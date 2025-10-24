@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from einops import rearrange, repeat
 from apps.server.backend.runtime.attention import attention_function
-from apps.server.backend import utils
+from apps.server.backend.runtime import utils
 from apps.server.backend.runtime.nn.flux import attention, rope, timestep_embedding, EmbedND, MLPEmbedder, RMSNorm, QKNorm, SelfAttention
 
 class Approximator(nn.Module):

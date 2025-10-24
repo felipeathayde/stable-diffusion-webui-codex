@@ -143,7 +143,7 @@
               </div>
               <div>
                 <label class="label" for="scheduler">Scheduler</label>
-                <input id="scheduler" class="ui-input" type="text" v-model="state.scheduler" placeholder="Simple" />
+                <input id="scheduler" class="ui-input" type="text" v-model="state.scheduler" placeholder="Automatic" />
               </div>
               <div>
                 <label class="label" for="format">Format</label>
@@ -152,6 +152,12 @@
                   <option value="diffusers">Diffusers</option>
                   <option value="auto">Auto</option>
                 </select>
+              </div>
+            </div>
+            <div class="test-grid test-grid-three">
+              <div>
+                <label class="label" for="seed">Seed</label>
+                <input id="seed" class="ui-input" type="number" v-model.number="state.seed" placeholder="-1 (random)" />
               </div>
             </div>
           </div>
@@ -206,6 +212,7 @@ const state = reactive({
     loraPath: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005clow_noise_model_lora.safetensors', loraWeight: 1.0,
   },
   sampler: 'Euler', scheduler: 'Simple', wanFormat: 'gguf',
+  seed: -1,
 })
 
 const isRunning = ref(false)
@@ -266,6 +273,7 @@ async function generate(): Promise<void> {
         img2vid_height: state.height,
         img2vid_num_frames: state.frames,
         img2vid_fps: state.fps,
+        img2vid_seed: state.seed,
         img2vid_init_image: state.initImageData,
         ...extras,
       }
@@ -280,6 +288,7 @@ async function generate(): Promise<void> {
         txt2vid_height: state.height,
         txt2vid_num_frames: state.frames,
         txt2vid_fps: state.fps,
+        txt2vid_seed: state.seed,
         ...extras,
       }
       const { task_id } = await startTxt2Vid(payload)

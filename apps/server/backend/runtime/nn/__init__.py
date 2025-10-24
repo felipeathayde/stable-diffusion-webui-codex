@@ -30,14 +30,17 @@ from .flux import (
     QKNorm,
     SelfAttention,
 )
-from .mmditx import MMDiTXTransformer3DModel
-from .chroma import ChromaTransformer2DModel
+# mmditx module defines MMDiTX; export a compatibility alias
+from .mmditx import MMDiTX as MMDiTXTransformer3DModel
+# chroma module defines IntegratedChromaTransformer2DModel; provide alias
+from .chroma import IntegratedChromaTransformer2DModel as ChromaTransformer2DModel
 from .cnets import cldm, t2i_adapter
 
 __all__ = [
     "AutoencoderKLWan",
     "IntegratedAutoencoderKL",
     "ChromaTransformer2DModel",
+    "IntegratedChromaTransformer2DModel",
     "Dummy",
     "EmbedND",
     "FluxTransformer2DModel",
@@ -45,6 +48,7 @@ __all__ = [
     "IntegratedCLIP",
     "IntegratedT5",
     "MMDiTXTransformer3DModel",
+    "MMDiTX",
     "MLPEmbedder",
     "ModuleDict",
     "ObjectDict",

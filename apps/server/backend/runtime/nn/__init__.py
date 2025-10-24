@@ -20,7 +20,7 @@ from .unet import (
 # AutoencoderKLWan for compatibility with older codepaths expecting that name.
 from .vae import IntegratedAutoencoderKL as AutoencoderKLWan
 from .flux import (
-    FluxTransformer2DModel,
+    IntegratedFluxTransformer2DModel as FluxTransformer2DModel,
     attention,
     rope,
     timestep_embedding as flux_timestep_embedding,
@@ -41,6 +41,7 @@ __all__ = [
     "Dummy",
     "EmbedND",
     "FluxTransformer2DModel",
+    "IntegratedFluxTransformer2DModel",
     "IntegratedCLIP",
     "IntegratedT5",
     "MMDiTXTransformer3DModel",

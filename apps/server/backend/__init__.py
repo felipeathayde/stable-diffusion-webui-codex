@@ -12,7 +12,9 @@ from .core.requests import (
     Txt2ImgRequest,
     Txt2VidRequest,
 )
-from .runtime import attention, logging, memory_management, models, nn, ops, shared, stream, text_processing, utils
+# Avoid importing heavy runtime modules at package import time to prevent
+# circular imports (e.g., runtime.utils -> backend.gguf -> backend.runtime).
+# These are exposed lazily via __getattr__ below.
 from .huggingface import ensure_repo_minimal_files
 from .patchers import (
     CLIP,
@@ -73,8 +75,8 @@ __all__ = [
     "InferenceEvent",
     "InferenceOrchestrator",
     "ImageService",
-    "attention",
     "ensure_repo_minimal_files",
+    "attention",
     "logging",
     "memory_management",
     "models",
@@ -127,3 +129,22 @@ __all__ = [
     "register_default_engines",
     "registry",
 ]
+
+
+def __getattr__(name: str):  # pragma: no cover - runtime dispatch
+    # Lazy-export runtime helpers to avoid circular imports during package init.
+    if name in {
+        "attention",
+        "logging",
+        "memory_management",
+        "models",
+        "nn",
+        "ops",
+        "shared",
+        "stream",
+        "text_processing",
+        "utils",
+    }:
+        from . import runtime as _runtime
+        return getattr(_runtime, name)
+    raise AttributeError(name)

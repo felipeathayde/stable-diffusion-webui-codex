@@ -367,7 +367,7 @@ def build_app() -> FastAPI:
         data = _load_json(blocks_path)
         if not data or 'blocks' not in data:
             raise HTTPException(status_code=500, detail='invalid ui blocks json')
-        # Optional overrides in apps/ui/blocks.d/*.json (merged by id)
+        # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
         overrides_root = os.path.join(os.getcwd(), 'apps', 'ui', 'blocks.d')
         merged = {b.get('id'): b for b in (data.get('blocks') or []) if isinstance(b, dict)}
         try:
@@ -649,7 +649,7 @@ def build_app() -> FastAPI:
     def ui_blocks(tab: Optional[str] = None) -> Dict[str, Any]:
         """Return UI blocks filtered by tab and current semantic engine.
 
-        - Source of truth: apps/ui/blocks.json (+ overrides in apps/ui/blocks.d).
+        - Source of truth: apps/interface/blocks.json (+ overrides in apps/interface/blocks.d).
         - Filters by `tab` (when provided) and by current detected engine if block declares `when.engines`.
         - Includes `semantic_engine` in the response for UI gating.
         """

@@ -114,7 +114,7 @@
 
 - Server‑driven parameter blocks
   - All engine‑specific UI blocks are served by the backend at `/api/ui/blocks`.
-  - Source of truth: `apps/ui/blocks.json` (overrides in `apps/ui/blocks.d/*.json`). No frontend fallback.
+  - Source of truth: `apps/interface/blocks.json` (overrides in `apps/interface/blocks.d/*.json`). No frontend fallback.
 
 - Error handling: invalid params return explicit errors; no silent fallbacks.
 

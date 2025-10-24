@@ -33,4 +33,11 @@ __all__ = [
     'register_default_engines',
     'Wan2214BEngine',
     'Wan225BEngine',
+    # Compatibility aliases
+    'WanI2V14BEngine',
+    'WanT2V14BEngine',
 ]
+
+# Backward compatibility aliases (v1 naming): old WAN video engines mapped to WAN 2.2 implementations
+WanI2V14BEngine = Wan2214BEngine  # image-to-video 14B
+WanT2V14BEngine = Wan2214BEngine  # text-to-video 14B (unified engine supports both)

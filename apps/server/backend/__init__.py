@@ -16,28 +16,7 @@ from .core.requests import (
 # circular imports (e.g., runtime.utils -> backend.gguf -> backend.runtime).
 # These are exposed lazily via __getattr__ below.
 from .huggingface import ensure_repo_minimal_files
-from .patchers import (
-    CLIP,
-    ControlLora,
-    ControlNet,
-    LoraLoader,
-    ModelPatcher,
-    T2IAdapter,
-    UnetPatcher,
-    VAE,
-    apply_controlnet_advanced,
-    clip_preprocess,
-    extra_weight_calculators,
-    load_lora,
-    load_t2i_adapter,
-    lora_collection_priority,
-    merge_lora_to_weight,
-    model_lora_keys_clip,
-    model_lora_keys_unet,
-    set_model_options_patch_replace,
-    set_model_options_post_cfg_function,
-    set_model_options_pre_cfg_function,
-)
+# Patchers are exported lazily via __getattr__ to avoid circular imports
 from .runtime.text_processing import (
     ClassicTextProcessingEngine,
     EmbeddingDatabase,
@@ -147,4 +126,29 @@ def __getattr__(name: str):  # pragma: no cover - runtime dispatch
     }:
         from . import runtime as _runtime
         return getattr(_runtime, name)
+    # Patchers
+    if name in {
+        "CLIP",
+        "ControlLora",
+        "ControlNet",
+        "LoraLoader",
+        "ModelPatcher",
+        "T2IAdapter",
+        "UnetPatcher",
+        "VAE",
+        "apply_controlnet_advanced",
+        "clip_preprocess",
+        "extra_weight_calculators",
+        "load_lora",
+        "load_t2i_adapter",
+        "lora_collection_priority",
+        "merge_lora_to_weight",
+        "model_lora_keys_clip",
+        "model_lora_keys_unet",
+        "set_model_options_patch_replace",
+        "set_model_options_post_cfg_function",
+        "set_model_options_pre_cfg_function",
+    }:
+        from . import patchers as _patchers
+        return getattr(_patchers, name)
     raise AttributeError(name)

@@ -36,6 +36,8 @@ try:  # pragma: no cover
         "wan_gguf": "apps.server.backend.wan_gguf",
         "wan_gguf_core": "apps.server.backend.wan_gguf_core",
         "gguf": "apps.server.backend.gguf",
+        # Patchers (singular legacy)
+        "patcher": "apps.server.backend.patchers",
         # Legacy group renames
         "diffusion_engine": "apps.server.backend.engines.diffusion",
         "text_processing": "apps.server.backend.runtime.text_processing",
@@ -43,6 +45,13 @@ try:  # pragma: no cover
         "misc": "apps.server.backend.runtime.misc",
         "modules": "apps.server.backend.runtime.modules",
         "nn": "apps.server.backend.runtime.nn",
+        # Diffusion engines (shortcuts)
+        "engines.sd15": "apps.server.backend.engines.diffusion.sd15",
+        "engines.sd20": "apps.server.backend.engines.diffusion.sd20",
+        "engines.sd35": "apps.server.backend.engines.diffusion.sd35",
+        "engines.sdxl": "apps.server.backend.engines.diffusion.sdxl",
+        "engines.flux": "apps.server.backend.engines.diffusion.flux",
+        "engines.base": "apps.server.backend.engines.diffusion.base",
         # Single-file legacy modules
         "operations": "apps.server.backend.runtime.ops.operations",
         "operations_bnb": "apps.server.backend.runtime.ops.operations_bnb",

@@ -108,9 +108,8 @@
 
 - Engine semantics
   - The `engine` setting gates UI visibility and defaults. Model type is ultimately determined by the loaded weights and pipeline graph.
-  - Friendly key `wan22` maps in the backend to concrete engines:
-    - txt2vid → `wan_t2v_14b` (apps/server/run_api.py)
-    - img2vid → `wan_i2v_14b` (apps/server/run_api.py)
+- Friendly key `wan22` maps to concrete engines:
+    - `wan22_14b` and `wan22_5b` (apps/server/backend/engines/registration.py)
 
 - Server‑driven parameter blocks
   - All engine‑specific UI blocks are served by the backend at `/api/ui/blocks`.

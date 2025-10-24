@@ -215,19 +215,19 @@ def build_app() -> FastAPI:
     except Exception as _e:  # pragma: no cover
         print(color_red(f"[engines] registration failed: {_e}"))
 
-    # Defensive: ensure WAN engines are present even if optional video imports fail elsewhere
+    # Defensive: ensure WAN22 engines are present even if registration import failed
     try:
         from apps.server.backend.core.registry import registry as _engine_registry
-        need = {"wan_t2v_14b", "wan_i2v_14b"} - set(_engine_registry.list())
+        need = {"wan22_14b", "wan22_5b"} - set(_engine_registry.list())
         if need:
-            from apps.server.backend.engines.video.wan.t2v14b_engine import WanT2V14BEngine  # type: ignore
-            from apps.server.backend.engines.video.wan.i2v14b_engine import WanI2V14BEngine  # type: ignore
-            for key, cls in (("wan_t2v_14b", WanT2V14BEngine), ("wan_i2v_14b", WanI2V14BEngine)):
+            from apps.server.backend.engines.diffusion.wan22_14b import Wan2214BEngine  # type: ignore
+            from apps.server.backend.engines.diffusion.wan22_5b import Wan225BEngine  # type: ignore
+            for key, cls in (("wan22_14b", Wan2214BEngine), ("wan22_5b", Wan225BEngine)):
                 if key in need:
                     _engine_registry.register(key, cls, aliases=(key.replace('_', '-'),), replace=False)  # type: ignore
-            print(color_cyan("[engines] ensured WAN engines are registered"))
+            print(color_cyan("[engines] ensured WAN22 engines are registered"))
     except Exception as _e:  # pragma: no cover
-        print(color_red(f"[engines] failed to ensure WAN engines: {_e}"))
+        print(color_red(f"[engines] failed to ensure WAN22 engines: {_e}"))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=['*'],
@@ -355,7 +355,7 @@ def build_app() -> FastAPI:
     # UI Blocks (server-driven parameter panels)
     def _load_ui_blocks() -> Dict[str, Any]:
         nonlocal _ui_blocks_cache, _ui_blocks_mtime
-        blocks_path = os.path.join(os.getcwd(), 'apps', 'ui', 'blocks.json')
+        blocks_path = os.path.join(os.getcwd(), 'apps', 'interface', 'blocks.json')
         # Simple mtime-based cache
         try:
             stat = os.stat(blocks_path)
@@ -368,7 +368,7 @@ def build_app() -> FastAPI:
         if not data or 'blocks' not in data:
             raise HTTPException(status_code=500, detail='invalid ui blocks json')
         # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
-        overrides_root = os.path.join(os.getcwd(), 'apps', 'ui', 'blocks.d')
+        overrides_root = os.path.join(os.getcwd(), 'apps', 'interface', 'blocks.d')
         merged = {b.get('id'): b for b in (data.get('blocks') or []) if isinstance(b, dict)}
         try:
             if os.path.isdir(overrides_root):
@@ -400,13 +400,13 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
     def _tabs_path() -> str:
-        return os.path.join(os.getcwd(), 'apps', 'ui', 'tabs.json')
+        return os.path.join(os.getcwd(), 'apps', 'interface', 'tabs.json')
 
     def _workflows_path() -> str:
-        return os.path.join(os.getcwd(), 'apps', 'ui', 'workflows.json')
+        return os.path.join(os.getcwd(), 'apps', 'interface', 'workflows.json')
 
     def _ensure_dirs() -> None:
-        root = os.path.join(os.getcwd(), 'apps', 'ui')
+        root = os.path.join(os.getcwd(), 'apps', 'interface')
         os.makedirs(root, exist_ok=True)
 
     def _default_tabs() -> Dict[str, Any]:

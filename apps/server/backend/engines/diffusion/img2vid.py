@@ -68,6 +68,21 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
             "elapsed": round(time.perf_counter() - start, 3),
             "frames": len(frames),
             "video_interpolation": vfi_opts,
+            "wan": {
+                "high": {
+                    "steps": int(getattr(request, "steps", 12) or 12),
+                    "sampler": str(getattr(request, "sampler", "Automatic")),
+                    "scheduler": str(getattr(request, "scheduler", "Automatic")),
+                    "cfg": getattr(request, "guidance_scale", None),
+                },
+                "low": {
+                    "steps": int(getattr(request, "steps", 12) or 12),
+                    "sampler": str(getattr(request, "sampler", "Automatic")),
+                    "scheduler": str(getattr(request, "scheduler", "Automatic")),
+                    "cfg": getattr(request, "guidance_scale", None),
+                },
+            },
+            "seed": getattr(request, "seed", None),
         }
         yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
         return

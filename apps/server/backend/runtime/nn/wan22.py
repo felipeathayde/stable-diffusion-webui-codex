@@ -787,14 +787,27 @@ def _sample_stage_tokens(
         x = torch.randn(1, L, Ctok, device=device, dtype=dtype)
     # Scheduler em espaço de tokens (parametrizável)
     scheduler = _make_scheduler(steps, sampler=sampler_name, scheduler=scheduler_name)
-    # Diffusers sigma-based timesteps; cast to float for time embedding
+    # Diffusers timesteps; map to DiT time in [0,1]
     timesteps = scheduler.timesteps
+
+    def _t_from_idx(idx: int) -> float:
+        try:
+            sigmas = getattr(scheduler, 'sigmas', None)
+            if sigmas is not None and len(sigmas) == len(timesteps):
+                s = float(sigmas[idx])
+                s_min = float(sigmas[-1])
+                s_max = float(sigmas[0])
+                if s_max - s_min > 0:
+                    return max(0.0, min(1.0, (s - s_min) / (s_max - s_min)))
+        except Exception:
+            pass
+        n = max(1, len(timesteps) - 1)
+        return 1.0 - (float(idx) / float(n))
 
     iterator = _tqdm(timesteps, desc="WAN22(stage)") if _tqdm else timesteps
     for i, t in enumerate(iterator):
         # Model forward: conditional and unconditional
-        # Pass a scalar t (float) into UNet time embedding; keep simple for now
-        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        tt = _t_from_idx(i)
         eps_cond = dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
         eps_uncond = dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
         eps = _cfg_merge(eps_uncond, eps_cond, cfg_scale)
@@ -913,8 +926,22 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     x_lo = toks_lo0.clone()
     iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
+    def _t_from_idx_lo(idx: int) -> float:
+        try:
+            sigmas = getattr(scheduler_lo, 'sigmas', None)
+            if sigmas is not None and len(sigmas) == len(scheduler_lo.timesteps):
+                s = float(sigmas[idx])
+                s_min = float(sigmas[-1])
+                s_max = float(sigmas[0])
+                if s_max - s_min > 0:
+                    return max(0.0, min(1.0, (s - s_min) / (s_max - s_min)))
+        except Exception:
+            pass
+        n = max(1, len(scheduler_lo.timesteps) - 1)
+        return 1.0 - (float(idx) / float(n))
+
     for i, t in enumerate(iterator_lo):
-        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        tt = _t_from_idx_lo(i)
         eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)

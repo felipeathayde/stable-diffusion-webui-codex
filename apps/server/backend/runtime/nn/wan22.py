@@ -471,10 +471,53 @@ def _infer_latent_grid(unet: 'WanUNetGGUF', *, T: int, H_lat: int, W_lat: int, d
     return (grid[0], grid[1], grid[2]), (L, Cout)
 
 
-def _make_scheduler(steps: int):
-    from diffusers import EulerDiscreteScheduler
-    # Use defaults; set_timesteps controls the inference length. Prediction is epsilon by default for Euler.
-    sched = EulerDiscreteScheduler()
+def _make_scheduler(steps: int, *, sampler: Optional[str] = None, scheduler: Optional[str] = None):
+    """Instantiate a Diffusers scheduler based on requested sampler/scheduler names.
+
+    Defaults to Euler when unspecified. No hardcoded counts; `steps` is passed through.
+    """
+    from diffusers import (
+        EulerDiscreteScheduler,
+        EulerAncestralDiscreteScheduler,
+        DDIMScheduler,
+        DPMSolverMultistepScheduler,
+        LMSDiscreteScheduler,
+        PNDMScheduler,
+    )
+
+    s = (sampler or "").strip().lower()
+    sch = (scheduler or "").strip().lower()
+
+    cls = EulerDiscreteScheduler  # default
+    # Try sampler first (explicit user intent)
+    if s in ("euler",):
+        cls = EulerDiscreteScheduler
+    elif s in ("euler a", "euler_a", "euler-ancestral", "ancestral"):  # tolerant forms
+        cls = EulerAncestralDiscreteScheduler
+    elif s in ("ddim",):
+        cls = DDIMScheduler
+    elif s in ("dpm++ 2m", "dpm++ 2m sde", "dpm2m", "dpmpp2m", "dpmpp2m sde"):
+        cls = DPMSolverMultistepScheduler
+    elif s in ("plms", "lms"):
+        cls = LMSDiscreteScheduler
+    elif s in ("pndm",):
+        cls = PNDMScheduler
+    else:
+        # Fall back to scheduler hint, if provided
+        if "euler a" in sch or "ancestral" in sch:
+            cls = EulerAncestralDiscreteScheduler
+        elif "euler" in sch:
+            cls = EulerDiscreteScheduler
+        elif "ddim" in sch:
+            cls = DDIMScheduler
+        elif "dpm" in sch:
+            cls = DPMSolverMultistepScheduler
+        elif "lms" in sch:
+            cls = LMSDiscreteScheduler
+        elif "pndm" in sch:
+            cls = PNDMScheduler
+
+    sched = cls()
     sched.set_timesteps(max(1, int(steps)))
     return sched
 
@@ -497,14 +540,16 @@ def _sample_stage_tokens(
     device: torch.device,
     dtype: torch.dtype,
     logger: Any,
+    sampler_name: Optional[str] = None,
+    scheduler_name: Optional[str] = None,
 ) -> torch.Tensor:
     log = _get_logger(logger)
     T2, H2, W2 = grid
     L, Ctok = token_shape
     # Initialize token space with Gaussian noise
     x = torch.randn(1, L, Ctok, device=device, dtype=dtype)
-    # Scheduler in token space
-    scheduler = _make_scheduler(steps)
+    # Scheduler em espaço de tokens (parametrizável)
+    scheduler = _make_scheduler(steps, sampler=sampler_name, scheduler=scheduler_name)
     # Diffusers sigma-based timesteps; cast to float for time embedding
     timesteps = scheduler.timesteps
 
@@ -579,6 +624,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
 
     # Sample tokens in High stage
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
+    sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
+    sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
     toks_hi = _sample_stage_tokens(
         unet=hi_unet,
         steps=steps_hi,
@@ -590,6 +637,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         device=dev,
         dtype=dt,
         logger=log,
+        sampler_name=sampler_hi,
+        scheduler_name=sched_hi,
     )
 
     # Decode High to frames and seed Low with last frame (Low is mandatory)
@@ -609,7 +658,9 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
 
     # Low stage sampling (mandatory)
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
-    scheduler_lo = _make_scheduler(steps_lo)
+    sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
+    sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
+    scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     x_lo = toks_lo0.clone()
     iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
     for i, t in enumerate(iterator_lo):
@@ -676,7 +727,10 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     seed_tokens, _ = _patch_embed3d(lat0.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
 
     # Run sampler starting from seeded tokens (replace init noise)
-    scheduler = _make_scheduler(int(getattr(cfg.high, 'steps', 12) if cfg.high else 12))
+    steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
+    sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
+    sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
+    scheduler = _make_scheduler(steps_hi, sampler=sampler_hi, scheduler=sched_hi)
     timesteps = scheduler.timesteps
     x = seed_tokens.clone()
     iterator = _tqdm(timesteps, desc="WAN22(high)") if _tqdm else timesteps
@@ -707,7 +761,9 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
-    scheduler_lo = _make_scheduler(steps_lo)
+    sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
+    sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
+    scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     tlist_lo = scheduler_lo.timesteps
     x_lo = toks_lo0.clone()
     iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo

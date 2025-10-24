@@ -7,7 +7,7 @@ import torch
 from collections.abc import MutableMapping
 from safetensors.torch import safe_open
 
-from apps.server.backend.runtime.misc import checkpoint_pickle
+from apps.server.backend.runtime.misc.checkpoint_pickle import checkpoint_pickle
 # Avoid importing the whole `runtime.ops` package here (it imports `utils`,
 # creating a circular import). Import the required symbol directly from the
 # submodule that defines it.

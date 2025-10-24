@@ -26,9 +26,9 @@ from apps.server.backend.runtime.models.state_dict import (
     load_state_dict,
 )
 from apps.server.backend.runtime.ops import using_forge_operations
-from apps.server.backend.runtime.nn.vae import IntegratedAutoencoderKL
+from apps.server.backend.runtime.nn.vae import AutoencoderKLWan
 from apps.server.backend.runtime.nn.clip import IntegratedCLIP
-from apps.server.backend.runtime.nn.unet import IntegratedUNet2DConditionModel
+from apps.server.backend.runtime.nn.unet import UNet2DConditionModel
 from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
 
 from apps.server.backend.engines.diffusion.sd15 import StableDiffusion
@@ -135,14 +135,14 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
             from collections.abc import Mapping
             assert isinstance(state_dict, Mapping) and len(state_dict) > 16, 'You do not have VAE state dict!'
 
-            config = IntegratedAutoencoderKL.load_config(config_path)
+            config = AutoencoderKLWan.load_config(config_path)
 
             # Prefer constructing VAE on GPU when policy allows
             vae_dev = memory_management.vae_device()
             vae_dtype = memory_management.vae_dtype(device=vae_dev)
             _trace.event("vae_construct", device=str(vae_dev), dtype=str(vae_dtype))
             with using_forge_operations(device=vae_dev, dtype=vae_dtype, manual_cast_enabled=True):
-                model = IntegratedAutoencoderKL.from_config(config)
+                model = AutoencoderKLWan.from_config(config)
 
             if 'decoder.up_blocks.0.resnets.0.norm1.weight' in state_dict.keys(): # diffusers format
                 state_dict = huggingface_guess.diffusers_convert.convert_vae_state_dict(state_dict)
@@ -212,16 +212,16 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
 
             model_loader = None
             if cls_name == 'UNet2DConditionModel':
-                model_loader = lambda c: IntegratedUNet2DConditionModel.from_config(c)
+                model_loader = lambda c: UNet2DConditionModel.from_config(c)
             elif cls_name == 'FluxTransformer2DModel':
-                from apps.server.backend.runtime.nn.flux import IntegratedFluxTransformer2DModel
-                model_loader = lambda c: IntegratedFluxTransformer2DModel(**c)
+                from apps.server.backend.runtime.nn.flux import FluxTransformer2DModel
+                model_loader = lambda c: FluxTransformer2DModel(**c)
             elif cls_name == 'ChromaTransformer2DModel':
-                from apps.server.backend.runtime.nn.chroma import IntegratedChromaTransformer2DModel
-                model_loader = lambda c: IntegratedChromaTransformer2DModel(**c)
+                from apps.server.backend.runtime.nn.chroma import ChromaTransformer2DModel
+                model_loader = lambda c: ChromaTransformer2DModel(**c)
             elif cls_name == 'SD3Transformer2DModel':
-                from apps.server.backend.runtime.nn.mmditx import MMDiTX
-                model_loader = lambda c: MMDiTX(**c)
+                from apps.server.backend.runtime.nn.mmditx import SD3Transformer2DModel
+                model_loader = lambda c: SD3Transformer2DModel(**c)
 
             unet_config = guess.unet_config.copy()
             # Avoid materializing tensors during stats; rely on policy/env

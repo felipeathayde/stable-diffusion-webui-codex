@@ -323,7 +323,7 @@ class LastLayer(nn.Module):
         return x
 
 
-class IntegratedFluxTransformer2DModel(nn.Module):
+class FluxTransformer2DModel(nn.Module):
     def __init__(self, in_channels: int, vec_in_dim: int, context_in_dim: int, hidden_size: int, mlp_ratio: float, num_heads: int, depth: int, depth_single_blocks: int, axes_dim: list[int], theta: int, qkv_bias: bool, guidance_embed: bool):
         super().__init__()
 

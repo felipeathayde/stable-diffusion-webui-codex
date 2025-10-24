@@ -7,7 +7,7 @@ from apps.server.backend.patchers.vae import VAE
 from apps.server.backend.patchers.unet import UnetPatcher
 from apps.server.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.server.backend.config.args import dynamic_args
-from apps.server.backend.runtime.modules.k_prediction import PredictionFlux
+from apps.server.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.server.backend.runtime.memory import memory_management
 
 class Chroma(ForgeDiffusionEngine):
@@ -25,7 +25,7 @@ class Chroma(ForgeDiffusionEngine):
         )
 
         vae = VAE(model=huggingface_components['vae'])
-        k_predictor = PredictionFlux(
+        k_predictor = FlowMatchEulerPrediction(
             mu=1.0
         )
         unet = UnetPatcher.from_model(

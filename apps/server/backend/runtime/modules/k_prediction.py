@@ -282,7 +282,7 @@ class PredictionDiscreteFlow(AbstractPrediction):
         return 1.0 - percent
 
 
-class PredictionFlux(AbstractPrediction):
+class FlowMatchEulerPrediction(AbstractPrediction):
     def __init__(self, seq_len=4096, base_seq_len=256, max_seq_len=4096, base_shift=0.5, max_shift=1.15, pseudo_timestep_range=10000, mu=None):
         super().__init__(sigma_data=1.0, prediction_type='const')
         self.mu = mu

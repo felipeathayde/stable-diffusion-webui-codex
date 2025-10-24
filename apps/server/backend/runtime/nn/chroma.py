@@ -135,7 +135,7 @@ class LastLayer(nn.Module):
         return x
 
 
-class IntegratedChromaTransformer2DModel(nn.Module):
+class ChromaTransformer2DModel(nn.Module):
     def __init__(self, in_channels: int, vec_in_dim: int, context_in_dim: int, hidden_size: int, mlp_ratio: float, num_heads: int, depth: int, depth_single_blocks: int, axes_dim: list[int], theta: int, qkv_bias: bool, guidance_out_dim: int, guidance_hidden_dim: int, guidance_n_layers: int):
         super().__init__()
 

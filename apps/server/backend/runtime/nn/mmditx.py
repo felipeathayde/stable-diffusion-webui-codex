@@ -4,7 +4,7 @@
 ## attention, Mlp : other_impls.py
 ## all else : mmditx.py
 
-## minor modifications to MMDiTX.__init__() and MMDiTX.forward()
+## minor modifications to SD3Transformer2DModel.__init__() and SD3Transformer2DModel.forward()
 
 import math
 from typing import Dict, List, Optional
@@ -737,7 +737,7 @@ class FinalLayer(nn.Module):
         return x
 
 
-class MMDiTX(nn.Module):
+class SD3Transformer2DModel(nn.Module):
     """Diffusion model with a Transformer backbone."""
 
     def __init__(

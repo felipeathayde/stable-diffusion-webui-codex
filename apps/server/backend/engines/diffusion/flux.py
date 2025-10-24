@@ -8,7 +8,7 @@ from apps.server.backend.patchers.unet import UnetPatcher
 from apps.server.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.server.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.server.backend.config.args import dynamic_args
-from apps.server.backend.runtime.modules.k_prediction import PredictionFlux
+from apps.server.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.server.backend.runtime.memory import memory_management
 
 
@@ -33,11 +33,11 @@ class Flux(ForgeDiffusionEngine):
         vae = VAE(model=huggingface_components['vae'])
 
         if 'schnell' in estimated_config.huggingface_repo.lower():
-            k_predictor = PredictionFlux(
+            k_predictor = FlowMatchEulerPrediction(
                 mu=1.0
             )
         else:
-            k_predictor = PredictionFlux(
+            k_predictor = FlowMatchEulerPrediction(
                 seq_len=4096,
                 base_seq_len=256,
                 max_seq_len=4096,

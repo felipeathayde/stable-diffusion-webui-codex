@@ -478,7 +478,7 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
-class IntegratedUNet2DConditionModel(nn.Module, ConfigMixin):
+class UNet2DConditionModel(nn.Module, ConfigMixin):
     config_name = 'config.json'
 
     @register_to_config

@@ -271,7 +271,7 @@ class Decoder(nn.Module):
         return h
 
 
-class IntegratedAutoencoderKL(nn.Module, ConfigMixin):
+class AutoencoderKLWan(nn.Module, ConfigMixin):
     config_name = 'config.json'
 
     @register_to_config

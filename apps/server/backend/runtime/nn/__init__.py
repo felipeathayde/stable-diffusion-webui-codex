@@ -16,7 +16,9 @@ from .unet import (
     exists,
     Downsample,
 )
-from .vae import AutoencoderKLWan
+# Our VAE implementation is IntegratedAutoencoderKL; export an alias
+# AutoencoderKLWan for compatibility with older codepaths expecting that name.
+from .vae import IntegratedAutoencoderKL as AutoencoderKLWan
 from .flux import (
     FluxTransformer2DModel,
     attention,
@@ -34,6 +36,7 @@ from .cnets import cldm, t2i_adapter
 
 __all__ = [
     "AutoencoderKLWan",
+    "IntegratedAutoencoderKL",
     "ChromaTransformer2DModel",
     "Dummy",
     "EmbedND",

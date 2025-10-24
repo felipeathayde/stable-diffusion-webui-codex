@@ -1,17 +1,33 @@
-"""Miscellaneous backend helpers (attention, resize, state dict utilities).
+"""Miscellaneous backend helpers (lazy exports to avoid import cycles).
 
-Note: This package previously re-exported conversion helpers that are not
-implemented in `diffusers_state_dict.py`. To avoid import-time failures,
-only export symbols that exist. Add new exports here when corresponding
-implementations are added.
+This package exposes symbols on demand to prevent importing heavy modules
+at package import time. It keeps `utils` and `memory` free from cycles.
 """
 
-from .sub_quadratic_attention import efficient_dot_product_attention
-from .image_resize import adaptive_resize, bislerp, lanczos
-from .diffusers_state_dict import unet_to_diffusers
-# Re-export the `checkpoint_pickle` module for torch.load(pickle_module=...)
-from . import checkpoint_pickle
-# TomeSD helpers are provided via TomePatcher within tomesd.py; no direct
-# merge_* symbols are exposed here to avoid import-time errors.
+from importlib import import_module
+from typing import Any
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+_EXPORTS = {
+    # attention utils
+    "efficient_dot_product_attention": (".sub_quadratic_attention", "efficient_dot_product_attention"),
+    # image resize helpers
+    "adaptive_resize": (".image_resize", "adaptive_resize"),
+    "bislerp": (".image_resize", "bislerp"),
+    "lanczos": (".image_resize", "lanczos"),
+    # state dict helpers
+    "unet_to_diffusers": (".diffusers_state_dict", "unet_to_diffusers"),
+    # for torch.load(..., pickle_module=checkpoint_pickle)
+    # expose the submodule itself, not a symbol
+    "checkpoint_pickle": (".checkpoint_pickle", None),
+}
+
+__all__ = sorted(_EXPORTS.keys())
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - runtime behavior
+    try:
+        mod_path, sym = _EXPORTS[name]
+    except KeyError as e:
+        raise AttributeError(name) from e
+    mod = import_module(mod_path, __name__)
+    return mod if sym is None else getattr(mod, sym)

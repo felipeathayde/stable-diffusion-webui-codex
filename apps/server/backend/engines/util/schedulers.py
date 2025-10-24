@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from enum import Enum
+from typing import List, Optional, Union
 
 
 @dataclass
@@ -13,7 +14,26 @@ class ApplyOutcome:
     warnings: List[str]
 
 
-def apply_sampler_scheduler(pipe, sampler: str, scheduler: str) -> ApplyOutcome:
+class SamplerKind(str, Enum):
+    AUTOMATIC = "automatic"
+    EULER = "euler"
+    EULER_A = "euler a"
+    DDIM = "ddim"
+    DPM2M = "dpm++ 2m"
+    DPM2M_SDE = "dpm++ 2m sde"
+    PLMS = "plms"
+    PNDM = "pndm"
+
+    @staticmethod
+    def from_string(name: str) -> "SamplerKind":
+        key = (name or "automatic").strip().lower()
+        for member in SamplerKind:
+            if key == member.value:
+                return member
+        return SamplerKind.AUTOMATIC
+
+
+def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: Optional[str]) -> ApplyOutcome:
     """Best-effort mapping of sampler/scheduler strings to Diffusers pipeline.
 
     Notes
@@ -21,8 +41,8 @@ def apply_sampler_scheduler(pipe, sampler: str, scheduler: str) -> ApplyOutcome:
     - We set relevant flags on the scheduler instance when applicable.
     - Returns warnings when a request is adjusted.
     """
-    wanted_sampler = (sampler or "Automatic").strip()
-    wanted_scheduler = (scheduler or "Automatic").strip()
+    wanted_sampler = sampler.value if isinstance(sampler, SamplerKind) else (sampler or "Automatic").strip()
+    wanted_scheduler = (scheduler or "Automatic").strip() if scheduler is not None else "Automatic"
     eff_sampler = wanted_sampler
     eff_scheduler = wanted_scheduler
     warnings: List[str] = []
@@ -38,24 +58,24 @@ def apply_sampler_scheduler(pipe, sampler: str, scheduler: str) -> ApplyOutcome:
         )
 
         allowed = {
-            "euler": EulerDiscreteScheduler,
-            "euler a": EulerAncestralDiscreteScheduler,
-            "ddim": DDIMScheduler,
-            "dpm++ 2m": DPMSolverMultistepScheduler,
-            "dpm++ 2m sde": DPMSolverMultistepScheduler,
-            "plms": LMSDiscreteScheduler,
-            "pndm": PNDMScheduler,
+            SamplerKind.EULER: EulerDiscreteScheduler,
+            SamplerKind.EULER_A: EulerAncestralDiscreteScheduler,
+            SamplerKind.DDIM: DDIMScheduler,
+            SamplerKind.DPM2M: DPMSolverMultistepScheduler,
+            SamplerKind.DPM2M_SDE: DPMSolverMultistepScheduler,
+            SamplerKind.PLMS: LMSDiscreteScheduler,
+            SamplerKind.PNDM: PNDMScheduler,
         }
 
-        key = wanted_sampler.lower()
-        if key in ("auto", "automatic", ""):
+        kind = SamplerKind.from_string(wanted_sampler)
+        if kind is SamplerKind.AUTOMATIC:
             # Keep existing scheduler; annotate only
             sched = getattr(pipe, "scheduler", None)
             eff_sampler = "Automatic"
             eff_scheduler = type(sched).__name__ if sched is not None else "<none>"
             return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
 
-        target_cls = allowed.get(key)
+        target_cls = allowed.get(kind)
         if target_cls is None:
             warnings.append(f"Unsupported sampler '{wanted_sampler}', keeping pipeline scheduler")
             sched = getattr(pipe, "scheduler", None)
@@ -95,5 +115,4 @@ def apply_sampler_scheduler(pipe, sampler: str, scheduler: str) -> ApplyOutcome:
         return ApplyOutcome(wanted_sampler, wanted_scheduler, eff, eff, warnings)
 
 
-__all__ = ["apply_sampler_scheduler", "ApplyOutcome"]
-
+__all__ = ["apply_sampler_scheduler", "ApplyOutcome", "SamplerKind"]

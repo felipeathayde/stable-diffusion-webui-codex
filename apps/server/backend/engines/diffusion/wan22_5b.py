@@ -16,19 +16,7 @@ from typing import Any, Optional
 import os
 
 
-@dataclass
-class _Components:
-    text_encoder: Any | None = None
-    transformer: Any | None = None
-    vae: Any | None = None
-    pipeline: Any | None = None
-    pipeline_high: Any | None = None
-    pipeline_low: Any | None = None
-    model_dir: str | None = None
-    high_dir: str | None = None
-    low_dir: str | None = None
-    device: str = "cpu"
-    dtype: str = "fp16"
+from .wan22_common import EngineOpts, WanComponents
 
 
 class Wan225BEngine(BaseVideoEngine):
@@ -36,8 +24,8 @@ class Wan225BEngine(BaseVideoEngine):
 
     def __init__(self) -> None:
         super().__init__()
-        self._comp: Optional[_Components] = None
-        self._opts = {"device": "auto", "dtype": "fp16"}
+        self._comp: Optional[WanComponents] = None
+        self._opts = EngineOpts()
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
@@ -52,8 +40,8 @@ class Wan225BEngine(BaseVideoEngine):
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
-        self._opts = {"device": dev, "dtype": dty}
-        comp = _Components()
+        self._opts = EngineOpts(device=dev, dtype=dty)
+        comp = WanComponents()
         p = model_ref
         try:
             if os.path.isfile(p):

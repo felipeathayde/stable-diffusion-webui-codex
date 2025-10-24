@@ -1365,15 +1365,15 @@ def build_app() -> FastAPI:
         # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
         engine_key = None
         if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = 'wan_t2v_14b'
+            engine_key = 'wan22_14b'
         else:
             sem = _detect_semantic_engine()
             if sem == 'wan22':
-                engine_key = 'wan_t2v_14b'
+                engine_key = 'wan22_14b'
             elif sem == 'hunyuan_video':
                 engine_key = 'hunyuan_video'
             else:
-                engine_key = 'wan_t2v_14b'
+                engine_key = 'wan22_14b'
         # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
         model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
         try:
@@ -1440,15 +1440,15 @@ def build_app() -> FastAPI:
         # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
         engine_key = None
         if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = 'wan_i2v_14b'
+            engine_key = 'wan22_14b'
         else:
             sem = _detect_semantic_engine()
             if sem == 'wan22':
-                engine_key = 'wan_i2v_14b'
+                engine_key = 'wan22_14b'
             elif sem == 'hunyuan_video':
                 engine_key = 'hunyuan_video'
             else:
-                engine_key = 'wan_i2v_14b'
+                engine_key = 'wan22_14b'
         # Choose model_ref from WAN extras when provided
         model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
         try:

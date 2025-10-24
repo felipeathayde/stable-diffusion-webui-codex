@@ -4,7 +4,7 @@ import time
 from typing import Iterator, List, Any
 
 from apps.server.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
-from apps.server.backend.engines.util.schedulers import apply_sampler_scheduler
+from apps.server.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 
 
 def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceEvent]:
@@ -26,7 +26,7 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
     # Sampler/Scheduler mapping
     sampler = getattr(request, "sampler", "Automatic")
     scheduler = getattr(request, "scheduler", "Automatic")
-    outcome = apply_sampler_scheduler(pipe, sampler, scheduler)
+    outcome = apply_sampler_scheduler(pipe, SamplerKind.from_string(sampler), scheduler)
     for w in outcome.warnings:
         if logger:
             logger.warning("txt2vid: %s", w)
@@ -63,4 +63,3 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
         "scheduler": outcome.scheduler_effective,
     }
     yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
-

@@ -4,7 +4,8 @@ import time
 from typing import Iterator, List, Any
 
 from apps.server.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Img2VidRequest
-from apps.server.backend.engines.util.schedulers import apply_sampler_scheduler
+from apps.server.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
+from .wan22_common import WanStageOptions
 from apps.server.backend.core.params.video import VideoInterpolationOptions
 from apps.server.backend.video.interpolation import maybe_interpolate
 
@@ -33,7 +34,11 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
     active_pipe_hi = high_model or pipe
     if active_pipe_hi is None:
         raise RuntimeError("img2vid requires a Diffusers pipeline (single or per-stage)")
-    outcome = apply_sampler_scheduler(active_pipe_hi, getattr(request, "sampler", "Automatic"), getattr(request, "scheduler", "Automatic"))
+    outcome = apply_sampler_scheduler(
+        active_pipe_hi,
+        SamplerKind.from_string(getattr(request, "sampler", "Automatic")),
+        getattr(request, "scheduler", "Automatic"),
+    )
     for w in outcome.warnings:
         if logger:
             logger.warning("img2vid: %s", w)
@@ -56,18 +61,22 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
     lo = None
     try:
         extras = getattr(request, "extras", {}) or {}
-        lo = extras.get("wan_low") if isinstance(extras, dict) else None
+        lo = WanStageOptions.from_mapping(extras.get("wan_low")) if isinstance(extras, dict) else None
     except Exception:
         lo = None
     if active_pipe_lo is not None and frames_hi:
         # Apply LoRA per-stage if available (best-effort)
         try:
-            if isinstance(lo, dict) and lo.get("lora_path"):
+            if isinstance(lo, WanStageOptions) and lo.lora_path:
                 if hasattr(active_pipe_lo, "load_lora_weights"):
-                    active_pipe_lo.load_lora_weights(lo["lora_path"])  # type: ignore[attr-defined]
+                    active_pipe_lo.load_lora_weights(lo.lora_path)  # type: ignore[attr-defined]
         except Exception:
             pass
-        outcome_lo = apply_sampler_scheduler(active_pipe_lo, getattr(request, "sampler", "Automatic"), getattr(request, "scheduler", "Automatic"))
+        outcome_lo = apply_sampler_scheduler(
+            active_pipe_lo,
+            SamplerKind.from_string(getattr(request, "sampler", "Automatic")),
+            getattr(request, "scheduler", "Automatic"),
+        )
         for w in outcome_lo.warnings:
             if logger:
                 logger.warning("img2vid(low): %s", w)
@@ -121,4 +130,3 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
         "video_interpolation": vfi_opts,
     }
     yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
-

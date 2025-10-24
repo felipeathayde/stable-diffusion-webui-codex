@@ -12,9 +12,8 @@ Rationale
 - This yields clearer ownership, fewer circular imports, and a strictly versioned surface.
 
 Timeline
-- 2025-10-24: Deprecation notice published; import redirector active. DEBUG‑level redirect logs are emitted when `CODEX_SHIM_WARN=1` (default).
-- 2025-11-07: End of grace period for new code. New PRs introducing `from backend ...` or `import backend` will be requested to change to the façade before merge.
-- Not before 2025-11-24: Removal window opens. Remaining shims may be deleted and redirector tightened once internal/external consumers have migrated.
+- 2025-10-24: Deprecation notice published.
+- 2025-10-24: Removal executed — legacy `backend/` and `backend_ext/` packages deleted; HF assets moved into `apps/server/backend/huggingface/`.
 
 What to do (migration checklist)
 - Replace `from backend import X` with `from apps.server.backend import X` when `X` is exported by the façade. Prefer façade‑level imports over deep subpackages.
@@ -57,7 +56,7 @@ engine = text_processing.ClassicTextProcessingEngine(...)
 ```
 
 Observability
-- Import redirects are logged (DEBUG) by `backend/__init__.py`. To see them, run with a DEBUG log level or inspect logs for the `backend.shim` logger. Set `CODEX_SHIM_WARN=1` (default) to keep redirects visible at DEBUG.
+- No redirector remains. If you still import `backend.*`, Python will raise `ModuleNotFoundError`. Migrate to the façade imports shown above.
 
 References
 - Shim inventory: `apps/server/backend/SHIM_INVENTORY.md` (authoritative list of remaining shims and removals).
@@ -66,4 +65,3 @@ References
 Notes
 - Do not modify files under `legacy/`.
 - External extensions should migrate to the façade within the window above. If a missing façade export is blocking your migration, open an issue or PR to add a stable export rather than importing deep internals.
-

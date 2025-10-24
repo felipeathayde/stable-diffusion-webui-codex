@@ -117,3 +117,10 @@
   - Source of truth: `apps/ui/blocks.json` (overrides in `apps/ui/blocks.d/*.json`). No frontend fallback.
 
 - Error handling: invalid params return explicit errors; no silent fallbacks.
+
+## Deprecations
+- Active: `backend.*` namespace deprecation
+  - Notice: 2025-10-24; removal window opens not before 2025-11-24.
+  - Migrate imports to the façade `apps.server.backend.*`.
+  - See: `codex/deprecations/2025-10-backend-namespace-deprecation.md` and `apps/server/backend/SHIM_INVENTORY.md`.
+  - Observability: DEBUG redirect logs via `backend.shim` when `CODEX_SHIM_WARN=1` (default).

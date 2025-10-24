@@ -27,12 +27,242 @@ import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
-from apps.server.backend.wan_gguf_core.patch import patch_embed as _patch_embed3d, patch_unembed as _patch_unembed3d
-from apps.server.backend.wan_gguf_core.text_context import get_text_context as _get_text_context
-from apps.server.backend.wan_gguf_core.latents import (
-    encode_init_image_to_latents as _vae_encode_init,
-    decode_latents_to_images as _vae_decode_video,
-)
+# WAN DiT helpers are inlined here to keep the one-file-per-model convention,
+# matching flux/chroma. No dependence on legacy wan_gguf_core/*.
+
+def _patch_embed3d(video, w, b):
+    import torch
+    from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
+
+    device = video.device
+    dtype = video.dtype
+    W = w
+    if hasattr(W, 'gguf_cls'):
+        W = dequantize_tensor(W)
+    W = W.to(device=device, dtype=dtype)
+    bias = None
+    if b is not None:
+        bias = b.to(device=device, dtype=dtype)
+    B, C, T, H, Wd = video.shape
+    kCout, kCin, kT, kH, kW = W.shape
+    if C != kCin:
+        raise RuntimeError(f"patch_embed: C_in mismatch: video C={C} vs weight {kCin}")
+    y = torch.nn.functional.conv3d(video, W, bias=bias, stride=(1, kH, kW), padding=(0, 0, 0))
+    B2, Cout, T2, H2, W2 = y.shape
+    tokens = y.permute(0, 2, 3, 4, 1).contiguous().view(B2, T2 * H2 * W2, Cout)
+    return tokens, (T2, H2, W2)
+
+
+def _patch_unembed3d(tokens, w, out_shape):
+    import torch
+    from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
+
+    device = tokens.device
+    dtype = tokens.dtype
+    W = w
+    if hasattr(W, 'gguf_cls'):
+        W = dequantize_tensor(W)
+    W = W.to(device=device, dtype=dtype)
+    B, L, Cout = tokens.shape
+    kCout, kCin, kT, kH, kW = W.shape
+    if Cout != kCout:
+        raise RuntimeError(f"patch_unembed: C_out mismatch: tokens C={Cout} vs weight {kCout}")
+    T2, H2, W2 = out_shape
+    y = tokens.view(B, T2, H2, W2, Cout).permute(0, 4, 1, 2, 3).contiguous().to(device=device, dtype=dtype)
+    video = torch.nn.functional.conv_transpose3d(y, W, bias=None, stride=(1, kH, kW), padding=(0, 0, 0))
+    return video
+
+
+def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None):
+    # Try transformers tokenizer+encoder first
+    try:
+        import torch
+        from transformers import AutoTokenizer, AutoConfig
+        try:
+            from transformers import UMT5EncoderModel as _Enc
+        except Exception:
+            from transformers import T5EncoderModel as _Enc
+        tk_dir = tokenizer_dir
+        te_dir = text_encoder_dir
+        te_file: Optional[str] = None
+        import os
+        if te_dir and os.path.isfile(te_dir) and te_dir.lower().endswith('.safetensors'):
+            te_file = te_dir
+            te_dir = os.path.dirname(te_dir)
+        if tk_dir and os.path.isfile(tk_dir):
+            tk_dir = os.path.dirname(tk_dir)
+        tok_candidates = [p for p in [tk_dir, os.path.join(model_dir, 'tokenizer'), model_dir] if p]
+        enc_candidates = [p for p in [te_dir, os.path.join(model_dir, 'text_encoder'), model_dir] if p]
+        tok = None
+        last_err: Optional[Exception] = None
+        for cand in tok_candidates:
+            try:
+                tok = AutoTokenizer.from_pretrained(cand, subfolder=None, use_fast=True, local_files_only=True)
+                break
+            except Exception as ex:
+                last_err = ex
+                tok = None
+        if tok is None and last_err is not None:
+            raise last_err
+        enc = None
+        if te_file is not None:
+            try:
+                cfg = None
+                for cand in enc_candidates:
+                    try:
+                        cfg = AutoConfig.from_pretrained(cand, subfolder=None, local_files_only=True)
+                        break
+                    except Exception:
+                        continue
+                if cfg is None:
+                    raise RuntimeError('text encoder config not found')
+                enc = _Enc(cfg)
+                from safetensors.torch import load_file as _load_st
+                sd = _load_st(te_file)
+                enc.load_state_dict(sd, strict=False)
+            except Exception as ex:
+                last_err = ex
+                enc = None
+        if enc is None:
+            for cand in enc_candidates:
+                try:
+                    enc = _Enc.from_pretrained(cand, subfolder=None, torch_dtype=_as_dtype(dtype), local_files_only=True)
+                    break
+                except Exception as ex:
+                    last_err = ex
+                    enc = None
+        if enc is None and last_err is not None:
+            raise last_err
+        dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
+        enc = enc.to(dev)
+        try:
+            enc = enc.to(dtype=_as_dtype(dtype))
+        except Exception:
+            pass
+        def _do(txt: str):
+            inputs = tok([txt], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
+            inputs = {k: v.to(dev) for k, v in inputs.items()}
+            with torch.no_grad():
+                out = enc(**inputs).last_hidden_state
+                return out.to(_as_dtype(dtype))
+        p = _do(prompt or '')
+        n = _do(negative or '') if negative is not None else _do('')
+        return p, n
+    except Exception:
+        # Fallback to Diffusers pipeline encode_prompt
+        import torch
+        from diffusers import WanPipeline, AutoencoderKLWan  # type: ignore
+        dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
+        torch_dtype = _as_dtype(dtype)
+        try:
+            import os
+            vd = vae_dir
+            if vd and os.path.isfile(vd):
+                vd = os.path.dirname(vd)
+            vae = AutoencoderKLWan.from_pretrained(vd or model_dir, subfolder=(None if vd else 'vae'), torch_dtype=torch_dtype, local_files_only=True)
+        except Exception:
+            vae = None
+        pipe = WanPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, local_files_only=True, vae=vae)
+        pipe = pipe.to(dev)
+        out = pipe.encode_prompt(prompt=prompt or '', negative_prompt=negative or '', do_classifier_free_guidance=True, device=dev, dtype=torch_dtype)
+        if isinstance(out, tuple) and len(out) >= 2:
+            return out[0], out[1]
+        if hasattr(out, 'prompt_embeds'):
+            return out.prompt_embeds, getattr(out, 'negative_prompt_embeds', out.prompt_embeds)
+        raise RuntimeError('encode_prompt returned unexpected structure')
+
+
+def _load_vae(vae_path: Optional[str], *, torch_dtype):
+    import os
+    from diffusers import AutoencoderKLWan  # type: ignore
+    if not vae_path:
+        raise RuntimeError('wan_vae_dir is required when running WAN GGUF (VAE path missing)')
+    path = os.path.expanduser(str(vae_path))
+    if os.path.isdir(path):
+        return AutoencoderKLWan.from_pretrained(path, torch_dtype=torch_dtype, local_files_only=True)
+    if os.path.isfile(path):
+        loader = getattr(AutoencoderKLWan, 'from_single_file', None)
+        if loader is None:
+            raise RuntimeError(f'AutoencoderKLWan.from_single_file not available; provide a directory instead of file: {path}')
+        return loader(path, torch_dtype=torch_dtype)
+    raise RuntimeError(f'VAE path not found: {path}')
+
+
+def _get_scale_shift(vae) -> tuple[float, float]:
+    try:
+        cfg = getattr(vae, 'config', None) or {}
+        sf = float(getattr(cfg, 'scaling_factor', getattr(cfg, 'scaling_factor', 0.18215)))
+        sh = float(getattr(cfg, 'shift_factor', getattr(cfg, 'shift_factor', 0.0)))
+        if isinstance(cfg, dict):
+            sf = float(cfg.get('scaling_factor', sf))
+            sh = float(cfg.get('shift_factor', sh))
+        return sf, sh
+    except Exception:
+        return 0.18215, 0.0
+
+
+def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger=None):
+    import torch
+    torch_dtype = _as_dtype(dtype)
+    vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
+    sf, sh = _get_scale_shift(vae)
+    if logger:
+        try:
+            logger.info('[wan22.gguf] VAE encode scale=%.6f shift=%.6f', sf, sh)
+        except Exception:
+            pass
+    target = 'cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu'
+    vae = vae.to(device=target, dtype=torch_dtype)
+    if not hasattr(init_image, 'to'):
+        from PIL import Image
+        import numpy as np
+        if isinstance(init_image, Image.Image):
+            img = init_image.convert('RGB')
+            arr = np.array(img).astype('float32') / 255.0
+            t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            t = t.to(target).to(torch_dtype)
+            init_image = t * 2.0 - 1.0
+        else:
+            arr = np.asarray(init_image).astype('float32')
+            if arr.ndim == 3 and arr.shape[2] in (1, 3):
+                arr = arr / 255.0 if arr.max() > 1.0 else arr
+                t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            elif arr.ndim == 3 and arr.shape[0] in (1, 3):
+                t = torch.from_numpy(arr).unsqueeze(0)
+            else:
+                raise RuntimeError('unsupported init_image array shape')
+            t = t.to(target).to(torch_dtype)
+            init_image = t * 2.0 - 1.0
+    with torch.no_grad():
+        latents = vae.encode(init_image).latent_dist.sample()
+        latents = (latents - sh) * sf
+    return latents
+
+
+def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None, logger=None):
+    import torch
+    from PIL import Image
+    torch_dtype = _as_dtype(dtype)
+    dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
+    sf, sh = _get_scale_shift(vae)
+    if logger:
+        try:
+            logger.info('[wan22.gguf] VAE decode scale=%.6f shift=%.6f', sf, sh)
+        except Exception:
+            pass
+    vae = vae.to(device=dev, dtype=torch_dtype)
+    B, C, T, H, W = video_latents.shape
+    frames: list[Image.Image] = []
+    with torch.no_grad():
+        for t in range(T):
+            lat = video_latents[:, :, t]
+            lat = (lat / sf) + sh
+            img = vae.decode(lat).sample
+            img0 = img[0].detach().clamp(0, 1)
+            arr = (img0.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
+            frames.append(Image.fromarray(arr))
+    return frames
 
 try:  # progress bar for long loops (non-fatal if unavailable)
     from tqdm.auto import tqdm as _tqdm

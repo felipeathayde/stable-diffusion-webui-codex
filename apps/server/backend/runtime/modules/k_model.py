@@ -1,6 +1,7 @@
 import torch
 
-from apps.server.backend import attention, memory_management
+from apps.server.backend.runtime import attention
+from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.modules.k_prediction import k_prediction_from_diffusers_scheduler
 
 

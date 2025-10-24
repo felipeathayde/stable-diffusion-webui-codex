@@ -35,7 +35,7 @@ Canonical mappings (prefix rules)
 
 Façade exports (preferred imports)
 - Services: `ImageService`, `MediaService`, `OptionsService`, `ProgressService`, `SamplerService`.
-- Engines: `register_default_engines`, `WanT2V14BEngine`, `WanI2V14BEngine`, errors (`EngineLoadError`, `EngineExecutionError`).
+- Engines: `register_default_engines`, errors (`EngineLoadError`, `EngineExecutionError`).
 - Core: `InferenceOrchestrator`, `EngineRegistry`, request dataclasses (`Txt2ImgRequest`, `Img2ImgRequest`, `Txt2VidRequest`, `Img2VidRequest`, events).
 - Runtime: `attention`, `logging`, `memory_management`, `models`, `nn`, `ops`, `shared`, `stream`, `text_processing`, `utils`.
 

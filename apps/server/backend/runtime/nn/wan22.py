@@ -778,6 +778,13 @@ def _log_t_mapping(scheduler, timesteps, label: str, logger: Any) -> None:
         pass
 
 
+def _time_snr_shift(alpha: float, t: float) -> float:
+    # Same form as ComfyUI comfy.model_sampling.time_snr_shift
+    if alpha == 1.0:
+        return t
+    return alpha * t / (1 + (alpha - 1) * t)
+
+
 def _sample_stage_tokens(
     *,
     dit: 'WanDiTGGUF',
@@ -810,18 +817,11 @@ def _sample_stage_tokens(
     timesteps = scheduler.timesteps
 
     def _t_from_idx(idx: int) -> float:
-        try:
-            sigmas = getattr(scheduler, 'sigmas', None)
-            if sigmas is not None and len(sigmas) == len(timesteps):
-                s = float(sigmas[idx])
-                s_min = float(sigmas[-1])
-                s_max = float(sigmas[0])
-                if s_max - s_min > 0:
-                    return max(0.0, min(1.0, (s - s_min) / (s_max - s_min)))
-        except Exception:
-            pass
+        # ComfyUI FLOW mapping: percent -> sigma via time_snr_shift -> timestep = sigma * 1000
         n = max(1, len(timesteps) - 1)
-        return 1.0 - (float(idx) / float(n))
+        percent = float(idx) / float(n)
+        sigma = _time_snr_shift(1.0, 1.0 - percent)
+        return sigma * 1000.0
 
     _log_t_mapping(scheduler, timesteps, 'stage', logger)
     iterator = _tqdm(timesteps, desc="WAN22(stage)") if _tqdm else timesteps
@@ -1041,8 +1041,14 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     x = seed_tokens.clone()
     _log_t_mapping(scheduler, timesteps, 'high', log)
     iterator = _tqdm(timesteps, desc="WAN22(high)") if _tqdm else timesteps
+    def _t_from_idx_high(idx: int) -> float:
+        n = max(1, len(timesteps) - 1)
+        percent = float(idx) / float(n)
+        sigma = _time_snr_shift(1.0, 1.0 - percent)
+        return sigma * 1000.0
+
     for i, t in enumerate(iterator):
-        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        tt = _t_from_idx_high(i)
         eps_c = hi_dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps_u = hi_dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale)
@@ -1079,8 +1085,14 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     x_lo = toks_lo0.clone()
     _log_t_mapping(scheduler_lo, tlist_lo, 'low(img2vid)', log)
     iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo
+    def _t_from_idx_lo(idx: int) -> float:
+        n = max(1, len(scheduler_lo.timesteps) - 1)
+        percent = float(idx) / float(n)
+        sigma = _time_snr_shift(1.0, 1.0 - percent)
+        return sigma * 1000.0
+
     for i, t in enumerate(iterator_lo):
-        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        tt = _t_from_idx_lo(i)
         eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)

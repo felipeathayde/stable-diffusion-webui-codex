@@ -35,6 +35,14 @@
 - Documentation: author docs in English by default; link new docs from the nearest README.
 - Ignore/attributes: see gitignore.md for the full policy.
 
+## Documentation Index
+- Docs home: `codex/` — architecture, design, research, tasks, roadmaps, reports, and sprint logs.
+  - Architecture (video): `codex/backend-video-architecture.md`.
+  - Research (loading/efficiency): `codex/research/`.
+  - Design/UX: `codex/design/`.
+- Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.
+- Backend inventories: `apps/server/backend/SHIM_INVENTORY.md` (shim status/history).
+
 ### Git commit guide
 1. `git status`
 2. `git branch safety/backup-$(date +%Y%m%d-%H%M%S)`

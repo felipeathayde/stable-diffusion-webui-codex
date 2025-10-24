@@ -8,7 +8,7 @@ from apps.server.backend.patchers.unet import UnetPatcher
 from apps.server.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.server.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.server.backend.config.args import dynamic_args
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.modules.k_prediction import PredictionDiscreteFlow
 
 from modules.shared import opts

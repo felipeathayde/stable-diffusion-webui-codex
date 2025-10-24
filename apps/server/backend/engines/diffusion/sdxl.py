@@ -7,11 +7,11 @@ from apps.server.backend.patchers.vae import VAE
 from apps.server.backend.patchers.unet import UnetPatcher
 from apps.server.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.server.backend.config.args import dynamic_args
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.nn.unet import Timestep
 
 import safetensors.torch as sf
-from apps.server.backend import utils
+from apps.server.backend.runtime import utils
 
 from modules.shared import opts
 

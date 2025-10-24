@@ -3,7 +3,7 @@ import math
 import itertools
 
 from tqdm import trange
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 from .base import ModelPatcher
 
 

@@ -8,7 +8,8 @@
 import copy
 import inspect
 
-from apps.server.backend import memory_management, utils
+from apps.server.backend.runtime.memory import memory_management
+from apps.server.backend.runtime import utils
 from .lora import LoraLoader
 from apps.server.backend.runtime import trace as _trace
 

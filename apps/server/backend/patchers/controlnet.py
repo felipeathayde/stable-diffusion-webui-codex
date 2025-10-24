@@ -2,12 +2,12 @@ import torch
 import math
 
 from apps.server.backend.runtime.misc import adaptive_resize
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.models.state_dict import state_dict_prefix_replace
 from apps.server.backend.runtime import utils
 from apps.server.backend.runtime.nn.cnets import cldm, t2i_adapter
 from .base import ModelPatcher
-from apps.server.backend.ops.operations import using_forge_operations, ForgeOperations, main_stream_worker, weights_manual_cast
+from apps.server.backend.runtime.ops.operations import using_forge_operations, ForgeOperations, main_stream_worker, weights_manual_cast
 
 
 def apply_controlnet_advanced(

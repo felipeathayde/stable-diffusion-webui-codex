@@ -1,4 +1,4 @@
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 from .base import ModelPatcher
 from apps.server.backend.runtime.nn import ModuleDict, ObjectDict
 

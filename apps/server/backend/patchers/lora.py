@@ -3,7 +3,8 @@ import torch
 import packages_3rdparty.webui_lora_collection.lora as lora_utils_webui
 import packages_3rdparty.comfyui_lora_collection.lora as lora_utils_comfyui
 
-from apps.server.backend import memory_management, utils
+from apps.server.backend.runtime.memory import memory_management
+from apps.server.backend.runtime import utils
 
 
 extra_weight_calculators = {}

@@ -1,7 +1,7 @@
 import torch
 import safetensors.torch as sf
 
-from apps.server.backend import utils
+from apps.server.backend.runtime import utils
 
 
 class ForgeObjects:

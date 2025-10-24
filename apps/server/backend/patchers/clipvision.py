@@ -1,6 +1,7 @@
 import torch
 
-from apps.server.backend import memory_management, ops as operations
+from apps.server.backend.runtime.memory import memory_management
+from apps.server.backend.runtime import ops as operations
 from apps.server.backend.runtime.models.state_dict import transformers_convert, state_dict_prefix_replace
 from apps.server.backend.runtime.utils import load_torch_file
 from .base import ModelPatcher

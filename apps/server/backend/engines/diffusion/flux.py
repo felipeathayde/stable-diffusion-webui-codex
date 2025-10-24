@@ -9,7 +9,7 @@ from apps.server.backend.runtime.text_processing.classic_engine import ClassicTe
 from apps.server.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.server.backend.config.args import dynamic_args
 from apps.server.backend.runtime.modules.k_prediction import PredictionFlux
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 
 
 class Flux(ForgeDiffusionEngine):

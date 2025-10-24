@@ -118,6 +118,7 @@
 - Error handling: invalid params return explicit errors; no silent fallbacks.
 
 ## Backend Engine Structure (Required)
+- See also: `codex/backend-video-architecture.md` (architecture rationale and next steps).
 - Per‑task runtimes under `apps/server/backend/engines/diffusion/`:
   - Always implement by task, not by monolithic engine. Files: `txt2img.py`, `img2img.py`, `txt2vid.py`, `img2vid.py`.
   - Engines de modelo (ex.: `wan22_14b`, `wan22_5b`) devem delegar para esses módulos por tarefa.

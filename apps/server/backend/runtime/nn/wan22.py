@@ -759,6 +759,25 @@ def _cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) ->
     return uncond + (cond - uncond) * float(scale)
 
 
+def _log_t_mapping(scheduler, timesteps, label: str, logger: Any) -> None:
+    try:
+        log = _get_logger(logger)
+        n = len(timesteps)
+        idxs = [0, max(0, n // 2 - 1), n - 1]
+        vals: list[float] = []
+        sigmas = getattr(scheduler, 'sigmas', None)
+        for i in idxs:
+            if sigmas is not None and len(sigmas) == n:
+                s = float(sigmas[i]); s_min = float(sigmas[-1]); s_max = float(sigmas[0])
+                t = max(0.0, min(1.0, (s - s_min) / (s_max - s_min))) if (s_max - s_min) > 0 else 0.0
+            else:
+                t = 1.0 - (float(i) / float(max(1, n - 1)))
+            vals.append(t)
+        log.info("[wan22.gguf] t-map(%s): t0=%.4f tmid=%.4f tend=%.4f (sigmas=%s)", label, vals[0], vals[1], vals[2], bool(sigmas is not None and len(sigmas)==n))
+    except Exception:
+        pass
+
+
 def _sample_stage_tokens(
     *,
     dit: 'WanDiTGGUF',
@@ -804,6 +823,7 @@ def _sample_stage_tokens(
         n = max(1, len(timesteps) - 1)
         return 1.0 - (float(idx) / float(n))
 
+    _log_t_mapping(scheduler, timesteps, 'stage', logger)
     iterator = _tqdm(timesteps, desc="WAN22(stage)") if _tqdm else timesteps
     for i, t in enumerate(iterator):
         # Model forward: conditional and unconditional
@@ -925,6 +945,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     )
     scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     x_lo = toks_lo0.clone()
+    _log_t_mapping(scheduler_lo, scheduler_lo.timesteps, 'low', log)
     iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
     def _t_from_idx_lo(idx: int) -> float:
         try:
@@ -1018,6 +1039,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     scheduler = _make_scheduler(steps_hi, sampler=sampler_hi, scheduler=sched_hi)
     timesteps = scheduler.timesteps
     x = seed_tokens.clone()
+    _log_t_mapping(scheduler, timesteps, 'high', log)
     iterator = _tqdm(timesteps, desc="WAN22(high)") if _tqdm else timesteps
     for i, t in enumerate(iterator):
         tt = float(t) if not torch.is_tensor(t) else float(t.item())
@@ -1055,6 +1077,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     tlist_lo = scheduler_lo.timesteps
     x_lo = toks_lo0.clone()
+    _log_t_mapping(scheduler_lo, tlist_lo, 'low(img2vid)', log)
     iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo
     for i, t in enumerate(iterator_lo):
         tt = float(t) if not torch.is_tensor(t) else float(t.item())

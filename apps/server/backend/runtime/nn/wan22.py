@@ -10,7 +10,7 @@ runtime, using only:
 
 It provides:
 - derive_spec_from_state(): parse GGUF state keys into a model spec
-- WanUNetGGUF: minimal UNet wrapper with forward over SA/CA/FFN stacks
+- WanVideoTransformerGGUF: minimal video transformer wrapper with forward over SA/CA/FFN stacks
 - run_txt2vid/run_img2vid: skeletons that validate stages and prepare flow
 
 Notes
@@ -248,7 +248,7 @@ def _sa(x: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads
     return x + out
 
 
-class WanUNetGGUF:
+class WanVideoTransformerGGUF:
     def __init__(self, stage_dir: str, *, logger=None) -> None:
         self._logger = logger
         self.stage_dir = stage_dir
@@ -530,7 +530,7 @@ def _cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) ->
 
 def _sample_stage_tokens(
     *,
-    unet: 'WanUNetGGUF',
+    unet: 'WanVideoTransformerGGUF',
     steps: int,
     cfg_scale: Optional[float],
     prompt_embeds: torch.Tensor,
@@ -572,7 +572,7 @@ def _sample_stage_tokens(
 def _decode_tokens_to_frames(
     *,
     tokens: torch.Tensor,
-    unet: 'WanUNetGGUF',
+    unet: 'WanVideoTransformerGGUF',
     grid: Tuple[int, int, int],
     device: torch.device,
     dtype: torch.dtype,
@@ -599,7 +599,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     dt = _as_dtype(cfg.dtype)
 
     # Prepare UNet (High stage) and text context
-    hi_unet = WanUNetGGUF(os.path.dirname(hi_path), logger=log)
+    hi_unet = WanVideoTransformerGGUF(os.path.dirname(hi_path), logger=log)
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -648,7 +648,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
 
     seed_image = frames_hi[-1]
     # Prepare Low UNet
-    lo_unet = WanUNetGGUF(os.path.dirname(lo_path), logger=log)
+    lo_unet = WanVideoTransformerGGUF(os.path.dirname(lo_path), logger=log)
     # Encode seed to latents → tokens for Low
     lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
     if lat_lo0.ndim == 4:
@@ -694,7 +694,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     dt = _as_dtype(cfg.dtype)
 
     # Prepare UNet (High)
-    hi_unet = WanUNetGGUF(os.path.dirname(hi_path), logger=log)
+    hi_unet = WanVideoTransformerGGUF(os.path.dirname(hi_path), logger=log)
 
     # Text embeds
     prompt_embeds, negative_embeds = _get_text_context(
@@ -751,7 +751,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     # Low stage (mandatory): seed from last High frame
     if seed_image is None:
         raise RuntimeError("WAN22 GGUF: missing seed image for Low stage")
-    lo_unet = WanUNetGGUF(os.path.dirname(lo_path), logger=log)
+    lo_unet = WanVideoTransformerGGUF(os.path.dirname(lo_path), logger=log)
 
     # Prepare seed tokens for Low from seed_image
     lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
@@ -784,5 +784,5 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
 
 __all__ = [
     'ModelSpec', 'BlockSpec', 'CrossAttnWeights', 'derive_spec_from_state',
-    'WanUNetGGUF', 'run_txt2vid', 'run_img2vid',
+    'WanVideoTransformerGGUF', 'run_txt2vid', 'run_img2vid',
 ]

@@ -1,12 +1,14 @@
-"""Miscellaneous backend helpers (attention, resize, state dict utilities)."""
+"""Miscellaneous backend helpers (attention, resize, state dict utilities).
+
+Note: This package previously re-exported conversion helpers that are not
+implemented in `diffusers_state_dict.py`. To avoid import-time failures,
+only export symbols that exist. Add new exports here when corresponding
+implementations are added.
+"""
 
 from .sub_quadratic_attention import efficient_dot_product_attention
 from .image_resize import adaptive_resize, bislerp, lanczos
-from .diffusers_state_dict import (
-    convert_ldm_unet_checkpoint,
-    convert_ldm_clip_checkpoint,
-    extract_checkpoint,
-)
+from .diffusers_state_dict import unet_to_diffusers
 from .checkpoint_pickle import load_pickle_state_dict
 from .tomesd import merge_sdsd, merge_subspaces
 

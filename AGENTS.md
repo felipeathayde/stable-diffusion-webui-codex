@@ -35,6 +35,14 @@
 - Documentation: author docs in English by default; link new docs from the nearest README.
 - Ignore/attributes: see gitignore.md for the full policy.
 
+## Documentation Index
+- Docs home: `codex/` — architecture, design, research, tasks, roadmaps, reports, and sprint logs.
+  - Architecture (video): `codex/backend-video-architecture.md`.
+  - Research (loading/efficiency): `codex/research/`.
+  - Design/UX: `codex/design/`.
+- Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.
+- Backend inventories: `apps/server/backend/SHIM_INVENTORY.md` (shim status/history).
+
 ### Git commit guide
 1. `git status`
 2. `git branch safety/backup-$(date +%Y%m%d-%H%M%S)`
@@ -108,12 +116,44 @@
 
 - Engine semantics
   - The `engine` setting gates UI visibility and defaults. Model type is ultimately determined by the loaded weights and pipeline graph.
-  - Friendly key `wan22` maps in the backend to concrete engines:
-    - txt2vid → `wan_t2v_14b` (apps/server/run_api.py)
-    - img2vid → `wan_i2v_14b` (apps/server/run_api.py)
+- Friendly key `wan22` maps to concrete engines:
+    - `wan22_14b` and `wan22_5b` (apps/server/backend/engines/registration.py)
 
 - Server‑driven parameter blocks
   - All engine‑specific UI blocks are served by the backend at `/api/ui/blocks`.
-  - Source of truth: `apps/ui/blocks.json` (overrides in `apps/ui/blocks.d/*.json`). No frontend fallback.
+  - Source of truth: `apps/interface/blocks.json` (overrides in `apps/interface/blocks.d/*.json`). No frontend fallback.
 
 - Error handling: invalid params return explicit errors; no silent fallbacks.
+
+## Backend Engine Structure (Required)
+- See also: `codex/backend-video-architecture.md` (architecture rationale and next steps).
+- Per‑task runtimes under `apps/server/backend/engines/diffusion/`:
+  - Always implement by task, not by monolithic engine. Files: `txt2img.py`, `img2img.py`, `txt2vid.py`, `img2vid.py`.
+  - Engines de modelo (ex.: `wan22_14b`, `wan22_5b`) devem delegar para esses módulos por tarefa.
+- Vídeo helpers
+  - `engines/diffusion/base_video.py` contém utilitários mínimos (serialize/export hooks). Não criar helpers dispersos.
+- Registro canônico
+  - Registro de engines vive em `apps/server/backend/engines/registration.py`. Não referenciar registradores antigos.
+- WAN 2.2 (vídeo)
+  - Engines: `wan22_14b` e `wan22_5b` em `engines/diffusion/`. Não usar `engines/video/wan/*`.
+  - GGUF: usar apenas o pacote genérico `apps.server.backend.gguf` e os ops de `apps.server.backend.runtime.ops`. Proibido criar “core” próprio (`wan_gguf*`).
+  - Runtime específico (GGUF) vive em `apps/server/backend/runtime/nn/wan22.py`. Sem kernels custom; SDPA do PyTorch é o padrão.
+- Dataclasses & Enum (Obrigatório)
+  - Parâmetros/estruturas públicas devem ser `@dataclass` (ex.: `VideoExportOptions`, `VideoInterpolationOptions`, `EngineOpts`, `WanComponents`, `WanStageOptions`).
+  - Mapeamentos de sampler/scheduler devem usar `SamplerKind` (enum) via `engines/util/schedulers.py`.
+- UI blocks
+  - Fonte única em `apps/interface/blocks.json` (+ overrides em `apps/interface/blocks.d`). Não usar `apps/ui`.
+- Nomes de engines
+  - ‘wan22’ é semântico; o backend resolve para `wan22_14b` ou `wan22_5b`.
+
+## Do/Don’t (WAN e vídeo)
+- Do: Diffusers‑first; cair para GGUF apenas quando não houver pipeline Diffusers disponível localmente.
+- Do: Erros explícitos para partes não implementadas no GGUF (sem “saídas falsas”).
+- Don’t: Criar novos diretórios sob `engines/video/wan/` ou pacotes `wan_gguf*`.
+- Don’t: Codificar lógica por-engine com condicionais profundas; preferir runtimes por tarefa + utilitários dedicados.
+
+## Deprecations
+- Completed: `backend.*` namespace
+  - Removed on 2025-10-24. Use the façade `apps.server.backend.*`.
+  - See: `codex/deprecations/2025-10-backend-namespace-deprecation.md` and `apps/server/backend/SHIM_INVENTORY.md`.
+  - Import redirector no longer exists; old imports raise `ModuleNotFoundError`.

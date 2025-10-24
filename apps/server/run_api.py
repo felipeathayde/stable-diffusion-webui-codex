@@ -215,19 +215,19 @@ def build_app() -> FastAPI:
     except Exception as _e:  # pragma: no cover
         print(color_red(f"[engines] registration failed: {_e}"))
 
-    # Defensive: ensure WAN engines are present even if optional video imports fail elsewhere
+    # Defensive: ensure WAN22 engines are present even if registration import failed
     try:
         from apps.server.backend.core.registry import registry as _engine_registry
-        need = {"wan_t2v_14b", "wan_i2v_14b"} - set(_engine_registry.list())
+        need = {"wan22_14b", "wan22_5b"} - set(_engine_registry.list())
         if need:
-            from apps.server.backend.engines.video.wan.t2v14b_engine import WanT2V14BEngine  # type: ignore
-            from apps.server.backend.engines.video.wan.i2v14b_engine import WanI2V14BEngine  # type: ignore
-            for key, cls in (("wan_t2v_14b", WanT2V14BEngine), ("wan_i2v_14b", WanI2V14BEngine)):
+            from apps.server.backend.engines.diffusion.wan22_14b import Wan2214BEngine  # type: ignore
+            from apps.server.backend.engines.diffusion.wan22_5b import Wan225BEngine  # type: ignore
+            for key, cls in (("wan22_14b", Wan2214BEngine), ("wan22_5b", Wan225BEngine)):
                 if key in need:
                     _engine_registry.register(key, cls, aliases=(key.replace('_', '-'),), replace=False)  # type: ignore
-            print(color_cyan("[engines] ensured WAN engines are registered"))
+            print(color_cyan("[engines] ensured WAN22 engines are registered"))
     except Exception as _e:  # pragma: no cover
-        print(color_red(f"[engines] failed to ensure WAN engines: {_e}"))
+        print(color_red(f"[engines] failed to ensure WAN22 engines: {_e}"))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=['*'],
@@ -248,6 +248,50 @@ def build_app() -> FastAPI:
     _workflows_cache: Optional[Dict[str, Any]] = None
     _workflows_mtime: Optional[float] = None
     _ui_dist_dir = os.path.join(PROJECT_ROOT, 'apps', 'interface', 'dist')
+
+    def _detect_wan_variant_from_dir(p: Optional[str]) -> Optional[str]:
+        """Return '5b' or '14b' when a WAN dir hints a variant via config or path name."""
+        if not p:
+            return None
+        try:
+            pd = p
+            if os.path.isfile(pd):
+                pd = os.path.dirname(pd)
+            cfg = _load_json(os.path.join(pd, 'config.json'))
+            txts: list[str] = []
+            if isinstance(cfg, dict):
+                for k, v in cfg.items():
+                    if isinstance(v, str):
+                        txts.append(v.lower())
+            blob = ' '.join(txts + [str(p).lower()])
+            if '5b' in blob:
+                return '5b'
+            if '14b' in blob or 'a14b' in blob or '14-b' in blob:
+                return '14b'
+        except Exception:
+            pass
+        s = str(p).lower()
+        if '5b' in s:
+            return '5b'
+        if '14b' in s or 'a14b' in s or '14-b' in s:
+            return '14b'
+        return None
+
+    def _pick_wan_engine(extras: Dict[str, Any]) -> str:
+        """Choose wan22_14b or wan22_5b from provided WAN extras; default to 14b."""
+        wh = extras.get('wan_high') or {}
+        wl = extras.get('wan_low') or {}
+        cand = None
+        try:
+            if isinstance(wh, dict) and wh.get('model_dir'):
+                cand = _detect_wan_variant_from_dir(str(wh.get('model_dir')))
+            if cand is None and isinstance(wl, dict) and wl.get('model_dir'):
+                cand = _detect_wan_variant_from_dir(str(wl.get('model_dir')))
+        except Exception:
+            cand = None
+        if cand == '5b':
+            return 'wan22_5b'
+        return 'wan22_14b'
 
     # Settings registry (hardcoded dataclasses/enums via codegen)
     try:
@@ -355,7 +399,7 @@ def build_app() -> FastAPI:
     # UI Blocks (server-driven parameter panels)
     def _load_ui_blocks() -> Dict[str, Any]:
         nonlocal _ui_blocks_cache, _ui_blocks_mtime
-        blocks_path = os.path.join(os.getcwd(), 'apps', 'ui', 'blocks.json')
+        blocks_path = os.path.join(os.getcwd(), 'apps', 'interface', 'blocks.json')
         # Simple mtime-based cache
         try:
             stat = os.stat(blocks_path)
@@ -367,8 +411,8 @@ def build_app() -> FastAPI:
         data = _load_json(blocks_path)
         if not data or 'blocks' not in data:
             raise HTTPException(status_code=500, detail='invalid ui blocks json')
-        # Optional overrides in apps/ui/blocks.d/*.json (merged by id)
-        overrides_root = os.path.join(os.getcwd(), 'apps', 'ui', 'blocks.d')
+        # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
+        overrides_root = os.path.join(os.getcwd(), 'apps', 'interface', 'blocks.d')
         merged = {b.get('id'): b for b in (data.get('blocks') or []) if isinstance(b, dict)}
         try:
             if os.path.isdir(overrides_root):
@@ -400,13 +444,13 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
     def _tabs_path() -> str:
-        return os.path.join(os.getcwd(), 'apps', 'ui', 'tabs.json')
+        return os.path.join(os.getcwd(), 'apps', 'interface', 'tabs.json')
 
     def _workflows_path() -> str:
-        return os.path.join(os.getcwd(), 'apps', 'ui', 'workflows.json')
+        return os.path.join(os.getcwd(), 'apps', 'interface', 'workflows.json')
 
     def _ensure_dirs() -> None:
-        root = os.path.join(os.getcwd(), 'apps', 'ui')
+        root = os.path.join(os.getcwd(), 'apps', 'interface')
         os.makedirs(root, exist_ok=True)
 
     def _default_tabs() -> Dict[str, Any]:
@@ -649,7 +693,7 @@ def build_app() -> FastAPI:
     def ui_blocks(tab: Optional[str] = None) -> Dict[str, Any]:
         """Return UI blocks filtered by tab and current semantic engine.
 
-        - Source of truth: apps/ui/blocks.json (+ overrides in apps/ui/blocks.d).
+        - Source of truth: apps/interface/blocks.json (+ overrides in apps/interface/blocks.d).
         - Filters by `tab` (when provided) and by current detected engine if block declares `when.engines`.
         - Includes `semantic_engine` in the response for UI gating.
         """
@@ -1365,15 +1409,15 @@ def build_app() -> FastAPI:
         # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
         engine_key = None
         if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = 'wan_t2v_14b'
+            engine_key = _pick_wan_engine(extras)
         else:
             sem = _detect_semantic_engine()
             if sem == 'wan22':
-                engine_key = 'wan_t2v_14b'
+                engine_key = 'wan22_14b'
             elif sem == 'hunyuan_video':
                 engine_key = 'hunyuan_video'
             else:
-                engine_key = 'wan_t2v_14b'
+                engine_key = 'wan22_14b'
         # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
         model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
         try:
@@ -1440,15 +1484,15 @@ def build_app() -> FastAPI:
         # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
         engine_key = None
         if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = 'wan_i2v_14b'
+            engine_key = _pick_wan_engine(extras)
         else:
             sem = _detect_semantic_engine()
             if sem == 'wan22':
-                engine_key = 'wan_i2v_14b'
+                engine_key = 'wan22_14b'
             elif sem == 'hunyuan_video':
                 engine_key = 'hunyuan_video'
             else:
-                engine_key = 'wan_i2v_14b'
+                engine_key = 'wan22_14b'
         # Choose model_ref from WAN extras when provided
         model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
         try:

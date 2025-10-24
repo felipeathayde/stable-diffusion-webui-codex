@@ -10,8 +10,8 @@ Implement backend JSON persistence for tabs and workflows with mtime caching and
 
 ## Deliverables
 - JSON stores with mtime cache:
-  - `apps/ui/tabs.json` — registry of base tab instances.
-  - `apps/ui/workflows.json` — registry of workflow snapshots.
+  - `apps/interface/tabs.json` — registry of base tab instances.
+  - `apps/interface/workflows.json` — registry of workflow snapshots.
 - Endpoints (FastAPI):
   - Tabs: GET/POST/PATCH/DELETE + reorder.
   - Workflows: GET/POST/PATCH/DELETE + load-into-base.
@@ -28,7 +28,7 @@ Implement backend JSON persistence for tabs and workflows with mtime caching and
 ## Backend Tasks
 
 ### 1) Storage & Cache
-- [ ] Files: `apps/ui/tabs.json`, `apps/ui/workflows.json`.
+- [ ] Files: `apps/interface/tabs.json`, `apps/interface/workflows.json`.
 - [ ] Helpers: `_load_json(path)`, `_save_json(path, data)`, mtime cache same as /api/ui/blocks.
 - [ ] Schema version: `{ version: 1, tabs: [] }`, `{ version: 1, workflows: [] }`.
 
@@ -86,8 +86,8 @@ Implement backend JSON persistence for tabs and workflows with mtime caching and
 ---
 
 ## QA
-- [ ] CRUD Tabs persists to `apps/ui/tabs.json` and reflects in UI after reload.
-- [ ] CRUD Workflows persists to `apps/ui/workflows.json`.
+- [ ] CRUD Tabs persists to `apps/interface/tabs.json` and reflects in UI after reload.
+- [ ] CRUD Workflows persists to `apps/interface/workflows.json`.
 - [ ] Load/Unload returns success and UI status changes accordingly; Unload blocked during active task.
 - [ ] Error cases: bad ids (404), bad payload (400), conflict (409) → proper messages.
 

@@ -80,7 +80,7 @@ Notes:
 ## State & Persistence
 - Phase 1: localStorage (tab instances + workflows), with debounced saves.
 - Phase 2: backend persistence in JSON files with mtime cache.
-  - apps/ui/tabs.json, apps/ui/workflows.json
+  - apps/interface/tabs.json, apps/interface/workflows.json
 
 ### tabs.json (v1)
 {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 
 def _map_dtype(dtype: str):
@@ -34,7 +34,22 @@ def _load_vae(vae_path: Optional[str], *, torch_dtype):
     raise RuntimeError(f"VAE path not found: {path}")
 
 
-def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None):
+def _get_scale_shift(vae) -> Tuple[float, float]:
+    """Return (scaling_factor, shift_factor) from VAE config with sane defaults."""
+    try:
+        cfg = getattr(vae, 'config', None) or {}
+        sf = float(getattr(cfg, 'scaling_factor', getattr(cfg, 'scaling_factor', 0.18215)))
+        sh = float(getattr(cfg, 'shift_factor', getattr(cfg, 'shift_factor', 0.0)))
+        # Some configs store as dict
+        if isinstance(cfg, dict):
+            sf = float(cfg.get('scaling_factor', sf))
+            sh = float(cfg.get('shift_factor', sh))
+        return sf, sh
+    except Exception:
+        return 0.18215, 0.0
+
+
+def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger: Any | None = None):
     """Encode an initial image to latents using AutoencoderKLWan (diffusers).
 
     dtype: 'bf16' | 'fp16' | 'fp32'
@@ -45,6 +60,12 @@ def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, va
 
     # We expect the VAE to be colocated with the model (current working dir or model dir)
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
+    sf, sh = _get_scale_shift(vae)
+    if logger is not None:
+        try:
+            logger.info("[wan22.gguf] VAE encode scale=%.6f shift=%.6f", sf, sh)
+        except Exception:
+            pass
     target = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
     vae = vae.to(device=target, dtype=torch_dtype)
 
@@ -75,11 +96,12 @@ def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, va
             raise RuntimeError(f"init_image must be a tensor or PIL/numpy convertible: {ex}")
 
     with torch.no_grad():
-        latents = vae.encode(init_image).latent_dist.sample() * 0.18215
+        latents = vae.encode(init_image).latent_dist.sample()
+        latents = (latents - sh) * sf
     return latents
 
 
-def decode_latents_to_images(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None):
+def decode_latents_to_images(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None, logger: Any | None = None):
     """Decode video latents [B,C,T,H,W] into a list of PIL images (per frame).
 
     Uses AutoencoderKLWan.decode frame-by-frame to limit memory.
@@ -90,13 +112,20 @@ def decode_latents_to_images(video_latents: Any, *, model_dir: str, device: str,
     torch_dtype = _map_dtype(dtype)
     dev = torch.device("cuda" if device == "cuda" and torch.cuda.is_available() else "cpu")
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
+    sf, sh = _get_scale_shift(vae)
+    if logger is not None:
+        try:
+            logger.info("[wan22.gguf] VAE decode scale=%.6f shift=%.6f", sf, sh)
+        except Exception:
+            pass
     vae = vae.to(device=dev, dtype=torch_dtype)
     B, C, T, H, W = video_latents.shape
     frames: list[Image.Image] = []
     with torch.no_grad():
         for t in range(T):
             lat = video_latents[:, :, t]
-            img = vae.decode(lat / 0.18215).sample  # [B,3,H*,W*]
+            lat = (lat / sf) + sh
+            img = vae.decode(lat).sample  # [B,3,H*,W*]
             img0 = img[0].detach().clamp(0,1)
             arr = (img0.permute(1,2,0).cpu().numpy() * 255).astype('uint8')
             frames.append(Image.fromarray(arr))

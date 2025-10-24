@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from einops import rearrange, repeat
 from apps.server.backend.runtime.attention import attention_function
-from apps.server.backend import utils
+from apps.server.backend.runtime import utils
 
 
 def attention(q, k, v, pe):

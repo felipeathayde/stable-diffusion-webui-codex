@@ -55,19 +55,23 @@ class Logger:
     as_json: bool = False
 
     def _write(self, payload: dict[str, Any]):
-        if self.as_json:
-            self.out.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        else:
-            # simple human line
-            ts = payload.get("ts", _now_iso())
-            ev = payload.get("event", "log")
-            msg = payload.get("msg", "")
-            extra = {k: v for k, v in payload.items() if k not in {"ts", "event", "msg"}}
-            line = f"[{ts}] {ev}: {msg}"
-            if extra:
-                line += f" | {extra}"
-            self.out.write(line + "\n")
-        self.out.flush()
+        try:
+            if self.as_json:
+                self.out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            else:
+                # simple human line
+                ts = payload.get("ts", _now_iso())
+                ev = payload.get("event", "log")
+                msg = payload.get("msg", "")
+                extra = {k: v for k, v in payload.items() if k not in {"ts", "event", "msg"}}
+                line = f"[{ts}] {ev}: {msg}"
+                if extra:
+                    line += f" | {extra}"
+                self.out.write(line + "\n")
+            self.out.flush()
+        except (ValueError, OSError):
+            # Ignore writes after stream is closed (e.g., late audit events on atexit)
+            pass
 
     def info(self, msg: str, **kw):
         self._write({"ts": _now_iso(), "event": "info", "msg": msg, **kw})

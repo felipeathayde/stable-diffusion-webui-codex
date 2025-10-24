@@ -3,8 +3,10 @@
 from .base import ModuleDict, ObjectDict, Dummy
 from .clip import IntegratedCLIP
 from .t5 import IntegratedT5
+# Align export names: our implementation class is IntegratedUNet2DConditionModel
+# but many call-sites expect UNet2DConditionModel for SD1/SDXL.
 from .unet import (
-    UNet2DConditionModel,
+    IntegratedUNet2DConditionModel as UNet2DConditionModel,
     conv_nd,
     avg_pool_nd,
     ResBlock,

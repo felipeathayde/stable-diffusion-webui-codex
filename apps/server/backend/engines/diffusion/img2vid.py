@@ -28,7 +28,48 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
 
     # Prefer explicit stage pipelines if provided (per-stage dirs)
     if high_model is None and low_model is None and pipe is None and (getattr(comp, "high_dir", None) or getattr(comp, "low_dir", None)):
-        raise RuntimeError("GGUF forward for img2vid pending; supply Diffusers WAN pipeline for now")
+        # GGUF path: delegate to wan22 runtime (img2vid)
+        from apps.server.backend.runtime.nn.wan22 import RunConfig, StageConfig, run_img2vid as gguf_i2v
+        cfg = RunConfig(
+            width=int(getattr(request, "width", 768) or 768),
+            height=int(getattr(request, "height", 432) or 432),
+            fps=int(getattr(request, "fps", 24) or 24),
+            num_frames=int(getattr(request, "num_frames", 16) or 16),
+            guidance_scale=getattr(request, "cfg_scale", None),
+            dtype=str(getattr(comp, "dtype", "fp16")),
+            device=str(getattr(comp, "device", "cuda")),
+            init_image=getattr(request, "init_image", None),
+            vae_dir=getattr(comp, "model_dir", None),
+            high=StageConfig(model_dir=getattr(comp, "high_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),
+            low=StageConfig(model_dir=getattr(comp, "low_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),
+        )
+        frames = gguf_i2v(cfg, logger=logger)
+        # VFI/export
+        vfi_opts = None
+        try:
+            vi = (getattr(request, 'extras', {}) or {}).get('video_interpolation')
+            if isinstance(vi, dict):
+                from apps.server.backend.core.params.video import VideoInterpolationOptions
+                vfi = VideoInterpolationOptions(enabled=bool(vi.get('enabled', False)), model=str(vi.get('model')) if vi.get('model') else None, times=int(vi.get('times')) if vi.get('times') else None)
+                vfi_opts = vfi.as_dict()
+        except Exception:
+            vfi_opts = None
+        fps = int(getattr(request, "fps", 24) or 24)
+        video_meta = None
+        try:
+            video_opts = getattr(request, "video_options", None)
+            video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
+        except Exception:
+            video_meta = None
+        info = {
+            "engine": getattr(engine, "engine_id", "unknown"),
+            "task": "img2vid",
+            "elapsed": round(time.perf_counter() - start, 3),
+            "frames": len(frames),
+            "video_interpolation": vfi_opts,
+        }
+        yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
+        return
 
     # Stage 1 (High)
     active_pipe_hi = high_model or pipe

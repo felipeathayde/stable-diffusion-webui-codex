@@ -18,8 +18,38 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
 
     pipe = getattr(comp, "pipeline", None)
     if pipe is None and (getattr(comp, "high_dir", None) or getattr(comp, "low_dir", None)):
-        # GGUF-only path (not yet wired generically)
-        raise RuntimeError("GGUF forward for txt2vid pending; use Diffusers WAN pipeline or provide both stage directories.")
+        # GGUF path via runtime/nn/wan22
+        from apps.server.backend.runtime.nn.wan22 import RunConfig, StageConfig, run_txt2vid as gguf_t2v
+        cfg = RunConfig(
+            width=int(getattr(request, "width", 768) or 768),
+            height=int(getattr(request, "height", 432) or 432),
+            fps=int(getattr(request, "fps", 24) or 24),
+            num_frames=int(getattr(request, "num_frames", 16) or 16),
+            guidance_scale=getattr(request, "cfg_scale", None),
+            dtype=str(getattr(comp, "dtype", "fp16")),
+            device=str(getattr(comp, "device", "cuda")),
+            prompt=request.prompt,
+            negative_prompt=getattr(request, "negative_prompt", None),
+            vae_dir=getattr(comp, "model_dir", None),
+            high=StageConfig(model_dir=getattr(comp, "high_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),
+            low=StageConfig(model_dir=getattr(comp, "low_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),
+        )
+        frames = gguf_t2v(cfg, logger=logger)
+        fps = int(getattr(request, "fps", 24) or 24)
+        video_meta = None
+        try:
+            video_opts = getattr(request, "video_options", None)
+            video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
+        except Exception:
+            video_meta = None
+        info = {
+            "engine": getattr(engine, "engine_id", "unknown"),
+            "task": "txt2vid",
+            "elapsed": round(time.perf_counter() - start, 3),
+            "frames": len(frames),
+        }
+        yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
+        return
     if pipe is None:
         raise RuntimeError("Diffusers pipeline not available for txt2vid and no GGUF fallback found")
 

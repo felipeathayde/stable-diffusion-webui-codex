@@ -20,6 +20,15 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
     if pipe is None and (getattr(comp, "high_dir", None) or getattr(comp, "low_dir", None)):
         # GGUF path via runtime/nn/wan22
         from apps.server.backend.runtime.nn.wan22 import RunConfig, StageConfig, run_txt2vid as gguf_t2v
+        # Stage overrides from request.extras
+        ex = getattr(request, 'extras', {}) or {}
+        hi_ex = ex.get('wan_high') if isinstance(ex, dict) else None
+        lo_ex = ex.get('wan_low') if isinstance(ex, dict) else None
+        def _s(d, k, fallback):
+            try:
+                return (d.get(k) if isinstance(d, dict) else None) or fallback
+            except Exception:
+                return fallback
         cfg = RunConfig(
             width=int(getattr(request, "width", 768) or 768),
             height=int(getattr(request, "height", 432) or 432),
@@ -31,9 +40,23 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
             seed=(int(getattr(request, "seed", -1)) if getattr(request, "seed", None) is not None else None),
             prompt=request.prompt,
             negative_prompt=getattr(request, "negative_prompt", None),
-            vae_dir=getattr(comp, "model_dir", None),
-            high=StageConfig(model_dir=getattr(comp, "high_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),
-            low=StageConfig(model_dir=getattr(comp, "low_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),
+            vae_dir=_s(ex, 'wan_vae_dir', getattr(comp, 'model_dir', None)),
+            text_encoder_dir=_s(ex, 'wan_text_encoder_dir', None),
+            tokenizer_dir=_s(ex, 'wan_tokenizer_dir', None),
+            high=StageConfig(
+                model_dir=(getattr(comp, 'high_dir', None) or _s(hi_ex, 'model_dir', getattr(comp, 'model_dir', ''))),
+                sampler=str(_s(hi_ex, 'sampler', getattr(request, 'sampler', 'Automatic'))),
+                scheduler=str(_s(hi_ex, 'scheduler', getattr(request, 'scheduler', 'Automatic'))),
+                steps=int(_s(hi_ex, 'steps', 12)),
+                cfg_scale=_s(hi_ex, 'cfg_scale', getattr(request, 'guidance_scale', None)),
+            ),
+            low=StageConfig(
+                model_dir=(getattr(comp, 'low_dir', None) or _s(lo_ex, 'model_dir', getattr(comp, 'model_dir', ''))),
+                sampler=str(_s(lo_ex, 'sampler', getattr(request, 'sampler', 'Automatic'))),
+                scheduler=str(_s(lo_ex, 'scheduler', getattr(request, 'scheduler', 'Automatic'))),
+                steps=int(_s(lo_ex, 'steps', 12)),
+                cfg_scale=_s(lo_ex, 'cfg_scale', getattr(request, 'guidance_scale', None)),
+            ),
         )
         frames = gguf_t2v(cfg, logger=logger)
         fps = int(getattr(request, "fps", 24) or 24)

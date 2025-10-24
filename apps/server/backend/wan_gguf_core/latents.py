@@ -49,7 +49,7 @@ def _get_scale_shift(vae) -> Tuple[float, float]:
         return 0.18215, 0.0
 
 
-def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None):
+def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger: Any | None = None):
     """Encode an initial image to latents using AutoencoderKLWan (diffusers).
 
     dtype: 'bf16' | 'fp16' | 'fp32'
@@ -61,6 +61,11 @@ def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, va
     # We expect the VAE to be colocated with the model (current working dir or model dir)
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
     sf, sh = _get_scale_shift(vae)
+    if logger is not None:
+        try:
+            logger.info("[wan22.gguf] VAE encode scale=%.6f shift=%.6f", sf, sh)
+        except Exception:
+            pass
     target = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
     vae = vae.to(device=target, dtype=torch_dtype)
 
@@ -96,7 +101,7 @@ def encode_init_image_to_latents(init_image: Any, *, device: str, dtype: str, va
     return latents
 
 
-def decode_latents_to_images(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None):
+def decode_latents_to_images(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None, logger: Any | None = None):
     """Decode video latents [B,C,T,H,W] into a list of PIL images (per frame).
 
     Uses AutoencoderKLWan.decode frame-by-frame to limit memory.
@@ -108,6 +113,11 @@ def decode_latents_to_images(video_latents: Any, *, model_dir: str, device: str,
     dev = torch.device("cuda" if device == "cuda" and torch.cuda.is_available() else "cpu")
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
     sf, sh = _get_scale_shift(vae)
+    if logger is not None:
+        try:
+            logger.info("[wan22.gguf] VAE decode scale=%.6f shift=%.6f", sf, sh)
+        except Exception:
+            pass
     vae = vae.to(device=dev, dtype=torch_dtype)
     B, C, T, H, W = video_latents.shape
     frames: list[Image.Image] = []

@@ -628,11 +628,19 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     W_lat = max(8, cfg.width // 8)
     T = max(1, int(cfg.num_frames))
     grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    log.info(
+        "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
+        str(dev), str(dt), grid, (token_shape[0], token_shape[1])
+    )
 
     # Sample tokens in High stage
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
     sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
+    log.info(
+        "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
+        steps_hi, sampler_hi, sched_hi, (getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale), cfg.seed,
+    )
     toks_hi = _sample_stage_tokens(
         dit=hi_dit,
         steps=steps_hi,
@@ -658,7 +666,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     # Prepare Low UNet
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
     # Encode seed to latents → tokens for Low
-    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     if lat_lo0.ndim == 4:
         lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
@@ -668,6 +676,10 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
     sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
+    log.info(
+        "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s (seeded from last HIGH frame)",
+        steps_lo, sampler_lo, sched_lo, (getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+    )
     scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     x_lo = toks_lo0.clone()
     iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
@@ -681,7 +693,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         if (i + 1) % 5 == 0:
             log.info("[wan22.gguf] low step %d/%d", i + 1, len(scheduler_lo.timesteps))
 
-    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames_lo
@@ -726,8 +738,12 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     W_lat = max(8, cfg.width // 8)
     T = max(1, int(cfg.num_frames))
     grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    log.info(
+        "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
+        str(dev), str(dt), grid, (token_shape[0], token_shape[1])
+    )
     # For img2vid, we seed token space from VAE latents of the init image (repeated across T)
-    lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     # Tile along time to match requested frames
     if lat0.ndim == 4:  # [B,C,H,W]
         lat0 = lat0.unsqueeze(2).repeat(1, 1, T, 1, 1)
@@ -738,6 +754,10 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
     sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
+    log.info(
+        "[wan22.gguf] HIGH(img2vid): steps=%s sampler=%s scheduler=%s cfg_scale=%s (seeded from init image)",
+        steps_hi, sampler_hi, sched_hi, (getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+    )
     scheduler = _make_scheduler(steps_hi, sampler=sampler_hi, scheduler=sched_hi)
     timesteps = scheduler.timesteps
     x = seed_tokens.clone()
@@ -762,7 +782,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
 
     # Prepare seed tokens for Low from seed_image
-    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     if lat_lo0.ndim == 4:
         lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
@@ -771,6 +791,10 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
     sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
+    log.info(
+        "[wan22.gguf] LOW(img2vid): steps=%s sampler=%s scheduler=%s cfg_scale=%s (seeded from last HIGH frame)",
+        steps_lo, sampler_lo, sched_lo, (getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+    )
     scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
     tlist_lo = scheduler_lo.timesteps
     x_lo = toks_lo0.clone()
@@ -784,7 +808,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         x_lo = out.prev_sample
         if (i + 1) % 5 == 0:
             log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
-    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames_lo

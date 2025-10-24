@@ -27,6 +27,17 @@ import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
+from apps.server.backend.wan_gguf_core.patch import patch_embed as _patch_embed3d, patch_unembed as _patch_unembed3d
+from apps.server.backend.wan_gguf_core.text_context import get_text_context as _get_text_context
+from apps.server.backend.wan_gguf_core.latents import (
+    encode_init_image_to_latents as _vae_encode_init,
+    decode_latents_to_images as _vae_decode_video,
+)
+
+try:  # progress bar for long loops (non-fatal if unavailable)
+    from tqdm.auto import tqdm as _tqdm
+except Exception:  # pragma: no cover
+    _tqdm = None
 
 
 # ------------------------------ spec/mapping
@@ -427,30 +438,265 @@ class RunConfig:
     high: Optional[StageConfig] = None
     low: Optional[StageConfig] = None
 
+def _as_dtype(dtype: str):
+    return {
+        'fp16': torch.float16,
+        'bf16': getattr(torch, 'bfloat16', torch.float16),
+        'fp32': torch.float32,
+    }.get(str(dtype).lower(), torch.float16)
+
+
+def _get_logger(logger: Any):
+    import logging
+    return logger or logging.getLogger("wan22.gguf")
+
+
+def _resolve_patch_weights(state: Mapping[str, Any]) -> Tuple[Any, Any]:
+    w = state.get('patch_embedding.weight')
+    b = state.get('patch_embedding.bias')
+    if w is None:
+        raise RuntimeError("GGUF missing 'patch_embedding.weight'")
+    return w, b
+
+
+def _infer_latent_grid(unet: 'WanUNetGGUF', *, T: int, H_lat: int, W_lat: int, device: torch.device, dtype: torch.dtype) -> Tuple[Tuple[int, int, int], Tuple[int, int]]:
+    w, b = _resolve_patch_weights(unet.state)
+    # Probe with zeros to avoid guessing shapes; cheap and reliable
+    Cin = int(getattr(w, 'shape', [None, None, None, None, None])[1])
+    if Cin is None:
+        raise RuntimeError("failed to read patch_embedding weight shape")
+    vid = torch.zeros(1, Cin, T, H_lat, W_lat, device=device, dtype=dtype)
+    tokens, grid = _patch_embed3d(vid, w, b)
+    L, Cout = int(tokens.shape[1]), int(tokens.shape[2])
+    return (grid[0], grid[1], grid[2]), (L, Cout)
+
+
+def _make_scheduler(steps: int):
+    from diffusers import EulerDiscreteScheduler
+    # Use defaults; set_timesteps controls the inference length. Prediction is epsilon by default for Euler.
+    sched = EulerDiscreteScheduler()
+    sched.set_timesteps(max(1, int(steps)))
+    return sched
+
+
+def _cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) -> torch.Tensor:
+    if scale is None:
+        return cond
+    return uncond + (cond - uncond) * float(scale)
+
+
+def _sample_stage_tokens(
+    *,
+    unet: 'WanUNetGGUF',
+    steps: int,
+    cfg_scale: Optional[float],
+    prompt_embeds: torch.Tensor,
+    negative_embeds: torch.Tensor,
+    grid: Tuple[int, int, int],
+    token_shape: Tuple[int, int],
+    device: torch.device,
+    dtype: torch.dtype,
+    logger: Any,
+) -> torch.Tensor:
+    log = _get_logger(logger)
+    T2, H2, W2 = grid
+    L, Ctok = token_shape
+    # Initialize token space with Gaussian noise
+    x = torch.randn(1, L, Ctok, device=device, dtype=dtype)
+    # Scheduler in token space
+    scheduler = _make_scheduler(steps)
+    # Diffusers sigma-based timesteps; cast to float for time embedding
+    timesteps = scheduler.timesteps
+
+    iterator = _tqdm(timesteps, desc="WAN22(stage)") if _tqdm else timesteps
+    for i, t in enumerate(iterator):
+        # Model forward: conditional and unconditional
+        # Pass a scalar t (float) into UNet time embedding; keep simple for now
+        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        eps_cond = unet.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
+        eps_uncond = unet.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
+        eps = _cfg_merge(eps_uncond, eps_cond, cfg_scale)
+        # Euler step
+        out = scheduler.step(model_output=eps, timestep=t, sample=x)
+        x = out.prev_sample
+        if (i + 1) % 5 == 0:
+            log.info("[wan22.gguf] step %d/%d", i + 1, len(timesteps))
+    return x
+
+
+def _decode_tokens_to_frames(
+    *,
+    tokens: torch.Tensor,
+    unet: 'WanUNetGGUF',
+    grid: Tuple[int, int, int],
+    device: torch.device,
+    dtype: torch.dtype,
+    model_dir: str,
+    cfg: RunConfig,
+) -> List[object]:
+    # Unembed tokens back to video latents and decode via VAE
+    w, _b = _resolve_patch_weights(unet.state)
+    video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]
+    frames = _vae_decode_video(video_latents, model_dir=model_dir, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    return frames
+
 
 def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
-    hi = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
-    lo = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
-    if not hi or not lo:
+    log = _get_logger(logger)
+    hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
+    lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
+    if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
-    if logger:
-        logger.info("[wan22.gguf] high=%s low=%s", hi, lo)
-    # Forward mapping of tokens→latents→frames is pending; keep error explicit
-    raise RuntimeError("WAN22 GGUF txt2vid forward pending (tokenization/latent decode)")
+    log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+
+    # Device & dtype
+    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dt = _as_dtype(cfg.dtype)
+
+    # Prepare UNet (High stage) and text context
+    hi_unet = WanUNetGGUF(os.path.dirname(hi_path), logger=log)
+    prompt_embeds, negative_embeds = _get_text_context(
+        model_dir=os.path.dirname(hi_path),
+        prompt=cfg.prompt or "",
+        negative=cfg.negative_prompt,
+        device=cfg.device,
+        dtype=cfg.dtype,
+        text_encoder_dir=cfg.text_encoder_dir,
+        tokenizer_dir=cfg.tokenizer_dir,
+        vae_dir=cfg.vae_dir,
+        model_key='wan22',
+    )
+    if isinstance(prompt_embeds, torch.Tensor):
+        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+    if isinstance(negative_embeds, torch.Tensor):
+        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+
+    # Infer latent grid and token shape from patch embedding
+    H_lat = max(8, cfg.height // 8)
+    W_lat = max(8, cfg.width // 8)
+    T = max(1, int(cfg.num_frames))
+    grid, token_shape = _infer_latent_grid(hi_unet, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+
+    # Sample tokens in High stage
+    steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
+    toks_hi = _sample_stage_tokens(
+        unet=hi_unet,
+        steps=steps_hi,
+        cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        grid=grid,
+        token_shape=token_shape,
+        device=dev,
+        dtype=dt,
+        logger=log,
+    )
+
+    # Decode to frames
+    frames = _decode_tokens_to_frames(tokens=toks_hi, unet=hi_unet, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    return frames
 
 
 def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
-    hi = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
-    lo = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
-    if not hi or not lo:
+    log = _get_logger(logger)
+    hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
+    lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
+    if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
-    if logger:
-        logger.info("[wan22.gguf] high=%s low=%s", hi, lo)
-    raise RuntimeError("WAN22 GGUF img2vid forward pending (VAE encode/UNet loop/decode)")
+    log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+
+    if cfg.init_image is None:
+        raise RuntimeError("img2vid requires init_image for GGUF path")
+
+    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dt = _as_dtype(cfg.dtype)
+
+    # Prepare UNet (High)
+    hi_unet = WanUNetGGUF(os.path.dirname(hi_path), logger=log)
+
+    # Text embeds
+    prompt_embeds, negative_embeds = _get_text_context(
+        model_dir=os.path.dirname(hi_path),
+        prompt=cfg.prompt or "",
+        negative=cfg.negative_prompt,
+        device=cfg.device,
+        dtype=cfg.dtype,
+        text_encoder_dir=cfg.text_encoder_dir,
+        tokenizer_dir=cfg.tokenizer_dir,
+        vae_dir=cfg.vae_dir,
+        model_key='wan22',
+    )
+    if isinstance(prompt_embeds, torch.Tensor):
+        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+    if isinstance(negative_embeds, torch.Tensor):
+        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+
+    # Encode init image to latents → tokens
+    H_lat = max(8, cfg.height // 8)
+    W_lat = max(8, cfg.width // 8)
+    T = max(1, int(cfg.num_frames))
+    grid, token_shape = _infer_latent_grid(hi_unet, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    # For img2vid, we seed token space from VAE latents of the init image (repeated across T)
+    lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    # Tile along time to match requested frames
+    if lat0.ndim == 4:  # [B,C,H,W]
+        lat0 = lat0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    w, b = _resolve_patch_weights(hi_unet.state)
+    seed_tokens, _ = _patch_embed3d(lat0.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
+
+    # Run sampler starting from seeded tokens (replace init noise)
+    scheduler = _make_scheduler(int(getattr(cfg.high, 'steps', 12) if cfg.high else 12))
+    timesteps = scheduler.timesteps
+    x = seed_tokens.clone()
+    iterator = _tqdm(timesteps, desc="WAN22(high)") if _tqdm else timesteps
+    for i, t in enumerate(iterator):
+        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        eps_c = hi_unet.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = hi_unet.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale)
+        out = scheduler.step(model_output=eps, timestep=t, sample=x)
+        x = out.prev_sample
+        if (i + 1) % 5 == 0:
+            log.info("[wan22.gguf] high step %d/%d", i + 1, len(timesteps))
+
+    # Decode High frames and seed Low with last frame latent
+    frames_hi = _decode_tokens_to_frames(tokens=x, unet=hi_unet, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    seed_image = frames_hi[-1] if frames_hi else None
+
+    # Low stage (optional refinement): if we can, run a short loop seeded from last frame
+    try:
+        lo_unet = WanUNetGGUF(os.path.dirname(lo_path), logger=log)
+        if seed_image is None:
+            return frames_hi
+        # Prepare seed tokens for Low from seed_image
+        lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+        if lat_lo0.ndim == 4:
+            lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+        w_lo, b_lo = _resolve_patch_weights(lo_unet.state)
+        toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+
+        steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
+        scheduler_lo = _make_scheduler(steps_lo)
+        tlist_lo = scheduler_lo.timesteps
+        x_lo = toks_lo0.clone()
+        iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo
+        for i, t in enumerate(iterator_lo):
+            tt = float(t) if not torch.is_tensor(t) else float(t.item())
+            eps_c = lo_unet.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+            eps_u = lo_unet.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+            eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
+            out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
+            x_lo = out.prev_sample
+            if (i + 1) % 5 == 0:
+                log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
+        frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+        return frames_lo
+    except Exception as ex:
+        log.warning("[wan22.gguf] low stage skipped: %s", ex)
+        return frames_hi
 
 
 __all__ = [
     'ModelSpec', 'BlockSpec', 'CrossAttnWeights', 'derive_spec_from_state',
     'WanUNetGGUF', 'run_txt2vid', 'run_img2vid',
 ]
-

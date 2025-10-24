@@ -13,7 +13,9 @@ from apps.server.backend.runtime.nn.unet import Timestep
 import safetensors.torch as sf
 from apps.server.backend.runtime import utils
 
-from modules.shared import opts
+def _opts():
+    from modules import shared as _shared
+    return _shared.opts
 
 
 class StableDiffusionXL(ForgeDiffusionEngine):
@@ -93,8 +95,8 @@ class StableDiffusionXL(ForgeDiffusionEngine):
         height = getattr(prompt, 'height', 1024) or 1024
         is_negative_prompt = getattr(prompt, 'is_negative_prompt', False)
 
-        crop_w = opts.sdxl_crop_left
-        crop_h = opts.sdxl_crop_top
+        crop_w = _opts().sdxl_crop_left
+        crop_h = _opts().sdxl_crop_top
         target_width = width
         target_height = height
 
@@ -213,9 +215,9 @@ class StableDiffusionXLRefiner(ForgeDiffusionEngine):
         height = getattr(prompt, 'height', 1024) or 1024
         is_negative_prompt = getattr(prompt, 'is_negative_prompt', False)
 
-        crop_w = opts.sdxl_crop_left
-        crop_h = opts.sdxl_crop_top
-        aesthetic = opts.sdxl_refiner_low_aesthetic_score if is_negative_prompt else opts.sdxl_refiner_high_aesthetic_score
+        crop_w = _opts().sdxl_crop_left
+        crop_h = _opts().sdxl_crop_top
+        aesthetic = _opts().sdxl_refiner_low_aesthetic_score if is_negative_prompt else _opts().sdxl_refiner_high_aesthetic_score
 
         out = [
             self.embedder(torch.Tensor([height])), self.embedder(torch.Tensor([width])),

@@ -4,7 +4,9 @@ from collections import namedtuple
 from . import parsing, emphasis
 from apps.server.backend.runtime.memory import memory_management
 
-from modules.shared import opts
+def _opts():
+    from modules import shared as _shared
+    return _shared.opts
 
 
 PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
@@ -23,7 +25,7 @@ class T5TextProcessingEngine:
         self.text_encoder = text_encoder.transformer
         self.tokenizer = tokenizer
 
-        self.emphasis = emphasis.get_current_option(opts.emphasis)()
+        self.emphasis = emphasis.get_current_option(_opts().emphasis)()
         self.min_length = min_length
         self.id_end = 1
         self.id_pad = 0
@@ -113,7 +115,7 @@ class T5TextProcessingEngine:
         zs = []
         cache = {}
 
-        self.emphasis = emphasis.get_current_option(opts.emphasis)()
+        self.emphasis = emphasis.get_current_option(_opts().emphasis)()
 
         for line in texts:
             if line in cache:

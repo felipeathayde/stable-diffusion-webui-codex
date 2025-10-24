@@ -11,7 +11,9 @@ from apps.server.backend.config.args import dynamic_args
 from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.modules.k_prediction import PredictionDiscreteFlow
 
-from modules.shared import opts
+def _opts():
+    from modules import shared as _shared
+    return _shared.opts
 
 
 ##  patch SD3 Class in huggingface_guess.model_list
@@ -104,7 +106,7 @@ class StableDiffusion3(ForgeDiffusionEngine):
 
         cond_g, g_pooled = self.text_processing_engine_g(prompt)
         cond_l, l_pooled = self.text_processing_engine_l(prompt)
-        if opts.sd3_enable_t5:
+        if _opts().sd3_enable_t5:
             cond_t5 = self.text_processing_engine_t5(prompt)
         else:
             cond_t5 = torch.zeros([len(prompt), 256, 4096]).to(cond_l.device)

@@ -6,7 +6,9 @@ from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
 from apps.server.backend.runtime.memory import memory_management
 
-from modules.shared import opts
+def _opts():
+    from modules import shared as _shared
+    return _shared.opts
 
 
 PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
@@ -69,7 +71,7 @@ class ClassicTextProcessingEngine:
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
 
-        self.emphasis = emphasis.get_current_option(opts.emphasis)()
+        self.emphasis = emphasis.get_current_option(_opts().emphasis)()
         self.text_projection = text_projection
         self.minimal_clip_skip = minimal_clip_skip
         self.clip_skip = clip_skip

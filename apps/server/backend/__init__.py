@@ -27,13 +27,6 @@ from .runtime.text_processing import (
     parsing as text_parsing,
     textual_inversion,
 )
-from .services import (
-    ImageService,
-    MediaService,
-    OptionsService,
-    ProgressService,
-    SamplerService,
-)
 from .engines import (
     EngineExecutionError,
     EngineLoadError,
@@ -151,4 +144,14 @@ def __getattr__(name: str):  # pragma: no cover - runtime dispatch
     }:
         from . import patchers as _patchers
         return getattr(_patchers, name)
+    # Services
+    if name in {
+        "ImageService",
+        "MediaService",
+        "OptionsService",
+        "ProgressService",
+        "SamplerService",
+    }:
+        from . import services as _services
+        return getattr(_services, name)
     raise AttributeError(name)

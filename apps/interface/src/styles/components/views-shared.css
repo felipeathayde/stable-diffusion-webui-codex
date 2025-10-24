@@ -1,0 +1,17 @@
+@layer components {
+  /* Prompt header toolbar */
+  .prompt-toolbar { margin-left: auto; display: flex; align-items: center; gap: var(--space-sm); }
+  .prompt-toolbar .styles-label { margin-left: var(--space-sm); }
+  .prompt-toolbar .styles-input { width: clamp(12rem, 22vw, 16rem); }
+
+  /* Results header */
+  .results-actions { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-sm); align-items: center; }
+  .results-generate { width: 10rem; }
+
+  /* Settings: Paths */
+  .settings-paths-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); }
+
+  /* Settings: Path list header */
+  .pathlist-controls { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm); }
+}
+

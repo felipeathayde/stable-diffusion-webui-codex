@@ -1,0 +1,70 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/vscode-pyright/schemas/pyrightconfig.schema.json",
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.10",
+  "useLibraryCodeForTypes": true,
+
+  // Workspace-only mode: focus on the UI entrypoints; skip backend pieces that need a full venv
+  "include": [
+    "webui.py",
+    "launch.py",
+    "modules/ui*.py",
+    "modules/ui_common.py",
+    "modules/ui_settings.py",
+    "modules/ui_extensions.py",
+    "modules/ui_toprow.py",
+    "modules/ui_components.py",
+    "modules/ui_postprocessing.py",
+    "modules/ui_checkpoint_merger.py",
+    "modules/ui_loadsave.py",
+    "modules/ui_prompt_styles.py",
+    "modules/ui_gradio_extensions.py",
+    "modules/ui_extra_networks*.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".git",
+    "node_modules",
+    "legacy",
+    "extensions",
+    "extensions-builtin",
+    "packages_3rdparty",
+    "backend",
+    "modules_forge",
+    "models",
+    "outputs",
+    "output",
+    "venv",
+    ".venv",
+    ".tmp",
+    ".npm-cache"
+  ],
+
+  // Noise control when venv is absent: downgrade or disable
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+
+  // Keep strictness but avoid unknown-propagation from missing libs being fatal
+  "reportUnknownParameterType": "warning",
+  "reportUnknownArgumentType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportUnknownLambdaType": "warning",
+  "reportMissingParameterType": "error",
+  "reportUnnecessaryIsInstance": "warning",
+  "reportUntypedFunctionDecorator": "warning",
+  "reportUntypedClassDecorator": "warning",
+  "reportUntypedBaseClass": "warning",
+  "reportPrivateUsage": "warning",
+  "reportIncompatibleMethodOverride": "error",
+  "reportIncompatibleVariableOverride": "error",
+  "reportInvalidTypeVarUse": "error",
+  "reportMissingTypeArgument": "error",
+  "reportPossiblyUnboundVariable": "error",
+  "reportImplicitOverride": "error",
+  "reportDeprecated": "warning",
+  "reportCallIssue": "error",
+  "reportUnnecessaryCast": "warning",
+  "reportUnnecessaryComparison": "warning",
+  "reportUnnecessaryContains": "warning"
+}

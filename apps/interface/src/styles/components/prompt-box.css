@@ -1,0 +1,7 @@
+@layer components {
+  .prompt-box { display: flex; flex-direction: column; gap: 0.35rem; }
+  .prompt-header { display: flex; align-items: center; justify-content: space-between; }
+  .prompt-editor-wrap { position: relative; border: 0.0625rem solid hsla(0,0%,100%,0.12); background: hsla(0,0%,100%,0.02); border-radius: 0.625rem; padding: 0.5rem; }
+  .prompt-editor-wrap .ProseMirror { min-height: 8rem; line-height: 1.4; outline: none; }
+  .ear-badge { position: absolute; top: -0.0625rem; right: 0; font-size: 0.75rem; padding: 0.25rem 1.5rem; border: 0.0625rem solid var(--color-border); background: var(--color-muted); color: var(--color-panel-foreground); border-top-right-radius: 0.625rem; border-bottom-left-radius: 0.625rem; border-top-left-radius: 0; border-bottom-right-radius: 0; box-shadow: 0 0.0625rem 0 hsla(0,0%,100%,0.08); }
+}

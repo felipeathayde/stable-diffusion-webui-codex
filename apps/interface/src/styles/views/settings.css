@@ -1,0 +1,11 @@
+@layer components {
+  .settings-page .subtabs{ display:flex; gap:.35rem; flex-wrap:wrap; margin-bottom:.5rem }
+  .settings-page .subtabs.thin .subtab{ padding:.25rem .5rem; font-size:.85rem }
+  .settings-page .layout{ display:grid; grid-template-columns: 1.2fr .9fr; gap:.75rem }
+  .settings-page .left{ display:flex; flex-direction:column; gap:.5rem }
+  .settings-page .right{ display:flex; flex-direction:column; gap:.5rem }
+  .settings-page .panel-stack{ flex: 1 1 auto; }
+  .settings-page .panel.subtle .panel-header{ font-size:.9rem; opacity:.85 }
+  .settings-page .toolbar{ display:flex; gap:.5rem; align-items:center; margin-bottom:.25rem }
+  .settings-error{ color:#f99; border:1px solid #933; background:rgba(255,0,0,.05) }
+}

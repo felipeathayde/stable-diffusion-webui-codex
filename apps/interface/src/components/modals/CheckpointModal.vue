@@ -1,0 +1,51 @@
+<template>
+  <Modal v-model="open" title="Choose Checkpoint">
+    <div class="form-grid">
+      <div>
+        <label class="label-muted">Search</label>
+        <input class="ui-input" type="text" v-model="q" placeholder="type to filter..." />
+      </div>
+      <div>
+        <label class="label-muted">Current</label>
+        <div class="card text-sm">{{ qs.currentModel || '(none)' }}</div>
+      </div>
+    </div>
+    <div class="panel-section" style="margin-top: .5rem">
+      <ul class="list" role="listbox">
+        <li v-for="m in filtered" :key="m.title" class="list-item clickable" @click="apply(m.title)">
+          <div class="flex items-center justify-between">
+            <span>{{ m.title }}</span>
+            <span class="caption opacity-70">{{ m.model_name }}</span>
+          </div>
+        </li>
+      </ul>
+    </div>
+    <template #footer>
+      <button class="btn btn-md btn-outline" type="button" @click="open=false">Close</button>
+    </template>
+  </Modal>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import Modal from '../ui/Modal.vue'
+import { useQuicksettingsStore } from '../../stores/quicksettings'
+
+const props = defineProps<{ modelValue: boolean }>()
+const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void }>()
+const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('update:modelValue', v) })
+
+const qs = useQuicksettingsStore()
+const q = ref('')
+const filtered = computed(() => {
+  const query = q.value.toLowerCase().trim()
+  if (!query) return qs.models
+  return qs.models.filter((m) => m.title.toLowerCase().includes(query) || m.model_name.toLowerCase().includes(query))
+})
+
+async function apply(title: string): Promise<void> {
+  await qs.setModel(title)
+  open.value = false
+}
+</script>
+

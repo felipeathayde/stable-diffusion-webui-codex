@@ -16,8 +16,9 @@ from .unet import (
     exists,
     Downsample,
 )
-# Our VAE implementation is IntegratedAutoencoderKL; export an alias
+# Our VAE implementation is IntegratedAutoencoderKL; export it and an alias
 # AutoencoderKLWan for compatibility with older codepaths expecting that name.
+from .vae import IntegratedAutoencoderKL
 from .vae import IntegratedAutoencoderKL as AutoencoderKLWan
 from .flux import (
     IntegratedFluxTransformer2DModel as FluxTransformer2DModel,

@@ -188,8 +188,30 @@ def _install_audit(log: Logger):
         log.warn("Could not install audit hook", error=repr(e))
 
 
+def _ensure_repo_root_on_path(log: Logger) -> None:
+    """Ensure repository root (parent of this scripts/ dir) and CWD are on sys.path.
+
+    When this tool is executed as a file (python scripts/trace_imports.py),
+    Python sets sys.path[0] to the directory of this script (scripts/), not the
+    repository root. Our codebase expects imports like `apps.server...` to
+    resolve from repo root. This injects the parent directory early in sys.path.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, os.pardir))
+    cwd = os.getcwd()
+
+    inserted = []
+    for p in (repo_root, cwd):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+            inserted.append(p)
+    if inserted:
+        log.info("sys.path.inject", inserted=inserted)
+
+
 def _run_target_inprocess(args, log: Logger):
     # Show environment for reproducibility
+    _ensure_repo_root_on_path(log)
     log.info("Interpreter", exe=sys.executable)
     log.info("CWD", cwd=os.getcwd())
     log.info("sys.path", path=sys.path)
@@ -206,8 +228,14 @@ def _run_target_inprocess(args, log: Logger):
             log.info("run_module", module=args.module)
             runpy.run_module(args.module, run_name="__main__", alter_sys=True)
         elif args.file:
-            log.info("run_path", file=args.file)
-            runpy.run_path(args.file, run_name="__main__")
+            # For script path, ensure its parent-of-parent (package root) is on sys.path
+            file_abspath = os.path.abspath(args.file)
+            pkg_root = os.path.dirname(os.path.dirname(file_abspath))
+            if pkg_root not in sys.path:
+                sys.path.insert(0, pkg_root)
+                log.info("sys.path.inject_file_root", added=pkg_root)
+            log.info("run_path", file=file_abspath)
+            runpy.run_path(file_abspath, run_name="__main__")
         else:
             raise SystemExit("Provide --module or --file")
     except SystemExit as e:
@@ -300,4 +328,3 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

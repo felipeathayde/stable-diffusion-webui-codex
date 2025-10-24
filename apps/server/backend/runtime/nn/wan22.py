@@ -592,9 +592,40 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         logger=log,
     )
 
-    # Decode to frames
-    frames = _decode_tokens_to_frames(tokens=toks_hi, unet=hi_unet, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
-    return frames
+    # Decode High to frames and seed Low with last frame (Low is mandatory)
+    frames_hi = _decode_tokens_to_frames(tokens=toks_hi, unet=hi_unet, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    if not frames_hi:
+        raise RuntimeError("WAN22 GGUF: High stage produced no frames")
+
+    seed_image = frames_hi[-1]
+    # Prepare Low UNet
+    lo_unet = WanUNetGGUF(os.path.dirname(lo_path), logger=log)
+    # Encode seed to latents → tokens for Low
+    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    if lat_lo0.ndim == 4:
+        lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    w_lo, b_lo = _resolve_patch_weights(lo_unet.state)
+    toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+
+    # Low stage sampling (mandatory)
+    steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
+    scheduler_lo = _make_scheduler(steps_lo)
+    x_lo = toks_lo0.clone()
+    iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
+    for i, t in enumerate(iterator_lo):
+        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        eps_c = lo_unet.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_unet.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
+        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
+        x_lo = out.prev_sample
+        if (i + 1) % 5 == 0:
+            log.info("[wan22.gguf] low step %d/%d", i + 1, len(scheduler_lo.timesteps))
+
+    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    if not frames_lo:
+        raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
+    return frames_lo
 
 
 def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
@@ -663,37 +694,36 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     frames_hi = _decode_tokens_to_frames(tokens=x, unet=hi_unet, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
     seed_image = frames_hi[-1] if frames_hi else None
 
-    # Low stage (optional refinement): if we can, run a short loop seeded from last frame
-    try:
-        lo_unet = WanUNetGGUF(os.path.dirname(lo_path), logger=log)
-        if seed_image is None:
-            return frames_hi
-        # Prepare seed tokens for Low from seed_image
-        lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
-        if lat_lo0.ndim == 4:
-            lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
-        w_lo, b_lo = _resolve_patch_weights(lo_unet.state)
-        toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+    # Low stage (mandatory): seed from last High frame
+    if seed_image is None:
+        raise RuntimeError("WAN22 GGUF: missing seed image for Low stage")
+    lo_unet = WanUNetGGUF(os.path.dirname(lo_path), logger=log)
 
-        steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
-        scheduler_lo = _make_scheduler(steps_lo)
-        tlist_lo = scheduler_lo.timesteps
-        x_lo = toks_lo0.clone()
-        iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo
-        for i, t in enumerate(iterator_lo):
-            tt = float(t) if not torch.is_tensor(t) else float(t.item())
-            eps_c = lo_unet.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-            eps_u = lo_unet.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-            eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
-            out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
-            x_lo = out.prev_sample
-            if (i + 1) % 5 == 0:
-                log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
-        frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
-        return frames_lo
-    except Exception as ex:
-        log.warning("[wan22.gguf] low stage skipped: %s", ex)
-        return frames_hi
+    # Prepare seed tokens for Low from seed_image
+    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    if lat_lo0.ndim == 4:
+        lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    w_lo, b_lo = _resolve_patch_weights(lo_unet.state)
+    toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+
+    steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
+    scheduler_lo = _make_scheduler(steps_lo)
+    tlist_lo = scheduler_lo.timesteps
+    x_lo = toks_lo0.clone()
+    iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo
+    for i, t in enumerate(iterator_lo):
+        tt = float(t) if not torch.is_tensor(t) else float(t.item())
+        eps_c = lo_unet.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_unet.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
+        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
+        x_lo = out.prev_sample
+        if (i + 1) % 5 == 0:
+            log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
+    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
+    if not frames_lo:
+        raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
+    return frames_lo
 
 
 __all__ = [

@@ -9,7 +9,8 @@ implementations are added.
 from .sub_quadratic_attention import efficient_dot_product_attention
 from .image_resize import adaptive_resize, bislerp, lanczos
 from .diffusers_state_dict import unet_to_diffusers
-from .checkpoint_pickle import load_pickle_state_dict
+# Re-export the `checkpoint_pickle` module for torch.load(pickle_module=...)
+from . import checkpoint_pickle
 from .tomesd import merge_sdsd, merge_subspaces
 
 __all__ = [name for name in globals() if not name.startswith("_")]

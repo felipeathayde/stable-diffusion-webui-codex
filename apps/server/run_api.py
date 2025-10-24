@@ -249,6 +249,50 @@ def build_app() -> FastAPI:
     _workflows_mtime: Optional[float] = None
     _ui_dist_dir = os.path.join(PROJECT_ROOT, 'apps', 'interface', 'dist')
 
+    def _detect_wan_variant_from_dir(p: Optional[str]) -> Optional[str]:
+        """Return '5b' or '14b' when a WAN dir hints a variant via config or path name."""
+        if not p:
+            return None
+        try:
+            pd = p
+            if os.path.isfile(pd):
+                pd = os.path.dirname(pd)
+            cfg = _load_json(os.path.join(pd, 'config.json'))
+            txts: list[str] = []
+            if isinstance(cfg, dict):
+                for k, v in cfg.items():
+                    if isinstance(v, str):
+                        txts.append(v.lower())
+            blob = ' '.join(txts + [str(p).lower()])
+            if '5b' in blob:
+                return '5b'
+            if '14b' in blob or 'a14b' in blob or '14-b' in blob:
+                return '14b'
+        except Exception:
+            pass
+        s = str(p).lower()
+        if '5b' in s:
+            return '5b'
+        if '14b' in s or 'a14b' in s or '14-b' in s:
+            return '14b'
+        return None
+
+    def _pick_wan_engine(extras: Dict[str, Any]) -> str:
+        """Choose wan22_14b or wan22_5b from provided WAN extras; default to 14b."""
+        wh = extras.get('wan_high') or {}
+        wl = extras.get('wan_low') or {}
+        cand = None
+        try:
+            if isinstance(wh, dict) and wh.get('model_dir'):
+                cand = _detect_wan_variant_from_dir(str(wh.get('model_dir')))
+            if cand is None and isinstance(wl, dict) and wl.get('model_dir'):
+                cand = _detect_wan_variant_from_dir(str(wl.get('model_dir')))
+        except Exception:
+            cand = None
+        if cand == '5b':
+            return 'wan22_5b'
+        return 'wan22_14b'
+
     # Settings registry (hardcoded dataclasses/enums via codegen)
     try:
         # Generated from scripts/generate_settings_registry.py
@@ -1365,7 +1409,7 @@ def build_app() -> FastAPI:
         # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
         engine_key = None
         if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = 'wan22_14b'
+            engine_key = _pick_wan_engine(extras)
         else:
             sem = _detect_semantic_engine()
             if sem == 'wan22':
@@ -1440,7 +1484,7 @@ def build_app() -> FastAPI:
         # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
         engine_key = None
         if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = 'wan22_14b'
+            engine_key = _pick_wan_engine(extras)
         else:
             sem = _detect_semantic_engine()
             if sem == 'wan22':

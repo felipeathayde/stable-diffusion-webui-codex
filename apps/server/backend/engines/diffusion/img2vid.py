@@ -38,6 +38,7 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
             guidance_scale=getattr(request, "cfg_scale", None),
             dtype=str(getattr(comp, "dtype", "fp16")),
             device=str(getattr(comp, "device", "cuda")),
+            seed=(int(getattr(request, "seed", -1)) if getattr(request, "seed", None) is not None else None),
             init_image=getattr(request, "init_image", None),
             vae_dir=getattr(comp, "model_dir", None),
             high=StageConfig(model_dir=getattr(comp, "high_dir", None) or getattr(comp, "model_dir", ""), sampler=str(getattr(request, "sampler", "Automatic")), scheduler=str(getattr(request, "scheduler", "Automatic")), steps=int(getattr(request, "steps", 12) or 12), cfg_scale=getattr(request, "guidance_scale", None)),

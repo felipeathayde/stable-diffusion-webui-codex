@@ -28,6 +28,7 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
             guidance_scale=getattr(request, "cfg_scale", None),
             dtype=str(getattr(comp, "dtype", "fp16")),
             device=str(getattr(comp, "device", "cuda")),
+            seed=(int(getattr(request, "seed", -1)) if getattr(request, "seed", None) is not None else None),
             prompt=request.prompt,
             negative_prompt=getattr(request, "negative_prompt", None),
             vae_dir=getattr(comp, "model_dir", None),

@@ -429,6 +429,7 @@ class RunConfig:
     guidance_scale: Optional[float]
     dtype: str
     device: str
+    seed: Optional[int] = None
     prompt: Optional[str] = None
     negative_prompt: Optional[str] = None
     init_image: Optional[object] = None
@@ -542,12 +543,18 @@ def _sample_stage_tokens(
     logger: Any,
     sampler_name: Optional[str] = None,
     scheduler_name: Optional[str] = None,
+    seed: Optional[int] = None,
 ) -> torch.Tensor:
     log = _get_logger(logger)
     T2, H2, W2 = grid
     L, Ctok = token_shape
-    # Initialize token space with Gaussian noise
-    x = torch.randn(1, L, Ctok, device=device, dtype=dtype)
+    # Initialize token space with Gaussian noise (seeded when provided)
+    if seed is not None and int(seed) >= 0:
+        g = torch.Generator(device=device)
+        g.manual_seed(int(seed))
+        x = torch.randn(1, L, Ctok, device=device, dtype=dtype, generator=g)
+    else:
+        x = torch.randn(1, L, Ctok, device=device, dtype=dtype)
     # Scheduler em espaço de tokens (parametrizável)
     scheduler = _make_scheduler(steps, sampler=sampler_name, scheduler=scheduler_name)
     # Diffusers sigma-based timesteps; cast to float for time embedding
@@ -639,6 +646,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         logger=log,
         sampler_name=sampler_hi,
         scheduler_name=sched_hi,
+        seed=cfg.seed,
     )
 
     # Decode High to frames and seed Low with last frame (Low is mandatory)

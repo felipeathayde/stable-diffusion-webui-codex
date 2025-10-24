@@ -13,7 +13,7 @@ from diffusers import DiffusionPipeline
 from transformers import modeling_utils
 
 from apps.server.backend.runtime import trace as _trace
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.utils import (
     read_arbitrary_config,
     load_torch_file,

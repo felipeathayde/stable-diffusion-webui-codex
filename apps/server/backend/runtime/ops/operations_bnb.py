@@ -3,7 +3,8 @@
 import torch
 import bitsandbytes as bnb
 
-from apps.server.backend import memory_management, utils
+from apps.server.backend.runtime.memory import memory_management
+from apps.server.backend.runtime import utils
 from bitsandbytes.nn.modules import Params4bit, QuantState
 from bitsandbytes.functional import dequantize_4bit
 

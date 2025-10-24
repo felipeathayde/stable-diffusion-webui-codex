@@ -7,7 +7,8 @@ import torch
 import math
 import collections
 
-from apps.server.backend import memory_management, utils
+from apps.server.backend.runtime.memory import memory_management
+from apps.server.backend.runtime import utils
 from apps.server.backend.runtime.ops import cleanup_cache
 from .condition import Condition, compile_conditions, compile_weighted_conditions
 from apps.server.backend.config.args import dynamic_args, args

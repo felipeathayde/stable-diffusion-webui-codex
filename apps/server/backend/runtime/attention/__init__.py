@@ -3,7 +3,8 @@ import torch
 import einops
 
 from apps.server.backend.config.args import args
-from apps.server.backend import memory_management
+# Avoid importing via backend facade during runtime package init to prevent cycles
+from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.misc import efficient_dot_product_attention
 
 

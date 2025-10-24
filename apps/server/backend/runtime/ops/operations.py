@@ -4,7 +4,8 @@ import time
 import torch
 import contextlib
 
-from apps.server.backend import memory_management, stream, utils
+from apps.server.backend.runtime.memory import memory_management, stream
+from apps.server.backend.runtime import utils
 from apps.server.backend.patchers.lora import merge_lora_to_weight
 
 

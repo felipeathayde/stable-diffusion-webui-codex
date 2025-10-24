@@ -4,7 +4,7 @@ import torch
 from collections import namedtuple
 from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
-from apps.server.backend import memory_management
+from apps.server.backend.runtime.memory import memory_management
 
 from modules.shared import opts
 

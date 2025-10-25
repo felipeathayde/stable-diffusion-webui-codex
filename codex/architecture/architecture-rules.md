@@ -16,7 +16,7 @@ Don’t
 
 Estrita/Políticas
 - CODEX_STRICT_EXIT=1 (default): qualquer exceção sem tratamento encerra o processo após dump (logs/exceptions-YYYYmmdd-<pid>.log)
-- CODEX_POLICY_STRICT=1 (default): violação de política (imports proibidos) encerra no startup
+- Sem guardas automáticos de política: a disciplina é documental e de revisão. Violações (ex.: imports proibidos) devem ser rejeitadas em revisão de código.
 
 Imports/Aliases
 - Só engines/ e runtime/ através do façade `apps.server.backend` quando for público
@@ -27,6 +27,4 @@ Assets
 - WAN: High.gguf, Low.gguf, tokenizer/ (tokenizer.json, tokenizer_config.json, spiece.model), text_encoder/ (config.json + pesos), VAE (dir ou arquivo único)
 
 Checks automáticos
-- tools/repo_guard.py valida os itens acima
-- apps/server/backend/policy.py reforça em runtime
-
+- Não utilizamos validadores automáticos. Siga estritamente estas regras e os checklists nos docs.

@@ -42,6 +42,7 @@
   - Architecture rules: `codex/architecture/architecture-rules.md`
   - Pipelines bible: `codex/architecture/model-pipelines-bible.md`
   - Repository inventory: `codex/architecture/repo-inventory.md`
+  - Cleanup checklists: `codex/architecture/repo-cleanup-checklists.md`
   - Research (loading/efficiency): `codex/research/`.
   - Design/UX: `codex/design/`.
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.

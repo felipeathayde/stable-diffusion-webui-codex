@@ -52,7 +52,7 @@ def ensure_initialized() -> None:
         return
 
     try:
-        from apps.server.backend.compat.codex.initialization import (
+        from apps.server.backend.codex.initialization import (
             initialize_codex,
         )
     except Exception:  # pragma: no cover - optional compatibility layer
@@ -960,7 +960,7 @@ def build_app() -> FastAPI:
         falling back to A1111's sd_vae.vae_dict if Forge is unavailable.
         """
         try:
-            from apps.server.backend.compat.codex import options as _codex_opts
+            from apps.server.backend.codex import options as _codex_opts
             current = _codex_opts.get_selected_vae('Automatic')
         except Exception:
             current = getattr(_shared.opts, 'forge_selected_vae', 'Automatic')
@@ -993,7 +993,7 @@ def build_app() -> FastAPI:
             choices = sorted(list(text_encoder_module_list.keys()))
             selected: list[str] = []
             try:
-                from apps.server.backend.compat.codex import options as _codex_opts
+                from apps.server.backend.codex import options as _codex_opts
                 addl = _codex_opts.get_additional_modules()
             except Exception:
                 addl = list(getattr(_shared.opts, 'forge_additional_modules', []) or [])

@@ -36,5 +36,5 @@ Codex (substitui “Forge” no backend)
   - `apps.server.backend.codex.initialization.initialize_codex()` — bootstrap do ambiente (no‑op em setups mínimos).
   - `apps.server.backend.codex.main.{modules_change, checkpoint_change, refresh_model_loading_parameters}` — gestão de módulos/modelos via opts nativos.
   - `apps.server.backend.codex.options` — leitura de opções (`codex_*`), com fallback interno para nomes antigos apenas para leitura.
-- Interação com A1111/legacy: se (e somente se) precisar tocar `modules.*`, faça por `apps.server.backend.engines.util.a1111_bridge`. Não importamos `modules.*` diretamente nos engines/serviços novos.
+- Interação com A1111/legacy: se (e somente se) precisar tocar `modules.*`, importe via façade `apps.server.backend.modules.*`. Não use `modules.*` diretamente no backend ativo.
 - Proibição: `modules_forge.*` não deve aparecer em código novo. Se houver necessidade funcional, exponha a capacidade via `apps.server.backend.codex.*` e implemente por trás conforme o plano de migração.

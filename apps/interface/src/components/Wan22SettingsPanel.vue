@@ -43,7 +43,7 @@
           </div>
         </div>
         <datalist id="dl-lora">
-          <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+          <option v-for="opt in options.loras" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
         </datalist>
       </div>
 

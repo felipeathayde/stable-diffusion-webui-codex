@@ -74,7 +74,15 @@ class Wan225BEngine(BaseVideoEngine):
                 comp.hf_vae_dir = str(vae_dir) if vae_dir.exists() else None
                 break
             except Exception as exc:
-                self._logger.debug("WAN22 5B: repo %s unavailable: %s", rid, exc)
+                self._logger.warning(
+                    "WAN22 5B: unable to download minimal assets from %s (%s). "
+                    "If this repo is gated, run `python scripts/fetch_tokenizer_hf.py --repo %s --local %s` "
+                    "with an authenticated token, or supply `wan_text_encoder_dir`/`wan_tokenizer_dir` extras.",
+                    rid,
+                    exc,
+                    rid,
+                    local_dir,
+                )
                 continue
 
         pipe = None

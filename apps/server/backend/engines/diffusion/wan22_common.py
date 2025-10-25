@@ -62,22 +62,18 @@ class WanStageOptions:
 
 WAN_DIFFUSERS_REPO_CANDIDATES = {
     "wan22_14b": (
-        "Kwai-Kolors/Wan2.2-Image-to-Video-14B",
-        "KwaiKolors/Wan2.2-Image-to-Video-14B",
-        "Kwai-Kolors/Wan-2-2-Image-to-Video-14B",
+        "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
     ),
     "wan22_5b": (
-        "Kwai-Kolors/Wan2.2-Image-to-Video-5B",
-        "KwaiKolors/Wan2.2-Image-to-Video-5B",
-        "Kwai-Kolors/Wan-2-2-Image-to-Video-5B",
+        "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
     ),
     "wan_t2v_14b": (
-        "Kwai-Kolors/Wan2.2-Text-to-Video-14B",
-        "KwaiKolors/Wan2.2-Text-to-Video-14B",
+        "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+        "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
     ),
     "wan_t2v_5b": (
-        "Kwai-Kolors/Wan2.2-Text-to-Video-5B",
-        "KwaiKolors/Wan2.2-Text-to-Video-5B",
+        "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
     ),
 }
 
@@ -91,18 +87,19 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
     env_repo = os.environ.get("CODEX_WAN_DIFFUSERS_REPO")
     if env_repo:
         candidates.append(env_repo)
-    owner = "Kwai-Kolors"
+    owner = "Wan-AI"
     variant = "14B" if "14b" in key else ("5B" if "5b" in key else "")
     mode = "Image-to-Video" if "i2v" in key else ("Text-to-Video" if "t2v" in key else "")
     if variant and mode:
         candidates.append(f"{owner}/Wan2.2-{mode}-{variant}")
     if not candidates:
-        candidates.extend([
-            f"{owner}/Wan2.2-Image-to-Video-14B",
-            f"{owner}/Wan2.2-Image-to-Video-5B",
-            f"{owner}/Wan2.2-Text-to-Video-14B",
-            f"{owner}/Wan2.2-Text-to-Video-5B",
-        ])
+        if "14b" in key:
+            candidates.extend([
+                f"{owner}/Wan2.2-I2V-A14B-Diffusers",
+                f"{owner}/Wan2.2-T2V-A14B-Diffusers",
+            ])
+        else:
+            candidates.append(f"{owner}/Wan2.2-TI2V-5B-Diffusers")
     seen: set[str] = set()
     uniq: List[str] = []
     for rid in candidates:

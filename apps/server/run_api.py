@@ -59,14 +59,8 @@ def ensure_initialized() -> None:
         def initialize_codex() -> None:
             return None
 
-    from modules import initialize, script_callbacks
-
+    # Native initialization only (no legacy bootstrap)
     initialize_codex()
-    initialize.imports()
-    initialize.check_versions()
-    initialize.initialize()
-    # Allow scripts to run their setup hooks (mirrors webui before UI launch)
-    script_callbacks.before_ui_callback()
 
     _initialized = True
 
@@ -466,10 +460,45 @@ def build_app() -> FastAPI:
         Returns one of: 'wan22', 'hunyuan_video', 'svd', 'flux', 'sdxl', 'sd15'.
         This is a conservative, metadata-first detector with filename fallback.
         """
+        # Heuristics based on current selected checkpoint title/path and registry metadata
         try:
-            from modules import shared as _shared, sd_models as _sd_models
+            from apps.server.backend.codex import main as _codex
+            from apps.server.backend.registry.checkpoints import describe_checkpoints as _describe
+            current = getattr(_codex, "_SELECTIONS").checkpoint_name
+            infos = _describe()
+            target = None
+            for i in infos:
+                if i.get('name') == current or i.get('title') == current:
+                    target = i
+                    break
+            blob = ''
+            if target:
+                blob = ' '.join([
+                    str(target.get('title') or ''), str(target.get('path') or ''), str(target.get('format') or ''),
+                ]).lower()
+                comps = target.get('components') or []
+                if any('flux' in blob for blob in [blob]) or 'transformer' in comps:
+                    if 'flux' in blob:
+                        return 'flux'
+                if 'text_encoder_2' in comps and 'tokenizer_2' in comps:
+                    return 'sdxl'
+                if 'hunyuan' in blob:
+                    return 'hunyuan_video'
+                if 'svd' in blob:
+                    return 'svd'
+                if 'wan' in blob:
+                    return 'wan22'
+            # Fallback on title string hints
+            t = (current or '').lower()
+            if 'flux' in t:
+                return 'flux'
+            if 'xl' in t:
+                return 'sdxl'
+            if 'wan' in t:
+                return 'wan22'
         except Exception:
-            return 'sd15'
+            pass
+        return 'sd15'
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
@@ -679,7 +708,7 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail='tab_id required')
         print(color_yellow(f"[models] unload requested for tab {tab_id}"))
         return {'ok': True}
-        title = getattr(_shared.opts, 'sd_model_checkpoint', '') or ''
+        title = str(_opts_get('sd_model_checkpoint', '')) or ''
         title_l = str(title).lower()
         meta = {}
         try:
@@ -1078,32 +1107,41 @@ def build_app() -> FastAPI:
         _save_json(cfg_path, payload['paths'])
         return {"ok": True}
 
+    # Native options store (apps/settings_values.json)
+    def _opts_load() -> Dict[str, Any]:
+        return _load_json(_settings_values_path) if os.path.exists(_settings_values_path) else {}
+
+    def _opts_get(key: str, default: Any = None) -> Any:
+        return _opts_load().get(key, default)
+
+    def _opts_set_many(payload: Dict[str, Any]) -> list[str]:
+        # Optional schema to validate/limit keys
+        idx = {}
+        try:
+            if _settings_registry_ok:
+                idx = _field_index()  # type: ignore[name-defined]
+        except Exception:
+            idx = {}
+        allowed = set(idx.keys()) if idx else set(payload.keys())
+        existing = _opts_load()
+        updated: list[str] = []
+        for k, v in payload.items():
+            if k not in allowed:
+                continue
+            existing[k] = v
+            updated.append(k)
+        _save_json(_settings_values_path, existing)
+        return updated
+
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
-        return {"values": _shared.opts.data}
+        return {"values": _opts_load()}
 
     @app.post('/api/options')
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        updated: list[str] = []
-        for key, value in payload.items():
-            if key in _shared.opts.data_labels:
-                # cast to expected type
-                try:
-                    casted = _shared.opts.cast_value(key, value)
-                except Exception:
-                    casted = value
-                if _shared.opts.set(key, casted, is_api=True):
-                    updated.append(key)
-
-        # Persist updated keys into apps/settings_values.json
-        try:
-            if updated:
-                existing = _load_json(_settings_values_path) if os.path.exists(_settings_values_path) else {}
-                for k in updated:
-                    existing[k] = _shared.opts.data.get(k)
-                _save_json(_settings_values_path, existing)
-        except Exception as e:  # pragma: no cover
-            print(color_red(f"[settings] failed to persist: {e}"))
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='invalid payload')
+        updated = _opts_set_many(payload)
         return {"updated": updated}
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
@@ -1166,7 +1204,7 @@ def build_app() -> FastAPI:
             seed=seed_val,
             batch_size=batch_size,
             metadata={
-                "mode": getattr(_shared.opts, 'codex_mode', 'Normal'),
+                "mode": str(_opts_get('codex_mode', 'Normal')),
                 "styles": prompt_styles,
                 "distilled_cfg_scale": distilled_cfg_scale,
                 "hr": bool(enable_hr),
@@ -1192,8 +1230,8 @@ def build_app() -> FastAPI:
             extras={},
         )
 
-        engine_key = getattr(_shared.opts, 'codex_engine', 'sd15')
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        engine_key = str(_opts_get('codex_engine', 'sd15'))
+        model_ref = _opts_get('sd_model_checkpoint', None)
         return req, str(engine_key), model_ref
 
     def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
@@ -1323,8 +1361,8 @@ def build_app() -> FastAPI:
             steps=steps_val,
         )
 
-        engine_key = getattr(_shared.opts, 'codex_engine', 'sd15')
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        engine_key = str(_opts_get('codex_engine', 'sd15'))
+        model_ref = _opts_get('sd_model_checkpoint', None)
         return req, str(engine_key), model_ref
 
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
@@ -1435,7 +1473,7 @@ def build_app() -> FastAPI:
             extras=extras,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
-                "mode": getattr(_shared.opts, 'codex_mode', 'Normal'),
+                "mode": str(_opts_get('codex_mode', 'Normal')),
             },
         )
 
@@ -1452,7 +1490,7 @@ def build_app() -> FastAPI:
             else:
                 engine_key = 'wan22_14b'
         # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        model_ref = _opts_get('sd_model_checkpoint', None)
         try:
             wh = extras.get('wan_high') or {}
             wl = extras.get('wan_low') or {}
@@ -1510,7 +1548,7 @@ def build_app() -> FastAPI:
             extras=extras,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
-                "mode": getattr(_shared.opts, 'codex_mode', 'Normal'),
+                "mode": str(_opts_get('codex_mode', 'Normal')),
             },
         )
 
@@ -1527,7 +1565,7 @@ def build_app() -> FastAPI:
             else:
                 engine_key = 'wan22_14b'
         # Choose model_ref from WAN extras when provided
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        model_ref = _opts_get('sd_model_checkpoint', None)
         try:
             wh = extras.get('wan_high') or {}
             wl = extras.get('wan_low') or {}
@@ -1570,7 +1608,7 @@ def build_app() -> FastAPI:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     orch = InferenceOrchestrator()
-                    engine_opts = {"export_video": bool(getattr(_shared.opts, 'codex_export_video', False))}
+                    engine_opts = {"export_video": bool(_opts_get('codex_export_video', False))}
                     for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if isinstance(ev, ProgressEvent):
                             push({

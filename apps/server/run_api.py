@@ -708,45 +708,6 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail='tab_id required')
         print(color_yellow(f"[models] unload requested for tab {tab_id}"))
         return {'ok': True}
-        title = str(_opts_get('sd_model_checkpoint', '')) or ''
-        title_l = str(title).lower()
-        meta = {}
-        try:
-            # Find checkpoint info by title
-            info = None
-            for _k, v in getattr(_sd_models, 'checkpoints_list', {}).items():
-                if getattr(v, 'title', None) == title:
-                    info = v
-                    break
-            if info is not None:
-                meta = getattr(info, 'metadata', {}) or {}
-        except Exception:
-            meta = {}
-
-        def has_meta(keys: list[str], substr: str) -> bool:
-            s = str(substr).lower()
-            for k in keys:
-                v = str(meta.get(k, '')).lower()
-                if s in v:
-                    return True
-            return False
-
-        # WAN 2.2
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'wan') or 'wan' in title_l:
-            return 'wan22'
-        # Hunyuan Video
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'hunyuan') or 'hunyuan' in title_l:
-            return 'hunyuan_video'
-        # SVD
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'svd') or 'svd' in title_l:
-            return 'svd'
-        # FLUX
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'flux') or 'flux' in title_l:
-            return 'flux'
-        # SDXL
-        if 'xl' in title_l or has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'xl'):
-            return 'sdxl'
-        return 'sd15'
 
     @app.get('/api/ui/blocks')
     def ui_blocks(tab: Optional[str] = None) -> Dict[str, Any]:
@@ -838,17 +799,9 @@ def build_app() -> FastAPI:
         if not sel_value:
             raise HTTPException(status_code=409, detail='preset has no model selector')
 
-        try:
-            from modules import sd_models as _sd_models
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f'models not available: {e}')
-        # Build list of checkpoint titles
-        titles = []
-        try:
-            for info in _sd_models.checkpoints_list.values():
-                titles.append(info.title)
-        except Exception:
-            pass
+        from apps.server.backend.registry.checkpoints import describe_checkpoints as _describe
+        infos = _describe()
+        titles = [str(i.get('title') or i.get('name') or '') for i in infos]
         target: Optional[str] = None
         if sel_type == 'exact':
             for t in titles:
@@ -865,19 +818,14 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=409, detail=f'checkpoint not found for selector: {sel_type}:{sel_value}')
 
         # Apply options atomically
+        from apps.server.backend.codex import main as _codex
         try:
-            from modules import shared as _shared
-            # sd_model_checkpoint
-            _shared.opts.set('sd_model_checkpoint', target, is_api=True)
-            # extra options if any
+            _codex.checkpoint_change(str(target), save=True, refresh=False)
+            updates = {'sd_model_checkpoint': str(target)}
             extra = preset.get('options') or {}
             if isinstance(extra, dict):
-                for k, v in extra.items():
-                    try:
-                        casted = _shared.opts.cast_value(k, v)
-                    except Exception:
-                        casted = v
-                    _shared.opts.set(k, casted, is_api=True)
+                updates.update(extra)
+            _opts_set_many(updates)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f'failed to apply preset: {e}')
 
@@ -886,13 +834,10 @@ def build_app() -> FastAPI:
     @app.get('/api/settings/values')
     def settings_values() -> Dict[str, Any]:
         try:
-            from modules import shared as _shared
-            vals = {}
+            vals = _opts_load()
             idx = _field_index() if _settings_registry_ok else {}
-            keys = set(idx.keys()) if idx else set(_shared.opts.data.keys())
-            for k in keys:
-                if k in _shared.opts.data:
-                    vals[k] = _shared.opts.data.get(k)
+            if idx:
+                vals = {k: vals.get(k) for k in idx.keys()}
             return {"values": vals}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed to read values: {e}")
@@ -901,63 +846,38 @@ def build_app() -> FastAPI:
     def _apply_saved_settings() -> None:
         if not _settings_registry_ok:
             return
-        try:
-            from modules import shared as _shared
-        except Exception:
-            return
-        saved = _load_json(_settings_values_path)
+        saved = _opts_load()
         if not isinstance(saved, dict) or not saved:
             return
         idx = _field_index()
-        applied, skipped = 0, 0
-        for k, v in saved.items():
+        # Validate and normalize persisted values against schema, then re-save
+        changed = False
+        for k in list(saved.keys()):
             f = idx.get(k)
             if not f:
-                skipped += 1
-                continue
+                saved.pop(k, None); changed = True; continue
             try:
-                # Validate basic domain rules
-                if getattr(f, 'choices', None) and isinstance(f.choices, list):
-                    if v not in f.choices:
-                        skipped += 1
-                        continue
+                if getattr(f, 'choices', None) and isinstance(f.choices, list) and saved[k] not in f.choices:
+                    saved.pop(k, None); changed = True; continue
                 if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
-                    try:
-                        num = float(v)
-                        lo = f.min if isinstance(getattr(f, 'min', None), (int, float)) else None
-                        hi = f.max if isinstance(getattr(f, 'max', None), (int, float)) else None
-                        if lo is not None:
-                            num = max(num, lo)
-                        if hi is not None:
-                            num = min(num, hi)
-                        v = num
-                    except Exception:
-                        skipped += 1
-                        continue
-                if getattr(f, 'type', None) == _SettingType.CHECKBOX:
-                    if isinstance(v, str):
-                        v = v.lower() in ('1', 'true', 'yes', 'on')
-                    else:
-                        v = bool(v)
-                # Cast and apply
-                try:
-                    casted = _shared.opts.cast_value(k, v)
-                except Exception:
-                    casted = v
-                if _shared.opts.set(k, casted, is_api=True):
-                    applied += 1
-                else:
-                    skipped += 1
+                    v = float(saved[k])
+                    lo = getattr(f, 'min', None); hi = getattr(f, 'max', None)
+                    if isinstance(lo, (int, float)) and v < lo:
+                        saved[k] = lo; changed = True
+                    if isinstance(hi, (int, float)) and v > hi:
+                        saved[k] = hi; changed = True
+                if getattr(f, 'type', None) == _SettingType.CHECKBOX and isinstance(saved[k], str):
+                    saved[k] = saved[k].lower() in ('1','true','yes','on'); changed = True
             except Exception:
-                skipped += 1
-        if applied:
-            print(color_cyan(f"[settings] applied {applied} saved item(s); skipped {skipped}"))
+                continue
+        if changed:
+            _save_json(_settings_values_path, saved)
 
     # Apply saved settings early (after modules init) before serving
     try:
         _apply_saved_settings()
     except Exception as e:  # pragma: no cover
-        print(color_red(f"[settings] failed to apply saved settings: {e}"))
+        print(color_red(f"[settings] failed to validate saved settings: {e}"))
 
     @app.get('/api/models')
     def list_models() -> Dict[str, Any]:
@@ -1731,7 +1651,7 @@ def build_app() -> FastAPI:
 
         return StreamingResponse(event_stream(), media_type='text/event-stream')
 
-    _script_callbacks.app_started_callback(None, app)
+    # Legacy callbacks are not used in the native backend entrypoint
     return app
 
 

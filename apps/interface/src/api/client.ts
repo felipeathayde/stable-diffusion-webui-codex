@@ -108,15 +108,26 @@ export function fetchTaskResult(taskId: string): Promise<TaskResult> {
 
 export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void): () => void {
   const es = new EventSource(`${API_BASE}/tasks/${taskId}/events`)
+  let ended = false
   es.onmessage = (msg: MessageEvent<string>) => {
     try {
       const payload = JSON.parse(msg.data) as TaskEvent
+      // Mark graceful end so we don’t log a browser “error” on normal close
+      if ((payload as any)?.type === 'end') {
+        ended = true
+        // Let consumers receive the end event before closing
+        onEvent(payload)
+        es.close()
+        return
+      }
       onEvent(payload)
     } catch (error) {
       console.error('[task-events] failed to parse event', error)
     }
   }
   es.onerror = (err) => {
+    // EventSource fires onerror on normal close; suppress noisy logs when ended or closed
+    if (ended || (es as any).readyState === 2 /* CLOSED */) return
     console.error('[task-events] stream error', err)
   }
   return () => es.close()

@@ -11,6 +11,12 @@ from apps.server.backend.core import devices
 from apps.server.backend.core.rng import ImageRNG
 from apps.server.backend.runtime.sampling.driver import CodexSampler
 
+
+class _ExtraNetworksShim:
+    @staticmethod
+    def activate(processing, data):
+        raise NotImplementedError("Extra networks activation is not implemented natively yet")
+
 try:  # optional – only present when LoRA extension is available
     from extensions_builtin.sd_forge_lora import networks as lora_networks
 except Exception:  # pragma: no cover - optional dependency

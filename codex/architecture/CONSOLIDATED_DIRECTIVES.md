@@ -101,7 +101,8 @@ Assets & Loading
 API & Compatibility
 - Public API responses should remain compatible when feasible (e.g., fields for `/api/models`). Internals are free to change.
 - If a legacy endpoint cannot be supported natively yet, return a strict error rather than a partial legacy fallback.
- - The API entrypoint (`apps/server/run_api.py`) is native-only: no `modules.*` or legacy call queue. Parameter parsing uses `apps/server/backend/services/param_utils.py`.
+- The API entrypoint (`apps/server/run_api.py`) is native-only: no `modules.*` or legacy call queue. Parameter parsing uses `apps/server/backend/services/param_utils.py`.
+ - Options are stored natively in `apps/settings_values.json` via `apps.server.backend.codex.options` (typed snapshot + JSON-backed store). Do not read legacy `shared.opts`.
 
 Embeddings (Textual Inversion)
 - Native registry lives under `registry/embeddings.py` and scans models/embeddings (+ configured paths in apps/paths.json) for `.safetensors`, `.pt`, `.bin` and image-embedded TI.

@@ -6,7 +6,8 @@ Backs options with a simple JSON file under `apps/settings_values.json`. This mo
 is the single point of truth for reading/writing option values from the backend.
 """
 
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
+from dataclasses import dataclass
 import os
 import json
 
@@ -74,7 +75,37 @@ def get_current_checkpoint(default: str | None = None) -> str | None:
 
 
 __all__ = [
-    'get_value', 'set_values',
+    'get_value', 'set_values', 'get_snapshot',
     'get_selected_vae', 'get_additional_modules',
     'get_mode', 'get_engine', 'get_current_checkpoint',
 ]
+
+
+@dataclass
+class OptionsSnapshot:
+    codex_mode: str = 'Normal'
+    codex_engine: str = 'sd15'
+    sd_model_checkpoint: Optional[str] = None
+    codex_export_video: bool = False
+    selected_vae: str = 'Automatic'
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            'codex_mode': self.codex_mode,
+            'codex_engine': self.codex_engine,
+            'sd_model_checkpoint': self.sd_model_checkpoint,
+            'codex_export_video': self.codex_export_video,
+            'selected_vae': self.selected_vae,
+        }
+
+
+def get_snapshot() -> OptionsSnapshot:
+    v = _load()
+    snap = OptionsSnapshot(
+        codex_mode=str(v.get('codex_mode', 'Normal')),
+        codex_engine=str(v.get('codex_engine', 'sd15')),
+        sd_model_checkpoint=v.get('sd_model_checkpoint'),
+        codex_export_video=bool(v.get('codex_export_video', False)),
+        selected_vae=str(v.get('selected_vae', 'Automatic')),
+    )
+    return snap

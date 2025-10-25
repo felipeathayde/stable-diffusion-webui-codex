@@ -1028,7 +1028,7 @@ def build_app() -> FastAPI:
         return {"ok": True}
 
     # Native options store via Codex options facade
-    from apps.server.backend.codex.options import get_value as _opts_get, set_values as _opts_set_many  # type: ignore
+    from apps.server.backend.codex.options import get_value as _opts_get, set_values as _opts_set_many, get_snapshot as _opts_snapshot  # type: ignore
 
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
@@ -1102,7 +1102,7 @@ def build_app() -> FastAPI:
             seed=seed_val,
             batch_size=batch_size,
             metadata={
-                "mode": str(_opts_get('codex_mode', 'Normal')),
+                "mode": _opts_snapshot().codex_mode,
                 "styles": prompt_styles,
                 "distilled_cfg_scale": distilled_cfg_scale,
                 "hr": bool(enable_hr),
@@ -1128,8 +1128,9 @@ def build_app() -> FastAPI:
             extras={},
         )
 
-        engine_key = str(_opts_get('codex_engine', 'sd15'))
-        model_ref = _opts_get('sd_model_checkpoint', None)
+        snap = _opts_snapshot()
+        engine_key = snap.codex_engine
+        model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
     def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
@@ -1259,8 +1260,9 @@ def build_app() -> FastAPI:
             steps=steps_val,
         )
 
-        engine_key = str(_opts_get('codex_engine', 'sd15'))
-        model_ref = _opts_get('sd_model_checkpoint', None)
+        snap = _opts_snapshot()
+        engine_key = snap.codex_engine
+        model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
@@ -1371,7 +1373,7 @@ def build_app() -> FastAPI:
             extras=extras,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
-                "mode": str(_opts_get('codex_mode', 'Normal')),
+                "mode": _opts_snapshot().codex_mode,
             },
         )
 
@@ -1388,7 +1390,7 @@ def build_app() -> FastAPI:
             else:
                 engine_key = 'wan22_14b'
         # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
-        model_ref = _opts_get('sd_model_checkpoint', None)
+        model_ref = _opts_snapshot().sd_model_checkpoint
         try:
             wh = extras.get('wan_high') or {}
             wl = extras.get('wan_low') or {}
@@ -1446,7 +1448,7 @@ def build_app() -> FastAPI:
             extras=extras,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
-                "mode": str(_opts_get('codex_mode', 'Normal')),
+                "mode": _opts_snapshot().codex_mode,
             },
         )
 
@@ -1463,7 +1465,7 @@ def build_app() -> FastAPI:
             else:
                 engine_key = 'wan22_14b'
         # Choose model_ref from WAN extras when provided
-        model_ref = _opts_get('sd_model_checkpoint', None)
+        model_ref = _opts_snapshot().sd_model_checkpoint
         try:
             wh = extras.get('wan_high') or {}
             wl = extras.get('wan_low') or {}
@@ -1506,7 +1508,7 @@ def build_app() -> FastAPI:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     orch = InferenceOrchestrator()
-                    engine_opts = {"export_video": bool(_opts_get('codex_export_video', False))}
+                    engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
                     for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if isinstance(ev, ProgressEvent):
                             push({

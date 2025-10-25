@@ -126,6 +126,12 @@ def ensure_repo_minimal_files(
                 "text_encoder_2/*model*.bin",
             }
         )
+    # Optional: include VAE weights when explicitly requested by caller (e.g., GGUF runtime)
+    if any(k in (include or ()) for k in ("vae_weights", "weights_all")):
+        patterns.update({
+            "vae/*.safetensors",
+            "vae/*model*.bin",
+        })
     if "scheduler" in need:
         patterns.update(
             {

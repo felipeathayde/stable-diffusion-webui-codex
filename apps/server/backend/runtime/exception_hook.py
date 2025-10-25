@@ -80,6 +80,9 @@ def install_exception_hooks(log_dir: Optional[str] = None, file_path: Optional[s
             except Exception:
                 # Avoid recursive failures
                 pass
+        # Optionally terminate the process after dump to surface 1-by-1 errors
+        if (os.environ.get("CODEX_STRICT_EXIT", "1") or "").strip() not in ("0", "false", "False"):
+            os._exit(1)
 
     def _thread_hook(args):  # type: ignore[no-untyped-def]
         try:
@@ -90,6 +93,8 @@ def install_exception_hooks(log_dir: Optional[str] = None, file_path: Optional[s
                     _orig_threading_hook(args)
                 except Exception:
                     pass
+        if (os.environ.get("CODEX_STRICT_EXIT", "1") or "").strip() not in ("0", "false", "False"):
+            os._exit(1)
 
     sys.excepthook = _dump_and_forward
     if hasattr(threading, "excepthook"):
@@ -177,4 +182,3 @@ def _stderr_notice(path: str) -> None:
 
 def get_log_path() -> Optional[str]:
     return _log_path
-

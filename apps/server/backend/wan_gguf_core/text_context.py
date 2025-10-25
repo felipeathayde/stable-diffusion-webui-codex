@@ -155,23 +155,36 @@ def encode_with_pipeline(model_dir: str, prompt: str, negative: Optional[str], *
 
 
 def get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None):
+    """Strict resolver: fail fast with actionable error if missing.
+
+    We no longer fall back to a Diffusers pipeline when the tokenizer/encoder
+    cannot be resolved locally. This makes errors explicit and surfaces a
+    full traceback early (caught by the global hooks).
+    """
+    # Resolve tokenizer and text encoder first
+    tk_dir = tokenizer_dir
+    te_dir = text_encoder_dir
+    tried = []
     try:
-        # Resolve tokenizer automatically if not provided or invalid
-        tk_dir = tokenizer_dir
-        te_dir = text_encoder_dir
-        try:
-            from .tokenizer_resolver import ensure_tokenizer, ensure_text_encoder
-            cand = [tokenizer_dir, text_encoder_dir, os.path.join(model_dir, 'tokenizer'), model_dir]
-            tk_path, _info_tk = ensure_tokenizer(model_key=model_key, candidates=cand)
-            if tk_path:
-                tk_dir = tk_path
-            # Resolve text encoder similarly (may download weights)
-            ecand = [text_encoder_dir, os.path.join(model_dir, 'text_encoder'), model_dir]
-            te_path, _info_te = ensure_text_encoder(model_key=model_key, candidates=ecand)
-            if te_path:
-                te_dir = te_path
-        except Exception:
-            pass
-        return encode_with_text_encoder(model_dir, prompt, negative, device=device, dtype=dtype, text_encoder_dir=te_dir, tokenizer_dir=tk_dir)
-    except Exception:
-        return encode_with_pipeline(model_dir, prompt, negative, device=device, dtype=dtype, vae_dir=vae_dir)
+        from .tokenizer_resolver import ensure_tokenizer, ensure_text_encoder
+        cand = [tokenizer_dir, text_encoder_dir, os.path.join(model_dir, 'tokenizer'), model_dir]
+        tk_path, info_tk = ensure_tokenizer(model_key=model_key, candidates=cand)
+        if tk_path:
+            tk_dir = tk_path
+            tried.append(f"tokenizer:{info_tk}")
+        ecand = [text_encoder_dir, os.path.join(model_dir, 'text_encoder'), model_dir]
+        te_path, info_te = ensure_text_encoder(model_key=model_key, candidates=ecand)
+        if te_path:
+            te_dir = te_path
+            tried.append(f"text_encoder:{info_te}")
+    except Exception as e:
+        # Surface resolver failures
+        raise RuntimeError(f"tokenizer/text_encoder resolver failed: {e}")
+
+    if not tk_dir or not te_dir:
+        raise FileNotFoundError(
+            f"WAN22 text context requires tokenizer+encoder; resolved tokenizer={tk_dir} encoder={te_dir}; tried={tried or 'local/vendored/preset'}"
+        )
+
+    # Encode using the resolved components
+    return encode_with_text_encoder(model_dir, prompt, negative, device=device, dtype=dtype, text_encoder_dir=te_dir, tokenizer_dir=tk_dir)

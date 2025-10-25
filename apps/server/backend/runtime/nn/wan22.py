@@ -870,6 +870,10 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
 
     # Prepare UNet (High stage) and text context
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
+    # Determine model key for tokenizer/encoder presets
+    _p = os.path.basename(hi_path).lower()
+    _variant = '5b' if '5b' in _p else '14b'
+    _model_key = f"wan_t2v_{_variant}"
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -879,7 +883,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         text_encoder_dir=cfg.text_encoder_dir,
         tokenizer_dir=cfg.tokenizer_dir,
         vae_dir=cfg.vae_dir,
-        model_key='wan22',
+        model_key=_model_key,
     )
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
@@ -995,6 +999,9 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
 
     # Text embeds
+    _p = os.path.basename(hi_path).lower()
+    _variant = '5b' if '5b' in _p else '14b'
+    _model_key = f"wan_i2v_{_variant}"
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -1004,7 +1011,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         text_encoder_dir=cfg.text_encoder_dir,
         tokenizer_dir=cfg.tokenizer_dir,
         vae_dir=cfg.vae_dir,
-        model_key='wan22',
+        model_key=_model_key,
     )
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)

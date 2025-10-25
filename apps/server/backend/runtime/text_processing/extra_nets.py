@@ -89,7 +89,7 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
         return ''
 
     # Also detect control tags with custom patterns
-    control_re = re.compile(r"<\s*(clip_skip|sampler|scheduler|merge|tm)\s*:\s*([^:>]+)(?::([^:>]+))?\s*>", re.IGNORECASE)
+    control_re = re.compile(r"<\s*(clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise)\s*:\s*([^:>]+)(?::([^:>]+))?\s*>", re.IGNORECASE)
     cleaned = control_re.sub(_repl, _TAG_RE.sub(_repl, prompt))
     # Collapse duplicated spaces
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()

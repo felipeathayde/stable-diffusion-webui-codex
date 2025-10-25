@@ -1137,6 +1137,52 @@ def build_app() -> FastAPI:
         updated = _opts_set_many(updates)
         return {"updated": updated}
 
+    @app.post('/api/options/validate')
+    def validate_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Dry-run options validation; returns accepted and rejected keys with reasons.
+
+        Shape: { accepted: {k:v}, rejected: {k: reason} }
+        """
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='invalid payload')
+        if not _settings_registry_ok:
+            return {"accepted": dict(payload), "rejected": {}}
+        try:
+            idx = _field_index()  # type: ignore[name-defined]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"registry unavailable: {e}")
+        accepted: Dict[str, Any] = {}
+        rejected: Dict[str, str] = {}
+        for k, v in payload.items():
+            f = idx.get(k)
+            if not f:
+                rejected[k] = 'unknown key'
+                continue
+            try:
+                if getattr(f, 'choices', None) and isinstance(f.choices, list) and v not in f.choices:
+                    rejected[k] = 'not in choices'
+                    continue
+                if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
+                    num = float(v)
+                    lo = getattr(f, 'min', None); hi = getattr(f, 'max', None)
+                    if isinstance(lo, (int, float)) and num < lo:
+                        rejected[k] = f'below min {lo}'
+                        continue
+                    if isinstance(hi, (int, float)) and num > hi:
+                        rejected[k] = f'above max {hi}'
+                        continue
+                    accepted[k] = num
+                elif getattr(f, 'type', None) == _SettingType.CHECKBOX:
+                    if isinstance(v, str):
+                        accepted[k] = v.strip().lower() in ('1','true','yes','on')
+                    else:
+                        accepted[k] = bool(v)
+                else:
+                    accepted[k] = v
+            except Exception:
+                rejected[k] = 'invalid value'
+        return {"accepted": accepted, "rejected": rejected}
+
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
         prompt = _p.require(payload, 'txt2img_prompt') or ''
         negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''

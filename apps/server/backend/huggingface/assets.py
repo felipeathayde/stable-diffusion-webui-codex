@@ -7,24 +7,33 @@ from typing import Iterable
 
 
 def _has_config(local_path: str) -> bool:
-    return os.path.isfile(os.path.join(local_path, "model_index.json")) or os.path.isfile(
-        os.path.join(local_path, "config.json")
+    candidates = (
+        "model_index.json",
+        "configuration.json",
+        "config.json",
     )
+    for name in candidates:
+        if os.path.isfile(os.path.join(local_path, name)):
+            return True
+    # WAN repositories place configs under stage directories
+    for stage in ("high_noise_model", "low_noise_model"):
+        if os.path.isfile(os.path.join(local_path, stage, "config.json")):
+            return True
+    return False
 
 
 def _has_tokenizer(local_path: str) -> bool:
-    def _dir_has_tok(dir_name: str) -> bool:
-        base = os.path.join(local_path, dir_name)
-        if not os.path.isdir(base):
-            return False
-        if os.path.isfile(os.path.join(base, "tokenizer.json")):
+    for root, _, files in os.walk(local_path):
+        files = set(files)
+        if {"tokenizer.json", "tokenizer_config.json"}.issubset(files):
             return True
-        vocab = os.path.join(base, "vocab.json")
-        merges = os.path.join(base, "merges.txt")
-        model = os.path.join(base, "tokenizer.model")
-        return (os.path.isfile(vocab) and os.path.isfile(merges)) or os.path.isfile(model)
-
-    return _dir_has_tok("tokenizer") and _dir_has_tok("tokenizer_2")
+        if {"spiece.model", "tokenizer_config.json"}.issubset(files):
+            return True
+        if {"tokenizer.model", "tokenizer_config.json"}.issubset(files):
+            return True
+        if {"vocab.json", "merges.txt"}.issubset(files):
+            return True
+    return False
 
 
 def _has_scheduler(local_path: str) -> bool:
@@ -77,7 +86,13 @@ def ensure_repo_minimal_files(
 
     patterns: set[str] = set()
     if "config" in need:
-        patterns.update({"model_index.json", "config.json"})
+        patterns.update({
+            "model_index.json",
+            "configuration.json",
+            "config.json",
+            "high_noise_model/config.json",
+            "low_noise_model/config.json",
+        })
     if "tokenizer" in need:
         patterns.update(
             {
@@ -95,6 +110,15 @@ def ensure_repo_minimal_files(
                 "tokenizer_2/*.json",
                 "tokenizer_2/*.txt",
                 "tokenizer_2/*.model",
+                "google/umt5-xxl/tokenizer.json",
+                "google/umt5-xxl/tokenizer_config.json",
+                "google/umt5-xxl/vocab.json",
+                "google/umt5-xxl/merges.txt",
+                "google/umt5-xxl/tokenizer.model",
+                "google/umt5-xxl/spiece.model",
+                "google/umt5-xxl/*.json",
+                "google/umt5-xxl/*.model",
+                "google/umt5-xxl/*.txt",
             }
         )
     if "scheduler" in need:

@@ -154,3 +154,12 @@ export interface ApiTabMeta { createdAt: string; updatedAt: string }
 export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
 export interface TabsResponse { version: number; tabs: ApiTab[] }
 export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>} 
+
+// Model inventory (for populating selects)
+export interface InventoryResponse {
+  vaes: Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>
+  text_encoders: Record<string, Array<{ subdir: string; type: string; hidden_size?: number | null; projection?: boolean; vocab_size?: number | null }>>
+  wan22: { gguf: Array<{ name: string; path: string; stage: 'high' | 'low' | 'unknown' }> }
+  tokenizers: Array<{ name: string; path: string }>
+  text_encoder_dirs: Array<{ name: string; path: string }>
+}

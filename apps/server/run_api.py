@@ -918,6 +918,51 @@ def build_app() -> FastAPI:
             current = models[0]["name"] if models else None
         return {"models": models, "current": current, "models_info": models_info}
 
+    @app.get('/api/models/inventory')
+    def list_models_inventory() -> Dict[str, Any]:
+        """Inventory of model-related assets discovered on startup.
+
+        Groups:
+        - vaes: describe_vaes()
+        - text_encoders: describe_text_encoders()
+        - wan22: gguf files under models/ (with stage hints)
+        - tokenizers: tokenizer directories in vendored HF cache
+        """
+        from apps.server.backend.registry.vae import describe_vaes as _desc_vaes
+        from apps.server.backend.registry.text_encoders import describe_text_encoders as _desc_te
+        from apps.server.backend.registry.wan22 import list_wan22_gguf as _list_wan
+        from apps.server.backend.registry.tokenizers import list_tokenizers as _list_tok
+        from apps.server.backend.registry.text_encoder_dirs import list_text_encoder_dirs as _list_te_dirs
+
+        try:
+            vaes = _desc_vaes()
+        except Exception as ex:
+            vaes = []
+        try:
+            text_encoders = _desc_te()
+        except Exception:
+            text_encoders = {}
+        try:
+            wan22 = [{"name": e.name, "path": e.path, "stage": e.stage} for e in _list_wan()]
+        except Exception:
+            wan22 = []
+        try:
+            tokenizers = _list_tok()
+        except Exception:
+            tokenizers = []
+        try:
+            text_encoder_dirs = _list_te_dirs()
+        except Exception:
+            text_encoder_dirs = []
+
+        return {
+            "vaes": vaes,
+            "text_encoders": text_encoders,
+            "text_encoder_dirs": text_encoder_dirs,
+            "wan22": {"gguf": wan22},
+            "tokenizers": tokenizers,
+        }
+
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:
         from apps.server.backend.engines.util.schedulers import SamplerKind

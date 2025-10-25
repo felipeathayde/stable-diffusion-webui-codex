@@ -99,12 +99,13 @@
 - Units: use `rem` for all measurements (sizes, radii, borders, shadows, spacing). Coherent exceptions are tolerable.
  
 ## Repository Map
-- `backend/` – server-side services, request handling, memory management helpers.
+- `apps/server/backend/` – server-side services, request handling, runtime/nn/ops, engines
 - `modules/` and `modules_forge/` – core Stable Diffusion pipelines, attention, schedulers, localization files.
 - `scripts/` – repeatable maintenance tasks, diagnostics, and automation helpers (prefer these over bespoke shell snippets).
 - `models/` – local weights and checkpoints (never commit contents); use symlinks or `.gitignore` patterns to avoid tracking.
 - `codex/` – internal documentation, roadmaps, and operational logs; update these whenever behaviour, contracts, or processes evolve.
 - `legacy/` – snapshot of legacy WebUI code, for REFERENCE only (read-only).
+- `DEPRECATED/` – historical code moved out of active tree (do not import).
 
 ## Legacy Code Policy (read-only)
 - `legacy/` is a historical reference. DO NOT modify, move, or remove files under `legacy/`.

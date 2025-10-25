@@ -1,22 +1,124 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
+
+import torch
+
+from . import sampling_function_inner, sampling_prepare, sampling_cleanup
+from .condition import compile_conditions
+from ...core.state import state as backend_state
 
 
 class CodexSampler:
-    """Native sampler façade for engines.
+    """Minimal native sampler for txt2img using an Euler ODE loop.
 
-    This class will call into runtime.sampling once the unified driver is wired.
-    For now, any attempt to sample raises an explicit NotImplementedError to
-    avoid falling back to legacy behavior.
+    - Uses the model's predictor to derive a sigma schedule from sigma_max→sigma_min.
+    - Calls `sampling_function_inner` (CFG and condition assembly) each step.
+    - Updates `backend_state` for progress reporting.
+    - No ancestral noise yet; samplers other than Euler will be added iteratively.
     """
 
-    def __init__(self, sd_model: Any) -> None:
+    def __init__(self, sd_model: Any, *, algorithm: str | None = None) -> None:
         self.sd_model = sd_model
+        self.algorithm = (algorithm or "euler a").strip().lower()
 
-    def sample(self, processing, noise, cond, uncond, image_conditioning=None):  # noqa: D401
-        raise NotImplementedError("Codex sampler is not implemented yet for txt2img")
+    def _sigma_bounds(self, model) -> tuple[float, float]:
+        pred = getattr(model, "predictor", None)
+        if pred is None:
+            raise RuntimeError("Model predictor missing; cannot derive sigma schedule")
+        smin = float(getattr(pred, "sigma_min").item() if hasattr(pred.sigma_min, "item") else pred.sigma_min)
+        smax = float(getattr(pred, "sigma_max").item() if hasattr(pred.sigma_max, "item") else pred.sigma_max)
+        # ensure smax >= smin
+        if smax < smin:
+            smin, smax = smax, smin
+        return smin, smax
+
+    @torch.inference_mode()
+    def sample(
+        self,
+        processing: Any,
+        noise: torch.Tensor,
+        cond: Any,
+        uncond: Optional[Any],
+        image_conditioning: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        unet = self.sd_model.forge_objects.unet
+        model = unet.model
+
+        steps = int(getattr(processing, "steps", 20))
+        cfg_scale = float(getattr(processing, "cfg_scale", 7.0))
+
+        # Prepare GPU residency and model options
+        sampling_prepare(unet, noise)
+
+        # Initial latent at sigma_max
+        smin, smax = self._sigma_bounds(model)
+        sigmas = torch.linspace(smax, smin, steps + 1, device=noise.device, dtype=noise.dtype)
+        x = model.predictor.noise_scaling(sigmas[:1], noise, torch.zeros_like(noise))
+
+        # Compile conditions
+        compiled_cond = compile_conditions(cond)
+        compiled_uncond = compile_conditions(uncond) if uncond is not None else None
+
+        # Progress state
+        backend_state.start(job_count=1, sampling_steps=steps)
+
+        # Sampling loop
+        for i in range(steps):
+            sigma = sigmas[i]
+            sigma_next = sigmas[i + 1]
+            sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=x.dtype)
+
+            denoised = sampling_function_inner(
+                model,
+                x,
+                sigma_batch,
+                compiled_uncond,
+                compiled_cond,
+                cfg_scale,
+                unet.model_options,
+                seed=None,
+                return_full=False,
+            )
+
+            # Convert denoised sample x0 to epsilon
+            # eps = (x - x0) / sigma
+            eps = (x - denoised) / max(float(sigma), 1e-8)
+
+            if self.algorithm in ("euler", "euler ode", "ode"):
+                # Euler ODE update: x_{t+1} = x_t - (sigma - sigma_next) * eps
+                x = x - (float(sigma) - float(sigma_next)) * eps
+            elif self.algorithm in ("euler a", "euler_ancestral", "ancestral"):
+                # Euler ancestral: split into deterministic step + noise
+                sigma = float(sigma); sigma_next = float(sigma_next)
+                if sigma_next <= 0.0:
+                    # final step goes deterministic
+                    x = denoised
+                else:
+                    # variance preserving update in sigma space
+                    sigma_up_sq = max(sigma_next**2 * (sigma**2 - sigma_next**2) / max(sigma**2, 1e-8), 0.0)
+                    sigma_up = sigma_up_sq ** 0.5
+                    sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
+                    # deterministic part to x0 + sigma_down*eps
+                    x = denoised + sigma_down * eps
+                    # add fresh noise
+                    noise = torch.randn_like(x)
+                    x = x + sigma_up * noise
+            elif self.algorithm in ("ddim",):
+                # Deterministic DDIM-like step in sigma domain (eta=0)
+                x = denoised + float(sigma_next) * eps
+            else:
+                # default to Euler A
+                sigma = float(sigma); sigma_next = float(sigma_next)
+                sigma_up_sq = max(sigma_next**2 * (sigma**2 - sigma_next**2) / max(sigma**2, 1e-8), 0.0)
+                sigma_up = sigma_up_sq ** 0.5
+                sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
+                x = denoised + sigma_down * eps + sigma_up * torch.randn_like(x)
+
+            backend_state.tick(sampling_step=i + 1)
+
+        sampling_cleanup(unet)
+        return x
 
 
 __all__ = ["CodexSampler"]
-

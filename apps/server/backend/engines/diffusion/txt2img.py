@@ -154,7 +154,8 @@ class Txt2ImgRuntime:
         )
 
     def _ensure_sampler(self) -> None:
-        self.processing.sampler = CodexSampler(self.processing.sd_model)
+        algo = getattr(self.processing, "sampler_name", None)
+        self.processing.sampler = CodexSampler(self.processing.sd_model, algorithm=algo)
         latent_channels = getattr(
             self.processing.sd_model.forge_objects_after_applying_lora.vae,
             "latent_channels",

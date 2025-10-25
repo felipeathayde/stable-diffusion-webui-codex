@@ -20,8 +20,8 @@ Estrita/Políticas
 - Sem guardas automáticos de política: a disciplina é documental e de revisão. Violações (ex.: imports proibidos) devem ser rejeitadas em revisão de código.
 
 Imports/Aliases
-- Só engines/ e runtime/ através do façade `apps.server.backend` quando for público
-- Internos podem importar de runtime submódulos diretamente quando necessário, sem criar ciclos
+- Use `apps.server.backend.modules.*` para acessar o stack A1111 quando ainda for necessário. Não use `modules.*` diretamente.
+- Engines e runtime podem importar submódulos internos diretamente quando necessário (evitar ciclos).
 
 Assets
 - Diffusers: organizar em subpastas padrão (tokenizer/, text_encoder[/_2]/, transformer|unet/, vae/, scheduler/); model_index.json presente

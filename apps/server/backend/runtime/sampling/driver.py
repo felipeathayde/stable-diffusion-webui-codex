@@ -45,6 +45,9 @@ class CodexSampler:
         cond: Any,
         uncond: Optional[Any],
         image_conditioning: Optional[torch.Tensor] = None,
+        *,
+        init_latent: Optional[torch.Tensor] = None,
+        start_at_step: int | None = None,
     ) -> torch.Tensor:
         unet = self.sd_model.forge_objects.unet
         model = unet.model
@@ -63,7 +66,14 @@ class CodexSampler:
         # Initial latent at sigma_max
         smin, smax = self._sigma_bounds(model)
         sigmas = torch.linspace(smax, smin, steps + 1, device=noise.device, dtype=noise.dtype)
-        x = model.predictor.noise_scaling(sigmas[:1], noise, torch.zeros_like(noise))
+        # Starting latent
+        start_idx = int(start_at_step or 0)
+        start_idx = max(0, min(start_idx, steps - 1))
+        if init_latent is not None:
+            # Start from provided latent with noise at sigma[start_idx]
+            x = init_latent + float(sigmas[start_idx]) * noise
+        else:
+            x = model.predictor.noise_scaling(sigmas[:1], noise, torch.zeros_like(noise))
 
         if self._log_enabled:
             self._logger.info("sampler algorithm=%s steps=%d sigma_max=%.6g sigma_min=%.6g", self.algorithm, steps, float(smax), float(smin))
@@ -87,7 +97,7 @@ class CodexSampler:
                         entry['model_conds']['c_concat'] = Condition(image_conditioning)
 
         # Progress state
-        backend_state.start(job_count=1, sampling_steps=steps)
+        backend_state.start(job_count=1, sampling_steps=steps - start_idx)
 
         # Sampling loop
         eps_prev: Optional[torch.Tensor] = None
@@ -95,7 +105,7 @@ class CodexSampler:
         strict = str(os.getenv("CODEX_SAMPLER_STRICT", "1")).lower() in ("1","true","yes","on")
         import time as _time
         t0 = _time.perf_counter()
-        for i in range(steps):
+        for i in range(start_idx, steps):
             sigma = sigmas[i]
             sigma_next = sigmas[i + 1]
             sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=x.dtype)

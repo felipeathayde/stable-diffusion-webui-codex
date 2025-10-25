@@ -12,23 +12,23 @@
             <div class="test-grid test-grid-two">
               <div class="field-stack">
                 <label class="label" for="vaeDir">VAE (input list)</label>
-                <input id="vaeDir" class="ui-input" list="dl-vaes" v-model="state.vaeDir" placeholder="/models/VAE/*.safetensors" />
+                <input id="vaeDir" class="ui-input" list="dl-vaes" v-model="state.vaeDir" placeholder="/models/VAE/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-vaes">
-                  <option v-for="opt in options.vaes" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.vaes" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div class="field-stack">
                 <label class="label" for="textEncoderDir">Text Encoder (input list)</label>
-                <input id="textEncoderDir" class="ui-input" list="dl-te" v-model="state.textEncoderDir" placeholder="/models/text-encoder/*.safetensors" />
+                <input id="textEncoderDir" class="ui-input" list="dl-te" v-model="state.textEncoderDir" placeholder="/models/text-encoder/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-te">
-                  <option v-for="opt in options.textEncoders" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.textEncoders" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div class="field-stack">
                 <label class="label" for="metadataDir">Metadata Dir (input list)</label>
-                <input id="metadataDir" class="ui-input" list="dl-meta" v-model="state.metadataDir" placeholder="apps/server/backend/huggingface/<org>/<repo>" />
+                <input id="metadataDir" class="ui-input" list="dl-meta" v-model="state.metadataDir" placeholder="apps/server/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-meta">
-                  <option v-for="opt in options.metadata" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.metadata" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
             </div>
@@ -91,9 +91,9 @@
             <div class="test-grid test-grid-three">
               <div class="field-stack">
                 <label class="label" for="highModel">High Model (.gguf, input list)</label>
-                <input id="highModel" class="ui-input" list="dl-wan-high" v-model="state.high.modelDir" placeholder="/models/wan22/*High*.gguf" />
+                <input id="highModel" class="ui-input" list="dl-wan-high" v-model="state.high.modelDir" placeholder="/models/wan22/*High*.gguf" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-wan-high">
-                  <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div>
@@ -113,9 +113,9 @@
                 </label>
                 <div v-if="state.high.useLora">
                   <label class="label" for="highLora">LoRA (input list)</label>
-                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/Lora/*.safetensors" />
+                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/Lora/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                   <datalist id="dl-lora">
-                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                   </datalist>
                 </div>
               </div>
@@ -131,9 +131,9 @@
             <div class="test-grid test-grid-three">
               <div class="field-stack">
                 <label class="label" for="lowModel">Low Model (.gguf, input list)</label>
-                <input id="lowModel" class="ui-input" list="dl-wan-low" v-model="state.low.modelDir" placeholder="/models/wan22/*Low*.gguf" />
+                <input id="lowModel" class="ui-input" list="dl-wan-low" v-model="state.low.modelDir" placeholder="/models/wan22/*Low*.gguf" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-wan-low">
-                  <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div>
@@ -258,6 +258,15 @@ const options = reactive({
   wanLow: [] as Array<{ name: string; path: string }>,
 })
 
+const maps = reactive({
+  vae: {} as Record<string, string>,
+  te: {} as Record<string, string>,
+  meta: {} as Record<string, string>,
+  lora: {} as Record<string, string>,
+  wanHigh: {} as Record<string, string>,
+  wanLow: {} as Record<string, string>,
+})
+
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
 function stopStream(): void { if (unsubscribe) { unsubscribe(); unsubscribe = null } }
@@ -282,12 +291,13 @@ function readFileAsDataURL(file: File): Promise<string> {
     const gguf = inv.wan22?.gguf || []
     options.wanHigh = gguf.filter((e: any) => e.stage === 'high').map((e: any) => ({ name: e.name, path: e.path }))
     options.wanLow = gguf.filter((e: any) => e.stage === 'low').map((e: any) => ({ name: e.name, path: e.path }))
-    // Defaults
-    if (!state.vaeDir && options.vaes.length) state.vaeDir = options.vaes[0].path
-    if (!state.textEncoderDir && options.textEncoders.length) state.textEncoderDir = options.textEncoders[0].path
-    if (!state.metadataDir && options.metadata.length) state.metadataDir = options.metadata[0].path
-    if (!state.high.modelDir && options.wanHigh.length) state.high.modelDir = options.wanHigh[0].path
-    if (!state.low.modelDir && options.wanLow.length) state.low.modelDir = options.wanLow[0].path
+    // Build name->path maps for resolution at submit
+    maps.vae = Object.fromEntries(options.vaes.map((x) => [x.name, x.path]))
+    maps.te = Object.fromEntries(options.textEncoders.map((x) => [x.name, x.path]))
+    maps.meta = Object.fromEntries(options.metadata.map((x) => [x.name, x.path]))
+    maps.lora = Object.fromEntries(options.loras.map((x) => [x.name, x.path]))
+    maps.wanHigh = Object.fromEntries(options.wanHigh.map((x) => [x.name, x.path]))
+    maps.wanLow = Object.fromEntries(options.wanLow.map((x) => [x.name, x.path]))
   } catch (err) {
     console.error('[inventory] failed to load', err)
   }
@@ -314,16 +324,23 @@ async function generate(): Promise<void> {
   errorMessage.value = ''
   framesResult.value = []
   try {
+    const resolve = (val: string, map: Record<string, string>) => (map && map[val]) ? map[val] : val
+    const highModel = resolve(state.high.modelDir, maps.wanHigh)
+    const lowModel = resolve(state.low.modelDir, maps.wanLow)
+    const vaePath = resolve(state.vaeDir, maps.vae)
+    const tePathOrDir = resolve(state.textEncoderDir, maps.te)
+    const metaDir = resolve(state.metadataDir, maps.meta)
+
     const extras: Record<string, unknown> = {
-      wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_dir: state.high.modelDir || undefined },
-      wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_dir: state.low.modelDir || undefined },
+      wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_dir: highModel || undefined },
+      wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_dir: lowModel || undefined },
       wan_format: state.wanFormat,
-      wan_vae_path: state.vaeDir || undefined,
-      wan_text_encoder_dir: state.textEncoderDir || undefined,
-      wan_tokenizer_dir: state.tokenizerDir || undefined,
+      wan_vae_path: vaePath || undefined,
+      wan_text_encoder_dir: tePathOrDir || undefined,
+      wan_metadata_dir: metaDir || undefined,
     }
-    if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = state.high.loraPath; (extras.wan_high as any).lora_weight = state.high.loraWeight }
-    if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = state.low.loraPath; (extras.wan_low as any).lora_weight = state.low.loraWeight }
+    if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = resolve(state.high.loraPath, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
+    if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = resolve(state.low.loraPath, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
     if (state.useInitImage && state.initImageData) {
       const payload = {
         __strict_version: 1,

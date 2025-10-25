@@ -27,6 +27,7 @@ import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
+from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
 
@@ -74,17 +75,6 @@ def _patch_unembed3d(tokens, w, out_shape):
 
 
 def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None):
-    # If caller didn't provide explicit dirs and local model_dir lacks tokenizer/, try to
-    # populate minimal files first (like legacy Flux/Chroma do) so that the fast
-    # transformers path succeeds without needing a full Diffusers pipeline.
-    try:
-        if not tokenizer_dir and not os.path.isdir(os.path.join(model_dir, 'tokenizer')):
-            from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
-            ensure_repo_minimal_files(_wan_repo_candidates_from_key(model_key), model_dir, offline=False)
-    except Exception:
-        # Best‑effort; we will still fall back below if transformers path fails
-        pass
-
     # Try transformers tokenizer+encoder first
     try:
         import torch
@@ -171,59 +161,7 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
 
         # Resolve a proper repo mirror: prefer explicit env; otherwise infer from
         # model_key (wan_i2v_14b / wan_t2v_5b) and try sensible candidates.
-        def _wan_repo_candidates() -> list[str]:
-            out: list[str] = []
-            env_repo = os.environ.get('CODEX_WAN_DIFFUSERS_REPO')
-            if env_repo:
-                out.append(env_repo)
-            key = str(model_key or '').lower()
-            variant = '14B' if '14b' in key else ('5B' if '5b' in key else '')
-            mode = 'Image-to-Video' if 'i2v' in key else ('Text-to-Video' if 't2v' in key else '')
-            owner = 'Kwai-Kolors'
-            # Try the most common naming patterns first
-            if variant and mode:
-                out.append(f"{owner}/Wan2.2-{mode}-{variant}")
-            if not out:
-                # As a last resort, try both variants for both modes
-                out.extend([
-                    f"{owner}/Wan2.2-Image-to-Video-14B",
-                    f"{owner}/Wan2.2-Image-to-Video-5B",
-                    f"{owner}/Wan2.2-Text-to-Video-14B",
-                    f"{owner}/Wan2.2-Text-to-Video-5B",
-                ])
-            # Deduplicate while preserving order
-            seen: set[str] = set(); uniq: list[str] = []
-            for rid in out:
-                if rid not in seen:
-                    uniq.append(rid); seen.add(rid)
-            return uniq
-
-        # Expose a small helper for early ensure above
-        def _wan_repo_candidates_from_key(key: Optional[str]) -> list[str]:
-            base = []
-            env_repo = os.environ.get('CODEX_WAN_DIFFUSERS_REPO')
-            if env_repo:
-                base.append(env_repo)
-            k = str(key or '').lower()
-            variant = '14B' if '14b' in k else ('5B' if '5b' in k else '')
-            mode = 'Image-to-Video' if 'i2v' in k else ('Text-to-Video' if 't2v' in k else '')
-            owner = 'Kwai-Kolors'
-            if variant and mode:
-                base.append(f"{owner}/Wan2.2-{mode}-{variant}")
-            if not base:
-                base.extend([
-                    f"{owner}/Wan2.2-Image-to-Video-14B",
-                    f"{owner}/Wan2.2-Image-to-Video-5B",
-                    f"{owner}/Wan2.2-Text-to-Video-14B",
-                    f"{owner}/Wan2.2-Text-to-Video-5B",
-                ])
-            seen: set[str] = set(); uniq: list[str] = []
-            for rid in base:
-                if rid not in seen:
-                    uniq.append(rid); seen.add(rid)
-            return uniq
-
-        candidates = _wan_repo_candidates()
+        candidates = resolve_wan_repo_candidates(model_key)
         # Download minimal files directly into model_dir so WanPipeline can load from there.
         try:
             ensure_repo_minimal_files(candidates, model_dir, offline=False)

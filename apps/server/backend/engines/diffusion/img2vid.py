@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Iterator, List, Any
+from typing import Iterator, List, Any, Optional
 
 from apps.server.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Img2VidRequest
 from apps.server.backend.codex import lora as codex_lora
@@ -45,11 +45,16 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
         ex = getattr(request, 'extras', {}) or {}
         hi_ex = ex.get('wan_high') if isinstance(ex, dict) else None
         lo_ex = ex.get('wan_low') if isinstance(ex, dict) else None
-        def _s(d, k, fallback):
-            try:
-                return (d.get(k) if isinstance(d, dict) else None) or fallback
-            except Exception:
-                return fallback
+        def _s(d, k, fallback, comp_attr: Optional[str] = None):
+            if isinstance(d, dict):
+                v = d.get(k)
+                if v:
+                    return v
+            if comp_attr:
+                v = getattr(comp, comp_attr, None)
+                if v:
+                    return v
+            return fallback
         cfg = RunConfig(
             width=int(getattr(request, "width", 768) or 768),
             height=int(getattr(request, "height", 432) or 432),
@@ -60,9 +65,9 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
             device=str(getattr(comp, "device", "cuda")),
             seed=(int(getattr(request, "seed", -1)) if getattr(request, "seed", None) is not None else None),
             init_image=getattr(request, "init_image", None),
-            vae_dir=_s(ex, 'wan_vae_dir', getattr(comp, 'model_dir', None)),
-            text_encoder_dir=_s(ex, 'wan_text_encoder_dir', None),
-            tokenizer_dir=_s(ex, 'wan_tokenizer_dir', None),
+            vae_dir=_s(ex, 'wan_vae_dir', getattr(comp, 'model_dir', None), 'hf_vae_dir'),
+            text_encoder_dir=_s(ex, 'wan_text_encoder_dir', None, 'hf_text_encoder_dir'),
+            tokenizer_dir=_s(ex, 'wan_tokenizer_dir', None, 'hf_tokenizer_dir'),
             high=StageConfig(
                 model_dir=(getattr(comp, 'high_dir', None) or _s(hi_ex, 'model_dir', getattr(comp, 'model_dir', ''))),
                 sampler=str(_s(hi_ex, 'sampler', getattr(request, 'sampler', 'Automatic'))),

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 
 @dataclass
@@ -23,6 +24,10 @@ class WanComponents:
     low_dir: str | None = None
     device: str = "cpu"
     dtype: str = "fp16"
+    hf_repo_dir: Optional[str] = None
+    hf_text_encoder_dir: Optional[str] = None
+    hf_tokenizer_dir: Optional[str] = None
+    hf_vae_dir: Optional[str] = None
 
 
 @dataclass
@@ -55,5 +60,56 @@ class WanStageOptions:
         )
 
 
-__all__ = ["EngineOpts", "WanComponents", "WanStageOptions"]
+WAN_DIFFUSERS_REPO_CANDIDATES = {
+    "wan22_14b": (
+        "Kwai-Kolors/Wan2.2-Image-to-Video-14B",
+        "KwaiKolors/Wan2.2-Image-to-Video-14B",
+        "Kwai-Kolors/Wan-2-2-Image-to-Video-14B",
+    ),
+    "wan22_5b": (
+        "Kwai-Kolors/Wan2.2-Image-to-Video-5B",
+        "KwaiKolors/Wan2.2-Image-to-Video-5B",
+        "Kwai-Kolors/Wan-2-2-Image-to-Video-5B",
+    ),
+    "wan_t2v_14b": (
+        "Kwai-Kolors/Wan2.2-Text-to-Video-14B",
+        "KwaiKolors/Wan2.2-Text-to-Video-14B",
+    ),
+    "wan_t2v_5b": (
+        "Kwai-Kolors/Wan2.2-Text-to-Video-5B",
+        "KwaiKolors/Wan2.2-Text-to-Video-5B",
+    ),
+}
 
+
+def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
+    key = (model_key or "").lower()
+    for mk, repos in WAN_DIFFUSERS_REPO_CANDIDATES.items():
+        if mk in key:
+            return list(repos)
+    candidates: List[str] = []
+    env_repo = os.environ.get("CODEX_WAN_DIFFUSERS_REPO")
+    if env_repo:
+        candidates.append(env_repo)
+    owner = "Kwai-Kolors"
+    variant = "14B" if "14b" in key else ("5B" if "5b" in key else "")
+    mode = "Image-to-Video" if "i2v" in key else ("Text-to-Video" if "t2v" in key else "")
+    if variant and mode:
+        candidates.append(f"{owner}/Wan2.2-{mode}-{variant}")
+    if not candidates:
+        candidates.extend([
+            f"{owner}/Wan2.2-Image-to-Video-14B",
+            f"{owner}/Wan2.2-Image-to-Video-5B",
+            f"{owner}/Wan2.2-Text-to-Video-14B",
+            f"{owner}/Wan2.2-Text-to-Video-5B",
+        ])
+    seen: set[str] = set()
+    uniq: List[str] = []
+    for rid in candidates:
+        if rid and rid not in seen:
+            uniq.append(rid)
+            seen.add(rid)
+    return uniq
+
+
+__all__ = ["EngineOpts", "WanComponents", "WanStageOptions", "resolve_wan_repo_candidates", "WAN_DIFFUSERS_REPO_CANDIDATES"]

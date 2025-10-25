@@ -112,7 +112,13 @@ class Wan2214BEngine(BaseVideoEngine):
             comp.dtype = dty
             self._logger.info("WAN22 14B diffusers pipeline loaded: %s", p)
         except Exception as exc:
-            self._logger.warning("WAN22 14B diffusers pipeline not available (%s): %s", p, exc)
+            # Clarify that this path is optional; complementary assets may be used from vendored HF cache instead.
+            self._logger.warning(
+                "WAN22 14B diffusers pipeline not available at model_dir=%s (reason: %s). "
+                "This is expected if your model_dir isn't a Diffusers repo; the backend will use vendored HF assets or GGUF instead.",
+                p,
+                exc,
+            )
             comp.device = "cuda" if dev == "cuda" else "cpu"
             comp.dtype = dty
 

@@ -7,7 +7,7 @@
 - **NEVER** rush. Speed kills quality. Take the time required to write it right.
 - When proposing or shipping a solution, **DO NOT REINVENT THE WHEEL**. Fix root causes; skip quick fixes, hacks, and throwaway workarounds.
 - **NEVER** remove, disable, or narrow existing features to hide errors; preserve functional parity and user-facing behavior.
-- Handle errors explicitly; **DO NOT** hide them behind fallbacks.
+- **NÃO USA FALLBACK**, PORRA DO CARALHO, ERRO TEM QUE RETORNAR EXCEÇÃO COM A PORRA DA CAUSA DO ERRO.
 - **DO NOT** add catch-all helpers or duplicate checks.
 - **ENSURE** verbose, actionable logs to support debugging.
 - Rename variables or functions **ONLY** when strictly necessary.
@@ -62,7 +62,7 @@ Tip — Native LoRA usage
 - Discover adapters via `GET /api/loras` (backend registry). Set selections with `POST /api/loras/apply`.
 - Engines apply LoRA natively at generation time using `codex.lora` selections and `patchers.lora_apply`.
 
-### Git commit guide
+### QUANDO FOR COMMITAR, USA ESSA MERDA DE SEQUÊNCIA:
 1. `git status`
 2. `git branch safety/backup-$(date +%Y%m%d-%H%M%S)`
 3. `git pull --rebase`
@@ -72,7 +72,7 @@ Tip — Native LoRA usage
 7. `git commit -m "type(scope): concise summary"`
 8. `git push -u origin $(git branch --show-current)`
 
-### Git revert guide
+### QUANDO FOR DAR REVERT, USA ESSA MERDA DE SEQUÊNCIA:
 1) `git status`
 2) `git switch -c safety/backup-$(date +%Y%m%d-%H%M%S)`
 3) `git pull --rebase`
@@ -84,7 +84,7 @@ Tip — Native LoRA usage
 
 ## End-of-task documentation:
 - Log each task under `.sangoi/task-logs/` (create if missing). If present, follow `.sangoi/task-guidelines.md`. Summarize user-visible highlights in `.sangoi/CHANGELOG.md`.
-- **YOU MUST DO** an atomic commit and push; no uncommitted leftovers.
+- QUANDO TU TERMINAR O CARALHO DE UMA TASK, FAZ A PORRA DE UM COMMIT ATÔMICO E DÁ PUSH NESSA MERDA. NÃO USA `git add -A` OU SIMILARES, CARALHO.
 
 ## Global python enviroment
 - python / pip / py (user-local): wrappers live in `~/.codextools/bin`.

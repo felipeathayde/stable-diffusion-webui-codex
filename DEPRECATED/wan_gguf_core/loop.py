@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# DEPRECATED: moved out of active backend; reference only.
+
 from dataclasses import dataclass
 from typing import Optional
 

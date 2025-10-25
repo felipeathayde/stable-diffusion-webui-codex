@@ -38,6 +38,11 @@
 ## Documentation Index
 - Docs home: `codex/` — architecture, design, research, tasks, roadmaps, reports, and sprint logs.
   - Architecture (video): `codex/backend-video-architecture.md`.
+  - Canonical structure: `codex/architecture/repo-structure.md`
+  - Architecture rules: `codex/architecture/architecture-rules.md`
+  - Pipelines bible: `codex/architecture/model-pipelines-bible.md`
+  - Repository inventory: `codex/architecture/repo-inventory.md`
+  - Cleanup checklists: `codex/architecture/repo-cleanup-checklists.md`
   - Research (loading/efficiency): `codex/research/`.
   - Design/UX: `codex/design/`.
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.
@@ -96,8 +101,13 @@
 - Units: use `rem` for all measurements (sizes, radii, borders, shadows, spacing). Coherent exceptions are tolerable.
  
 ## Repository Map
+- `apps/server/backend/` – server-side services, request handling, runtime/nn/ops, engines
+- `modules/` and `modules_forge/` – core Stable Diffusion pipelines, attention, schedulers, localization files.
+- `scripts/` – repeatable maintenance tasks, diagnostics, and automation helpers (prefer these over bespoke shell snippets).
+- `models/` – local weights and checkpoints (never commit contents); use symlinks or `.gitignore` patterns to avoid tracking.
 - `codex/` – internal documentation, roadmaps, and operational logs; update these whenever behaviour, contracts, or processes evolve.
 - `legacy/` – snapshot of legacy WebUI code, for REFERENCE only (read-only).
+- `DEPRECATED/` – historical code moved out of active tree (do not import).
 
 ## Legacy Code Policy (read-only)
 - `legacy/` is a historical reference. DO NOT modify, move, or remove files under `legacy/`.

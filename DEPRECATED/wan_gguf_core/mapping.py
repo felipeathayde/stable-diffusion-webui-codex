@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# DEPRECATED: moved out of active backend; reference only.
+
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple

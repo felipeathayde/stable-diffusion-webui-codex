@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# DEPRECATED: moved out of active backend; reference only.
+
 """Auto-resolve and fetch tokenizers from Hugging Face when missing.
 
 Design
@@ -13,6 +15,7 @@ No external deps beyond stdlib (urllib). Works offline unless fetch is needed.
 import os
 import urllib.request
 from typing import Iterable, Optional, Tuple
+from pathlib import Path
 
 
 KNOWN_FILES = (
@@ -34,6 +37,17 @@ PRESET = {
         "repo": "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
         "subdir": "tokenizer",
         "cache": "Wan2.2-T2V-A14B-Diffusers",
+    },
+    # best-effort naming for 5B variants; adjust if your local layout differs
+    "wan_i2v_5b": {
+        "repo": "Wan-AI/Wan2.2-I2V-A5B-Diffusers",
+        "subdir": "tokenizer",
+        "cache": "Wan2.2-I2V-A5B-Diffusers",
+    },
+    "wan_t2v_5b": {
+        "repo": "Wan-AI/Wan2.2-T2V-A5B-Diffusers",
+        "subdir": "tokenizer",
+        "cache": "Wan2.2-T2V-A5B-Diffusers",
     },
 }
 
@@ -88,6 +102,16 @@ def ensure_tokenizer(
         if _is_tokenizer_dir(path):
             return path, f"local:{path}"
 
+    # Look under our vendored HF snapshot if present
+    try:
+        root = Path(__file__).resolve().parents[3] / "huggingface"
+        # Search up to depth 3 for a 'tokenizer' folder with expected files
+        for path in root.rglob("tokenizer"):
+            if _is_tokenizer_dir(str(path)):
+                return str(path), f"vendored:{path}"
+    except Exception:
+        pass
+
     # Then try preset
     if model_key and model_key in PRESET:
         meta = PRESET[model_key]
@@ -139,6 +163,16 @@ def ensure_text_encoder(*, model_key: Optional[str], candidates: Iterable[str]) 
             path = os.path.dirname(path)
         if _is_text_encoder_dir(path):
             return path, f"local:{path}"
+
+    # Vendored
+    try:
+        root = Path(__file__).resolve().parents[3] / "huggingface"
+        for sub in ("text_encoder",):
+            for path in root.rglob(sub):
+                if _is_text_encoder_dir(str(path)):
+                    return str(path), f"vendored:{path}"
+    except Exception:
+        pass
 
     # Preset fetch
     if model_key and model_key in PRESET:

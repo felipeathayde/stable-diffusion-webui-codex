@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# DEPRECATED: moved out of active backend; reference only.
+
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -50,4 +52,3 @@ class EulerSimpleStepper:
     def step(self, model_output, timestep, sample):
         out = self._scheduler.step(model_output, timestep, sample, return_dict=True)
         return out.prev_sample
-

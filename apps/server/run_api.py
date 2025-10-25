@@ -42,6 +42,7 @@ try:
 except Exception:
     _EXC_LOG_PATH = None
 
+
 _initialized = False
 
 

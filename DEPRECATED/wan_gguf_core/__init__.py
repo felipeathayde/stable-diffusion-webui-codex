@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# DEPRECATED: moved out of active backend; reference only.
+
 """WAN 2.2 — Native GGUF Core (skeleton, CUDA 12.8, bf16 preferred).
 
 Status

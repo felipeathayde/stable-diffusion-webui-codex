@@ -779,6 +779,18 @@ def _cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) ->
     return uncond + (cond - uncond) * float(scale)
 
 
+def _log_cuda_mem(logger: Any, label: str = "mem") -> None:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            alloc = float(torch.cuda.memory_allocated()) / (1024**2)
+            reserv = float(torch.cuda.memory_reserved()) / (1024**2)
+            total = float(torch.cuda.get_device_properties(0).total_memory) / (1024**2)
+            logger.info("[wan22.gguf] %s: cuda mem alloc=%.0fMB reserved=%.0fMB total=%.0fMB", label, alloc, reserv, total)
+    except Exception:
+        pass
+
+
 def _log_t_mapping(scheduler, timesteps, label: str, logger: Any) -> None:
     try:
         log = _get_logger(logger)
@@ -852,6 +864,9 @@ def _sample_stage_tokens(
             on_progress(step=0, total=total, percent=0.0)
         except Exception:
             pass
+    import time
+    t0 = time.perf_counter()
+    last = t0
     for i, t in enumerate(iterator):
         # Model forward: conditional and unconditional
         tt = _t_from_idx(i)
@@ -864,7 +879,13 @@ def _sample_stage_tokens(
         pct = float(i + 1) / float(max(1, total))
         if on_progress:
             try:
-                on_progress(step=i + 1, total=total, percent=pct)
+                now = time.perf_counter()
+                dt_step = now - last
+                elapsed = now - t0
+                remain = max(0, total - (i + 1))
+                eta = (elapsed / max(1, i + 1)) * remain
+                on_progress(step=i + 1, total=total, percent=pct, eta_seconds=eta, step_seconds=dt_step)
+                last = now
             except Exception:
                 pass
         elif (i + 1) % 5 == 0:
@@ -943,6 +964,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
         str(dev), str(dt), grid, (token_shape[0], token_shape[1])
     )
+    _log_cuda_mem(log, label='after-high-setup')
 
     # Sample tokens in High stage
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
@@ -1013,6 +1035,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
             on_progress(stage='low', step=0, total=total_lo, percent=0.0)
         except Exception:
             pass
+    _log_cuda_mem(log, label='before-low')
     def _t_from_idx_lo(idx: int) -> float:
         try:
             sigmas = getattr(scheduler_lo, 'sigmas', None)

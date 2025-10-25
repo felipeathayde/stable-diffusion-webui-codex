@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 import logging
 
-from apps.server.backend.engines.util.a1111_bridge import get_opts as _get_opts
-from modules import processing as _processing  # type: ignore
+from apps.server.backend.modules import shared as _shared
+from apps.server.backend.modules import processing as _processing  # type: ignore
 
 from apps.server.backend.core.requests import Img2ImgRequest, Txt2ImgRequest
 
@@ -23,7 +23,7 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> _processing.StableDiffusion
         req.seed,
         bool(req.highres_fix),
     )
-    opts = _get_opts()
+    opts = _shared.opts
     # Respect explicit enable flag inside highres_fix; a non-empty dict must not
     # implicitly enable hires. This fixes HR showing as enabled with scale=1.0.
     _hr = req.highres_fix if isinstance(req.highres_fix, dict) else {}
@@ -105,7 +105,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> _processing.StableDiffusion
         bool(getattr(req, "init_image", None)),
         bool(getattr(req, "mask", None)),
     )
-    opts = _get_opts()
+    opts = _shared.opts
     width = req.width
     height = req.height
     if getattr(req, "init_image", None) is not None:

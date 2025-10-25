@@ -3,11 +3,11 @@ from __future__ import annotations
 from contextlib import closing, nullcontext
 from typing import Callable, Optional
 
-import modules.shared as shared  # type: ignore
-from modules.processing import process_images  # type: ignore
-from modules.processing import StableDiffusionProcessing  # type: ignore  # for type hints only
-from modules.api.api import process_extra_images  # type: ignore  # reuse existing helper
-from modules.progress import add_task_to_queue, start_task, finish_task  # type: ignore
+from apps.server.backend.modules import shared  # type: ignore
+from apps.server.backend.modules.processing import process_images  # type: ignore
+from apps.server.backend.modules.processing import StableDiffusionProcessing  # type: ignore  # for type hints only
+from apps.server.backend.modules.api import process_extra_images  # type: ignore  # reuse existing helper
+from apps.server.backend.modules.progress import add_task_to_queue, start_task, finish_task  # type: ignore
 
 
 class ImageService:

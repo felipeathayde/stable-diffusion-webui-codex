@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules import shared  # type: ignore
+from apps.server.backend.modules import shared  # type: ignore
 
 
 class OptionsService:
@@ -10,12 +10,12 @@ class OptionsService:
     """
 
     def get_config(self):
-        from modules.sysinfo import get_config
+        from apps.server.backend.modules.sysinfo import get_config
 
         return get_config()
 
     def set_config(self, req: dict):
-        from modules.sysinfo import set_config
+        from apps.server.backend.modules.sysinfo import set_config
 
         set_config(req)
 

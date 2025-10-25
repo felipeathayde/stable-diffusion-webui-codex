@@ -13,13 +13,13 @@ try:  # optional – only present when LoRA extension is available
     from extensions_builtin.sd_forge_lora import networks as lora_networks
 except Exception:  # pragma: no cover - optional dependency
     lora_networks = None
-from modules.sd_models import apply_token_merging, SkipWritingToConfig
-from modules.sd_samplers_common import (
+from apps.server.backend.modules.sd_models import apply_token_merging, SkipWritingToConfig  # type: ignore
+from apps.server.backend.modules.sd_samplers_common import (  # type: ignore
     approximation_indexes,
     decode_first_stage,
     images_tensor_to_samples,
 )
-from modules.shared import opts
+from apps.server.backend.modules.shared import opts  # type: ignore
 from apps.server.backend.codex import main as codex_main
 
 

@@ -954,57 +954,28 @@ def build_app() -> FastAPI:
 
     @app.get('/api/vaes')
     def list_vaes() -> Dict[str, Any]:
-        """Return available VAE modules and current selection.
-
-        Tries the Forge discovery first (modules_forge.main_entry),
-        falling back to A1111's sd_vae.vae_dict if Forge is unavailable.
-        """
+        """Return available VAE modules and current selection (native registry)."""
+        from apps.server.backend.codex import options as _codex_opts
+        from apps.server.backend.registry.vae import list_vaes as _list_vaes
+        current = _codex_opts.get_selected_vae('Automatic')
         try:
-            from apps.server.backend.codex import options as _codex_opts
-            current = _codex_opts.get_selected_vae('Automatic')
+            choices = _list_vaes()
+            return {"vaes": choices, "current": current}
         except Exception:
-            current = getattr(_shared.opts, 'forge_selected_vae', 'Automatic')
-        try:
-            from modules_forge.main_entry import refresh_models, vae_module_list  # type: ignore
-            refresh_models()
-            choices = sorted(list(vae_module_list.keys()))
-            # Preserve canonical aliases first
-            baseline = ['Automatic', 'Built in', 'None']
-            ordered = baseline + [c for c in choices if c not in baseline]
-            return {"vaes": ordered, "current": current}
-        except Exception:
-            try:
-                import modules.sd_vae as _sd_vae  # type: ignore
-                _sd_vae.refresh_vae_list()
-                # sd_vae.vae_dict maps filename -> absolute path
-                baseline = ['Automatic', 'Built in', 'None']
-                extra = sorted(list(getattr(_sd_vae, 'vae_dict', {}).keys()))
-                ordered = baseline + [c for c in extra if c not in baseline]
-                return {"vaes": ordered, "current": current}
-            except Exception:
-                return {"vaes": [], "current": current}
+            return {"vaes": ['Automatic', 'Built in', 'None'], "current": current}
 
     @app.get('/api/text-encoders')
     def list_text_encoders() -> Dict[str, Any]:
-        """Return available text encoder modules and current selection list."""
+        """Return available text encoder modules and current selection list (native registry)."""
+        from apps.server.backend.registry.text_encoders import list_text_encoders as _list_tes
+        from apps.server.backend.codex import options as _codex_opts
         try:
-            from modules_forge.main_entry import refresh_models, text_encoder_module_list  # type: ignore
-            refresh_models()
-            choices = sorted(list(text_encoder_module_list.keys()))
-            selected: list[str] = []
-            try:
-                from apps.server.backend.codex import options as _codex_opts
-                addl = _codex_opts.get_additional_modules()
-            except Exception:
-                addl = list(getattr(_shared.opts, 'forge_additional_modules', []) or [])
-            for path in addl:
-                base = os.path.basename(str(path))
-                if base in text_encoder_module_list:
-                    selected.append(base)
-            return {"text_encoders": choices, "current": selected}
+            mapping = _list_tes()
+            # current selection from codex options (paths/names as configured)
+            selected = _codex_opts.get_additional_modules()
+            return {"text_encoders": mapping, "current": selected}
         except Exception:
-            # No discovery without Forge – return empty list rather than failing
-            return {"text_encoders": [], "current": []}
+            return {"text_encoders": {}, "current": []}
 
     @app.get('/api/embeddings')
     def list_embeddings() -> Dict[str, Any]:

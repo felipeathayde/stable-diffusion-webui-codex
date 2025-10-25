@@ -23,9 +23,11 @@ Imports/Aliases
 - Não use `modules.*` nem qualquer façade para ele dentro de `apps/server/backend/**`.
 - Engines e runtime importam apenas código nativo sob `apps/server/backend/**` (evitar ciclos).
 
-Assets
-- Diffusers: organizar em subpastas padrão (tokenizer/, text_encoder[/_2]/, transformer|unet/, vae/, scheduler/); model_index.json presente
-- WAN: High.gguf, Low.gguf, tokenizer/ (tokenizer.json, tokenizer_config.json, spiece.model), text_encoder/ (config.json + pesos), VAE (dir ou arquivo único)
+Assets and Registries
+- Diffusers: organize in standard subfolders (tokenizer/, text_encoder[/_2]/, transformer|unet/, vae/, scheduler/) with model_index.json present.
+- WAN: High.gguf, Low.gguf, tokenizer/ (tokenizer.json, tokenizer_config.json, spiece.model), text_encoder/ (config.json + weights), and a VAE.
+- Do not rely on legacy discovery. The backend must expose native registries for VAEs, text encoders, and adapters. Discovery sources are explicit: local models/ and vendored HuggingFace trees under apps/server/backend/huggingface/.
+- When an asset is missing, raise a clear error; never “guess” silently.
 
 Checks automáticos
 - Não utilizamos validadores automáticos. Siga estritamente estas regras e os checklists nos docs.

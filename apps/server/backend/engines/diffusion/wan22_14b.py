@@ -182,6 +182,12 @@ class Wan2214BEngine(BaseVideoEngine):
                 vae_dir=vae_path,
                 text_encoder_dir=te_path,
                 metadata_dir=meta_dir,
+                # Memory/attention controls (optional extras)
+                sdpa_policy=(ex.get('gguf_sdpa_policy') if isinstance(ex, dict) else None),
+                attn_chunk_size=(int(ex.get('gguf_attn_chunk', 0)) if isinstance(ex, dict) and ex.get('gguf_attn_chunk') else None),
+                gguf_cache_policy=(ex.get('gguf_cache_policy') if isinstance(ex, dict) else None),
+                gguf_cache_limit_mb=(int(ex.get('gguf_cache_limit_mb', 0)) if isinstance(ex, dict) and ex.get('gguf_cache_limit_mb') else None),
+                log_mem_interval=(int(ex.get('gguf_log_mem_interval', 0)) if isinstance(ex, dict) and ex.get('gguf_log_mem_interval') else None),
                 high=gguf.StageConfig(
                     model_dir=self._comp.model_dir or '',
                     sampler=str(getattr(request, 'sampler', 'Euler a')),
@@ -248,6 +254,11 @@ class Wan2214BEngine(BaseVideoEngine):
                 vae_dir=vae_path,
                 text_encoder_dir=te_path,
                 metadata_dir=meta_dir,
+                sdpa_policy=(ex.get('gguf_sdpa_policy') if isinstance(ex, dict) else None),
+                attn_chunk_size=(int(ex.get('gguf_attn_chunk', 0)) if isinstance(ex, dict) and ex.get('gguf_attn_chunk') else None),
+                gguf_cache_policy=(ex.get('gguf_cache_policy') if isinstance(ex, dict) else None),
+                gguf_cache_limit_mb=(int(ex.get('gguf_cache_limit_mb', 0)) if isinstance(ex, dict) and ex.get('gguf_cache_limit_mb') else None),
+                log_mem_interval=(int(ex.get('gguf_log_mem_interval', 0)) if isinstance(ex, dict) and ex.get('gguf_log_mem_interval') else None),
                 high=gguf.StageConfig(
                     model_dir=self._comp.model_dir or '',
                     sampler=str(getattr(request, 'sampler', 'Euler a')),

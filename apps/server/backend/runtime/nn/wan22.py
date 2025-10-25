@@ -26,7 +26,7 @@ from pathlib import Path
 
 import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
-from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
+from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor, set_cache_policy as _gguf_set_cache_policy, clear_cache as _gguf_clear_cache
 from apps.server.backend.runtime import memory_management
 from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
@@ -215,7 +215,13 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
         except Exception:
             pass
     target = 'cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu'
-    vae = vae.to(device=target, dtype=torch_dtype)
+    from apps.server.backend.runtime.memory import memory_management as _mm
+    _old = getattr(_mm, 'VAE_ALWAYS_TILED', False)
+    try:
+        _mm.VAE_ALWAYS_TILED = True
+        vae = vae.to(device=target, dtype=torch_dtype)
+    finally:
+        _mm.VAE_ALWAYS_TILED = _old
     if not hasattr(init_image, 'to'):
         from PIL import Image
         import numpy as np
@@ -260,7 +266,13 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
             logger.info('[wan22.gguf] VAE decode scale=%.6f shift=%.6f', sf, sh)
         except Exception:
             pass
-    vae = vae.to(device=dev, dtype=torch_dtype)
+    from apps.server.backend.runtime.memory import memory_management as _mm
+    _old = getattr(_mm, 'VAE_ALWAYS_TILED', False)
+    try:
+        _mm.VAE_ALWAYS_TILED = True
+        vae = vae.to(device=dev, dtype=torch_dtype)
+    finally:
+        _mm.VAE_ALWAYS_TILED = _old
     B, C, T, H, W = video_latents.shape
     frames: list[Image.Image] = []
     with torch.no_grad():
@@ -436,8 +448,52 @@ def _linear(x: torch.Tensor, w: Any, b: Any | None) -> torch.Tensor:
     return torch.nn.functional.linear(x, w, b)
 
 
+try:
+    from contextlib import nullcontext
+except Exception:  # pragma: no cover
+    class nullcontext:  # type: ignore
+        def __init__(self, *a, **k):
+            ...
+        def __enter__(self):
+            return None
+        def __exit__(self, *a):
+            return False
+
+_SDPA_SETTINGS = {
+    'policy': 'mem_efficient',
+    'chunk': 0,
+}
+
+
+def _set_sdpa_settings(policy: Optional[str], chunk: Optional[int]) -> None:
+    pol = (policy or _SDPA_SETTINGS['policy']).strip().lower()
+    if pol not in ('mem_efficient', 'flash', 'math'):
+        pol = _SDPA_SETTINGS['policy']
+    ch = int(chunk) if (chunk is not None and int(chunk) > 0) else 0
+    _SDPA_SETTINGS['policy'] = pol
+    _SDPA_SETTINGS['chunk'] = ch
+
+
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
-    return torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
+    pol = _SDPA_SETTINGS['policy']
+    ch = _SDPA_SETTINGS['chunk']
+    ctx = torch.backends.cuda.sdp_kernel(
+        enable_flash=(pol == 'flash'),
+        enable_math=(pol == 'math'),
+        enable_mem_efficient=(pol == 'mem_efficient'),
+    ) if (q.is_cuda and hasattr(torch.backends, 'cuda')) else nullcontext()
+
+    if ch and ch > 0:
+        with ctx:
+            B, H, L, D = q.shape
+            out_chunks = []
+            for s in range(0, L, ch):
+                e = min(L, s + ch)
+                out_chunks.append(torch.nn.functional.scaled_dot_product_attention(q[:, :, s:e], k, v, is_causal=causal))
+            return torch.cat(out_chunks, dim=2)
+    else:
+        with ctx:
+            return torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
 
 
 def _split_heads(x: torch.Tensor, h: int) -> torch.Tensor:
@@ -678,6 +734,12 @@ class RunConfig:
     metadata_dir: Optional[str] = None
     high: Optional[StageConfig] = None
     low: Optional[StageConfig] = None
+    # Memory/attention controls (optional)
+    sdpa_policy: Optional[str] = None            # 'mem_efficient' | 'flash' | 'math'
+    attn_chunk_size: Optional[int] = None        # split attention along sequence if set (>0)
+    gguf_cache_policy: Optional[str] = None      # 'none' | 'cpu_lru'
+    gguf_cache_limit_mb: Optional[int] = None    # MB limit for cpu_lru cache
+    log_mem_interval: Optional[int] = None       # log CUDA mem every N steps if >0
 
 def _as_dtype(dtype: str):
     return {
@@ -877,6 +939,13 @@ def _sample_stage_tokens(
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample
         pct = float(i + 1) / float(max(1, total))
+        # Optional CUDA memory snapshot every N steps
+        try:
+            n = int(getattr(cfg, 'log_mem_interval', 0) or 0)
+            if n > 0 and ((i + 1) % n) == 0:
+                _log_cuda_mem(logger, label=f'stage-step-{i+1}')
+        except Exception:
+            pass
         if on_progress:
             try:
                 now = time.perf_counter()
@@ -926,6 +995,10 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+    # Configure attention and GGUF cache according to cfg (defaults emphasize memory efficiency)
+    _set_sdpa_settings(getattr(cfg, 'sdpa_policy', None), getattr(cfg, 'attn_chunk_size', None))
+    _gguf_set_cache_policy(policy=(getattr(cfg, 'gguf_cache_policy', None) or 'none'),
+                           limit_mb=int(getattr(cfg, 'gguf_cache_limit_mb', 0) or 0))
     # Early activity signal so the UI shows immediate progress
     if on_progress:
         try:
@@ -1088,6 +1161,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
             log.info("[wan22.gguf] low step %d/%d (%.1f%%)", i + 1, total_lo, pct * 100.0)
 
     frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    _gguf_clear_cache()
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames_lo

@@ -49,6 +49,14 @@
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.
 - Backend inventories: `apps/server/backend/SHIM_INVENTORY.md` (shim status/history).
 
+## Porting Protocol (Quick Checklist)
+- Do not call legacy code (`modules.*`, `modules_forge.*`, `legacy/`, `DEPRECATED/`).
+- Read the source thoroughly; list risks/side effects/globals.
+- Enumerate 5+ viable approaches; choose the most robust (non‑lazy). You may combine useful parts across options.
+- Re‑design to Codex style: dataclasses/enums, small modules, explicit errors, clear names.
+- Add validation points (logs, invariants, device/dtype/shape checks) and a clean migration path (no shims).
+- Acceptance: no legacy imports, clear API, explicit errors, rationale documented (include the five options summary), docs updated.
+
 ### Git commit guide
 1. `git status`
 2. `git branch safety/backup-$(date +%Y%m%d-%H%M%S)`

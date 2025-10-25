@@ -78,6 +78,8 @@ class CodexSampler:
         backend_state.start(job_count=1, sampling_steps=steps)
 
         # Sampling loop
+        eps_prev: Optional[torch.Tensor] = None
+        sigma_prev: Optional[float] = None
         for i in range(steps):
             sigma = sigmas[i]
             sigma_next = sigmas[i + 1]
@@ -95,8 +97,7 @@ class CodexSampler:
                 return_full=False,
             )
 
-            # Convert denoised sample x0 to epsilon
-            # eps = (x - x0) / sigma
+            # Convert denoised sample x0 to epsilon: eps = (x - x0) / sigma
             eps = (x - denoised) / max(float(sigma), 1e-8)
 
             if self.algorithm in ("euler", "euler ode", "ode"):
@@ -118,6 +119,57 @@ class CodexSampler:
                     # add fresh noise
                     noise = torch.randn_like(x)
                     x = x + sigma_up * noise
+            elif self.algorithm in ("dpm++ 2m", "dpmpp 2m"):
+                # DPM++ 2M (multistep, ODE) using single eval per step after a Heun bootstrap
+                h = float(sigma_next) - float(sigma)
+                if eps_prev is None or sigma_prev is None:
+                    # Bootstrap with Heun (two evals)
+                    x_euler = denoised + float(sigma_next) * eps  # DDIM-like prediction at next sigma
+                    sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
+                    denoised_next = sampling_function_inner(
+                        model, x_euler, sigma_next_batch, compiled_uncond, compiled_cond, cfg_scale, unet.model_options, seed=None, return_full=False
+                    )
+                    eps_next = (x_euler - denoised_next) / max(float(sigma_next), 1e-8)
+                    f_n = -eps
+                    f_next = -eps_next
+                    x = x + h * 0.5 * (f_n + f_next)
+                else:
+                    h_prev = float(sigma) - float(sigma_prev)
+                    r = h / (h_prev if abs(h_prev) > 1e-12 else h)
+                    f_n = -eps
+                    f_prev = -eps_prev
+                    x = x + h * (((1.0 + r) * 0.5) * f_n - (r * 0.5) * f_prev)
+                # update history
+                eps_prev = eps.detach()
+                sigma_prev = float(sigma)
+            elif self.algorithm in ("dpm++ 2m sde", "dpmpp 2m sde"):
+                # DPM++ 2M SDE: same multistep core plus an ancestral noise term
+                h = float(sigma_next) - float(sigma)
+                if eps_prev is None or sigma_prev is None:
+                    # Heun bootstrap
+                    x_euler = denoised + float(sigma_next) * eps
+                    sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
+                    denoised_next = sampling_function_inner(
+                        model, x_euler, sigma_next_batch, compiled_uncond, compiled_cond, cfg_scale, unet.model_options, seed=None, return_full=False
+                    )
+                    eps_next = (x_euler - denoised_next) / max(float(sigma_next), 1e-8)
+                    f_n = -eps
+                    f_next = -eps_next
+                    x = x + h * 0.5 * (f_n + f_next)
+                else:
+                    h_prev = float(sigma) - float(sigma_prev)
+                    r = h / (h_prev if abs(h_prev) > 1e-12 else h)
+                    f_n = -eps
+                    f_prev = -eps_prev
+                    x = x + h * (((1.0 + r) * 0.5) * f_n - (r * 0.5) * f_prev)
+                # add SDE noise akin to Euler A variance split
+                s = float(sigma); s_next = float(sigma_next)
+                if s_next > 0.0:
+                    sigma_up_sq = max(s_next**2 * (s**2 - s_next**2) / max(s**2, 1e-8), 0.0)
+                    sigma_up = sigma_up_sq ** 0.5
+                    x = x + sigma_up * torch.randn_like(x)
+                eps_prev = eps.detach()
+                sigma_prev = float(sigma)
             elif self.algorithm in ("ddim",):
                 # Deterministic DDIM-like step in sigma domain (eta=0)
                 x = denoised + float(sigma_next) * eps

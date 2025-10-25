@@ -129,7 +129,7 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
         if enc is None:
             for cand in enc_candidates:
                 try:
-                    enc = _Enc.from_pretrained(cand, subfolder=None, torch_dtype=_as_dtype(dtype), local_files_only=True)
+                    enc = _Enc.from_pretrained(cand, torch_dtype=_as_dtype(dtype), local_files_only=True)
                     break
                 except Exception as ex:
                     last_err = ex

@@ -119,15 +119,11 @@ def ensure_repo_minimal_files(
                 "tokenizer_2/*.json",
                 "tokenizer_2/*.txt",
                 "tokenizer_2/*.model",
-                "google/umt5-xxl/tokenizer.json",
-                "google/umt5-xxl/tokenizer_config.json",
-                "google/umt5-xxl/vocab.json",
-                "google/umt5-xxl/merges.txt",
-                "google/umt5-xxl/tokenizer.model",
-                "google/umt5-xxl/spiece.model",
-                "google/umt5-xxl/*.json",
-                "google/umt5-xxl/*.model",
-                "google/umt5-xxl/*.txt",
+                # text encoder weights (allow both safetensors and pytorch bin)
+                "text_encoder/*.safetensors",
+                "text_encoder/*model*.bin",
+                "text_encoder_2/*.safetensors",
+                "text_encoder_2/*model*.bin",
             }
         )
     if "scheduler" in need:

@@ -188,35 +188,27 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
             return uniq
 
         candidates = _wan_repo_candidates()
-        last_err: Exception | None = None
-        mirror_root = None
-        for rid in candidates:
-            try:
-                mirror_root = os.path.join(os.getcwd(), 'apps', 'server', 'backend', 'huggingface', rid)
-                ensure_repo_minimal_files(rid, mirror_root, offline=False)
-                last_err = None
-                break
-            except Exception as ex:
-                last_err = ex
-                continue
-        if mirror_root is None or last_err is not None:
+        # Download minimal files directly into model_dir so WanPipeline can load from there.
+        try:
+            ensure_repo_minimal_files(candidates, model_dir, offline=False)
+        except Exception as ex:
             raise RuntimeError(
-                "WAN22: unable to fetch minimal Diffusers files for a WAN repo. "
+                "WAN22: unable to fetch minimal Diffusers files for a WAN repo into the model directory. "
                 "Set CODEX_WAN_DIFFUSERS_REPO explicitly to a valid repo (e.g., "
                 "'Kwai-Kolors/Wan2.2-Image-to-Video-14B') or provide explicit "
-                "text_encoder_dir and tokenizer_dir."
+                "text_encoder_dir and tokenizer_dir. Details: %s" % (ex,)
             )
 
-        # Load VAE either from provided dir or from the repo mirror
+        # Load VAE either from provided dir or from the local model_dir now populated
         try:
             vd = vae_dir
             if vd and os.path.isfile(vd):
                 vd = os.path.dirname(vd)
-            vae = AutoencoderKLWan.from_pretrained(vd or mirror_root, subfolder=('vae' if not vd else None), torch_dtype=torch_dtype, local_files_only=True)
+            vae = AutoencoderKLWan.from_pretrained(vd or model_dir, subfolder=('vae' if not vd else None), torch_dtype=torch_dtype, local_files_only=True)
         except Exception:
             vae = None
 
-        pipe = WanPipeline.from_pretrained(mirror_root, torch_dtype=torch_dtype, local_files_only=True, vae=vae)
+        pipe = WanPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, local_files_only=True, vae=vae)
         pipe = pipe.to(dev)
         out = pipe.encode_prompt(prompt=prompt or '', negative_prompt=negative or '', do_classifier_free_guidance=True, device=dev, dtype=torch_dtype)
         if isinstance(out, tuple) and len(out) >= 2:

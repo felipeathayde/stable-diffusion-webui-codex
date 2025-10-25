@@ -177,13 +177,19 @@ class Wan225BEngine(BaseVideoEngine):
                     cfg_scale=getattr(request, 'cfg_scale', None),
                 ),
             )
-            def _cb(**p):
-                try:
-                    self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", p.get('stage','-'), int(p.get('step',0)), int(p.get('total',0)), float(p.get('percent',0))*100.0)
-                except Exception:
-                    pass
-            frames = gguf.run_txt2vid(cfg, logger=self._logger, on_progress=_cb)
-            yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "txt2vid", "frames": len(frames)})})
+            for ev in gguf.stream_txt2vid(cfg, logger=self._logger):
+                if isinstance(ev, dict) and ev.get('type') == 'progress':
+                    st = str(ev.get('stage', ''))
+                    step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
+                    try:
+                        self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct * 100.0)
+                    except Exception:
+                        pass
+                    yield ProgressEvent(stage=st, percent=pct, step=step, total_steps=total)
+                elif isinstance(ev, dict) and ev.get('type') == 'result':
+                    frames = ev.get('frames', [])
+                    yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "txt2vid", "frames": len(frames)})})
+            return
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         self.ensure_loaded()
@@ -236,13 +242,19 @@ class Wan225BEngine(BaseVideoEngine):
                     cfg_scale=getattr(request, 'cfg_scale', None),
                 ),
             )
-            def _cb2(**p):
-                try:
-                    self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", p.get('stage','-'), int(p.get('step',0)), int(p.get('total',0)), float(p.get('percent',0))*100.0)
-                except Exception:
-                    pass
-            frames = gguf.run_img2vid(cfg, logger=self._logger, on_progress=_cb2)
-            yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "img2vid", "frames": len(frames)})})
+            for ev in gguf.stream_img2vid(cfg, logger=self._logger):
+                if isinstance(ev, dict) and ev.get('type') == 'progress':
+                    st = str(ev.get('stage', ''))
+                    step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
+                    try:
+                        self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct * 100.0)
+                    except Exception:
+                        pass
+                    yield ProgressEvent(stage=st, percent=pct, step=step, total_steps=total)
+                elif isinstance(ev, dict) and ev.get('type') == 'result':
+                    frames = ev.get('frames', [])
+                    yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "img2vid", "frames": len(frames)})})
+            return
 
     # ------------------------------ helpers
     # No per-stage GGUF builder needed here; runtimes will read request.extras directly

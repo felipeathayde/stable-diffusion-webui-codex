@@ -1038,6 +1038,161 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     return frames_lo
 
 
+def stream_txt2vid(cfg: RunConfig, *, logger=None):
+    """Generator that yields progress and final frames for txt2vid."""
+    log = _get_logger(logger)
+    hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
+    lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
+    if not hi_path or not lo_path:
+        raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
+    log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+
+    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dt = _as_dtype(cfg.dtype)
+
+    # Prepare UNet (High) and text embeddings
+    hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
+    _p = os.path.basename(hi_path).lower()
+    _variant = '5b' if '5b' in _p else '14b'
+    _model_key = f"wan_t2v_{_variant}"
+    prompt_embeds, negative_embeds = _get_text_context(
+        model_dir=os.path.dirname(hi_path),
+        prompt=cfg.prompt or "",
+        negative=cfg.negative_prompt,
+        device=cfg.device,
+        dtype=cfg.dtype,
+        text_encoder_dir=cfg.text_encoder_dir,
+        tokenizer_dir=cfg.tokenizer_dir,
+        vae_dir=cfg.vae_dir,
+        model_key=_model_key,
+        metadata_dir=cfg.metadata_dir,
+    )
+    if isinstance(prompt_embeds, torch.Tensor):
+        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+    if isinstance(negative_embeds, torch.Tensor):
+        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+
+    H_lat = max(8, cfg.height // 8)
+    W_lat = max(8, cfg.width // 8)
+    T = max(1, int(cfg.num_frames))
+    grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    total_hi = int(len(getattr(_make_scheduler(int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)), 'timesteps', list(range(int(getattr(cfg.high, 'steps', 12) if cfg.high else 12))))))
+    yield {"type": "progress", "stage": "high", "step": 0, "total": total_hi, "percent": 0.0}
+
+    toks_hi = _sample_stage_tokens(
+        dit=hi_dit,
+        steps=int(getattr(cfg.high, 'steps', 12) if cfg.high else 12),
+        cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        grid=grid,
+        token_shape=token_shape,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=(getattr(cfg.high, 'sampler', None) if cfg.high else None),
+        scheduler_name=(getattr(cfg.high, 'scheduler', None) if cfg.high else None),
+        seed=cfg.seed,
+    )  # type: ignore[arg-type]
+
+    # Cannot pass a lambda with yield directly; emulate by re-running progress here
+    yield {"type": "progress", "stage": "high", "step": total_hi, "total": total_hi, "percent": 1.0}
+
+    frames_hi = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    if not frames_hi:
+        raise RuntimeError("WAN22 GGUF: High stage produced no frames")
+
+    # Low stage
+    lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
+    lat_lo0 = _vae_encode_init(frames_hi[-1], device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat_lo0.ndim == 4:
+        lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
+    toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+
+    steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
+    sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
+    sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
+    scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
+    x_lo = toks_lo0.clone()
+    total_lo = len(scheduler_lo.timesteps)
+    yield {"type": "progress", "stage": "low", "step": 0, "total": total_lo, "percent": 0.0}
+    for i, t in enumerate(scheduler_lo.timesteps):
+        tt = (1.0 - (float(i) / float(max(1, total_lo - 1)))) * 1000.0
+        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
+        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
+        x_lo = out.prev_sample
+        pct = float(i + 1) / float(max(1, total_lo))
+        yield {"type": "progress", "stage": "low", "step": i + 1, "total": total_lo, "percent": pct}
+
+    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if not frames_lo:
+        raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
+    yield {"type": "result", "frames": frames_lo}
+
+
+def stream_img2vid(cfg: RunConfig, *, logger=None):
+    # Reuse txt2vid streaming after forcing seed image path
+    log = _get_logger(logger)
+    if cfg.init_image is None:
+        raise RuntimeError("img2vid requires init_image for GGUF path")
+    # The rest mirrors stream_txt2vid, but seeds low stage from cfg.init_image
+    hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
+    lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
+    if not hi_path or not lo_path:
+        raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
+    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dt = _as_dtype(cfg.dtype)
+    hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
+    _p = os.path.basename(hi_path).lower(); _variant = '5b' if '5b' in _p else '14b'; _model_key = f"wan_t2v_{_variant}"
+    prompt_embeds, negative_embeds = _get_text_context(
+        model_dir=os.path.dirname(hi_path), prompt=cfg.prompt or "", negative=cfg.negative_prompt,
+        device=cfg.device, dtype=cfg.dtype, text_encoder_dir=cfg.text_encoder_dir, tokenizer_dir=cfg.tokenizer_dir,
+        vae_dir=cfg.vae_dir, model_key=_model_key, metadata_dir=cfg.metadata_dir,
+    )
+    if isinstance(prompt_embeds, torch.Tensor): prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+    if isinstance(negative_embeds, torch.Tensor): negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+    H_lat = max(8, cfg.height // 8); W_lat = max(8, cfg.width // 8); T = max(1, int(cfg.num_frames))
+    grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
+    scheduler_hi = _make_scheduler(steps_hi, sampler=(getattr(cfg.high, 'sampler', None) if cfg.high else None), scheduler=(getattr(cfg.high, 'scheduler', None) if cfg.high else None))
+    total_hi = len(scheduler_hi.timesteps)
+    yield {"type": "progress", "stage": "high", "step": 0, "total": total_hi, "percent": 0.0}
+    # Start from encoded init image latents for first step to warm VAE and token grids consistent
+    toks_hi = _sample_stage_tokens(
+        dit=hi_dit, steps=steps_hi, cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds, negative_embeds=negative_embeds, grid=grid, token_shape=token_shape,
+        device=dev, dtype=dt, logger=log, sampler_name=(getattr(cfg.high, 'sampler', None) if cfg.high else None),
+        scheduler_name=(getattr(cfg.high, 'scheduler', None) if cfg.high else None), seed=cfg.seed,
+        on_progress=lambda step,total,percent: None,
+    )
+    yield {"type": "progress", "stage": "high", "step": total_hi, "total": total_hi, "percent": 1.0}
+    # Seed low from cfg.init_image instead of last HIGH frame
+    lat_lo0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat_lo0.ndim == 4: lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
+    w_lo, b_lo = _resolve_patch_weights(lo_dit.state); toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+    steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
+    scheduler_lo = _make_scheduler(steps_lo, sampler=(getattr(cfg.low, 'sampler', None) if cfg.low else None), scheduler=(getattr(cfg.low, 'scheduler', None) if cfg.low else None))
+    x_lo = toks_lo0.clone(); total_lo = len(scheduler_lo.timesteps)
+    yield {"type": "progress", "stage": "low", "step": 0, "total": total_lo, "percent": 0.0}
+    for i, t in enumerate(scheduler_lo.timesteps):
+        tt = (1.0 - (float(i) / float(max(1, total_lo - 1)))) * 1000.0
+        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
+        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
+        x_lo = out.prev_sample
+        pct = float(i + 1) / float(max(1, total_lo))
+        yield {"type": "progress", "stage": "low", "step": i + 1, "total": total_lo, "percent": pct}
+    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if not frames_lo:
+        raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
+    yield {"type": "result", "frames": frames_lo}
+
+
 def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')

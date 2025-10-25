@@ -41,6 +41,7 @@
   - Canonical structure: `codex/architecture/repo-structure.md`
   - Architecture rules: `codex/architecture/architecture-rules.md`
   - Pipelines bible: `codex/architecture/model-pipelines-bible.md`
+  - Repository inventory: `codex/architecture/repo-inventory.md`
   - Research (loading/efficiency): `codex/research/`.
   - Design/UX: `codex/design/`.
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.

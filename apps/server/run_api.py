@@ -35,6 +35,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+# Install global exception hooks as early as possible so any startup errors are dumped
+try:
+    from apps.server.backend.runtime.exception_hook import install_exception_hooks as _install_exc_hooks
+    _EXC_LOG_PATH = _install_exc_hooks(log_dir=str(PROJECT_ROOT / 'logs'))
+except Exception:
+    _EXC_LOG_PATH = None
+
 _initialized = False
 
 
@@ -248,6 +255,31 @@ def build_app() -> FastAPI:
     _workflows_cache: Optional[Dict[str, Any]] = None
     _workflows_mtime: Optional[float] = None
     _ui_dist_dir = os.path.join(PROJECT_ROOT, 'apps', 'interface', 'dist')
+
+    # Exception hooks for asyncio + HTTP middleware to dump unhandled route exceptions
+    try:
+        from apps.server.backend.runtime.exception_hook import attach_asyncio as _attach_asyncio, dump_current_exception as _dump_current_exception
+
+        @app.on_event('startup')
+        async def _setup_exc_hooks() -> None:  # pragma: no cover
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+            _attach_asyncio(loop)
+
+        @app.middleware('http')
+        async def _errors_middleware(request, call_next):  # type: ignore[no-untyped-def]
+            try:
+                return await call_next(request)
+            except Exception:
+                try:
+                    _dump_current_exception(where='http', context={'path': str(getattr(request, 'url', '')), 'method': getattr(request, 'method', '')})
+                finally:
+                    pass
+                raise
+    except Exception:
+        pass
 
     def _detect_wan_variant_from_dir(p: Optional[str]) -> Optional[str]:
         """Return '5b' or '14b' when a WAN dir hints a variant via config or path name."""
@@ -1242,6 +1274,11 @@ def build_app() -> FastAPI:
                 push({"type": "end"})
                 mark_done(True)
             except Exception as err:  # pragma: no cover - surfaces runtime errors
+                try:
+                    from apps.server.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
+                except Exception:
+                    pass
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
@@ -1351,6 +1388,11 @@ def build_app() -> FastAPI:
                 push({"type": "end"})
                 mark_done(True)
             except Exception as err:
+                try:
+                    from apps.server.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
+                except Exception:
+                    pass
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
@@ -1562,6 +1604,11 @@ def build_app() -> FastAPI:
                 push({"type": "end"})
                 mark_done(True)
             except Exception as err:
+                try:
+                    from apps.server.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
+                except Exception:
+                    pass
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})

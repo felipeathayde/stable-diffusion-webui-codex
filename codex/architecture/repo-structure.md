@@ -11,7 +11,7 @@ Top‑level
 - .refs/ — upstream reference trees (e.g., ComfyUI); do not import
 
 Backend (apps/server/backend)
-- core/ — engine interface, registry, requests, orchestrator
+- core/ — engine interface, registry, requests, orchestrator; devices/RNG/state nativos
 - engines/
   - diffusion/ — engines per model family; entry modules by task: txt2img.py, img2img.py, txt2vid.py, img2vid.py
   - util/ — adapters, attention backend selection, schedulers mapping
@@ -20,9 +20,10 @@ Backend (apps/server/backend)
   - models/ — light loaders, state_dict helpers
   - ops/ — tensor ops; prefer PyTorch SDPA; no custom kernels unless missing in PyTorch
   - text_processing/ — tokenizers/encoders engines (CLIP/T5 etc.)
+  - sampling/ — drivers/helpers de amostragem
   - logging.py, memory/, utils.py — shared infra
-  - exception_hook.py, policy.py — crash dumps + policy guard
-- codex/ — API nativa do backend (ex.: initialization, main, options) que substitui antigas integrações "forge".
+  - exception_hook.py — crash dumps
+- codex/ — API nativa do backend (ex.: initialization, main, options); substitui antigas integrações "forge".
 - huggingface/ — vendored minimal trees for Diffusers assets (no code)
 - services/ — media/options/progress helpers
 
@@ -31,7 +32,7 @@ Interface (apps/interface)
 - src/ — components/views; styles under src/styles/** (semantic, no utility dump)
 
 Critical Boundaries
-- engines import only via `apps.server.backend.*` façade
-- runtime must not import legacy/ or DEPRECATED/
+- engines/runtime só importam de `apps/server/backend/**` (nada de legacy/.refs/DEPRECATED/)
+- Nenhum `modules.*`/`modules_forge.*` no backend: se faltar algo, portar para `apps/server/backend/**`
 - No `wan_gguf*` anywhere in active code; WAN lives in runtime/nn/wan22.py
 - Do not create engines/video/wan or backend.* (deprecated namespace)

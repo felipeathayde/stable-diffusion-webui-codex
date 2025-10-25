@@ -160,9 +160,12 @@
 
 ## Deprecations
 - Completed: `backend.*` namespace
-  - Removed on 2025-10-24. Use the façade `apps.server.backend.*`.
-  - See: `codex/deprecations/2025-10-backend-namespace-deprecation.md` and `apps/server/backend/SHIM_INVENTORY.md`.
-  - Import redirector no longer exists; old imports raise `ModuleNotFoundError`.
+  - Removed on 2025-10-24. Use `apps.server.backend.*` diretamente.
+  - Import redirector não existe mais; imports antigos quebram.
+
+- Proibido: qualquer “bridge/shim/compat” para A1111/Forge (`modules.*`, `modules_forge.*`).
+  - Se o backend precisar de uma peça existente fora de `apps/`, portar o código como módulo nativo sob `apps/server/backend/**` com nomes claros (dataclasses/enums quando fizer sentido).
+  - Erros devem ser explícitos (sem fallbacks silenciosos). Se a funcionalidade ainda não foi portada, lance `NotImplementedError`.
 
 ## Roadmap — Backend Consolidation (apps/server/backend‑first)
 

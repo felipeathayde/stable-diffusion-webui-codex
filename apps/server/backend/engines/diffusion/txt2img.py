@@ -7,7 +7,9 @@ import logging
 import numpy as np
 import torch
 
-from modules import devices, rng, sd_samplers, scripts, shared, sd_models, extra_networks
+from apps.server.backend.core import devices
+from apps.server.backend.core.rng import ImageRNG
+from apps.server.backend.runtime.sampling.driver import CodexSampler
 
 try:  # optional – only present when LoRA extension is available
     from extensions_builtin.sd_forge_lora import networks as lora_networks
@@ -40,7 +42,7 @@ def _prepare_first_pass_from_image(processing) -> tuple[torch.Tensor | None, tor
     array = np.array(image).astype(np.float32) / 255.0
     array = np.moveaxis(array, 2, 0)
     tensor = torch.from_numpy(np.expand_dims(array, axis=0))
-    tensor = tensor.to(shared.device, dtype=torch.float32)
+    tensor = tensor.to(devices.default_device(), dtype=torch.float32)
 
     # Encode the image to latents using native engine VAE
     sample_in = tensor
@@ -51,8 +53,9 @@ def _prepare_first_pass_from_image(processing) -> tuple[torch.Tensor | None, tor
 
 def _reload_for_hires(processing) -> None:
     with SkipWritingToConfig():
-        checkpoint_before = getattr(opts, "sd_model_checkpoint")
-        modules_before = getattr(opts, "forge_additional_modules")
+        from apps.server.backend.codex import main as _codex
+        checkpoint_before = getattr(_codex, "_SELECTIONS").checkpoint_name
+        modules_before = list(getattr(_codex, "_SELECTIONS").additional_modules)
 
         reload_required = False
         if (
@@ -80,7 +83,7 @@ def _reload_for_hires(processing) -> None:
         if reload_required:
             try:
                 codex_main.refresh_model_loading_parameters()
-                sd_models.forge_model_reload()
+                raise NotImplementedError("Model reload during hires is not implemented natively yet")
             finally:
                 codex_main.modules_change(modules_before, save=False, refresh=False)
                 codex_main.checkpoint_change(checkpoint_before, save=False, refresh=False)
@@ -145,9 +148,7 @@ class Txt2ImgRuntime:
         )
 
     def _ensure_sampler(self) -> None:
-        self.processing.sampler = sd_samplers.create_sampler(
-            self.processing.sampler_name, self.processing.sd_model
-        )
+        self.processing.sampler = CodexSampler(self.processing.sd_model)
         latent_channels = getattr(
             self.processing.sd_model.forge_objects_after_applying_lora.vae,
             "latent_channels",
@@ -158,7 +159,7 @@ class Txt2ImgRuntime:
             self.processing.height // 8,
             self.processing.width // 8,
         )
-        self.processing.rng = rng.ImageRNG(
+        self.processing.rng = ImageRNG(
             shape,
             self.seeds,
             subseeds=self.subseeds,
@@ -205,12 +206,7 @@ class Txt2ImgRuntime:
 
         samples = self._run_post_sample_hooks(samples)
 
-        shared_state = getattr(shared, "state", None)
-        if shared_state is not None:
-            shared_state.current_latent = samples
-            nextjob = getattr(shared_state, "nextjob", None)
-            if callable(nextjob):
-                nextjob()
+        # Native backend state is updated by services; no legacy shared.state here.
 
         del noise
         devices.torch_gc()
@@ -224,7 +220,7 @@ class Txt2ImgRuntime:
 
         if self.processing.latent_scale_mode is None:
             return _decode_latent_batch(
-                self.processing.sd_model, samples, target_device=devices.cpu
+                self.processing.sd_model, samples, target_device=devices.cpu()
             ).to(dtype=torch.float32)
 
         return None
@@ -234,13 +230,15 @@ class Txt2ImgRuntime:
         if script_runner is None or not hasattr(script_runner, "post_sample"):
             return samples
 
-        post_sample_args_cls = getattr(scripts, "PostSampleArgs", None)
-        if post_sample_args_cls is None:
+        class _PostSampleArgs:
+            def __init__(self, samples):
+                self.samples = samples
+        try:
+            args = _PostSampleArgs(samples)
+            script_runner.post_sample(self.processing, args)
+            return getattr(args, "samples", samples)
+        except Exception:
             return samples
-
-        args = post_sample_args_cls(samples)
-        script_runner.post_sample(self.processing, args)
-        return getattr(args, "samples", samples)
 
     def _run_process_scripts(self):
         script_runner = getattr(self.processing, "scripts", None)
@@ -278,14 +276,14 @@ class Txt2ImgRuntime:
     def _activate_extra_networks(self):
         if getattr(self.processing, "disable_extra_networks", False):
             return
-        bridge = getattr(extra_networks, "forge_registry_bridge", None)
+        bridge = None
         if bridge is not None:
             bridge.ensure_lora_registry()
         elif lora_networks is not None:
             try:
                 print(
                     "[runtime] scanning lora dir:",
-                    getattr(shared.cmd_opts, "lora_dir", "<unset>"),
+                    "<unset>",
                 )
                 lora_networks.list_available_networks()
             except Exception as exc:

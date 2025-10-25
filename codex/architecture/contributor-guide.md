@@ -8,7 +8,7 @@ Read First
 
 Principles
 - Small, composable modules; no monolitos
-- Public imports only via `apps.server.backend.*` façade (when applicable)
+- Public imports only via `apps.server.backend.*` (não use pacotes fora de `apps/`)
 - Prefer PyTorch SDPA; não criar kernels custom se o PyTorch já tem
 - Erros explícitos; sem fallbacks silenciosos
 - Evite nomes/integrações "Forge": use `Codex*` (ex.: `CodexDiffusionEngine`, `CodexObjects`) e APIs sob `apps.server.backend.codex.*`. Não introduza `modules_forge.*` em código novo.
@@ -22,14 +22,14 @@ Common Tasks
 - Mapeie sampler/scheduler via `engines/util/schedulers.py` (`SamplerKind`)
 - Registre em `engines/registration.py` (sem condicionais profundas)
 - Use `tools/templates/new_engine/` como referência
-- Se precisar alterar seleção de módulos/modelos: use `apps.server.backend.codex.main` em vez de `modules_forge.main_entry`.
+- Se precisar alterar seleção de módulos/modelos: use `apps.server.backend.codex.main`.
 
 2) Adicionar/estender um modelo no runtime
 - Coloque classes em `apps/server/backend/runtime/nn/`
 - Helpers genéricos em `runtime/ops/` (somente quando o PyTorch não supre)
 - Tokenizers/encoders: `runtime/text_processing/*`
 - Não importar de `legacy/` ou `DEPRECATED/`
-- Se houver dependência transitória de `modules.*`, encapsule em `engines/util/a1111_bridge.py`. Engines/serviços não devem importar `modules.*` diretamente.
+- Nunca use `modules.*` ou `modules_forge.*` no backend ativo. Se faltar alguma peça, porte o código necessário para dentro de `apps/server/backend/**` (módulo nativo Codex) e expõe via `apps.server.backend.codex.*`.
 
 3) Carregar assets do Hugging Face
 - Prefira layout Diffusers padrão (model_index + subpastas)

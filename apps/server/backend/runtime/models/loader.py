@@ -276,16 +276,22 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
                     with using_forge_operations(**to_args, manual_cast_enabled=need_manual_cast):
                         model = model_loader(unet_config).to(**to_args)
                 except memory_management.OOM_EXCEPTION as e:
-                    # Fallback if policy allows offload
+                    # Strict mode: no implicit CPU/offload fallback on OOM during construction.
+                    # Surface a precise, actionable error explaining the context and policy.
                     policy = getattr(memory_management.args, 'swap_policy', 'cpu')
                     _trace.event("construct_oom", policy=policy)
-                    if policy == 'never':
-                        raise
-                    construct_device = torch.device('cpu')
-                    construct_dtype = torch.float32 if construct_dtype in (torch.bfloat16, torch.float16) else construct_dtype
-                    to_args = dict(device=construct_device, dtype=construct_dtype)
-                    with using_forge_operations(**to_args, manual_cast_enabled=True):
-                        model = model_loader(unet_config).to(**to_args)
+                    msg = (
+                        "UNet construction OOM on device={dev} with dtype={dtype}. "
+                        "Automatic fallback/offload is disabled. "
+                        "Reduce model precision/size or free VRAM and retry. "
+                        "(swap_policy={policy}, gpu_prefer_construct={prefer})"
+                    ).format(
+                        dev=str(construct_device),
+                        dtype=str(construct_dtype),
+                        policy=str(policy),
+                        prefer=str(getattr(memory_management.args, 'gpu_prefer_construct', False)),
+                    )
+                    raise RuntimeError(msg) from e
 
             _trace.event("load_state_dict", module="unet", tensors=len(state_dict))
             # Use safe tensor-by-tensor loader to avoid native crashes; our

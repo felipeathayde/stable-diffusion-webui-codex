@@ -68,7 +68,7 @@ parser.add_argument("--swap-policy", choices=["never", "cpu", "shared"], default
 parser.add_argument("--swap-method", choices=["blocked", "async"], default="blocked",
                     help="Data transfer mode: blocked (no CUDA streams) or async (CUDA streams)")
 parser.add_argument("--gpu-prefer-construct", action="store_true",
-                    help="Prefer constructing models directly on GPU (fallback to policy on OOM)")
+                    help="Prefer constructing models directly on GPU (OOM now raises; no implicit fallback)")
 
 args = parser.parse_known_args()[0]
 

@@ -20,7 +20,7 @@ from modules.sd_samplers_common import (
     images_tensor_to_samples,
 )
 from modules.shared import opts
-from modules_forge import main_entry
+from apps.server.backend.compat.codex import main as codex_main
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
@@ -70,7 +70,7 @@ def _reload_for_hires(processing) -> None:
             getattr(processing, "hr_additional_modules", None) is not None
             and "Use same choices" not in processing.hr_additional_modules
         ):
-            modules_changed = main_entry.modules_change(
+            modules_changed = codex_main.modules_change(
                 processing.hr_additional_modules, save=False, refresh=False
             )
             reload_required = reload_required or modules_changed
@@ -79,7 +79,7 @@ def _reload_for_hires(processing) -> None:
             processing.hr_checkpoint_name
             and processing.hr_checkpoint_name != "Use same checkpoint"
         ):
-            checkpoint_changed = main_entry.checkpoint_change(
+            checkpoint_changed = codex_main.checkpoint_change(
                 processing.hr_checkpoint_name, save=False, refresh=False
             )
             if checkpoint_changed:
@@ -90,12 +90,12 @@ def _reload_for_hires(processing) -> None:
 
         if reload_required:
             try:
-                main_entry.refresh_model_loading_parameters()
+                codex_main.refresh_model_loading_parameters()
                 sd_models.forge_model_reload()
             finally:
-                main_entry.modules_change(modules_before, save=False, refresh=False)
-                main_entry.checkpoint_change(checkpoint_before, save=False, refresh=False)
-                main_entry.refresh_model_loading_parameters()
+                codex_main.modules_change(modules_before, save=False, refresh=False)
+                codex_main.checkpoint_change(checkpoint_before, save=False, refresh=False)
+                codex_main.refresh_model_loading_parameters()
 
         if processing.sd_model.use_distilled_cfg_scale:
             processing.extra_generation_params["Hires Distilled CFG Scale"] = (

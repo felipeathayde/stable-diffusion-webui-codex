@@ -1,7 +1,7 @@
 import torch
 
 from huggingface_guess import model_list
-from .base import ForgeDiffusionEngine, ForgeObjects
+from .base import CodexDiffusionEngine, CodexObjects
 from apps.server.backend.patchers.clip import CLIP
 from apps.server.backend.patchers.vae import VAE
 from apps.server.backend.patchers.unet import UnetPatcher
@@ -18,7 +18,7 @@ def _opts():
     return _shared.opts
 
 
-class StableDiffusionXL(ForgeDiffusionEngine):
+class StableDiffusionXL(CodexDiffusionEngine):
     matched_guesses = [model_list.SDXL]
 
     def __init__(self, estimated_config, huggingface_components):
@@ -73,9 +73,9 @@ class StableDiffusionXL(ForgeDiffusionEngine):
 
         self.embedder = Timestep(256)
 
-        self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
-        self.forge_objects_original = self.forge_objects.shallow_copy()
-        self.forge_objects_after_applying_lora = self.forge_objects.shallow_copy()
+        self.codex_objects = CodexObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
+        self.codex_objects_original = self.codex_objects.shallow_copy()
+        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
         # WebUI Legacy
         self.is_sdxl = True
@@ -86,7 +86,7 @@ class StableDiffusionXL(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
-        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+        memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
         cond_l = self.text_processing_engine_l(prompt)
         cond_g, clip_pooled = self.text_processing_engine_g(prompt)
@@ -129,14 +129,14 @@ class StableDiffusionXL(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x):
-        sample = self.forge_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.forge_objects.vae.first_stage_model.process_in(sample)
+        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
     def decode_first_stage(self, x):
-        sample = self.forge_objects.vae.first_stage_model.process_out(x)
-        sample = self.forge_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+        sample = self.codex_objects.vae.first_stage_model.process_out(x)
+        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
 
     def save_checkpoint(self, filename):

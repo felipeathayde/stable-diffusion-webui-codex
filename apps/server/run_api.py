@@ -52,14 +52,16 @@ def ensure_initialized() -> None:
         return
 
     try:
-        from modules_forge.initialization import initialize_forge
-    except ModuleNotFoundError:  # pragma: no cover - optional Forge build
-        def initialize_forge() -> None:
+        from apps.server.backend.compat.codex.initialization import (
+            initialize_codex,
+        )
+    except Exception:  # pragma: no cover - optional compatibility layer
+        def initialize_codex() -> None:
             return None
 
     from modules import initialize, script_callbacks
 
-    initialize_forge()
+    initialize_codex()
     initialize.imports()
     initialize.check_versions()
     initialize.initialize()

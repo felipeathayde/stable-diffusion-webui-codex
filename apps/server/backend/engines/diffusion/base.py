@@ -85,3 +85,36 @@ class ForgeDiffusionEngine:
         )
         sf.save_file(sd, filename)
         return filename
+
+
+# Forward-looking aliases using Codex naming. Keep legacy Forge* for compat.
+class CodexObjects(ForgeObjects):
+    pass
+
+
+class CodexDiffusionEngine(ForgeDiffusionEngine):
+    # Provide property aliases so code may use codex_* while legacy modules still use forge_*
+    @property
+    def codex_objects(self):  # noqa: D401
+        """Alias to forge_objects for migration."""
+        return self.forge_objects
+
+    @codex_objects.setter
+    def codex_objects(self, value):
+        self.forge_objects = value
+
+    @property
+    def codex_objects_original(self):
+        return self.forge_objects_original
+
+    @codex_objects_original.setter
+    def codex_objects_original(self, value):
+        self.forge_objects_original = value
+
+    @property
+    def codex_objects_after_applying_lora(self):
+        return self.forge_objects_after_applying_lora
+
+    @codex_objects_after_applying_lora.setter
+    def codex_objects_after_applying_lora(self, value):
+        self.forge_objects_after_applying_lora = value

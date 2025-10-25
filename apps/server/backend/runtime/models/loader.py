@@ -257,7 +257,7 @@ def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_p
                 with using_forge_operations(device=initial_device, dtype=computation_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
                     model = model_loader(unet_config)
             else:
-                # Prefer constructing on GPU (policy), fallback per swap policy
+                # Prefer constructing on GPU (policy); on OOM we raise (no fallback)
                 prefer_gpu = getattr(memory_management.args, 'gpu_prefer_construct', False)
                 if prefer_gpu:
                     construct_device = load_device

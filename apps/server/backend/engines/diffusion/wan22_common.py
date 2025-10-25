@@ -61,6 +61,7 @@ class WanStageOptions:
 
 
 WAN_DIFFUSERS_REPO_CANDIDATES = {
+    # Known, published Diffusers repos only (avoid ambiguous non-diffusers names)
     "wan22_14b": (
         "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
@@ -79,27 +80,43 @@ WAN_DIFFUSERS_REPO_CANDIDATES = {
 
 
 def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
+    """Return an ordered list of WAN2.2 Diffusers repo IDs to try.
+
+    Only returns valid Diffusers repos; avoids generic names like
+    'Wan2.2-Image-to-Video-14B' that are not published.
+    Honors CODEX_WAN_DIFFUSERS_REPO env var first, then known defaults.
+    """
     key = (model_key or "").lower()
-    for mk, repos in WAN_DIFFUSERS_REPO_CANDIDATES.items():
-        if mk in key:
-            return list(repos)
+    # 1) explicit env override
     candidates: List[str] = []
     env_repo = os.environ.get("CODEX_WAN_DIFFUSERS_REPO")
     if env_repo:
         candidates.append(env_repo)
-    owner = "Wan-AI"
-    variant = "14B" if "14b" in key else ("5B" if "5b" in key else "")
-    mode = "Image-to-Video" if "i2v" in key else ("Text-to-Video" if "t2v" in key else "")
-    if variant and mode:
-        candidates.append(f"{owner}/Wan2.2-{mode}-{variant}")
+
+    # 2) known map by key
+    for mk, repos in WAN_DIFFUSERS_REPO_CANDIDATES.items():
+        if mk in key:
+            candidates.extend(repos)
+            break
+
+    # 3) generic fallback by variant when key didn't match explicitly
     if not candidates:
         if "14b" in key:
             candidates.extend([
-                f"{owner}/Wan2.2-I2V-A14B-Diffusers",
-                f"{owner}/Wan2.2-T2V-A14B-Diffusers",
+                "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
             ])
+        elif "5b" in key:
+            candidates.append("Wan-AI/Wan2.2-TI2V-5B-Diffusers")
         else:
-            candidates.append(f"{owner}/Wan2.2-TI2V-5B-Diffusers")
+            # Sensible default: prefer larger I2V repo
+            candidates.extend([
+                "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+                "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+            ])
+
+    # 4) deduplicate preserving order
     seen: set[str] = set()
     uniq: List[str] = []
     for rid in candidates:

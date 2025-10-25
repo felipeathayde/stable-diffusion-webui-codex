@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import os
 import math
+from pathlib import Path
 
 import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
@@ -75,122 +76,107 @@ def _patch_unembed3d(tokens, w, out_shape):
 
 
 def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None):
-    # Try transformers tokenizer+encoder first
+    """GGUF path: use Transformers tokenizer + encoder only; do NOT fall back to Diffusers.
+
+    - Searches explicit extras first (tokenizer_dir/text_encoder_dir), then common subfolders under model_dir.
+    - Never downloads; never calls Diffusers. If not found, raises an explicit, actionable error.
+    """
+    import torch
+    from transformers import AutoTokenizer, AutoConfig
     try:
-        import torch
-        from transformers import AutoTokenizer, AutoConfig
+        from transformers import UMT5EncoderModel as _Enc
+    except Exception:
+        from transformers import T5EncoderModel as _Enc
+
+    tk_dir = tokenizer_dir
+    te_dir = text_encoder_dir
+    te_file: Optional[str] = None
+    if te_dir and os.path.isfile(te_dir) and te_dir.lower().endswith('.safetensors'):
+        te_file = te_dir
+        te_dir = os.path.dirname(te_dir)
+    if tk_dir and os.path.isfile(tk_dir):
+        tk_dir = os.path.dirname(tk_dir)
+
+    # Candidate directories (explicit first, then common names under model_dir)
+    tok_candidates: List[str] = []
+    for p in (tk_dir, os.path.join(model_dir, 'tokenizer'), os.path.join(model_dir, 'tokenizer_2')):
+        if p and os.path.isdir(p):
+            tok_candidates.append(p)
+    enc_candidates: List[str] = []
+    for p in (te_dir, os.path.join(model_dir, 'text_encoder'), os.path.join(model_dir, 'text_encoder_2'), os.path.join(model_dir, 't5')):
+        if p and os.path.isdir(p):
+            enc_candidates.append(p)
+
+    # Load tokenizer
+    tok = None
+    tok_errors: List[str] = []
+    for cand in tok_candidates:
         try:
-            from transformers import UMT5EncoderModel as _Enc
-        except Exception:
-            from transformers import T5EncoderModel as _Enc
-        tk_dir = tokenizer_dir
-        te_dir = text_encoder_dir
-        te_file: Optional[str] = None
-        import os
-        if te_dir and os.path.isfile(te_dir) and te_dir.lower().endswith('.safetensors'):
-            te_file = te_dir
-            te_dir = os.path.dirname(te_dir)
-        if tk_dir and os.path.isfile(tk_dir):
-            tk_dir = os.path.dirname(tk_dir)
-        tok_candidates = [p for p in [tk_dir, os.path.join(model_dir, 'tokenizer'), model_dir] if p]
-        enc_candidates = [p for p in [te_dir, os.path.join(model_dir, 'text_encoder'), model_dir] if p]
-        tok = None
-        last_err: Optional[Exception] = None
-        for cand in tok_candidates:
-            try:
-                # Do not pass subfolder=None — some transformers versions treat it as str
-                tok = AutoTokenizer.from_pretrained(cand, use_fast=True, local_files_only=True)
-                break
-            except Exception as ex:
-                last_err = ex
-                tok = None
-        if tok is None and last_err is not None:
-            raise last_err
-        enc = None
-        if te_file is not None:
-            try:
-                cfg = None
-                for cand in enc_candidates:
-                    try:
-                        # Avoid subfolder=None to keep join() happy on older libs
-                        cfg = AutoConfig.from_pretrained(cand, local_files_only=True)
-                        break
-                    except Exception:
-                        continue
-                if cfg is None:
-                    raise RuntimeError('text encoder config not found')
-                enc = _Enc(cfg)
-                from safetensors.torch import load_file as _load_st
-                sd = _load_st(te_file)
-                enc.load_state_dict(sd, strict=False)
-            except Exception as ex:
-                last_err = ex
-                enc = None
-        if enc is None:
+            tok = AutoTokenizer.from_pretrained(cand, use_fast=True, local_files_only=True)
+            break
+        except Exception as ex:
+            tok_errors.append(f"{cand}: {ex}")
+            tok = None
+    if tok is None:
+        attempted = ', '.join(tok_candidates) if tok_candidates else '(none)'
+        raise RuntimeError(
+            "WAN22 GGUF: tokenizer not found. Provide 'wan_tokenizer_dir' in extras or ensure a 'tokenizer/' directory exists. "
+            f"Attempted: {attempted}"
+        )
+
+    # Load encoder
+    enc = None
+    enc_errors: List[str] = []
+    if te_file is not None:
+        try:
+            cfg = None
             for cand in enc_candidates:
                 try:
-                    enc = _Enc.from_pretrained(cand, torch_dtype=_as_dtype(dtype), local_files_only=True)
+                    cfg = AutoConfig.from_pretrained(cand, local_files_only=True)
                     break
-                except Exception as ex:
-                    last_err = ex
-                    enc = None
-        if enc is None and last_err is not None:
-            raise last_err
-        dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
-        enc = enc.to(dev)
-        try:
-            enc = enc.to(dtype=_as_dtype(dtype))
-        except Exception:
-            pass
-        def _do(txt: str):
-            inputs = tok([txt], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
-            inputs = {k: v.to(dev) for k, v in inputs.items()}
-            with torch.no_grad():
-                out = enc(**inputs).last_hidden_state
-                return out.to(_as_dtype(dtype))
-        p = _do(prompt or '')
-        n = _do(negative or '') if negative is not None else _do('')
-        return p, n
-    except Exception:
-        # Fallback to Diffusers pipeline encode_prompt using a proper Diffusers repo mirror.
-        import torch
-        from diffusers import WanPipeline, AutoencoderKLWan  # type: ignore
-        from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
-        dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
-        torch_dtype = _as_dtype(dtype)
-
-        # Resolve a proper repo mirror: prefer explicit env; otherwise infer from
-        # model_key (wan_i2v_14b / wan_t2v_5b) and try sensible candidates.
-        candidates = resolve_wan_repo_candidates(model_key)
-        # Download minimal files directly into model_dir so WanPipeline can load from there.
-        try:
-            ensure_repo_minimal_files(candidates, model_dir, offline=False)
+                except Exception:
+                    continue
+            if cfg is None:
+                raise RuntimeError('text encoder config not found')
+            enc = _Enc(cfg)
+            from safetensors.torch import load_file as _load_st
+            sd = _load_st(te_file)
+            enc.load_state_dict(sd, strict=False)
         except Exception as ex:
-            raise RuntimeError(
-                "WAN22: unable to fetch minimal Diffusers files for a WAN repo into the model directory. "
-                "Set CODEX_WAN_DIFFUSERS_REPO explicitly to a valid repo (e.g., "
-                "'Wan-AI/Wan2.2-I2V-A14B-Diffusers') and provide an HF token, "
-                "run `python scripts/fetch_tokenizer_hf.py --repo <repo> --local <dir>` manually, "
-                "or provide explicit text_encoder_dir/tokenizer_dir extras. Details: %s" % (ex,)
-            )
+            enc_errors.append(f"file {te_file}: {ex}")
+            enc = None
+    if enc is None:
+        for cand in enc_candidates:
+            try:
+                enc = _Enc.from_pretrained(cand, torch_dtype=_as_dtype(dtype), local_files_only=True)
+                break
+            except Exception as ex:
+                enc_errors.append(f"{cand}: {ex}")
+                enc = None
+    if enc is None:
+        attempted = ', '.join(enc_candidates) if enc_candidates else '(none)'
+        raise RuntimeError(
+            "WAN22 GGUF: text encoder not found. Provide 'wan_text_encoder_dir' (or a .safetensors file + adjacent config) "
+            f"or ensure a 'text_encoder/' directory exists. Attempted: {attempted}"
+        )
 
-        # Load VAE either from provided dir or from the local model_dir now populated
-        try:
-            vd = vae_dir
-            if vd and os.path.isfile(vd):
-                vd = os.path.dirname(vd)
-            vae = AutoencoderKLWan.from_pretrained(vd or model_dir, subfolder=('vae' if not vd else None), torch_dtype=torch_dtype, local_files_only=True)
-        except Exception:
-            vae = None
+    dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    enc = enc.to(dev)
+    try:
+        enc = enc.to(dtype=_as_dtype(dtype))
+    except Exception:
+        pass
 
-        pipe = WanPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, local_files_only=True, vae=vae)
-        pipe = pipe.to(dev)
-        out = pipe.encode_prompt(prompt=prompt or '', negative_prompt=negative or '', do_classifier_free_guidance=True, device=dev, dtype=torch_dtype)
-        if isinstance(out, tuple) and len(out) >= 2:
-            return out[0], out[1]
-        if hasattr(out, 'prompt_embeds'):
-            return out.prompt_embeds, getattr(out, 'negative_prompt_embeds', out.prompt_embeds)
-        raise RuntimeError('encode_prompt returned unexpected structure')
+    def _do(txt: str):
+        inputs = tok([txt], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
+        inputs = {k: v.to(dev) for k, v in inputs.items()}
+        with torch.no_grad():
+            out = enc(**inputs).last_hidden_state
+            return out.to(_as_dtype(dtype))
+
+    p = _do(prompt or '')
+    n = _do(negative or '') if negative is not None else _do('')
+    return p, n
 
 
 def _load_vae(vae_path: Optional[str], *, torch_dtype):

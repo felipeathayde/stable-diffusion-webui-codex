@@ -97,68 +97,37 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
     if tk_dir and os.path.isfile(tk_dir):
         tk_dir = os.path.dirname(tk_dir)
 
-    # Candidate directories (explicit first, then common names under model_dir)
-    tok_candidates: List[str] = []
-    for p in (tk_dir, os.path.join(model_dir, 'tokenizer'), os.path.join(model_dir, 'tokenizer_2')):
-        if p and os.path.isdir(p):
-            tok_candidates.append(p)
-    enc_candidates: List[str] = []
-    for p in (te_dir, os.path.join(model_dir, 'text_encoder'), os.path.join(model_dir, 'text_encoder_2'), os.path.join(model_dir, 't5')):
-        if p and os.path.isdir(p):
-            enc_candidates.append(p)
+    # Strict: require tokenizer_dir explicitly
+    if not tk_dir or not os.path.isdir(tk_dir):
+        raise RuntimeError("WAN22 GGUF: tokenizer_dir missing or invalid; provide 'wan_tokenizer_dir'.")
 
-    # Load tokenizer
-    tok = None
-    tok_errors: List[str] = []
-    for cand in tok_candidates:
-        try:
-            tok = AutoTokenizer.from_pretrained(cand, use_fast=True, local_files_only=True)
-            break
-        except Exception as ex:
-            tok_errors.append(f"{cand}: {ex}")
-            tok = None
-    if tok is None:
-        attempted = ', '.join(tok_candidates) if tok_candidates else '(none)'
-        raise RuntimeError(
-            "WAN22 GGUF: tokenizer not found. Provide 'wan_tokenizer_dir' in extras or ensure a 'tokenizer/' directory exists. "
-            f"Attempted: {attempted}"
-        )
+    # Load tokenizer from the single provided directory
+    try:
+        tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
+    except Exception as ex:
+        raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
 
-    # Load encoder
-    enc = None
-    enc_errors: List[str] = []
+    # Strict: require text encoder dir or file (with adjacent config)
     if te_file is not None:
+        enc_dir = os.path.dirname(te_file)
         try:
-            cfg = None
-            for cand in enc_candidates:
-                try:
-                    cfg = AutoConfig.from_pretrained(cand, local_files_only=True)
-                    break
-                except Exception:
-                    continue
-            if cfg is None:
-                raise RuntimeError('text encoder config not found')
-            enc = _Enc(cfg)
-            from safetensors.torch import load_file as _load_st
+            cfg = AutoConfig.from_pretrained(enc_dir, local_files_only=True)
+        except Exception as ex:
+            raise RuntimeError(f"WAN22 GGUF: missing/invalid text encoder config in '{enc_dir}': {ex}") from ex
+        enc = _Enc(cfg)
+        from safetensors.torch import load_file as _load_st
+        try:
             sd = _load_st(te_file)
             enc.load_state_dict(sd, strict=False)
         except Exception as ex:
-            enc_errors.append(f"file {te_file}: {ex}")
-            enc = None
-    if enc is None:
-        for cand in enc_candidates:
-            try:
-                enc = _Enc.from_pretrained(cand, torch_dtype=_as_dtype(dtype), local_files_only=True)
-                break
-            except Exception as ex:
-                enc_errors.append(f"{cand}: {ex}")
-                enc = None
-    if enc is None:
-        attempted = ', '.join(enc_candidates) if enc_candidates else '(none)'
-        raise RuntimeError(
-            "WAN22 GGUF: text encoder not found. Provide 'wan_text_encoder_dir' (or a .safetensors file + adjacent config) "
-            f"or ensure a 'text_encoder/' directory exists. Attempted: {attempted}"
-        )
+            raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {ex}") from ex
+    else:
+        if not te_dir or not os.path.isdir(te_dir):
+            raise RuntimeError("WAN22 GGUF: text encoder path missing or invalid; provide 'wan_text_encoder_dir' or 'wan_text_encoder_path'.")
+        try:
+            enc = _Enc.from_pretrained(te_dir, torch_dtype=_as_dtype(dtype), local_files_only=True)
+        except Exception as ex:
+            raise RuntimeError(f"WAN22 GGUF: failed to load text encoder from '{te_dir}': {ex}") from ex
 
     dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
     enc = enc.to(dev)

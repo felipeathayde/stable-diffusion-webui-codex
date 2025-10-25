@@ -123,3 +123,27 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
 
 
 __all__ = ["EngineOpts", "WanComponents", "WanStageOptions", "resolve_wan_repo_candidates", "WAN_DIFFUSERS_REPO_CANDIDATES"]
+
+
+def resolve_user_supplied_assets(extras: dict | None, fallback_tokenizer_dir: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Strict parsing of user-supplied asset paths.
+
+    Accepted keys only:
+    - VAE: 'wan_vae_path'
+    - Text encoder: 'wan_text_encoder_path' (file) or 'wan_text_encoder_dir' (directory)
+    - Tokenizer (optional): 'wan_tokenizer_dir'; if missing, use fallback_tokenizer_dir
+
+    Returns (vae_path, text_encoder_path_or_dir, tokenizer_dir). No guessing.
+    """
+    import os
+    ex = extras or {}
+    vae = str(ex.get('wan_vae_path')).strip() if ex.get('wan_vae_path') else None
+    te = None
+    if ex.get('wan_text_encoder_path'):
+        te = str(ex.get('wan_text_encoder_path')).strip()
+    elif ex.get('wan_text_encoder_dir'):
+        te = str(ex.get('wan_text_encoder_dir')).strip()
+    tok = str(ex.get('wan_tokenizer_dir')).strip() if ex.get('wan_tokenizer_dir') else None
+    if not tok and fallback_tokenizer_dir and os.path.isdir(fallback_tokenizer_dir):
+        tok = fallback_tokenizer_dir
+    return (vae if vae else None), (te if te else None), (tok if tok else None)

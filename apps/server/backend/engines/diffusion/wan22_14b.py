@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 from apps.server.backend.core.engine_interface import EngineCapabilities, TaskType
-from apps.server.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest
+from apps.server.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest, ProgressEvent, ResultEvent
 from apps.server.backend.engines.diffusion.base_video import BaseVideoEngine
 from apps.server.backend.engines.diffusion.txt2vid import run_txt2vid as _run_t2v
 from apps.server.backend.engines.diffusion.img2vid import run_img2vid as _run_i2v

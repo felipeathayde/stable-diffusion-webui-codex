@@ -13,7 +13,7 @@ Active (entry points live under `apps/`)
 - codex/ — Internal docs and specs (architecture, guides, roadmaps).
 - .sangoi/ — Operational logs (task‑logs, handoffs, CHANGELOG).
 
-Compat (legacy stack that the backend still consumes)
+Compat (legacy stack ainda consumido — sem novos acoplamentos)
 - modules/ (Category: Compat; Risk: Do‑not)
   - Purpose: A1111 core (samplers, loaders, shared state, legacy UI glue).
   - Used by: `apps/server/run_api.py` (initialize, script_callbacks, sd_models, sd_samplers, sd_schedulers, call_queue, txt2img/img2img/txt2vid/img2vid); services (image/options/progress); engines util.
@@ -21,8 +21,9 @@ Compat (legacy stack that the backend still consumes)
 
 - modules_forge/ (Category: Compat; Risk: High)
   - Purpose: Forge initialization and utilities (patchers, preprocessors, canvas, memory utils).
-  - Used by: `run_api.initialize_forge()`, modules/extensions, builtin extensions.
-  - Governance: keep for now; avoid expanding surface.
+  - Used by: módulos/extensões legado (fora do backend ativo).
+  - Backend: toda gestão nativa usa `apps.server.backend.codex.*` (sem `modules_forge.*`).
+  - Governance: manter por ora; não criar novos usos no backend. Migração contínua para APIs Codex.
 
 - k_diffusion/ (Category: Vendor/Compat; Risk: High)
   - Purpose: third‑party samplers used by `modules/sd_samplers_*`.
@@ -96,8 +97,7 @@ Appendix — Imports cross‑check (evidences)
 - packages_3rdparty/gguf — re‑export façade.
 
 Governance
-- Active code stays in `apps/server/backend` and `apps/interface` only.
-- Do not import from `legacy/` or `DEPRECATED/` in active code.
-- No `backend.*` namespace; use `apps.server.backend.*` façade.
-- Prefer migrating presets para o backend (server‑driven) ao invés de duplicar em `configs/`.
-
+- Código ativo vive em `apps/server/backend` e `apps/interface`.
+- Não importar de `legacy/`, `DEPRECATED/` ou `modules_forge.*` no backend.
+- Use `apps.server.backend.*` (façade) e `apps.server.backend.codex.*` para gestão de modelos/módulos.
+- Preferir migrar presets para o backend (server‑driven) ao invés de duplicar em `configs/`.

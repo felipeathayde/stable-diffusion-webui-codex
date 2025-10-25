@@ -37,6 +37,8 @@ modules/ — Compat → P0
 modules_forge/ — Compat → P0
 - [ ] Same audit and “compat only” label
   - AC: note in repo-inventory; no new backend coupling added
+ - [ ] Confirm backend only uses `apps.server.backend.codex.*` (zero `modules_forge.*` in apps/)
+   - AC: grep em `apps/server/backend/**` retorna 0 para `modules_forge.*`
 
 k_diffusion/ — Vendor/Compat → P1
 - [ ] Pin version hash in docs (vendor note)
@@ -114,4 +116,3 @@ DEPRECATED/ — Reference/Archive → P1
 
 How to use
 - Treat this file as a live checklist. When you complete a line, add a short note (who/when) and optional pointer to a commit or doc.
-

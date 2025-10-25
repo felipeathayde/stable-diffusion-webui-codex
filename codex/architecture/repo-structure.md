@@ -22,6 +22,7 @@ Backend (apps/server/backend)
   - text_processing/ — tokenizers/encoders engines (CLIP/T5 etc.)
   - logging.py, memory/, utils.py — shared infra
   - exception_hook.py, policy.py — crash dumps + policy guard
+- codex/ — API nativa do backend (ex.: initialization, main, options) que substitui antigas integrações "forge".
 - huggingface/ — vendored minimal trees for Diffusers assets (no code)
 - services/ — media/options/progress helpers
 
@@ -34,4 +35,3 @@ Critical Boundaries
 - runtime must not import legacy/ or DEPRECATED/
 - No `wan_gguf*` anywhere in active code; WAN lives in runtime/nn/wan22.py
 - Do not create engines/video/wan or backend.* (deprecated namespace)
-

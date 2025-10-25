@@ -37,6 +37,7 @@
 
 ## Documentation Index
 - Docs home: `codex/` — architecture, design, research, tasks, roadmaps, reports, and sprint logs.
+  - Consolidated directives: `codex/architecture/CONSOLIDATED_DIRECTIVES.md`
   - Architecture (video): `codex/backend-video-architecture.md`.
   - Canonical structure: `codex/architecture/repo-structure.md`
   - Architecture rules: `codex/architecture/architecture-rules.md`

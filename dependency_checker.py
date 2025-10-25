@@ -231,6 +231,20 @@ def print_tree(node: DepNode, prefix: str = '') -> Tuple[int, int, int, int]:
     }.get(node.kind, '[?]')
     loc = f" ({node.path})" if node.path else ''
     print(f"{prefix}{marker} {node.name}{loc}")
+    # Helpful diagnostics for repo-local style names reported missing on Windows
+    if node.kind == 'missing' and node.name.startswith('apps.'):
+        cand_py = os.path.join(REPO_ROOT, *node.name.split('.')) + '.py'
+        cand_pkg = os.path.join(REPO_ROOT, *node.name.split('.'), '__init__.py')
+        cand_dir = os.path.join(REPO_ROOT, *node.name.split('.'))
+        hint = []
+        if os.path.isfile(cand_py):
+            hint.append(f"found file: {cand_py}")
+        if os.path.isfile(cand_pkg):
+            hint.append(f"found package: {cand_pkg}")
+        if os.path.isdir(cand_dir):
+            hint.append(f"found dir: {cand_dir}")
+        if hint:
+            print(f"{prefix}    ↳ hint: local paths exist -> " + "; ".join(hint))
     total = 1
     local = 1 if node.kind == 'local' else 0
     missing = 1 if node.kind == 'missing' else 0

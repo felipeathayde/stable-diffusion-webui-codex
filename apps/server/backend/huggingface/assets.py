@@ -131,9 +131,7 @@ def ensure_repo_minimal_files(
         # Ensure snapshot_download target isn't nested under local_path unexpectedly
         if cached_dir != local_path and os.path.isdir(cached_dir):
             _copy_selected_files(cached_dir, local_path, patterns)
-    except ImportError:
-        _http_list_and_download(repo_id, local_path, patterns)
-    except TypeError:
+    except (ImportError, TypeError, OSError):
         _http_list_and_download(repo_id, local_path, patterns)
     except Exception:
         _http_list_and_download(repo_id, local_path, patterns)

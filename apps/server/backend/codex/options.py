@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-"""Options compatibility helpers (Codex naming over legacy opts).
+"""Options helpers (native Codex naming).
 
-Read values from modules.shared.opts using `codex_*` names first, then fall
-back to legacy `forge_*` names. Write paths can be added later if needed.
+Pure native implementation; no lookup in legacy option stores.
 """
 
 from typing import Any, List

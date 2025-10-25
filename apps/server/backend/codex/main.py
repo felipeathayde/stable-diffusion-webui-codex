@@ -2,9 +2,7 @@ from __future__ import annotations
 
 """Codex model/runtime management (native).
 
-These names are the forward‑looking API the backend should use. When needed,
-we integrate with the legacy stack by modifying `modules.shared.opts` and
-triggering reloads via `modules.sd_models`.
+Forward‑looking API for model/module selection entirely no‑legacy.
 """
 
 from typing import Any, List

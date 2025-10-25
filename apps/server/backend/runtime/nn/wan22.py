@@ -888,6 +888,15 @@ def _decode_tokens_to_frames(
     return frames
 
 
+def _resolve_device_name(name: str) -> str:
+    s = (name or 'auto').lower().strip()
+    if s == 'auto':
+        return 'cuda' if torch.cuda.is_available() else 'cpu'
+    if s == 'cuda' and torch.cuda.is_available():
+        return 'cuda'
+    return 'cpu'
+
+
 def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
@@ -897,7 +906,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
 
     # Device & dtype
-    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dev_name = _resolve_device_name(getattr(cfg, 'device', 'auto'))
+    dev = torch.device(dev_name)
     dt = _as_dtype(cfg.dtype)
 
     # Prepare UNet (High stage) and text context
@@ -910,7 +920,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
         negative=cfg.negative_prompt,
-        device=cfg.device,
+        device=dev_name,
         dtype=cfg.dtype,
         text_encoder_dir=cfg.text_encoder_dir,
         tokenizer_dir=cfg.tokenizer_dir,
@@ -1204,7 +1214,8 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if cfg.init_image is None:
         raise RuntimeError("img2vid requires init_image for GGUF path")
 
-    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dev_name = _resolve_device_name(getattr(cfg, 'device', 'auto'))
+    dev = torch.device(dev_name)
     dt = _as_dtype(cfg.dtype)
 
     # Prepare UNet (High)
@@ -1218,7 +1229,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
         negative=cfg.negative_prompt,
-        device=cfg.device,
+        device=dev_name,
         dtype=cfg.dtype,
         text_encoder_dir=cfg.text_encoder_dir,
         tokenizer_dir=cfg.tokenizer_dir,

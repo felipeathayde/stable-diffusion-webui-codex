@@ -978,26 +978,28 @@ def build_app() -> FastAPI:
     def list_vaes() -> Dict[str, Any]:
         """Return available VAE modules and current selection (native registry)."""
         from apps.server.backend.codex import options as _codex_opts
-        from apps.server.backend.registry.vae import list_vaes as _list_vaes
+        from apps.server.backend.registry.vae import list_vaes as _list_vaes, describe_vaes as _describe_vaes
         current = _codex_opts.get_selected_vae('Automatic')
         try:
             choices = _list_vaes()
-            return {"vaes": choices, "current": current}
+            info = _describe_vaes()
+            return {"vaes": choices, "current": current, "vaes_info": info}
         except Exception:
-            return {"vaes": ['Automatic', 'Built in', 'None'], "current": current}
+            return {"vaes": ['Automatic', 'Built in', 'None'], "current": current, "vaes_info": []}
 
     @app.get('/api/text-encoders')
     def list_text_encoders() -> Dict[str, Any]:
         """Return available text encoder modules and current selection list (native registry)."""
-        from apps.server.backend.registry.text_encoders import list_text_encoders as _list_tes
+        from apps.server.backend.registry.text_encoders import list_text_encoders as _list_tes, describe_text_encoders as _describe_tes
         from apps.server.backend.codex import options as _codex_opts
         try:
             mapping = _list_tes()
+            info = _describe_tes()
             # current selection from codex options (paths/names as configured)
             selected = _codex_opts.get_additional_modules()
-            return {"text_encoders": mapping, "current": selected}
+            return {"text_encoders": mapping, "current": selected, "text_encoders_info": info}
         except Exception:
-            return {"text_encoders": {}, "current": []}
+            return {"text_encoders": {}, "current": [], "text_encoders_info": {}}
 
     @app.get('/api/embeddings')
     def list_embeddings() -> Dict[str, Any]:

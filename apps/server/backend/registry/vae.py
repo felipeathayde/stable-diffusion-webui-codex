@@ -4,6 +4,7 @@ import os
 from typing import List
 
 from .base import AssetEntry, _iter_dirs
+import json
 
 
 DEFAULT_BASELINES = ["Automatic", "Built in", "None"]
@@ -67,5 +68,45 @@ def list_vaes(models_root: str = "models", vendored_hf_root: str = "apps/server/
     return ordered
 
 
-__all__ = ["list_vaes"]
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
+
+def describe_vaes(models_root: str = "models", vendored_hf_root: str = "apps/server/backend/huggingface") -> List[dict]:
+    """Return metadata for discovered VAEs.
+
+    Each entry contains: name, path, format (diffusers|file|dir), latent_channels, scaling_factor.
+    """
+    info = []
+    # Scan models_root
+    for e in _collect_from_models_root(models_root):
+        fmt = "file" if os.path.isfile(e.path) or e.path.lower().endswith(('.safetensors','.pt','.bin')) else "dir"
+        meta = {"name": e.name, "path": e.path, "format": fmt, "latent_channels": None, "scaling_factor": None}
+        # Try to find adjacent config.json
+        cfg_path = os.path.join(os.path.dirname(e.path) if fmt=="file" else e.path, "config.json")
+        if os.path.isfile(cfg_path):
+            cfg = _read_json(cfg_path)
+            meta["latent_channels"] = cfg.get("latent_channels") or cfg.get("vae_latent_channels")
+            meta["scaling_factor"] = cfg.get("scaling_factor")
+        info.append(meta)
+    # Scan vendored HF repos (vae subfolder)
+    if os.path.isdir(vendored_hf_root):
+        for org in _iter_dirs(vendored_hf_root):
+            for repo in _iter_dirs(org):
+                vae_dir = os.path.join(repo, "vae")
+                if os.path.isdir(vae_dir):
+                    cfg_path = os.path.join(vae_dir, "config.json")
+                    meta = {"name": f"{os.path.basename(repo)}/vae", "path": vae_dir, "format": "diffusers", "latent_channels": None, "scaling_factor": None}
+                    if os.path.isfile(cfg_path):
+                        cfg = _read_json(cfg_path)
+                        meta["latent_channels"] = cfg.get("latent_channels")
+                        meta["scaling_factor"] = cfg.get("scaling_factor")
+                    info.append(meta)
+    return sorted(info, key=lambda m: m["name"].lower())
+
+
+__all__ = ["list_vaes", "describe_vaes"]

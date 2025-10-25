@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+import os
+import logging
 
 import torch
 
@@ -21,6 +23,8 @@ class CodexSampler:
     def __init__(self, sd_model: Any, *, algorithm: str | None = None) -> None:
         self.sd_model = sd_model
         self.algorithm = (algorithm or "euler a").strip().lower()
+        self._logger = logging.getLogger(__name__ + ".CodexSampler")
+        self._log_enabled = str(os.getenv("CODEX_LOG_SAMPLER", "0")).lower() in ("1","true","yes","on")
 
     def _sigma_bounds(self, model) -> tuple[float, float]:
         pred = getattr(model, "predictor", None)
@@ -48,6 +52,11 @@ class CodexSampler:
         steps = int(getattr(processing, "steps", 20))
         cfg_scale = float(getattr(processing, "cfg_scale", 7.0))
 
+        if steps <= 0:
+            raise ValueError("steps must be >= 1")
+        if noise.ndim != 4:
+            raise ValueError(f"noise must be BCHW; got shape={tuple(noise.shape)}")
+
         # Prepare GPU residency and model options
         sampling_prepare(unet, noise)
 
@@ -55,6 +64,9 @@ class CodexSampler:
         smin, smax = self._sigma_bounds(model)
         sigmas = torch.linspace(smax, smin, steps + 1, device=noise.device, dtype=noise.dtype)
         x = model.predictor.noise_scaling(sigmas[:1], noise, torch.zeros_like(noise))
+
+        if self._log_enabled:
+            self._logger.info("sampler algorithm=%s steps=%d sigma_max=%.6g sigma_min=%.6g", self.algorithm, steps, float(smax), float(smin))
 
         # Compile conditions
         compiled_cond = compile_conditions(cond)
@@ -180,6 +192,9 @@ class CodexSampler:
                 sigma_up = sigma_up_sq ** 0.5
                 sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
                 x = denoised + sigma_down * eps + sigma_up * torch.randn_like(x)
+
+            if self._log_enabled and (i == 0 or (i+1) == steps or (i+1) % max(1, steps//5) == 0):
+                self._logger.info("step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f", i+1, steps, float(sigma), float(sigma_next), float(x.norm().item()))
 
             backend_state.tick(sampling_step=i + 1)
 

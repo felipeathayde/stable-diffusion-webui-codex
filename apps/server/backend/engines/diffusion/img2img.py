@@ -68,9 +68,15 @@ class Img2ImgRuntime:
         # Apply width/height before preparing sampler
         try:
             if 'width' in prompt_controls:
-                self.processing.width = int(prompt_controls['width'])
+                w = int(prompt_controls['width'])
+                if w % 8 != 0:
+                    raise ValueError('width must be a multiple of 8')
+                self.processing.width = max(8, min(8192, w))
             if 'height' in prompt_controls:
-                self.processing.height = int(prompt_controls['height'])
+                h = int(prompt_controls['height'])
+                if h % 8 != 0:
+                    raise ValueError('height must be a multiple of 8')
+                self.processing.height = max(8, min(8192, h))
         except Exception:
             pass
 

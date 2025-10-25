@@ -1067,6 +1067,27 @@ def build_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed to read snapshot: {e}")
 
+    @app.get('/api/options/defaults')
+    def get_options_defaults() -> Dict[str, Any]:
+        """Return default values from the settings registry and the current snapshot.
+
+        Shape: { defaults: {key: value}, snapshot: {...} }
+        """
+        defaults: Dict[str, Any] = {}
+        if _settings_registry_ok:
+            try:
+                idx = _field_index()  # type: ignore[name-defined]
+                for k, f in idx.items():
+                    defaults[k] = getattr(f, 'default', None)
+            except Exception:
+                defaults = {}
+        try:
+            from apps.server.backend.codex.options import get_snapshot as _snap  # type: ignore
+            snap = _snap().as_dict()
+        except Exception:
+            snap = {}
+        return {"defaults": defaults, "snapshot": snap}
+
     def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             return {}

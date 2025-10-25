@@ -125,7 +125,7 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
 __all__ = ["EngineOpts", "WanComponents", "WanStageOptions", "resolve_wan_repo_candidates", "WAN_DIFFUSERS_REPO_CANDIDATES"]
 
 
-def resolve_user_supplied_assets(extras: dict | None, fallback_tokenizer_dir: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def resolve_user_supplied_assets(extras: dict | None, fallback_metadata_dir: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Strict parsing of user-supplied asset paths.
 
     Accepted keys only:
@@ -143,7 +143,7 @@ def resolve_user_supplied_assets(extras: dict | None, fallback_tokenizer_dir: Op
         te = str(ex.get('wan_text_encoder_path')).strip()
     elif ex.get('wan_text_encoder_dir'):
         te = str(ex.get('wan_text_encoder_dir')).strip()
-    tok = str(ex.get('wan_tokenizer_dir')).strip() if ex.get('wan_tokenizer_dir') else None
-    if not tok and fallback_tokenizer_dir and os.path.isdir(fallback_tokenizer_dir):
-        tok = fallback_tokenizer_dir
-    return (vae if vae else None), (te if te else None), (tok if tok else None)
+    meta = str(ex.get('wan_metadata_dir')).strip() if ex.get('wan_metadata_dir') else None
+    if not meta and fallback_metadata_dir and os.path.isdir(fallback_metadata_dir):
+        meta = fallback_metadata_dir
+    return (vae if vae else None), (te if te else None), (meta if meta else None)

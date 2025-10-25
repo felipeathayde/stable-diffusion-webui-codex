@@ -145,7 +145,7 @@ class Wan2214BEngine(BaseVideoEngine):
             from apps.server.backend.runtime.nn import wan22 as gguf
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
-            vae_path, te_path, tk_dir = resolve_user_supplied_assets(ex, self._comp.hf_tokenizer_dir)
+            vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, self._comp.hf_repo_dir)
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),
@@ -159,7 +159,7 @@ class Wan2214BEngine(BaseVideoEngine):
                 negative_prompt=getattr(request, 'negative_prompt', None),
                 vae_dir=vae_path,
                 text_encoder_dir=te_path,
-                tokenizer_dir=tk_dir,
+                metadata_dir=meta_dir,
                 high=gguf.StageConfig(
                     model_dir=self._comp.model_dir or '',
                     sampler=str(getattr(request, 'sampler', 'Euler a')),
@@ -189,7 +189,7 @@ class Wan2214BEngine(BaseVideoEngine):
                 raise RuntimeError("img2vid requires 'init_image'")
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
-            vae_path, te_path, tk_dir = resolve_user_supplied_assets(ex, self._comp.hf_tokenizer_dir)
+            vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, self._comp.hf_repo_dir)
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),
@@ -204,7 +204,7 @@ class Wan2214BEngine(BaseVideoEngine):
                 init_image=getattr(request, 'init_image', None),
                 vae_dir=vae_path,
                 text_encoder_dir=te_path,
-                tokenizer_dir=tk_dir,
+                metadata_dir=meta_dir,
                 high=gguf.StageConfig(
                     model_dir=self._comp.model_dir or '',
                     sampler=str(getattr(request, 'sampler', 'Euler a')),

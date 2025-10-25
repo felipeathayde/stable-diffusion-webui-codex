@@ -233,12 +233,12 @@ const state = reactive({
   high: {
     modelDir: '',
     steps: 4, cfgScale: 7,
-    loraPath: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005chigh_noise_model_lora.safetensors', loraWeight: 1.0,
+    loraPath: '', loraWeight: 1.0,
   },
   low: {
     modelDir: '',
     steps: 4, cfgScale: 7,
-    loraPath: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005clow_noise_model_lora.safetensors', loraWeight: 1.0,
+    loraPath: '', loraWeight: 1.0,
   },
   sampler: 'Euler', scheduler: 'Simple', wanFormat: 'gguf',
   seed: -1,

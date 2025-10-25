@@ -1525,6 +1525,17 @@ def build_app() -> FastAPI:
             extras['wan_high'] = payload.get('wan_high')
         if isinstance(payload.get('wan_low'), dict):
             extras['wan_low'] = payload.get('wan_low')
+        # Pass-through of explicit WAN GGUF complements (no guessing)
+        for key in (
+            'wan_format',
+            'wan_vae_path',
+            'wan_text_encoder_path',
+            'wan_text_encoder_dir',
+            'wan_metadata_dir',
+            'wan_tokenizer_dir',
+        ):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
 
         req = Txt2VidRequest(
             task=TaskType.TXT2VID,
@@ -1599,6 +1610,17 @@ def build_app() -> FastAPI:
             extras['wan_high'] = payload.get('wan_high')
         if isinstance(payload.get('wan_low'), dict):
             extras['wan_low'] = payload.get('wan_low')
+        # Pass-through of explicit WAN GGUF complements (no guessing)
+        for key in (
+            'wan_format',
+            'wan_vae_path',
+            'wan_text_encoder_path',
+            'wan_text_encoder_dir',
+            'wan_metadata_dir',
+            'wan_tokenizer_dir',
+        ):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
 
         req = Img2VidRequest(
             task=TaskType.IMG2VID,

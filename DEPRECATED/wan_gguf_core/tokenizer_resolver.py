@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# DEPRECATED: moved out of active backend; reference only.
+
 """Auto-resolve and fetch tokenizers from Hugging Face when missing.
 
 Design

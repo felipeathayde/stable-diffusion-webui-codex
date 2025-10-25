@@ -15,7 +15,7 @@ from apps.server.backend.core.exceptions import EngineLoadError
 import os
 
 from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
-from .wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates
+from .wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates, resolve_user_supplied_assets
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 HF_ROOT = PROJECT_ROOT / "apps" / "server" / "backend" / "huggingface"
@@ -138,9 +138,7 @@ class Wan225BEngine(BaseVideoEngine):
             from apps.server.backend.runtime.nn import wan22 as gguf
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
-            vae_path = ex.get('wan_vae_path') or ex.get('vae_path') or ex.get('vae')
-            te_path = ex.get('wan_text_encoder_path') or ex.get('text_encoder_path') or ex.get('text_encoder')
-            tk_dir = ex.get('wan_tokenizer_dir') or ex.get('tokenizer_dir') or self._comp.hf_tokenizer_dir
+            vae_path, te_path, tk_dir = resolve_user_supplied_assets(ex, self._comp.hf_tokenizer_dir)
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),
@@ -184,9 +182,7 @@ class Wan225BEngine(BaseVideoEngine):
                 raise RuntimeError("img2vid requires 'init_image'")
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
-            vae_path = ex.get('wan_vae_path') or ex.get('vae_path') or ex.get('vae')
-            te_path = ex.get('wan_text_encoder_path') or ex.get('text_encoder_path') or ex.get('text_encoder')
-            tk_dir = ex.get('wan_tokenizer_dir') or ex.get('tokenizer_dir') or self._comp.hf_tokenizer_dir
+            vae_path, te_path, tk_dir = resolve_user_supplied_assets(ex, self._comp.hf_tokenizer_dir)
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),

@@ -75,7 +75,19 @@ def _patch_unembed3d(tokens, w, out_shape):
     return video
 
 
-def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None, metadata_dir: Optional[str] = None):
+def _get_text_context(
+    model_dir: str,
+    prompt: str,
+    negative: Optional[str],
+    *,
+    device: str,
+    dtype: str,
+    text_encoder_dir: Optional[str] = None,
+    tokenizer_dir: Optional[str] = None,
+    vae_dir: Optional[str] = None,
+    model_key: Optional[str] = None,
+    metadata_dir: Optional[str] = None,
+):
     """GGUF path: use Transformers tokenizer + encoder only; do NOT fall back to Diffusers.
 
     - Searches explicit extras first (tokenizer_dir/text_encoder_dir), then common subfolders under model_dir.
@@ -115,13 +127,22 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
     except Exception as ex:
         raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
 
-    # Strict: require text encoder dir or file (with adjacent config)
+    # Strict: require text encoder weights (file) OR a directory with config; when a file is provided,
+    # the config is resolved from metadata_dir/text_encoder (vendored repo), never from the weights folder.
     if te_file is not None:
-        enc_dir = os.path.dirname(te_file)
+        if not metadata_dir or not os.path.isdir(metadata_dir):
+            raise RuntimeError("WAN22 GGUF: 'wan_metadata_dir' is required when providing 'wan_text_encoder_path'.")
+        enc_dir = os.path.join(metadata_dir, 'text_encoder')
+        if not os.path.isdir(enc_dir):
+            raise RuntimeError(
+                f"WAN22 GGUF: expected text encoder config under metadata repo: '{enc_dir}'"
+            )
         try:
             cfg = AutoConfig.from_pretrained(enc_dir, local_files_only=True)
         except Exception as ex:
-            raise RuntimeError(f"WAN22 GGUF: missing/invalid text encoder config in '{enc_dir}': {ex}") from ex
+            raise RuntimeError(
+                f"WAN22 GGUF: failed to read text encoder config from '{enc_dir}': {ex}"
+            ) from ex
         enc = _Enc(cfg)
         from safetensors.torch import load_file as _load_st
         try:
@@ -131,7 +152,9 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
             raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {ex}") from ex
     else:
         if not te_dir or not os.path.isdir(te_dir):
-            raise RuntimeError("WAN22 GGUF: text encoder path missing or invalid; provide 'wan_text_encoder_dir' or 'wan_text_encoder_path'.")
+            raise RuntimeError(
+                "WAN22 GGUF: text encoder path missing or invalid; provide 'wan_text_encoder_path' (file) or 'wan_text_encoder_dir' (directory)."
+            )
         try:
             enc = _Enc.from_pretrained(te_dir, torch_dtype=_as_dtype(dtype), local_files_only=True)
         except Exception as ex:

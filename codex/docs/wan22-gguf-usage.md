@@ -44,6 +44,8 @@ Strict rules (no fallbacks)
 - `wan_metadata_dir` is mandatory any time `wan_text_encoder_path` is provided.
 - Tokenizer is loaded from `<wan_metadata_dir>/tokenizer` (or `tokenizer_2`). Provide `wan_tokenizer_dir` only for advanced overrides.
 - VAE must be present: `wan_vae_path` points to a file or a directory compatible with `AutoencoderKLWan`.
+- Device policy: CPU only when explicitly set (`device='cpu'`). Otherwise CUDA is required.
+  - If `device` is omitted or set to `'auto'`/`'cuda'` and CUDA is unavailable, the backend raises a clear error. No silent CPU fallback.
 
 Common errors (and fixes)
 - "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required" → select a TE weights file in models/text-encoder.
@@ -54,4 +56,3 @@ Common errors (and fixes)
 UI wiring
 - Test tab and WAN tab expose input-lists for Metadata, Text Encoder (file), and VAE. They display names only and submit absolute paths.
 - High/Low models are plain dropdowns listing `.gguf` files under models/wan22.
-

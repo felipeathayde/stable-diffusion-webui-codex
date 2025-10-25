@@ -101,7 +101,19 @@ class Wan2214BEngine(BaseVideoEngine):
                 return False
 
         comp.model_dir = p
-        comp.device = "cuda" if (dev in ("auto", "cuda")) and getattr(__import__('torch').cuda, 'is_available', lambda: False)() else "cpu"
+        # Strict device policy: CPU only if explicitly chosen. Otherwise require CUDA.
+        try:
+            import torch
+            cuda_ok = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
+        except Exception:
+            cuda_ok = False
+        dev_lc = (dev or 'auto').lower().strip()
+        if dev_lc == 'cpu':
+            comp.device = 'cpu'
+        else:
+            if not cuda_ok:
+                raise EngineLoadError("CUDA is not available; set device='cpu' explicitly to force CPU.")
+            comp.device = 'cuda'
         comp.dtype = dty
 
         if _is_diffusers_dir(p):

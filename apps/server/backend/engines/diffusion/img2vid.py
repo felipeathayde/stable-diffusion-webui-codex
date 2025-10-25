@@ -4,6 +4,8 @@ import time
 from typing import Iterator, List, Any
 
 from apps.server.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Img2VidRequest
+from apps.server.backend.codex import lora as codex_lora
+from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
 from apps.server.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from .wan22_common import WanStageOptions
 from apps.server.backend.core.params.video import VideoInterpolationOptions
@@ -25,6 +27,16 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
     pipe = getattr(comp, "pipeline", None)
     high_model = getattr(comp, "pipeline_high", None)
     low_model = getattr(comp, "pipeline_low", None)
+
+    # Best-effort native LoRA application (only if engine exposes patchers)
+    try:
+        sels = codex_lora.get_selections()
+        if sels and hasattr(engine, 'forge_objects_after_applying_lora'):
+            apply_loras_to_engine(engine, sels)
+            if logger:
+                logger.info("[native] img2vid applied %d LoRA(s)", len(sels))
+    except Exception:
+        pass
 
     # Prefer explicit stage pipelines if provided (per-stage dirs)
     if high_model is None and low_model is None and pipe is None and (getattr(comp, "high_dir", None) or getattr(comp, "low_dir", None)):

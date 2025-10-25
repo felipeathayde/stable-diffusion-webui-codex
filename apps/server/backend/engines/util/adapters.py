@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 import logging
 
-from modules import processing as _processing
-from modules import shared as _shared
+from apps.server.backend.modules import shared as _shared
+from apps.server.backend.modules import processing as _processing  # type: ignore
 
 from apps.server.backend.core.requests import Img2ImgRequest, Txt2ImgRequest
 

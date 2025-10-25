@@ -1,48 +1,34 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List
+from apps.server.backend.codex.options import get_snapshot as _opts_snapshot  # type: ignore
+
+
+# Hydration choices are native and conservative. If richer choices are needed,
+# add native providers under apps/server/backend and import them here.
 
 
 def _choices_upscalers() -> List[str]:
-    try:
-        from modules import shared as _shared  # type: ignore
-        return [x.name for x in getattr(_shared, 'sd_upscalers', [])]
-    except Exception:
-        return []
+    # No native upscaler registry yet; return a minimal-safe set
+    return ["None"]
 
 
 def _choices_sd_unet() -> List[str]:
-    try:
-        from modules import shared_items as _items  # type: ignore
-        return list(_items.sd_unet_items())
-    except Exception:
-        return []
+    # No native UNet variants exposed to UI; empty (UI should hide when empty)
+    return []
 
 
 def _choices_cross_attention() -> List[str]:
-    try:
-        from modules import shared_items as _items  # type: ignore
-        return list(_items.cross_attention_optimizations())
-    except Exception:
-        return ['Automatic']
+    # Keep a single default
+    return ["Automatic"]
 
 
 def _choices_hypernetworks() -> List[str]:
-    try:
-        from modules import shared as _shared  # type: ignore
-        base = ["None"]
-        others = list(getattr(_shared, 'hypernetworks', []) or [])
-        return base + others
-    except Exception:
-        return ["None"]
+    return ["None"]
 
 
 def _choices_localizations() -> List[str]:
-    try:
-        from modules import localization as _loc  # type: ignore
-        return ["None"] + list(getattr(_loc, 'localizations', {}).keys())
-    except Exception:
-        return ["None"]
+    return ["None"]
 
 
 HYDRATORS: Dict[str, Callable[[], List[str]]] = {
@@ -68,6 +54,7 @@ def hydrate_schema(base: Dict[str, Any]) -> Dict[str, Any]:
         'version': base.get('version', 1),
         'source': base.get('source', 'hydrated'),
     }
+    snap = _opts_snapshot().as_dict()
     for f in base.get('fields', []):
         fk = f.get('key') if isinstance(f, dict) else None
         if fk in HYDRATORS:
@@ -81,8 +68,13 @@ def hydrate_schema(base: Dict[str, Any]) -> Dict[str, Any]:
             if choices and nf.get('default') not in choices:
                 # pick first choice rather than invalid default
                 nf['default'] = choices[0]
+            # current value from options snapshot when available
+            if fk in snap:
+                nf['current'] = snap[fk]
             out['fields'].append(nf)
         else:
-            out['fields'].append(f)
+            nf = dict(f)
+            if fk in snap:
+                nf['current'] = snap[fk]
+            out['fields'].append(nf)
     return out
-

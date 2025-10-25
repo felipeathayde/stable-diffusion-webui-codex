@@ -1,67 +1,54 @@
 from __future__ import annotations
 
-from contextlib import closing, nullcontext
-from typing import Callable, Optional
+from typing import Any, Dict, Iterable, List, Optional
+import io
+import base64
+import json
 
-import modules.shared as shared
-from modules.processing import process_images
-from modules.processing import StableDiffusionProcessing  # for type hints only
-from modules.api.api import process_extra_images  # reuse existing helper
-from modules.progress import add_task_to_queue, start_task, finish_task
+from apps.server.backend.core.engine_interface import TaskType
+from apps.server.backend.core.orchestrator import InferenceOrchestrator
+from apps.server.backend.core.requests import ProgressEvent, ResultEvent, Txt2ImgRequest, Img2ImgRequest
+
+
+def _encode_images(images: Iterable[Any]) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for img in images or []:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        out.append({"format": "png", "data": base64.b64encode(buf.getvalue()).decode("ascii")})
+    return out
 
 
 class ImageService:
-    """Encapsulates Stable Diffusion image generation flows.
+    """Native image generation service over Codex engines (no A1111 dependency)."""
 
-    This service owns the common execution path for txt2img/img2img style
-    requests, without knowledge of HTTP frameworks or request models.
-    """
+    def __init__(self) -> None:
+        self._orch = InferenceOrchestrator()
 
-    def execute_generation(
-        self,
-        p_factory: Callable[[], StableDiffusionProcessing],
-        *,
-        script_runner,
-        selectable_scripts,
-        script_args,
-        task_id: str,
-        job_label: str,
-        outpath_samples: str,
-        outpath_grids: str,
-        prepare_p: Optional[Callable[[StableDiffusionProcessing], None]] = None,
-        queue_lock=None,
-    ):
-        """Create, configure and execute a processing pipeline.
-
-        Returns the `Processed` object from `process_images()` or script runner.
-        """
-
-        add_task_to_queue(task_id)
-
-        lock_ctx = queue_lock if queue_lock is not None else nullcontext()
-        with lock_ctx:
-            with closing(p_factory()) as p:
-                p.is_api = True
-                p.scripts = script_runner
-                p.outpath_grids = outpath_grids
-                p.outpath_samples = outpath_samples
-
-                if callable(prepare_p):
-                    prepare_p(p)
-
+    def txt2img(self, req: Txt2ImgRequest, *, engine_key: str, model_ref: Optional[str]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for ev in self._orch.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+            if isinstance(ev, ResultEvent):
+                payload = ev.payload or {}
+                info_raw = payload.get("info", "{}")
                 try:
-                    shared.state.begin(job=job_label)
-                    start_task(task_id)
-                    if selectable_scripts is not None:
-                        p.script_args = script_args
-                        processed = script_runner.run(p, *p.script_args)
-                    else:
-                        p.script_args = tuple(script_args)
-                        processed = process_images(p)
-                    process_extra_images(processed)
-                    finish_task(task_id)
-                finally:
-                    shared.state.end()
-                    shared.total_tqdm.clear()
+                    info_obj = json.loads(info_raw)
+                except Exception:
+                    info_obj = info_raw
+                images = _encode_images(payload.get("images", []))
+                result = {"images": images, "info": info_obj}
+        return result
 
-        return processed
+    def img2img(self, req: Img2ImgRequest, *, engine_key: str, model_ref: Optional[str]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for ev in self._orch.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
+            if isinstance(ev, ResultEvent):
+                payload = ev.payload or {}
+                info_raw = payload.get("info", "{}")
+                try:
+                    info_obj = json.loads(info_raw)
+                except Exception:
+                    info_obj = info_raw
+                images = _encode_images(payload.get("images", []))
+                result = {"images": images, "info": info_obj}
+        return result

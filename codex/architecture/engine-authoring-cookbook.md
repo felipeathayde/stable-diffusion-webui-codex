@@ -19,6 +19,7 @@ Guidar a criação de engines (familias de modelos) sem sair da arquitetura.
   - Selecione scheduler via `engines/util/schedulers.SamplerKind`
   - Chame NN do runtime (`runtime/nn/...`) e produza `InferenceEvent`s
   - Informe progresso com `ProgressEvent`, resultados com `ResultEvent`
+- Evite integrar com `modules_forge.*` ou `modules.*`. O backend ativo não deve depender de A1111. Se faltar alguma capacidade, implemente‑a nativamente sob `apps/server/backend/**` e exponha via `apps.server.backend.codex.*`.
 
 4) Assets
 - Exija explicitamente os diretórios/arquivos mínimos; se faltar, lance `EngineLoadError`/`EngineExecutionError`
@@ -36,4 +37,4 @@ Pitfalls comuns
 - Evitar imports para `legacy/` e `DEPRECATED/`
 - Não usar `backend.*` namespace antigo
 - Não criar engines/video/wan/*; WAN 2.2 é `runtime/nn/wan22.py`
-
+- Não introduzir novos `forge_*` (use `codex_*` e classes Codex)

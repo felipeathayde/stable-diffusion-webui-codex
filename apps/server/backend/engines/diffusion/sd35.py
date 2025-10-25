@@ -10,10 +10,13 @@ from apps.server.backend.runtime.text_processing.t5_engine import T5TextProcessi
 from apps.server.backend.config.args import dynamic_args
 from apps.server.backend.runtime.memory import memory_management
 from apps.server.backend.runtime.modules.k_prediction import PredictionDiscreteFlow
+from types import SimpleNamespace
+import os
 
 def _opts():
-    from modules import shared as _shared
-    return _shared.opts
+    # Minimal native options shim (no legacy dependency)
+    enable_t5 = os.getenv("CODEX_SD3_ENABLE_T5", "1") in ("1", "true", "yes", "on")
+    return SimpleNamespace(sd3_enable_t5=enable_t5)
 
 
 ##  patch SD3 Class in huggingface_guess.model_list

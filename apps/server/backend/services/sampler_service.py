@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from fastapi.exceptions import HTTPException
-
-from modules import sd_samplers
+from apps.server.backend.engines.util.schedulers import SamplerKind
 
 
 class SamplerService:
@@ -12,16 +11,18 @@ class SamplerService:
     def resolve(sampler_name_or_index, scheduler: str | None):
         """Return a tuple (sampler_name, scheduler_name).
 
-        Normalizes aliases and indices using sd_samplers helpers.
+        Native resolver using Codex SamplerKind; indices are not supported.
         """
-        sampler, sched = sd_samplers.get_sampler_and_scheduler(
-            sampler_name_or_index, scheduler
-        )
-        return sampler, sched
+        if isinstance(sampler_name_or_index, int):
+            raise HTTPException(status_code=400, detail="Sampler index not supported; use name")
+        name = str(sampler_name_or_index or "Automatic")
+        kind = SamplerKind.from_string(name)
+        return kind.value, (scheduler or "Automatic")
 
     @staticmethod
     def ensure_valid_sampler(name: str) -> str:
-        config = sd_samplers.all_samplers_map.get(name, None)
-        if config is None:
+        try:
+            _ = SamplerKind.from_string(name)
+        except Exception:
             raise HTTPException(status_code=400, detail="Sampler not found")
         return name

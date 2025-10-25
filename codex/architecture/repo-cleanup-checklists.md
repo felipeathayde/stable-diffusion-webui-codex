@@ -37,6 +37,8 @@ modules/ — Compat → P0
 modules_forge/ — Compat → P0
 - [ ] Same audit and “compat only” label
   - AC: note in repo-inventory; no new backend coupling added
+ - [ ] Confirm backend only uses `apps.server.backend.codex.*` (zero `modules_forge.*` in apps/)
+   - AC: grep em `apps/server/backend/**` retorna 0 para `modules_forge.*`
 
 k_diffusion/ — Vendor/Compat → P1
 - [ ] Pin version hash in docs (vendor note)
@@ -59,8 +61,8 @@ html/ — Compat → P3
   - AC: grep shows only known images referenced
 
 packages_3rdparty/gguf/ — Vendor → P1
-- [ ] Confirm façade path used when needed
-  - AC: no direct third-party import; façade stable
+- [ ] Backend sem dependências de A1111 (`modules.*`)
+  - AC: grep zero em `apps/server/backend/**` para `\bmodules(\.|_forge)`, `forge_`
 
 packages_3rdparty/* (collections) — Vendor (optional) → P3
 - [ ] Tag as examples only
@@ -114,4 +116,3 @@ DEPRECATED/ — Reference/Archive → P1
 
 How to use
 - Treat this file as a live checklist. When you complete a line, add a short note (who/when) and optional pointer to a commit or doc.
-

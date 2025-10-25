@@ -52,19 +52,15 @@ def ensure_initialized() -> None:
         return
 
     try:
-        from modules_forge.initialization import initialize_forge
-    except ModuleNotFoundError:  # pragma: no cover - optional Forge build
-        def initialize_forge() -> None:
+        from apps.server.backend.codex.initialization import (
+            initialize_codex,
+        )
+    except Exception:  # pragma: no cover - optional compatibility layer
+        def initialize_codex() -> None:
             return None
 
-    from modules import initialize, script_callbacks
-
-    initialize_forge()
-    initialize.imports()
-    initialize.check_versions()
-    initialize.initialize()
-    # Allow scripts to run their setup hooks (mirrors webui before UI launch)
-    script_callbacks.before_ui_callback()
+    # Native initialization only (no legacy bootstrap)
+    initialize_codex()
 
     _initialized = True
 
@@ -193,16 +189,11 @@ class _DummyRequest:
 def build_app() -> FastAPI:
     ensure_initialized()
 
-    from modules import script_callbacks as _script_callbacks
-    from modules import shared as _shared
-    from modules import sd_models as _sd_models
-    from modules import sd_samplers as _sd_samplers
-    from modules import sd_schedulers as _sd_schedulers
-    from modules import call_queue as _call_queue
-    import modules.txt2img as _txt2img
-    import modules.img2img as _img2img
-    import modules.txt2vid as _txt2vid
-    import modules.img2vid as _img2vid
+    # Native parameter helpers (replace legacy _txt2img/_img2img parsers)
+    from apps.server.backend.services import param_utils as _p
+    _script_callbacks = None  # legacy callbacks not used in native backend
+    _shared = None
+    _sd_models = None
     from apps.server.backend.core.engine_interface import TaskType
     from apps.server.backend.core.orchestrator import InferenceOrchestrator
     from apps.server.backend.core.requests import (
@@ -469,10 +460,45 @@ def build_app() -> FastAPI:
         Returns one of: 'wan22', 'hunyuan_video', 'svd', 'flux', 'sdxl', 'sd15'.
         This is a conservative, metadata-first detector with filename fallback.
         """
+        # Heuristics based on current selected checkpoint title/path and registry metadata
         try:
-            from modules import shared as _shared, sd_models as _sd_models
+            from apps.server.backend.codex import main as _codex
+            from apps.server.backend.registry.checkpoints import describe_checkpoints as _describe
+            current = getattr(_codex, "_SELECTIONS").checkpoint_name
+            infos = _describe()
+            target = None
+            for i in infos:
+                if i.get('name') == current or i.get('title') == current:
+                    target = i
+                    break
+            blob = ''
+            if target:
+                blob = ' '.join([
+                    str(target.get('title') or ''), str(target.get('path') or ''), str(target.get('format') or ''),
+                ]).lower()
+                comps = target.get('components') or []
+                if any('flux' in blob for blob in [blob]) or 'transformer' in comps:
+                    if 'flux' in blob:
+                        return 'flux'
+                if 'text_encoder_2' in comps and 'tokenizer_2' in comps:
+                    return 'sdxl'
+                if 'hunyuan' in blob:
+                    return 'hunyuan_video'
+                if 'svd' in blob:
+                    return 'svd'
+                if 'wan' in blob:
+                    return 'wan22'
+            # Fallback on title string hints
+            t = (current or '').lower()
+            if 'flux' in t:
+                return 'flux'
+            if 'xl' in t:
+                return 'sdxl'
+            if 'wan' in t:
+                return 'wan22'
         except Exception:
-            return 'sd15'
+            pass
+        return 'sd15'
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
@@ -682,45 +708,6 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail='tab_id required')
         print(color_yellow(f"[models] unload requested for tab {tab_id}"))
         return {'ok': True}
-        title = getattr(_shared.opts, 'sd_model_checkpoint', '') or ''
-        title_l = str(title).lower()
-        meta = {}
-        try:
-            # Find checkpoint info by title
-            info = None
-            for _k, v in getattr(_sd_models, 'checkpoints_list', {}).items():
-                if getattr(v, 'title', None) == title:
-                    info = v
-                    break
-            if info is not None:
-                meta = getattr(info, 'metadata', {}) or {}
-        except Exception:
-            meta = {}
-
-        def has_meta(keys: list[str], substr: str) -> bool:
-            s = str(substr).lower()
-            for k in keys:
-                v = str(meta.get(k, '')).lower()
-                if s in v:
-                    return True
-            return False
-
-        # WAN 2.2
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'wan') or 'wan' in title_l:
-            return 'wan22'
-        # Hunyuan Video
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'hunyuan') or 'hunyuan' in title_l:
-            return 'hunyuan_video'
-        # SVD
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'svd') or 'svd' in title_l:
-            return 'svd'
-        # FLUX
-        if has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'flux') or 'flux' in title_l:
-            return 'flux'
-        # SDXL
-        if 'xl' in title_l or has_meta(['modelspec.architecture', 'architecture', 'model_name'], 'xl'):
-            return 'sdxl'
-        return 'sd15'
 
     @app.get('/api/ui/blocks')
     def ui_blocks(tab: Optional[str] = None) -> Dict[str, Any]:
@@ -812,17 +799,9 @@ def build_app() -> FastAPI:
         if not sel_value:
             raise HTTPException(status_code=409, detail='preset has no model selector')
 
-        try:
-            from modules import sd_models as _sd_models
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f'models not available: {e}')
-        # Build list of checkpoint titles
-        titles = []
-        try:
-            for info in _sd_models.checkpoints_list.values():
-                titles.append(info.title)
-        except Exception:
-            pass
+        from apps.server.backend.registry.checkpoints import describe_checkpoints as _describe
+        infos = _describe()
+        titles = [str(i.get('title') or i.get('name') or '') for i in infos]
         target: Optional[str] = None
         if sel_type == 'exact':
             for t in titles:
@@ -839,19 +818,14 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=409, detail=f'checkpoint not found for selector: {sel_type}:{sel_value}')
 
         # Apply options atomically
+        from apps.server.backend.codex import main as _codex
         try:
-            from modules import shared as _shared
-            # sd_model_checkpoint
-            _shared.opts.set('sd_model_checkpoint', target, is_api=True)
-            # extra options if any
+            _codex.checkpoint_change(str(target), save=True, refresh=False)
+            updates = {'sd_model_checkpoint': str(target)}
             extra = preset.get('options') or {}
             if isinstance(extra, dict):
-                for k, v in extra.items():
-                    try:
-                        casted = _shared.opts.cast_value(k, v)
-                    except Exception:
-                        casted = v
-                    _shared.opts.set(k, casted, is_api=True)
+                updates.update(extra)
+            _opts_set_many(updates)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f'failed to apply preset: {e}')
 
@@ -860,13 +834,10 @@ def build_app() -> FastAPI:
     @app.get('/api/settings/values')
     def settings_values() -> Dict[str, Any]:
         try:
-            from modules import shared as _shared
-            vals = {}
+            vals = _opts_load()
             idx = _field_index() if _settings_registry_ok else {}
-            keys = set(idx.keys()) if idx else set(_shared.opts.data.keys())
-            for k in keys:
-                if k in _shared.opts.data:
-                    vals[k] = _shared.opts.data.get(k)
+            if idx:
+                vals = {k: vals.get(k) for k in idx.keys()}
             return {"values": vals}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed to read values: {e}")
@@ -875,202 +846,170 @@ def build_app() -> FastAPI:
     def _apply_saved_settings() -> None:
         if not _settings_registry_ok:
             return
-        try:
-            from modules import shared as _shared
-        except Exception:
-            return
-        saved = _load_json(_settings_values_path)
+        saved = _opts_load()
         if not isinstance(saved, dict) or not saved:
             return
         idx = _field_index()
-        applied, skipped = 0, 0
-        for k, v in saved.items():
+        # Validate and normalize persisted values against schema, then re-save
+        changed = False
+        for k in list(saved.keys()):
             f = idx.get(k)
             if not f:
-                skipped += 1
-                continue
+                saved.pop(k, None); changed = True; continue
             try:
-                # Validate basic domain rules
-                if getattr(f, 'choices', None) and isinstance(f.choices, list):
-                    if v not in f.choices:
-                        skipped += 1
-                        continue
+                if getattr(f, 'choices', None) and isinstance(f.choices, list) and saved[k] not in f.choices:
+                    saved.pop(k, None); changed = True; continue
                 if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
-                    try:
-                        num = float(v)
-                        lo = f.min if isinstance(getattr(f, 'min', None), (int, float)) else None
-                        hi = f.max if isinstance(getattr(f, 'max', None), (int, float)) else None
-                        if lo is not None:
-                            num = max(num, lo)
-                        if hi is not None:
-                            num = min(num, hi)
-                        v = num
-                    except Exception:
-                        skipped += 1
-                        continue
-                if getattr(f, 'type', None) == _SettingType.CHECKBOX:
-                    if isinstance(v, str):
-                        v = v.lower() in ('1', 'true', 'yes', 'on')
-                    else:
-                        v = bool(v)
-                # Cast and apply
-                try:
-                    casted = _shared.opts.cast_value(k, v)
-                except Exception:
-                    casted = v
-                if _shared.opts.set(k, casted, is_api=True):
-                    applied += 1
-                else:
-                    skipped += 1
+                    v = float(saved[k])
+                    lo = getattr(f, 'min', None); hi = getattr(f, 'max', None)
+                    if isinstance(lo, (int, float)) and v < lo:
+                        saved[k] = lo; changed = True
+                    if isinstance(hi, (int, float)) and v > hi:
+                        saved[k] = hi; changed = True
+                if getattr(f, 'type', None) == _SettingType.CHECKBOX and isinstance(saved[k], str):
+                    saved[k] = saved[k].lower() in ('1','true','yes','on'); changed = True
             except Exception:
-                skipped += 1
-        if applied:
-            print(color_cyan(f"[settings] applied {applied} saved item(s); skipped {skipped}"))
+                continue
+        if changed:
+            _save_json(_settings_values_path, saved)
 
     # Apply saved settings early (after modules init) before serving
     try:
         _apply_saved_settings()
     except Exception as e:  # pragma: no cover
-        print(color_red(f"[settings] failed to apply saved settings: {e}"))
+        print(color_red(f"[settings] failed to validate saved settings: {e}"))
 
     @app.get('/api/models')
     def list_models() -> Dict[str, Any]:
-        _sd_models.list_models()
-        models = [_serialize_checkpoint(info) for info in _sd_models.checkpoints_list.values()]
-        return {"models": models, "current": _shared.opts.sd_model_checkpoint}
+        """List checkpoints discovered by the native registry.
+
+        Response shape remains compatible: fields include title/name/filename/metadata.
+        """
+        from apps.server.backend.registry.checkpoints import list_checkpoints as _list_ckpt, describe_checkpoints as _describe_ckpt
+
+        def _serialize(entry) -> Dict[str, Any]:
+            return {
+                "title": entry.title,
+                "name": entry.name,
+                "model_name": entry.model_name,
+                "hash": entry.short_hash,
+                "filename": entry.filename,
+                "metadata": entry.metadata,
+            }
+
+        entries = _list_ckpt()
+        models = [_serialize(e) for e in entries]
+        models_info = _describe_ckpt()
+        # Current selection: track via codex options when available
+        try:
+            from apps.server.backend.codex import main as _codex
+            current = getattr(_codex, "_SELECTIONS").checkpoint_name or (models[0]["name"] if models else None)
+        except Exception:
+            current = models[0]["name"] if models else None
+        return {"models": models, "current": current, "models_info": models_info}
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:
-        _sd_samplers.set_samplers()
-        samplers = [_serialize_sampler(s) for s in _sd_samplers.visible_samplers()]
+        from apps.server.backend.engines.util.schedulers import SamplerKind
+        kinds = [
+            (SamplerKind.EULER.value, ["k_euler"]),
+            (SamplerKind.EULER_A.value, ["k_euler_a", "euler_a"]),
+            (SamplerKind.DDIM.value, ["ddim"]),
+            (SamplerKind.DPM2M.value, ["dpmpp_2m", "dpm++ 2m"]),
+            (SamplerKind.DPM2M_SDE.value, ["dpmpp_2m_sde", "dpm++ 2m sde"]),
+            (SamplerKind.PLMS.value, ["lms"]),
+            (SamplerKind.PNDM.value, ["pndm"]),
+        ]
+        samplers = [{"name": n, "aliases": a, "options": {}} for n, a in kinds]
         return {"samplers": samplers}
 
     @app.get('/api/schedulers')
     def list_schedulers() -> Dict[str, Any]:
-        schedulers = [_serialize_scheduler(s) for s in _sd_schedulers.schedulers]
+        schedulers = [
+            {"name": "EulerDiscreteScheduler", "label": "Euler", "aliases": ["euler"]},
+            {"name": "EulerAncestralDiscreteScheduler", "label": "Euler a", "aliases": ["euler a"]},
+            {"name": "DDIMScheduler", "label": "DDIM", "aliases": ["ddim"]},
+            {"name": "DPMSolverMultistepScheduler", "label": "DPM++ 2M", "aliases": ["dpm++ 2m", "dpmpp_2m"]},
+            {"name": "LMSDiscreteScheduler", "label": "PLMS", "aliases": ["plms"]},
+            {"name": "PNDMScheduler", "label": "PNDM", "aliases": ["pndm"]},
+        ]
         return {"schedulers": schedulers}
 
     @app.get('/api/vaes')
     def list_vaes() -> Dict[str, Any]:
-        """Return available VAE modules and current selection.
-
-        Tries the Forge discovery first (modules_forge.main_entry),
-        falling back to A1111's sd_vae.vae_dict if Forge is unavailable.
-        """
-        current = getattr(_shared.opts, 'forge_selected_vae', 'Automatic')
+        """Return available VAE modules and current selection (native registry)."""
+        from apps.server.backend.codex import options as _codex_opts
+        from apps.server.backend.registry.vae import list_vaes as _list_vaes, describe_vaes as _describe_vaes
+        current = _codex_opts.get_selected_vae('Automatic')
         try:
-            from modules_forge.main_entry import refresh_models, vae_module_list  # type: ignore
-            refresh_models()
-            choices = sorted(list(vae_module_list.keys()))
-            # Preserve canonical aliases first
-            baseline = ['Automatic', 'Built in', 'None']
-            ordered = baseline + [c for c in choices if c not in baseline]
-            return {"vaes": ordered, "current": current}
+            choices = _list_vaes()
+            info = _describe_vaes()
+            return {"vaes": choices, "current": current, "vaes_info": info}
         except Exception:
-            try:
-                import modules.sd_vae as _sd_vae  # type: ignore
-                _sd_vae.refresh_vae_list()
-                # sd_vae.vae_dict maps filename -> absolute path
-                baseline = ['Automatic', 'Built in', 'None']
-                extra = sorted(list(getattr(_sd_vae, 'vae_dict', {}).keys()))
-                ordered = baseline + [c for c in extra if c not in baseline]
-                return {"vaes": ordered, "current": current}
-            except Exception:
-                return {"vaes": [], "current": current}
+            return {"vaes": ['Automatic', 'Built in', 'None'], "current": current, "vaes_info": []}
 
     @app.get('/api/text-encoders')
     def list_text_encoders() -> Dict[str, Any]:
-        """Return available text encoder modules and current selection list."""
+        """Return available text encoder modules and current selection list (native registry)."""
+        from apps.server.backend.registry.text_encoders import list_text_encoders as _list_tes, describe_text_encoders as _describe_tes
+        from apps.server.backend.codex import options as _codex_opts
         try:
-            from modules_forge.main_entry import refresh_models, text_encoder_module_list  # type: ignore
-            refresh_models()
-            choices = sorted(list(text_encoder_module_list.keys()))
-            selected: list[str] = []
-            for path in getattr(_shared.opts, 'forge_additional_modules', []) or []:
-                base = os.path.basename(str(path))
-                if base in text_encoder_module_list:
-                    selected.append(base)
-            return {"text_encoders": choices, "current": selected}
+            mapping = _list_tes()
+            info = _describe_tes()
+            # current selection from codex options (paths/names as configured)
+            selected = _codex_opts.get_additional_modules()
+            return {"text_encoders": mapping, "current": selected, "text_encoders_info": info}
         except Exception:
-            # No discovery without Forge – return empty list rather than failing
-            return {"text_encoders": [], "current": []}
+            return {"text_encoders": {}, "current": [], "text_encoders_info": {}}
 
     @app.get('/api/embeddings')
     def list_embeddings() -> Dict[str, Any]:
-        """Return Textual Inversion embeddings (loaded + skipped)."""
-        nonlocal _embedding_db
-        try:
-            from modules import shared as _s
-            from modules.textual_inversion.textual_inversion import EmbeddingDatabase  # type: ignore
-        except Exception as e:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"Embeddings not available: {e}")
+        """Native Textual Inversion registry.
 
-        if _embedding_db is None:
-            db = EmbeddingDatabase()
-            # Prefer configured directory
-            try:
-                db.add_embedding_dir(_s.cmd_opts.embeddings_dir)
-            except Exception:
-                pass
-            try:
-                db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to load embeddings: {e}")
-            _embedding_db = db
-        else:
-            try:
-                _embedding_db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False)
-            except Exception:
-                pass
-
-        def convert(emb) -> Dict[str, Any]:
-            return {
-                "name": emb.name,
-                "step": emb.step,
-                "vectors": emb.vectors,
-                "shape": emb.shape,
-                "sd_checkpoint": getattr(emb, 'sd_checkpoint', None),
-                "sd_checkpoint_name": getattr(emb, 'sd_checkpoint_name', None),
-            }
-
-        loaded = {name: convert(emb) for name, emb in getattr(_embedding_db, 'word_embeddings', {}).items()}
-        skipped = {name: convert(emb) for name, emb in getattr(_embedding_db, 'skipped_embeddings', {}).items()}
-        return {"loaded": loaded, "skipped": skipped}
+        Returns a non-breaking shape including `loaded` and `skipped`, but all
+        entries are considered loaded when parseable.
+        """
+        from apps.server.backend.registry.embeddings import describe_embeddings as _describe
+        info = [e.__dict__ for e in _describe()]
+        loaded = {e["name"]: {"name": e["name"], "vectors": e.get("vectors"), "shape": e.get("dims"), "step": e.get("step") } for e in info if e.get("vectors")}
+        skipped = {e["name"]: {"name": e["name"], "vectors": e.get("vectors"), "shape": e.get("dims"), "step": e.get("step") } for e in info if not e.get("vectors")}
+        return {"loaded": loaded, "skipped": skipped, "embeddings_info": info}
 
     @app.get('/api/loras')
     def list_loras() -> Dict[str, Any]:
-        """Return LoRA files discovered under models/lora and --lora-dir.
+        """Return LoRA files via native registry plus metadata.
 
-        This is a simple directory scan (basenames) for quick UI listing.
+        Shape: { loras: [{name, path}], loras_info: [LoraEntry-like dicts] }
         """
-        roots: list[str] = []
-        try:
-            from modules import paths as _paths
-            roots.append(os.path.join(_paths.models_path, 'lora'))
-        except Exception:
-            pass
-        try:
-            from modules import shared as _s
-            if isinstance(_s.cmd_opts.lora_dir, str):
-                roots.append(_s.cmd_opts.lora_dir)
-        except Exception:
-            pass
-        exts = {'.safetensors', '.pt', '.ckpt'}
-        seen = set()
-        items: list[Dict[str, str]] = []
-        for r in roots:
-            if not isinstance(r, str) or not os.path.isdir(r):
+        from apps.server.backend.registry.lora import list_loras as _list_loras, describe_loras as _describe_loras
+        items = _list_loras()
+        info = [e.__dict__ for e in _describe_loras()]
+        return {"loras": items, "loras_info": info}
+
+    @app.get('/api/loras/selections')
+    def get_lora_selections() -> Dict[str, Any]:
+        from apps.server.backend.codex.lora import get_selections
+        sels = get_selections()
+        return {"selections": [s.__dict__ for s in sels]}
+
+    @app.post('/api/loras/apply')
+    def apply_lora_selections(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Set LoRA selections process-wide (used at generation time).
+
+        Payload: { selections: [{ path, weight?, online? }] }
+        """
+        if not isinstance(payload, dict) or 'selections' not in payload or not isinstance(payload['selections'], list):
+            raise HTTPException(status_code=400, detail='payload must be {"selections": [...]}')
+        from apps.server.backend.codex.lora import set_selections, LoraSelection
+        raw = payload['selections']
+        # Normalize to dataclasses
+        sels = []
+        for it in raw:
+            if not isinstance(it, dict) or 'path' not in it:
                 continue
-            for dp, _dn, files in os.walk(r):
-                for fn in files:
-                    if os.path.splitext(fn)[1].lower() in exts:
-                        name = os.path.splitext(fn)[0]
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                        items.append({"name": name, "path": os.path.join(dp, fn)})
-        items.sort(key=lambda x: x["name"].lower())
-        return {"loras": items}
+            sels.append(LoraSelection(path=str(it['path']), weight=float(it.get('weight', 1.0)), online=bool(it.get('online', False))))
+        set_selections(sels)
+        return {"ok": True, "count": len(sels)}
 
     # Simple paths config for frontend-managed search locations
     @app.get('/api/paths')
@@ -1088,65 +1027,193 @@ def build_app() -> FastAPI:
         _save_json(cfg_path, payload['paths'])
         return {"ok": True}
 
+    # Native options store via Codex options facade
+    from apps.server.backend.codex.options import get_value as _opts_get, set_values as _opts_set_many, get_snapshot as _opts_snapshot  # type: ignore
+
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
-        return {"values": _shared.opts.data}
+        from apps.server.backend.codex.options import _load as _opts_load_native  # type: ignore
+        return {"values": _opts_load_native()}
+
+    @app.get('/api/options/keys')
+    def get_options_keys() -> Dict[str, Any]:
+        """List supported option keys and basic metadata from the settings registry.
+
+        Fields: { keys: [...], types: {key: type_name}, choices: {key: [..]} }
+        """
+        if not _settings_registry_ok:
+            return {"keys": [], "types": {}, "choices": {}}
+        try:
+            idx = _field_index()  # type: ignore[name-defined]
+            keys = list(idx.keys())
+            types = {}
+            choices = {}
+            for k, f in idx.items():
+                t = getattr(getattr(f, 'type', None), 'name', None) or str(getattr(f, 'type', None))
+                types[k] = t
+                ch = getattr(f, 'choices', None)
+                if isinstance(ch, list):
+                    choices[k] = ch
+            return {"keys": keys, "types": types, "choices": choices}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to read registry: {e}")
+
+    @app.get('/api/options/snapshot')
+    def get_options_snapshot() -> Dict[str, Any]:
+        """Return a typed snapshot of current options (for UI defaults)."""
+        try:
+            from apps.server.backend.codex.options import get_snapshot as _snap  # type: ignore
+            return {"snapshot": _snap().as_dict()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to read snapshot: {e}")
+
+    @app.get('/api/options/defaults')
+    def get_options_defaults() -> Dict[str, Any]:
+        """Return default values from the settings registry and the current snapshot.
+
+        Shape: { defaults: {key: value}, snapshot: {...} }
+        """
+        defaults: Dict[str, Any] = {}
+        if _settings_registry_ok:
+            try:
+                idx = _field_index()  # type: ignore[name-defined]
+                for k, f in idx.items():
+                    defaults[k] = getattr(f, 'default', None)
+            except Exception:
+                defaults = {}
+        try:
+            from apps.server.backend.codex.options import get_snapshot as _snap  # type: ignore
+            snap = _snap().as_dict()
+        except Exception:
+            snap = {}
+        return {"defaults": defaults, "snapshot": snap}
+
+    def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        # If a registry schema exists, validate/clamp/choice-filter values
+        if not _settings_registry_ok:
+            return dict(payload)
+        try:
+            idx = _field_index()  # type: ignore[name-defined]
+        except Exception:
+            return dict(payload)
+        out: Dict[str, Any] = {}
+        for k, v in payload.items():
+            f = idx.get(k)
+            if not f:
+                continue
+            try:
+                # choices
+                if getattr(f, 'choices', None) and isinstance(f.choices, list):
+                    if v not in f.choices:
+                        continue
+                # type normalization
+                if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
+                    num = float(v)
+                    lo = getattr(f, 'min', None); hi = getattr(f, 'max', None)
+                    if isinstance(lo, (int, float)) and num < lo:
+                        num = lo
+                    if isinstance(hi, (int, float)) and num > hi:
+                        num = hi
+                    out[k] = num
+                elif getattr(f, 'type', None) == _SettingType.CHECKBOX:
+                    if isinstance(v, str):
+                        out[k] = v.strip().lower() in ('1','true','yes','on')
+                    else:
+                        out[k] = bool(v)
+                else:
+                    out[k] = v
+            except Exception:
+                continue
+        return out
 
     @app.post('/api/options')
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        updated: list[str] = []
-        for key, value in payload.items():
-            if key in _shared.opts.data_labels:
-                # cast to expected type
-                try:
-                    casted = _shared.opts.cast_value(key, value)
-                except Exception:
-                    casted = value
-                if _shared.opts.set(key, casted, is_api=True):
-                    updated.append(key)
-
-        # Persist updated keys into apps/settings_values.json
-        try:
-            if updated:
-                existing = _load_json(_settings_values_path) if os.path.exists(_settings_values_path) else {}
-                for k in updated:
-                    existing[k] = _shared.opts.data.get(k)
-                _save_json(_settings_values_path, existing)
-        except Exception as e:  # pragma: no cover
-            print(color_red(f"[settings] failed to persist: {e}"))
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='invalid payload')
+        # Validate against schema when available, then persist via Codex options
+        updates = _validate_options(payload)
+        updated = _opts_set_many(updates)
         return {"updated": updated}
 
+    @app.post('/api/options/validate')
+    def validate_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Dry-run options validation; returns accepted and rejected keys with reasons.
+
+        Shape: { accepted: {k:v}, rejected: {k: reason} }
+        """
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='invalid payload')
+        if not _settings_registry_ok:
+            return {"accepted": dict(payload), "rejected": {}}
+        try:
+            idx = _field_index()  # type: ignore[name-defined]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"registry unavailable: {e}")
+        accepted: Dict[str, Any] = {}
+        rejected: Dict[str, str] = {}
+        for k, v in payload.items():
+            f = idx.get(k)
+            if not f:
+                rejected[k] = 'unknown key'
+                continue
+            try:
+                if getattr(f, 'choices', None) and isinstance(f.choices, list) and v not in f.choices:
+                    rejected[k] = 'not in choices'
+                    continue
+                if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
+                    num = float(v)
+                    lo = getattr(f, 'min', None); hi = getattr(f, 'max', None)
+                    if isinstance(lo, (int, float)) and num < lo:
+                        rejected[k] = f'below min {lo}'
+                        continue
+                    if isinstance(hi, (int, float)) and num > hi:
+                        rejected[k] = f'above max {hi}'
+                        continue
+                    accepted[k] = num
+                elif getattr(f, 'type', None) == _SettingType.CHECKBOX:
+                    if isinstance(v, str):
+                        accepted[k] = v.strip().lower() in ('1','true','yes','on')
+                    else:
+                        accepted[k] = bool(v)
+                else:
+                    accepted[k] = v
+            except Exception:
+                rejected[k] = 'invalid value'
+        return {"accepted": accepted, "rejected": rejected}
+
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
-        prompt = _txt2img._require(payload, 'txt2img_prompt') or ''
-        negative_prompt = _txt2img._require(payload, 'txt2img_neg_prompt') or ''
-        prompt_styles = _txt2img._as_list(payload, 'txt2img_styles')
-        n_iter = _txt2img._as_int(payload, 'txt2img_batch_count')
-        batch_size = _txt2img._as_int(payload, 'txt2img_batch_size')
-        cfg_scale = _txt2img._as_float(payload, 'txt2img_cfg_scale')
-        distilled_cfg_scale = _txt2img._as_float_optional(payload, 'txt2img_distilled_cfg_scale', 3.5)
-        height = _txt2img._as_int(payload, 'txt2img_height')
-        width = _txt2img._as_int(payload, 'txt2img_width')
-        enable_hr = _txt2img._as_bool(payload, 'txt2img_hr_enable')
-        steps_val = _txt2img._as_int(payload, 'txt2img_steps')
-        sampler_name = _txt2img._require(payload, 'txt2img_sampling')
-        scheduler_name = _txt2img._require(payload, 'txt2img_scheduler')
-        seed_val = _txt2img._as_int(payload, 'txt2img_seed')
+        prompt = _p.require(payload, 'txt2img_prompt') or ''
+        negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''
+        prompt_styles = _p.as_list(payload, 'txt2img_styles')
+        n_iter = _p.as_int(payload, 'txt2img_batch_count')
+        batch_size = _p.as_int(payload, 'txt2img_batch_size')
+        cfg_scale = _p.as_float(payload, 'txt2img_cfg_scale')
+        distilled_cfg_scale = _p.as_float_optional(payload, 'txt2img_distilled_cfg_scale', 3.5)
+        height = _p.as_int(payload, 'txt2img_height')
+        width = _p.as_int(payload, 'txt2img_width')
+        enable_hr = _p.as_bool(payload, 'txt2img_hr_enable')
+        steps_val = _p.as_int(payload, 'txt2img_steps')
+        sampler_name = _p.require(payload, 'txt2img_sampling')
+        scheduler_name = _p.require(payload, 'txt2img_scheduler')
+        seed_val = _p.as_int(payload, 'txt2img_seed')
 
         if enable_hr:
-            denoising_strength = _txt2img._as_float(payload, 'txt2img_denoising_strength')
-            hr_scale = _txt2img._as_float(payload, 'txt2img_hr_scale')
-            hr_upscaler = _txt2img._require(payload, 'txt2img_hr_upscaler')
-            hr_second_pass_steps = _txt2img._as_int(payload, 'txt2img_hires_steps')
-            hr_resize_x = _txt2img._as_int(payload, 'txt2img_hr_resize_x')
-            hr_resize_y = _txt2img._as_int(payload, 'txt2img_hr_resize_y')
-            hr_checkpoint_name = payload.get('hr_checkpoint_name') or _txt2img._require(payload, 'hr_checkpoint')
-            hr_additional_modules = payload.get('hr_additional_modules') or _txt2img._as_list(payload, 'hr_vae_te')
-            hr_sampler_name = payload.get('hr_sampler_name') or _txt2img._require(payload, 'hr_sampler')
-            hr_scheduler = payload.get('hr_scheduler') or _txt2img._require(payload, 'hr_scheduler')
+            denoising_strength = _p.as_float(payload, 'txt2img_denoising_strength')
+            hr_scale = _p.as_float(payload, 'txt2img_hr_scale')
+            hr_upscaler = _p.require(payload, 'txt2img_hr_upscaler')
+            hr_second_pass_steps = _p.as_int(payload, 'txt2img_hires_steps')
+            hr_resize_x = _p.as_int(payload, 'txt2img_hr_resize_x')
+            hr_resize_y = _p.as_int(payload, 'txt2img_hr_resize_y')
+            hr_checkpoint_name = payload.get('hr_checkpoint_name') or _p.require(payload, 'hr_checkpoint')
+            hr_additional_modules = payload.get('hr_additional_modules') or _p.as_list(payload, 'hr_vae_te')
+            hr_sampler_name = payload.get('hr_sampler_name') or _p.require(payload, 'hr_sampler')
+            hr_scheduler = payload.get('hr_scheduler') or _p.require(payload, 'hr_scheduler')
             hr_prompt = payload.get('txt2img_hr_prompt') or ''
             hr_negative_prompt = payload.get('txt2img_hr_neg_prompt') or ''
-            hr_cfg = _txt2img._as_float(payload, 'txt2img_hr_cfg')
-            hr_distilled_cfg = _txt2img._as_float(payload, 'txt2img_hr_distilled_cfg')
+            hr_cfg = _p.as_float(payload, 'txt2img_hr_cfg')
+            hr_distilled_cfg = _p.as_float(payload, 'txt2img_hr_distilled_cfg')
         else:
             denoising_strength = 0.0
             hr_scale = 1.0
@@ -1176,7 +1243,7 @@ def build_app() -> FastAPI:
             seed=seed_val,
             batch_size=batch_size,
             metadata={
-                "mode": getattr(_shared.opts, 'codex_mode', 'Normal'),
+                "mode": _opts_snapshot().codex_mode,
                 "styles": prompt_styles,
                 "distilled_cfg_scale": distilled_cfg_scale,
                 "hr": bool(enable_hr),
@@ -1202,8 +1269,9 @@ def build_app() -> FastAPI:
             extras={},
         )
 
-        engine_key = getattr(_shared.opts, 'codex_engine', 'sd15')
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        snap = _opts_snapshot()
+        engine_key = snap.codex_engine
+        model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
     def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
@@ -1243,7 +1311,7 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                with _call_queue.queue_lock:
+                with tasks_lock:
                     orch = InferenceOrchestrator()
                     for ev in orch.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
                         if isinstance(ev, ProgressEvent):
@@ -1289,26 +1357,26 @@ def build_app() -> FastAPI:
         thread.start()
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
-        init_image_data = _img2img._require(payload, 'img2img_init_image')
+        init_image_data = _p.require(payload, 'img2img_init_image')
         init_image = media.decode_image(init_image_data)
         mask_data = payload.get('img2img_mask')
         mask_image = media.decode_image(mask_data) if mask_data else None
 
-        prompt = _img2img._require(payload, 'img2img_prompt') or ''
-        negative_prompt = _img2img._require(payload, 'img2img_neg_prompt') or ''
-        styles = _img2img._as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
-        batch_count = _img2img._as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
-        batch_size = _img2img._as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
-        steps_val = _img2img._as_int(payload, 'img2img_steps')
-        cfg_scale = _img2img._as_float(payload, 'img2img_cfg_scale')
-        distilled_cfg_scale = _img2img._as_float(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
-        image_cfg_scale = _img2img._as_float(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-        denoise = _img2img._as_float(payload, 'img2img_denoising_strength')
-        width_val = _img2img._as_int(payload, 'img2img_width')
-        height_val = _img2img._as_int(payload, 'img2img_height')
-        sampler_name = _img2img._require(payload, 'img2img_sampling')
-        scheduler_name = _img2img._require(payload, 'img2img_scheduler')
-        seed_val = _img2img._as_int(payload, 'img2img_seed')
+        prompt = _p.require(payload, 'img2img_prompt') or ''
+        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+        styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
+        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
+        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
+        steps_val = _p.as_int(payload, 'img2img_steps')
+        cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+        distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+        image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
+        denoise = _p.as_float(payload, 'img2img_denoising_strength')
+        width_val = _p.as_int(payload, 'img2img_width')
+        height_val = _p.as_int(payload, 'img2img_height')
+        sampler_name = _p.require(payload, 'img2img_sampling')
+        scheduler_name = _p.require(payload, 'img2img_scheduler')
+        seed_val = _p.as_int(payload, 'img2img_seed')
 
         req = Img2ImgRequest(
             task=TaskType.IMG2IMG,
@@ -1333,8 +1401,9 @@ def build_app() -> FastAPI:
             steps=steps_val,
         )
 
-        engine_key = getattr(_shared.opts, 'codex_engine', 'sd15')
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        snap = _opts_snapshot()
+        engine_key = snap.codex_engine
+        model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
@@ -1363,7 +1432,7 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                with _call_queue.queue_lock:
+                with tasks_lock:
                     orch = InferenceOrchestrator()
                     for ev in orch.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
                         if isinstance(ev, ProgressEvent):
@@ -1445,7 +1514,7 @@ def build_app() -> FastAPI:
             extras=extras,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
-                "mode": getattr(_shared.opts, 'codex_mode', 'Normal'),
+                "mode": _opts_snapshot().codex_mode,
             },
         )
 
@@ -1462,7 +1531,7 @@ def build_app() -> FastAPI:
             else:
                 engine_key = 'wan22_14b'
         # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        model_ref = _opts_snapshot().sd_model_checkpoint
         try:
             wh = extras.get('wan_high') or {}
             wl = extras.get('wan_low') or {}
@@ -1520,7 +1589,7 @@ def build_app() -> FastAPI:
             extras=extras,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
-                "mode": getattr(_shared.opts, 'codex_mode', 'Normal'),
+                "mode": _opts_snapshot().codex_mode,
             },
         )
 
@@ -1537,7 +1606,7 @@ def build_app() -> FastAPI:
             else:
                 engine_key = 'wan22_14b'
         # Choose model_ref from WAN extras when provided
-        model_ref = getattr(_shared.opts, 'sd_model_checkpoint', None)
+        model_ref = _opts_snapshot().sd_model_checkpoint
         try:
             wh = extras.get('wan_high') or {}
             wl = extras.get('wan_low') or {}
@@ -1578,9 +1647,9 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                with _call_queue.queue_lock:
+                with tasks_lock:
                     orch = InferenceOrchestrator()
-                    engine_opts = {"export_video": bool(getattr(_shared.opts, 'codex_export_video', False))}
+                    engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
                     for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if isinstance(ev, ProgressEvent):
                             push({
@@ -1703,7 +1772,7 @@ def build_app() -> FastAPI:
 
         return StreamingResponse(event_stream(), media_type='text/event-stream')
 
-    _script_callbacks.app_started_callback(None, app)
+    # Legacy callbacks are not used in the native backend entrypoint
     return app
 
 

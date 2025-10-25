@@ -4,6 +4,8 @@ import time
 from typing import Iterator, List, Any
 
 from apps.server.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
+from apps.server.backend.codex import lora as codex_lora
+from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
 from apps.server.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 
 
@@ -17,6 +19,16 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
     yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid")
 
     pipe = getattr(comp, "pipeline", None)
+
+    # Best-effort native LoRA application (only if engine exposes patchers)
+    try:
+        sels = codex_lora.get_selections()
+        if sels and hasattr(engine, 'forge_objects_after_applying_lora'):
+            apply_loras_to_engine(engine, sels)
+            if logger:
+                logger.info("[native] txt2vid applied %d LoRA(s)", len(sels))
+    except Exception:
+        pass
     if pipe is None and (getattr(comp, "high_dir", None) or getattr(comp, "low_dir", None)):
         # GGUF path via runtime/nn/wan22
         from apps.server.backend.runtime.nn.wan22 import RunConfig, StageConfig, run_txt2vid as gguf_t2v

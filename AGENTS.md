@@ -37,16 +37,30 @@
 
 ## Documentation Index
 - Docs home: `codex/` — architecture, design, research, tasks, roadmaps, reports, and sprint logs.
+  - Consolidated directives: `codex/architecture/CONSOLIDATED_DIRECTIVES.md`
   - Architecture (video): `codex/backend-video-architecture.md`.
   - Canonical structure: `codex/architecture/repo-structure.md`
   - Architecture rules: `codex/architecture/architecture-rules.md`
   - Pipelines bible: `codex/architecture/model-pipelines-bible.md`
   - Repository inventory: `codex/architecture/repo-inventory.md`
-  - Cleanup checklists: `codex/architecture/repo-cleanup-checklists.md`
+- Cleanup checklists: `codex/architecture/repo-cleanup-checklists.md`
+- Native LoRA (registry + apply): see `codex/architecture/CONSOLIDATED_DIRECTIVES.md` (LoRA section)
   - Research (loading/efficiency): `codex/research/`.
   - Design/UX: `codex/design/`.
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.
 - Backend inventories: `apps/server/backend/SHIM_INVENTORY.md` (shim status/history).
+
+## Porting Protocol (Quick Checklist)
+- Do not call legacy code (`modules.*`, `modules_forge.*`, `legacy/`, `DEPRECATED/`).
+- Read the source thoroughly; list risks/side effects/globals.
+- Enumerate 5+ viable approaches; choose the most robust (non‑lazy). You may combine useful parts across options.
+- Re‑design to Codex style: dataclasses/enums, small modules, explicit errors, clear names.
+- Add validation points (logs, invariants, device/dtype/shape checks) and a clean migration path (no shims).
+- Acceptance: no legacy imports, clear API, explicit errors, rationale documented (include the five options summary), docs updated.
+
+Tip — Native LoRA usage
+- Discover adapters via `GET /api/loras` (backend registry). Set selections with `POST /api/loras/apply`.
+- Engines apply LoRA natively at generation time using `codex.lora` selections and `patchers.lora_apply`.
 
 ### Git commit guide
 1. `git status`
@@ -160,6 +174,47 @@
 
 ## Deprecations
 - Completed: `backend.*` namespace
-  - Removed on 2025-10-24. Use the façade `apps.server.backend.*`.
-  - See: `codex/deprecations/2025-10-backend-namespace-deprecation.md` and `apps/server/backend/SHIM_INVENTORY.md`.
-  - Import redirector no longer exists; old imports raise `ModuleNotFoundError`.
+  - Removed on 2025-10-24. Use `apps.server.backend.*` diretamente.
+  - Import redirector não existe mais; imports antigos quebram.
+
+- Proibido: qualquer “bridge/shim/compat” para A1111/Forge (`modules.*`, `modules_forge.*`).
+  - Se o backend precisar de uma peça existente fora de `apps/`, portar o código como módulo nativo sob `apps/server/backend/**` com nomes claros (dataclasses/enums quando fizer sentido).
+  - Erros devem ser explícitos (sem fallbacks silenciosos). Se a funcionalidade ainda não foi portada, lance `NotImplementedError`.
+
+## Roadmap — Backend Consolidation (apps/server/backend‑first)
+
+Goal
+- Refatorar e organizar tudo o que é importante para dentro de `apps/server/backend`, mantendo paridade funcional e sem criar acoplamentos novos ao legado.
+
+Principles (always on)
+- Código ativo vive em `apps/server/backend` (backend) e `apps/interface` (UI nova).
+- Nada de novos imports a partir de `legacy/` ou `DEPRECATED/`. Sem `backend.*` (namespace antigo).
+- Preferir PyTorch SDPA; erros explícitos (sem fallbacks silenciosos).
+
+Phases
+- P0 (now)
+  - Fonte de verdade: seguir `codex/architecture/*` (repo‑structure, rules, pipelines, inventory, checklists).
+  - `backend/` (raiz) marcado como DEPRECATED (guard ativo). WAN `wan_gguf*` em `DEPRECATED/`.
+  - Sem novos códigos fora de `apps/`. Exceções estritas habilitadas (dumps em logs/exceptions‑YYYYmmdd‑pid.log).
+
+- P1 (next sprint)
+  - Consolidar entradas das tasks: engines/diffusion/{txt2img,img2img,txt2vid,img2vid}.py como única orquestração.
+- Implementar nativamente tudo que o backend precisa; nada de `modules/`/`modules_forge/` no backend ativo.
+  - Samplers/Schedulers via `engines/util/schedulers.SamplerKind` (única fonte); UI recebe a lista pelo backend.
+  - Presets: alinhar `configs/presets` com presets servidos pelo backend (sem duplicidade futura).
+
+- P2 (2–4 semanas)
+  - Migrar loaders/modelos necessários de `modules/` para `runtime/models` e `runtime/nn` (sem quebrar extensões).
+  - Texto/Tokenizers: consolidar em `runtime/text_processing/*` (CLIP/T5/LLAMA/Qwen que usamos).
+  - Limpar dependências optativas em `extensions-builtin/` (listar o que é realmente usado em startup).
+
+- P3 (backlog)
+  - UI legacy: aposentar `javascript*/html` quando a UI nova cobrir os fluxos.
+  - Presets legados: consolidar em endpoints do backend; arquivar `configs/presets`.
+  - Mover ferramentas/inspeções de `scripts/` para `tools/` ou `DEPRECATED/` quando não forem mais úteis.
+
+Acceptance Criteria por fase
+- P0: Sem novos arquivos fora de `apps/`. Importar `backend.*` quebra com mensagem clara. Documentação publicada.
+- P1: Todas as tasks entram por engines/diffusion/*; lista de samplers/schedulers sai do backend; presets servidos pelo backend; zero `modules_forge.*` em `apps/server/backend/**`.
+- P2: Carregadores/NN críticos no `runtime/*`; texto/tokenizers unificados; extensões opcionais isoladas.
+- P3: UI nova cobre fluxos; legados marcados como referência; repositório limpo de duplicidades.

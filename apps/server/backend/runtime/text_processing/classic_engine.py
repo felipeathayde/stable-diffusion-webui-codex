@@ -5,10 +5,7 @@ from collections import namedtuple
 from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
 from apps.server.backend.runtime.memory import memory_management
-
-def _opts():
-    from modules import shared as _shared
-    return _shared.opts
+from apps.server.backend.config.args import dynamic_args
 
 
 PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
@@ -71,7 +68,7 @@ class ClassicTextProcessingEngine:
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
 
-        self.emphasis = emphasis.get_current_option(_opts().emphasis)()
+        self.emphasis = emphasis.get_current_option(dynamic_args.get('emphasis_name', 'original'))()
         self.text_projection = text_projection
         self.minimal_clip_skip = minimal_clip_skip
         self.clip_skip = clip_skip
@@ -252,7 +249,7 @@ class ClassicTextProcessingEngine:
         return batch_chunks, token_count
 
     def __call__(self, texts):
-        self.emphasis = emphasis.get_current_option(opts.emphasis)()
+        self.emphasis = emphasis.get_current_option(dynamic_args.get('emphasis_name', 'original'))()
 
         batch_chunks, token_count = self.process_texts(texts)
 

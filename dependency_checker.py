@@ -53,14 +53,15 @@ def module_path_from_file(file_path: str) -> str:
     return '.'.join(parts)
 
 
-def resolve_import_base(current_module: str, level: int) -> str:
+def resolve_import_base(current_module: str, level: int, is_package: bool) -> str:
     """Return base package for a relative import of given level.
     level=1 means current package; level=2 means parent package, etc.
     """
     parts = current_module.split('.')
-    # If current is a module (not a package), drop last component
-    if parts:
+    # If current module is not a package (__init__.py), drop last component
+    if not is_package and parts:
         parts = parts[:-1]
+    # Relative import: level=1 => current package; level=2 => parent, etc.
     asc = max(0, level - 1)
     if asc:
         parts = parts[:-asc]

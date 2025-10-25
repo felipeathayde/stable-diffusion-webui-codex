@@ -50,8 +50,11 @@ def _has_scheduler(local_path: str) -> bool:
     return False
 
 
+from typing import Iterable, Union
+
+
 def ensure_repo_minimal_files(
-    repo_id: str,
+    repo_id: Union[str, Iterable[str]],
     local_path: str,
     *,
     offline: bool = False,
@@ -92,6 +95,12 @@ def ensure_repo_minimal_files(
             "config.json",
             "high_noise_model/config.json",
             "low_noise_model/config.json",
+            # Common component configs required by pipelines
+            "vae/config.json",
+            "text_encoder/config.json",
+            "text_encoder_2/config.json",
+            "unet/config.json",
+            "transformer/config.json",
         })
     if "tokenizer" in need:
         patterns.update(
@@ -136,29 +145,54 @@ def ensure_repo_minimal_files(
 
     os.makedirs(local_path, exist_ok=True)
 
-    try:
-        from huggingface_hub import snapshot_download
+    # Support a list/iterator of repo ids: try until one succeeds
+    repo_ids: Iterable[str] = (
+        [repo_id] if isinstance(repo_id, str) else list(repo_id)
+    )
+    last_exc: Exception | None = None
+    for rid in repo_ids:
+        try:
+            from huggingface_hub import snapshot_download
 
-        cached_dir = snapshot_download(
-            repo_id=repo_id,
-            local_dir=local_path,
-            allow_patterns=list(patterns),
-            local_files_only=False,
-            force_download=False,
-        )
-        cache_dir = os.path.join(local_path, ".cache")
-        if os.path.isdir(cache_dir):
+            cached_dir = snapshot_download(
+                repo_id=rid,
+                local_dir=local_path,
+                allow_patterns=list(patterns),
+                local_files_only=False,
+                force_download=False,
+            )
+            cache_dir = os.path.join(local_path, ".cache")
+            if os.path.isdir(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                except Exception:
+                    pass
+            # Ensure snapshot_download target isn't nested under local_path unexpectedly
+            if cached_dir != local_path and os.path.isdir(cached_dir):
+                _copy_selected_files(cached_dir, local_path, patterns)
+            last_exc = None
+            break
+        except (ImportError, TypeError, OSError) as ex:
+            # Fall back to simple HTTP client
+            last_exc = ex
             try:
-                shutil.rmtree(cache_dir)
-            except Exception:
-                pass
-        # Ensure snapshot_download target isn't nested under local_path unexpectedly
-        if cached_dir != local_path and os.path.isdir(cached_dir):
-            _copy_selected_files(cached_dir, local_path, patterns)
-    except (ImportError, TypeError, OSError):
-        _http_list_and_download(repo_id, local_path, patterns)
-    except Exception:
-        _http_list_and_download(repo_id, local_path, patterns)
+                _http_list_and_download(rid, local_path, patterns)
+                last_exc = None
+                break
+            except Exception as ex2:
+                last_exc = ex2
+        except Exception as ex:
+            # Try next candidate (e.g., repo renamed)
+            last_exc = ex
+            try:
+                _http_list_and_download(rid, local_path, patterns)
+                last_exc = None
+                break
+            except Exception as ex2:
+                last_exc = ex2
+
+    if last_exc is not None:
+        raise last_exc
 
 
 def _copy_selected_files(src_root: str, dst_root: str, patterns: Iterable[str]) -> None:

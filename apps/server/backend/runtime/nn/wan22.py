@@ -151,30 +151,61 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
         n = _do(negative or '') if negative is not None else _do('')
         return p, n
     except Exception:
-        # Fallback to Diffusers pipeline encode_prompt
+        # Fallback to Diffusers pipeline encode_prompt using a proper Diffusers repo mirror.
         import torch
         from diffusers import WanPipeline, AutoencoderKLWan  # type: ignore
         from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
         dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
         torch_dtype = _as_dtype(dtype)
 
-        # Resolve a proper repo mirror to load WanPipeline from. We do NOT try the
-        # user-provided model_dir (e.g. where .gguf lives) because diffusers expects
-        # a directory with model_index.json and component subfolders. Use an env var
-        # to point at the correct WAN diffusers repo, then mirror the minimal files
-        # into apps/server/backend/huggingface/<owner>/<repo>.
-        repo_id = os.environ.get('CODEX_WAN_DIFFUSERS_REPO')
-        if not repo_id:
+        # Resolve a proper repo mirror: prefer explicit env; otherwise infer from
+        # model_key (wan_i2v_14b / wan_t2v_5b) and try sensible candidates.
+        def _wan_repo_candidates() -> list[str]:
+            out: list[str] = []
+            env_repo = os.environ.get('CODEX_WAN_DIFFUSERS_REPO')
+            if env_repo:
+                out.append(env_repo)
+            key = str(model_key or '').lower()
+            variant = '14B' if '14b' in key else ('5B' if '5b' in key else '')
+            mode = 'Image-to-Video' if 'i2v' in key else ('Text-to-Video' if 't2v' in key else '')
+            owner = 'Kwai-Kolors'
+            # Try the most common naming patterns first
+            if variant and mode:
+                out.append(f"{owner}/Wan2.2-{mode}-{variant}")
+            if not out:
+                # As a last resort, try both variants for both modes
+                out.extend([
+                    f"{owner}/Wan2.2-Image-to-Video-14B",
+                    f"{owner}/Wan2.2-Image-to-Video-5B",
+                    f"{owner}/Wan2.2-Text-to-Video-14B",
+                    f"{owner}/Wan2.2-Text-to-Video-5B",
+                ])
+            # Deduplicate while preserving order
+            seen: set[str] = set(); uniq: list[str] = []
+            for rid in out:
+                if rid not in seen:
+                    uniq.append(rid); seen.add(rid)
+            return uniq
+
+        candidates = _wan_repo_candidates()
+        last_err: Exception | None = None
+        mirror_root = None
+        for rid in candidates:
+            try:
+                mirror_root = os.path.join(os.getcwd(), 'apps', 'server', 'backend', 'huggingface', rid)
+                ensure_repo_minimal_files(rid, mirror_root, offline=False)
+                last_err = None
+                break
+            except Exception as ex:
+                last_err = ex
+                continue
+        if mirror_root is None or last_err is not None:
             raise RuntimeError(
-                "WAN22: Diffusers fallback requires CODEX_WAN_DIFFUSERS_REPO env to be set "
-                "(e.g., 'Kwai-Kolors/Wan2.2-Image-to-Video-14B'). Alternatively supply "
-                "explicit text_encoder_dir and tokenizer_dir extras."
+                "WAN22: unable to fetch minimal Diffusers files for a WAN repo. "
+                "Set CODEX_WAN_DIFFUSERS_REPO explicitly to a valid repo (e.g., "
+                "'Kwai-Kolors/Wan2.2-Image-to-Video-14B') or provide explicit "
+                "text_encoder_dir and tokenizer_dir."
             )
-        mirror_root = os.path.join(os.getcwd(), 'apps', 'server', 'backend', 'huggingface', repo_id)
-        try:
-            ensure_repo_minimal_files(repo_id, mirror_root, offline=False)
-        except Exception as _dl_ex:
-            raise RuntimeError(f"WAN22: failed to ensure minimal files for repo '{repo_id}': {_dl_ex}")
 
         # Load VAE either from provided dir or from the repo mirror
         try:

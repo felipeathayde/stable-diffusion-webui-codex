@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List
+from apps.server.backend.codex.options import get_snapshot as _opts_snapshot  # type: ignore
 
 
 # Hydration choices are native and conservative. If richer choices are needed,
@@ -53,6 +54,7 @@ def hydrate_schema(base: Dict[str, Any]) -> Dict[str, Any]:
         'version': base.get('version', 1),
         'source': base.get('source', 'hydrated'),
     }
+    snap = _opts_snapshot().as_dict()
     for f in base.get('fields', []):
         fk = f.get('key') if isinstance(f, dict) else None
         if fk in HYDRATORS:
@@ -66,7 +68,13 @@ def hydrate_schema(base: Dict[str, Any]) -> Dict[str, Any]:
             if choices and nf.get('default') not in choices:
                 # pick first choice rather than invalid default
                 nf['default'] = choices[0]
+            # current value from options snapshot when available
+            if fk in snap:
+                nf['current'] = snap[fk]
             out['fields'].append(nf)
         else:
-            out['fields'].append(f)
+            nf = dict(f)
+            if fk in snap:
+                nf['current'] = snap[fk]
+            out['fields'].append(nf)
     return out

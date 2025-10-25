@@ -1035,11 +1035,62 @@ def build_app() -> FastAPI:
         from apps.server.backend.codex.options import _load as _opts_load_native  # type: ignore
         return {"values": _opts_load_native()}
 
+    @app.get('/api/options/snapshot')
+    def get_options_snapshot() -> Dict[str, Any]:
+        """Return a typed snapshot of current options (for UI defaults)."""
+        try:
+            from apps.server.backend.codex.options import get_snapshot as _snap  # type: ignore
+            return {"snapshot": _snap().as_dict()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to read snapshot: {e}")
+
+    def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        # If a registry schema exists, validate/clamp/choice-filter values
+        if not _settings_registry_ok:
+            return dict(payload)
+        try:
+            idx = _field_index()  # type: ignore[name-defined]
+        except Exception:
+            return dict(payload)
+        out: Dict[str, Any] = {}
+        for k, v in payload.items():
+            f = idx.get(k)
+            if not f:
+                continue
+            try:
+                # choices
+                if getattr(f, 'choices', None) and isinstance(f.choices, list):
+                    if v not in f.choices:
+                        continue
+                # type normalization
+                if getattr(f, 'type', None) in (_SettingType.SLIDER, _SettingType.NUMBER):
+                    num = float(v)
+                    lo = getattr(f, 'min', None); hi = getattr(f, 'max', None)
+                    if isinstance(lo, (int, float)) and num < lo:
+                        num = lo
+                    if isinstance(hi, (int, float)) and num > hi:
+                        num = hi
+                    out[k] = num
+                elif getattr(f, 'type', None) == _SettingType.CHECKBOX:
+                    if isinstance(v, str):
+                        out[k] = v.strip().lower() in ('1','true','yes','on')
+                    else:
+                        out[k] = bool(v)
+                else:
+                    out[k] = v
+            except Exception:
+                continue
+        return out
+
     @app.post('/api/options')
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail='invalid payload')
-        updated = _opts_set_many(payload)
+        # Validate against schema when available, then persist via Codex options
+        updates = _validate_options(payload)
+        updated = _opts_set_many(updates)
         return {"updated": updated}
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:

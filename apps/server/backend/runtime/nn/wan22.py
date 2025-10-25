@@ -650,6 +650,7 @@ class RunConfig:
     vae_dir: Optional[str] = None
     text_encoder_dir: Optional[str] = None
     tokenizer_dir: Optional[str] = None
+    metadata_dir: Optional[str] = None
     high: Optional[StageConfig] = None
     low: Optional[StageConfig] = None
 
@@ -868,6 +869,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         tokenizer_dir=cfg.tokenizer_dir,
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
+        metadata_dir=cfg.metadata_dir,
     )
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
@@ -996,6 +998,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         tokenizer_dir=cfg.tokenizer_dir,
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
+        metadata_dir=cfg.metadata_dir,
     )
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)

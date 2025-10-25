@@ -937,9 +937,31 @@ def build_app() -> FastAPI:
 
     @app.get('/api/models')
     def list_models() -> Dict[str, Any]:
-        _sd_models.list_models()
-        models = [_serialize_checkpoint(info) for info in _sd_models.checkpoints_list.values()]
-        return {"models": models, "current": _shared.opts.sd_model_checkpoint}
+        """List checkpoints discovered by the native registry.
+
+        Response shape remains compatible: fields include title/name/filename/metadata.
+        """
+        from apps.server.backend.registry.checkpoints import list_checkpoints as _list_ckpt
+
+        def _serialize(entry) -> Dict[str, Any]:
+            return {
+                "title": entry.title,
+                "name": entry.name,
+                "model_name": entry.model_name,
+                "hash": entry.short_hash,
+                "filename": entry.filename,
+                "metadata": entry.metadata,
+            }
+
+        entries = _list_ckpt()
+        models = [_serialize(e) for e in entries]
+        # Current selection: track via codex options when available
+        try:
+            from apps.server.backend.codex import main as _codex
+            current = getattr(_codex, "_SELECTIONS").checkpoint_name or (models[0]["name"] if models else None)
+        except Exception:
+            current = models[0]["name"] if models else None
+        return {"models": models, "current": current}
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:

@@ -90,11 +90,7 @@ def parse_imports(file_path: str, current_module: str) -> List[str]:
                 mod = node.module or ''
             if mod:
                 imports.add(mod)
-            # Try to detect submodule imports (from X import Y)
-            for alias in node.names:
-                if alias.name and mod:
-                    sub = f"{mod}.{alias.name}"
-                    imports.add(sub)
+            # Do not add alias-based dotted modules here; many aliases are attributes
 
     # Normalize: drop empty strings and builtins
     normed = sorted({m for m in imports if m and not m.startswith('builtins')})
@@ -112,18 +108,51 @@ def classify_module(name: str) -> Tuple[str, Optional[str]]:
     # builtin/namespace module
     origin = getattr(spec, 'origin', None)
     locations = getattr(spec, 'submodule_search_locations', None)
-    def _is_local_path(p: Optional[str]) -> bool:
-        return bool(p) and os.path.abspath(str(p)).startswith(REPO_ROOT)
+    # Determine external roots (stdlib, site-packages, virtualenv)
+    extern_roots: List[str] = []
+    try:
+        import site, sysconfig
+        for p in site.getsitepackages() + [site.getusersitepackages()]:
+            if p:
+                extern_roots.append(os.path.abspath(p))
+        stdlib = sysconfig.get_paths().get('stdlib')
+        if stdlib:
+            extern_roots.append(os.path.abspath(stdlib))
+    except Exception:
+        pass
+    # Add common venv folders inside repo (e.g., .venv)
+    for cand in ('.venv', 'venv', 'env'):  # common names
+        vp = os.path.join(REPO_ROOT, cand)
+        if os.path.isdir(vp):
+            extern_roots.append(os.path.abspath(vp))
+    def _norm(p: Optional[str]) -> Optional[str]:
+        return os.path.abspath(str(p)) if p else None
+    def _is_external_path(p: Optional[str]) -> bool:
+        np = _norm(p)
+        if not np:
+            return False
+        return any(np.startswith(root) for root in extern_roots)
+    def _is_local_repo_path(p: Optional[str]) -> bool:
+        np = _norm(p)
+        if not np:
+            return False
+        # Treat anything under external roots as external, even if under REPO_ROOT (e.g., .venv/)
+        if _is_external_path(np):
+            return False
+        return np.startswith(REPO_ROOT)
     if origin == 'built-in':
         return 'external', None
     if locations:
         # package
         for loc in locations:
-            if _is_local_path(loc):
-                return 'local', os.path.join(loc, '__init__.py') if os.path.isfile(os.path.join(loc, '__init__.py')) else loc
-        return 'external', str(list(locations)[0])
+            if _is_local_repo_path(loc):
+                init = os.path.join(loc, '__init__.py')
+                return 'local', init if os.path.isfile(init) else loc
+        # otherwise external
+        first = list(locations)[0]
+        return 'external', str(first)
     # module
-    if _is_local_path(origin):
+    if _is_local_repo_path(origin):
         return 'local', origin
     return 'external', origin
 
@@ -218,4 +247,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-

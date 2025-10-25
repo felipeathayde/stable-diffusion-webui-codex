@@ -236,6 +236,12 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
                 raise RuntimeError('unsupported init_image array shape')
             t = t.to(target).to(torch_dtype)
             init_image = t * 2.0 - 1.0
+    # VAE expects video tensor [B,C,T,H,W]; expand a single frame to T=1
+    if hasattr(init_image, 'ndim'):
+        if init_image.ndim == 4:
+            init_image = init_image.unsqueeze(2)
+        elif init_image.ndim != 5:
+            raise RuntimeError('init_image must be 4D (B,C,H,W) or 5D (B,C,T,H,W) after preprocessing')
     with torch.no_grad():
         latents = vae.encode(init_image).latent_dist.sample()
         latents = (latents - sh) * sf

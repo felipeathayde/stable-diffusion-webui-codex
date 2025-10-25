@@ -34,7 +34,13 @@ class ParameterGGUF(torch.nn.Parameter):
         return self.real_shape
 
     def __new__(cls, tensor=None, requires_grad=False, no_init=False):
-        return super().__new__(cls, torch.tensor(tensor.data), requires_grad=requires_grad)
+        # Avoid torch.tensor(...tensor...) construction to silence copy warnings and preserve dtype
+        src = tensor.data
+        if isinstance(src, torch.Tensor):
+            base = src.detach().clone()
+        else:
+            base = torch.as_tensor(src).clone()
+        return super().__new__(cls, base, requires_grad=requires_grad)
 
     def dequantize_as_pytorch_parameter(self):
         if self.gguf_cls is not None:

@@ -959,7 +959,11 @@ def build_app() -> FastAPI:
         Tries the Forge discovery first (modules_forge.main_entry),
         falling back to A1111's sd_vae.vae_dict if Forge is unavailable.
         """
-        current = getattr(_shared.opts, 'forge_selected_vae', 'Automatic')
+        try:
+            from apps.server.backend.compat.codex import options as _codex_opts
+            current = _codex_opts.get_selected_vae('Automatic')
+        except Exception:
+            current = getattr(_shared.opts, 'forge_selected_vae', 'Automatic')
         try:
             from modules_forge.main_entry import refresh_models, vae_module_list  # type: ignore
             refresh_models()
@@ -988,7 +992,12 @@ def build_app() -> FastAPI:
             refresh_models()
             choices = sorted(list(text_encoder_module_list.keys()))
             selected: list[str] = []
-            for path in getattr(_shared.opts, 'forge_additional_modules', []) or []:
+            try:
+                from apps.server.backend.compat.codex import options as _codex_opts
+                addl = _codex_opts.get_additional_modules()
+            except Exception:
+                addl = list(getattr(_shared.opts, 'forge_additional_modules', []) or [])
+            for path in addl:
                 base = os.path.basename(str(path))
                 if base in text_encoder_module_list:
                     selected.append(base)

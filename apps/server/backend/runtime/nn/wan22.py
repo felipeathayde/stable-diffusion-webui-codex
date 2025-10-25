@@ -97,7 +97,8 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
         last_err: Optional[Exception] = None
         for cand in tok_candidates:
             try:
-                tok = AutoTokenizer.from_pretrained(cand, subfolder=None, use_fast=True, local_files_only=True)
+                # Do not pass subfolder=None — some transformers versions treat it as str
+                tok = AutoTokenizer.from_pretrained(cand, use_fast=True, local_files_only=True)
                 break
             except Exception as ex:
                 last_err = ex
@@ -110,7 +111,8 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
                 cfg = None
                 for cand in enc_candidates:
                     try:
-                        cfg = AutoConfig.from_pretrained(cand, subfolder=None, local_files_only=True)
+                        # Avoid subfolder=None to keep join() happy on older libs
+                        cfg = AutoConfig.from_pretrained(cand, local_files_only=True)
                         break
                     except Exception:
                         continue
@@ -152,17 +154,38 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
         # Fallback to Diffusers pipeline encode_prompt
         import torch
         from diffusers import WanPipeline, AutoencoderKLWan  # type: ignore
+        from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
         dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
         torch_dtype = _as_dtype(dtype)
+
+        # Resolve a proper repo mirror to load WanPipeline from. We do NOT try the
+        # user-provided model_dir (e.g. where .gguf lives) because diffusers expects
+        # a directory with model_index.json and component subfolders. Use an env var
+        # to point at the correct WAN diffusers repo, then mirror the minimal files
+        # into apps/server/backend/huggingface/<owner>/<repo>.
+        repo_id = os.environ.get('CODEX_WAN_DIFFUSERS_REPO')
+        if not repo_id:
+            raise RuntimeError(
+                "WAN22: Diffusers fallback requires CODEX_WAN_DIFFUSERS_REPO env to be set "
+                "(e.g., 'Kwai-Kolors/Wan2.2-Image-to-Video-14B'). Alternatively supply "
+                "explicit text_encoder_dir and tokenizer_dir extras."
+            )
+        mirror_root = os.path.join(os.getcwd(), 'apps', 'server', 'backend', 'huggingface', repo_id)
         try:
-            import os
+            ensure_repo_minimal_files(repo_id, mirror_root, offline=False)
+        except Exception as _dl_ex:
+            raise RuntimeError(f"WAN22: failed to ensure minimal files for repo '{repo_id}': {_dl_ex}")
+
+        # Load VAE either from provided dir or from the repo mirror
+        try:
             vd = vae_dir
             if vd and os.path.isfile(vd):
                 vd = os.path.dirname(vd)
-            vae = AutoencoderKLWan.from_pretrained(vd or model_dir, subfolder=(None if vd else 'vae'), torch_dtype=torch_dtype, local_files_only=True)
+            vae = AutoencoderKLWan.from_pretrained(vd or mirror_root, subfolder=('vae' if not vd else None), torch_dtype=torch_dtype, local_files_only=True)
         except Exception:
             vae = None
-        pipe = WanPipeline.from_pretrained(model_dir, torch_dtype=torch_dtype, local_files_only=True, vae=vae)
+
+        pipe = WanPipeline.from_pretrained(mirror_root, torch_dtype=torch_dtype, local_files_only=True, vae=vae)
         pipe = pipe.to(dev)
         out = pipe.encode_prompt(prompt=prompt or '', negative_prompt=negative or '', do_classifier_free_guidance=True, device=dev, dtype=torch_dtype)
         if isinstance(out, tuple) and len(out) >= 2:

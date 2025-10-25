@@ -53,6 +53,34 @@
             </div>
           </div>
         </div>
+
+        <div class="panel-sub" style="margin-top:.75rem">
+          <h4 class="h6" style="margin:0 0 .25rem 0">WAN Assets</h4>
+          <div class="grid grid-3">
+            <div>
+              <label class="label" for="wanMeta">Metadata Dir (input list)</label>
+              <input id="wanMeta" class="ui-input" list="dl-meta-wan" v-model="assets.metadata" placeholder="apps/server/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <datalist id="dl-meta-wan">
+                <option v-for="m in inv.metadata" :key="m.path" :value="m.name">{{ m.name }}</option>
+              </datalist>
+            </div>
+            <div>
+              <label class="label" for="wanTE">Text Encoder (input list)</label>
+              <input id="wanTE" class="ui-input" list="dl-te-wan" v-model="assets.textEncoder" placeholder="models/text-encoder/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <datalist id="dl-te-wan">
+                <option v-for="t in inv.textEncoders" :key="t.path" :value="t.name">{{ t.name }}</option>
+              </datalist>
+            </div>
+            <div>
+              <label class="label" for="wanVAE">VAE (input list)</label>
+              <input id="wanVAE" class="ui-input" list="dl-vaes-wan" v-model="assets.vae" placeholder="models/VAE/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <datalist id="dl-vaes-wan">
+                <option v-for="v in inv.vaes" :key="v.path" :value="v.name">{{ v.name }}</option>
+              </datalist>
+            </div>
+          </div>
+          <p class="muted" style="margin-top:.25rem">Select filenames; the app resolves to full paths at submit.</p>
+        </div>
       </div>
     </div>
 
@@ -293,10 +321,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed, ref } from 'vue'
+import { onMounted, computed, ref, reactive } from 'vue'
 import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
-import { fetchSamplers, fetchSchedulers, startTxt2Vid, startImg2Vid, subscribeTask } from '../api/client'
+import { fetchSamplers, fetchSchedulers, startTxt2Vid, startImg2Vid, subscribeTask, fetchModelInventory } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
 
@@ -309,9 +337,18 @@ const schedulers = ref<SchedulerInfo[]>([])
 
 onMounted(async () => {
   if (!store.tabs.length) store.load()
-  const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
+  const [samp, sched, inv] = await Promise.all([fetchSamplers(), fetchSchedulers(), fetchModelInventory()])
   samplers.value = samp.samplers
   schedulers.value = sched.schedulers
+  // Load inventory for WAN assets
+  invState.inv = {
+    vaes: (inv.vaes || []).map((v:any)=>({ name:v.name, path:v.path })),
+    textEncoders: (inv.text_encoders || []).map((t:any)=>({ name:t.name, path:t.path })),
+    metadata: (inv.metadata || []).map((m:any)=>({ name:m.name, path:m.path })),
+  }
+  invState.maps.vae = Object.fromEntries(invState.inv.vaes.map((x)=>[x.name,x.path]))
+  invState.maps.te = Object.fromEntries(invState.inv.textEncoders.map((x)=>[x.name,x.path]))
+  invState.maps.meta = Object.fromEntries(invState.inv.metadata.map((x)=>[x.name,x.path]))
 })
 
 const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
@@ -333,6 +370,15 @@ const video = computed<WanVideoParams>(() => ((tab.value?.params as any)?.video 
 const high = computed<WanStageParams>(() => ((tab.value?.params as any)?.high as WanStageParams) || defaultStage())
 const low = computed<WanStageParams>(() => ((tab.value?.params as any)?.low as WanStageParams) || defaultStage())
 const wanFormat = computed<string>(() => (tab.value?.params as any)?.modelFormat || 'auto')
+
+// WAN assets (local state)
+const invState = reactive({
+  inv: { vaes: [] as Array<{name:string;path:string}>, textEncoders: [] as Array<{name:string;path:string}>, metadata: [] as Array<{name:string;path:string}> },
+  maps: { vae: {} as Record<string,string>, te: {} as Record<string,string>, meta: {} as Record<string,string> },
+})
+const inv = invState.inv
+const maps = invState.maps
+const assets = reactive({ metadata: '', textEncoder: '', vae: '' })
 
 function setVideo(patch: Partial<WanVideoParams>): void {
   if (!tab.value) return
@@ -420,6 +466,11 @@ async function generate(): Promise<void> {
   const v = video.value
   const hi = high.value
   const lo = low.value
+  // Resolve asset names to absolute paths
+  const resolve = (val: string, map: Record<string,string>) => (map && map[val]) ? map[val] : val
+  const metaDir = resolve(assets.metadata, maps.meta)
+  const tePath = resolve(assets.textEncoder, maps.te)
+  const vaePath = resolve(assets.vae, maps.vae)
   const extras = {
     video_filename_prefix: v.filenamePrefix,
     video_format: v.format,
@@ -443,6 +494,9 @@ async function generate(): Promise<void> {
       lora_weight: lo.loraEnabled ? lo.loraWeight : undefined,
     },
     wan_format: wanFormat.value,
+    wan_metadata_dir: metaDir || undefined,
+    wan_text_encoder_path: tePath || undefined,
+    wan_vae_path: vaePath || undefined,
   } as Record<string, unknown>
 
   try {

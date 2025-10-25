@@ -328,7 +328,7 @@ async function generate(): Promise<void> {
     const highModel = resolve(state.high.modelDir, maps.wanHigh)
     const lowModel = resolve(state.low.modelDir, maps.wanLow)
     const vaePath = resolve(state.vaeDir, maps.vae)
-    const tePathOrDir = resolve(state.textEncoderDir, maps.te)
+    const tePath = resolve(state.textEncoderDir, maps.te)
     const metaDir = resolve(state.metadataDir, maps.meta)
 
     const extras: Record<string, unknown> = {
@@ -336,7 +336,7 @@ async function generate(): Promise<void> {
       wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_dir: lowModel || undefined },
       wan_format: state.wanFormat,
       wan_vae_path: vaePath || undefined,
-      wan_text_encoder_dir: tePathOrDir || undefined,
+      wan_text_encoder_path: tePath || undefined,
       wan_metadata_dir: metaDir || undefined,
     }
     if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = resolve(state.high.loraPath, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }

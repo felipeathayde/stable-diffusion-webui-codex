@@ -92,6 +92,9 @@ class CodexSampler:
         # Sampling loop
         eps_prev: Optional[torch.Tensor] = None
         sigma_prev: Optional[float] = None
+        strict = str(os.getenv("CODEX_SAMPLER_STRICT", "1")).lower() in ("1","true","yes","on")
+        import time as _time
+        t0 = _time.perf_counter()
         for i in range(steps):
             sigma = sigmas[i]
             sigma_next = sigmas[i + 1]
@@ -111,6 +114,8 @@ class CodexSampler:
 
             # Convert denoised sample x0 to epsilon: eps = (x - x0) / sigma
             eps = (x - denoised) / max(float(sigma), 1e-8)
+            if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
+                raise RuntimeError(f"NaN encountered at step {i+1}")
 
             if self.algorithm in ("euler", "euler ode", "ode"):
                 # Euler ODE update: x_{t+1} = x_t - (sigma - sigma_next) * eps
@@ -194,7 +199,8 @@ class CodexSampler:
                 x = denoised + sigma_down * eps + sigma_up * torch.randn_like(x)
 
             if self._log_enabled and (i == 0 or (i+1) == steps or (i+1) % max(1, steps//5) == 0):
-                self._logger.info("step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f", i+1, steps, float(sigma), float(sigma_next), float(x.norm().item()))
+                self._logger.info("step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f dt=%.2fms", i+1, steps, float(sigma), float(sigma_next), float(x.norm().item()), (_time.perf_counter()-t0)*1000.0)
+                t0 = _time.perf_counter()
 
             backend_state.tick(sampling_step=i + 1)
 

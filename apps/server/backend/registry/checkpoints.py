@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Dict, Any
+import json
 
 
 @dataclass
@@ -105,5 +106,65 @@ def list_checkpoints(models_root: str = "models", vendored_hf_root: str = "apps/
     return entries
 
 
-__all__ = ["CheckpointEntry", "list_checkpoints"]
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
+
+def describe_checkpoints(models_root: str = "models", vendored_hf_root: str = "apps/server/backend/huggingface") -> List[Dict[str, Any]]:
+    """Return metadata for discovered checkpoints (non-destructive, lightweight).
+
+    Fields per entry (best-effort):
+    - name, title, filename, path, format: 'diffusers'|'checkpoint'
+    - components (diffusers): list of present subfolders (unet/transformer/vae/text_encoder[/_2]/tokenizer[/_2]/scheduler)
+    - prediction_type (if scheduler/config present)
+    - vae.latent_channels, vae.scaling_factor (if VAE config present)
+    - file_ext, file_size (for checkpoint files)
+    """
+    out: List[Dict[str, Any]] = []
+    for e in list_checkpoints(models_root, vendored_hf_root):
+        meta: Dict[str, Any] = {
+            "name": e.name,
+            "title": e.title,
+            "model_name": e.model_name,
+            "filename": e.filename,
+            "path": e.path,
+            "format": e.metadata.get("format") or ("diffusers" if os.path.isfile(os.path.join(e.path, "model_index.json")) else "checkpoint"),
+        }
+        if meta["format"] == "diffusers":
+            comps = []
+            for sub in ("unet", "transformer", "vae", "text_encoder", "text_encoder_2", "tokenizer", "tokenizer_2", "scheduler"):
+                if os.path.isdir(os.path.join(e.path, sub)):
+                    comps.append(sub)
+            meta["components"] = comps
+            # scheduler prediction_type
+            sch_cfg = os.path.join(e.path, "scheduler", "config.json")
+            if os.path.isfile(sch_cfg):
+                cfg = _read_json(sch_cfg)
+                pt = cfg.get("prediction_type")
+                if isinstance(pt, str):
+                    meta["prediction_type"] = pt
+            # vae config
+            vae_cfg = os.path.join(e.path, "vae", "config.json")
+            if os.path.isfile(vae_cfg):
+                cfg = _read_json(vae_cfg)
+                meta.setdefault("vae", {})
+                meta["vae"]["latent_channels"] = cfg.get("latent_channels")
+                meta["vae"]["scaling_factor"] = cfg.get("scaling_factor")
+        else:
+            # single-file checkpoint
+            try:
+                stat = os.stat(e.filename)
+                meta["file_ext"] = os.path.splitext(e.filename)[1].lower()
+                meta["file_size"] = stat.st_size
+            except Exception:
+                meta["file_ext"] = os.path.splitext(e.filename)[1].lower()
+                meta["file_size"] = None
+        out.append(meta)
+    return out
+
+
+__all__ = ["CheckpointEntry", "list_checkpoints", "describe_checkpoints"]

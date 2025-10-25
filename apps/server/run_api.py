@@ -941,7 +941,7 @@ def build_app() -> FastAPI:
 
         Response shape remains compatible: fields include title/name/filename/metadata.
         """
-        from apps.server.backend.registry.checkpoints import list_checkpoints as _list_ckpt
+        from apps.server.backend.registry.checkpoints import list_checkpoints as _list_ckpt, describe_checkpoints as _describe_ckpt
 
         def _serialize(entry) -> Dict[str, Any]:
             return {
@@ -955,13 +955,14 @@ def build_app() -> FastAPI:
 
         entries = _list_ckpt()
         models = [_serialize(e) for e in entries]
+        models_info = _describe_ckpt()
         # Current selection: track via codex options when available
         try:
             from apps.server.backend.codex import main as _codex
             current = getattr(_codex, "_SELECTIONS").checkpoint_name or (models[0]["name"] if models else None)
         except Exception:
             current = models[0]["name"] if models else None
-        return {"models": models, "current": current}
+        return {"models": models, "current": current, "models_info": models_info}
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:

@@ -19,6 +19,7 @@ import type {
   UiBlocksResponse,
   UiPresetsResponse,
   UiPresetApplyResponse,
+  InventoryResponse,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
@@ -40,6 +41,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchModels(): Promise<ModelsResponse> {
   return requestJson<ModelsResponse>('/models')
+}
+
+export function fetchModelInventory(): Promise<InventoryResponse> {
+  return requestJson<InventoryResponse>('/models/inventory')
 }
 
 export function fetchSamplers(): Promise<SamplersResponse> {

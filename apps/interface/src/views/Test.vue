@@ -11,17 +11,22 @@
             <p class="muted test-sublabel">Provide explicit paths when you want to override the default WAN assets.</p>
             <div class="test-grid test-grid-two">
               <div class="field-stack">
-                <label class="label" for="vaeDir">VAE Path (.safetensors)</label>
-                <input id="vaeDir" class="ui-input" type="text" v-model="state.vaeDir" placeholder="C:\\...\\vae.safetensors" />
+                <label class="label" for="vaeDir">VAE</label>
+                <select id="vaeDir" class="select-md" v-model="state.vaeDir">
+                  <option v-for="opt in options.vaes" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
               <div class="field-stack">
-                <label class="label" for="textEncoderDir">Text Encoder Path (.safetensors)</label>
-                <input id="textEncoderDir" class="ui-input" type="text" v-model="state.textEncoderDir" placeholder="C:\\...\\text_encoder.safetensors" />
+                <label class="label" for="textEncoderDir">Text Encoder</label>
+                <select id="textEncoderDir" class="select-md" v-model="state.textEncoderDir">
+                  <option v-for="opt in options.textEncoders" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
               <div class="field-stack">
-                <label class="label" for="tokenizerDir">Tokenizer Dir (optional)</label>
-                <input id="tokenizerDir" class="ui-input" type="text" v-model="state.tokenizerDir" placeholder="C:\\...\\tokenizer" />
-                <span class="muted test-sublabel">Leave blank to auto-fetch.</span>
+                <label class="label" for="tokenizerDir">Tokenizer Dir</label>
+                <select id="tokenizerDir" class="select-md" v-model="state.tokenizerDir">
+                  <option v-for="opt in options.tokenizers" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
             </div>
           </div>
@@ -82,8 +87,10 @@
             <h4 class="h5">High Stage</h4>
             <div class="test-grid test-grid-three">
               <div class="field-stack">
-                <label class="label" for="highModel">Model Dir</label>
-                <input id="highModel" class="ui-input" type="text" v-model="state.high.modelDir" placeholder="C:\\...HighNoise..." />
+                <label class="label" for="highModel">High Model (.gguf)</label>
+                <select id="highModel" class="select-md" v-model="state.high.modelDir">
+                  <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
               <div>
                 <label class="label" for="highSteps">Steps</label>
@@ -110,8 +117,10 @@
             <h4 class="h5">Low Stage</h4>
             <div class="test-grid test-grid-three">
               <div class="field-stack">
-                <label class="label" for="lowModel">Model Dir</label>
-                <input id="lowModel" class="ui-input" type="text" v-model="state.low.modelDir" placeholder="C:\\...LowNoise..." />
+                <label class="label" for="lowModel">Low Model (.gguf)</label>
+                <select id="lowModel" class="select-md" v-model="state.low.modelDir">
+                  <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
               <div>
                 <label class="label" for="lowSteps">Steps</label>
@@ -183,7 +192,7 @@
 
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { startImg2Vid, startTxt2Vid, subscribeTask } from '../api/client'
+import { startImg2Vid, startTxt2Vid, subscribeTask, fetchModelInventory } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 
@@ -197,17 +206,16 @@ const state = reactive({
   useInitImage: true,
   initImageData: '',
   initImageName: '',
-  // Defaults (Windows paths provided by you)
-  vaeDir: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005cWan2.1_VAE.safetensors',
-  textEncoderDir: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005cumt5_xxl_fp8_e4m3fn_scaled.safetensors',
+  vaeDir: '',
+  textEncoderDir: '',
   tokenizerDir: '',
   high: {
-    modelDir: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005cWan2.2-I2V-A14B-HighNoise-Q2_K.gguf',
+    modelDir: '',
     steps: 4, cfgScale: 7,
     loraPath: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005chigh_noise_model_lora.safetensors', loraWeight: 1.0,
   },
   low: {
-    modelDir: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005cWan2.2-I2V-A14B-LowNoise-Q2_K.gguf',
+    modelDir: '',
     steps: 4, cfgScale: 7,
     loraPath: 'C:\\\u005cUsers\\\u005clucas\\\u005cOneDrive\\\u005cDocumentos\\\u005cstable-diffusion-webui-codex\\\u005cmodels\\\u005ccodex\\\u005clow_noise_model_lora.safetensors', loraWeight: 1.0,
   },
@@ -219,6 +227,14 @@ const isRunning = ref(false)
 const errorMessage = ref('')
 const framesResult = ref<GeneratedImage[]>([])
 let unsubscribe: (() => void) | null = null
+
+const options = reactive({
+  vaes: [] as Array<{ name: string; path: string }>,
+  textEncoders: [] as Array<{ name: string; path: string }>,
+  tokenizers: [] as Array<{ name: string; path: string }>,
+  wanHigh: [] as Array<{ name: string; path: string }>,
+  wanLow: [] as Array<{ name: string; path: string }>,
+})
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
@@ -232,6 +248,28 @@ function readFileAsDataURL(file: File): Promise<string> {
     reader.readAsDataURL(file)
   })
 }
+
+// Load inventory for selects on mount (immediately invoked)
+(async () => {
+  try {
+    const inv = await fetchModelInventory()
+    options.vaes = (inv.vaes || []).map(v => ({ name: v.name, path: v.path }))
+    // Use text encoder directories (absolute paths)
+    options.textEncoders = (inv.text_encoder_dirs || [])
+    options.tokenizers = (inv.tokenizers || [])
+    const gguf = inv.wan22?.gguf || []
+    options.wanHigh = gguf.filter((e: any) => e.stage === 'high').map((e: any) => ({ name: e.name, path: e.path }))
+    options.wanLow = gguf.filter((e: any) => e.stage === 'low').map((e: any) => ({ name: e.name, path: e.path }))
+    // Defaults
+    if (!state.vaeDir && options.vaes.length) state.vaeDir = options.vaes[0].path
+    if (!state.textEncoderDir && options.textEncoders.length) state.textEncoderDir = options.textEncoders[0].path
+    if (!state.tokenizerDir && options.tokenizers.length) state.tokenizerDir = options.tokenizers[0].path
+    if (!state.high.modelDir && options.wanHigh.length) state.high.modelDir = options.wanHigh[0].path
+    if (!state.low.modelDir && options.wanLow.length) state.low.modelDir = options.wanLow[0].path
+  } catch (err) {
+    console.error('[inventory] failed to load', err)
+  }
+})()
 
 async function onFile(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
@@ -258,7 +296,7 @@ async function generate(): Promise<void> {
       wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_dir: state.high.modelDir || undefined },
       wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_dir: state.low.modelDir || undefined },
       wan_format: state.wanFormat,
-      wan_vae_dir: state.vaeDir || undefined,
+      wan_vae_path: state.vaeDir || undefined,
       wan_text_encoder_dir: state.textEncoderDir || undefined,
       wan_tokenizer_dir: state.tokenizerDir || undefined,
     }

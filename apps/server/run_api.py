@@ -1027,35 +1027,13 @@ def build_app() -> FastAPI:
         _save_json(cfg_path, payload['paths'])
         return {"ok": True}
 
-    # Native options store (apps/settings_values.json)
-    def _opts_load() -> Dict[str, Any]:
-        return _load_json(_settings_values_path) if os.path.exists(_settings_values_path) else {}
-
-    def _opts_get(key: str, default: Any = None) -> Any:
-        return _opts_load().get(key, default)
-
-    def _opts_set_many(payload: Dict[str, Any]) -> list[str]:
-        # Optional schema to validate/limit keys
-        idx = {}
-        try:
-            if _settings_registry_ok:
-                idx = _field_index()  # type: ignore[name-defined]
-        except Exception:
-            idx = {}
-        allowed = set(idx.keys()) if idx else set(payload.keys())
-        existing = _opts_load()
-        updated: list[str] = []
-        for k, v in payload.items():
-            if k not in allowed:
-                continue
-            existing[k] = v
-            updated.append(k)
-        _save_json(_settings_values_path, existing)
-        return updated
+    # Native options store via Codex options facade
+    from apps.server.backend.codex.options import get_value as _opts_get, set_values as _opts_set_many  # type: ignore
 
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
-        return {"values": _opts_load()}
+        from apps.server.backend.codex.options import _load as _opts_load_native  # type: ignore
+        return {"values": _opts_load_native()}
 
     @app.post('/api/options')
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

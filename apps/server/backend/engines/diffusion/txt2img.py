@@ -151,6 +151,18 @@ class Txt2ImgRuntime:
         self._run_process_scripts()
 
         samples, decoded_samples = _prepare_first_pass_from_image(self.processing)
+        # Apply prompt-level controls for cfg/steps/seed if present
+        try:
+            if 'cfg' in prompt_controls:
+                self.processing.cfg_scale = float(prompt_controls['cfg'])
+            if 'steps' in prompt_controls:
+                self.processing.steps = int(float(prompt_controls['steps']))
+            if 'seed' in prompt_controls:
+                s = int(float(prompt_controls['seed']))
+                self.seeds = [s]
+                self.processing.seeds = [s]
+        except Exception:
+            pass
 
         if samples is None and decoded_samples is None:
             samples = self._run_base_sampling()

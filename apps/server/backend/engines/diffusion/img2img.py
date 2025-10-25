@@ -141,6 +141,21 @@ class Img2ImgRuntime:
         except Exception:
             img_cond = None
 
+        # Apply prompt-level controls for cfg/steps/seed/denoise if present
+        try:
+            if 'cfg' in prompt_controls:
+                self.processing.cfg_scale = float(prompt_controls['cfg'])
+            if 'steps' in prompt_controls:
+                self.processing.steps = int(float(prompt_controls['steps']))
+            if 'seed' in prompt_controls:
+                s = int(float(prompt_controls['seed']))
+                # Not overriding batch seeds here; use main seed when present
+                self.processing.seed = s
+            if 'denoise' in prompt_controls:
+                self.processing.denoising_strength = float(prompt_controls['denoise'])
+        except Exception:
+            pass
+
         samples = self.processing.sampler.sample(
             self.processing,
             noise,

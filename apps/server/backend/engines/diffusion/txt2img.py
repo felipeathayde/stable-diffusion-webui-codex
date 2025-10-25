@@ -20,7 +20,7 @@ from modules.sd_samplers_common import (
     images_tensor_to_samples,
 )
 from modules.shared import opts
-from apps.server.backend.compat.codex import main as codex_main
+from apps.server.backend.codex import main as codex_main
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:

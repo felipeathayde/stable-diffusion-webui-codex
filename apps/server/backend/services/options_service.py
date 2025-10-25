@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules import shared
+from modules import shared  # type: ignore
 
 
 class OptionsService:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Compatibility initialization for Codex (wraps modules_forge)."""
+"""Codex initialization (wraps legacy modules_forge when present)."""
 
 
 def initialize_codex() -> None:
@@ -11,4 +11,3 @@ def initialize_codex() -> None:
         def _init() -> None:  # type: ignore
             return None
     _init()
-

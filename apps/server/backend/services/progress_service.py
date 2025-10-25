@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 
-import modules.shared as shared
-from modules.progress import current_task
+import modules.shared as shared  # type: ignore
+from modules.progress import current_task  # type: ignore
 
 
 class ProgressService:

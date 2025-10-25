@@ -163,3 +163,41 @@
   - Removed on 2025-10-24. Use the façade `apps.server.backend.*`.
   - See: `codex/deprecations/2025-10-backend-namespace-deprecation.md` and `apps/server/backend/SHIM_INVENTORY.md`.
   - Import redirector no longer exists; old imports raise `ModuleNotFoundError`.
+
+## Roadmap — Backend Consolidation (apps/server/backend‑first)
+
+Goal
+- Refatorar e organizar tudo o que é importante para dentro de `apps/server/backend`, mantendo paridade funcional e sem criar acoplamentos novos ao legado.
+
+Principles (always on)
+- Código ativo vive em `apps/server/backend` (backend) e `apps/interface` (UI nova).
+- Nada de novos imports a partir de `legacy/` ou `DEPRECATED/`. Sem `backend.*` (namespace antigo).
+- Preferir PyTorch SDPA; erros explícitos (sem fallbacks silenciosos).
+
+Phases
+- P0 (now)
+  - Fonte de verdade: seguir `codex/architecture/*` (repo‑structure, rules, pipelines, inventory, checklists).
+  - `backend/` (raiz) marcado como DEPRECATED (guard ativo). WAN `wan_gguf*` em `DEPRECATED/`.
+  - Sem novos códigos fora de `apps/`. Exceções estritas habilitadas (dumps em logs/exceptions‑YYYYmmdd‑pid.log).
+
+- P1 (next sprint)
+  - Consolidar entradas das tasks: engines/diffusion/{txt2img,img2img,txt2vid,img2vid}.py como única orquestração.
+  - Formalizar adapters mínimos para consumir o que ainda vier de `modules/` (services/adapters), sem expandir o legado.
+  - Samplers/Schedulers via `engines/util/schedulers.SamplerKind` (única fonte); UI recebe a lista pelo backend.
+  - Presets: alinhar `configs/presets` com presets servidos pelo backend (sem duplicidade futura).
+
+- P2 (2–4 semanas)
+  - Migrar loaders/modelos necessários de `modules/` para `runtime/models` e `runtime/nn` (sem quebrar extensões).
+  - Texto/Tokenizers: consolidar em `runtime/text_processing/*` (CLIP/T5/LLAMA/Qwen que usamos).
+  - Limpar dependências optativas em `extensions-builtin/` (listar o que é realmente usado em startup).
+
+- P3 (backlog)
+  - UI legacy: aposentar `javascript*/html` quando a UI nova cobrir os fluxos.
+  - Presets legados: consolidar em endpoints do backend; arquivar `configs/presets`.
+  - Mover ferramentas/inspeções de `scripts/` para `tools/` ou `DEPRECATED/` quando não forem mais úteis.
+
+Acceptance Criteria por fase
+- P0: Sem novos arquivos fora de `apps/`. Importar `backend.*` quebra com mensagem clara. Documentação publicada.
+- P1: Todas as tasks entram por engines/diffusion/*; lista de samplers/schedulers sai do backend; presets servidos pelo backend.
+- P2: Carregadores/NN críticos no `runtime/*`; texto/tokenizers unificados; extensões opcionais isoladas.
+- P3: UI nova cobre fluxos; legados marcados como referência; repositório limpo de duplicidades.

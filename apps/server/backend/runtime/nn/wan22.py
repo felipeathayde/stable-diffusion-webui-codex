@@ -75,7 +75,7 @@ def _patch_unembed3d(tokens, w, out_shape):
     return video
 
 
-def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None):
+def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, device: str, dtype: str, text_encoder_dir: Optional[str] = None, tokenizer_dir: Optional[str] = None, vae_dir: Optional[str] = None, model_key: Optional[str] = None, metadata_dir: Optional[str] = None):
     """GGUF path: use Transformers tokenizer + encoder only; do NOT fall back to Diffusers.
 
     - Searches explicit extras first (tokenizer_dir/text_encoder_dir), then common subfolders under model_dir.
@@ -88,7 +88,15 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
     except Exception:
         from transformers import T5EncoderModel as _Enc
 
+    # Resolve tokenizer dir: prefer explicit tokenizer_dir; else infer from metadata_dir/tokenizer*
     tk_dir = tokenizer_dir
+    if (not tk_dir) and metadata_dir:
+        cand = os.path.join(metadata_dir, 'tokenizer')
+        cand2 = os.path.join(metadata_dir, 'tokenizer_2')
+        if os.path.isdir(cand):
+            tk_dir = cand
+        elif os.path.isdir(cand2):
+            tk_dir = cand2
     te_dir = text_encoder_dir
     te_file: Optional[str] = None
     if te_dir and os.path.isfile(te_dir) and te_dir.lower().endswith('.safetensors'):
@@ -97,9 +105,9 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
     if tk_dir and os.path.isfile(tk_dir):
         tk_dir = os.path.dirname(tk_dir)
 
-    # Strict: require tokenizer_dir explicitly
+    # Strict: require tokenizer source
     if not tk_dir or not os.path.isdir(tk_dir):
-        raise RuntimeError("WAN22 GGUF: tokenizer_dir missing or invalid; provide 'wan_tokenizer_dir'.")
+        raise RuntimeError("WAN22 GGUF: tokenizer metadata missing or invalid; provide 'wan_metadata_dir' or 'wan_tokenizer_dir'.")
 
     # Load tokenizer from the single provided directory
     try:

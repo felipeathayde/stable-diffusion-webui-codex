@@ -158,8 +158,8 @@ export interface WorkflowsResponse { version: number; workflows: Array<{ id: str
 // Model inventory (for populating selects)
 export interface InventoryResponse {
   vaes: Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>
-  text_encoders: Record<string, Array<{ subdir: string; type: string; hidden_size?: number | null; projection?: boolean; vocab_size?: number | null }>>
+  text_encoders: Array<{ name: string; path: string }>
+  loras: Array<{ name: string; path: string }>
   wan22: { gguf: Array<{ name: string; path: string; stage: 'high' | 'low' | 'unknown' }> }
-  tokenizers: Array<{ name: string; path: string }>
-  text_encoder_dirs: Array<{ name: string; path: string }>
+  metadata: Array<{ name: string; path: string }>
 }

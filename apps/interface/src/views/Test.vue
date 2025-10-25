@@ -11,22 +11,25 @@
             <p class="muted test-sublabel">Provide explicit paths when you want to override the default WAN assets.</p>
             <div class="test-grid test-grid-two">
               <div class="field-stack">
-                <label class="label" for="vaeDir">VAE</label>
-                <select id="vaeDir" class="select-md" v-model="state.vaeDir">
+                <label class="label" for="vaeDir">VAE (input list)</label>
+                <input id="vaeDir" class="ui-input" list="dl-vaes" v-model="state.vaeDir" placeholder="/models/VAE/*.safetensors" />
+                <datalist id="dl-vaes">
                   <option v-for="opt in options.vaes" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
-                </select>
+                </datalist>
               </div>
               <div class="field-stack">
-                <label class="label" for="textEncoderDir">Text Encoder</label>
-                <select id="textEncoderDir" class="select-md" v-model="state.textEncoderDir">
+                <label class="label" for="textEncoderDir">Text Encoder (input list)</label>
+                <input id="textEncoderDir" class="ui-input" list="dl-te" v-model="state.textEncoderDir" placeholder="/models/text-encoder/*.safetensors" />
+                <datalist id="dl-te">
                   <option v-for="opt in options.textEncoders" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
-                </select>
+                </datalist>
               </div>
               <div class="field-stack">
-                <label class="label" for="tokenizerDir">Tokenizer Dir</label>
-                <select id="tokenizerDir" class="select-md" v-model="state.tokenizerDir">
-                  <option v-for="opt in options.tokenizers" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
-                </select>
+                <label class="label" for="metadataDir">Metadata Dir (input list)</label>
+                <input id="metadataDir" class="ui-input" list="dl-meta" v-model="state.metadataDir" placeholder="apps/server/backend/huggingface/<org>/<repo>" />
+                <datalist id="dl-meta">
+                  <option v-for="opt in options.metadata" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </datalist>
               </div>
             </div>
           </div>
@@ -87,10 +90,11 @@
             <h4 class="h5">High Stage</h4>
             <div class="test-grid test-grid-three">
               <div class="field-stack">
-                <label class="label" for="highModel">High Model (.gguf)</label>
-                <select id="highModel" class="select-md" v-model="state.high.modelDir">
+                <label class="label" for="highModel">High Model (.gguf, input list)</label>
+                <input id="highModel" class="ui-input" list="dl-wan-high" v-model="state.high.modelDir" placeholder="/models/wan22/*High*.gguf" />
+                <datalist id="dl-wan-high">
                   <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
-                </select>
+                </datalist>
               </div>
               <div>
                 <label class="label" for="highSteps">Steps</label>
@@ -103,8 +107,17 @@
             </div>
             <div class="test-grid test-grid-lora">
               <div class="field-stack">
-                <label class="label" for="highLora">LoRA Path</label>
-                <input id="highLora" class="ui-input" type="text" v-model="state.high.loraPath" placeholder="C:\\...\\lora.safetensors" />
+                <label class="switch-label">
+                  <input type="checkbox" v-model="state.high.useLora" />
+                  <span>Use Auxiliary LoRA (High)</span>
+                </label>
+                <div v-if="state.high.useLora">
+                  <label class="label" for="highLora">LoRA (input list)</label>
+                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/Lora/*.safetensors" />
+                  <datalist id="dl-lora">
+                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  </datalist>
+                </div>
               </div>
               <div>
                 <label class="label" for="highLoraWeight">LoRA Weight</label>
@@ -117,10 +130,11 @@
             <h4 class="h5">Low Stage</h4>
             <div class="test-grid test-grid-three">
               <div class="field-stack">
-                <label class="label" for="lowModel">Low Model (.gguf)</label>
-                <select id="lowModel" class="select-md" v-model="state.low.modelDir">
+                <label class="label" for="lowModel">Low Model (.gguf, input list)</label>
+                <input id="lowModel" class="ui-input" list="dl-wan-low" v-model="state.low.modelDir" placeholder="/models/wan22/*Low*.gguf" />
+                <datalist id="dl-wan-low">
                   <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
-                </select>
+                </datalist>
               </div>
               <div>
                 <label class="label" for="lowSteps">Steps</label>
@@ -133,8 +147,14 @@
             </div>
             <div class="test-grid test-grid-lora">
               <div class="field-stack">
-                <label class="label" for="lowLora">LoRA Path</label>
-                <input id="lowLora" class="ui-input" type="text" v-model="state.low.loraPath" placeholder="C:\\...\\lora.safetensors" />
+                <label class="switch-label">
+                  <input type="checkbox" v-model="state.low.useLora" />
+                  <span>Use Auxiliary LoRA (Low)</span>
+                </label>
+                <div v-if="state.low.useLora">
+                  <label class="label" for="lowLora">LoRA (input list)</label>
+                  <input id="lowLora" class="ui-input" list="dl-lora" v-model="state.low.loraPath" placeholder="/models/Lora/*.safetensors" />
+                </div>
               </div>
               <div>
                 <label class="label" for="lowLoraWeight">LoRA Weight</label>
@@ -209,6 +229,7 @@ const state = reactive({
   vaeDir: '',
   textEncoderDir: '',
   tokenizerDir: '',
+  metadataDir: '',
   high: {
     modelDir: '',
     steps: 4, cfgScale: 7,
@@ -231,7 +252,8 @@ let unsubscribe: (() => void) | null = null
 const options = reactive({
   vaes: [] as Array<{ name: string; path: string }>,
   textEncoders: [] as Array<{ name: string; path: string }>,
-  tokenizers: [] as Array<{ name: string; path: string }>,
+  metadata: [] as Array<{ name: string; path: string }>,
+  loras: [] as Array<{ name: string; path: string }>,
   wanHigh: [] as Array<{ name: string; path: string }>,
   wanLow: [] as Array<{ name: string; path: string }>,
 })
@@ -253,17 +275,17 @@ function readFileAsDataURL(file: File): Promise<string> {
 (async () => {
   try {
     const inv = await fetchModelInventory()
-    options.vaes = (inv.vaes || []).map(v => ({ name: v.name, path: v.path }))
-    // Use text encoder directories (absolute paths)
-    options.textEncoders = (inv.text_encoder_dirs || [])
-    options.tokenizers = (inv.tokenizers || [])
+    options.vaes = (inv.vaes || []).map((v: any) => ({ name: v.name, path: v.path }))
+    options.textEncoders = (inv.text_encoders || []).map((t: any) => ({ name: t.name, path: t.path }))
+    options.metadata = (inv.metadata || []).map((m: any) => ({ name: m.name, path: m.path }))
+    options.loras = (inv.loras || []).map((l: any) => ({ name: l.name, path: l.path }))
     const gguf = inv.wan22?.gguf || []
     options.wanHigh = gguf.filter((e: any) => e.stage === 'high').map((e: any) => ({ name: e.name, path: e.path }))
     options.wanLow = gguf.filter((e: any) => e.stage === 'low').map((e: any) => ({ name: e.name, path: e.path }))
     // Defaults
     if (!state.vaeDir && options.vaes.length) state.vaeDir = options.vaes[0].path
     if (!state.textEncoderDir && options.textEncoders.length) state.textEncoderDir = options.textEncoders[0].path
-    if (!state.tokenizerDir && options.tokenizers.length) state.tokenizerDir = options.tokenizers[0].path
+    if (!state.metadataDir && options.metadata.length) state.metadataDir = options.metadata[0].path
     if (!state.high.modelDir && options.wanHigh.length) state.high.modelDir = options.wanHigh[0].path
     if (!state.low.modelDir && options.wanLow.length) state.low.modelDir = options.wanLow[0].path
   } catch (err) {
@@ -300,8 +322,8 @@ async function generate(): Promise<void> {
       wan_text_encoder_dir: state.textEncoderDir || undefined,
       wan_tokenizer_dir: state.tokenizerDir || undefined,
     }
-    if (state.high.loraPath) { (extras.wan_high as any).lora_path = state.high.loraPath; (extras.wan_high as any).lora_weight = state.high.loraWeight }
-    if (state.low.loraPath) { (extras.wan_low as any).lora_path = state.low.loraPath; (extras.wan_low as any).lora_weight = state.low.loraWeight }
+    if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = state.high.loraPath; (extras.wan_high as any).lora_weight = state.high.loraWeight }
+    if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = state.low.loraPath; (extras.wan_low as any).lora_weight = state.low.loraWeight }
     if (state.useInitImage && state.initImageData) {
       const payload = {
         __strict_version: 1,

@@ -90,11 +90,11 @@
             <h4 class="h5">High Stage</h4>
             <div class="test-grid test-grid-three">
               <div class="field-stack">
-                <label class="label" for="highModel">High Model (.gguf, input list)</label>
-                <input id="highModel" class="ui-input" list="dl-wan-high" v-model="state.high.modelDir" placeholder="/models/wan22/*High*.gguf" autocomplete="off" autocapitalize="off" spellcheck="false" />
-                <datalist id="dl-wan-high">
-                  <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
-                </datalist>
+                <label class="label" for="highModel">High Model (.gguf)</label>
+                <select id="highModel" class="select-md" v-model="state.high.modelDir">
+                  <option value="">— Select —</option>
+                  <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
               <div>
                 <label class="label" for="highSteps">Steps</label>
@@ -115,7 +115,7 @@
                   <label class="label" for="highLora">LoRA (input list)</label>
                   <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/Lora/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                   <datalist id="dl-lora">
-                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
                   </datalist>
                 </div>
               </div>
@@ -130,11 +130,11 @@
             <h4 class="h5">Low Stage</h4>
             <div class="test-grid test-grid-three">
               <div class="field-stack">
-                <label class="label" for="lowModel">Low Model (.gguf, input list)</label>
-                <input id="lowModel" class="ui-input" list="dl-wan-low" v-model="state.low.modelDir" placeholder="/models/wan22/*Low*.gguf" autocomplete="off" autocapitalize="off" spellcheck="false" />
-                <datalist id="dl-wan-low">
-                  <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
-                </datalist>
+                <label class="label" for="lowModel">Low Model (.gguf)</label>
+                <select id="lowModel" class="select-md" v-model="state.low.modelDir">
+                  <option value="">— Select —</option>
+                  <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                </select>
               </div>
               <div>
                 <label class="label" for="lowSteps">Steps</label>

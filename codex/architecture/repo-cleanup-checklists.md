@@ -61,8 +61,8 @@ html/ — Compat → P3
   - AC: grep shows only known images referenced
 
 packages_3rdparty/gguf/ — Vendor → P1
-- [ ] Confirm façade path used when needed
-  - AC: no direct third-party import; façade stable
+- [ ] Backend sem dependências de A1111 (`modules.*`)
+  - AC: grep zero em `apps/server/backend/**` para `\bmodules(\.|_forge)`, `forge_`
 
 packages_3rdparty/* (collections) — Vendor (optional) → P3
 - [ ] Tag as examples only

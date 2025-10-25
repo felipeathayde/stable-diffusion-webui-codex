@@ -20,8 +20,8 @@ Estrita/Políticas
 - Sem guardas automáticos de política: a disciplina é documental e de revisão. Violações (ex.: imports proibidos) devem ser rejeitadas em revisão de código.
 
 Imports/Aliases
-- Use `apps.server.backend.modules.*` para acessar o stack A1111 quando ainda for necessário. Não use `modules.*` diretamente.
-- Engines e runtime podem importar submódulos internos diretamente quando necessário (evitar ciclos).
+- Não use `modules.*` nem qualquer façade para ele dentro de `apps/server/backend/**`.
+- Engines e runtime importam apenas código nativo sob `apps/server/backend/**` (evitar ciclos).
 
 Assets
 - Diffusers: organizar em subpastas padrão (tokenizer/, text_encoder[/_2]/, transformer|unet/, vae/, scheduler/); model_index.json presente
@@ -36,5 +36,5 @@ Codex (substitui “Forge” no backend)
   - `apps.server.backend.codex.initialization.initialize_codex()` — bootstrap do ambiente (no‑op em setups mínimos).
   - `apps.server.backend.codex.main.{modules_change, checkpoint_change, refresh_model_loading_parameters}` — gestão de módulos/modelos via opts nativos.
   - `apps.server.backend.codex.options` — leitura de opções (`codex_*`), com fallback interno para nomes antigos apenas para leitura.
-- Interação com A1111/legacy: se (e somente se) precisar tocar `modules.*`, importe via façade `apps.server.backend.modules.*`. Não use `modules.*` diretamente no backend ativo.
+- Interação com A1111/legacy: proibida no backend ativo. Se alguma capacidade ainda faltar, implemente nativamente sob `apps/server/backend/**` e exponha via `apps.server.backend.codex.*`.
 - Proibição: `modules_forge.*` não deve aparecer em código novo. Se houver necessidade funcional, exponha a capacidade via `apps.server.backend.codex.*` e implemente por trás conforme o plano de migração.

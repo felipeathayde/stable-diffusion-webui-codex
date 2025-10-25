@@ -7,7 +7,18 @@ we integrate with the legacy stack by modifying `modules.shared.opts` and
 triggering reloads via `modules.sd_models`.
 """
 
-from typing import Any
+from typing import Any, List
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class _Selections:
+    additional_modules: List[str] = field(default_factory=list)
+    checkpoint_name: str | None = None
+
+
+_SELECTIONS = _Selections()
 
 
 def modules_change(spec: Any, *, save: bool, refresh: bool) -> bool:
@@ -17,12 +28,7 @@ def modules_change(spec: Any, *, save: bool, refresh: bool) -> bool:
     and mirror into `opts.codex_additional_modules` for forward use.
     Returns True if the selection changed.
     """
-    try:
-        from modules import shared as _shared  # type: ignore
-    except Exception:
-        return False
-    opts = _shared.opts
-    before = list(getattr(opts, "forge_additional_modules", []) or [])
+    before = list(_SELECTIONS.additional_modules)
     # Normalize spec to list[str]
     if spec is None:
         after = []
@@ -31,8 +37,7 @@ def modules_change(spec: Any, *, save: bool, refresh: bool) -> bool:
     else:
         after = [str(spec)]
     changed = before != after
-    setattr(opts, "forge_additional_modules", after)
-    setattr(opts, "codex_additional_modules", after)
+    _SELECTIONS.additional_modules = after
     return changed
 
 
@@ -41,18 +46,10 @@ def checkpoint_change(name: str, *, save: bool, refresh: bool) -> bool:
 
     Returns True if changed.
     """
-    try:
-        from modules import shared as _shared  # type: ignore
-    except Exception:
-        return False
-    before = getattr(_shared.opts, "sd_model_checkpoint", None)
+    before = _SELECTIONS.checkpoint_name
     if before == name:
         return False
-    # Apply atomically via opts API if available
-    try:
-        _shared.opts.set("sd_model_checkpoint", name, is_api=True)
-    except Exception:
-        setattr(_shared.opts, "sd_model_checkpoint", name)
+    _SELECTIONS.checkpoint_name = name
     return True
 
 

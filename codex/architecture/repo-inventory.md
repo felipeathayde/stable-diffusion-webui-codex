@@ -99,5 +99,5 @@ Appendix — Imports cross‑check (evidences)
 Governance
 - Código ativo vive em `apps/server/backend` e `apps/interface`.
 - Não importar de `legacy/`, `DEPRECATED/` ou `modules_forge.*` no backend.
-- Use `apps.server.backend.*` (façade) e `apps.server.backend.codex.*` para gestão de modelos/módulos.
+- Use apenas `apps.server.backend.*` e `apps.server.backend.codex.*` no backend ativo; nenhuma façade para A1111.
 - Preferir migrar presets para o backend (server‑driven) ao invés de duplicar em `configs/`.

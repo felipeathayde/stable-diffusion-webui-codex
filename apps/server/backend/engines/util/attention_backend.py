@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+import os
 
 
 def _get_selected_backend() -> str:
-    try:
-        from modules import shared as _shared  # type: ignore
-        val = getattr(_shared.opts, 'codex_attention_backend', 'torch-sdpa')
-        return str(val or 'torch-sdpa')
-    except Exception:
-        return 'torch-sdpa'
+    # Read from env; default to PyTorch SDPA
+    return os.getenv("CODEX_ATTENTION_BACKEND", "torch-sdpa")
 
 
 def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, logger=None) -> str:
@@ -79,4 +76,3 @@ def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, log
         return apply_to_diffusers_pipeline(pipe, backend='torch-sdpa', logger=logger)
 
     return choice
-

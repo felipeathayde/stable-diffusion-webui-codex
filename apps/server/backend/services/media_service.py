@@ -4,15 +4,11 @@ import base64
 from io import BytesIO
 from typing import Optional
 
+import os
 import requests
-from PIL import PngImagePlugin
+from PIL import Image, PngImagePlugin
 import piexif
 import piexif.helper
-
-def _opts():
-    from modules import shared as _shared
-    return _shared.opts
-from modules import images
 
 
 class MediaService:
@@ -37,46 +33,57 @@ class MediaService:
         return True
 
     def decode_image(self, encoding: str):
-        """Decode base64 or fetch from URL respecting opts.* flags."""
+        """Decode base64 or fetch from URL.
+
+        Uses environment flags to guard requests:
+        - CODEX_API_ENABLE_REQUESTS (default: 0)
+        - CODEX_API_FORBID_LOCAL (default: 1)
+        - CODEX_API_USERAGENT (optional)
+        """
         if encoding.startswith("http://") or encoding.startswith("https://"):
-            if not _opts().api_enable_requests:
+            if os.getenv("CODEX_API_ENABLE_REQUESTS", "0") not in ("1", "true", "yes", "on"):
                 raise ValueError("Requests not allowed")
 
-            if _opts().api_forbid_local_requests and not self._verify_url(encoding):
+            forbid_local = os.getenv("CODEX_API_FORBID_LOCAL", "1") in ("1", "true", "yes", "on")
+            if forbid_local and not self._verify_url(encoding):
                 raise ValueError("Request to local resource not allowed")
 
-            headers = {'user-agent': _opts().api_useragent} if _opts().api_useragent else {}
+            ua = os.getenv("CODEX_API_USERAGENT", "")
+            headers = {'user-agent': ua} if ua else {}
             response = requests.get(encoding, timeout=30, headers=headers)
-            return images.read(BytesIO(response.content))
+            return Image.open(BytesIO(response.content)).copy()
 
         if encoding.startswith("data:image/"):
             encoding = encoding.split(";")[1].split(",")[1]
 
-        return images.read(BytesIO(base64.b64decode(encoding)))
+        return Image.open(BytesIO(base64.b64decode(encoding))).copy()
 
     def encode_image(self, image) -> str:
         with BytesIO() as output_bytes:
             if isinstance(image, str):
                 return image
-            if _opts().samples_format.lower() == 'png':
+            fmt = os.getenv("CODEX_SAMPLES_FORMAT", "png").lower()
+            jpeg_quality = int(os.getenv("CODEX_JPEG_QUALITY", "95"))
+            webp_lossless = os.getenv("CODEX_WEBP_LOSSLESS", "0") in ("1", "true", "yes", "on")
+            if fmt == 'png':
                 use_metadata = False
                 metadata = PngImagePlugin.PngInfo()
                 for key, value in image.info.items():
                     if isinstance(key, str) and isinstance(value, str):
                         metadata.add_text(key, value)
                         use_metadata = True
-                image.save(output_bytes, format="PNG", pnginfo=(metadata if use_metadata else None), quality=_opts().jpeg_quality)
-            elif _opts().samples_format.lower() in ("jpg", "jpeg", "webp"):
+                image.save(output_bytes, format="PNG", pnginfo=(metadata if use_metadata else None), quality=jpeg_quality)
+            elif fmt in ("jpg", "jpeg", "webp"):
                 if image.mode in ("RGBA", "P"):
                     image = image.convert("RGB")
                 parameters = image.info.get('parameters', None)
                 exif_bytes = piexif.dump({
                     "Exif": { piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(parameters or "", encoding="unicode") }
                 })
-                if _opts().samples_format.lower() in ("jpg", "jpeg"):
-                    image.save(output_bytes, format="JPEG", exif=exif_bytes, quality=_opts().jpeg_quality)
+                if fmt in ("jpg", "jpeg"):
+                    image.save(output_bytes, format="JPEG", exif=exif_bytes, quality=jpeg_quality)
                 else:
-                    image.save(output_bytes, format="WEBP", exif=exif_bytes, quality=_opts().jpeg_quality, lossless=_opts().webp_lossless)
+                    image.save(output_bytes, format="WEBP", exif=exif_bytes, quality=jpeg_quality, lossless=webp_lossless)
             else:
                 raise ValueError("Invalid image format")
 

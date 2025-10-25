@@ -14,8 +14,14 @@ import safetensors.torch as sf
 from apps.server.backend.runtime import utils
 
 def _opts():
-    from modules import shared as _shared
-    return _shared.opts
+    # Minimal option shim for SDXL-specific parameters without legacy deps
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        sdxl_crop_left=0,
+        sdxl_crop_top=0,
+        sdxl_refiner_low_aesthetic_score=2.5,
+        sdxl_refiner_high_aesthetic_score=6.0,
+    )
 
 
 class StableDiffusionXL(CodexDiffusionEngine):

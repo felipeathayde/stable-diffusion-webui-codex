@@ -182,7 +182,7 @@ Phases
 
 - P1 (next sprint)
   - Consolidar entradas das tasks: engines/diffusion/{txt2img,img2img,txt2vid,img2vid}.py como única orquestração.
-  - Formalizar adapters mínimos para consumir o que ainda vier de `modules/` (services/adapters), sem expandir o legado (use `engines/util/a1111_bridge.py`).
+- Implementar nativamente tudo que o backend precisa; nada de `modules/`/`modules_forge/` no backend ativo.
   - Samplers/Schedulers via `engines/util/schedulers.SamplerKind` (única fonte); UI recebe a lista pelo backend.
   - Presets: alinhar `configs/presets` com presets servidos pelo backend (sem duplicidade futura).
 

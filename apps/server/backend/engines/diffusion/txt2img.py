@@ -13,19 +13,13 @@ try:  # optional – only present when LoRA extension is available
     from extensions_builtin.sd_forge_lora import networks as lora_networks
 except Exception:  # pragma: no cover - optional dependency
     lora_networks = None
-from apps.server.backend.modules.sd_models import apply_token_merging, SkipWritingToConfig  # type: ignore
-from apps.server.backend.modules.sd_samplers_common import (  # type: ignore
-    approximation_indexes,
-    decode_first_stage,
-    images_tensor_to_samples,
-)
-from apps.server.backend.modules.shared import opts  # type: ignore
+from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import main as codex_main
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
-    """Mirror modules.processing.decode_latent_batch without importing the module."""
-    decoded = decode_first_stage(model, batch)
+    """Decode latents using the engine VAE (native)."""
+    decoded = model.decode_first_stage(batch)
     if target_device is not None:
         decoded = decoded.to(target_device)
     return decoded
@@ -48,14 +42,9 @@ def _prepare_first_pass_from_image(processing) -> tuple[torch.Tensor | None, tor
     tensor = torch.from_numpy(np.expand_dims(array, axis=0))
     tensor = tensor.to(shared.device, dtype=torch.float32)
 
-    if opts.sd_vae_encode_method != "Full":
-        processing.extra_generation_params["VAE Encoder"] = opts.sd_vae_encode_method
-
-    samples = images_tensor_to_samples(
-        tensor,
-        approximation_indexes.get(opts.sd_vae_encode_method),
-        processing.sd_model,
-    )
+    # Encode the image to latents using native engine VAE
+    sample_in = tensor
+    samples = processing.sd_model.encode_first_stage(sample_in)
     devices.torch_gc()
     return samples, None
 

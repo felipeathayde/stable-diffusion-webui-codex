@@ -8,40 +8,18 @@ back to legacy `forge_*` names. Write paths can be added later if needed.
 
 from typing import Any, List
 
-
-def _opts():
-    try:
-        from modules import shared as _shared  # type: ignore
-
-        return getattr(_shared, "opts", None)
-    except Exception:
-        return None
+from . import main as codex_main
 
 
 def get(name: str, default: Any = None) -> Any:
-    opts = _opts()
-    if opts is None:
-        return default
-    # Try exact name first
-    if hasattr(opts, name):
-        return getattr(opts, name)
-    # Fallback forge_ prefix
-    if name.startswith("codex_"):
-        legacy = "forge_" + name[len("codex_") :]
-        if hasattr(opts, legacy):
-            return getattr(opts, legacy)
+    # Minimal native options getter; extend as needed.
     return default
 
 
 def get_selected_vae(default: str = "Automatic") -> str:
-    return str(get("codex_selected_vae", default))
+    # No native VAE registry yet; return default
+    return default
 
 
 def get_additional_modules() -> List[str]:
-    v = get("codex_additional_modules", None)
-    if isinstance(v, list):
-        return v
-    # legacy name
-    v2 = get("forge_additional_modules", None)  # type: ignore[arg-type]
-    return list(v2 or [])
-
+    return list(getattr(codex_main, "_SELECTIONS").additional_modules)

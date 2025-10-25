@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import time
 
-from apps.server.backend.modules import shared  # type: ignore
-from apps.server.backend.modules.progress import current_task  # type: ignore
+from apps.server.backend.core.state import state as backend_state
 
 
 class ProgressService:
@@ -16,41 +15,41 @@ class ProgressService:
         self.media = media_service
 
     def compute(self, skip_current_image: bool = False):
-        # Derived from modules/api/api.py progressapi
-        if shared.state.job_count == 0:
+        # Native implementation; no dependency on legacy shared.state
+        if backend_state.job_count == 0:
             return {
                 "progress": 0,
                 "eta_relative": 0,
-                "state": shared.state.dict(),
-                "textinfo": shared.state.textinfo,
-                "current_task": current_task,
+                "state": backend_state.dict(),
+                "textinfo": backend_state.textinfo,
+                "current_task": None,
                 "current_image": None,
             }
 
         progress = 0.01
 
-        if shared.state.job_count > 0:
-            progress += shared.state.job_no / shared.state.job_count
-        if shared.state.sampling_steps > 0:
-            progress += 1 / shared.state.job_count * shared.state.sampling_step / shared.state.sampling_steps
+        if backend_state.job_count > 0:
+            progress += backend_state.job_no / backend_state.job_count
+        if backend_state.sampling_steps > 0:
+            progress += 1 / backend_state.job_count * backend_state.sampling_step / backend_state.sampling_steps
 
-        time_since_start = time.time() - shared.state.time_start
+        time_since_start = time.time() - backend_state.time_start
         eta = (time_since_start / max(progress, 1e-6))
         eta_relative = eta - time_since_start
 
         progress = min(progress, 1)
 
-        shared.state.set_current_image()
+        backend_state.set_current_image()
 
         current_image = None
-        if shared.state.current_image and not skip_current_image:
-            current_image = self.media.encode_image(shared.state.current_image)
+        if backend_state.current_image and not skip_current_image:
+            current_image = self.media.encode_image(backend_state.current_image)
 
         return {
             "progress": progress,
             "eta_relative": eta_relative,
-            "state": shared.state.dict(),
+            "state": backend_state.dict(),
             "current_image": current_image,
-            "textinfo": shared.state.textinfo,
-            "current_task": current_task,
+            "textinfo": backend_state.textinfo,
+            "current_task": None,
         }

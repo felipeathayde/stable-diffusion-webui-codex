@@ -60,6 +60,7 @@ class Wan225BEngine(BaseVideoEngine):
                 raise EngineLoadError(f"WAN22 5B model path not found: {model_ref}")
 
         vendor_dir: Optional[Path] = None
+        last_exc: Optional[Exception] = None
         for rid in resolve_wan_repo_candidates(self.engine_id):
             local_dir = HF_ROOT / Path(rid.replace('/', os.sep))
             try:
@@ -74,58 +75,38 @@ class Wan225BEngine(BaseVideoEngine):
                 comp.hf_vae_dir = str(vae_dir) if vae_dir.exists() else None
                 break
             except Exception as exc:
-                self._logger.warning(
-                    "WAN22 5B: unable to download minimal assets from %s (%s). "
-                    "If this repo is gated, run `python scripts/fetch_tokenizer_hf.py --repo %s --local %s` "
-                    "with an authenticated token, or supply `wan_text_encoder_dir`/`wan_tokenizer_dir` extras.",
-                    rid,
-                    exc,
-                    rid,
-                    local_dir,
+                last_exc = exc
+                self._logger.error(
+                    "WAN22 5B: failed to fetch minimal HF assets from %s: %s", rid, exc
                 )
-                continue
+        if vendor_dir is None and last_exc is not None:
+            raise EngineLoadError(
+                f"WAN22 5B: unable to prepare required HF assets; last error: {last_exc}"
+            )
 
         pipe = None
         vae = None
-        try:
-            from diffusers import AutoencoderKLWan  # type: ignore
-            from diffusers import WanPipeline  # type: ignore
-            import torch  # type: ignore
-            torch_dtype = {"fp16": torch.float16, "bf16": getattr(torch, "bfloat16", torch.float16), "fp32": torch.float32}[dty.lower() if dty.lower() in ("fp16", "bf16", "fp32") else "fp16"]
-            vae = AutoencoderKLWan.from_pretrained(p, subfolder="vae", torch_dtype=torch_dtype, local_files_only=True)
-            pipe = WanPipeline.from_pretrained(p, torch_dtype=torch_dtype, vae=vae, local_files_only=True)
-            target_device = "cuda" if (dev in ("auto", "cuda")) and getattr(__import__('torch').cuda, 'is_available', lambda: False)() else "cpu"
-            pipe = pipe.to(target_device)
-            try:
-                from apps.server.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as apply_attn  # type: ignore
-                from apps.server.backend.engines.util.accelerator import apply_to_diffusers_pipeline as apply_accel  # type: ignore
-                apply_attn(pipe, logger=self._logger)
-                apply_accel(pipe, logger=self._logger)
-            except Exception:
-                pass
-            comp.pipeline = pipe
-            comp.vae = vae
-            comp.device = target_device
-            comp.dtype = dty
-            self._logger.info("WAN22 5B diffusers pipeline loaded: %s", p)
-        except Exception as exc:
-            self._logger.warning(
-                "WAN22 5B diffusers pipeline not available at model_dir=%s (reason: %s). "
-                "This is expected if your model_dir isn't a Diffusers repo; the backend will use vendored HF assets or GGUF instead.",
-                p,
-                exc,
-            )
-            comp.device = "cuda" if dev == "cuda" else "cpu"
-            comp.dtype = dty
+        from diffusers import AutoencoderKLWan  # type: ignore
+        from diffusers import WanPipeline  # type: ignore
+        import torch  # type: ignore
+        torch_dtype = {"fp16": torch.float16, "bf16": getattr(torch, "bfloat16", torch.float16), "fp32": torch.float32}[
+            dty.lower() if dty.lower() in ("fp16", "bf16", "fp32") else "fp16"
+        ]
+        vae = AutoencoderKLWan.from_pretrained(p, subfolder="vae", torch_dtype=torch_dtype, local_files_only=True)
+        pipe = WanPipeline.from_pretrained(p, torch_dtype=torch_dtype, vae=vae, local_files_only=True)
+        target_device = "cuda" if (dev in ("auto", "cuda")) and getattr(__import__('torch').cuda, 'is_available', lambda: False)() else "cpu"
+        pipe = pipe.to(target_device)
+        from apps.server.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as apply_attn  # type: ignore
+        from apps.server.backend.engines.util.accelerator import apply_to_diffusers_pipeline as apply_accel  # type: ignore
+        apply_attn(pipe, logger=self._logger)
+        apply_accel(pipe, logger=self._logger)
+        comp.pipeline = pipe
+        comp.vae = vae
+        comp.device = target_device
+        comp.dtype = dty
+        self._logger.info("WAN22 5B diffusers pipeline loaded: %s", p)
 
-        try:
-            if comp.pipeline is None:
-                if any(fn.lower().endswith('.gguf') for fn in os.listdir(p)):
-                    comp.high_dir = p
-                    comp.low_dir = p
-                    self._logger.info("WAN22 5B GGUF detected at %s; will use GGUF path when wired", p)
-        except Exception:
-            pass
+        # No GGUF fallback in strict mode
 
         comp.model_dir = p
         self._comp = comp

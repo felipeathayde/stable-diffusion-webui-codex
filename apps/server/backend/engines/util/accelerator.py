@@ -10,51 +10,26 @@ def _get_selected_accelerator() -> str:
 
 
 def apply_to_diffusers_pipeline(pipe: Any, *, accelerator: Optional[str] = None, logger=None) -> str:
-    """Attempt to apply an accelerator to a diffusers pipeline (no-op if none).
+    """Apply a selected accelerator to a diffusers pipeline or raise with cause.
 
-    Supports 'tensorrt' via the pluggable accelerator; unrecognized values are ignored.
-    Returns the effective accelerator string used (or 'none').
+    - 'none'/'off' performs no acceleration.
+    - 'tensorrt' requires the built-in accelerator to be available; otherwise an error is raised.
     """
     choice = (accelerator or _get_selected_accelerator()).lower().strip()
-    if choice in ('', 'none', 'off'):
-        return 'none'
+    if choice in ("", "none", "off"):
+        return "none"
 
-    if choice == 'tensorrt':
-        # Prefer external plugin if present
+    if choice == "tensorrt":
+        from ...accelerators.trt import TensorRTAccelerator  # type: ignore
+        acc = TensorRTAccelerator()
+        if not acc.is_available():
+            raise RuntimeError("TensorRT accelerator requested but not available in this environment")
         try:
-            import importlib
-            mod = None
-            for name in ("backend_ext.trt_accel", "trt_accel"):
-                try:
-                    mod = importlib.import_module(name)
-                    break
-                except Exception:
-                    mod = None
-            if mod and hasattr(mod, 'apply_to_diffusers'):
-                mod.apply_to_diffusers(pipe)  # type: ignore[attr-defined]
-                if logger:
-                    logger.info("accelerator applied: TensorRT (external)")
-                return 'tensorrt'
-        except Exception as ex:
-            if logger:
-                logger.warning("TensorRT external accelerator failed: %s", ex)
-
-        # Fallback to built-in stub (will raise if truly unavailable)
-        try:
-            from ...accelerators.trt import TensorRTAccelerator  # type: ignore
-            acc = TensorRTAccelerator()
-            if not acc.is_available():
-                if logger:
-                    logger.warning("TensorRT not available in environment; skipping")
-                return 'none'
             acc.apply_to_diffusers(pipe)
-            if logger:
-                logger.info("accelerator applied: TensorRT (built-in)")
-            return 'tensorrt'
         except Exception as ex:
-            if logger:
-                logger.warning("TensorRT accelerator apply failed: %s", ex)
-        return 'none'
+            raise RuntimeError(f"Failed to apply TensorRT accelerator: {ex}") from ex
+        if logger:
+            logger.info("accelerator applied: TensorRT (built-in)")
+        return "tensorrt"
 
-    # Unknown choice
-    return 'none'
+    raise ValueError(f"Unsupported accelerator '{choice}'. Allowed: none, tensorrt")

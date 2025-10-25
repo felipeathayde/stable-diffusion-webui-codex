@@ -235,27 +235,21 @@ class Txt2ImgRuntime:
         self._run_before_and_process_batch_hooks()
 
         # Merge global selections with prompt-local LoRAs (dedupe by path)
-        try:
-            selections = codex_lora.get_selections() + prompt_loras
-            # dedupe
-            seen = set(); merged = []
-            for s in selections:
-                if s.path in seen:
-                    continue
-                seen.add(s.path); merged.append(s)
-        except Exception:
-            merged = prompt_loras
+        selections = codex_lora.get_selections() + prompt_loras
+        # dedupe
+        seen = set(); merged = []
+        for s in selections:
+            if s.path in seen:
+                continue
+            seen.add(s.path); merged.append(s)
         if merged:
             stats = apply_loras_to_engine(model, merged)
             logging.info("[native] Applied %d LoRA(s), %d params touched (prompt+global)", stats.files, stats.params_touched)
         model.forge_objects = model.forge_objects_after_applying_lora.shallow_copy()
         # Controls: clip_skip, sampler, scheduler, token merge
-        try:
-            cs = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None
-            if cs is not None and hasattr(self.processing.sd_model, 'set_clip_skip'):
-                self.processing.sd_model.set_clip_skip(cs)
-        except Exception:
-            pass
+        cs = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None
+        if cs is not None and hasattr(self.processing.sd_model, 'set_clip_skip'):
+            self.processing.sd_model.set_clip_skip(cs)
         if 'sampler' in prompt_controls:
             self.processing.sampler_name = str(prompt_controls['sampler'])
         # Token merging with strategy (allow override via tag)
@@ -280,15 +274,12 @@ class Txt2ImgRuntime:
             self.processing.modified_noise = None
 
         def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
-            try:
-                # decode x0 (denoised) to an image preview on CPU
-                img = _decode_latent_batch(self.processing.sd_model, denoised_latent, target_device=devices.cpu())
-                # convert BCHW [-1,1] to HWC, [0,255] uint8 and then PIL
-                arr = img[0].detach().float().cpu().clamp(-1, 1)
-                arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
-                backend_state.set_current_image(Image.fromarray(arr, mode='RGB'))
-            except Exception:
-                pass
+            # decode x0 (denoised) to an image preview on CPU
+            img = _decode_latent_batch(self.processing.sd_model, denoised_latent, target_device=devices.cpu())
+            # convert BCHW [-1,1] to HWC, [0,255] uint8 and then PIL
+            arr = img[0].detach().float().cpu().clamp(-1, 1)
+            arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
+            backend_state.set_current_image(Image.fromarray(arr, mode='RGB'))
 
         samples = self.processing.sampler.sample(
             self.processing,
@@ -328,12 +319,9 @@ class Txt2ImgRuntime:
         class _PostSampleArgs:
             def __init__(self, samples):
                 self.samples = samples
-        try:
-            args = _PostSampleArgs(samples)
-            script_runner.post_sample(self.processing, args)
-            return getattr(args, "samples", samples)
-        except Exception:
-            return samples
+        args = _PostSampleArgs(samples)
+        script_runner.post_sample(self.processing, args)
+        return getattr(args, "samples", samples)
 
     def _run_process_scripts(self):
         script_runner = getattr(self.processing, "scripts", None)

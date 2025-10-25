@@ -13,11 +13,8 @@ if memory_management.xformers_enabled():
     import xformers
     import xformers.ops
 
-    try:
-        x_vers = xformers.__version__
-        BROKEN_XFORMERS = x_vers.startswith("0.0.2") and not x_vers.startswith("0.0.20")
-    except:
-        pass
+    x_vers = xformers.__version__
+    BROKEN_XFORMERS = x_vers.startswith("0.0.2") and not x_vers.startswith("0.0.20")
 
 
 FORCE_UPCAST_ATTENTION_DTYPE = memory_management.force_upcast_attention_dtype()
@@ -228,46 +225,26 @@ def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
             bs = mask.shape[0]
         mask = mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1]).expand(b, heads, -1, -1).reshape(-1, mask.shape[-2], mask.shape[-1])
 
-    # print("steps", steps, mem_required, mem_free_total, modifier, q.element_size(), tensor_size)
-    first_op_done = False
-    cleared_cache = False
-    while True:
-        try:
-            slice_size = q.shape[1] // steps if (q.shape[1] % steps) == 0 else q.shape[1]
-            for i in range(0, q.shape[1], slice_size):
-                end = i + slice_size
-                if upcast:
-                    with torch.autocast(enabled=False, device_type='cuda'):
-                        s1 = torch.einsum('b i d, b j d -> b i j', q[:, i:end].float(), k.float()) * scale
-                else:
-                    s1 = torch.einsum('b i d, b j d -> b i j', q[:, i:end], k) * scale
+    slice_size = q.shape[1] // steps if (q.shape[1] % steps) == 0 else q.shape[1]
+    for i in range(0, q.shape[1], slice_size):
+        end = i + slice_size
+        if upcast:
+            with torch.autocast(enabled=False, device_type='cuda'):
+                s1 = torch.einsum('b i d, b j d -> b i j', q[:, i:end].float(), k.float()) * scale
+        else:
+            s1 = torch.einsum('b i d, b j d -> b i j', q[:, i:end], k) * scale
 
-                if mask is not None:
-                    if len(mask.shape) == 2:
-                        s1 += mask[i:end]
-                    else:
-                        s1 += mask[:, i:end]
-
-                s2 = s1.softmax(dim=-1).to(v.dtype)
-                del s1
-                first_op_done = True
-
-                r1[:, i:end] = torch.einsum('b i j, b j d -> b i d', s2, v)
-                del s2
-            break
-        except memory_management.OOM_EXCEPTION as e:
-            if first_op_done == False:
-                memory_management.soft_empty_cache(True)
-                if cleared_cache == False:
-                    cleared_cache = True
-                    print("out of memory error, emptying cache and trying again")
-                    continue
-                steps *= 2
-                if steps > 64:
-                    raise e
-                print("out of memory error, increasing steps and trying again {}".format(steps))
+        if mask is not None:
+            if len(mask.shape) == 2:
+                s1 += mask[i:end]
             else:
-                raise e
+                s1 += mask[:, i:end]
+
+        s2 = s1.softmax(dim=-1).to(v.dtype)
+        del s1
+
+        r1[:, i:end] = torch.einsum('b i j, b j d -> b i d', s2, v)
+        del s2
 
     del q, k, v
 
@@ -288,7 +265,7 @@ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_resh
         dim_head //= heads
 
     if BROKEN_XFORMERS and b * heads > 65535:
-        return attention_pytorch(q, k, v, heads, mask, skip_reshape=skip_reshape)
+        raise RuntimeError("xformers is broken for this batch*heads size; refusing to fall back to PyTorch attention")
 
     if skip_reshape:
         q, k, v = map(
@@ -403,12 +380,8 @@ def xformers_attention_single_head_spatial(q, k, v):
         (q, k, v),
     )
 
-    try:
-        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None)
-        out = out.transpose(1, 2).reshape(B, C, H, W)
-    except NotImplementedError as e:
-        out = slice_attention_single_head_spatial(q.view(B, -1, C), k.view(B, -1, C).transpose(1, 2),
-                                                  v.view(B, -1, C).transpose(1, 2)).reshape(B, C, H, W)
+    out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None)
+    out = out.transpose(1, 2).reshape(B, C, H, W)
     return out
 
 
@@ -420,13 +393,8 @@ def pytorch_attention_single_head_spatial(q, k, v):
         (q, k, v),
     )
 
-    try:
-        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
-        out = out.transpose(2, 3).reshape(B, C, H, W)
-    except memory_management.OOM_EXCEPTION as e:
-        print("scaled_dot_product_attention OOMed: switched to slice attention")
-        out = slice_attention_single_head_spatial(q.view(B, -1, C), k.view(B, -1, C).transpose(1, 2),
-                                                  v.view(B, -1, C).transpose(1, 2)).reshape(B, C, H, W)
+    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+    out = out.transpose(2, 3).reshape(B, C, H, W)
     return out
 
 

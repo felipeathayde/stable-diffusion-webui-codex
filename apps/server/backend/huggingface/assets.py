@@ -168,24 +168,10 @@ def ensure_repo_minimal_files(
                 _copy_selected_files(cached_dir, local_path, patterns)
             last_exc = None
             break
-        except (ImportError, TypeError, OSError) as ex:
-            # Fall back to simple HTTP client
-            last_exc = ex
-            try:
-                _http_list_and_download(rid, local_path, patterns)
-                last_exc = None
-                break
-            except Exception as ex2:
-                last_exc = ex2
         except Exception as ex:
-            # Try next candidate (e.g., repo renamed)
+            # Try next candidate (e.g., repo renamed); no HTTP fallback in strict mode
             last_exc = ex
-            try:
-                _http_list_and_download(rid, local_path, patterns)
-                last_exc = None
-                break
-            except Exception as ex2:
-                last_exc = ex2
+            continue
 
     if last_exc is not None:
         raise last_exc

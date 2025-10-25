@@ -921,14 +921,22 @@ def supports_cast(device, dtype):  # TODO
 
 
 def pick_weight_dtype(dtype, fallback_dtype, device=None):
+    """Select weight dtype strictly; no implicit fallback.
+
+    - If `dtype` is None, raise.
+    - If `dtype` is larger than `fallback_dtype`, raise.
+    - If the device does not support casting to `dtype`, raise.
+    """
     if dtype is None:
-        dtype = fallback_dtype
-    elif dtype_size(dtype) > dtype_size(fallback_dtype):
-        dtype = fallback_dtype
-
+        raise ValueError("pick_weight_dtype: dtype must be specified; no fallback allowed")
+    if dtype_size(dtype) > dtype_size(fallback_dtype):
+        raise ValueError(
+            f"pick_weight_dtype: requested dtype {dtype} larger than allowed {fallback_dtype}"
+        )
     if not supports_cast(device, dtype):
-        dtype = fallback_dtype
-
+        raise RuntimeError(
+            f"pick_weight_dtype: device {getattr(device, 'type', device)} does not support cast to {dtype}"
+        )
     return dtype
 
 

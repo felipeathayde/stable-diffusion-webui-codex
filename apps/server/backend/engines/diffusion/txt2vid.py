@@ -20,94 +20,15 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
 
     pipe = getattr(comp, "pipeline", None)
 
-    # Best-effort native LoRA application (only if engine exposes patchers)
-    try:
-        sels = codex_lora.get_selections()
-        if sels and hasattr(engine, 'forge_objects_after_applying_lora'):
-            apply_loras_to_engine(engine, sels)
-            if logger:
-                logger.info("[native] txt2vid applied %d LoRA(s)", len(sels))
-    except Exception:
-        pass
-    if pipe is None and (getattr(comp, "high_dir", None) or getattr(comp, "low_dir", None)):
-        # GGUF path via runtime/nn/wan22
-        from apps.server.backend.runtime.nn.wan22 import RunConfig, StageConfig, run_txt2vid as gguf_t2v
-        # Stage overrides from request.extras
-        ex = getattr(request, 'extras', {}) or {}
-        hi_ex = ex.get('wan_high') if isinstance(ex, dict) else None
-        lo_ex = ex.get('wan_low') if isinstance(ex, dict) else None
-        def _s(d, k, fallback, comp_attr: Optional[str] = None):
-            if isinstance(d, dict):
-                v = d.get(k)
-                if v:
-                    return v
-            if comp_attr:
-                v = getattr(comp, comp_attr, None)
-                if v:
-                    return v
-            return fallback
-        cfg = RunConfig(
-            width=int(getattr(request, "width", 768) or 768),
-            height=int(getattr(request, "height", 432) or 432),
-            fps=int(getattr(request, "fps", 24) or 24),
-            num_frames=int(getattr(request, "num_frames", 16) or 16),
-            guidance_scale=getattr(request, "cfg_scale", None),
-            dtype=str(getattr(comp, "dtype", "fp16")),
-            device=str(getattr(comp, "device", "cuda")),
-            seed=(int(getattr(request, "seed", -1)) if getattr(request, "seed", None) is not None else None),
-            prompt=request.prompt,
-            negative_prompt=getattr(request, "negative_prompt", None),
-            vae_dir=_s(ex, 'wan_vae_dir', getattr(comp, 'model_dir', None), 'hf_vae_dir'),
-            text_encoder_dir=_s(ex, 'wan_text_encoder_dir', None, 'hf_text_encoder_dir'),
-            tokenizer_dir=_s(ex, 'wan_tokenizer_dir', None, 'hf_tokenizer_dir'),
-            high=StageConfig(
-                model_dir=(getattr(comp, 'high_dir', None) or _s(hi_ex, 'model_dir', getattr(comp, 'model_dir', ''))),
-                sampler=str(_s(hi_ex, 'sampler', getattr(request, 'sampler', 'Automatic'))),
-                scheduler=str(_s(hi_ex, 'scheduler', getattr(request, 'scheduler', 'Automatic'))),
-                steps=int(_s(hi_ex, 'steps', 12)),
-                cfg_scale=_s(hi_ex, 'cfg_scale', getattr(request, 'guidance_scale', None)),
-            ),
-            low=StageConfig(
-                model_dir=(getattr(comp, 'low_dir', None) or _s(lo_ex, 'model_dir', getattr(comp, 'model_dir', ''))),
-                sampler=str(_s(lo_ex, 'sampler', getattr(request, 'sampler', 'Automatic'))),
-                scheduler=str(_s(lo_ex, 'scheduler', getattr(request, 'scheduler', 'Automatic'))),
-                steps=int(_s(lo_ex, 'steps', 12)),
-                cfg_scale=_s(lo_ex, 'cfg_scale', getattr(request, 'guidance_scale', None)),
-            ),
-        )
-        frames = gguf_t2v(cfg, logger=logger)
-        fps = int(getattr(request, "fps", 24) or 24)
-        video_meta = None
-        try:
-            video_opts = getattr(request, "video_options", None)
-            video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
-        except Exception:
-            video_meta = None
-        info = {
-            "engine": getattr(engine, "engine_id", "unknown"),
-            "task": "txt2vid",
-            "elapsed": round(time.perf_counter() - start, 3),
-            "frames": len(frames),
-            "wan": {
-                "high": {
-                    "steps": int(getattr(request, "steps", 12) or 12),
-                    "sampler": str(getattr(request, "sampler", "Automatic")),
-                    "scheduler": str(getattr(request, "scheduler", "Automatic")),
-                    "cfg": getattr(request, "guidance_scale", None),
-                },
-                "low": {
-                    "steps": int(getattr(request, "steps", 12) or 12),
-                    "sampler": str(getattr(request, "sampler", "Automatic")),
-                    "scheduler": str(getattr(request, "scheduler", "Automatic")),
-                    "cfg": getattr(request, "guidance_scale", None),
-                },
-            },
-            "seed": getattr(request, "seed", None),
-        }
-        yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
-        return
+    # Native LoRA application (error on failure)
+    sels = codex_lora.get_selections()
+    if sels and hasattr(engine, "forge_objects_after_applying_lora"):
+        apply_loras_to_engine(engine, sels)
+        if logger:
+            logger.info("[native] txt2vid applied %d LoRA(s)", len(sels))
+
     if pipe is None:
-        raise RuntimeError("Diffusers pipeline not available for txt2vid and no GGUF fallback found")
+        raise RuntimeError("txt2vid requires a Diffusers pipeline; none found in components")
 
     # Sampler/Scheduler mapping
     sampler = getattr(request, "sampler", "Automatic")
@@ -131,12 +52,8 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
 
     fps = int(getattr(request, "fps", 24) or 24)
     # Delegate export to engine helper if present
-    video_meta = None
-    try:
-        video_opts = getattr(request, "video_options", None)
-        video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
-    except Exception:
-        video_meta = None
+    video_opts = getattr(request, "video_options", None)
+    video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
 
     info = {
         "engine": getattr(engine, "engine_id", "unknown"),

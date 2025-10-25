@@ -30,16 +30,14 @@ class SamplerKind(str, Enum):
         for member in SamplerKind:
             if key == member.value:
                 return member
-        return SamplerKind.AUTOMATIC
+        raise ValueError(f"Unsupported sampler '{name}'. Valid: {[m.value for m in SamplerKind]}")
 
 
 def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: Optional[str]) -> ApplyOutcome:
-    """Best-effort mapping of sampler/scheduler strings to Diffusers pipeline.
+    """Strict mapping of sampler/scheduler to Diffusers pipeline.
 
-    Notes
-    - WAN engines allow: Euler a, Euler, DDIM, DPM++ 2M, DPM++ 2M SDE, PLMS.
-    - We set relevant flags on the scheduler instance when applicable.
-    - Returns warnings when a request is adjusted.
+    - Allowed: Euler a, Euler, DDIM, DPM++ 2M, DPM++ 2M SDE, PLMS, PNDM.
+    - On invalid or failed application, raises with the root cause; no fallbacks.
     """
     wanted_sampler = sampler.value if isinstance(sampler, SamplerKind) else (sampler or "Automatic").strip()
     wanted_scheduler = (scheduler or "Automatic").strip() if scheduler is not None else "Automatic"
@@ -47,15 +45,14 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
     eff_scheduler = wanted_scheduler
     warnings: List[str] = []
 
-    try:
-        from diffusers import (
-            EulerDiscreteScheduler,
-            EulerAncestralDiscreteScheduler,
-            DDIMScheduler,
-            DPMSolverMultistepScheduler,
-            LMSDiscreteScheduler,
-            PNDMScheduler,
-        )
+    from diffusers import (
+        EulerDiscreteScheduler,
+        EulerAncestralDiscreteScheduler,
+        DDIMScheduler,
+        DPMSolverMultistepScheduler,
+        LMSDiscreteScheduler,
+        PNDMScheduler,
+    )
 
         allowed = {
             SamplerKind.EULER: EulerDiscreteScheduler,
@@ -69,19 +66,16 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
 
         kind = SamplerKind.from_string(wanted_sampler)
         if kind is SamplerKind.AUTOMATIC:
-            # Keep existing scheduler; annotate only
             sched = getattr(pipe, "scheduler", None)
+            if sched is None:
+                raise RuntimeError("Pipeline has no scheduler to keep for 'Automatic'")
             eff_sampler = "Automatic"
-            eff_scheduler = type(sched).__name__ if sched is not None else "<none>"
+            eff_scheduler = type(sched).__name__
             return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
 
         target_cls = allowed.get(kind)
         if target_cls is None:
-            warnings.append(f"Unsupported sampler '{wanted_sampler}', keeping pipeline scheduler")
-            sched = getattr(pipe, "scheduler", None)
-            eff_sampler = type(sched).__name__ if sched is not None else "<none>"
-            eff_scheduler = eff_sampler
-            return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
+            raise ValueError(f"Unsupported sampler '{wanted_sampler}'")
 
         # Rebuild scheduler from config to preserve sigmas/timesteps defaults
         conf = getattr(pipe, "scheduler", None)
@@ -93,26 +87,14 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
 
         # Heuristics for options
         if isinstance(pipe.scheduler, DPMSolverMultistepScheduler):
-            # DPM++ family defaults
-            try:
-                pipe.scheduler.config.setdefault("use_karras_sigmas", True)
-            except Exception:
-                pass
+            pipe.scheduler.config.setdefault("use_karras_sigmas", True)
         if isinstance(pipe.scheduler, (EulerDiscreteScheduler, EulerAncestralDiscreteScheduler)):
-            try:
-                # trailing spacing is more compatible with SD style
-                pipe.scheduler.config.setdefault("timestep_spacing", "trailing")
-            except Exception:
-                pass
+            # trailing spacing is more compatible with SD style
+            pipe.scheduler.config.setdefault("timestep_spacing", "trailing")
 
         eff_sampler = wanted_sampler
         eff_scheduler = type(pipe.scheduler).__name__
         return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
-    except Exception as exc:
-        warnings.append(f"Failed to apply sampler/scheduler: {exc}")
-        sched = getattr(pipe, "scheduler", None)
-        eff = type(sched).__name__ if sched is not None else "<none>"
-        return ApplyOutcome(wanted_sampler, wanted_scheduler, eff, eff, warnings)
 
 
 __all__ = ["apply_sampler_scheduler", "ApplyOutcome", "SamplerKind"]

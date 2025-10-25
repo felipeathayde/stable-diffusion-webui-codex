@@ -44,19 +44,13 @@ def register_chroma(*, registry: EngineRegistry | None = None, replace: bool = F
 
 
 def register_svd(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:  # optional
-    try:
-        from .video.svd.engine import SvdEngine  # type: ignore
-        _reg("svd", SvdEngine, registry=registry, replace=replace)
-    except Exception:
-        return
+    from .video.svd.engine import SvdEngine  # type: ignore
+    _reg("svd", SvdEngine, registry=registry, replace=replace)
 
 
 def register_hunyuan_video(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:  # optional
-    try:
-        from .video.hunyuan.engine import HunyuanVideoEngine  # type: ignore
-        _reg("hunyuan_video", HunyuanVideoEngine, registry=registry, replace=replace, aliases=("hunyuan",))
-    except Exception:
-        return
+    from .video.hunyuan.engine import HunyuanVideoEngine  # type: ignore
+    _reg("hunyuan_video", HunyuanVideoEngine, registry=registry, replace=replace, aliases=("hunyuan",))
 
 
 def register_wan22_videos(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
@@ -64,4 +58,3 @@ def register_wan22_videos(*, registry: EngineRegistry | None = None, replace: bo
     from .diffusion.wan22_5b import Wan225BEngine
     _reg("wan22_14b", Wan2214BEngine, registry=registry, replace=replace, aliases=("wan22-14b",))
     _reg("wan22_5b", Wan225BEngine, registry=registry, replace=replace, aliases=("wan22-5b",))
-

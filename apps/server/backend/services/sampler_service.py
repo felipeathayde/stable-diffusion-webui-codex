@@ -16,13 +16,16 @@ class SamplerService:
         if isinstance(sampler_name_or_index, int):
             raise HTTPException(status_code=400, detail="Sampler index not supported; use name")
         name = str(sampler_name_or_index or "Automatic")
-        kind = SamplerKind.from_string(name)
+        try:
+            kind = SamplerKind.from_string(name)
+        except ValueError as ex:
+            raise HTTPException(status_code=400, detail=str(ex))
         return kind.value, (scheduler or "Automatic")
 
     @staticmethod
     def ensure_valid_sampler(name: str) -> str:
         try:
             _ = SamplerKind.from_string(name)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Sampler not found")
+        except ValueError as ex:
+            raise HTTPException(status_code=400, detail=str(ex))
         return name

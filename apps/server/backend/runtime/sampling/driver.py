@@ -60,6 +60,20 @@ class CodexSampler:
         compiled_cond = compile_conditions(cond)
         compiled_uncond = compile_conditions(uncond) if uncond is not None else None
 
+        # Inject image conditioning (c_concat) when provided and shape-compatible
+        if isinstance(image_conditioning, torch.Tensor):
+            if (
+                image_conditioning.shape[0] == noise.shape[0]
+                and image_conditioning.shape[2] == noise.shape[2]
+                and image_conditioning.shape[3] == noise.shape[3]
+            ):
+                from .condition import Condition
+                for entry in compiled_cond:
+                    entry['model_conds']['c_concat'] = Condition(image_conditioning)
+                if compiled_uncond is not None:
+                    for entry in compiled_uncond:
+                        entry['model_conds']['c_concat'] = Condition(image_conditioning)
+
         # Progress state
         backend_state.start(job_count=1, sampling_steps=steps)
 

@@ -146,6 +146,15 @@ class Wan2214BEngine(BaseVideoEngine):
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
             vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, self._comp.hf_repo_dir)
+            try:
+                self._logger.info(
+                    "[wan22.gguf] assets: metadata=%s te=%s vae=%s",
+                    os.path.basename(str(meta_dir)) if meta_dir else None,
+                    os.path.basename(str(te_path)) if te_path else None,
+                    os.path.basename(str(vae_path)) if vae_path else None,
+                )
+            except Exception:
+                pass
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),
@@ -175,7 +184,12 @@ class Wan2214BEngine(BaseVideoEngine):
                     cfg_scale=getattr(request, 'cfg_scale', None),
                 ),
             )
-            frames = gguf.run_txt2vid(cfg, logger=self._logger)
+            def _cb(**p):
+                try:
+                    self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", p.get('stage','-'), int(p.get('step',0)), int(p.get('total',0)), float(p.get('percent',0))*100.0)
+                except Exception:
+                    pass
+            frames = gguf.run_txt2vid(cfg, logger=self._logger, on_progress=_cb)
             yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "txt2vid", "frames": len(frames)})})
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
@@ -190,6 +204,15 @@ class Wan2214BEngine(BaseVideoEngine):
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
             vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, self._comp.hf_repo_dir)
+            try:
+                self._logger.info(
+                    "[wan22.gguf] assets: metadata=%s te=%s vae=%s",
+                    os.path.basename(str(meta_dir)) if meta_dir else None,
+                    os.path.basename(str(te_path)) if te_path else None,
+                    os.path.basename(str(vae_path)) if vae_path else None,
+                )
+            except Exception:
+                pass
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),
@@ -220,7 +243,12 @@ class Wan2214BEngine(BaseVideoEngine):
                     cfg_scale=getattr(request, 'cfg_scale', None),
                 ),
             )
-            frames = gguf.run_img2vid(cfg, logger=self._logger)
+            def _cb2(**p):
+                try:
+                    self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", p.get('stage','-'), int(p.get('step',0)), int(p.get('total',0)), float(p.get('percent',0))*100.0)
+                except Exception:
+                    pass
+            frames = gguf.run_img2vid(cfg, logger=self._logger, on_progress=_cb2)
             yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "img2vid", "frames": len(frames)})})
 
     # ------------------------------ helpers

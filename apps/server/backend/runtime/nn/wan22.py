@@ -683,7 +683,16 @@ def _as_dtype(dtype: str):
 
 def _get_logger(logger: Any):
     import logging
-    return logger or logging.getLogger("wan22.gguf")
+    if logger is not None:
+        return logger
+    lg = logging.getLogger("wan22.gguf")
+    if not lg.handlers:
+        h = logging.StreamHandler()
+        fmt = logging.Formatter('[wan22.gguf] %(levelname)s: %(message)s')
+        h.setFormatter(fmt)
+        lg.addHandler(h)
+    lg.setLevel(logging.INFO)
+    return lg
 
 
 def _resolve_patch_weights(state: Mapping[str, Any]) -> Tuple[Any, Any]:
@@ -804,6 +813,7 @@ def _sample_stage_tokens(
     sampler_name: Optional[str] = None,
     scheduler_name: Optional[str] = None,
     seed: Optional[int] = None,
+    on_progress: Optional[Any] = None,
 ) -> torch.Tensor:
     log = _get_logger(logger)
     T2, H2, W2 = grid
@@ -829,6 +839,12 @@ def _sample_stage_tokens(
 
     _log_t_mapping(scheduler, timesteps, 'stage', logger)
     iterator = _tqdm(timesteps, desc="WAN22(stage)") if _tqdm else timesteps
+    total = len(timesteps)
+    if on_progress:
+        try:
+            on_progress(step=0, total=total, percent=0.0)
+        except Exception:
+            pass
     for i, t in enumerate(iterator):
         # Model forward: conditional and unconditional
         tt = _t_from_idx(i)
@@ -838,8 +854,14 @@ def _sample_stage_tokens(
         # Euler step
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample
-        if (i + 1) % 5 == 0:
-            log.info("[wan22.gguf] step %d/%d", i + 1, len(timesteps))
+        pct = float(i + 1) / float(max(1, total))
+        if on_progress:
+            try:
+                on_progress(step=i + 1, total=total, percent=pct)
+            except Exception:
+                pass
+        elif (i + 1) % 5 == 0:
+            log.info("[wan22.gguf] step %d/%d (%.1f%%)", i + 1, total, pct * 100.0)
     return x
 
 
@@ -860,7 +882,7 @@ def _decode_tokens_to_frames(
     return frames
 
 
-def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
+def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
     lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
@@ -913,6 +935,12 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
         steps_hi, sampler_hi, sched_hi, (getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale), cfg.seed,
     )
+    total_hi = int(len(getattr(_make_scheduler(steps_hi), 'timesteps', list(range(steps_hi)))))
+    if on_progress:
+        try:
+            on_progress(stage='high', step=0, total=total_hi, percent=0.0)
+        except Exception:
+            pass
     toks_hi = _sample_stage_tokens(
         dit=hi_dit,
         steps=steps_hi,
@@ -927,7 +955,13 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         sampler_name=sampler_hi,
         scheduler_name=sched_hi,
         seed=cfg.seed,
+        on_progress=(lambda **p: on_progress(stage='high', **p)) if on_progress else None,
     )
+    if on_progress:
+        try:
+            on_progress(stage='high', step=total_hi, total=total_hi, percent=1.0)
+        except Exception:
+            pass
 
     # Decode High to frames and seed Low with last frame (Low is mandatory)
     frames_hi = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
@@ -956,6 +990,12 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     x_lo = toks_lo0.clone()
     _log_t_mapping(scheduler_lo, scheduler_lo.timesteps, 'low', log)
     iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
+    total_lo = len(scheduler_lo.timesteps)
+    if on_progress:
+        try:
+            on_progress(stage='low', step=0, total=total_lo, percent=0.0)
+        except Exception:
+            pass
     def _t_from_idx_lo(idx: int) -> float:
         try:
             sigmas = getattr(scheduler_lo, 'sigmas', None)
@@ -977,8 +1017,14 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
         out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
         x_lo = out.prev_sample
-        if (i + 1) % 5 == 0:
-            log.info("[wan22.gguf] low step %d/%d", i + 1, len(scheduler_lo.timesteps))
+        pct = float(i + 1) / float(max(1, total_lo))
+        if on_progress:
+            try:
+                on_progress(stage='low', step=i + 1, total=total_lo, percent=pct)
+            except Exception:
+                pass
+        elif ((i + 1) % 5) == 0:
+            log.info("[wan22.gguf] low step %d/%d (%.1f%%)", i + 1, total_lo, pct * 100.0)
 
     frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     if not frames_lo:
@@ -986,7 +1032,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None) -> List[object]:
     return frames_lo
 
 
-def run_img2vid(cfg: RunConfig, *, logger=None) -> List[object]:
+def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
     lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')

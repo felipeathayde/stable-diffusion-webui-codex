@@ -34,6 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import logging
 
 # Install global exception hooks as early as possible so any startup errors are dumped
 try:
@@ -61,6 +62,15 @@ def ensure_initialized() -> None:
 
     # Native initialization only (no legacy bootstrap)
     initialize_codex()
+
+    # Configure root logging so engine/runtime INFO logs are visible in console
+    try:
+        if not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.INFO, format='[BACKEND] %(asctime)s %(levelname)s: %(message)s')
+        else:
+            logging.getLogger().setLevel(logging.INFO)
+    except Exception:
+        pass
 
     _initialized = True
 

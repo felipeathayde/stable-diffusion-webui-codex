@@ -1,0 +1,28 @@
+{
+  "__strict_version": 1,
+  "txt2vid_prompt": "a cinematic timelapse of aurora borealis over snowy mountains, 4k",
+  "txt2vid_neg_prompt": "blurry, lowres, artifacts",
+  "txt2vid_width": 768,
+  "txt2vid_height": 432,
+  "txt2vid_num_frames": 16,
+  "txt2vid_fps": 24,
+  "wan_high": {
+    "model_dir": "/abs/path/models/wan22/Wan2.2-I2V-A14B-HighNoise-Q2_K.gguf",
+    "sampler": "Euler",
+    "scheduler": "Automatic",
+    "steps": 12,
+    "cfg_scale": 7
+  },
+  "wan_low": {
+    "model_dir": "/abs/path/models/wan22/Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf",
+    "sampler": "Euler",
+    "scheduler": "Automatic",
+    "steps": 12,
+    "cfg_scale": 7
+  },
+  "wan_metadata_dir": "/abs/path/apps/server/backend/huggingface/Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+  "wan_text_encoder_path": "/abs/path/models/text-encoder/t5xxl-encoder.safetensors",
+  "wan_vae_path": "/abs/path/models/VAE/wan-vae.safetensors",
+  "wan_format": "gguf"
+}
+

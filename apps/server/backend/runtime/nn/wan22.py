@@ -151,14 +151,10 @@ def _get_text_context(
         except Exception as ex:
             raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {ex}") from ex
     else:
-        if not te_dir or not os.path.isdir(te_dir):
-            raise RuntimeError(
-                "WAN22 GGUF: text encoder path missing or invalid; provide 'wan_text_encoder_path' (file) or 'wan_text_encoder_dir' (directory)."
-            )
-        try:
-            enc = _Enc.from_pretrained(te_dir, torch_dtype=_as_dtype(dtype), local_files_only=True)
-        except Exception as ex:
-            raise RuntimeError(f"WAN22 GGUF: failed to load text encoder from '{te_dir}': {ex}") from ex
+        # Strict mode: require a TE weights file; directory-based TE loading is not supported in WAN22 GGUF.
+        raise RuntimeError(
+            "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required. Directory-based text encoders are not supported."
+        )
 
     dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
     enc = enc.to(dev)

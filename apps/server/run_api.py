@@ -1004,45 +1004,16 @@ def build_app() -> FastAPI:
 
     @app.get('/api/embeddings')
     def list_embeddings() -> Dict[str, Any]:
-        """Return Textual Inversion embeddings (loaded + skipped)."""
-        nonlocal _embedding_db
-        try:
-            from modules import shared as _s
-            from modules.textual_inversion.textual_inversion import EmbeddingDatabase  # type: ignore
-        except Exception as e:  # pragma: no cover
-            raise HTTPException(status_code=500, detail=f"Embeddings not available: {e}")
+        """Native Textual Inversion registry.
 
-        if _embedding_db is None:
-            db = EmbeddingDatabase()
-            # Prefer configured directory
-            try:
-                db.add_embedding_dir(_s.cmd_opts.embeddings_dir)
-            except Exception:
-                pass
-            try:
-                db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to load embeddings: {e}")
-            _embedding_db = db
-        else:
-            try:
-                _embedding_db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False)
-            except Exception:
-                pass
-
-        def convert(emb) -> Dict[str, Any]:
-            return {
-                "name": emb.name,
-                "step": emb.step,
-                "vectors": emb.vectors,
-                "shape": emb.shape,
-                "sd_checkpoint": getattr(emb, 'sd_checkpoint', None),
-                "sd_checkpoint_name": getattr(emb, 'sd_checkpoint_name', None),
-            }
-
-        loaded = {name: convert(emb) for name, emb in getattr(_embedding_db, 'word_embeddings', {}).items()}
-        skipped = {name: convert(emb) for name, emb in getattr(_embedding_db, 'skipped_embeddings', {}).items()}
-        return {"loaded": loaded, "skipped": skipped}
+        Returns a non-breaking shape including `loaded` and `skipped`, but all
+        entries are considered loaded when parseable.
+        """
+        from apps.server.backend.registry.embeddings import describe_embeddings as _describe
+        info = [e.__dict__ for e in _describe()]
+        loaded = {e["name"]: {"name": e["name"], "vectors": e.get("vectors"), "shape": e.get("dims"), "step": e.get("step") } for e in info if e.get("vectors")}
+        skipped = {e["name"]: {"name": e["name"], "vectors": e.get("vectors"), "shape": e.get("dims"), "step": e.get("step") } for e in info if not e.get("vectors")}
+        return {"loaded": loaded, "skipped": skipped, "embeddings_info": info}
 
     @app.get('/api/loras')
     def list_loras() -> Dict[str, Any]:

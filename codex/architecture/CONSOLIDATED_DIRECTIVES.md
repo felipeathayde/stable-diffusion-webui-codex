@@ -102,6 +102,11 @@ API & Compatibility
 - Public API responses should remain compatible when feasible (e.g., fields for `/api/models`). Internals are free to change.
 - If a legacy endpoint cannot be supported natively yet, return a strict error rather than a partial legacy fallback.
 
+Embeddings (Textual Inversion)
+- Native registry lives under `registry/embeddings.py` and scans models/embeddings (+ configured paths in apps/paths.json) for `.safetensors`, `.pt`, `.bin` and image-embedded TI.
+- Metadata includes vectors, dims, and step (best‑effort). Endpoint `/api/embeddings` returns a non‑breaking shape `{ loaded, skipped, embeddings_info }` sourced from the native registry.
+- Text processing engines load embeddings from a configured directory (dynamic_args['embedding_dir']). No calls to legacy embedding stores.
+
 Git & Workflow (Hygiene)
 - Commit exactly and only the files for the current task.
 - Message style: `type(scope): concise summary`.

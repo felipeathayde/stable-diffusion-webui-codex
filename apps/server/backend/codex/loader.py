@@ -64,6 +64,16 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     entry = _find_checkpoint_by_name(name_or_path)
     if entry is None:
         raise ValueError(f"Checkpoint not found: {name_or_path}")
+    # If options not provided, derive defaults from registry metadata when possible
+    if options is None:
+        try:
+            from apps.server.backend.registry.checkpoints import describe_checkpoints as _describe
+            info = {i["name"]: i for i in _describe()}
+            hint = info.get(entry.name)
+            if hint and isinstance(hint.get("default_dtype"), str):
+                options = EngineLoadOptions(dtype=hint.get("default_dtype"))
+        except Exception:
+            options = None
     if entry.metadata.get("format") == "diffusers" or os.path.isfile(os.path.join(entry.path, "model_index.json")):
         return _apply_runtime_options(load_engine_from_diffusers(entry.path), options)
     return _apply_runtime_options(forge_loader(entry.filename), options)

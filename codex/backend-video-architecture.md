@@ -12,6 +12,7 @@ WAN22 specifics
 - Engines: `wan22_14b`, `wan22_5b` (diffusion directory). Semantic key ‘wan22’ maps to them.
 - Common dataclasses in `engines/diffusion/wan22_common.py`:
   - `EngineOpts`, `WanComponents`, `WanStageOptions`.
+- Repo resolution (strict): `resolve_wan_repo_candidates()` only accepts explicit engine-key mapping or `CODEX_WAN_DIFFUSERS_REPO`. No generic guessing; unresolved keys raise.
 - Generic GGUF runtime in `runtime/nn/wan22.py`:
   - `derive_spec_from_state`, `WanUNetGGUF.forward` (SA/CA/FFN via SDPA, modulação de tempo 6×C), skeletons `run_txt2vid`/`run_img2vid`.
 - Per‑task runtimes:
@@ -33,4 +34,3 @@ Next Steps
 - GGUF operational: patch embed/unembed 3D, encode/decodificação VAE por quadro, loop Euler(Simple) + CFG; seed do Low com último frame do High.
 - Seleção explícita de variante (14B/5B) via preset/modelo no `run_api.py`.
 - Remover legados (`engines/video/wan/*`, `wan_gguf*`) quando GGUF estiver funcional.
-

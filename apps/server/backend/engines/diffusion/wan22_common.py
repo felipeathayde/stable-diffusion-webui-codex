@@ -80,43 +80,39 @@ WAN_DIFFUSERS_REPO_CANDIDATES = {
 
 
 def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
-    """Return an ordered list of WAN2.2 Diffusers repo IDs to try.
+    """Return an ordered list of WAN 2.2 Diffusers repo IDs to try.
 
-    Only returns valid Diffusers repos; avoids generic names like
-    'Wan2.2-Image-to-Video-14B' that are not published.
-    Honors CODEX_WAN_DIFFUSERS_REPO env var first, then known defaults.
+    Strict mode: no implicit or generic fallbacks. Resolution order is:
+    1) Explicit env override `CODEX_WAN_DIFFUSERS_REPO` (single repo id)
+    2) Exact key match in `WAN_DIFFUSERS_REPO_CANDIDATES`
+
+    If neither yields any candidate, raise with an actionable message.
     """
-    key = (model_key or "").lower()
-    # 1) explicit env override
-    candidates: List[str] = []
-    env_repo = os.environ.get("CODEX_WAN_DIFFUSERS_REPO")
-    if env_repo:
-        candidates.append(env_repo)
+    key = (model_key or "").lower().strip()
 
-    # 2) known map by key
+    # 1) explicit env override (highest precedence)
+    env_repo = (os.environ.get("CODEX_WAN_DIFFUSERS_REPO") or "").strip()
+    if env_repo:
+        return [env_repo]
+
+    # 2) exact/contained key match from known map
+    candidates: List[str] = []
     for mk, repos in WAN_DIFFUSERS_REPO_CANDIDATES.items():
         if mk in key:
             candidates.extend(repos)
             break
 
-    # 3) generic fallback by variant when key didn't match explicitly
     if not candidates:
-        if "14b" in key:
-            candidates.extend([
-                "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
-            ])
-        elif "5b" in key:
-            candidates.append("Wan-AI/Wan2.2-TI2V-5B-Diffusers")
-        else:
-            # Sensible default: prefer larger I2V repo
-            candidates.extend([
-                "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
-                "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
-            ])
+        valid = ", ".join(sorted(WAN_DIFFUSERS_REPO_CANDIDATES.keys()))
+        raise ValueError(
+            (
+                "resolve_wan_repo_candidates: unable to resolve repo for key '{key}'. "
+                "Provide a valid engine/model key (one of: {valid}) or set "
+                "CODEX_WAN_DIFFUSERS_REPO to an explicit repo id."
+            ).format(key=model_key, valid=valid)
+        )
 
-    # 4) deduplicate preserving order
+    # Deduplicate preserving order
     seen: set[str] = set()
     uniq: List[str] = []
     for rid in candidates:

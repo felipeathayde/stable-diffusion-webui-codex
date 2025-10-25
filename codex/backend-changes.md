@@ -16,3 +16,10 @@ Extra Networks / LoRA
 
 Tools Relocation
 - Maintenance scripts moved to `tools/` to avoid Gradio “scripts” loader import.
+
+No-Fallback Enforcement (2025-10-25)
+- Removed implicit UNet construction fallback to CPU after CUDA OOM in `apps/server/backend/runtime/models/loader.py`. OOM now raises with a precise message (device, dtype, policy).
+- Tightened WAN 2.2 Diffusers repo resolution in `apps/server/backend/engines/diffusion/wan22_common.py`: only env override (`CODEX_WAN_DIFFUSERS_REPO`) or explicit engine-key mapping. No generic guessing by variant; unresolved keys raise.
+- Updated CLI help for `--gpu-prefer-construct` to reflect strict behavior.
+
+Rationale: honor strict backend policy — explicit errors, no silent fallbacks; keep logs actionable.

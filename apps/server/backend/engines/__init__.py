@@ -22,8 +22,7 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     registration.register_flux(registry=registry, replace=replace)
     registration.register_sd20(registry=registry, replace=replace)
     registration.register_sd35(registry=registry, replace=replace)
-    registration.register_svd(registry=registry, replace=replace)
-    registration.register_hunyuan_video(registry=registry, replace=replace)
+    # Optional engines are not auto-registered in strict mode (no silent fallbacks)
     registration.register_wan22_videos(registry=registry, replace=replace)
 
 

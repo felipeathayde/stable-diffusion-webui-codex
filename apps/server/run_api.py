@@ -65,10 +65,12 @@ def ensure_initialized() -> None:
 
     # Configure root logging so engine/runtime INFO logs are visible in console
     try:
-        if not logging.getLogger().handlers:
-            logging.basicConfig(level=logging.INFO, format='[BACKEND] %(asctime)s %(levelname)s: %(message)s')
+        root = logging.getLogger()
+        if not root.handlers:
+            # Avoid duplicating prefixes/timestamps — outer harness already prints them
+            logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         else:
-            logging.getLogger().setLevel(logging.INFO)
+            root.setLevel(logging.INFO)
     except Exception:
         pass
 

@@ -698,6 +698,7 @@ def _get_logger(logger: Any):
         h.setFormatter(fmt)
         lg.addHandler(h)
     lg.setLevel(logging.INFO)
+    lg.propagate = False
     return lg
 
 

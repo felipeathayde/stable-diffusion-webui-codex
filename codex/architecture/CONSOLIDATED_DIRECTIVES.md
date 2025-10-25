@@ -104,3 +104,14 @@ Roadmap Snapshot (Backend‑First)
 - P2: Consolidate loaders/NN under `runtime/*`, unify text/tokenizers, and isolate optional extensions.
 - P3: Retire legacy UI paths as the server‑driven interface reaches feature parity.
 
+Porting External Code into apps/server/backend (Mandatory Protocol)
+- Do not call code from `modules/`, `modules_forge/`, `legacy/`, `.refs/`, or random scripts. When functionality exists only outside `apps/server/backend/**`, port it natively.
+- Before porting, perform a deliberate design exercise:
+  1) Capture requirements precisely (inputs/outputs, constraints, performance targets).
+  2) Read the source thoroughly and note risks (correctness, performance, memory, hidden globals, side effects).
+  3) Enumerate at least five viable implementation paths (different decompositions, APIs, or data flows). For each, document trade‑offs (complexity, maintainability, testability, perf). Choose the most robust, non‑lazy option. You may combine parts from other options if they add value without compromising clarity.
+  4) Re‑design to Codex style: small modules, clear names, `@dataclass`/`Enum` for public structures, explicit errors. Remove hacks and implicit globals.
+  5) Plan validation: observable logs, invariants (shape/dtype/device), and where applicable, unit‑level checks. If tests aren’t added yet, keep instrumentation to verify in runtime safely.
+  6) Migration plan: replace call sites incrementally while preserving behavior. No façades or shims.
+- Never copy code verbatim (“ipsis literis”) unless legally required and clearly marked as vendored; otherwise, translate intent into clean native code.
+- Acceptance criteria: no legacy imports, clear API, explicit errors, documented rationale (include the five options summary), and updated docs.

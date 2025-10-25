@@ -65,7 +65,7 @@
 
 ## End-of-task documentation:
 - Log each task under `.sangoi/task-logs/` (create if missing). If present, follow `.sangoi/task-guidelines.md`. Summarize user-visible highlights in `.sangoi/CHANGELOG.md`.
-- Make an atomic commit and push; no uncommitted leftovers.
+- **YOU MUST DO** an atomic commit and push; no uncommitted leftovers.
 
 ## Global python enviroment
 - python / pip / py (user-local): wrappers live in `~/.codextools/bin`.
@@ -96,10 +96,6 @@
 - Units: use `rem` for all measurements (sizes, radii, borders, shadows, spacing). Coherent exceptions are tolerable.
  
 ## Repository Map
-- `backend/` – server-side services, request handling, memory management helpers.
-- `modules/` and `modules_forge/` – core Stable Diffusion pipelines, attention, schedulers, localization files.
-- `scripts/` – repeatable maintenance tasks, diagnostics, and automation helpers (prefer these over bespoke shell snippets).
-- `models/` – local weights and checkpoints (never commit contents); use symlinks or `.gitignore` patterns to avoid tracking.
 - `codex/` – internal documentation, roadmaps, and operational logs; update these whenever behaviour, contracts, or processes evolve.
 - `legacy/` – snapshot of legacy WebUI code, for REFERENCE only (read-only).
 

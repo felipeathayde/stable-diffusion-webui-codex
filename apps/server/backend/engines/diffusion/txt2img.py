@@ -11,6 +11,7 @@ import os
 from apps.server.backend.core import devices
 from apps.server.backend.core.rng import ImageRNG
 from apps.server.backend.runtime.sampling.driver import CodexSampler
+from apps.server.backend.runtime.text_processing.extra_nets import parse_prompts
 
 
 class _ExtraNetworksShim:
@@ -139,7 +140,9 @@ class Txt2ImgRuntime:
     def generate(self):
         self._ensure_sampler()
 
-        self.processing.prompts = list(self.prompts)
+        # Parse extra-network tags and clean prompts
+        cleaned_prompts, prompt_loras = parse_prompts(list(self.prompts))
+        self.processing.prompts = cleaned_prompts
         self.processing.seeds = list(self.seeds)
         self.processing.subseeds = list(self.subseeds)
         self.processing.negative_prompts = getattr(
@@ -199,10 +202,26 @@ class Txt2ImgRuntime:
 
         self._run_before_and_process_batch_hooks()
 
+        # Merge global selections with prompt-local LoRAs (dedupe by path)
+        try:
+            selections = codex_lora.get_selections() + prompt_loras
+            # dedupe
+            seen = set(); merged = []
+            for s in selections:
+                if s.path in seen:
+                    continue
+                seen.add(s.path); merged.append(s)
+        except Exception:
+            merged = prompt_loras
+        if merged:
+            stats = apply_loras_to_engine(model, merged)
+            logging.info("[native] Applied %d LoRA(s), %d params touched (prompt+global)", stats.files, stats.params_touched)
         model.forge_objects = model.forge_objects_after_applying_lora.shallow_copy()
-        apply_token_merging(
-            model, self.processing.get_token_merging_ratio()
-        )
+        # Token merging with strategy
+        strat = getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
+        if not strat:
+            strat = os.getenv('CODEX_TOKEN_MERGE_STRATEGY', 'avg')
+        apply_token_merging(model, self.processing.get_token_merging_ratio(), strategy=strat)
 
         if self.processing.scripts is not None:
             self.processing.scripts.process_before_every_sampling(

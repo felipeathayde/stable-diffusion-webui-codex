@@ -63,7 +63,7 @@ Sampling Rules
 - Use sigma‑domain updates consistently; convert x0↔ε carefully and guard divisions.
 - Update `BackendState` every step for progress.
 
-LoRA (Native)
+ LoRA (Native)
 - Never use legacy extra_networks.
 - Use the native path:
   - Discovery: `registry/lora.py` provides `list_loras()` and `describe_loras()`.
@@ -73,6 +73,25 @@ LoRA (Native)
   - `GET /api/loras` returns `{ loras, loras_info }`.
   - `GET /api/loras/selections` returns `{ selections }`.
   - `POST /api/loras/apply` sets selections process‑wide.
+
+Extra Networks (Native — Prompt Tags)
+- Do not use legacy `extra_networks`. Backend parses prompt tags natively:
+  - Supported tags: `<lora:NAME[:WEIGHT]>` (case‑insensitive).
+  - Parser lives in `runtime/text_processing/extra_nets.py` and returns cleaned prompts plus `LoraSelection`s.
+  - Engines (txt2img/img2img) merge prompt‑local selections with global Codex selections, deduplicate by path, and apply via `patchers.lora_apply`.
+  - Unknown names are ignored explicitly; logging remains actionable.
+
+Token Merging (Native)
+- Implemented in `patchers/token_merging.py` with strategies:
+  - `avg` (contiguous average pooling), `max` (contiguous max pooling), `energy` (top‑k by token L2 energy).
+- Strategy can be specified via `processing.get_token_merging_strategy()` or `CODEX_TOKEN_MERGE_STRATEGY` env; ratio remains `[0,1)`. Q length is preserved; only K/V are reduced.
+
+Previews (Native)
+- Sampler can emit denoised previews (`x0`) via a callback at an interval set by `CODEX_PREVIEW_INTERVAL` (steps). Engines decode to PIL and place it in `BackendState.current_image` for the ProgressService to return.
+
+Img2Img Conditioning (Native)
+- The img2img runtime encodes the init image to latents and starts from a later step based on `denoising_strength`.
+- Mask support: when `processing.image_mask` is present, it is converted to a single‑channel mask, optionally thresholded by `round_image_mask`, resized to latent size, and passed as `c_concat`.
 
 Assets & Loading
 - Diffusers trees must follow standard layout: `tokenizer/`, `text_encoder[/_2]/`, `unet|transformer/`, `vae/`, `scheduler/`, with `model_index.json`.

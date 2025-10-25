@@ -15,6 +15,7 @@ import torch
 from apps.server.backend.core import devices
 from apps.server.backend.core.rng import ImageRNG
 from apps.server.backend.runtime.sampling.driver import CodexSampler
+from apps.server.backend.runtime.text_processing.extra_nets import parse_prompts
 from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import lora as codex_lora
 from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
@@ -57,6 +58,13 @@ class Img2ImgRuntime:
                 pass
 
     def generate(self) -> torch.Tensor:
+        # Parse extra-network tags and clean prompts
+        if hasattr(self.processing, 'prompts'):
+            cleaned_prompts, prompt_loras = parse_prompts(list(getattr(self.processing, 'prompts', self.prompts)))
+            self.processing.prompts = cleaned_prompts
+        else:
+            prompt_loras = []
+
         # Prepare sampler
         algo = getattr(self.processing, "sampler_name", None)
         self.processing.sampler = CodexSampler(self.processing.sd_model, algorithm=algo)
@@ -70,9 +78,27 @@ class Img2ImgRuntime:
         # Apply LoRA and token merging
         if hasattr(self.processing.sd_model, "forge_objects_original") and self.processing.sd_model.forge_objects_original is not None:
             self.processing.sd_model.forge_objects = self.processing.sd_model.forge_objects_original.shallow_copy()
-        self._apply_extras()
+        # Merge global selections with prompt-local LoRAs
+        try:
+            selections = codex_lora.get_selections() + prompt_loras
+            seen = set(); merged = []
+            for s in selections:
+                if s.path in seen:
+                    continue
+                seen.add(s.path); merged.append(s)
+        except Exception:
+            merged = prompt_loras
+        if merged:
+            stats = apply_loras_to_engine(self.processing.sd_model, merged)
+            try:
+                print(f"[native] img2img applied {stats.files} LoRA(s), {stats.params_touched} params touched")
+            except Exception:
+                pass
         self.processing.sd_model.forge_objects = self.processing.sd_model.forge_objects_after_applying_lora.shallow_copy()
-        apply_token_merging(self.processing.sd_model, getattr(self.processing, "token_merging_ratio", 0.0))
+        strat = getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
+        if not strat:
+            strat = os.getenv('CODEX_TOKEN_MERGE_STRATEGY', 'avg')
+        apply_token_merging(self.processing.sd_model, getattr(self.processing, "token_merging_ratio", 0.0), strategy=strat)
 
         # Denoising strength controls where we start in the sigma schedule
         steps = int(getattr(self.processing, "steps", 20) or 20)
@@ -88,12 +114,28 @@ class Img2ImgRuntime:
             except Exception:
                 pass
 
+        # Build c_concat from mask when available
+        img_cond = None
+        try:
+            if hasattr(self.processing, 'image_mask') and self.processing.image_mask is not None:
+                import numpy as np
+                mask = np.array(self.processing.image_mask).astype(np.float32) / 255.0
+                if getattr(self.processing, 'round_image_mask', True):
+                    mask = (mask > 0.5).astype(np.float32)
+                mask = np.mean(mask, axis=2) if mask.ndim == 3 else mask  # single channel
+                mask_t = torch.from_numpy(mask).to(init_latent).unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+                # resize to latent size
+                mask_t = torch.nn.functional.interpolate(mask_t, size=(init_latent.shape[2], init_latent.shape[3]), mode='nearest')
+                img_cond = mask_t
+        except Exception:
+            img_cond = None
+
         samples = self.processing.sampler.sample(
             self.processing,
             noise,
             self.conditioning,
             self.unconditional_conditioning,
-            image_conditioning=getattr(self.processing, 'img2img_image_conditioning', lambda *_: None)(None, None, None),
+            image_conditioning=img_cond,
             init_latent=init_latent,
             start_at_step=start_step,
             preview_callback=_preview_cb,

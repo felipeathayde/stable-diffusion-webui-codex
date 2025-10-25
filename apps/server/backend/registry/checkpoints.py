@@ -140,6 +140,17 @@ def describe_checkpoints(models_root: str = "models", vendored_hf_root: str = "a
                 if os.path.isdir(os.path.join(e.path, sub)):
                     comps.append(sub)
             meta["components"] = comps
+            # model_index dtype hint and base resolution
+            mi = os.path.join(e.path, "model_index.json")
+            if os.path.isfile(mi):
+                micfg = _read_json(mi)
+                if isinstance(micfg.get("torch_dtype"), str):
+                    meta["default_dtype"] = micfg.get("torch_dtype")
+            unet_cfg = os.path.join(e.path, "unet", "config.json")
+            if os.path.isfile(unet_cfg):
+                ucfg = _read_json(unet_cfg)
+                if isinstance(ucfg.get("sample_size"), int):
+                    meta["base_resolution"] = int(ucfg.get("sample_size"))
             # scheduler prediction_type
             sch_cfg = os.path.join(e.path, "scheduler", "config.json")
             if os.path.isfile(sch_cfg):

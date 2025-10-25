@@ -142,19 +142,17 @@ class Txt2ImgRuntime:
         cleaned_prompts, prompt_loras, prompt_controls = parse_prompts_with_extras(list(self.prompts))
         self.processing.prompts = cleaned_prompts
         # Apply width/height before sampler/rng setup
-        try:
-            if 'width' in prompt_controls:
-                w = int(prompt_controls['width'])
-                if w % 8 != 0:
-                    raise ValueError('width must be a multiple of 8')
-                self.processing.width = max(8, min(8192, w))
-            if 'height' in prompt_controls:
-                h = int(prompt_controls['height'])
-                if h % 8 != 0:
-                    raise ValueError('height must be a multiple of 8')
-                self.processing.height = max(8, min(8192, h))
-        except Exception:
-            pass
+        # Validate width/height explicitly (JSON error on invalid)
+        if 'width' in prompt_controls:
+            w = int(prompt_controls['width'])
+            if w % 8 != 0 or w < 8 or w > 8192:
+                raise ValueError('Invalid <width>: must be multiple of 8 and in [8,8192]')
+            self.processing.width = w
+        if 'height' in prompt_controls:
+            h = int(prompt_controls['height'])
+            if h % 8 != 0 or h < 8 or h > 8192:
+                raise ValueError('Invalid <height>: must be multiple of 8 and in [8,8192]')
+            self.processing.height = h
 
         self._ensure_sampler()
         self.processing.seeds = list(self.seeds)
@@ -179,8 +177,16 @@ class Txt2ImgRuntime:
             pass
 
         if samples is None and decoded_samples is None:
-            samples = self._run_base_sampling()
-            decoded_samples = self._maybe_decode_for_hr(samples)
+            # Optional tiling control for decode passes
+            from apps.server.backend.runtime.memory import memory_management
+            _old_tiled = memory_management.VAE_ALWAYS_TILED
+            try:
+                if prompt_controls.get('tiling') is True:
+                    memory_management.VAE_ALWAYS_TILED = True
+                samples = self._run_base_sampling()
+                decoded_samples = self._maybe_decode_for_hr(samples)
+            finally:
+                memory_management.VAE_ALWAYS_TILED = _old_tiled
 
         if not self.processing.enable_hr:
             return samples

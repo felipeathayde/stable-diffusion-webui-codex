@@ -66,19 +66,16 @@ class Img2ImgRuntime:
             prompt_loras, prompt_controls = [], {}
 
         # Apply width/height before preparing sampler
-        try:
-            if 'width' in prompt_controls:
-                w = int(prompt_controls['width'])
-                if w % 8 != 0:
-                    raise ValueError('width must be a multiple of 8')
-                self.processing.width = max(8, min(8192, w))
-            if 'height' in prompt_controls:
-                h = int(prompt_controls['height'])
-                if h % 8 != 0:
-                    raise ValueError('height must be a multiple of 8')
-                self.processing.height = max(8, min(8192, h))
-        except Exception:
-            pass
+        if 'width' in prompt_controls:
+            w = int(prompt_controls['width'])
+            if w % 8 != 0 or w < 8 or w > 8192:
+                raise ValueError('Invalid <width>: must be multiple of 8 and in [8,8192]')
+            self.processing.width = w
+        if 'height' in prompt_controls:
+            h = int(prompt_controls['height'])
+            if h % 8 != 0 or h < 8 or h > 8192:
+                raise ValueError('Invalid <height>: must be multiple of 8 and in [8,8192]')
+            self.processing.height = h
 
         # Prepare sampler
         algo = getattr(self.processing, "sampler_name", None)
@@ -171,16 +168,24 @@ class Img2ImgRuntime:
         except Exception:
             pass
 
-        samples = self.processing.sampler.sample(
-            self.processing,
-            noise,
-            self.conditioning,
-            self.unconditional_conditioning,
-            image_conditioning=img_cond,
-            init_latent=init_latent,
-            start_at_step=start_step,
-            preview_callback=_preview_cb,
-        )
+        # Optional tiling control for decode passes
+        from apps.server.backend.runtime.memory import memory_management
+        _old_tiled = memory_management.VAE_ALWAYS_TILED
+        try:
+            if prompt_controls.get('tiling') is True:
+                memory_management.VAE_ALWAYS_TILED = True
+            samples = self.processing.sampler.sample(
+                self.processing,
+                noise,
+                self.conditioning,
+                self.unconditional_conditioning,
+                image_conditioning=img_cond,
+                init_latent=init_latent,
+                start_at_step=start_step,
+                preview_callback=_preview_cb,
+            )
+        finally:
+            memory_management.VAE_ALWAYS_TILED = _old_tiled
 
         return samples
 

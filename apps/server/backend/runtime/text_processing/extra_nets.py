@@ -18,7 +18,7 @@ from apps.server.backend.registry.lora import list_loras
 from apps.server.backend.codex.lora import LoraSelection
 
 
-_TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti|clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti|clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise|tiling)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)
 
 
 @dataclass
@@ -84,12 +84,15 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
                 controls['seed'] = int(float(weight_s or name))
             elif kind == 'denoise':
                 controls['denoise'] = float(weight_s or name)
+            elif kind == 'tiling':
+                s = (name or '').strip().lower()
+                controls['tiling'] = s in ('1','true','yes','on','enable','enabled')
         except Exception:
             pass
         return ''
 
     # Also detect control tags with custom patterns
-    control_re = re.compile(r"<\s*(clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise)\s*:\s*([^:>]+)(?::([^:>]+))?\s*>", re.IGNORECASE)
+    control_re = re.compile(r"<\s*(clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise|tiling)\s*:\s*([^:>]+)(?::([^:>]+))?\s*>", re.IGNORECASE)
     cleaned = control_re.sub(_repl, _TAG_RE.sub(_repl, prompt))
     # Collapse duplicated spaces
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()

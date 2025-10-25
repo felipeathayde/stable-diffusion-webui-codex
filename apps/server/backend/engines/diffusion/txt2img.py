@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
     lora_networks = None
 from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import main as codex_main
-from apps.server.backend.codex.loader import load_engine as _load_engine
+from apps.server.backend.codex.loader import load_engine as _load_engine, EngineLoadOptions
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
@@ -90,9 +90,16 @@ def _reload_for_hires(processing) -> None:
         if reload_required:
             try:
                 codex_main.refresh_model_loading_parameters()
-                # Native model reload for hires
+                # Native model reload for hires with runtime options derived from env/processing
                 try:
-                    new_engine = _load_engine(processing.hr_checkpoint_name)
+                    load_opts = EngineLoadOptions(
+                        device=None,  # auto
+                        dtype=None,
+                        attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
+                        accelerator=os.getenv("CODEX_ACCELERATOR"),
+                        vae_path=None,
+                    )
+                    new_engine = _load_engine(processing.hr_checkpoint_name, options=load_opts)
                     processing.sd_model = new_engine
                 except Exception as exc:
                     raise RuntimeError(f"Failed to load hires checkpoint '{processing.hr_checkpoint_name}': {exc}")

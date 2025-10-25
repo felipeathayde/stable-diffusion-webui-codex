@@ -18,7 +18,7 @@ from apps.server.backend.registry.lora import list_loras
 from apps.server.backend.codex.lora import LoraSelection
 
 
-_TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti|clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)
 
 
 @dataclass
@@ -54,7 +54,8 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
             # textual inversion by name — expand into weighted token; embeddings are loaded by name in the engine
             w = weight_s or '1.0'
             return f"({name}:{w})"
-        # control tags: <clip_skip:N>, <sampler:NAME>, <scheduler:NAME>, <merge:ratio[:strategy]>
+        # control tags: <clip_skip:N>, <sampler:NAME>, <scheduler:NAME>,
+        # <merge:ratio[:strategy]>, <width:N>/<height:N>, <cfg:x>, <steps:n>, <seed:n>, <denoise:x>
         try:
             if kind == 'clip_skip':
                 n = int(float(weight_s or name))
@@ -71,6 +72,18 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
                 parts = (name or '').split(':')
                 if len(parts) >= 2:
                     controls['token_merge_strategy'] = parts[0].lower()
+            elif kind in ('width','w'):
+                controls['width'] = max(8, int(float(weight_s or name)))
+            elif kind in ('height','h'):
+                controls['height'] = max(8, int(float(weight_s or name)))
+            elif kind == 'cfg':
+                controls['cfg'] = float(weight_s or name)
+            elif kind == 'steps':
+                controls['steps'] = max(1, int(float(weight_s or name)))
+            elif kind == 'seed':
+                controls['seed'] = int(float(weight_s or name))
+            elif kind == 'denoise':
+                controls['denoise'] = float(weight_s or name)
         except Exception:
             pass
         return ''

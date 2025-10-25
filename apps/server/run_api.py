@@ -1035,6 +1035,29 @@ def build_app() -> FastAPI:
         from apps.server.backend.codex.options import _load as _opts_load_native  # type: ignore
         return {"values": _opts_load_native()}
 
+    @app.get('/api/options/keys')
+    def get_options_keys() -> Dict[str, Any]:
+        """List supported option keys and basic metadata from the settings registry.
+
+        Fields: { keys: [...], types: {key: type_name}, choices: {key: [..]} }
+        """
+        if not _settings_registry_ok:
+            return {"keys": [], "types": {}, "choices": {}}
+        try:
+            idx = _field_index()  # type: ignore[name-defined]
+            keys = list(idx.keys())
+            types = {}
+            choices = {}
+            for k, f in idx.items():
+                t = getattr(getattr(f, 'type', None), 'name', None) or str(getattr(f, 'type', None))
+                types[k] = t
+                ch = getattr(f, 'choices', None)
+                if isinstance(ch, list):
+                    choices[k] = ch
+            return {"keys": keys, "types": types, "choices": choices}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to read registry: {e}")
+
     @app.get('/api/options/snapshot')
     def get_options_snapshot() -> Dict[str, Any]:
         """Return a typed snapshot of current options (for UI defaults)."""

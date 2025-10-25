@@ -65,6 +65,15 @@ class Img2ImgRuntime:
         else:
             prompt_loras, prompt_controls = [], {}
 
+        # Apply width/height before preparing sampler
+        try:
+            if 'width' in prompt_controls:
+                self.processing.width = int(prompt_controls['width'])
+            if 'height' in prompt_controls:
+                self.processing.height = int(prompt_controls['height'])
+        except Exception:
+            pass
+
         # Prepare sampler
         algo = getattr(self.processing, "sampler_name", None)
         self.processing.sampler = CodexSampler(self.processing.sd_model, algorithm=algo)

@@ -138,11 +138,19 @@ class Txt2ImgRuntime:
         self.prompts = prompts
 
     def generate(self):
-        self._ensure_sampler()
-
-        # Parse extra-network tags and clean prompts
+        # Parse extra-network tags and clean prompts first (may override size)
         cleaned_prompts, prompt_loras, prompt_controls = parse_prompts_with_extras(list(self.prompts))
         self.processing.prompts = cleaned_prompts
+        # Apply width/height before sampler/rng setup
+        try:
+            if 'width' in prompt_controls:
+                self.processing.width = int(prompt_controls['width'])
+            if 'height' in prompt_controls:
+                self.processing.height = int(prompt_controls['height'])
+        except Exception:
+            pass
+
+        self._ensure_sampler()
         self.processing.seeds = list(self.seeds)
         self.processing.subseeds = list(self.subseeds)
         self.processing.negative_prompts = getattr(

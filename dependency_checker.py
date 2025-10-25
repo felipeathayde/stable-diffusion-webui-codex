@@ -74,11 +74,16 @@ def parse_imports(file_path: str, current_module: str) -> List[str]:
     tree = ast.parse(src, filename=file_path)
     imports: Set[str] = set()
 
+    imported_names: Set[str] = set()
+    defined_names: Set[str] = set()
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name:
                     imports.add(alias.name)
+                    # record imported symbol basename for later base-name checks
+                    imported_names.add(alias.asname or alias.name.split('.')[-1])
         elif isinstance(node, ast.ImportFrom):
             # Base module path
             if node.level and node.level > 0:
@@ -92,10 +97,31 @@ def parse_imports(file_path: str, current_module: str) -> List[str]:
                 mod = node.module or ''
             if mod:
                 imports.add(mod)
-            # Do not add alias-based dotted modules here; many aliases are attributes
+            # Track imported symbol names for later base-name checks
+            for alias in node.names:
+                if alias.name != '*':
+                    imported_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef) or isinstance(node, ast.ClassDef):
+            defined_names.add(node.name)
+
+    # Lightweight sanity check: unknown base classes referenced without import/definition
+    unknown_bases: list[str] = []
+    builtin_ok = {
+        'object','BaseException','Exception','RuntimeError','ValueError','TypeError','str','int','float','bool','Enum'
+    }
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    bname = base.id
+                    if bname not in imported_names and bname not in defined_names and bname not in builtin_ok:
+                        unknown_bases.append(f"{node.name} -> {bname}")
 
     # Normalize: drop empty strings and builtins
     normed = sorted({m for m in imports if m and not m.startswith('builtins')})
+    # Attach a pseudo-import to surface base-name problems as [ERROR] children
+    if unknown_bases:
+        normed.append(f"<unknown-bases: {', '.join(unknown_bases)}>\n")
     return normed
 
 
@@ -211,6 +237,9 @@ def walk_dependencies(start_file: str) -> DepNode:
             node.children.append(DepNode(name=f"<parse-error: {e}>", kind='error', path=file_path))
             return node
         for imp in imports:
+            if imp.startswith('<unknown-bases:'):
+                node.children.append(DepNode(name=imp.strip(), kind='error', path=file_path))
+                continue
             # Stop descending for externals automatically inside recursion
             child = _walk(imp, None)
             node.children.append(child)

@@ -18,7 +18,7 @@ from apps.server.backend.registry.lora import list_loras
 from apps.server.backend.codex.lora import LoraSelection
 
 
-_TAG_RE = re.compile(r"<\s*(?P<kind>lora)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)
 
 
 @dataclass
@@ -46,7 +46,12 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
                 except Exception:
                     w = 1.0
                 loras.append(LoraSelection(path=path, weight=w, online=False))
-        # Remove the tag from prompt
+            # remove the tag
+            return ''
+        if kind == 'ti' and name:
+            # textual inversion by name — expand into weighted token; embeddings are loaded by name in the engine
+            w = weight_s or '1.0'
+            return f"({name}:{w})"
         return ''
 
     cleaned = _TAG_RE.sub(_repl, prompt)
@@ -70,4 +75,3 @@ def parse_prompts(prompts: List[str]) -> Tuple[List[str], List[LoraSelection]]:
 
 
 __all__ = ["parse_prompts", "parse_prompt_for_extras", "ParsedExtras"]
-

@@ -195,16 +195,11 @@ class _DummyRequest:
 def build_app() -> FastAPI:
     ensure_initialized()
 
-    from modules import script_callbacks as _script_callbacks
-    from modules import shared as _shared
-    from modules import sd_models as _sd_models
-    from modules import sd_samplers as _sd_samplers
-    from modules import sd_schedulers as _sd_schedulers
-    from modules import call_queue as _call_queue
-    import modules.txt2img as _txt2img
-    import modules.img2img as _img2img
-    import modules.txt2vid as _txt2vid
-    import modules.img2vid as _img2vid
+    # Native parameter helpers (replace legacy _txt2img/_img2img parsers)
+    from apps.server.backend.services import param_utils as _p
+    _script_callbacks = None  # legacy callbacks not used in native backend
+    _shared = None
+    _sd_models = None
     from apps.server.backend.core.engine_interface import TaskType
     from apps.server.backend.core.orchestrator import InferenceOrchestrator
     from apps.server.backend.core.requests import (
@@ -966,13 +961,29 @@ def build_app() -> FastAPI:
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:
-        _sd_samplers.set_samplers()
-        samplers = [_serialize_sampler(s) for s in _sd_samplers.visible_samplers()]
+        from apps.server.backend.engines.util.schedulers import SamplerKind
+        kinds = [
+            (SamplerKind.EULER.value, ["k_euler"]),
+            (SamplerKind.EULER_A.value, ["k_euler_a", "euler_a"]),
+            (SamplerKind.DDIM.value, ["ddim"]),
+            (SamplerKind.DPM2M.value, ["dpmpp_2m", "dpm++ 2m"]),
+            (SamplerKind.DPM2M_SDE.value, ["dpmpp_2m_sde", "dpm++ 2m sde"]),
+            (SamplerKind.PLMS.value, ["lms"]),
+            (SamplerKind.PNDM.value, ["pndm"]),
+        ]
+        samplers = [{"name": n, "aliases": a, "options": {}} for n, a in kinds]
         return {"samplers": samplers}
 
     @app.get('/api/schedulers')
     def list_schedulers() -> Dict[str, Any]:
-        schedulers = [_serialize_scheduler(s) for s in _sd_schedulers.schedulers]
+        schedulers = [
+            {"name": "EulerDiscreteScheduler", "label": "Euler", "aliases": ["euler"]},
+            {"name": "EulerAncestralDiscreteScheduler", "label": "Euler a", "aliases": ["euler a"]},
+            {"name": "DDIMScheduler", "label": "DDIM", "aliases": ["ddim"]},
+            {"name": "DPMSolverMultistepScheduler", "label": "DPM++ 2M", "aliases": ["dpm++ 2m", "dpmpp_2m"]},
+            {"name": "LMSDiscreteScheduler", "label": "PLMS", "aliases": ["plms"]},
+            {"name": "PNDMScheduler", "label": "PNDM", "aliases": ["pndm"]},
+        ]
         return {"schedulers": schedulers}
 
     @app.get('/api/vaes')
@@ -1096,36 +1107,36 @@ def build_app() -> FastAPI:
         return {"updated": updated}
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
-        prompt = _txt2img._require(payload, 'txt2img_prompt') or ''
-        negative_prompt = _txt2img._require(payload, 'txt2img_neg_prompt') or ''
-        prompt_styles = _txt2img._as_list(payload, 'txt2img_styles')
-        n_iter = _txt2img._as_int(payload, 'txt2img_batch_count')
-        batch_size = _txt2img._as_int(payload, 'txt2img_batch_size')
-        cfg_scale = _txt2img._as_float(payload, 'txt2img_cfg_scale')
-        distilled_cfg_scale = _txt2img._as_float_optional(payload, 'txt2img_distilled_cfg_scale', 3.5)
-        height = _txt2img._as_int(payload, 'txt2img_height')
-        width = _txt2img._as_int(payload, 'txt2img_width')
-        enable_hr = _txt2img._as_bool(payload, 'txt2img_hr_enable')
-        steps_val = _txt2img._as_int(payload, 'txt2img_steps')
-        sampler_name = _txt2img._require(payload, 'txt2img_sampling')
-        scheduler_name = _txt2img._require(payload, 'txt2img_scheduler')
-        seed_val = _txt2img._as_int(payload, 'txt2img_seed')
+        prompt = _p.require(payload, 'txt2img_prompt') or ''
+        negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''
+        prompt_styles = _p.as_list(payload, 'txt2img_styles')
+        n_iter = _p.as_int(payload, 'txt2img_batch_count')
+        batch_size = _p.as_int(payload, 'txt2img_batch_size')
+        cfg_scale = _p.as_float(payload, 'txt2img_cfg_scale')
+        distilled_cfg_scale = _p.as_float_optional(payload, 'txt2img_distilled_cfg_scale', 3.5)
+        height = _p.as_int(payload, 'txt2img_height')
+        width = _p.as_int(payload, 'txt2img_width')
+        enable_hr = _p.as_bool(payload, 'txt2img_hr_enable')
+        steps_val = _p.as_int(payload, 'txt2img_steps')
+        sampler_name = _p.require(payload, 'txt2img_sampling')
+        scheduler_name = _p.require(payload, 'txt2img_scheduler')
+        seed_val = _p.as_int(payload, 'txt2img_seed')
 
         if enable_hr:
-            denoising_strength = _txt2img._as_float(payload, 'txt2img_denoising_strength')
-            hr_scale = _txt2img._as_float(payload, 'txt2img_hr_scale')
-            hr_upscaler = _txt2img._require(payload, 'txt2img_hr_upscaler')
-            hr_second_pass_steps = _txt2img._as_int(payload, 'txt2img_hires_steps')
-            hr_resize_x = _txt2img._as_int(payload, 'txt2img_hr_resize_x')
-            hr_resize_y = _txt2img._as_int(payload, 'txt2img_hr_resize_y')
-            hr_checkpoint_name = payload.get('hr_checkpoint_name') or _txt2img._require(payload, 'hr_checkpoint')
-            hr_additional_modules = payload.get('hr_additional_modules') or _txt2img._as_list(payload, 'hr_vae_te')
-            hr_sampler_name = payload.get('hr_sampler_name') or _txt2img._require(payload, 'hr_sampler')
-            hr_scheduler = payload.get('hr_scheduler') or _txt2img._require(payload, 'hr_scheduler')
+            denoising_strength = _p.as_float(payload, 'txt2img_denoising_strength')
+            hr_scale = _p.as_float(payload, 'txt2img_hr_scale')
+            hr_upscaler = _p.require(payload, 'txt2img_hr_upscaler')
+            hr_second_pass_steps = _p.as_int(payload, 'txt2img_hires_steps')
+            hr_resize_x = _p.as_int(payload, 'txt2img_hr_resize_x')
+            hr_resize_y = _p.as_int(payload, 'txt2img_hr_resize_y')
+            hr_checkpoint_name = payload.get('hr_checkpoint_name') or _p.require(payload, 'hr_checkpoint')
+            hr_additional_modules = payload.get('hr_additional_modules') or _p.as_list(payload, 'hr_vae_te')
+            hr_sampler_name = payload.get('hr_sampler_name') or _p.require(payload, 'hr_sampler')
+            hr_scheduler = payload.get('hr_scheduler') or _p.require(payload, 'hr_scheduler')
             hr_prompt = payload.get('txt2img_hr_prompt') or ''
             hr_negative_prompt = payload.get('txt2img_hr_neg_prompt') or ''
-            hr_cfg = _txt2img._as_float(payload, 'txt2img_hr_cfg')
-            hr_distilled_cfg = _txt2img._as_float(payload, 'txt2img_hr_distilled_cfg')
+            hr_cfg = _p.as_float(payload, 'txt2img_hr_cfg')
+            hr_distilled_cfg = _p.as_float(payload, 'txt2img_hr_distilled_cfg')
         else:
             denoising_strength = 0.0
             hr_scale = 1.0
@@ -1222,7 +1233,7 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                with _call_queue.queue_lock:
+                with tasks_lock:
                     orch = InferenceOrchestrator()
                     for ev in orch.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
                         if isinstance(ev, ProgressEvent):
@@ -1268,26 +1279,26 @@ def build_app() -> FastAPI:
         thread.start()
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
-        init_image_data = _img2img._require(payload, 'img2img_init_image')
+        init_image_data = _p.require(payload, 'img2img_init_image')
         init_image = media.decode_image(init_image_data)
         mask_data = payload.get('img2img_mask')
         mask_image = media.decode_image(mask_data) if mask_data else None
 
-        prompt = _img2img._require(payload, 'img2img_prompt') or ''
-        negative_prompt = _img2img._require(payload, 'img2img_neg_prompt') or ''
-        styles = _img2img._as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
-        batch_count = _img2img._as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
-        batch_size = _img2img._as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
-        steps_val = _img2img._as_int(payload, 'img2img_steps')
-        cfg_scale = _img2img._as_float(payload, 'img2img_cfg_scale')
-        distilled_cfg_scale = _img2img._as_float(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
-        image_cfg_scale = _img2img._as_float(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-        denoise = _img2img._as_float(payload, 'img2img_denoising_strength')
-        width_val = _img2img._as_int(payload, 'img2img_width')
-        height_val = _img2img._as_int(payload, 'img2img_height')
-        sampler_name = _img2img._require(payload, 'img2img_sampling')
-        scheduler_name = _img2img._require(payload, 'img2img_scheduler')
-        seed_val = _img2img._as_int(payload, 'img2img_seed')
+        prompt = _p.require(payload, 'img2img_prompt') or ''
+        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+        styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
+        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
+        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
+        steps_val = _p.as_int(payload, 'img2img_steps')
+        cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+        distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+        image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
+        denoise = _p.as_float(payload, 'img2img_denoising_strength')
+        width_val = _p.as_int(payload, 'img2img_width')
+        height_val = _p.as_int(payload, 'img2img_height')
+        sampler_name = _p.require(payload, 'img2img_sampling')
+        scheduler_name = _p.require(payload, 'img2img_scheduler')
+        seed_val = _p.as_int(payload, 'img2img_seed')
 
         req = Img2ImgRequest(
             task=TaskType.IMG2IMG,
@@ -1342,7 +1353,7 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                with _call_queue.queue_lock:
+                with tasks_lock:
                     orch = InferenceOrchestrator()
                     for ev in orch.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
                         if isinstance(ev, ProgressEvent):
@@ -1557,7 +1568,7 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                with _call_queue.queue_lock:
+                with tasks_lock:
                     orch = InferenceOrchestrator()
                     engine_opts = {"export_video": bool(getattr(_shared.opts, 'codex_export_video', False))}
                     for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):

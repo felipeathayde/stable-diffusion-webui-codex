@@ -235,6 +235,16 @@ def build_app() -> FastAPI:
     )
 
     media = MediaService()
+    # Native options facade (JSON‑backed). Import early so helpers are available
+    # to any route or startup function defined below.
+    from apps.server.backend.codex.options import (
+        get_value as _opts_get,
+        set_values as _opts_set_many,
+        get_snapshot as _opts_snapshot,
+        _load as _opts_load_native,  # private, but safe here
+    )
+    def _opts_load() -> Dict[str, Any]:  # thin alias used by existing helpers
+        return _opts_load_native()
     _embedding_db = None  # lazy init
     _settings_schema_cache: Optional[Dict[str, Any]] = None
     _settings_values_path = os.path.join(os.getcwd(), 'apps', 'settings_values.json')
@@ -1027,13 +1037,11 @@ def build_app() -> FastAPI:
         _save_json(cfg_path, payload['paths'])
         return {"ok": True}
 
-    # Native options store via Codex options facade
-    from apps.server.backend.codex.options import get_value as _opts_get, set_values as _opts_set_many, get_snapshot as _opts_snapshot  # type: ignore
+    # Native options store via Codex options facade (aliases defined above)
 
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
-        from apps.server.backend.codex.options import _load as _opts_load_native  # type: ignore
-        return {"values": _opts_load_native()}
+        return {"values": _opts_load()}
 
     @app.get('/api/options/keys')
     def get_options_keys() -> Dict[str, Any]:
@@ -1062,8 +1070,7 @@ def build_app() -> FastAPI:
     def get_options_snapshot() -> Dict[str, Any]:
         """Return a typed snapshot of current options (for UI defaults)."""
         try:
-            from apps.server.backend.codex.options import get_snapshot as _snap  # type: ignore
-            return {"snapshot": _snap().as_dict()}
+            return {"snapshot": _opts_snapshot().as_dict()}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed to read snapshot: {e}")
 

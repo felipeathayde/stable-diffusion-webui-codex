@@ -54,47 +54,47 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
         PNDMScheduler,
     )
 
-        allowed = {
-            SamplerKind.EULER: EulerDiscreteScheduler,
-            SamplerKind.EULER_A: EulerAncestralDiscreteScheduler,
-            SamplerKind.DDIM: DDIMScheduler,
-            SamplerKind.DPM2M: DPMSolverMultistepScheduler,
-            SamplerKind.DPM2M_SDE: DPMSolverMultistepScheduler,
-            SamplerKind.PLMS: LMSDiscreteScheduler,
-            SamplerKind.PNDM: PNDMScheduler,
-        }
+    allowed = {
+        SamplerKind.EULER: EulerDiscreteScheduler,
+        SamplerKind.EULER_A: EulerAncestralDiscreteScheduler,
+        SamplerKind.DDIM: DDIMScheduler,
+        SamplerKind.DPM2M: DPMSolverMultistepScheduler,
+        SamplerKind.DPM2M_SDE: DPMSolverMultistepScheduler,
+        SamplerKind.PLMS: LMSDiscreteScheduler,
+        SamplerKind.PNDM: PNDMScheduler,
+    }
 
-        kind = SamplerKind.from_string(wanted_sampler)
-        if kind is SamplerKind.AUTOMATIC:
-            sched = getattr(pipe, "scheduler", None)
-            if sched is None:
-                raise RuntimeError("Pipeline has no scheduler to keep for 'Automatic'")
-            eff_sampler = "Automatic"
-            eff_scheduler = type(sched).__name__
-            return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
-
-        target_cls = allowed.get(kind)
-        if target_cls is None:
-            raise ValueError(f"Unsupported sampler '{wanted_sampler}'")
-
-        # Rebuild scheduler from config to preserve sigmas/timesteps defaults
-        conf = getattr(pipe, "scheduler", None)
-        conf = getattr(conf, "config", None)
-        if conf is not None:
-            pipe.scheduler = target_cls.from_config(conf)
-        else:
-            pipe.scheduler = target_cls()
-
-        # Heuristics for options
-        if isinstance(pipe.scheduler, DPMSolverMultistepScheduler):
-            pipe.scheduler.config.setdefault("use_karras_sigmas", True)
-        if isinstance(pipe.scheduler, (EulerDiscreteScheduler, EulerAncestralDiscreteScheduler)):
-            # trailing spacing is more compatible with SD style
-            pipe.scheduler.config.setdefault("timestep_spacing", "trailing")
-
-        eff_sampler = wanted_sampler
-        eff_scheduler = type(pipe.scheduler).__name__
+    kind = SamplerKind.from_string(wanted_sampler)
+    if kind is SamplerKind.AUTOMATIC:
+        sched = getattr(pipe, "scheduler", None)
+        if sched is None:
+            raise RuntimeError("Pipeline has no scheduler to keep for 'Automatic'")
+        eff_sampler = "Automatic"
+        eff_scheduler = type(sched).__name__
         return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
+
+    target_cls = allowed.get(kind)
+    if target_cls is None:
+        raise ValueError(f"Unsupported sampler '{wanted_sampler}'")
+
+    # Rebuild scheduler from config to preserve sigmas/timesteps defaults
+    conf = getattr(pipe, "scheduler", None)
+    conf = getattr(conf, "config", None)
+    if conf is not None:
+        pipe.scheduler = target_cls.from_config(conf)
+    else:
+        pipe.scheduler = target_cls()
+
+    # Heuristics for options
+    if isinstance(pipe.scheduler, DPMSolverMultistepScheduler):
+        pipe.scheduler.config.setdefault("use_karras_sigmas", True)
+    if isinstance(pipe.scheduler, (EulerDiscreteScheduler, EulerAncestralDiscreteScheduler)):
+        # trailing spacing is more compatible with SD style
+        pipe.scheduler.config.setdefault("timestep_spacing", "trailing")
+
+    eff_sampler = wanted_sampler
+    eff_scheduler = type(pipe.scheduler).__name__
+    return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
 
 
 __all__ = ["apply_sampler_scheduler", "ApplyOutcome", "SamplerKind"]

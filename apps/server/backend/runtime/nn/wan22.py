@@ -27,6 +27,7 @@ import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
+from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
 
@@ -160,34 +161,7 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
 
         # Resolve a proper repo mirror: prefer explicit env; otherwise infer from
         # model_key (wan_i2v_14b / wan_t2v_5b) and try sensible candidates.
-        def _wan_repo_candidates() -> list[str]:
-            out: list[str] = []
-            env_repo = os.environ.get('CODEX_WAN_DIFFUSERS_REPO')
-            if env_repo:
-                out.append(env_repo)
-            key = str(model_key or '').lower()
-            variant = '14B' if '14b' in key else ('5B' if '5b' in key else '')
-            mode = 'Image-to-Video' if 'i2v' in key else ('Text-to-Video' if 't2v' in key else '')
-            owner = 'Kwai-Kolors'
-            # Try the most common naming patterns first
-            if variant and mode:
-                out.append(f"{owner}/Wan2.2-{mode}-{variant}")
-            if not out:
-                # As a last resort, try both variants for both modes
-                out.extend([
-                    f"{owner}/Wan2.2-Image-to-Video-14B",
-                    f"{owner}/Wan2.2-Image-to-Video-5B",
-                    f"{owner}/Wan2.2-Text-to-Video-14B",
-                    f"{owner}/Wan2.2-Text-to-Video-5B",
-                ])
-            # Deduplicate while preserving order
-            seen: set[str] = set(); uniq: list[str] = []
-            for rid in out:
-                if rid not in seen:
-                    uniq.append(rid); seen.add(rid)
-            return uniq
-
-        candidates = _wan_repo_candidates()
+        candidates = resolve_wan_repo_candidates(model_key)
         # Download minimal files directly into model_dir so WanPipeline can load from there.
         try:
             ensure_repo_minimal_files(candidates, model_dir, offline=False)

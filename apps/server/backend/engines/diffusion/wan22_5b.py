@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 from apps.server.backend.core.engine_interface import EngineCapabilities, TaskType
@@ -11,12 +12,13 @@ from apps.server.backend.engines.diffusion.txt2vid import run_txt2vid as _run_t2
 from apps.server.backend.engines.diffusion.img2vid import run_img2vid as _run_i2v
 from apps.server.backend.core.exceptions import EngineLoadError
 
-from dataclasses import dataclass
-from typing import Any, Optional
 import os
 
+from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
+from .wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates
 
-from .wan22_common import EngineOpts, WanComponents
+PROJECT_ROOT = Path(__file__).resolve().parents[5]
+HF_ROOT = PROJECT_ROOT / "apps" / "server" / "backend" / "huggingface"
 
 
 class Wan225BEngine(BaseVideoEngine):
@@ -56,6 +58,24 @@ class Wan225BEngine(BaseVideoEngine):
                 p = alt
             else:
                 raise EngineLoadError(f"WAN22 5B model path not found: {model_ref}")
+
+        vendor_dir: Optional[Path] = None
+        for rid in resolve_wan_repo_candidates(self.engine_id):
+            local_dir = HF_ROOT / Path(rid.replace('/', os.sep))
+            try:
+                ensure_repo_minimal_files(rid, str(local_dir), offline=False)
+                vendor_dir = local_dir
+                comp.hf_repo_dir = str(local_dir)
+                te_dir = local_dir / "text_encoder"
+                tk_dir = local_dir / "tokenizer"
+                vae_dir = local_dir / "vae"
+                comp.hf_text_encoder_dir = str(te_dir) if te_dir.exists() else None
+                comp.hf_tokenizer_dir = str(tk_dir) if tk_dir.exists() else None
+                comp.hf_vae_dir = str(vae_dir) if vae_dir.exists() else None
+                break
+            except Exception as exc:
+                self._logger.debug("WAN22 5B: repo %s unavailable: %s", rid, exc)
+                continue
 
         pipe = None
         vae = None

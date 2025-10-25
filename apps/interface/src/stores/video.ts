@@ -82,8 +82,10 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
   // WAN per-stage models/LoRAs
   const hiModelDir = ref('')
   const loModelDir = ref('')
+  const hiUseLora = ref(false)
   const hiLoraPath = ref('')
   const hiLoraWeight = ref(1.0)
+  const loUseLora = ref(false)
   const loLoraPath = ref('')
   const loLoraWeight = ref(1.0)
   const batchSize = ref(1)
@@ -207,7 +209,7 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
         cfg_scale: hiCfgScale.value,
         seed: hiSeed.value,
         model_dir: hiModelDir.value || undefined,
-        lora_path: hiLoraPath.value || undefined,
+        lora_path: hiUseLora.value ? (hiLoraPath.value || undefined) : undefined,
         lora_weight: hiLoraWeight.value,
       },
       wan_low: {
@@ -217,7 +219,7 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
         cfg_scale: loCfgScale.value,
         seed: loSeed.value,
         model_dir: loModelDir.value || undefined,
-        lora_path: loLoraPath.value || undefined,
+        lora_path: loUseLora.value ? (loLoraPath.value || undefined) : undefined,
         lora_weight: loLoraWeight.value,
       },
     }
@@ -311,8 +313,10 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
     loSeed,
     hiModelDir,
     loModelDir,
+    hiUseLora,
     hiLoraPath,
     hiLoraWeight,
+    loUseLora,
     loLoraPath,
     loLoraWeight,
     batchSize,

@@ -169,8 +169,9 @@ def _get_text_context(model_dir: str, prompt: str, negative: Optional[str], *, d
             raise RuntimeError(
                 "WAN22: unable to fetch minimal Diffusers files for a WAN repo into the model directory. "
                 "Set CODEX_WAN_DIFFUSERS_REPO explicitly to a valid repo (e.g., "
-                "'Kwai-Kolors/Wan2.2-Image-to-Video-14B') or provide explicit "
-                "text_encoder_dir and tokenizer_dir. Details: %s" % (ex,)
+                "'Wan-AI/Wan2.2-I2V-A14B-Diffusers') and provide an HF token, "
+                "run `python scripts/fetch_tokenizer_hf.py --repo <repo> --local <dir>` manually, "
+                "or provide explicit text_encoder_dir/tokenizer_dir extras. Details: %s" % (ex,)
             )
 
         # Load VAE either from provided dir or from the local model_dir now populated

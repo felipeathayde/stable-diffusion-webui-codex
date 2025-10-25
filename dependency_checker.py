@@ -36,7 +36,7 @@ def ensure_repo_on_path() -> None:
 @dataclass
 class DepNode:
     name: str
-    kind: str  # 'local' | 'external' | 'missing'
+    kind: str  # 'local' | 'external' | 'missing' | 'error'
     path: Optional[str] = None
     children: List['DepNode'] = field(default_factory=list)
 
@@ -82,7 +82,8 @@ def parse_imports(file_path: str, current_module: str) -> List[str]:
         elif isinstance(node, ast.ImportFrom):
             # Base module path
             if node.level and node.level > 0:
-                base = resolve_import_base(current_module, node.level)
+                is_pkg = os.path.basename(file_path) == '__init__.py'
+                base = resolve_import_base(current_module, node.level, is_pkg)
                 if node.module:
                     mod = f"{base}.{node.module}" if base else node.module
                 else:
@@ -105,6 +106,13 @@ def classify_module(name: str) -> Tuple[str, Optional[str]]:
     except Exception:
         spec = None
     if spec is None:
+        # Fallback: treat repo-local paths that exist as local
+        rel_path = os.path.join(REPO_ROOT, *name.split('.'))
+        if os.path.isfile(rel_path + '.py'):
+            return 'local', rel_path + '.py'
+        if os.path.isdir(rel_path):
+            init = os.path.join(rel_path, '__init__.py')
+            return ('local', init) if os.path.isfile(init) else ('local', rel_path)
         return 'missing', None
     # builtin/namespace module
     origin = getattr(spec, 'origin', None)
@@ -197,7 +205,10 @@ def walk_dependencies(start_file: str) -> DepNode:
         try:
             imports = parse_imports(file_path, current_module=mod_name)
         except Exception as e:
-            node.children.append(DepNode(name=f"<parse-error: {e}>", kind='missing', path=file_path))
+            # Parsing failed for this local module — report as [ERROR] but do not
+            # inflate the missing count. This typically indicates a syntax error
+            # or a stale checker running against an older file version.
+            node.children.append(DepNode(name=f"<parse-error: {e}>", kind='error', path=file_path))
             return node
         for imp in imports:
             # Stop descending for externals automatically inside recursion
@@ -210,25 +221,27 @@ def walk_dependencies(start_file: str) -> DepNode:
     return entry
 
 
-def print_tree(node: DepNode, prefix: str = '') -> Tuple[int, int, int]:
-    """Print a tree; returns (total, local, missing)."""
+def print_tree(node: DepNode, prefix: str = '') -> Tuple[int, int, int, int]:
+    """Print a tree; returns (total, local, missing, errors)."""
     marker = {
         'local': '[LOCAL]',
         'external': '[EXT]',
-        'missing': '[MISSING]'
+        'missing': '[MISSING]',
+        'error': '[ERROR]'
     }.get(node.kind, '[?]')
     loc = f" ({node.path})" if node.path else ''
     print(f"{prefix}{marker} {node.name}{loc}")
     total = 1
     local = 1 if node.kind == 'local' else 0
     missing = 1 if node.kind == 'missing' else 0
+    errors = 1 if node.kind == 'error' else 0
     n = len(node.children)
     for i, ch in enumerate(node.children):
         last = (i == n - 1)
         child_prefix = prefix + ("└─ " if last else "├─ ")
-        t, l, m = print_tree(ch, prefix=child_prefix)
-        total += t; local += l; missing += m
-    return total, local, missing
+        t, l, m, e = print_tree(ch, prefix=child_prefix)
+        total += t; local += l; missing += m; errors += e
+    return total, local, missing, errors
 
 
 def main() -> None:
@@ -237,13 +250,14 @@ def main() -> None:
         sys.exit(1)
     entry = walk_dependencies(START_FILE)
     print("\nDependency tree (starting at apps/server/run_api.py):")
-    total, local, missing = print_tree(entry)
+    total, local, missing, errors = print_tree(entry)
     print("\nSummary:")
     print(f"  Total modules visited: {total}")
     print(f"  Local modules:         {local}")
     print(f"  Missing modules:       {missing}")
-    if missing:
-        print("\n[WARNING] Some modules are missing. See [MISSING] entries above.")
+    print(f"  Parse errors:          {errors}")
+    if missing or errors:
+        print("\n[WARNING] Issues detected. See [MISSING]/[ERROR] entries above.")
 
 
 if __name__ == '__main__':

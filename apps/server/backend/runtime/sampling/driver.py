@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 import os
 import logging
 
@@ -48,6 +48,7 @@ class CodexSampler:
         *,
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
+        preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
     ) -> torch.Tensor:
         unet = self.sd_model.forge_objects.unet
         model = unet.model
@@ -104,6 +105,7 @@ class CodexSampler:
         sigma_prev: Optional[float] = None
         strict = str(os.getenv("CODEX_SAMPLER_STRICT", "1")).lower() in ("1","true","yes","on")
         import time as _time
+        preview_interval = int(os.getenv("CODEX_PREVIEW_INTERVAL", "0") or 0)
         t0 = _time.perf_counter()
         for i in range(start_idx, steps):
             sigma = sigmas[i]
@@ -207,6 +209,13 @@ class CodexSampler:
                 sigma_up = sigma_up_sq ** 0.5
                 sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
                 x = denoised + sigma_down * eps + sigma_up * torch.randn_like(x)
+
+            # Optional preview callback on denoised (x0)
+            if preview_callback is not None and (preview_interval > 0 and ((i+1) % preview_interval == 0) or (i+1) == steps):
+                try:
+                    preview_callback(denoised.detach(), i + 1, steps)
+                except Exception:
+                    pass
 
             if self._log_enabled and (i == 0 or (i+1) == steps or (i+1) % max(1, steps//5) == 0):
                 self._logger.info("step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f dt=%.2fms", i+1, steps, float(sigma), float(sigma_next), float(x.norm().item()), (_time.perf_counter()-t0)*1000.0)

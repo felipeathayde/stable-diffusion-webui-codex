@@ -18,6 +18,8 @@ from apps.server.backend.runtime.sampling.driver import CodexSampler
 from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import lora as codex_lora
 from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
+from apps.server.backend.core.state import state as backend_state
+from PIL import Image
 
 
 class Img2ImgRuntime:
@@ -77,14 +79,24 @@ class Img2ImgRuntime:
         strength = float(getattr(self.processing, "denoising_strength", 0.5) or 0.5)
         start_step = max(0, min(int(round(strength * steps)), steps - 1))
 
+        def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
+            try:
+                sample = self.processing.sd_model.decode_first_stage(denoised_latent.to(devices.default_device()))
+                arr = sample[0].detach().float().cpu().clamp(-1, 1)
+                arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
+                backend_state.set_current_image(Image.fromarray(arr, mode='RGB'))
+            except Exception:
+                pass
+
         samples = self.processing.sampler.sample(
             self.processing,
             noise,
             self.conditioning,
             self.unconditional_conditioning,
-            image_conditioning=None,  # TODO: feed mask/c_concat when available
+            image_conditioning=getattr(self.processing, 'img2img_image_conditioning', lambda *_: None)(None, None, None),
             init_latent=init_latent,
             start_at_step=start_step,
+            preview_callback=_preview_cb,
         )
 
         return samples

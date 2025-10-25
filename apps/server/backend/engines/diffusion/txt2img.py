@@ -23,6 +23,8 @@ from apps.server.backend.codex import main as codex_main
 from apps.server.backend.codex.loader import load_engine as _load_engine, EngineLoadOptions
 from apps.server.backend.codex import lora as codex_lora
 from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
+from apps.server.backend.core.state import state as backend_state
+from PIL import Image
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
@@ -215,12 +217,24 @@ class Txt2ImgRuntime:
             noise = self.processing.modified_noise
             self.processing.modified_noise = None
 
+        def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
+            try:
+                # decode x0 (denoised) to an image preview on CPU
+                img = _decode_latent_batch(self.processing.sd_model, denoised_latent, target_device=devices.cpu())
+                # convert BCHW [-1,1] to HWC, [0,255] uint8 and then PIL
+                arr = img[0].detach().float().cpu().clamp(-1, 1)
+                arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
+                backend_state.set_current_image(Image.fromarray(arr, mode='RGB'))
+            except Exception:
+                pass
+
         samples = self.processing.sampler.sample(
             self.processing,
             noise,
             self.conditioning,
             self.unconditional_conditioning,
             image_conditioning=self.processing.txt2img_image_conditioning(noise),
+            preview_callback=_preview_cb,
         )
 
         samples = self._run_post_sample_hooks(samples)

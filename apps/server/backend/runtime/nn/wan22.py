@@ -926,6 +926,12 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+    # Early activity signal so the UI shows immediate progress
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=0, total=1, percent=0.0)
+        except Exception:
+            pass
 
     # Device & dtype
     dev_name = _resolve_device_name(getattr(cfg, 'device', 'auto'))
@@ -934,6 +940,11 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
 
     # Prepare UNet (High stage) and text context
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=0, total=1, percent=0.05)
+        except Exception:
+            pass
     # Determine model key for tokenizer/encoder presets
     _p = os.path.basename(hi_path).lower()
     _variant = '5b' if '5b' in _p else '14b'
@@ -950,6 +961,11 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
     )
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=0, total=1, percent=0.1)
+        except Exception:
+            pass
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     if isinstance(negative_embeds, torch.Tensor):
@@ -965,6 +981,11 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         str(dev), str(dt), grid, (token_shape[0], token_shape[1])
     )
     _log_cuda_mem(log, label='after-high-setup')
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=1, total=1, percent=0.15)
+        except Exception:
+            pass
 
     # Sample tokens in High stage
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
@@ -1234,6 +1255,11 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=0, total=1, percent=0.0)
+        except Exception:
+            pass
 
     if cfg.init_image is None:
         raise RuntimeError("img2vid requires init_image for GGUF path")
@@ -1244,6 +1270,11 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
 
     # Prepare UNet (High)
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=0, total=1, percent=0.05)
+        except Exception:
+            pass
 
     # Text embeds
     _p = os.path.basename(hi_path).lower()
@@ -1261,6 +1292,11 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
     )
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=0, total=1, percent=0.1)
+        except Exception:
+            pass
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     if isinstance(negative_embeds, torch.Tensor):
@@ -1275,6 +1311,11 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
         str(dev), str(dt), grid, (token_shape[0], token_shape[1])
     )
+    if on_progress:
+        try:
+            on_progress(stage='prepare', step=1, total=1, percent=0.15)
+        except Exception:
+            pass
     # For img2vid, we seed token space from VAE latents of the init image (repeated across T)
     lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     # Tile along time to match requested frames

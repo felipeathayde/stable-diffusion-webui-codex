@@ -4,10 +4,6 @@ from typing import Any, Mapping, Sequence
 import logging
 
 from apps.server.backend.engines.util.a1111_bridge import get_opts as _get_opts
-from apps.server.backend.engines.util.a1111_bridge import (
-    # type hints only; the bridge returns real objects from legacy when needed
-    # but engines should depend on the types, not import legacy directly.
-)
 from modules import processing as _processing  # type: ignore
 
 from apps.server.backend.core.requests import Img2ImgRequest, Txt2ImgRequest

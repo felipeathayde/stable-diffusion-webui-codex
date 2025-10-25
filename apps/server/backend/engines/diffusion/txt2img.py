@@ -11,7 +11,7 @@ import os
 from apps.server.backend.core import devices
 from apps.server.backend.core.rng import ImageRNG
 from apps.server.backend.runtime.sampling.driver import CodexSampler
-from apps.server.backend.runtime.text_processing.extra_nets import parse_prompts
+from apps.server.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 
 
 class _ExtraNetworksShim:
@@ -141,7 +141,7 @@ class Txt2ImgRuntime:
         self._ensure_sampler()
 
         # Parse extra-network tags and clean prompts
-        cleaned_prompts, prompt_loras = parse_prompts(list(self.prompts))
+        cleaned_prompts, prompt_loras, prompt_controls = parse_prompts_with_extras(list(self.prompts))
         self.processing.prompts = cleaned_prompts
         self.processing.seeds = list(self.seeds)
         self.processing.subseeds = list(self.subseeds)
@@ -217,11 +217,22 @@ class Txt2ImgRuntime:
             stats = apply_loras_to_engine(model, merged)
             logging.info("[native] Applied %d LoRA(s), %d params touched (prompt+global)", stats.files, stats.params_touched)
         model.forge_objects = model.forge_objects_after_applying_lora.shallow_copy()
-        # Token merging with strategy
-        strat = getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
+        # Controls: clip_skip, sampler, scheduler, token merge
+        try:
+            cs = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None
+            if cs is not None and hasattr(self.processing.sd_model, 'set_clip_skip'):
+                self.processing.sd_model.set_clip_skip(cs)
+        except Exception:
+            pass
+        if 'sampler' in prompt_controls:
+            self.processing.sampler_name = str(prompt_controls['sampler'])
+        # Token merging with strategy (allow override via tag)
+        strat = prompt_controls.get('token_merge_strategy') or getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
         if not strat:
             strat = os.getenv('CODEX_TOKEN_MERGE_STRATEGY', 'avg')
-        apply_token_merging(model, self.processing.get_token_merging_ratio(), strategy=strat)
+        ratio_override = prompt_controls.get('token_merge_ratio', None)
+        ratio = float(ratio_override) if ratio_override is not None else float(self.processing.get_token_merging_ratio())
+        apply_token_merging(model, ratio, strategy=strat)
 
         if self.processing.scripts is not None:
             self.processing.scripts.process_before_every_sampling(

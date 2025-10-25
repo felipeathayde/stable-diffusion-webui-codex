@@ -15,7 +15,7 @@ import torch
 from apps.server.backend.core import devices
 from apps.server.backend.core.rng import ImageRNG
 from apps.server.backend.runtime.sampling.driver import CodexSampler
-from apps.server.backend.runtime.text_processing.extra_nets import parse_prompts
+from apps.server.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import lora as codex_lora
 from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
@@ -60,10 +60,10 @@ class Img2ImgRuntime:
     def generate(self) -> torch.Tensor:
         # Parse extra-network tags and clean prompts
         if hasattr(self.processing, 'prompts'):
-            cleaned_prompts, prompt_loras = parse_prompts(list(getattr(self.processing, 'prompts', self.prompts)))
+            cleaned_prompts, prompt_loras, prompt_controls = parse_prompts_with_extras(list(getattr(self.processing, 'prompts', self.prompts)))
             self.processing.prompts = cleaned_prompts
         else:
-            prompt_loras = []
+            prompt_loras, prompt_controls = [], {}
 
         # Prepare sampler
         algo = getattr(self.processing, "sampler_name", None)
@@ -95,10 +95,21 @@ class Img2ImgRuntime:
             except Exception:
                 pass
         self.processing.sd_model.forge_objects = self.processing.sd_model.forge_objects_after_applying_lora.shallow_copy()
-        strat = getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
+        # Controls: clip_skip, sampler, scheduler, token merge
+        try:
+            cs = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None
+            if cs is not None and hasattr(self.processing.sd_model, 'set_clip_skip'):
+                self.processing.sd_model.set_clip_skip(cs)
+        except Exception:
+            pass
+        if 'sampler' in prompt_controls:
+            self.processing.sampler_name = str(prompt_controls['sampler'])
+        strat = prompt_controls.get('token_merge_strategy') or getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
         if not strat:
             strat = os.getenv('CODEX_TOKEN_MERGE_STRATEGY', 'avg')
-        apply_token_merging(self.processing.sd_model, getattr(self.processing, "token_merging_ratio", 0.0), strategy=strat)
+        ratio_override = prompt_controls.get('token_merge_ratio', None)
+        ratio = float(ratio_override) if ratio_override is not None else float(getattr(self.processing, "token_merging_ratio", 0.0))
+        apply_token_merging(self.processing.sd_model, ratio, strategy=strat)
 
         # Denoising strength controls where we start in the sigma schedule
         steps = int(getattr(self.processing, "steps", 20) or 20)

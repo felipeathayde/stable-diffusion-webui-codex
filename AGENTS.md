@@ -38,6 +38,9 @@
 ## Documentation Index
 - Docs home: `codex/` — architecture, design, research, tasks, roadmaps, reports, and sprint logs.
   - Architecture (video): `codex/backend-video-architecture.md`.
+  - Canonical structure: `codex/architecture/repo-structure.md`
+  - Architecture rules: `codex/architecture/architecture-rules.md`
+  - Pipelines bible: `codex/architecture/model-pipelines-bible.md`
   - Research (loading/efficiency): `codex/research/`.
   - Design/UX: `codex/design/`.
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.

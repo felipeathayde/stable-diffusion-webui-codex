@@ -42,6 +42,13 @@ try:
 except Exception:
     _EXC_LOG_PATH = None
 
+# Enforce repo policies early
+try:
+    from apps.server.backend.policy import enforce_repo_policies as _enforce_policies
+    _enforce_policies()
+except Exception:
+    pass
+
 _initialized = False
 
 

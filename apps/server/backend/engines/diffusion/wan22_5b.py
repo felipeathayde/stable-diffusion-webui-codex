@@ -15,6 +15,7 @@ from apps.server.backend.core.exceptions import EngineLoadError
 import os
 
 from apps.server.backend.huggingface.assets import ensure_repo_minimal_files
+from apps.server.backend.core.progress_stream import stream_run
 from .wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates, resolve_user_supplied_assets
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
@@ -177,7 +178,7 @@ class Wan225BEngine(BaseVideoEngine):
                     cfg_scale=getattr(request, 'cfg_scale', None),
                 ),
             )
-            for ev in gguf.stream_txt2vid(cfg, logger=self._logger):
+            for ev in stream_run(gguf.run_txt2vid, cfg=cfg, logger=self._logger):
                 if isinstance(ev, dict) and ev.get('type') == 'progress':
                     st = str(ev.get('stage', ''))
                     step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
@@ -242,7 +243,7 @@ class Wan225BEngine(BaseVideoEngine):
                     cfg_scale=getattr(request, 'cfg_scale', None),
                 ),
             )
-            for ev in gguf.stream_img2vid(cfg, logger=self._logger):
+            for ev in stream_run(gguf.run_img2vid, cfg=cfg, logger=self._logger):
                 if isinstance(ev, dict) and ev.get('type') == 'progress':
                     st = str(ev.get('stage', ''))
                     step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))

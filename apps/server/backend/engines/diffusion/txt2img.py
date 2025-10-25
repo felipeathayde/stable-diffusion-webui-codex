@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
     lora_networks = None
 from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import main as codex_main
+from apps.server.backend.codex.loader import load_engine as _load_engine
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
@@ -89,7 +90,12 @@ def _reload_for_hires(processing) -> None:
         if reload_required:
             try:
                 codex_main.refresh_model_loading_parameters()
-                raise NotImplementedError("Model reload during hires is not implemented natively yet")
+                # Native model reload for hires
+                try:
+                    new_engine = _load_engine(processing.hr_checkpoint_name)
+                    processing.sd_model = new_engine
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to load hires checkpoint '{processing.hr_checkpoint_name}': {exc}")
             finally:
                 codex_main.modules_change(modules_before, save=False, refresh=False)
                 codex_main.checkpoint_change(checkpoint_before, save=False, refresh=False)

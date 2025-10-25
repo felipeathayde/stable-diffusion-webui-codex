@@ -786,7 +786,84 @@ def forge_loader(sd, additional_state_dicts=None):
         return Chroma(estimated_config=estimated_config, huggingface_components=huggingface_components)
     for M in possible_models:
         if any(isinstance(estimated_config, x) for x in M.matched_guesses):
-            return M(estimated_config=estimated_config, huggingface_components=huggingface_components)
+    return M(estimated_config=estimated_config, huggingface_components=huggingface_components)
 
     print('Failed to recognize model type!')
     return None
+
+
+# ------------------------------ Native diffusers repo loader (no state dict)
+class _SimpleEstimated:
+    def __init__(self, *, huggingface_repo: str, unet_config: dict):
+        self.huggingface_repo = huggingface_repo
+        self.unet_config = unet_config
+        self.model_type = type("_T", (), {"name": "EPS"})  # default
+
+    def inpaint_model(self) -> bool:  # API parity with guess
+        return False
+
+
+def _detect_engine_from_config(config: dict) -> str:
+    # Heuristics based on component classes and names
+    comps = {k: v for k, v in config.items() if isinstance(v, list) and len(v) == 2}
+    cls_by_name = {k: v[1] for k, v in comps.items()}
+    if "text_encoder_2" in comps and "unet" in comps:
+        return "sdxl"
+    if cls_by_name.get("transformer") in ("FluxTransformer2DModel",):
+        return "flux"
+    if cls_by_name.get("transformer") in ("SD3Transformer2DModel",):
+        return "sd35"
+    if cls_by_name.get("transformer") in ("ChromaTransformer2DModel",):
+        return "chroma"
+    # Fallback: sd1/sd2 presence
+    if "unet" in comps and "text_encoder" in comps and "vae" in comps:
+        # Rough heuristic: SD2 uses OpenCLIP (CLIPTextModelWithProjection) frequently
+        te_cls = cls_by_name.get("text_encoder", "")
+        if te_cls.endswith("WithProjection"):
+            return "sd20"
+        return "sd15"
+    raise ValueError("Unable to determine engine from diffusers config")
+
+
+def load_engine_from_diffusers(repo_dir: str):
+    """Build an engine instance from a local diffusers repository directory.
+
+    Loads components via from_pretrained(local_files_only=True) and instantiates
+    the appropriate engine class based on the config structure.
+    """
+    config: dict = DiffusionPipeline.load_config(repo_dir)
+    comps = {}
+    for name, (lib_name, cls_name) in ((k, v) for k, v in config.items() if isinstance(v, list) and len(v) == 2):
+        cls = getattr(importlib.import_module(lib_name), cls_name)
+        comps[name] = cls.from_pretrained(os.path.join(repo_dir, name), local_files_only=True)
+
+    engine_key = _detect_engine_from_config(config)
+    # Minimal unet config placeholder; engines expect a config dict for patchers
+    unet_config = {}
+    try:
+        # Try to read the unet/transformer config when present
+        for k in ("unet", "transformer"):
+            cfg_dir = os.path.join(repo_dir, k)
+            if os.path.isdir(cfg_dir):
+                cfg_path = os.path.join(cfg_dir, "config.json")
+                if os.path.isfile(cfg_path):
+                    unet_config = json.load(open(cfg_path, "r", encoding="utf-8"))
+                    break
+    except Exception:
+        unet_config = {}
+
+    est = _SimpleEstimated(huggingface_repo=os.path.basename(repo_dir), unet_config=unet_config)
+
+    if engine_key == "sdxl":
+        return StableDiffusionXL(estimated_config=est, huggingface_components=comps)
+    if engine_key == "flux":
+        return Flux(estimated_config=est, huggingface_components=comps)
+    if engine_key == "sd35":
+        return StableDiffusion3(estimated_config=est, huggingface_components=comps)
+    if engine_key == "chroma":
+        return Chroma(estimated_config=est, huggingface_components=comps)
+    if engine_key == "sd20":
+        return StableDiffusion2(estimated_config=est, huggingface_components=comps)
+    if engine_key == "sd15":
+        return StableDiffusion(estimated_config=est, huggingface_components=comps)
+    raise ValueError(f"Unsupported engine key from diffusers config: {engine_key}")

@@ -65,7 +65,23 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     vaes = _list_files(vae_dir, (".safetensors", ".bin", ".pt"))
     text_encoders = _list_files(te_dir, (".safetensors", ".bin", ".pt"))
     loras = _list_files(lora_dir, (".safetensors", ".bin", ".pt", ".ckpt"))
-    wan22 = _list_files(wan_dir, (".gguf",))
+    # WAN22 GGUF with stage detection (high/low/unknown)
+    wan22: List[Dict[str, str]] = []
+    if os.path.isdir(wan_dir):
+        try:
+            for name in os.listdir(wan_dir):
+                full = os.path.join(wan_dir, name)
+                if os.path.isfile(full) and name.lower().endswith('.gguf'):
+                    lower = name.lower()
+                    stage = 'unknown'
+                    if any(k in lower for k in ('high', 'highnoise', 'high_noise')):
+                        stage = 'high'
+                    elif any(k in lower for k in ('low', 'lownoise', 'low_noise')):
+                        stage = 'low'
+                    wan22.append({"name": name, "path": full, "stage": stage})
+            wan22.sort(key=lambda d: d["name"].lower())
+        except Exception:
+            wan22 = []
 
     # Metadata folders: org/repo roots under hf_root
     metadata: List[Dict[str, str]] = []
@@ -91,4 +107,3 @@ def get() -> Dict[str, List[Dict[str, str]]]:
         init()
     assert _CACHE is not None
     return asdict(_CACHE)
-

@@ -115,7 +115,7 @@
                   <label class="label" for="highLora">LoRA (input list)</label>
                   <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/Lora/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                   <datalist id="dl-lora">
-                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                   </datalist>
                 </div>
               </div>

@@ -43,7 +43,8 @@
   - Architecture rules: `codex/architecture/architecture-rules.md`
   - Pipelines bible: `codex/architecture/model-pipelines-bible.md`
   - Repository inventory: `codex/architecture/repo-inventory.md`
-  - Cleanup checklists: `codex/architecture/repo-cleanup-checklists.md`
+- Cleanup checklists: `codex/architecture/repo-cleanup-checklists.md`
+- Native LoRA (registry + apply): see `codex/architecture/CONSOLIDATED_DIRECTIVES.md` (LoRA section)
   - Research (loading/efficiency): `codex/research/`.
   - Design/UX: `codex/design/`.
 - Operational logs: `.sangoi/` — `task-logs/`, `handoffs/`, and machine-readable inventories.
@@ -56,6 +57,10 @@
 - Re‑design to Codex style: dataclasses/enums, small modules, explicit errors, clear names.
 - Add validation points (logs, invariants, device/dtype/shape checks) and a clean migration path (no shims).
 - Acceptance: no legacy imports, clear API, explicit errors, rationale documented (include the five options summary), docs updated.
+
+Tip — Native LoRA usage
+- Discover adapters via `GET /api/loras` (backend registry). Set selections with `POST /api/loras/apply`.
+- Engines apply LoRA natively at generation time using `codex.lora` selections and `patchers.lora_apply`.
 
 ### Git commit guide
 1. `git status`

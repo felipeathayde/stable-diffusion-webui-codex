@@ -786,7 +786,7 @@ def forge_loader(sd, additional_state_dicts=None):
         return Chroma(estimated_config=estimated_config, huggingface_components=huggingface_components)
     for M in possible_models:
         if any(isinstance(estimated_config, x) for x in M.matched_guesses):
-    return M(estimated_config=estimated_config, huggingface_components=huggingface_components)
+            return M(estimated_config=estimated_config, huggingface_components=huggingface_components)
 
     print('Failed to recognize model type!')
     return None

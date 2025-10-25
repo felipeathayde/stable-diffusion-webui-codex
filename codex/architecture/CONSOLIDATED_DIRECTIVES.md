@@ -43,6 +43,7 @@ Architecture & Structure
   - `registry/checkpoints.py` — diffusers repos and single‑file checkpoints.
   - `registry/vae.py` — local and vendored VAE discovery.
   - `registry/text_encoders.py` — vendored encoders and tokenizers.
+  - `registry/lora.py` — LoRA adapters under `models/lora` and configured paths.
   - Discovery sources are explicit: local `models/` and vendored Hugging Face trees under `apps/server/backend/huggingface/`.
   - When missing, return clear errors; never “guess” silently.
 - UI & Blocks
@@ -61,6 +62,17 @@ Sampling Rules
   - Euler (ODE), Euler A (ancestral), DDIM (η=0). DPM++ variants are being added next.
 - Use sigma‑domain updates consistently; convert x0↔ε carefully and guard divisions.
 - Update `BackendState` every step for progress.
+
+LoRA (Native)
+- Never use legacy extra_networks.
+- Use the native path:
+  - Discovery: `registry/lora.py` provides `list_loras()` and `describe_loras()`.
+  - Selection: `codex/lora.py` with `LoraSelection`, `set_selections()`, `get_selections()`.
+  - Application: `patchers/lora_apply.py::apply_loras_to_engine(engine, selections)` (UNet + CLIP), with explicit logging and strict errors.
+- API endpoints:
+  - `GET /api/loras` returns `{ loras, loras_info }`.
+  - `GET /api/loras/selections` returns `{ selections }`.
+  - `POST /api/loras/apply` sets selections process‑wide.
 
 Assets & Loading
 - Diffusers trees must follow standard layout: `tokenizer/`, `text_encoder[/_2]/`, `unet|transformer/`, `vae/`, `scheduler/`, with `model_index.json`.

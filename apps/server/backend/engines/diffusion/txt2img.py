@@ -6,6 +6,7 @@ import logging
 
 import numpy as np
 import torch
+import os
 
 from apps.server.backend.core import devices
 from apps.server.backend.core.rng import ImageRNG
@@ -17,13 +18,11 @@ class _ExtraNetworksShim:
     def activate(processing, data):
         raise NotImplementedError("Extra networks activation is not implemented natively yet")
 
-try:  # optional – only present when LoRA extension is available
-    from extensions_builtin.sd_forge_lora import networks as lora_networks
-except Exception:  # pragma: no cover - optional dependency
-    lora_networks = None
 from apps.server.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.server.backend.codex import main as codex_main
 from apps.server.backend.codex.loader import load_engine as _load_engine, EngineLoadOptions
+from apps.server.backend.codex import lora as codex_lora
+from apps.server.backend.patchers.lora_apply import apply_loras_to_engine
 
 
 def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
@@ -294,34 +293,20 @@ class Txt2ImgRuntime:
         self._set_shared_job()
 
     def _activate_extra_networks(self):
+        """Apply native extras (LoRA etc.) if selections are configured.
+
+        No legacy extra_networks usage; we rely on explicit LoRA selections
+        stored via Codex options.
+        """
         if getattr(self.processing, "disable_extra_networks", False):
             return
-        bridge = None
-        if bridge is not None:
-            bridge.ensure_lora_registry()
-        elif lora_networks is not None:
-            try:
-                print(
-                    "[runtime] scanning lora dir:",
-                    "<unset>",
-                )
-                lora_networks.list_available_networks()
-            except Exception as exc:
-                print("[runtime] LoRA listing failed:", exc)
-        if hasattr(self.processing, "parse_extra_network_prompts"):
-            self.processing.parse_extra_network_prompts()
-        data = getattr(self.processing, "extra_network_data", None)
-        if data:
-            if lora_networks is not None:
-                print(
-                    "[runtime] activating extra networks:",
-                    list(data.keys()),
-                    "lotr entries",
-                    len(getattr(lora_networks, "available_networks", {})),
-                    "aliases",
-                    len(getattr(lora_networks, "available_network_aliases", {})),
-                )
-            extra_networks.activate(self.processing, data)
+        try:
+            selections = codex_lora.get_selections()
+        except Exception:
+            selections = []
+        if selections:
+            stats = apply_loras_to_engine(self.processing.sd_model, selections)
+            logging.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
 
     def _set_shared_job(self):
         if getattr(self.processing, "n_iter", 1) <= 1:

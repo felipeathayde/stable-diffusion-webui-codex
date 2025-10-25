@@ -1046,38 +1046,39 @@ def build_app() -> FastAPI:
 
     @app.get('/api/loras')
     def list_loras() -> Dict[str, Any]:
-        """Return LoRA files discovered under models/lora and --lora-dir.
+        """Return LoRA files via native registry plus metadata.
 
-        This is a simple directory scan (basenames) for quick UI listing.
+        Shape: { loras: [{name, path}], loras_info: [LoraEntry-like dicts] }
         """
-        roots: list[str] = []
-        try:
-            from modules import paths as _paths
-            roots.append(os.path.join(_paths.models_path, 'lora'))
-        except Exception:
-            pass
-        try:
-            from modules import shared as _s
-            if isinstance(_s.cmd_opts.lora_dir, str):
-                roots.append(_s.cmd_opts.lora_dir)
-        except Exception:
-            pass
-        exts = {'.safetensors', '.pt', '.ckpt'}
-        seen = set()
-        items: list[Dict[str, str]] = []
-        for r in roots:
-            if not isinstance(r, str) or not os.path.isdir(r):
+        from apps.server.backend.registry.lora import list_loras as _list_loras, describe_loras as _describe_loras
+        items = _list_loras()
+        info = [e.__dict__ for e in _describe_loras()]
+        return {"loras": items, "loras_info": info}
+
+    @app.get('/api/loras/selections')
+    def get_lora_selections() -> Dict[str, Any]:
+        from apps.server.backend.codex.lora import get_selections
+        sels = get_selections()
+        return {"selections": [s.__dict__ for s in sels]}
+
+    @app.post('/api/loras/apply')
+    def apply_lora_selections(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Set LoRA selections process-wide (used at generation time).
+
+        Payload: { selections: [{ path, weight?, online? }] }
+        """
+        if not isinstance(payload, dict) or 'selections' not in payload or not isinstance(payload['selections'], list):
+            raise HTTPException(status_code=400, detail='payload must be {"selections": [...]}')
+        from apps.server.backend.codex.lora import set_selections, LoraSelection
+        raw = payload['selections']
+        # Normalize to dataclasses
+        sels = []
+        for it in raw:
+            if not isinstance(it, dict) or 'path' not in it:
                 continue
-            for dp, _dn, files in os.walk(r):
-                for fn in files:
-                    if os.path.splitext(fn)[1].lower() in exts:
-                        name = os.path.splitext(fn)[0]
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                        items.append({"name": name, "path": os.path.join(dp, fn)})
-        items.sort(key=lambda x: x["name"].lower())
-        return {"loras": items}
+            sels.append(LoraSelection(path=str(it['path']), weight=float(it.get('weight', 1.0)), online=bool(it.get('online', False))))
+        set_selections(sels)
+        return {"ok": True, "count": len(sels)}
 
     # Simple paths config for frontend-managed search locations
     @app.get('/api/paths')

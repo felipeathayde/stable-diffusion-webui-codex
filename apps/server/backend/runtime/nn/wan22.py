@@ -581,10 +581,7 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         if torch.is_tensor(vt):
             n_bad = int((~torch.isfinite(vt)).sum().item())
             if n_bad > 0:
-                if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
-                    raise RuntimeError(f"WAN22 GGUF: non-finite latents before VAE decode (count={n_bad}). Enable WAN_I2V_LAT_STATS=1 to inspect distribution.")
-                if logger:
-                    _lw(logger, "[wan22.gguf] WARN: VAE decode received non-finite latents (count=%d); continuing", n_bad)
+                raise RuntimeError(f"WAN22 GGUF: non-finite latents before VAE decode (count={n_bad}).")
     except Exception:
         pass
     if hasattr(video_latents, 'ndim'):
@@ -645,19 +642,13 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
                     x = x.squeeze()
             if x.ndim != 3:
                 raise RuntimeError(f'VAE decode produced unexpected tensor rank: shape={tuple(x.shape)}; expected [C,H,W]')
-            # Sanitize NaNs/Infs then clamp to display range
+            # No sanitization: non-finite outputs are hard errors
             if not torch.isfinite(x).all():
                 try:
                     n_bad = int((~torch.isfinite(x)).sum().item())
                 except Exception:
                     n_bad = -1
-                if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
-                    raise RuntimeError(f"WAN22 GGUF: VAE decode produced non-finite outputs (count={n_bad}). Consider lowering steps/cfg or enabling debug clamp.")
-                try:
-                    _lw(logger, "[wan22.gguf] WARN: VAE decode produced non-finite values (count=%d); sanitizing.", n_bad)
-                except Exception:
-                    pass
-                x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=0.0)
+                raise RuntimeError(f"WAN22 GGUF: VAE decode produced non-finite outputs (count={n_bad}).")
             x = x.clamp(0, 1)
             arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             frames.append(Image.fromarray(arr))
@@ -1498,17 +1489,13 @@ def _sample_stage_tokens(
         # Guard: detect non-finite gradients/tokens early
         if not torch.isfinite(eps).all():
             bad = int((~torch.isfinite(eps)).sum().item())
-            if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
-                raise RuntimeError(f"WAN22 GGUF: non-finite model_output at step {i+1}/{total} (count={bad}).")
-            _lw(log, "[wan22.gguf] WARN: non-finite model_output at %d/%d (count=%d); continuing", i+1, total, bad)
+            raise RuntimeError(f"WAN22 GGUF: non-finite model_output at step {i+1}/{total} (count={bad}).")
         # Euler step
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample
         if not torch.isfinite(x).all():
             badx = int((~torch.isfinite(x)).sum().item())
-            if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
-                raise RuntimeError(f"WAN22 GGUF: non-finite tokens after step {i+1}/{total} (count={badx}).")
-            _lw(log, "[wan22.gguf] WARN: non-finite tokens after %d/%d (count=%d); continuing", i+1, total, badx)
+            raise RuntimeError(f"WAN22 GGUF: non-finite tokens after step {i+1}/{total} (count={badx}).")
         pct = float(i + 1) / float(max(1, total))
         # Optional CUDA memory snapshot every N steps
         if log_mem_interval is not None:

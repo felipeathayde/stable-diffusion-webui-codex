@@ -828,6 +828,25 @@ def _rms_norm(x: torch.Tensor, w: Any) -> torch.Tensor:
     return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)) * w
 
 
+@_io
+def _layer_norm(x: torch.Tensor, *, weight: Any | None = None, bias: Any | None = None, eps: float = 1e-6) -> torch.Tensor:
+    """LayerNorm over last dim; weight/bias are optional.
+
+    ComfyUI uses LayerNorm with elementwise_affine=False for norm1/norm2 and
+    optionally elementwise_affine=True for norm3 (cross_attn_norm). This helper
+    replicates that: when weight/bias are None we apply LN without affine.
+    """
+    import torch.nn.functional as F
+    w_t: torch.Tensor | None = None
+    b_t: torch.Tensor | None = None
+    if weight is not None:
+        w = dequantize_tensor(weight)
+        w_t = (w if torch.is_tensor(w) else torch.as_tensor(w)).to(device=x.device, dtype=x.dtype)
+    if bias is not None:
+        b = dequantize_tensor(bias)
+        b_t = (b if torch.is_tensor(b) else torch.as_tensor(b)).to(device=x.device, dtype=x.dtype)
+    return F.layer_norm(x, (x.shape[-1],), w_t, b_t, eps)
+
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
     # Fallback to env if not explicitly provided
     if policy is None:
@@ -1011,41 +1030,130 @@ def _merge_heads(x: torch.Tensor) -> torch.Tensor:
 
 
 @_io
-def _ca(x: torch.Tensor, ctx: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int, scale=None, shift=None) -> torch.Tensor:
-    q_in = _rms_norm(x, state[w.norm_q_w]) if w.norm_q_w else x
-    if scale is not None:
-        q_in = q_in * (1 + scale)
-    if shift is not None:
-        q_in = q_in + shift
-    q = _linear(q_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
+def _ca_core(x_in: torch.Tensor, ctx: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int) -> torch.Tensor:
+    """Cross-attention core (no residual add, no external gating)."""
+    q = _linear(_rms_norm(x_in, state[w.norm_q_w]) if w.norm_q_w else x_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
     k = _linear(_rms_norm(ctx, state[w.norm_k_w]) if w.norm_k_w else ctx, state[w.k_w], state.get(w.k_b), name=w.k_w)
     v = _linear(ctx, state[w.v_w], state.get(w.v_b), name=w.v_w)
-    qh = _split_heads(q, heads)
-    kh = _split_heads(k, heads)
-    vh = _split_heads(v, heads)
-    ah = _sdpa(qh, kh, vh, causal=False)
+    ah = _sdpa(_split_heads(q, heads), _split_heads(k, heads), _split_heads(v, heads), causal=False)
     a = _merge_heads(ah)
-    out = _linear(a, state[w.o_w], state.get(w.o_b))
-    return x + out
+    return _linear(a, state[w.o_w], state.get(w.o_b))
 
 
 @_io
-def _sa(x: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int, scale=None, shift=None) -> torch.Tensor:
-    q_in = _rms_norm(x, state[w.norm_q_w]) if w.norm_q_w else x
-    if scale is not None:
-        q_in = q_in * (1 + scale)
-    if shift is not None:
-        q_in = q_in + shift
-    q = _linear(q_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
-    k = _linear(_rms_norm(x, state[w.norm_k_w]) if w.norm_k_w else x, state[w.k_w], state.get(w.k_b), name=w.k_w)
-    v = _linear(x, state[w.v_w], state.get(w.v_b), name=w.v_w)
-    qh = _split_heads(q, heads)
-    kh = _split_heads(k, heads)
-    vh = _split_heads(v, heads)
-    ah = _sdpa(qh, kh, vh, causal=False)
+def _sa_core(x_in: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int,
+             grid: Optional[Tuple[int, int, int]] = None,
+             rope_cache: Optional[Dict[tuple, Dict[str, torch.Tensor]]] = None) -> torch.Tensor:
+    """Self-attention core (no residual add, no external gating).
+
+    Applies 3D ROPE to q/k when grid is provided (T,H,W).
+    """
+    q = _linear(_rms_norm(x_in, state[w.norm_q_w]) if w.norm_q_w else x_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
+    k = _linear(_rms_norm(x_in, state[w.norm_k_w]) if w.norm_k_w else x_in, state[w.k_w], state.get(w.k_b), name=w.k_w)
+    v = _linear(x_in, state[w.v_w], state.get(w.v_b), name=w.v_w)
+
+    if grid is not None:
+        try:
+            qh = _split_heads(q, heads)
+            kh = _split_heads(k, heads)
+            qh, kh = _apply_rope_qk(qh, kh, grid=grid, cache=(rope_cache or {}))
+            ah = _sdpa(qh, kh, _split_heads(v, heads), causal=False)
+        except Exception:
+            ah = _sdpa(_split_heads(q, heads), _split_heads(k, heads), _split_heads(v, heads), causal=False)
+    else:
+        ah = _sdpa(_split_heads(q, heads), _split_heads(k, heads), _split_heads(v, heads), causal=False)
+
     a = _merge_heads(ah)
-    out = _linear(a, state[w.o_w], state.get(w.o_b))
-    return x + out
+    return _linear(a, state[w.o_w], state.get(w.o_b))
+
+
+@_io
+def _apply_rope_qk(q: torch.Tensor, k: torch.Tensor, *, grid: Tuple[int, int, int], cache: Dict[tuple, Dict[str, torch.Tensor]]):
+    """Apply 3D ROPE to q/k split by heads.
+
+    q,k: [B, L, H, D]; grid=(T,Hg,Wg) where L = T*Hg*Wg.
+    Splits D per ComfyUI: dt = D-4*(D//6), dh = 2*(D//6), dw = 2*(D//6).
+    """
+    B, L, Hh, D = q.shape
+    T2, H2, W2 = int(grid[0]), int(grid[1]), int(grid[2])
+    if L != (T2 * H2 * W2):
+        # Try to infer T from L if only T changed
+        if (L % (H2 * W2)) == 0:
+            T2 = L // (H2 * W2)
+        else:
+            return q, k
+
+    device = q.device
+    dtype = q.dtype
+    key = (T2, H2, W2, int(D), str(device), str(dtype))
+    tbl = cache.get(key)
+    if tbl is None:
+        half_base = 10000.0
+        # positions per token
+        idx = torch.arange(L, device=device, dtype=torch.float32)
+        pos_t = torch.div(idx, (H2 * W2), rounding_mode='floor') % T2
+        pos_h = torch.div(idx, W2, rounding_mode='floor') % H2
+        pos_w = idx % W2
+
+        dt = int(D - 4 * (D // 6))
+        dh = int(2 * (D // 6))
+        dw = int(2 * (D // 6))
+        ht = dt // 2
+        hh = dh // 2
+        hw = dw // 2
+
+        tbl = {}
+        if ht > 0:
+            inv = torch.pow(half_base, -torch.arange(ht, device=device, dtype=torch.float32) / max(1, ht))
+            ang = pos_t[:, None] * inv[None, :]
+            tbl['ct'] = torch.cos(ang).to(dtype).view(1, L, 1, ht)
+            tbl['st'] = torch.sin(ang).to(dtype).view(1, L, 1, ht)
+        if hh > 0:
+            inv = torch.pow(half_base, -torch.arange(hh, device=device, dtype=torch.float32) / max(1, hh))
+            ang = pos_h[:, None] * inv[None, :]
+            tbl['ch'] = torch.cos(ang).to(dtype).view(1, L, 1, hh)
+            tbl['sh'] = torch.sin(ang).to(dtype).view(1, L, 1, hh)
+        if hw > 0:
+            inv = torch.pow(half_base, -torch.arange(hw, device=device, dtype=torch.float32) / max(1, hw))
+            ang = pos_w[:, None] * inv[None, :]
+            tbl['cw'] = torch.cos(ang).to(dtype).view(1, L, 1, hw)
+            tbl['sw'] = torch.sin(ang).to(dtype).view(1, L, 1, hw)
+        cache[key] = tbl
+
+    def _rot_part(x: torch.Tensor, ct: torch.Tensor, st: torch.Tensor):
+        xe = x[..., 0::2]
+        xo = x[..., 1::2]
+        ye = (xe * ct) - (xo * st)
+        yo = (xo * ct) + (xe * st)
+        return torch.stack((ye, yo), dim=-1).reshape(x.shape)
+
+    dt = int(D - 4 * (D // 6))
+    dh = int(2 * (D // 6))
+    dw = int(2 * (D // 6))
+
+    # apply to T slice
+    if dt > 0 and 'ct' in tbl:
+        t_slice = slice(0, dt)
+        q_t = q[..., t_slice]
+        k_t = k[..., t_slice]
+        q[..., t_slice] = _rot_part(q_t, tbl['ct'], tbl['st'])
+        k[..., t_slice] = _rot_part(k_t, tbl['ct'], tbl['st'])
+    # apply to H slice
+    if dh > 0 and 'ch' in tbl:
+        h_slice = slice(dt, dt + dh)
+        q_h = q[..., h_slice]
+        k_h = k[..., h_slice]
+        q[..., h_slice] = _rot_part(q_h, tbl['ch'], tbl['sh'])
+        k[..., h_slice] = _rot_part(k_h, tbl['ch'], tbl['sh'])
+    # apply to W slice
+    if dw > 0 and 'cw' in tbl:
+        w_slice = slice(dt + dh, dt + dh + dw)
+        q_w = q[..., w_slice]
+        k_w = k[..., w_slice]
+        q[..., w_slice] = _rot_part(q_w, tbl['cw'], tbl['sw'])
+        k[..., w_slice] = _rot_part(k_w, tbl['cw'], tbl['sw'])
+
+    return q, k
 
 
 class WanDiTGGUF:
@@ -1054,6 +1162,8 @@ class WanDiTGGUF:
         self.stage_dir = stage_dir
         self.state: Dict[str, Any] = self._load_state(stage_dir)
         self.spec: ModelSpec = derive_spec_from_state(self.state)
+        # Cache for ROPE per grid/dim: key=(T,H,W,D)
+        self._rope_cache: Dict[tuple, Dict[str, torch.Tensor]] = {}
 
     def _load_state(self, stage_dir: str) -> Dict[str, Any]:
         path = _pick_stage_gguf(stage_dir, 'high') or _pick_stage_gguf(stage_dir, 'low')
@@ -1075,7 +1185,7 @@ class WanDiTGGUF:
             self._logger.info("[wan22.gguf] tensors=%d sample=%s", len(keys), keys[:3])
         return state
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor | float | int, cond: torch.Tensor, *, dtype: str = "bf16") -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor | float | int, cond: torch.Tensor, *, grid: Optional[Tuple[int, int, int]] = None, dtype: str = "bf16") -> torch.Tensor:
         spec = self.spec
         if spec.d_model is None or spec.n_heads is None or not spec.blocks:
             raise RuntimeError("WAN22 spec incomplete (d_model/heads/blocks)")
@@ -1152,32 +1262,74 @@ class WanDiTGGUF:
                 raise RuntimeError(f"WAN22 GGUF: text embedding dim {ctx.shape[-1]} != model d_model {C} and no text_embedding.* weights found.")
 
         h = x
+        # Optional per-layer NaN guard for deep debug
+        _nan_guard = str(os.getenv('WAN_NAN_GUARD', '0')).strip().lower() in ('1', 'true', 'yes', 'on')
         for bs in spec.blocks:
-            # per-block modulation slices
-            s_sa, b_sa, s_ca, b_ca, s_ffn, b_ffn = tproj[:, 0], tproj[:, 1], tproj[:, 2], tproj[:, 3], tproj[:, 4], tproj[:, 5]
+            # Build e = time_projection + modulation (ComfyUI: additive)
+            e = tproj
             if bs.modulation and bs.modulation in self.state:
                 mod = self.state[bs.modulation]
                 mod = dequantize_tensor(mod)
-                if not torch.is_tensor(mod):
-                    mod = torch.as_tensor(mod, device=device, dtype=tt)
-                else:
-                    mod = mod.to(device=device, dtype=tt)
-                m = tproj * mod  # broadcast [B,6,C]
-                s_sa, b_sa, s_ca, b_ca, s_ffn, b_ffn = m[:, 0], m[:, 1], m[:, 2], m[:, 3], m[:, 4], m[:, 5]
+                mod_t = (mod if torch.is_tensor(mod) else torch.as_tensor(mod)).to(device=device, dtype=tt)
+                e = e + mod_t  # [B,6,C]
+            # Unpack following Comfy order: [sa_shift, sa_scale, sa_gate, ffn_shift, ffn_scale, ffn_gate]
+            b_sa, s_sa, g_sa, b_ffn, s_ffn, g_ffn = e[:, 0], e[:, 1], e[:, 2], e[:, 3], e[:, 4], e[:, 5]
 
-            # Self-attention
+        # Flags
+        _nan_guard = str(os.getenv('WAN_NAN_GUARD', '0')).strip().lower() in ('1', 'true', 'yes', 'on')
+        _snap_stats = str(os.getenv('WAN_SNAPSHOT_STATS', '0')).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        def _stats(label: str, tens: torch.Tensor):
+            if not _snap_stats:
+                return
+            try:
+                v = tens.detach().to(device='cpu', dtype=torch.float32)
+                finite = torch.isfinite(v)
+                if finite.any():
+                    vals = v[finite]
+                    mn = float(vals.min().item()); mx = float(vals.max().item())
+                    mean = float(vals.mean().item()); std = float(vals.std(unbiased=False).item())
+                    _li(self._logger, "[wan22.gguf] snap %s: min=%.5f max=%.5f mean=%.5f std=%.5f", label, mn, mx, mean, std)
+                else:
+                    _li(self._logger, "[wan22.gguf] snap %s: all non-finite", label)
+            except Exception:
+                pass
+
+        # Self-attention: norm1 (LN no affine) → modulate → SA core (+ ROPE) → residual with gate g_sa
             if bs.self_attn.q_w and bs.self_attn.k_w and bs.self_attn.v_w and bs.self_attn.o_w:
-                h = _sa(h, w=bs.self_attn, state=self.state, heads=H, scale=s_sa, shift=b_sa)
-            # Cross-attention
-            h = _ca(h, ctx, w=bs.cross_attn, state=self.state, heads=H, scale=s_ca, shift=b_ca)
-            # FFN
-            if bs.ffn_in_w and bs.ffn_out_w and bs.norm3_w:
-                u = _rms_norm(h, self.state[bs.norm3_w])
+                h_sa_in = _layer_norm(h, eps=1e-6)
+                h_sa_in = h_sa_in * (1 + s_sa) + b_sa
+                sa_out = _sa_core(h_sa_in, w=bs.self_attn, state=self.state, heads=H, grid=grid, rope_cache=self._rope_cache)
+                h = h + sa_out * g_sa
+                _stats(f"b{bs.index}-sa", h)
+                if _nan_guard:
+                    if not torch.isfinite(h).all():
+                        raise RuntimeError(f"WAN22 GGUF: non-finite after SA block {bs.index}")
+
+            # Cross-attention: optional norm3 (affine LN) before CA core → residual add (no extra gate)
+            # ComfyUI applies norm3 only if cross_attn_norm enabled; detect by presence of weights
+            h_ca_in = h
+            if bs.norm3_w is not None:
+                h_ca_in = _layer_norm(h, weight=self.state.get(bs.norm3_w), bias=self.state.get(bs.norm3_b), eps=1e-6)
+            ca_out = _ca_core(h_ca_in, ctx, w=bs.cross_attn, state=self.state, heads=H)
+            h = h + ca_out
+            _stats(f"b{bs.index}-ca", h)
+            if _nan_guard:
+                if not torch.isfinite(h).all():
+                    raise RuntimeError(f"WAN22 GGUF: non-finite after CA block {bs.index}")
+
+            # FFN: norm2 (LN no affine) → modulate → MLP → residual with gate g_ffn
+            if bs.ffn_in_w and bs.ffn_out_w:
+                u = _layer_norm(h, eps=1e-6)
                 u = u * (1 + s_ffn) + b_ffn
                 u = _linear(u, self.state[bs.ffn_in_w], self.state.get(bs.ffn_in_b), name=bs.ffn_in_w or f'ffn.{bs.index}.0.weight')
                 u = u * torch.sigmoid(u)  # SiLU
                 u = _linear(u, self.state[bs.ffn_out_w], self.state.get(bs.ffn_out_b), name=bs.ffn_out_w or f'ffn.{bs.index}.2.weight')
-                h = h + u
+                h = h + u * g_ffn
+                _stats(f"b{bs.index}-ffn", h)
+                if _nan_guard:
+                    if not torch.isfinite(h).all():
+                        raise RuntimeError(f"WAN22 GGUF: non-finite after FFN block {bs.index}")
         return h
 
 
@@ -1483,8 +1635,8 @@ def _sample_stage_tokens(
     for i, t in enumerate(iterator):
         # Model forward: conditional and unconditional
         tt = _t_from_idx(i)
-        eps_cond = dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
-        eps_uncond = dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
+        eps_cond = dit.forward(x, tt, prompt_embeds, grid=grid, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
+        eps_uncond = dit.forward(x, tt, negative_embeds, grid=grid, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
         eps = _cfg_merge(eps_uncond, eps_cond, cfg_scale)
         # Guard: detect non-finite gradients/tokens early
         if not torch.isfinite(eps).all():
@@ -1788,8 +1940,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
 
     for i, t in enumerate(iterator_lo):
         tt = _t_from_idx_lo(i)
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, grid=grid_lo, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, grid=grid_lo, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
         out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
         x_lo = out.prev_sample
@@ -1912,8 +2064,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
     yield {"type": "progress", "stage": "low", "step": 0, "total": total_lo, "percent": 0.0}
     for i, t in enumerate(scheduler_lo.timesteps):
         tt = (1.0 - (float(i) / float(max(1, total_lo - 1)))) * 1000.0
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, grid=grid_lo, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, grid=grid_lo, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
         out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
         x_lo = out.prev_sample
@@ -1985,8 +2137,8 @@ def stream_img2vid(cfg: RunConfig, *, logger=None):
     yield {"type": "progress", "stage": "low", "step": 0, "total": total_lo, "percent": 0.0}
     for i, t in enumerate(scheduler_lo.timesteps):
         tt = (1.0 - (float(i) / float(max(1, total_lo - 1)))) * 1000.0
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, grid=grid_lo, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, grid=grid_lo, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
         out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
         x_lo = out.prev_sample
@@ -2130,8 +2282,8 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
 
     for i, t in enumerate(iterator):
         tt = _t_from_idx_high(i)
-        eps_c = hi_dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = hi_dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_c = hi_dit.forward(x, tt, prompt_embeds, grid=grid, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
+        eps_u = hi_dit.forward(x, tt, negative_embeds, grid=grid, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
         eps = _cfg_merge(eps_u, eps_c, getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale)
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample

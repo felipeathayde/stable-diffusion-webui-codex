@@ -1760,6 +1760,12 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     _p = os.path.basename(hi_path).lower()
     _variant = '5b' if '5b' in _p else '14b'
     _model_key = f"wan_i2v_{_variant}"
+    # Offload profile for this run (align with txt2vid)
+    lvl = cfg.offload_level if cfg.offload_level is not None else (3 if getattr(cfg, 'aggressive_offload', True) else 0)
+    te_dev_eff = getattr(cfg, 'te_device', None)
+    if te_dev_eff is None:
+        te_dev_eff = 'cuda' if lvl <= 1 else 'cpu'
+    _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s", lvl, te_dev_eff)
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -1771,8 +1777,8 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
-        offload_after=bool(getattr(cfg, 'aggressive_offload', True)),
-        te_device=getattr(cfg, 'te_device', None),
+        offload_after=(lvl >= 1),
+        te_device=te_dev_eff,
     )
     if on_progress:
         try:

@@ -231,14 +231,14 @@ def _get_text_context(
             "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required. Directory-based text encoders are not supported."
         )
 
-    # Device for TE: explicit te_device overrides cfg.device; no silent fallback
+    # Device/dtype for TE: set both in a single call to avoid transient FP32 allocation on GPU
     use_dev_name = (te_device or device or 'cpu').lower().strip()
     dev = torch.device('cuda' if use_dev_name == 'cuda' and torch.cuda.is_available() else 'cpu')
-    enc = enc.to(dev)
     try:
-        enc = enc.to(dtype=_as_dtype(dtype))
+        enc = enc.to(device=dev, dtype=_as_dtype(dtype))
     except Exception:
-        pass
+        # If dtype cast fails (rare), at least ensure device move
+        enc = enc.to(device=dev)
 
     def _do(txt: str):
         inputs = tok([txt], padding='max_length', truncation=True, max_length=225, return_tensors='pt')

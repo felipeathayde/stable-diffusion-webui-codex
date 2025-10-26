@@ -435,6 +435,26 @@ def _rms_norm(x: torch.Tensor, w: Any) -> torch.Tensor:
     return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)) * w
 
 
+def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
+    pol = (policy or 'none').strip().lower()
+    lim = int(limit_mb or 0)
+    if pol in ('none', '', 'off') or lim <= 0:
+        return
+    try:
+        from apps.server.backend.runtime.ops.operations_gguf import set_cache_policy as _scp
+    except Exception as ex:  # pragma: no cover
+        raise RuntimeError("GGUF dequant cache requested but not available in this build (set_cache_policy missing). Update backend.") from ex
+    _scp(pol, lim)
+
+
+def _try_clear_cache() -> None:
+    try:
+        from apps.server.backend.runtime.ops.operations_gguf import clear_cache as _cc
+        _cc()
+    except Exception:
+        pass
+
+
 def _linear(x: torch.Tensor, w: Any, b: Any | None) -> torch.Tensor:
     w = dequantize_tensor(w)
     if not torch.is_tensor(w):

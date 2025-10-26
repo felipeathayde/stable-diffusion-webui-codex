@@ -536,6 +536,11 @@ class ModelSpec:
     time_proj_w: Optional[str] = None
     time_proj_b: Optional[str] = None
     head_modulation: Optional[str] = None  # [1,2,C]
+    # Optional text embedding projection (text_dim -> d_model)
+    text_emb_0_w: Optional[str] = None
+    text_emb_0_b: Optional[str] = None
+    text_emb_2_w: Optional[str] = None
+    text_emb_2_b: Optional[str] = None
 
 
 @_io
@@ -617,6 +622,11 @@ def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
     time_proj_w = "time_projection.1.weight" if "time_projection.1.weight" in state else None
     time_proj_b = "time_projection.1.bias" if "time_projection.1.bias" in state else None
     head_mod = "head.modulation" if "head.modulation" in state else None
+    # Text embedding projection layers are optional
+    text_emb_0_w = "text_embedding.0.weight" if "text_embedding.0.weight" in state else None
+    text_emb_0_b = "text_embedding.0.bias" if "text_embedding.0.bias" in state else None
+    text_emb_2_w = "text_embedding.2.weight" if "text_embedding.2.weight" in state else None
+    text_emb_2_b = "text_embedding.2.bias" if "text_embedding.2.bias" in state else None
 
     return ModelSpec(
         d_model=d_model, n_heads=heads, n_blocks=len(blocks), blocks=blocks,
@@ -624,6 +634,8 @@ def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
         time_emb_2_w=time_emb_2_w, time_emb_2_b=time_emb_2_b,
         time_proj_w=time_proj_w, time_proj_b=time_proj_b,
         head_modulation=head_mod,
+        text_emb_0_w=text_emb_0_w, text_emb_0_b=text_emb_0_b,
+        text_emb_2_w=text_emb_2_w, text_emb_2_b=text_emb_2_b,
     )
 
 
@@ -814,9 +826,9 @@ class WanDiTGGUF:
             'fp32': torch.float32,
         }.get(dtype, torch.float16)
 
-        device = x.device
-        cond = cond.to(device=device, dtype=tt)
-        x = x.to(device=device, dtype=tt)
+    device = x.device
+    cond = cond.to(device=device, dtype=tt)
+    x = x.to(device=device, dtype=tt)
 
         # Time embedding (sinusoidal -> 5120 -> proj -> [B,6,C])
         te0_w = self.state.get(spec.time_emb_0_w)
@@ -860,6 +872,22 @@ class WanDiTGGUF:
         t5120 = _linear(t5120, te2_w, te2_b)
         tproj = _linear(t5120, tp_w, tp_b).view(t5120.shape[0], 6, C)
 
+        # Text embedding projection (if weights are present)
+        ctx = cond
+        if spec.text_emb_0_w and spec.text_emb_2_w:
+            te0_w = self.state.get(spec.text_emb_0_w); te0_b = self.state.get(spec.text_emb_0_b)
+            te2_w = self.state.get(spec.text_emb_2_w); te2_b = self.state.get(spec.text_emb_2_b)
+            if te0_w is None or te2_w is None:
+                raise RuntimeError("Missing text_embedding weights")
+            ctx = _linear(ctx, te0_w, te0_b)
+            # GELU (approximate OK)
+            ctx = torch.nn.functional.gelu(ctx)
+            ctx = _linear(ctx, te2_w, te2_b)
+        else:
+            # If no projection weights exist, require ctx dim to match d_model
+            if ctx.shape[-1] != C:
+                raise RuntimeError(f"WAN22 GGUF: text embedding dim {ctx.shape[-1]} != model d_model {C} and no text_embedding.* weights found.")
+
         h = x
         for bs in spec.blocks:
             # per-block modulation slices
@@ -878,7 +906,7 @@ class WanDiTGGUF:
             if bs.self_attn.q_w and bs.self_attn.k_w and bs.self_attn.v_w and bs.self_attn.o_w:
                 h = _sa(h, w=bs.self_attn, state=self.state, heads=H, scale=s_sa, shift=b_sa)
             # Cross-attention
-            h = _ca(h, cond, w=bs.cross_attn, state=self.state, heads=H, scale=s_ca, shift=b_ca)
+            h = _ca(h, ctx, w=bs.cross_attn, state=self.state, heads=H, scale=s_ca, shift=b_ca)
             # FFN
             if bs.ffn_in_w and bs.ffn_out_w and bs.norm3_w:
                 u = _rms_norm(h, self.state[bs.norm3_w])

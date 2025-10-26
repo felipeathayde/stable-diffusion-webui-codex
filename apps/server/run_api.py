@@ -1868,6 +1868,22 @@ def build_app() -> FastAPI:
         run_video_task(task_id, payload, entry, TaskType.IMG2VID)
         return {"task_id": task_id}
 
+    @app.post('/api/test/save')
+    async def save_test_request(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        if payload.get('__strict_version') != 1:
+            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+        # Persist as plain JSON for TUI consumption
+        try:
+            from pathlib import Path
+            p = Path('.sangoi/test-request.json')
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(payload, indent=2))
+            return {"saved": str(p)}
+        except Exception as ex:
+            raise HTTPException(status_code=500, detail=f"Failed to save test request: {ex}")
+
     @app.get('/api/tasks/{task_id}')
     async def task_status(task_id: str) -> Dict[str, Any]:
         entry = get_task(task_id)

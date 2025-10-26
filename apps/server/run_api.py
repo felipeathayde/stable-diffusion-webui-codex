@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover - optional dependency missing
     def color_cyan(s: str) -> str: return s
     def color_red(s: str) -> str: return s
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from starlette.responses import FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -931,7 +931,7 @@ def build_app() -> FastAPI:
         return {"models": models, "current": current, "models_info": models_info}
 
     @app.get('/api/models/inventory')
-    def list_models_inventory() -> Dict[str, Any]:
+    def list_models_inventory(refresh: bool = Query(False, description="If true, re-scan the models/ and huggingface/ folders.")) -> Dict[str, Any]:
         """Inventory of model-related assets discovered at startup (strict dirs).
 
         - vaes: files under /models/VAE
@@ -941,7 +941,17 @@ def build_app() -> FastAPI:
         - metadata: org/repo roots under backend/huggingface
         """
         from apps.server.backend.inventory import cache as _inv_cache
-        inv = _inv_cache.get()
+        if refresh:
+            try:
+                inv = _inv_cache.refresh()
+                logging.getLogger("inventory").info(
+                    "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
+                    len(inv.get("vaes", [])), len(inv.get("text_encoders", [])), len(inv.get("loras", [])), len(inv.get("wan22", [])), len(inv.get("metadata", []))
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"inventory refresh failed: {e}")
+        else:
+            inv = _inv_cache.get()
         return {
             "vaes": inv.get("vaes", []),
             "text_encoders": inv.get("text_encoders", []),
@@ -949,6 +959,29 @@ def build_app() -> FastAPI:
             "wan22": {"gguf": inv.get("wan22", [])},
             "metadata": inv.get("metadata", []),
         }
+
+    @app.post('/api/models/inventory/refresh')
+    def refresh_models_inventory() -> Dict[str, Any]:
+        """Force re-scan of model folders and return the updated inventory.
+
+        This is useful after copying new files into models/ without restarting the backend.
+        """
+        from apps.server.backend.inventory import cache as _inv_cache
+        try:
+            inv = _inv_cache.refresh()
+            logging.getLogger("inventory").info(
+                "inventory: refreshed (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
+                len(inv.get("vaes", [])), len(inv.get("text_encoders", [])), len(inv.get("loras", [])), len(inv.get("wan22", [])), len(inv.get("metadata", []))
+            )
+            return {
+                "vaes": inv.get("vaes", []),
+                "text_encoders": inv.get("text_encoders", []),
+                "loras": inv.get("loras", []),
+                "wan22": {"gguf": inv.get("wan22", [])},
+                "metadata": inv.get("metadata", []),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"inventory refresh failed: {e}")
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:

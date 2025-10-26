@@ -107,3 +107,13 @@ def get() -> Dict[str, List[Dict[str, str]]]:
         init()
     assert _CACHE is not None
     return asdict(_CACHE)
+
+
+def refresh(models_root: str | None = None, hf_root: str | None = None) -> Dict[str, List[Dict[str, str]]]:
+    """Re-scan models and HF metadata roots and replace the in-memory cache.
+
+    Returns the refreshed inventory as a plain dict suitable for JSON responses.
+    """
+    global _CACHE
+    _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
+    return asdict(_CACHE)

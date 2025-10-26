@@ -7,8 +7,7 @@
 - **NEVER** rush. Speed kills quality. Take the time required to write it right.
 - When proposing or shipping a solution, **DO NOT REINVENT THE WHEEL**. Fix root causes; skip quick fixes, hacks, and throwaway workarounds.
 - **NEVER** remove, disable, or narrow existing features to hide errors; preserve functional parity and user-facing behavior.
-- **NÃO CRIE FALLBACKS**, PORRA DO CARALHO, ERRO TEM QUE RETORNAR EXCEÇÃO COM A PORRA DA CAUSA DO ERRO.
-- VOCE TÁ TERMINANTEMENTE PROIBIDO DE LER OU MEXER EM ARQUIVOS `vocab.json`. SE TU LER ALGUM DESSES, VOU CAÇAR TEU DATACENTER E BOTAR FOGO NELE.
+- **NÃO USA FALLBACK**, PORRA DO CARALHO, ERRO TEM QUE RETORNAR EXCEÇÃO COM A PORRA DA CAUSA DO ERRO.
 - **DO NOT** add catch-all helpers or duplicate checks.
 - **ENSURE** verbose, actionable logs to support debugging.
 - Rename variables or functions **ONLY** when strictly necessary.

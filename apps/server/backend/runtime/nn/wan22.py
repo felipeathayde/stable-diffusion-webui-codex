@@ -867,6 +867,8 @@ class WanDiTGGUF:
                 mod = dequantize_tensor(mod)
                 if not torch.is_tensor(mod):
                     mod = torch.as_tensor(mod, device=device, dtype=tt)
+                else:
+                    mod = mod.to(device=device, dtype=tt)
                 m = tproj * mod  # broadcast [B,6,C]
                 s_sa, b_sa, s_ca, b_ca, s_ffn, b_ffn = m[:, 0], m[:, 1], m[:, 2], m[:, 3], m[:, 4], m[:, 5]
 

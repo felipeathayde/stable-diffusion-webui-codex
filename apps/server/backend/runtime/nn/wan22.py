@@ -214,8 +214,47 @@ def _get_text_context(
             if te_kernel_required:
                 raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda or disable te_kernel_required.")
             raise RuntimeError("WAN22 TE CUDA kernel not available. Set gguf_te_impl='hf' or gguf_te_device='cpu'.")
-        # Tokenizer still needed; encoding via CUDA path is not wired yet.
-        raise RuntimeError("WAN22 TE CUDA kernel path is scaffolded; encoder graph wiring pending. Use gguf_te_device='cpu' or te_impl='hf'.")
+        # Tokenize normally, then run experimental FP8 encoder path
+        # 1) Tokenizer
+        try:
+            tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
+        except Exception as ex:
+            raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
+        inputs = tok([prompt or "", negative or ""], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
+        input_ids = inputs['input_ids']  # [2,L]
+        attn_mask = inputs.get('attention_mask', None)
+        # 2) Encoder FP8 (CUDA): run per prompt/negative separately to keep memory minimal
+        from transformers import AutoConfig as _AutoCfg
+        enc_dir = os.path.join(metadata_dir, 'text_encoder')
+        cfg_hf = _AutoCfg.from_pretrained(enc_dir, local_files_only=True)
+        num_heads = int(getattr(cfg_hf, 'num_heads', getattr(cfg_hf, 'num_attention_heads', 32)))
+        d_kv = int(getattr(cfg_hf, 'd_kv', getattr(cfg_hf, 'hidden_size', 4096) // num_heads))
+        from apps.server.backend.runtime.nn.wan_te_encoder import encode_fp8 as _encode_fp8
+        dev = torch.device('cuda' if (te_device or device) == 'cuda' and torch.cuda.is_available() else 'cpu')
+        if dev.type != 'cuda':
+            raise RuntimeError("WAN22 TE CUDA path requested but selected device is not CUDA")
+        dt = _as_dtype(dtype)
+        def _run_one(ids: torch.Tensor) -> torch.Tensor:
+            ids = ids.to(torch.long)
+            return _encode_fp8(
+                te_weights_path=te_file or '',
+                input_ids=ids.to(dev),
+                attention_mask=(attn_mask[0:1].to(dev) if attn_mask is not None else None),
+                device=dev,
+                dtype=dt,
+                num_heads=num_heads,
+                d_kv=d_kv,
+                log_metrics=True,
+            )
+        p = _run_one(input_ids[0:1])
+        n = _run_one(input_ids[1:2])
+        # Offload aggressively after TE
+        if offload_after:
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        return p, n
 
     # Strict: require text encoder weights (file) OR a directory with config; when a file is provided,
     # the config is resolved from metadata_dir/text_encoder (vendored repo), never from the weights folder.

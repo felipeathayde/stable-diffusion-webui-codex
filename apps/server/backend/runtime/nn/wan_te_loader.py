@@ -128,6 +128,15 @@ def load_umt5_xxl_fp8(path: str) -> WanTEFp8Weights:
             b = f'{prefix_attn}{name}.bias'
             if w in keys:
                 layer[name] = _fp8_pack_from(path, w, s if s in keys else None, b if b in keys else None)
+        # Optional LayerNorm weights (float)
+        ln1 = f'encoder.block.{i}.layer.0.layer_norm.weight'
+        ln2 = f'encoder.block.{i}.layer.1.layer_norm.weight'
+        if ln1 in keys:
+            ln1_w = _tensor_from_safe(path, ln1)
+            layer['ln1_w'] = LinearPack(Fp8Weight(w_u8=torch.empty(0, dtype=torch.uint8), scale=torch.ones(1)), ln1_w, (ln1_w.numel(), 1))
+        if ln2 in keys:
+            ln2_w = _tensor_from_safe(path, ln2)
+            layer['ln2_w'] = LinearPack(Fp8Weight(w_u8=torch.empty(0, dtype=torch.uint8), scale=torch.ones(1)), ln2_w, (ln2_w.numel(), 1))
         for name in ('wi', 'wi_1', 'wo'):
             w = f'{prefix_ffn}{name}.weight_u8'
             s = f'{prefix_ffn}{name}.scale'
@@ -156,5 +165,4 @@ def load_umt5_xxl_fp8(path: str) -> WanTEFp8Weights:
 
     log.info("loaded TE FP8: layers=%d d_model=%s embed=%s", num_layers, d_model, tuple(embed.w_u8.shape))
     return WanTEFp8Weights(embed=embed, blocks=blocks, num_layers=num_layers, d_model=int(d_model), n_heads=int(n_heads))
-
 

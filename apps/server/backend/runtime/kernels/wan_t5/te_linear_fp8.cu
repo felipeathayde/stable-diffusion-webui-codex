@@ -8,15 +8,15 @@ using torch::Tensor;
 
 namespace {
 
-inline Tensor dequant_tile(const Tensor& w_u8, const Tensor& w_scale, int64_t r0, int64_t r1, at::ScalarType dtype) {
+inline Tensor dequant_tile(const Tensor& w_u8, const Tensor& w_scale, int64_t r0, int64_t r1, at::ScalarType dtype, c10::Device dev) {
   // w_u8: [Cout, Cin] uint8, w_scale: [Cout] or broadcastable
   auto rows = r1 - r0;
   auto cols = w_u8.size(1);
   Tensor u8_tile = w_u8.narrow(0, r0, rows);                  // [rows, Cin]
-  Tensor f32 = u8_tile.to(torch::kFloat32);                    // convert small tile
+  Tensor f32 = u8_tile.to(torch::kFloat32);                    // convert small tile (stays on src device)
   Tensor s = w_scale.narrow(0, r0, rows).to(torch::kFloat32);  // [rows]
   f32.mul_(s.view({rows, 1}));
-  return f32.to(dtype);                                        // to compute dtype
+  return f32.to(dev, dtype);                                   // move to compute device+dtype
 }
 
 } // namespace
@@ -49,10 +49,11 @@ Tensor te_linear_fp8_forward(const Tensor& x, const Tensor& w_u8, const Tensor& 
   }
 
   // Process Cout in tiles
+  auto dev = x.device();
   for (int64_t r0 = 0; r0 < Cout; r0 += tile) {
     int64_t r1 = std::min<int64_t>(Cout, r0 + tile);
     // Dequantize tile to compute dtype without materializing full W
-    Tensor w_t = dequant_tile(w_u8, w_scale, r0, r1, dtype);   // [rows, Cin]
+    Tensor w_t = dequant_tile(w_u8, w_scale, r0, r1, dtype, dev);   // [rows, Cin]
     // GEMM: [B,L,Cin] @ [rows,Cin]^T -> [B,L,rows]
     // We reshape to 2D for matmul and back to 3D for slice assign
     Tensor x2d = x.reshape({B*L, Cin});

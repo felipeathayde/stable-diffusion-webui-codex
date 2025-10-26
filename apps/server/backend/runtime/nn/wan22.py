@@ -1622,6 +1622,17 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if lat0.ndim == 4:  # [B,C,H,W]
         lat0 = lat0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w, b = _resolve_patch_weights(hi_dit.state)
+    # Validate VAE latent channels vs. GGUF patch embedding expected Cin
+    try:
+        expected_cin = int(getattr(w, 'shape', [0, 0, 0, 0, 0])[1])
+    except Exception:
+        expected_cin = None
+    found_c = int(lat0.shape[1])
+    if expected_cin is not None and found_c != expected_cin:
+        raise RuntimeError(
+            f"WAN22 GGUF: VAE latent channels mismatch for High stage. Expected C_in={expected_cin} from 'patch_embedding.weight' but VAE produced C={found_c}. "
+            f"Select a VAE that matches this GGUF model (e.g., WAN 2.2 I2V VAE with {expected_cin} channels). Current VAE: {cfg.vae_dir}"
+        )
     seed_tokens, _ = _patch_embed3d(lat0.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
 
     # Run sampler starting from seeded tokens (replace init noise)
@@ -1667,6 +1678,16 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if lat_lo0.ndim == 4:
         lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
+    try:
+        expected_cin_lo = int(getattr(w_lo, 'shape', [0, 0, 0, 0, 0])[1])
+    except Exception:
+        expected_cin_lo = None
+    found_c_lo = int(lat_lo0.shape[1])
+    if expected_cin_lo is not None and found_c_lo != expected_cin_lo:
+        raise RuntimeError(
+            f"WAN22 GGUF: VAE latent channels mismatch for Low stage. Expected C_in={expected_cin_lo} but VAE produced C={found_c_lo}. "
+            f"Select a VAE that matches this GGUF model. Current VAE: {cfg.vae_dir}"
+        )
     toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)

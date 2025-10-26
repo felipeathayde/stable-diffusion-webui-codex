@@ -32,17 +32,27 @@ def _rms_norm(x: torch.Tensor, w: torch.Tensor, eps: float = 1e-6) -> torch.Tens
 
 
 def _embedding_fp8(indices: torch.Tensor, embed_u8: torch.Tensor, embed_scale: torch.Tensor, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-    # indices: [B,L], embed_u8: [V,C], embed_scale: [V] or [1]
+    # indices: [B,L], embed_u8: [V,C] (uint8 CPU), embed_scale: [V] or [1] (float)
+    # Strategy: gather on CPU -> pin -> async copy to GPU -> dequantize on GPU -> cast to dtype
     B, L = indices.shape
     V, C = embed_u8.shape
-    # Gather rows then dequantize per row: (u8_row * scale_row)
-    # For efficiency, gather on CPU then move a batch to CUDA in one go.
     rows = indices.reshape(-1).to(torch.long).cpu()
     u8_rows = embed_u8.index_select(0, rows)  # [B*L, C] (CPU u8)
+    if u8_rows.device.type == 'cpu':
+        try:
+            u8_rows = u8_rows.pin_memory()
+        except Exception:
+            pass
     sc_rows = embed_scale.index_select(0, rows).to(torch.float32).view(-1, 1)
-    em = (u8_rows.to(torch.float32) * sc_rows).to(dtype)
-    em = em.to(device).view(B, L, C)
-    return em
+    if sc_rows.device.type == 'cpu':
+        try:
+            sc_rows = sc_rows.pin_memory()
+        except Exception:
+            pass
+    u8_gpu = u8_rows.to(device, non_blocking=True)
+    sc_gpu = sc_rows.to(device, non_blocking=True)
+    em = u8_gpu.to(torch.float32).mul_(sc_gpu).to(dtype)
+    return em.view(B, L, C)
 
 
 def _proj_fp8(x: torch.Tensor, pack, device: torch.device) -> torch.Tensor:

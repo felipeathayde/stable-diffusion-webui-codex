@@ -7,6 +7,7 @@ this_dir = os.path.dirname(__file__)
 sources = [
     os.path.join(this_dir, 'te_binding.cpp'),
     os.path.join(this_dir, 'te_attention_fp8.cu'),
+    os.path.join(this_dir, 'te_attention_fp8_kernel.cu'),
     os.path.join(this_dir, 'te_linear_fp8.cu'),
 ]
 
@@ -27,4 +28,3 @@ setup(
     ext_modules=ext_modules,
     cmdclass={'build_ext': BuildExtension}
 )
-

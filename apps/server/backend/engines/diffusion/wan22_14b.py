@@ -236,6 +236,27 @@ class Wan2214BEngine(BaseVideoEngine):
                     steps=steps, cfg_scale=cfg_scale,
                 )
 
+            # Stage config helpers (prefer per-stage extras when provided)
+            def _as_dir(p: Optional[str]) -> Optional[str]:
+                try:
+                    if p and os.path.isfile(p):
+                        return os.path.dirname(p)
+                except Exception:
+                    pass
+                return p
+            ex_high = ex.get('wan_high', {}) if isinstance(ex, dict) else {}
+            ex_low = ex.get('wan_low', {}) if isinstance(ex, dict) else {}
+            def _stage_from(ex_stage: Dict[str, Any]) -> gguf.StageConfig:
+                model_p = _as_dir(str(ex_stage.get('model_dir') or (self._comp.model_dir or '')))
+                sampler = str(ex_stage.get('sampler') or getattr(request, 'sampler', 'Euler a'))
+                scheduler = str(ex_stage.get('scheduler') or getattr(request, 'scheduler', 'Automatic'))
+                steps = max(1, int(ex_stage.get('steps') or getattr(request, 'steps', 12) or 12))
+                cfg_scale = ex_stage.get('cfg_scale', getattr(request, 'cfg_scale', None))
+                return gguf.StageConfig(
+                    model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
+                    steps=steps, cfg_scale=cfg_scale,
+                )
+
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),

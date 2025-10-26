@@ -54,10 +54,18 @@ def _proj_fp8(x: torch.Tensor, pack, device: torch.device) -> torch.Tensor:
     return linear_fp8(x, pack.w, b)
 
 
+_ATTN_LOG_ONCE = False
+
 def _attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     # q/k/v: [B,H,L,D]
     B, H, L, D = q.shape
-    impl = (os.environ.get('WAN_TE_ATTN', 'sdpa').lower().strip())
+    impl_env = os.environ.get('WAN_TE_ATTN', '').lower().strip()
+    # Auto-select: use CUDA path if extension available and not explicitly forced to 'sdpa'
+    impl = 'cuda' if (impl_env in ('', 'auto') and te_ext_available()) else (impl_env or 'sdpa')
+    global _ATTN_LOG_ONCE
+    if not _ATTN_LOG_ONCE:
+        _ATTN_LOG_ONCE = True
+        log.info("attention_impl=%s (env=%s, ext=%s)", impl, (impl_env or 'auto'), te_ext_available())
     if impl == 'cuda' and te_ext_available():
         out, _ = attn_fp8(q, k, v, None, bool(causal))
         return out
@@ -107,7 +115,17 @@ def encode_fp8(
     H = num_heads
     D = d_kv
 
-    # Iterate encoder blocks
+    # Iterate encoder blocks with lightweight telemetry
+    def _mem(label: str) -> None:
+        try:
+            if torch.cuda.is_available():
+                alloc = torch.cuda.memory_allocated() // (1024*1024)
+                reserved = torch.cuda.memory_reserved() // (1024*1024)
+                log.info("mem[%s]: alloc=%dMB reserved=%dMB", label, alloc, reserved)
+        except Exception:
+            pass
+
+    _mem('te-start')
     for i in range(weights.num_layers):
         blk = weights.blocks.get(i)
         if blk is None:
@@ -145,5 +163,7 @@ def encode_fp8(
             wi = torch.nn.functional.gelu(wi)
         wo = _proj_fp8(wi, blk['wo'], dev)
         h = x2 + wo
+        if (i % 4) == 3:
+            _mem(f'blk{i}')
 
     return h

@@ -1052,7 +1052,7 @@ def _sa_core(x_in: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any
     k = _linear(_rms_norm(x_in, state[w.norm_k_w]) if w.norm_k_w else x_in, state[w.k_w], state.get(w.k_b), name=w.k_w)
     v = _linear(x_in, state[w.v_w], state.get(w.v_b), name=w.v_w)
 
-    if grid is not None:
+    if grid is not None and str(os.getenv('WAN_DISABLE_ROPE', '0')).strip().lower() not in ('1', 'true', 'yes', 'on'):
         try:
             qh = _split_heads(q, heads)
             kh = _split_heads(k, heads)
@@ -1071,10 +1071,10 @@ def _sa_core(x_in: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any
 def _apply_rope_qk(q: torch.Tensor, k: torch.Tensor, *, grid: Tuple[int, int, int], cache: Dict[tuple, Dict[str, torch.Tensor]]):
     """Apply 3D ROPE to q/k split by heads.
 
-    q,k: [B, L, H, D]; grid=(T,Hg,Wg) where L = T*Hg*Wg.
+    q,k: [B, H, L, D]; grid=(T,Hg,Wg) where L = T*Hg*Wg.
     Splits D per ComfyUI: dt = D-4*(D//6), dh = 2*(D//6), dw = 2*(D//6).
     """
-    B, L, Hh, D = q.shape
+    B, Hh, L, D = q.shape
     T2, H2, W2 = int(grid[0]), int(grid[1]), int(grid[2])
     if L != (T2 * H2 * W2):
         # Try to infer T from L if only T changed
@@ -1106,21 +1106,22 @@ def _apply_rope_qk(q: torch.Tensor, k: torch.Tensor, *, grid: Tuple[int, int, in
         if ht > 0:
             inv = torch.pow(half_base, -torch.arange(ht, device=device, dtype=torch.float32) / max(1, ht))
             ang = pos_t[:, None] * inv[None, :]
-            tbl['ct'] = torch.cos(ang).to(dtype).view(1, L, 1, ht)
-            tbl['st'] = torch.sin(ang).to(dtype).view(1, L, 1, ht)
+            tbl['ct'] = torch.cos(ang).to(dtype).view(1, 1, L, ht)
+            tbl['st'] = torch.sin(ang).to(dtype).view(1, 1, L, ht)
         if hh > 0:
             inv = torch.pow(half_base, -torch.arange(hh, device=device, dtype=torch.float32) / max(1, hh))
             ang = pos_h[:, None] * inv[None, :]
-            tbl['ch'] = torch.cos(ang).to(dtype).view(1, L, 1, hh)
-            tbl['sh'] = torch.sin(ang).to(dtype).view(1, L, 1, hh)
+            tbl['ch'] = torch.cos(ang).to(dtype).view(1, 1, L, hh)
+            tbl['sh'] = torch.sin(ang).to(dtype).view(1, 1, L, hh)
         if hw > 0:
             inv = torch.pow(half_base, -torch.arange(hw, device=device, dtype=torch.float32) / max(1, hw))
             ang = pos_w[:, None] * inv[None, :]
-            tbl['cw'] = torch.cos(ang).to(dtype).view(1, L, 1, hw)
-            tbl['sw'] = torch.sin(ang).to(dtype).view(1, L, 1, hw)
+            tbl['cw'] = torch.cos(ang).to(dtype).view(1, 1, L, hw)
+            tbl['sw'] = torch.sin(ang).to(dtype).view(1, 1, L, hw)
         cache[key] = tbl
 
     def _rot_part(x: torch.Tensor, ct: torch.Tensor, st: torch.Tensor):
+        # x: [B,H,L,half*2]; ct,st: [1,1,L,half]
         xe = x[..., 0::2]
         xo = x[..., 1::2]
         ye = (xe * ct) - (xo * st)

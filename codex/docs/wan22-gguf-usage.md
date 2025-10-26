@@ -47,6 +47,12 @@ Strict rules (no fallbacks)
 - Device policy: CPU only when explicitly set (`device='cpu'`). Otherwise CUDA is required.
   - If `device` is omitted or set to `'auto'`/`'cuda'` and CUDA is unavailable, the backend raises a clear error. No silent CPU fallback.
 
+I2V channel composition (design)
+- Image-to-Video (I2V) models may expect 36 input channels at the UNet patch embedding. The design is:
+  - 16 VAE latent channels + 4 temporal mask channels + 16 image-feature channels = 36.
+- The backend assembles this layout automatically for img2vid when the loaded GGUF expects 36 and your VAE produces 16 (common for WAN 2.1 VAE).
+- If a GGUF expects a different layout (i.e., `expected_cin - latent_c != 20`), the runtime raises an explicit error (no implicit guessing).
+
 Common errors (and fixes)
 - "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required" → select a TE weights file in models/text-encoder.
 - "expected text encoder config under metadata repo: '<repo>/text_encoder'" → ensure you chose the correct metadata repo.

@@ -289,8 +289,9 @@ function readFileAsDataURL(file: File): Promise<string> {
     options.metadata = (inv.metadata || []).map((m: any) => ({ name: m.name, path: m.path }))
     options.loras = (inv.loras || []).map((l: any) => ({ name: l.name, path: l.path }))
     const gguf = inv.wan22?.gguf || []
-    options.wanHigh = gguf.filter((e: any) => e.stage === 'high').map((e: any) => ({ name: e.name, path: e.path }))
-    options.wanLow = gguf.filter((e: any) => e.stage === 'low').map((e: any) => ({ name: e.name, path: e.path }))
+    // List all .gguf files under models/wan22 without stage filtering
+    options.wanHigh = gguf.map((e: any) => ({ name: e.name, path: e.path }))
+    options.wanLow = gguf.map((e: any) => ({ name: e.name, path: e.path }))
     // Build name->path maps for resolution at submit
     maps.vae = Object.fromEntries(options.vaes.map((x) => [x.name, x.path]))
     maps.te = Object.fromEntries(options.textEncoders.map((x) => [x.name, x.path]))

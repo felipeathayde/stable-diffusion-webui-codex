@@ -262,57 +262,72 @@ def _get_text_context(
     except Exception as ex:
         raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
 
-    # Optional experimental path: CUDA TE kernel (FP8). This is scaffold-only for now.
-    if te_impl and str(te_impl).lower().strip() == 'cuda_fp8':
+    # Effective TE preferences (extras > env > defaults)
+    try:
+        te_impl_eff = (te_impl or os.getenv('WAN_TE_IMPL', '') or 'hf').strip().lower()
+    except Exception:
+        te_impl_eff = (te_impl or 'hf') if te_impl else 'hf'
+    # No fallbacks allowed: if impl=cuda_fp8, kernel is REQUIRED
+    te_req_eff = (te_impl_eff == 'cuda_fp8')
+    te_dev_eff = (te_device or os.getenv('WAN_TE_DEVICE') or device or 'cpu').strip().lower()
+
+    # One-time log of effective selection
+    try:
+        _li(None, "[wan22.gguf] text-encoder: impl=%s required=%s device=%s", te_impl_eff, str(bool(te_req_eff)).lower(), te_dev_eff)
+    except Exception:
+        pass
+
+    # CUDA TE kernel (FP8). Required if selected; do not fallback.
+    if te_impl_eff == 'cuda_fp8':
         try:
             from apps.server.backend.runtime.nn import wan_te_cuda as _tecuda
         except Exception as ex:
-            raise RuntimeError(f"WAN22 TE CUDA path requested but module not importable: {ex}") from ex
+            raise RuntimeError(f"WAN22 TE CUDA kernel required but module not importable: {ex}") from ex
         if not _tecuda.available():
-            if te_kernel_required:
-                raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda or disable te_kernel_required.")
-            raise RuntimeError("WAN22 TE CUDA kernel not available. Set gguf_te_impl='hf' or gguf_te_device='cpu'.")
+            raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda.")
         # Tokenize normally, then run experimental FP8 encoder path
-        # 1) Tokenizer
-        try:
-            tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
-        except Exception as ex:
-            raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
-        inputs = tok([prompt or "", negative or ""], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
-        input_ids = inputs['input_ids']  # [2,L]
-        attn_mask = inputs.get('attention_mask', None)
-        # 2) Encoder FP8 (CUDA): run per prompt/negative separately to keep memory minimal
-        from transformers import AutoConfig as _AutoCfg
-        enc_dir = os.path.join(metadata_dir, 'text_encoder')
-        cfg_hf = _AutoCfg.from_pretrained(enc_dir, local_files_only=True)
-        num_heads = int(getattr(cfg_hf, 'num_heads', getattr(cfg_hf, 'num_attention_heads', 32)))
-        d_kv = int(getattr(cfg_hf, 'd_kv', getattr(cfg_hf, 'hidden_size', 4096) // num_heads))
-        from apps.server.backend.runtime.nn.wan_te_encoder import encode_fp8 as _encode_fp8
-        dev = torch.device('cuda' if (te_device or device) == 'cuda' and torch.cuda.is_available() else 'cpu')
-        if dev.type != 'cuda':
-            raise RuntimeError("WAN22 TE CUDA path requested but selected device is not CUDA")
-        dt = _as_dtype(dtype)
-        def _run_one(ids: torch.Tensor) -> torch.Tensor:
-            ids = ids.to(torch.long)
-            return _encode_fp8(
-                te_weights_path=te_file or '',
-                input_ids=ids.to(dev),
-                attention_mask=(attn_mask[0:1].to(dev) if attn_mask is not None else None),
-                device=dev,
-                dtype=dt,
-                num_heads=num_heads,
-                d_kv=d_kv,
-                log_metrics=True,
-            )
-        p = _run_one(input_ids[0:1])
-        n = _run_one(input_ids[1:2])
-        # Offload aggressively after TE
-        if offload_after:
+        if te_impl_eff == 'cuda_fp8':
+            # 1) Tokenizer
             try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-        return p, n
+                tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
+            except Exception as ex:
+                raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
+            inputs = tok([prompt or "", negative or ""], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
+            input_ids = inputs['input_ids']  # [2,L]
+            attn_mask = inputs.get('attention_mask', None)
+            # 2) Encoder FP8 (CUDA): run per prompt/negative separately to keep memory minimal
+            from transformers import AutoConfig as _AutoCfg
+            enc_dir = os.path.join(metadata_dir, 'text_encoder')
+            cfg_hf = _AutoCfg.from_pretrained(enc_dir, local_files_only=True)
+            num_heads = int(getattr(cfg_hf, 'num_heads', getattr(cfg_hf, 'num_attention_heads', 32)))
+            d_kv = int(getattr(cfg_hf, 'd_kv', getattr(cfg_hf, 'hidden_size', 4096) // num_heads))
+            from apps.server.backend.runtime.nn.wan_te_encoder import encode_fp8 as _encode_fp8
+            dev = torch.device('cuda' if (te_dev_eff or device) == 'cuda' and torch.cuda.is_available() else 'cpu')
+            if dev.type != 'cuda':
+                raise RuntimeError("WAN22 TE CUDA path requested but selected device is not CUDA")
+            if te_impl_eff == 'cuda_fp8':
+                dt = _as_dtype(dtype)
+                def _run_one(ids: torch.Tensor) -> torch.Tensor:
+                    ids = ids.to(torch.long)
+                    return _encode_fp8(
+                        te_weights_path=te_file or '',
+                        input_ids=ids.to(dev),
+                        attention_mask=(attn_mask[0:1].to(dev) if attn_mask is not None else None),
+                        device=dev,
+                        dtype=dt,
+                        num_heads=num_heads,
+                        d_kv=d_kv,
+                        log_metrics=True,
+                    )
+                p = _run_one(input_ids[0:1])
+                n = _run_one(input_ids[1:2])
+                # Offload aggressively after TE
+                if offload_after:
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                return p, n
 
     # Strict: require text encoder weights (file) OR a directory with config; when a file is provided,
     # the config is resolved from metadata_dir/text_encoder (vendored repo), never from the weights folder.
@@ -344,7 +359,7 @@ def _get_text_context(
         )
 
     # Device/dtype for TE: set both in a single call to avoid transient FP32 allocation on GPU
-    use_dev_name = (te_device or device or 'cpu').lower().strip()
+    use_dev_name = (te_dev_eff or device or 'cpu').lower().strip()
     dev = torch.device('cuda' if use_dev_name == 'cuda' and torch.cuda.is_available() else 'cpu')
     try:
         enc = enc.to(device=dev, dtype=_as_dtype(dtype))
@@ -1461,7 +1476,10 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     te_dev_eff = getattr(cfg, 'te_device', None)
     if te_dev_eff is None:
         te_dev_eff = 'cuda' if lvl <= 1 else 'cpu'
-    _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s", lvl, te_dev_eff)
+    te_impl_val = (getattr(cfg, 'te_impl', None) or os.getenv('WAN_TE_IMPL', 'hf')).lower()
+    te_required_val = (te_impl_val == 'cuda_fp8')
+    _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
+        lvl, te_dev_eff, te_impl_val, str(te_required_val).lower())
 
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
@@ -1832,7 +1850,10 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     te_dev_eff = getattr(cfg, 'te_device', None)
     if te_dev_eff is None:
         te_dev_eff = 'cuda' if lvl <= 1 else 'cpu'
-    _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s", lvl, te_dev_eff)
+    te_impl_val = (getattr(cfg, 'te_impl', None) or os.getenv('WAN_TE_IMPL', 'hf')).lower()
+    te_required_val = (te_impl_val == 'cuda_fp8')
+    _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
+        lvl, te_dev_eff, te_impl_val, str(te_required_val).lower())
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",

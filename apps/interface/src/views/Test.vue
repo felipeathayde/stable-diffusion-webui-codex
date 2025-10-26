@@ -266,7 +266,7 @@ const state = reactive({
   },
   sampler: 'Euler', scheduler: 'Simple', wanFormat: 'gguf',
   offloadLevel: 3,
-  teKernel: 'cuda-fp8',
+  teKernel: 'auto',
   teKernelRequire: true,
   seed: -1,
 })

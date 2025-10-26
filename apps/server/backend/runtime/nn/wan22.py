@@ -504,6 +504,14 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
     finally:
         _mm.VAE_ALWAYS_TILED = _old
     # Expect [B,C,T,H,W]; expand to T=1 if a single frame [B,C,H,W] is provided
+    try:
+        vt = video_latents
+        if torch.is_tensor(vt):
+            n_bad = int((~torch.isfinite(vt)).sum().item())
+            if n_bad > 0 and logger:
+                _li(logger, "[wan22.gguf] WARN: VAE decode received non-finite latents (count=%d); continuing", n_bad)
+    except Exception:
+        pass
     if hasattr(video_latents, 'ndim'):
         if video_latents.ndim == 4:
             video_latents = video_latents.unsqueeze(2)
@@ -1845,6 +1853,11 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     # Configure attention and GGUF cache
     _set_sdpa_settings(getattr(cfg, 'sdpa_policy', None), getattr(cfg, 'attn_chunk_size', None))
     _try_set_cache_policy(getattr(cfg, 'gguf_cache_policy', None), getattr(cfg, 'gguf_cache_limit_mb', 0))
+    # Echo debug-flag to confirm pickup from environment
+    try:
+        _li(log, "[wan22.gguf] debug-flags: HI_DECODE=%s", 'on' if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE','0')).strip().lower() in ('1','true','yes','on') else 'off')
+    except Exception:
+        pass
     if on_progress:
         try:
             on_progress(stage='prepare', step=0, total=1, percent=0.0)

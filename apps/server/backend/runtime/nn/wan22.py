@@ -969,6 +969,7 @@ def _sample_stage_tokens(
     scheduler_name: Optional[str] = None,
     seed: Optional[int] = None,
     on_progress: Optional[Any] = None,
+    log_mem_interval: Optional[int] = None,
 ) -> torch.Tensor:
     log = _get_logger(logger)
     T2, H2, W2 = grid
@@ -1014,12 +1015,13 @@ def _sample_stage_tokens(
         x = out.prev_sample
         pct = float(i + 1) / float(max(1, total))
         # Optional CUDA memory snapshot every N steps
-        try:
-            n = int(getattr(cfg, 'log_mem_interval', 0) or 0)
-            if n > 0 and ((i + 1) % n) == 0:
-                _log_cuda_mem(logger, label=f'stage-step-{i+1}')
-        except Exception:
-            pass
+        if log_mem_interval is not None:
+            try:
+                n = int(log_mem_interval or 0)
+                if n > 0 and ((i + 1) % n) == 0:
+                    _log_cuda_mem(logger, label=f'stage-step-{i+1}')
+            except Exception:
+                pass
         if on_progress:
             try:
                 now = time.perf_counter()
@@ -1071,8 +1073,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
     # Configure attention and GGUF cache according to cfg (defaults emphasize memory efficiency)
     _set_sdpa_settings(getattr(cfg, 'sdpa_policy', None), getattr(cfg, 'attn_chunk_size', None))
-    _gguf_set_cache_policy(policy=(getattr(cfg, 'gguf_cache_policy', None) or 'none'),
-                           limit_mb=int(getattr(cfg, 'gguf_cache_limit_mb', 0) or 0))
+    _try_set_cache_policy(getattr(cfg, 'gguf_cache_policy', None), getattr(cfg, 'gguf_cache_limit_mb', 0))
     # Early activity signal so the UI shows immediate progress
     if on_progress:
         try:
@@ -1163,6 +1164,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         scheduler_name=sched_hi,
         seed=cfg.seed,
         on_progress=(lambda **p: on_progress(stage='high', **p)) if on_progress else None,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
     )
     if on_progress:
         try:
@@ -1235,7 +1237,7 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
             log.info("[wan22.gguf] low step %d/%d (%.1f%%)", i + 1, total_lo, pct * 100.0)
 
     frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    _gguf_clear_cache()
+    _try_clear_cache()
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames_lo
@@ -1403,6 +1405,9 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
+    # Configure attention and GGUF cache
+    _set_sdpa_settings(getattr(cfg, 'sdpa_policy', None), getattr(cfg, 'attn_chunk_size', None))
+    _try_set_cache_policy(getattr(cfg, 'gguf_cache_policy', None), getattr(cfg, 'gguf_cache_limit_mb', 0))
     if on_progress:
         try:
             on_progress(stage='prepare', step=0, total=1, percent=0.0)
@@ -1545,6 +1550,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         if (i + 1) % 5 == 0:
             log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
     frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    _try_clear_cache()
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     return frames_lo
@@ -1554,3 +1560,15 @@ __all__ = [
     'ModelSpec', 'BlockSpec', 'CrossAttnWeights', 'derive_spec_from_state',
     'WanDiTGGUF', 'run_txt2vid', 'run_img2vid',
 ]
+def _get_logger(logger: Any):
+    if logger is not None:
+        return logger
+    lg = logging.getLogger("wan22.gguf")
+    if not lg.handlers:
+        h = logging.StreamHandler()
+        fmt = logging.Formatter('[wan22.gguf] %(levelname)s: %(message)s')
+        h.setFormatter(fmt)
+        lg.addHandler(h)
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    return lg

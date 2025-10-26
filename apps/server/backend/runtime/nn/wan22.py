@@ -107,18 +107,23 @@ def _patch_embed3d(video, w, b):
 
     device = video.device
     dtype = video.dtype
+    use_fp32 = str(os.getenv('WAN_I2V_CONV32','0')).strip().lower() in ('1','true','yes','on')
     W = w
     if hasattr(W, 'gguf_cls'):
         W = dequantize_tensor(W)
-    W = W.to(device=device, dtype=dtype)
+    W = W.to(device=device, dtype=(torch.float32 if use_fp32 else dtype))
     bias = None
     if b is not None:
-        bias = b.to(device=device, dtype=dtype)
+        bias = b.to(device=device, dtype=(torch.float32 if use_fp32 else dtype))
     B, C, T, H, Wd = video.shape
     kCout, kCin, kT, kH, kW = W.shape
     if C != kCin:
         raise RuntimeError(f"patch_embed: C_in mismatch: video C={C} vs weight {kCin}")
+    if use_fp32 and video.dtype != torch.float32:
+        video = video.to(torch.float32)
     y = torch.nn.functional.conv3d(video, W, bias=bias, stride=(1, kH, kW), padding=(0, 0, 0))
+    if use_fp32 and dtype != torch.float32:
+        y = y.to(dtype)
     B2, Cout, T2, H2, W2 = y.shape
     tokens = y.permute(0, 2, 3, 4, 1).contiguous().view(B2, T2 * H2 * W2, Cout)
     # One-time shape log for debugging
@@ -164,16 +169,19 @@ def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: loggin
             # Pad features to 16 if VAE channels < 16 (unlikely for WAN 2.1), using zeros
             pad = 16 - image_feats.shape[1]
             image_feats = torch.cat([image_feats, latents.new_zeros((B, pad, T, H, W))], dim=1)
-        if _resolve_i2v_order() == 'lat_first':
+        order = _resolve_i2v_order()
+        if order == 'lat_first':
             assembled = torch.cat([latents, mask, image_feats], dim=1)
+            layout = f"[lat{C} + mask4 + img16]"
         else:
             assembled = torch.cat([mask, image_feats, latents], dim=1)
+            layout = f"[mask4 + img16 + lat{C}]"
         if assembled.shape[1] != expected_cin:
             raise RuntimeError(
                 f"I2V assembly produced {assembled.shape[1]} channels, expected {expected_cin} (mask4 + img16 + lat{C})."
             )
         if logger:
-            logger.info("[wan22.gguf] i2v assemble: order=%s → C=%d (mask4,img16,lat%d)", _resolve_i2v_order(), assembled.shape[1], C)
+            logger.info("[wan22.gguf] i2v assemble: order=%s %s → C=%d", order, layout, assembled.shape[1])
         return assembled
     # Unsupported pattern — surface a clear error
     raise RuntimeError(
@@ -189,10 +197,11 @@ def _patch_unembed3d(tokens, w, out_shape):
 
     device = tokens.device
     dtype = tokens.dtype
+    use_fp32 = str(os.getenv('WAN_I2V_CONV32','0')).strip().lower() in ('1','true','yes','on')
     W = w
     if hasattr(W, 'gguf_cls'):
         W = dequantize_tensor(W)
-    W = W.to(device=device, dtype=dtype)
+    W = W.to(device=device, dtype=(torch.float32 if use_fp32 else dtype))
     B, L, Cout = tokens.shape
     kCout, kCin, kT, kH, kW = W.shape
     if Cout != kCout:
@@ -208,8 +217,10 @@ def _patch_unembed3d(tokens, w, out_shape):
         raise RuntimeError(
             f"patch_unembed: token length L={L} does not match grid (T,H',W')={out_shape} → expected {expected_L}. "
             f"This usually means the seed latents spatial size didn't match cfg; ensure init_image latent H/W align to cfg height/width." )
-    y = tokens.view(B, T2, H2, W2, Cout).permute(0, 4, 1, 2, 3).contiguous().to(device=device, dtype=dtype)
+    y = tokens.view(B, T2, H2, W2, Cout).permute(0, 4, 1, 2, 3).contiguous().to(device=device, dtype=(torch.float32 if use_fp32 else dtype))
     video = torch.nn.functional.conv_transpose3d(y, W, bias=None, stride=(1, kH, kW), padding=(0, 0, 0))
+    if use_fp32 and dtype != torch.float32:
+        video = video.to(dtype)
     global _LOG_ONCE
     if not _LOG_ONCE.get('patch_unembed', False):
         _LOG_ONCE['patch_unembed'] = True
@@ -1481,6 +1492,22 @@ def _decode_tokens_to_frames(
     # Debug: token/grid shapes
     try:
         _li(None, "[wan22.gguf] unembed: tokens(L,C)=%s grid=%s", (int(tokens.shape[1]), int(tokens.shape[2])), grid)
+    except Exception:
+        pass
+    # Optional token stats for preview diagnostics
+    try:
+        if debug_preview and str(os.getenv('WAN_I2V_LAT_STATS','0')).strip().lower() in ('1','true','yes','on'):
+            import torch as _t
+            tt = tokens.detach().to(device='cpu', dtype=_t.float32)
+            finite = _t.isfinite(tt)
+            n_total = int(tt.numel()); n_bad = int((~finite).sum().item())
+            if n_bad < n_total:
+                vals = tt[finite]
+                mn = float(vals.min().item()); mx = float(vals.max().item())
+                mean = float(vals.mean().item()); std = float(vals.std(unbiased=False).item())
+                _li(None, "[wan22.gguf] tokens stats: L=%d C=%d min=%.4f max=%.4f mean=%.4f std=%.4f bad=%d", int(tt.shape[1]), int(tt.shape[2]), mn, mx, mean, std, n_bad)
+            else:
+                _li(None, "[wan22.gguf] tokens stats: L=%d C=%d (all non-finite: %d)", int(tt.shape[1]), int(tt.shape[2]), n_bad)
     except Exception:
         pass
     video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]

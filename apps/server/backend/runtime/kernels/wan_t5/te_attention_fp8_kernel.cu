@@ -81,38 +81,69 @@ __global__ void attn_stream_rows_kernel(
     // NOTE: For brevity and safety, we keep the kernel scaffold minimal here; real implementation will replace
 }
 
-// Launcher stub (keeps API while we iterate)
+// Launcher: streaming softmax over K tiles (memory-friendly, numerically stable)
 std::vector<torch::Tensor> attn_stream_rows_launcher(
     const torch::Tensor& q, const torch::Tensor& k, const torch::Tensor& v,
     const bool causal, const int64_t chunk)
 {
-    // For now, fall back to ATen chunked path in launcher to keep behavior stable until kernel completes.
     auto B = q.size(0); auto H = q.size(1); auto L = q.size(2); auto D = q.size(3);
     auto qv = q.reshape({B*H, L, D});
     auto kv = k.reshape({B*H, L, D});
     auto vv = v.reshape({B*H, L, D});
-    auto kT = kv.transpose(1,2);
     auto out = torch::empty_like(qv);
+
     const double scale = 1.0 / std::sqrt(static_cast<double>(D));
-    for (int64_t s = 0; s < L; s += chunk) {
-        int64_t c = std::min<int64_t>(chunk, L - s);
-        auto q_chunk = qv.narrow(1, s, c);
-        auto logits = torch::matmul(q_chunk, kT) * scale;
-        if (causal) {
-            // rudimentary causal row-wise mask for current chunk
-            auto arL = torch::arange(L, q.options().device(q.device()));
-            for (int64_t i = 0; i < c; ++i) {
-                int64_t pos = s + i;
-                auto row = logits.select(1, i);
-                auto mask = arL.gt(pos).to(row.dtype()) * (-1e9);
-                row.add_(mask);
+    // Tile sizes
+    int64_t qchunk = chunk > 0 ? chunk : 192;
+    int64_t kchunk = [](){ const char* v = std::getenv("WAN_TE_ATTN_KCHUNK"); if (!v) return (int64_t)256; try { return std::max<int64_t>(64, std::stoll(v)); } catch (...) { return (int64_t)256; } }();
+
+    auto options = q.options();
+    auto device = q.device();
+
+    for (int64_t qs = 0; qs < L; qs += qchunk) {
+        int64_t qc = std::min<int64_t>(qchunk, L - qs);
+        auto q_chunk = qv.narrow(1, qs, qc);             // [BH,qc,D]
+
+        // streaming vars per row: m:[BH,qc,1], s:[BH,qc], y:[BH,qc,D]
+        auto m = torch::full({B*H, qc, 1}, -1e30, options.dtype(torch::kFloat32).device(device));
+        auto s = torch::zeros({B*H, qc}, options.dtype(torch::kFloat32).device(device));
+        auto y = torch::zeros({B*H, qc, D}, options);
+
+        for (int64_t ks = 0; ks < L; ks += kchunk) {
+            int64_t kc = std::min<int64_t>(kchunk, L - ks);
+            auto k_tile = kv.narrow(1, ks, kc);          // [BH,kc,D]
+            auto v_tile = vv.narrow(1, ks, kc);          // [BH,kc,D]
+            auto kT = k_tile.transpose(1,2);             // [BH,D,kc]
+            auto logits = torch::matmul(q_chunk, kT) * scale; // [BH,qc,kc]
+            if (causal) {
+                auto arK = torch::arange(ks, ks+kc, options.device(device)); // absolute key positions
+                for (int64_t i = 0; i < qc; ++i) {
+                    int64_t pos = qs + i;
+                    auto row = logits.select(1, i); // [BH,kc]
+                    auto mask = arK.gt(pos).to(row.dtype()) * (-1e9);
+                    row.add_(mask);
+                }
             }
+            auto m_tile = std::get<0>(logits.max(-1, true));   // [BH,qc,1]
+            // exp(logits - m_tile)
+            auto e = (logits - m_tile).exp();                  // [BH,qc,kc]
+            auto s_tile = e.sum(-1);                           // [BH,qc]
+            auto y_tile = torch::matmul(e, v_tile);            // [BH,qc,D]
+
+            // combine streaming sums
+            auto m_new = torch::maximum(m, m_tile);            // [BH,qc,1]
+            auto a = (m - m_new).exp();                        // [BH,qc,1]
+            auto b = (m_tile - m_new).exp();                   // [BH,qc,1]
+            // s_new = s*a + s_tile*b.squeeze
+            auto s_new = s * a.squeeze(-1) + s_tile * b.squeeze(-1);
+            // y_new = y*a + y_tile*b
+            auto y_new = y * a + y_tile * b;
+            m = m_new; s = s_new; y = y_new;
         }
-        auto m = std::get<0>(logits.max(-1, true));
-        auto p = (logits - m).softmax(-1);
-        auto o_chunk = torch::matmul(p, vv);
-        out.narrow(1, s, c).copy_(o_chunk);
+        // out_chunk = y / s.unsqueeze(-1)
+        auto out_chunk = y / s.unsqueeze(-1).clamp_min(1e-20);
+        out.narrow(1, qs, qc).copy_(out_chunk);
     }
+
     return {out.reshape_as(q), torch::Tensor()};
 }
-

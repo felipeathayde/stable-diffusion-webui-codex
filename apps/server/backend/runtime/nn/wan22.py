@@ -726,21 +726,32 @@ def _set_sdpa_settings(policy: Optional[str], chunk: Optional[int]) -> None:
 
 
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
-    pol = _SDPA_SETTINGS['policy']
-    ch = _SDPA_SETTINGS['chunk']
-    # Prefer new API when available (avoid deprecation warnings)
+    pol = str(_SDPA_SETTINGS['policy']).strip().lower()
+    ch = int(_SDPA_SETTINGS['chunk'])
+    # Prefer new context manager torch.nn.attention.sdpa_kernel(backends=...) when available
+    ctx = nullcontext()
     try:
-        from torch.nn.attention import sdpa_kernel as _sdpa_kernel  # type: ignore[attr-defined]
+        if q.is_cuda:
+            from torch.nn.attention import sdpa_kernel as _sdpa_kernel  # type: ignore[attr-defined]
+            from torch.nn.attention import SDPBackend  # type: ignore[attr-defined]
+            backend = {
+                'flash': SDPBackend.FLASH_ATTENTION,
+                'mem_efficient': SDPBackend.EFFICIENT_ATTENTION,
+                'math': SDPBackend.MATH,
+                'cudnn': getattr(SDPBackend, 'CUDNN_ATTENTION', SDPBackend.EFFICIENT_ATTENTION),
+            }.get(pol, SDPBackend.EFFICIENT_ATTENTION)
+            ctx = _sdpa_kernel(backend)
     except Exception:
-        _sdpa_kernel = None
-    if _sdpa_kernel is not None and q.is_cuda:
-        ctx = _sdpa_kernel(
-            enable_flash=(pol == 'flash'),
-            enable_math=(pol == 'math'),
-            enable_mem_efficient=(pol == 'mem_efficient'),
-        )
-    else:
-        ctx = nullcontext()
+        # Fallback to legacy API (deprecated) only for compatibility on older torch builds
+        try:
+            if q.is_cuda and hasattr(torch.backends, 'cuda'):
+                ctx = torch.backends.cuda.sdp_kernel(
+                    enable_flash=(pol == 'flash'),
+                    enable_math=(pol == 'math'),
+                    enable_mem_efficient=(pol == 'mem_efficient'),
+                )
+        except Exception:
+            ctx = nullcontext()
 
     if ch and ch > 0:
         with ctx:

@@ -122,9 +122,9 @@ def _patch_embed3d(video, w, b):
 def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: logging.Logger | None = None) -> torch.Tensor:
     """Assemble I2V input volume to match expected Cin for patch embedding.
 
-    ComfyUI's I2V path feeds 36 channels by concatenating:
+    The WAN I2V pipeline design uses 36 channels composed as:
     4-channel temporal mask + 16-channel image features + 16 latent channels.
-    Here we follow the same layout when expected_cin - C == 20.
+    We follow this layout when expected_cin - C == 20.
 
     - latents: [B, C, T, H, W] (typically C=16 from VAE 2.1)
     - expected_cin: target channels for patch_embedding.weight.shape[1]
@@ -136,8 +136,8 @@ def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: loggin
     extra = expected_cin - C
     if extra <= 0:
         return latents
-    # Common WAN I2V: 36 = 16 (lat) + 4 (mask) + 16 (image)
-    # We mirror Comfy's concat order: torch.cat((mask, image), dim=1) then the sampler combines with 'noise' (latents).
+    # I2V composition: 36 = 16 (lat) + 4 (mask) + 16 (image)
+    # Concat order: (mask, image, latents)
     if extra == 20:
         # Build mask (zeros if not provided): [B,4,T,H,W]
         mask = latents.new_zeros((B, 4, T, H, W))
@@ -1123,7 +1123,7 @@ def _log_t_mapping(scheduler, timesteps, label: str, logger: Any) -> None:
 
 
 def _time_snr_shift(alpha: float, t: float) -> float:
-    # Same form as ComfyUI comfy.model_sampling.time_snr_shift
+    # Same functional form as time_snr_shift used in reference implementations
     if alpha == 1.0:
         return t
     return alpha * t / (1 + (alpha - 1) * t)
@@ -1163,7 +1163,7 @@ def _sample_stage_tokens(
     timesteps = scheduler.timesteps
 
     def _t_from_idx(idx: int) -> float:
-        # ComfyUI FLOW mapping: percent -> sigma via time_snr_shift -> timestep = sigma * 1000
+        # FLOW mapping: percent -> sigma via time_snr_shift -> timestep = sigma * 1000
         n = max(1, len(timesteps) - 1)
         percent = float(idx) / float(n)
         sigma = _time_snr_shift(1.0, 1.0 - percent)
@@ -1725,12 +1725,10 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     except Exception:
         expected_cin_lo = None
     found_c_lo = int(lat_lo0.shape[1])
+    x_lo_in = lat_lo0
     if expected_cin_lo is not None and found_c_lo != expected_cin_lo:
-        raise RuntimeError(
-            f"WAN22 GGUF: VAE latent channels mismatch for Low stage. Expected C_in={expected_cin_lo} but VAE produced C={found_c_lo}. "
-            f"Select a VAE that matches this GGUF model. Current VAE: {cfg.vae_dir}"
-        )
-    toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+        x_lo_in = _assemble_i2v_input(lat_lo0, expected_cin_lo, logger=log)
+    toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None

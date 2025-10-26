@@ -373,6 +373,15 @@ class Wan2214BEngine(BaseVideoEngine):
                     model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
                     steps=steps, cfg_scale=cfg_scale,
                 )
+            # Env-only controls for offload/TE implementation (img2vid path)
+            env_offload_lvl = os.getenv('WAN_GGUF_OFFLOAD_LEVEL')
+            try:
+                offload_level_env = int(env_offload_lvl) if env_offload_lvl is not None else None
+            except Exception:
+                offload_level_env = None
+            te_impl_env = (os.getenv('WAN_TE_IMPL', '').strip().lower() or None)
+            te_device_val = 'cuda' if te_impl_env == 'cuda_fp8' else None
+            te_kernel_required_val = True if te_impl_env == 'cuda_fp8' else None
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),

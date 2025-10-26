@@ -27,6 +27,7 @@ from pathlib import Path
 import torch
 import os
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
+from apps.server.backend.runtime import test_cache as _test_cache
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
 import logging
@@ -328,6 +329,15 @@ def _get_text_context(
     if not tk_dir or not os.path.isdir(tk_dir):
         raise RuntimeError("WAN22 GGUF: tokenizer metadata missing or invalid; provide 'wan_metadata_dir' or 'wan_tokenizer_dir'.")
 
+    # Test-cache short-circuit: if enabled and cache hit, avoid constructing TE
+    try:
+        hit = _test_cache.try_get_te(prompt or '', negative or '', tk_dir=tk_dir, te_file=te_dir if (te_dir and te_file) else te_file)
+    except Exception:
+        hit = None
+    if hit is not None:
+        p_cpu32, n_cpu32 = hit
+        return p_cpu32.to(_as_dtype(dtype)), n_cpu32.to(_as_dtype(dtype))
+
     # Load tokenizer from the single provided directory
     try:
         tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
@@ -455,6 +465,11 @@ def _get_text_context(
 
     p = _do(prompt or '')
     n = _do(negative or '') if negative is not None else _do('')
+    # Store TE outputs in test cache (CPU32)
+    try:
+        _test_cache.store_te(prompt or '', negative or '', tk_dir=tk_dir, te_file=te_file, p=p, n=n)
+    except Exception:
+        pass
     # Aggressive offload: drop TE from VRAM immediately after use
     if offload_after:
         try:
@@ -501,6 +516,21 @@ def _get_scale_shift(vae) -> tuple[float, float]:
 def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger=None, offload_after: bool = True):
     import torch
     torch_dtype = _as_dtype(dtype)
+    # Test-cache: attempt to reuse latents for the same image/vae/size
+    try:
+        from PIL import Image as _Img
+        if isinstance(init_image, _Img):
+            out_hw = (init_image.height, init_image.width)
+        elif hasattr(init_image, 'shape') and len(getattr(init_image, 'shape')) >= 2:
+            out_hw = (int(init_image.shape[-2]), int(init_image.shape[-1]))
+        else:
+            out_hw = (0, 0)
+        cached = _test_cache.try_get_vae(init_image, vae_dir=vae_dir, out_hw=out_hw)
+        if cached is not None:
+            return cached.to(device=_resolve_device_name(device), dtype=torch_dtype)
+    except Exception:
+        pass
+
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
     sf, sh = _get_scale_shift(vae)
     if logger:
@@ -545,6 +575,11 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
     with torch.no_grad():
         latents = vae.encode(init_image).latent_dist.sample()
         latents = (latents - sh) * sf
+    # Store latents in test cache (CPU fp16) keyed by image+vae_dir+HxW
+    try:
+        _test_cache.store_vae(init_image, vae_dir=vae_dir, out_hw=(int(init_image.shape[-2]), int(init_image.shape[-1])) if hasattr(init_image, 'shape') else out_hw, latents=latents)
+    except Exception:
+        pass
     if offload_after:
         try:
             vae.to('cpu')

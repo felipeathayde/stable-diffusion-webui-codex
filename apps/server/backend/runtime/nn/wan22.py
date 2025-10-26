@@ -509,8 +509,8 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
                     logger.info('[wan22.gguf] VAE decode output shape=%s', tuple(getattr(img, 'shape', ())))
                 except Exception:
                     pass
-            x = img[0].detach().clamp(0, 1)
-            # Some WAN VAEs return [C,1,H,W]; squeeze T dimension if present
+            x = img[0].detach()
+            # Some WAN VAEs return [C,1,H,W]; squeeze singleton time if present
             if x.ndim == 4:
                 # Common case [C,1,H,W]
                 if x.shape[1] == 1:
@@ -520,6 +520,15 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
                     x = x.squeeze()
             if x.ndim != 3:
                 raise RuntimeError(f'VAE decode produced unexpected tensor rank: shape={tuple(x.shape)}; expected [C,H,W]')
+            # Sanitize NaNs/Infs then clamp to display range
+            if not torch.isfinite(x).all():
+                try:
+                    n_bad = int((~torch.isfinite(x)).sum().item())
+                    _li(logger, "[wan22.gguf] WARN: VAE decode produced non-finite values (count=%d); sanitizing.", n_bad)
+                except Exception:
+                    pass
+                x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=0.0)
+            x = x.clamp(0, 1)
             arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             frames.append(Image.fromarray(arr))
     if offload_after:

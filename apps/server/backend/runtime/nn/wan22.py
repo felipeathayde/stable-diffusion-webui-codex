@@ -34,6 +34,7 @@ from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
 
 # Debug helpers (lightweight)
+_DEBUG_IO = False  # set True to enable entry/exit logs
 _LOG_ONCE = {
     'patch_embed': False,
     'patch_unembed': False,
@@ -62,6 +63,8 @@ def _li(logger, msg, *args):
         pass
 
 def _dbg(logger, name: str, where: str) -> None:
+    if not _DEBUG_IO:
+        return
     try:
         _get_logger(logger).info("[wan22.gguf] DEBUG: %s de função %s", where, name)
     except Exception:
@@ -178,6 +181,10 @@ def _patch_unembed3d(tokens, w, out_shape):
     if Cout != kCout:
         raise RuntimeError(f"patch_unembed: C_out mismatch: tokens C={Cout} vs weight {kCout}")
     T2, H2, W2 = out_shape
+    # Guard: if L != T2*H2*W2 (e.g., some graphs reduce T during sampling), infer T from L and spatial grid
+    expected_L = int(T2) * int(H2) * int(W2)
+    if L != expected_L and H2 > 0 and W2 > 0 and (L % (H2 * W2) == 0):
+        T2 = int(L // (H2 * W2))
     y = tokens.view(B, T2, H2, W2, Cout).permute(0, 4, 1, 2, 3).contiguous().to(device=device, dtype=dtype)
     video = torch.nn.functional.conv_transpose3d(y, W, bias=None, stride=(1, kH, kW), padding=(0, 0, 0))
     global _LOG_ONCE

@@ -826,9 +826,9 @@ class WanDiTGGUF:
             'fp32': torch.float32,
         }.get(dtype, torch.float16)
 
-    device = x.device
-    cond = cond.to(device=device, dtype=tt)
-    x = x.to(device=device, dtype=tt)
+        device = x.device
+        cond = cond.to(device=device, dtype=tt)
+        x = x.to(device=device, dtype=tt)
 
         # Time embedding (sinusoidal -> 5120 -> proj -> [B,6,C])
         te0_w = self.state.get(spec.time_emb_0_w)

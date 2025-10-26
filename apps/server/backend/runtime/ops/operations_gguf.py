@@ -3,6 +3,7 @@ import torch
 import logging
 import threading
 import time
+import numpy as np
 
 # Simple, optional CPU LRU cache for dequantized GGUF tensors.
 # Default: disabled. Can be enabled by set_cache_policy('cpu_lru', limit_mb).
@@ -138,7 +139,17 @@ class ParameterGGUF(torch.nn.Parameter):
         if isinstance(src, torch.Tensor):
             base = src.detach().clone()
         else:
-            base = torch.as_tensor(src).clone()
+            # Prefer a NumPy→torch path that never creates a non-writable view to silence
+            # "non-writable tensor" warnings from torch.as_tensor/from_numpy.
+            try:
+                arr = np.asarray(src)
+                if not arr.flags.writeable:
+                    # Make a private, writeable copy before creating a tensor
+                    arr = np.array(arr, copy=True)
+                base = torch.from_numpy(arr)
+            except Exception:
+                # Fallback: force a copy via torch.tensor (may be slower but always safe)
+                base = torch.tensor(src)
         return super().__new__(cls, base, requires_grad=requires_grad)
 
     def dequantize_as_pytorch_parameter(self):

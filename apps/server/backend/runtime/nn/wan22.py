@@ -26,7 +26,7 @@ from pathlib import Path
 
 import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
-from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor, set_cache_policy as _gguf_set_cache_policy, clear_cache as _gguf_clear_cache
+from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
 from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,

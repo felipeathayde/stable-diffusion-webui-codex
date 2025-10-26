@@ -18,6 +18,5 @@ Debug Preview (pre-handoff)
 - Availability: works in both streaming and non‑streaming paths after 2025‑10‑26.
 
 Notes
-- If using I2V checkpoints with concatenated channels (C=36), only the FIRST 16 channels correspond to VAE base latents during decode.
-- Logs clarify when handoff occurs and that no VAE is invoked at that point.
-
+- For I2V checkpoints com canais concatenados (C=36: mask4+img16+lat16), os latentes base do VAE ocupam os ÚLTIMOS 16 canais. O decode seleciona os últimos 16.
+- Logs esclarecem quando o handoff ocorre e que não há VAE nesse ponto.

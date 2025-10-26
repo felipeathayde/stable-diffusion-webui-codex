@@ -1429,15 +1429,14 @@ def _decode_tokens_to_frames(
     except Exception:
         pass
     video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]
-    # If the model used I2V composition (xc(16) + [mask4+img16] → C=36), keep only the base latent channels for VAE.
-    # In Comfy-style apply_model, the concatenation order is [xc, c_concat]; xc (the denoised/noise latents)
-    # comes first. Therefore the 16 channels for the VAE are the FIRST 16, not the last.
+    # If the model used I2V composition (mask4 + img16 + lat16 → C=36), keep only the base latent channels for VAE.
+    # Our I2V assembly feeds latents as the LAST 16 channels, matching (mask, image, latents) ordering.
     try:
         C = int(video_latents.shape[1])
         if C != 16 and C >= 16:
-            # Common case: 36 (16 base latents + 20 cond extras). Keep the FIRST 16 channels.
-            video_latents = video_latents[:, :16, ...]
-            _li(None, "[wan22.gguf] vae decode: took first 16 base-latent channels from C=%d", C)
+            # Common case: 36 → keep the LAST 16 channels (base VAE latents)
+            video_latents = video_latents[:, -16:, ...]
+            _li(None, "[wan22.gguf] vae decode: took last 16 base-latent channels from C=%d", C)
     except Exception:
         pass
     frames = _vae_decode_video(video_latents, model_dir=model_dir, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)

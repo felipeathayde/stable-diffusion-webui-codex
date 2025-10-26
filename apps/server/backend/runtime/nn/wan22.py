@@ -684,6 +684,14 @@ def _rms_norm(x: torch.Tensor, w: Any) -> torch.Tensor:
 
 
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
+    # Fallback to env if not explicitly provided
+    if policy is None:
+        policy = os.getenv('CODEX_GGUF_CACHE_POLICY', 'none')
+    if (limit_mb is None) or (int(limit_mb or 0) <= 0):
+        try:
+            limit_mb = int(os.getenv('CODEX_GGUF_CACHE_LIMIT_MB', '0') or 0)
+        except Exception:
+            limit_mb = 0
     pol = (policy or 'none').strip().lower()
     lim = int(limit_mb or 0)
     if pol in ('none', '', 'off') or lim <= 0:

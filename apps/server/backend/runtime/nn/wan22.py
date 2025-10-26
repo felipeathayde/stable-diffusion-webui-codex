@@ -119,6 +119,49 @@ def _patch_embed3d(video, w, b):
     return tokens, (T2, H2, W2)
 
 
+def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: logging.Logger | None = None) -> torch.Tensor:
+    """Assemble I2V input volume to match expected Cin for patch embedding.
+
+    ComfyUI's I2V path feeds 36 channels by concatenating:
+    4-channel temporal mask + 16-channel image features + 16 latent channels.
+    Here we follow the same layout when expected_cin - C == 20.
+
+    - latents: [B, C, T, H, W] (typically C=16 from VAE 2.1)
+    - expected_cin: target channels for patch_embedding.weight.shape[1]
+    Returns: [B, expected_cin, T, H, W]
+    """
+    if latents.ndim != 5:
+        raise RuntimeError(f"_assemble_i2v_input: expected 5D latents [B,C,T,H,W], got {tuple(latents.shape)}")
+    B, C, T, H, W = latents.shape
+    extra = expected_cin - C
+    if extra <= 0:
+        return latents
+    # Common WAN I2V: 36 = 16 (lat) + 4 (mask) + 16 (image)
+    # We mirror Comfy's concat order: torch.cat((mask, image), dim=1) then the sampler combines with 'noise' (latents).
+    if extra == 20:
+        # Build mask (zeros if not provided): [B,4,T,H,W]
+        mask = latents.new_zeros((B, 4, T, H, W))
+        # Image features: reuse VAE latents as 16-ch features by default
+        image_feats = latents[:, : min(16, C)]
+        if image_feats.shape[1] < 16:
+            # Pad features to 16 if VAE channels < 16 (unlikely for WAN 2.1), using zeros
+            pad = 16 - image_feats.shape[1]
+            image_feats = torch.cat([image_feats, latents.new_zeros((B, pad, T, H, W))], dim=1)
+        assembled = torch.cat([mask, image_feats, latents], dim=1)
+        if assembled.shape[1] != expected_cin:
+            raise RuntimeError(
+                f"I2V assembly produced {assembled.shape[1]} channels, expected {expected_cin} (mask4 + img16 + lat{C})."
+            )
+        if logger:
+            logger.info("[wan22.gguf] i2v assemble: mask(4)+img(16)+lat(%d) → C=%d", C, assembled.shape[1])
+        return assembled
+    # Unsupported pattern — surface a clear error
+    raise RuntimeError(
+        f"WAN22 GGUF (img2vid): expected C_in={expected_cin} but VAE produced C={C}. "
+        f"I2V assembly requires extra={extra} channels (mask+image). Unsupported combo."
+    )
+
+
 @_io
 def _patch_unembed3d(tokens, w, out_shape):
     import torch
@@ -1622,18 +1665,17 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if lat0.ndim == 4:  # [B,C,H,W]
         lat0 = lat0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w, b = _resolve_patch_weights(hi_dit.state)
-    # Validate VAE latent channels vs. GGUF patch embedding expected Cin
+    # Validate/Assemble input channels for High stage
     try:
         expected_cin = int(getattr(w, 'shape', [0, 0, 0, 0, 0])[1])
     except Exception:
         expected_cin = None
     found_c = int(lat0.shape[1])
+    x_in = lat0
     if expected_cin is not None and found_c != expected_cin:
-        raise RuntimeError(
-            f"WAN22 GGUF: VAE latent channels mismatch for High stage. Expected C_in={expected_cin} from 'patch_embedding.weight' but VAE produced C={found_c}. "
-            f"Select a VAE that matches this GGUF model (e.g., WAN 2.2 I2V VAE with {expected_cin} channels). Current VAE: {cfg.vae_dir}"
-        )
-    seed_tokens, _ = _patch_embed3d(lat0.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
+        # For img2vid, some WAN22 I2V checkpoints expect 36 channels (mask4 + img16 + lat16)
+        x_in = _assemble_i2v_input(lat0, expected_cin, logger=log)
+    seed_tokens, _ = _patch_embed3d(x_in.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
 
     # Run sampler starting from seeded tokens (replace init noise)
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)

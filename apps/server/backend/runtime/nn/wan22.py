@@ -504,8 +504,23 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
             lat = video_latents[:, :, t:t+1]
             lat = (lat / sf) + sh
             img = vae.decode(lat).sample
-            img0 = img[0].detach().clamp(0, 1)
-            arr = (img0.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
+            if t == 0 and logger:
+                try:
+                    logger.info('[wan22.gguf] VAE decode output shape=%s', tuple(getattr(img, 'shape', ())))
+                except Exception:
+                    pass
+            x = img[0].detach().clamp(0, 1)
+            # Some WAN VAEs return [C,1,H,W]; squeeze T dimension if present
+            if x.ndim == 4:
+                # Common case [C,1,H,W]
+                if x.shape[1] == 1:
+                    x = x[:, 0, ...]
+                # Fallback: squeeze any singleton dims
+                if x.ndim == 4:
+                    x = x.squeeze()
+            if x.ndim != 3:
+                raise RuntimeError(f'VAE decode produced unexpected tensor rank: shape={tuple(x.shape)}; expected [C,H,W]')
+            arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             frames.append(Image.fromarray(arr))
     if offload_after:
         try:

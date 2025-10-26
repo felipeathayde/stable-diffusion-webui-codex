@@ -508,8 +508,11 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         vt = video_latents
         if torch.is_tensor(vt):
             n_bad = int((~torch.isfinite(vt)).sum().item())
-            if n_bad > 0 and logger:
-                _li(logger, "[wan22.gguf] WARN: VAE decode received non-finite latents (count=%d); continuing", n_bad)
+            if n_bad > 0:
+                if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
+                    raise RuntimeError(f"WAN22 GGUF: non-finite latents before VAE decode (count={n_bad}). Enable WAN_I2V_LAT_STATS=1 to inspect distribution.")
+                if logger:
+                    _li(logger, "[wan22.gguf] WARN: VAE decode received non-finite latents (count=%d); continuing", n_bad)
     except Exception:
         pass
     if hasattr(video_latents, 'ndim'):
@@ -567,6 +570,11 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
             if not torch.isfinite(x).all():
                 try:
                     n_bad = int((~torch.isfinite(x)).sum().item())
+                except Exception:
+                    n_bad = -1
+                if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
+                    raise RuntimeError(f"WAN22 GGUF: VAE decode produced non-finite outputs (count={n_bad}). Consider lowering steps/cfg or enabling debug clamp.")
+                try:
                     _li(logger, "[wan22.gguf] WARN: VAE decode produced non-finite values (count=%d); sanitizing.", n_bad)
                 except Exception:
                     pass
@@ -1433,6 +1441,7 @@ def _decode_tokens_to_frames(
     dtype: torch.dtype,
     model_dir: str,
     cfg: RunConfig,
+    debug_preview: bool = False,
 ) -> List[object]:
     # Unembed tokens back to video latents and decode via VAE
     w, _b = _resolve_patch_weights(dit.state)
@@ -1452,6 +1461,18 @@ def _decode_tokens_to_frames(
             _li(None, "[wan22.gguf] vae decode: took last 16 base-latent channels from C=%d", C)
     except Exception:
         pass
+    # Optional clamp for debug preview only (does not affect final decode)
+    if debug_preview:
+        try:
+            v = os.getenv('WAN_I2V_DEBUG_CLAMP', '').strip()
+            if v:
+                lim = float(v)
+                if lim > 0:
+                    import torch as _t
+                    video_latents = _t.clamp(video_latents, min=-lim, max=lim)
+                    _li(None, "[wan22.gguf] debug: clamped latents to ±%.3f for preview", lim)
+        except Exception:
+            pass
     frames = _vae_decode_video(video_latents, model_dir=model_dir, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
     return frames
 
@@ -1738,7 +1759,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
     if _dbg_flag:
         try:
             _li(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
-            _ = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+            _ = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg, debug_preview=True)
         except Exception as ex:
             _li(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
 
@@ -2003,7 +2024,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
             _li(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
             # Preview decode using VAE from High tokens; output is discarded (debug only)
             _ = _decode_tokens_to_frames(tokens=x, dit=hi_dit, grid=grid, device=dev, dtype=dt,
-                                         model_dir=os.path.dirname(hi_path), cfg=cfg)
+                                         model_dir=os.path.dirname(hi_path), cfg=cfg, debug_preview=True)
         except Exception as ex:
             _li(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
 

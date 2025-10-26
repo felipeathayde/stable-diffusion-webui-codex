@@ -12,6 +12,7 @@ implemented. The API is stable to allow incremental adoption.
 """
 
 import os
+import sys
 import logging
 from typing import Optional, Tuple
 
@@ -39,6 +40,18 @@ def _try_load_ext(build: bool = False) -> None:
         return
     except Exception as ex:
         log.info("wan_te_cuda prebuilt not found: %s", ex)
+    # Try in-place build location (apps/server/backend/runtime/kernels/wan_t5)
+    try:
+        this_dir = os.path.dirname(__file__)
+        ext_dir = os.path.join(os.path.dirname(this_dir), 'kernels', 'wan_t5')
+        if os.path.isdir(ext_dir) and ext_dir not in sys.path:
+            sys.path.insert(0, ext_dir)
+        import wan_te_cuda as _loaded
+        _ext = _loaded
+        log.info("loaded wan_te_cuda extension from in-place build (%s)", ext_dir)
+        return
+    except Exception as ex:
+        log.info("wan_te_cuda not found in in-place dir: %s", ex)
     if not build:
         return
     # JIT build (requires nvcc toolchain present)
@@ -83,5 +96,4 @@ def attn_fp8(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, attn_mask: Optio
     fmt = 0 if fp8_format == 'e4m3fn' else 1
     out, probs = torch.ops.wan_te_cuda.attn_fp8_forward(q, k, v, attn_mask if attn_mask is not None else None, bool(causal), int(fmt))
     return out, probs if probs.numel() > 0 else None
-
 

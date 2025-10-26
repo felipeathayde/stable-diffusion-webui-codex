@@ -58,6 +58,18 @@ def _get_logger_legacy(logger: Any):
     lg.propagate = False
     return lg
 
+def _resolve_i2v_order() -> str:
+    """Return channel order for I2V concatenation.
+    - 'lat_first': latents(16) then cond extras (mask4+img16) → matches Comfy (xc + c_concat).
+    - 'lat_last' : cond extras first then latents(16).
+    Defaults to 'lat_first'. Controlled by env WAN_I2V_ORDER.
+    """
+    try:
+        v = str(os.getenv('WAN_I2V_ORDER', 'lat_first')).strip().lower()
+        return 'lat_last' if v in ('lat_last', 'last', 'cond_first') else 'lat_first'
+    except Exception:
+        return 'lat_first'
+
 def _li(logger, msg, *args):
     try:
         _get_logger(logger).info(msg, *args)
@@ -142,7 +154,7 @@ def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: loggin
     if extra <= 0:
         return latents
     # I2V composition: 36 = 16 (lat) + 4 (mask) + 16 (image)
-    # Concat order: (mask, image, latents)
+    # Concat order depends on WAN_I2V_ORDER (default: lat_first to match Comfy xc + c_concat)
     if extra == 20:
         # Build mask (zeros if not provided): [B,4,T,H,W]
         mask = latents.new_zeros((B, 4, T, H, W))
@@ -152,13 +164,16 @@ def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: loggin
             # Pad features to 16 if VAE channels < 16 (unlikely for WAN 2.1), using zeros
             pad = 16 - image_feats.shape[1]
             image_feats = torch.cat([image_feats, latents.new_zeros((B, pad, T, H, W))], dim=1)
-        assembled = torch.cat([mask, image_feats, latents], dim=1)
+        if _resolve_i2v_order() == 'lat_first':
+            assembled = torch.cat([latents, mask, image_feats], dim=1)
+        else:
+            assembled = torch.cat([mask, image_feats, latents], dim=1)
         if assembled.shape[1] != expected_cin:
             raise RuntimeError(
                 f"I2V assembly produced {assembled.shape[1]} channels, expected {expected_cin} (mask4 + img16 + lat{C})."
             )
         if logger:
-            logger.info("[wan22.gguf] i2v assemble: mask(4)+img(16)+lat(%d) → C=%d", C, assembled.shape[1])
+            logger.info("[wan22.gguf] i2v assemble: order=%s → C=%d (mask4,img16,lat%d)", _resolve_i2v_order(), assembled.shape[1], C)
         return assembled
     # Unsupported pattern — surface a clear error
     raise RuntimeError(
@@ -1456,9 +1471,12 @@ def _decode_tokens_to_frames(
     try:
         C = int(video_latents.shape[1])
         if C != 16 and C >= 16:
-            # Common case: 36 → keep the LAST 16 channels (base VAE latents)
-            video_latents = video_latents[:, -16:, ...]
-            _li(None, "[wan22.gguf] vae decode: took last 16 base-latent channels from C=%d", C)
+            if _resolve_i2v_order() == 'lat_first':
+                video_latents = video_latents[:, :16, ...]
+                _li(None, "[wan22.gguf] vae decode: took first 16 base-latent channels from C=%d", C)
+            else:
+                video_latents = video_latents[:, -16:, ...]
+                _li(None, "[wan22.gguf] vae decode: took last 16 base-latent channels from C=%d", C)
     except Exception:
         pass
     # Optional clamp for debug preview only (does not affect final decode)
@@ -1773,8 +1791,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
     cin_lo = int(getattr(w_lo, 'shape', [None, None, None, None, None])[1])
     vol = lat_hi
     if int(vol.shape[1]) > cin_lo:
-        # Take base latents first (see Comfy: xc + c_concat)
-        vol = vol[:, :cin_lo, ...]
+        # Reduce to base latents according to configured order
+        vol = vol[:, :cin_lo, ...] if _resolve_i2v_order() == 'lat_first' else vol[:, -cin_lo:, ...]
     elif int(vol.shape[1]) < cin_lo:
         vol = _assemble_i2v_input(vol, expected_cin=cin_lo, logger=log)
     toks_lo0, grid_lo = _patch_embed3d(vol.to(device=dev, dtype=dt), w_lo, b_lo)
@@ -1888,7 +1906,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     _try_set_cache_policy(getattr(cfg, 'gguf_cache_policy', None), getattr(cfg, 'gguf_cache_limit_mb', 0))
     # Echo debug-flag to confirm pickup from environment
     try:
-        _li(log, "[wan22.gguf] debug-flags: HI_DECODE=%s", 'on' if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE','0')).strip().lower() in ('1','true','yes','on') else 'off')
+        _li(log, "[wan22.gguf] debug-flags: HI_DECODE=%s ORDER=%s", 'on' if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE','0')).strip().lower() in ('1','true','yes','on') else 'off', _resolve_i2v_order())
     except Exception:
         pass
     if on_progress:
@@ -2049,9 +2067,11 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if expected_cin_lo is not None and int(lat_hi.shape[1]) != expected_cin_lo:
         # If Low expects 36 and we have 16 (or vice-versa), assemble/slice accordingly
         if int(lat_hi.shape[1]) >= 16 and expected_cin_lo == 16:
-            x_lo_in = lat_hi[:, -16:, ...]
+            x_lo_in = lat_hi[:, :16, ...] if _resolve_i2v_order() == 'lat_first' else lat_hi[:, -16:, ...]
         else:
-            x_lo_in = _assemble_i2v_input(lat_hi if int(lat_hi.shape[1]) == 16 else lat_hi[:, -16:, ...], expected_cin_lo, logger=log)
+            base16 = lat_hi[:, :16, ...] if int(lat_hi.shape[1]) >= 16 and _resolve_i2v_order() == 'lat_first' else (
+                lat_hi[:, -16:, ...] if int(lat_hi.shape[1]) >= 16 else lat_hi)
+            x_lo_in = _assemble_i2v_input(base16, expected_cin_lo, logger=log)
     toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)

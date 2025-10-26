@@ -18,5 +18,7 @@ Debug Preview (pre-handoff)
 - Availability: works in both streaming and non‑streaming paths after 2025‑10‑26.
 
 Notes
-- For I2V checkpoints com canais concatenados (C=36: mask4+img16+lat16), os latentes base do VAE ocupam os ÚLTIMOS 16 canais. O decode seleciona os últimos 16.
-- Logs esclarecem quando o handoff ocorre e que não há VAE nesse ponto.
+- Channel order is configurable via `WAN_I2V_ORDER` (default `lat_first`, matching Comfy `xc + c_concat`).
+- If `lat_first`: latents(16) come first; decode picks FIRST 16; assembling 36ch uses `[lat, mask4, img16]`.
+- If `lat_last`: latents come last; decode picks LAST 16; assembling 36ch uses `[mask4, img16, lat]`.
+- Logs clarify when handoff occurs and that no VAE is invoked at that point.

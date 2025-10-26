@@ -40,7 +40,8 @@ std::vector<Tensor> te_attn_fp8_forward(
   double scale = 1.0 / std::sqrt(static_cast<double>(D));
 
   const char* impl = std::getenv("WAN_TE_ATTN_IMPL");
-  bool use_kernel = impl && std::string(impl) == std::string("kernel");
+  // Default to kernel when extension is present; allow override by setting WAN_TE_ATTN_IMPL=aten
+  bool use_kernel = (!impl) || (std::string(impl) == std::string("kernel"));
   if (use_kernel) {
     // Call launcher that currently uses ATen chunked; swap to true kernel when ready
     extern std::vector<Tensor> attn_stream_rows_launcher(const Tensor&, const Tensor&, const Tensor&, const bool, const int64_t);

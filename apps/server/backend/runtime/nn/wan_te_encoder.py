@@ -38,13 +38,15 @@ def _embedding_fp8(indices: torch.Tensor, embed_u8: torch.Tensor, embed_scale: t
     V, C = embed_u8.shape
     rows = indices.reshape(-1).to(torch.long).cpu()
     u8_rows = embed_u8.index_select(0, rows)  # [B*L, C] (CPU u8)
-    if u8_rows.device.type == 'cpu':
+    sc_rows = embed_scale.index_select(0, rows).to(torch.float32).view(-1, 1)
+    # Optional pinned host path (enabled by default). Set WAN_TE_PINNED=0 to disable.
+    use_pinned = os.environ.get('WAN_TE_PINNED', '1').lower().strip() in ('1','true','yes','on')
+    if use_pinned and u8_rows.device.type == 'cpu' and torch.cuda.is_available():
         try:
             u8_rows = u8_rows.pin_memory()
         except Exception:
             pass
-    sc_rows = embed_scale.index_select(0, rows).to(torch.float32).view(-1, 1)
-    if sc_rows.device.type == 'cpu':
+    if use_pinned and sc_rows.device.type == 'cpu' and torch.cuda.is_available():
         try:
             sc_rows = sc_rows.pin_memory()
         except Exception:

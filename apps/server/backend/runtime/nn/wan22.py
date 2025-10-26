@@ -41,6 +41,7 @@ _LOG_ONCE = {
     'patch_unembed': False,
     'sdpa': False,
 }
+_SDPA_LOG_COUNT = 0
 
 def _get_logger_legacy(logger: Any):
     # Legacy duplicate; keep for compatibility if referenced elsewhere
@@ -790,16 +791,25 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = F
         except Exception:
             ctx = nullcontext()
 
-    # One-time or verbose logging of the SDPA backend decision
+    # SDPA backend decision logging (throttled)
+    global _LOG_ONCE, _SDPA_LOG_COUNT
     try:
         verbose = str(os.getenv('WAN_SDPA_DEBUG', '0')).strip().lower() in ('1', 'true', 'yes')
     except Exception:
         verbose = False
-    global _LOG_ONCE
-    if verbose or not _LOG_ONCE.get('sdpa', False):
-        _LOG_ONCE['sdpa'] = True
+    _SDPA_LOG_COUNT += 1
+    should_log = False
+    if verbose:
+        # Log every 5th call in verbose mode
+        should_log = (_SDPA_LOG_COUNT % 5 == 0)
+    else:
+        # Non-verbose: keep single one-time log (first call only)
+        if not _LOG_ONCE.get('sdpa', False):
+            should_log = True
+            _LOG_ONCE['sdpa'] = True
+    if should_log:
         try:
-            _li(None, "[wan22.gguf] sdpa: policy=%s effective=%s chunk=%d device=%s dtype=%s qkv=%s", pol, eff, ch, str(q.device), str(q.dtype), (tuple(q.shape), tuple(k.shape), tuple(v.shape)))
+            _li(None, "[wan22.gguf] sdpa[n=%d]: policy=%s effective=%s chunk=%d device=%s dtype=%s qkv=%s", _SDPA_LOG_COUNT, pol, eff, ch, str(q.device), str(q.dtype), (tuple(q.shape), tuple(k.shape), tuple(v.shape)))
         except Exception:
             pass
 

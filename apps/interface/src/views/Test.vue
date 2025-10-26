@@ -194,6 +194,7 @@
 
           <div class="toolbar test-toolbar">
             <button class="btn btn-primary" type="button" :disabled="isRunning" @click="generate">{{ isRunning ? 'Running…' : 'Generate' }}</button>
+            <button class="btn" type="button" :disabled="isRunning" @click="saveProfile">Save Profile</button>
             <span class="muted test-status" v-if="errorMessage">{{ errorMessage }}</span>
           </div>
         </div>
@@ -419,6 +420,68 @@ function onTaskEvent(ev: TaskEvent): void {
       break
     default:
       break
+  }
+}
+
+async function saveProfile(): Promise<void> {
+  try {
+    const resolve = (val: string, map: Record<string, string>) => (map && map[val]) ? map[val] : val
+    const highModel = resolve(state.high.modelDir, maps.wanHigh)
+    const lowModel = resolve(state.low.modelDir, maps.wanLow)
+    const vaePath = resolve(state.vaeDir, maps.vae)
+    const tePath = resolve(state.textEncoderDir, maps.te)
+    const metaDir = resolve(state.metadataDir, maps.meta)
+
+    const extras: Record<string, unknown> = {
+      wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_dir: highModel || undefined },
+      wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_dir: lowModel || undefined },
+      wan_format: state.wanFormat,
+      wan_vae_path: vaePath || undefined,
+      wan_text_encoder_path: tePath || undefined,
+      wan_metadata_dir: metaDir || undefined,
+    }
+    if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = resolve(state.high.loraPath, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
+    if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = resolve(state.low.loraPath, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
+
+    let payload: Record<string, unknown>
+    if (state.useInitImage && state.initImageData) {
+      payload = {
+        __strict_version: 1,
+        img2vid_prompt: state.prompt,
+        img2vid_neg_prompt: state.negative,
+        img2vid_width: state.width,
+        img2vid_height: state.height,
+        img2vid_num_frames: state.frames,
+        img2vid_fps: state.fps,
+        img2vid_seed: state.seed,
+        img2vid_init_image: state.initImageData,
+        ...extras,
+      }
+    } else {
+      payload = {
+        __strict_version: 1,
+        txt2vid_prompt: state.prompt,
+        txt2vid_neg_prompt: state.negative,
+        txt2vid_width: state.width,
+        txt2vid_height: state.height,
+        txt2vid_num_frames: state.frames,
+        txt2vid_fps: state.fps,
+        txt2vid_seed: state.seed,
+        ...extras,
+      }
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'test-request.json'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    errorMessage.value = 'Saved profile (downloaded test-request.json)'
+  } catch (e) {
+    errorMessage.value = e instanceof Error ? e.message : String(e)
   }
 }
 

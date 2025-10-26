@@ -11,6 +11,7 @@ Strict: raises explicit errors on missing tensors or unsupported shapes. No sile
 """
 
 from typing import Optional, Tuple
+import os
 import logging
 import torch
 

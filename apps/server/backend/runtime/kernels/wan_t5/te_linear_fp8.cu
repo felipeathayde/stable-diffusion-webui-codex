@@ -23,7 +23,9 @@ inline Tensor dequant_tile(const Tensor& w_u8, const Tensor& w_scale, int64_t r0
 
 Tensor te_linear_fp8_forward(const Tensor& x, const Tensor& w_u8, const Tensor& w_scale,
                              const c10::optional<Tensor>& b, const int8_t /*fp8_format*/) {
-  TORCH_CHECK(x.is_cuda() && w_u8.is_cuda() && w_scale.is_cuda(), "linear_fp8_forward: tensors must be CUDA");
+  TORCH_CHECK(x.is_cuda(), "linear_fp8_forward: input must be CUDA");
+  TORCH_CHECK(w_u8.device().is_cpu() || w_u8.is_cuda(), "linear_fp8_forward: w_u8 must be CPU or CUDA");
+  TORCH_CHECK(w_scale.device().is_cpu() || w_scale.is_cuda(), "linear_fp8_forward: w_scale must be CPU or CUDA");
   TORCH_CHECK(x.dim()==3, "linear_fp8_forward: x expected [B,L,Cin]");
   TORCH_CHECK(w_u8.dim()==2, "linear_fp8_forward: w_u8 expected [Cout,Cin]");
   TORCH_CHECK(w_scale.dim()==1 || (w_scale.dim()==0), "linear_fp8_forward: w_scale expected [Cout] or scalar");

@@ -1594,6 +1594,7 @@ def build_app() -> FastAPI:
         return req, str(engine_key), model_ref
 
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
+        logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
         prompt = payload.get('img2vid_prompt', '')
         negative_prompt = payload.get('img2vid_neg_prompt', '')
         width_val = int(payload.get('img2vid_width', 768))
@@ -1677,6 +1678,7 @@ def build_app() -> FastAPI:
                 model_ref = str(wl.get('model_dir'))
         except Exception:
             pass
+        logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, str(engine_key), model_ref
 
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
@@ -1706,6 +1708,7 @@ def build_app() -> FastAPI:
             return
 
         def worker() -> None:
+            logging.getLogger('backend.api').info('[api] DEBUG: enter worker task_id=%s type=%s engine=%s model=%s', task_id, task_type.value, engine_key, model_ref)
             try:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
@@ -1734,6 +1737,7 @@ def build_app() -> FastAPI:
                             push({"type": "result", **result})
                 push({"type": "end"})
                 mark_done(True)
+                logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
             except Exception as err:
                 try:
                     from apps.server.backend.runtime.exception_hook import dump_exception as _dump_exc
@@ -1793,6 +1797,7 @@ def build_app() -> FastAPI:
 
     @app.post('/api/img2vid')
     async def img2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
         if payload.get('__strict_version') != 1:
@@ -1802,6 +1807,7 @@ def build_app() -> FastAPI:
         entry = TaskEntry(loop)
         task_id = f"task(api-img2vid-{uuid4().hex})"
         register_task(task_id, entry)
+        logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
         run_video_task(task_id, payload, entry, TaskType.IMG2VID)
         return {"task_id": task_id}
 

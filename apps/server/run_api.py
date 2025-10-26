@@ -1578,6 +1578,18 @@ def build_app() -> FastAPI:
             'wan_text_encoder_dir',
             'wan_metadata_dir',
             'wan_tokenizer_dir',
+            # memory/attention/runtime controls
+            'gguf_offload',
+            'gguf_offload_level',
+            'gguf_sdpa_policy',
+            'gguf_attn_chunk',
+            'gguf_cache_policy',
+            'gguf_cache_limit_mb',
+            'gguf_log_mem_interval',
+            # TE kernel/device controls
+            'gguf_te_device',
+            'gguf_te_impl',
+            'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
@@ -1664,6 +1676,18 @@ def build_app() -> FastAPI:
             'wan_text_encoder_dir',
             'wan_metadata_dir',
             'wan_tokenizer_dir',
+            # memory/attention/runtime controls
+            'gguf_offload',
+            'gguf_offload_level',
+            'gguf_sdpa_policy',
+            'gguf_attn_chunk',
+            'gguf_cache_policy',
+            'gguf_cache_limit_mb',
+            'gguf_log_mem_interval',
+            # TE kernel/device controls
+            'gguf_te_device',
+            'gguf_te_impl',
+            'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)

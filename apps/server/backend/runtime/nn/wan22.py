@@ -518,6 +518,19 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         elif video_latents.ndim != 5:
             raise RuntimeError(f"VAE decode expects 4D or 5D latents; got shape={tuple(getattr(video_latents,'shape',()))}")
     B, C, T, H, W = video_latents.shape
+    # Optional stats to debug latent distribution before decode
+    try:
+        if str(os.getenv('WAN_I2V_LAT_STATS','0')).strip().lower() in ('1','true','yes','on'):
+            vt = video_latents
+            if torch.is_tensor(vt):
+                vt_cpu = vt.detach().to(device='cpu', dtype=torch.float32)
+                mn = float(vt_cpu.min().item())
+                mx = float(vt_cpu.max().item())
+                mean = float(vt_cpu.mean().item())
+                std = float(vt_cpu.std(unbiased=False).item())
+                _li(logger, "[wan22.gguf] latents stats: B=%d C=%d T=%d H=%d W=%d min=%.4f max=%.4f mean=%.4f std=%.4f", B, C, T, H, W, mn, mx, mean, std)
+    except Exception:
+        pass
     # Hard guard: WAN VAE expects 16-channel latents. If not, the caller likely passed
     # a concatenated I2V tensor (e.g., mask4+img16+lat16 → 36ch). Callers must slice
     # to the 16 latent channels before decode (use _decode_tokens_to_frames).

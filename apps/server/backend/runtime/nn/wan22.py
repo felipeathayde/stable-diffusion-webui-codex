@@ -797,11 +797,16 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = F
         verbose = str(os.getenv('WAN_SDPA_DEBUG', '0')).strip().lower() in ('1', 'true', 'yes')
     except Exception:
         verbose = False
+    # Determine interval (default 5, minimum 1)
+    try:
+        every = max(1, int(os.getenv('WAN_SDPA_DEBUG_EVERY', '5')))
+    except Exception:
+        every = 5
     _SDPA_LOG_COUNT += 1
     should_log = False
     if verbose:
-        # Log every 5th call in verbose mode
-        should_log = (_SDPA_LOG_COUNT % 5 == 0)
+        # Log every Nth call in verbose mode
+        should_log = (_SDPA_LOG_COUNT % every == 0)
     else:
         # Non-verbose: keep single one-time log (first call only)
         if not _LOG_ONCE.get('sdpa', False):

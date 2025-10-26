@@ -1296,6 +1296,15 @@ def _decode_tokens_to_frames(
     # Unembed tokens back to video latents and decode via VAE
     w, _b = _resolve_patch_weights(dit.state)
     video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]
+    # If the model used I2V composition (mask4+img16+lat16 → C=36), keep only the latent channels for VAE
+    try:
+        C = int(video_latents.shape[1])
+        if C > 16 and (C % 16 == 0):
+            # Common cases: 36 or 32 → keep the last 16 channels as latent
+            video_latents = video_latents[:, -16:, ...]
+            _li(None, "[wan22.gguf] vae decode: sliced latents to 16ch from C=%d", C)
+    except Exception:
+        pass
     frames = _vae_decode_video(video_latents, model_dir=model_dir, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
     return frames
 

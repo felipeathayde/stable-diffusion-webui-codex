@@ -162,6 +162,8 @@ def _get_text_context(
     metadata_dir: Optional[str] = None,
     offload_after: bool = True,
     te_device: Optional[str] = None,
+    te_impl: Optional[str] = None,
+    te_kernel_required: Optional[bool] = None,
 ):
     """GGUF path: use Transformers tokenizer + encoder only; do NOT fall back to Diffusers.
 
@@ -201,6 +203,19 @@ def _get_text_context(
         tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
     except Exception as ex:
         raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
+
+    # Optional experimental path: CUDA TE kernel (FP8). This is scaffold-only for now.
+    if te_impl and str(te_impl).lower().strip() == 'cuda_fp8':
+        try:
+            from apps.server.backend.runtime.nn import wan_te_cuda as _tecuda
+        except Exception as ex:
+            raise RuntimeError(f"WAN22 TE CUDA path requested but module not importable: {ex}") from ex
+        if not _tecuda.available():
+            if te_kernel_required:
+                raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda or disable te_kernel_required.")
+            raise RuntimeError("WAN22 TE CUDA kernel not available. Set gguf_te_impl='hf' or gguf_te_device='cpu'.")
+        # Tokenizer still needed; encoding via CUDA path is not wired yet.
+        raise RuntimeError("WAN22 TE CUDA kernel path is scaffolded; encoder graph wiring pending. Use gguf_te_device='cpu' or te_impl='hf'.")
 
     # Strict: require text encoder weights (file) OR a directory with config; when a file is provided,
     # the config is resolved from metadata_dir/text_encoder (vendored repo), never from the weights folder.

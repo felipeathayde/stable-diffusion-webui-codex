@@ -1001,8 +1001,11 @@ class RunConfig:
     gguf_cache_limit_mb: Optional[int] = None    # MB limit for cpu_lru cache
     log_mem_interval: Optional[int] = None       # log CUDA mem every N steps if >0
     # Aggressive offload controls
-    aggressive_offload: bool = True              # move modules off GPU immediately after use
+    aggressive_offload: bool = True              # legacy switch; see offload_level
     te_device: Optional[str] = None              # 'cuda' | 'cpu' (None = follow cfg.device)
+    # New: coarse-grained offload profile (takes precedence over aggressive_offload if provided)
+    # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (also clear between stages), 3 = aggressive (current behavior)
+    offload_level: Optional[int] = None
 
 def _as_dtype(dtype: str):
     return {
@@ -1308,6 +1311,13 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     _p = os.path.basename(hi_path).lower()
     _variant = '5b' if '5b' in _p else '14b'
     _model_key = f"wan_t2v_{_variant}"
+    # Offload profile
+    lvl = cfg.offload_level if cfg.offload_level is not None else (3 if getattr(cfg, 'aggressive_offload', True) else 0)
+    te_dev_eff = getattr(cfg, 'te_device', None)
+    if te_dev_eff is None:
+        te_dev_eff = 'cuda' if lvl <= 1 else 'cpu'
+    _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s", lvl, te_dev_eff)
+
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -1319,8 +1329,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
-        offload_after=bool(getattr(cfg, 'aggressive_offload', True)),
-        te_device=getattr(cfg, 'te_device', None),
+        offload_after=(lvl >= 1),
+        te_device=te_dev_eff,
     )
     if on_progress:
         try:
@@ -1740,6 +1750,8 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
 
     # Decode High frames and seed Low with last frame latent
     frames_hi = _decode_tokens_to_frames(tokens=x, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    if lvl >= 2:
+        _cuda_empty_cache(logger=log, label='after-high')
     seed_image = frames_hi[-1] if frames_hi else None
 
     # Low stage (mandatory): seed from last High frame
@@ -1748,7 +1760,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
 
     # Prepare seed tokens for Low from seed_image
-    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log, offload_after=bool(getattr(cfg, 'aggressive_offload', True)))
+    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log, offload_after=(lvl >= 1))
     if lat_lo0.ndim == 4:
         lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)

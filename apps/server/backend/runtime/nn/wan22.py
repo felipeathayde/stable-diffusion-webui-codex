@@ -633,7 +633,9 @@ def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
 def _rms_norm(x: torch.Tensor, w: Any) -> torch.Tensor:
     w = dequantize_tensor(w)
     if not torch.is_tensor(w):
-        w = torch.as_tensor(w, device=x.device, dtype=x.dtype)
+        w = torch.as_tensor(w)
+    # Ensure weight lives on the same device/dtype as the activation
+    w = w.to(device=x.device, dtype=x.dtype)
     eps = 1e-6
     return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)) * w
 

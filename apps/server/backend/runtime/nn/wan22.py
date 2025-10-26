@@ -542,11 +542,18 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
             vt = video_latents
             if torch.is_tensor(vt):
                 vt_cpu = vt.detach().to(device='cpu', dtype=torch.float32)
-                mn = float(vt_cpu.min().item())
-                mx = float(vt_cpu.max().item())
-                mean = float(vt_cpu.mean().item())
-                std = float(vt_cpu.std(unbiased=False).item())
-                _li(logger, "[wan22.gguf] latents stats: B=%d C=%d T=%d H=%d W=%d min=%.4f max=%.4f mean=%.4f std=%.4f", B, C, T, H, W, mn, mx, mean, std)
+                finite = torch.isfinite(vt_cpu)
+                n_total = int(vt_cpu.numel())
+                n_bad = int((~finite).sum().item())
+                if n_bad < n_total:
+                    vals = vt_cpu[finite]
+                    mn = float(vals.min().item())
+                    mx = float(vals.max().item())
+                    mean = float(vals.mean().item())
+                    std = float(vals.std(unbiased=False).item())
+                    _li(logger, "[wan22.gguf] latents stats: B=%d C=%d T=%d H=%d W=%d min=%.4f max=%.4f mean=%.4f std=%.4f bad=%d", B, C, T, H, W, mn, mx, mean, std, n_bad)
+                else:
+                    _li(logger, "[wan22.gguf] latents stats: B=%d C=%d T=%d H=%d W=%d (all non-finite: %d)", B, C, T, H, W, n_bad)
     except Exception:
         pass
     # Hard guard: WAN VAE expects 16-channel latents. If not, the caller likely passed
@@ -1418,9 +1425,20 @@ def _sample_stage_tokens(
         eps_cond = dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
         eps_uncond = dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
         eps = _cfg_merge(eps_uncond, eps_cond, cfg_scale)
+        # Guard: detect non-finite gradients/tokens early
+        if not torch.isfinite(eps).all():
+            bad = int((~torch.isfinite(eps)).sum().item())
+            if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
+                raise RuntimeError(f"WAN22 GGUF: non-finite model_output at step {i+1}/{total} (count={bad}).")
+            _li(logger, "[wan22.gguf] WARN: non-finite model_output at %d/%d (count=%d); continuing", i+1, total, bad)
         # Euler step
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample
+        if not torch.isfinite(x).all():
+            badx = int((~torch.isfinite(x)).sum().item())
+            if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
+                raise RuntimeError(f"WAN22 GGUF: non-finite tokens after step {i+1}/{total} (count={badx}).")
+            _li(logger, "[wan22.gguf] WARN: non-finite tokens after %d/%d (count=%d); continuing", i+1, total, badx)
         pct = float(i + 1) / float(max(1, total))
         # Optional CUDA memory snapshot every N steps
         if log_mem_interval is not None:

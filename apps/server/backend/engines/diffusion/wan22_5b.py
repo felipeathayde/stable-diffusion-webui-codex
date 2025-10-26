@@ -41,6 +41,7 @@ class Wan225BEngine(BaseVideoEngine):
 
     # ------------------------------ lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
+        self._logger.info('[wan22_5b] DEBUG: antes de função load')
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
         self._opts = EngineOpts(device=dev, dtype=dty)
@@ -135,14 +136,18 @@ class Wan225BEngine(BaseVideoEngine):
             self._logger.info("WAN22 5B GGUF runtime selected for %s", p)
 
         self._comp = comp
+        self._logger.info('[wan22_5b] DEBUG: depois de função load')
         self.mark_loaded()
 
     def unload(self) -> None:  # type: ignore[override]
+        self._logger.info('[wan22_5b] DEBUG: antes de função unload')
         self._comp = None
+        self._logger.info('[wan22_5b] DEBUG: depois de função unload')
         self.mark_unloaded()
 
     # ------------------------------ tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
+        self._logger.info('[wan22_5b] DEBUG: antes de função txt2vid')
         self.ensure_loaded()
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
@@ -207,9 +212,11 @@ class Wan225BEngine(BaseVideoEngine):
                 elif isinstance(ev, dict) and ev.get('type') == 'result':
                     frames = ev.get('frames', [])
                     yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "txt2vid", "frames": len(frames)})})
+            self._logger.info('[wan22_5b] DEBUG: depois de função txt2vid')
             return
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
+        self._logger.info('[wan22_5b] DEBUG: antes de função img2vid')
         self.ensure_loaded()
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
@@ -277,6 +284,7 @@ class Wan225BEngine(BaseVideoEngine):
                 elif isinstance(ev, dict) and ev.get('type') == 'result':
                     frames = ev.get('frames', [])
                     yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "img2vid", "frames": len(frames)})})
+            self._logger.info('[wan22_5b] DEBUG: depois de função img2vid')
             return
 
     # ------------------------------ helpers

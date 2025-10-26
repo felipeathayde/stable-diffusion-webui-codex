@@ -67,6 +67,23 @@ def _dbg(logger, name: str, where: str) -> None:
     except Exception:
         pass
 
+from functools import wraps
+def _io(fn):
+    @wraps(fn)
+    def _wrap(*args, **kwargs):
+        try:
+            _dbg(kwargs.get('logger', None), fn.__name__, 'antes')
+        except Exception:
+            _dbg(None, fn.__name__, 'antes')
+        out = fn(*args, **kwargs)
+        try:
+            _dbg(kwargs.get('logger', None), fn.__name__, 'depois')
+        except Exception:
+            _dbg(None, fn.__name__, 'depois')
+        return out
+    return _wrap
+
+@_io
 def _patch_embed3d(video, w, b):
     import torch
     from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
@@ -102,6 +119,7 @@ def _patch_embed3d(video, w, b):
     return tokens, (T2, H2, W2)
 
 
+@_io
 def _patch_unembed3d(tokens, w, out_shape):
     import torch
     from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
@@ -129,6 +147,7 @@ def _patch_unembed3d(tokens, w, out_shape):
     return video
 
 
+@_io
 def _get_text_context(
     model_dir: str,
     prompt: str,
@@ -229,6 +248,7 @@ def _get_text_context(
     return p, n
 
 
+@_io
 def _load_vae(vae_path: Optional[str], *, torch_dtype):
     import os
     from diffusers import AutoencoderKLWan  # type: ignore
@@ -245,6 +265,7 @@ def _load_vae(vae_path: Optional[str], *, torch_dtype):
     raise RuntimeError(f'VAE path not found: {path}')
 
 
+@_io
 def _get_scale_shift(vae) -> tuple[float, float]:
     try:
         cfg = getattr(vae, 'config', None) or {}
@@ -258,6 +279,7 @@ def _get_scale_shift(vae) -> tuple[float, float]:
         return 0.18215, 0.0
 
 
+@_io
 def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger=None):
     import torch
     torch_dtype = _as_dtype(dtype)
@@ -308,6 +330,7 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
     return latents
 
 
+@_io
 def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None, logger=None):
     import torch
     from PIL import Image
@@ -392,6 +415,7 @@ class ModelSpec:
     head_modulation: Optional[str] = None  # [1,2,C]
 
 
+@_io
 def _shape_of(state: Mapping[str, object], key: str) -> Optional[Tuple[int, ...]]:
     v = state.get(key)
     if v is None:
@@ -403,6 +427,7 @@ def _shape_of(state: Mapping[str, object], key: str) -> Optional[Tuple[int, ...]
         return None
 
 
+@_io
 def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
     by_block: Dict[int, Dict[str, str]] = {}
     for k in state.keys():
@@ -481,6 +506,7 @@ def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
 
 # ------------------------------ ops
 
+@_io
 def _rms_norm(x: torch.Tensor, w: Any) -> torch.Tensor:
     w = dequantize_tensor(w)
     if not torch.is_tensor(w):
@@ -509,6 +535,7 @@ def _try_clear_cache() -> None:
         pass
 
 
+@_io
 def _linear(x: torch.Tensor, w: Any, b: Any | None) -> torch.Tensor:
     w = dequantize_tensor(w)
     if not torch.is_tensor(w):
@@ -570,17 +597,20 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = F
             return torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
 
 
+@_io
 def _split_heads(x: torch.Tensor, h: int) -> torch.Tensor:
     B, L, C = x.shape
     D = C // h
     return x.view(B, L, h, D).permute(0, 2, 1, 3).contiguous()
 
 
+@_io
 def _merge_heads(x: torch.Tensor) -> torch.Tensor:
     B, H, L, D = x.shape
     return x.permute(0, 2, 1, 3).contiguous().view(B, L, H * D)
 
 
+@_io
 def _ca(x: torch.Tensor, ctx: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int, scale=None, shift=None) -> torch.Tensor:
     q_in = _rms_norm(x, state[w.norm_q_w]) if w.norm_q_w else x
     if scale is not None:
@@ -599,6 +629,7 @@ def _ca(x: torch.Tensor, ctx: torch.Tensor, *, w: CrossAttnWeights, state: Mappi
     return x + out
 
 
+@_io
 def _sa(x: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int, scale=None, shift=None) -> torch.Tensor:
     q_in = _rms_norm(x, state[w.norm_q_w]) if w.norm_q_w else x
     if scale is not None:
@@ -858,6 +889,7 @@ def _infer_latent_grid(dit: 'WanDiTGGUF', *, T: int, H_lat: int, W_lat: int, dev
     return (grid[0], grid[1], grid[2]), (L, Cout)
 
 
+@_io
 def _make_scheduler(steps: int, *, sampler: Optional[str] = None, scheduler: Optional[str] = None):
     """Instantiate a Diffusers scheduler based on requested sampler/scheduler names.
 
@@ -909,12 +941,14 @@ def _make_scheduler(steps: int, *, sampler: Optional[str] = None, scheduler: Opt
     return sched
 
 
+@_io
 def _cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) -> torch.Tensor:
     if scale is None:
         return cond
     return uncond + (cond - uncond) * float(scale)
 
 
+@_io
 def _log_cuda_mem(logger: Any, label: str = "mem") -> None:
     try:
         import torch
@@ -927,6 +961,7 @@ def _log_cuda_mem(logger: Any, label: str = "mem") -> None:
         pass
 
 
+@_io
 def _log_t_mapping(scheduler, timesteps, label: str, logger: Any) -> None:
     try:
         log = _get_logger(logger)
@@ -1038,6 +1073,7 @@ def _sample_stage_tokens(
     return x
 
 
+@_io
 def _decode_tokens_to_frames(
     *,
     tokens: torch.Tensor,
@@ -1055,6 +1091,7 @@ def _decode_tokens_to_frames(
     return frames
 
 
+@_io
 def _resolve_device_name(name: str) -> str:
     s = (name or 'auto').lower().strip()
     if s == 'auto':
@@ -1064,6 +1101,7 @@ def _resolve_device_name(name: str) -> str:
     return 'cpu'
 
 
+@_io
 def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
@@ -1398,6 +1436,7 @@ def stream_img2vid(cfg: RunConfig, *, logger=None):
     yield {"type": "result", "frames": frames_lo}
 
 
+@_io
 def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')

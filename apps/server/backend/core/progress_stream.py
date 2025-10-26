@@ -40,7 +40,16 @@ def stream_run(
             out = run_fn(cfg, logger=logger, on_progress=_cb)
             q.put({"type": "result", result_key: out})
         except Exception as ex:  # pragma: no cover
-            q.put({"type": "error", "error": ex})
+            # Always log the full stack trace to backend console, independent of UI/SSE.
+            try:
+                if logger is not None and hasattr(logger, "exception"):
+                    logger.exception("stream_run worker crashed: %s", ex)
+                else:
+                    import traceback, sys
+                    traceback.print_exc(file=sys.stderr)
+            finally:
+                # Surface error to the stream so engines can escalate
+                q.put({"type": "error", "error": ex})
 
     t = Thread(target=_worker, name=f"stream_run-{getattr(run_fn, '__name__', 'run')}", daemon=True)
     t.start()
@@ -54,4 +63,3 @@ def stream_run(
         yield ev
         if ev.get("type") in ("result", "error"):
             break
-

@@ -1710,17 +1710,33 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
     # Cannot pass a lambda with yield directly; emulate by re-running progress here
     yield {"type": "progress", "stage": "high", "step": total_hi, "total": total_hi, "percent": 1.0}
 
-    frames_hi = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
-    if not frames_hi:
-        raise RuntimeError("WAN22 GGUF: High stage produced no frames")
+    # Optional debug: decode High tokens to frames as if final (slice first 16 ch) BEFORE handoff
+    try:
+        _dbg_flag = str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1','true','yes','on')
+    except Exception:
+        _dbg_flag = False
+    if _dbg_flag:
+        try:
+            _li(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
+            _ = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+        except Exception as ex:
+            _li(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
+
+    # Proper handoff in latents: unembed High → embed Low (no VAE in-between)
+    w_hi, b_hi = _resolve_patch_weights(hi_dit.state)
+    lat_hi = _patch_unembed3d(toks_hi, w_hi, grid)  # [B, C_hi, T,H,W] (often C_hi=36)
 
     # Low stage
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-    lat_lo0 = _vae_encode_init(frames_hi[-1], device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat_lo0.ndim == 4:
-        lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
-    toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+    cin_lo = int(getattr(w_lo, 'shape', [None, None, None, None, None])[1])
+    vol = lat_hi
+    if int(vol.shape[1]) > cin_lo:
+        # Take base latents first (see Comfy: xc + c_concat)
+        vol = vol[:, :cin_lo, ...]
+    elif int(vol.shape[1]) < cin_lo:
+        vol = _assemble_i2v_input(vol, expected_cin=cin_lo, logger=log)
+    toks_lo0, grid_lo = _patch_embed3d(vol.to(device=dev, dtype=dt), w_lo, b_lo)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None

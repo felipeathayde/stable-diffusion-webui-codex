@@ -44,6 +44,7 @@ class InferenceOrchestrator:
         model_ref: Optional[str] = None,
         engine_options: Optional[Mapping[str, object]] = None,
     ) -> Iterator[InferenceEvent]:
+        logger.info("[orchestrator] DEBUG: enter run task=%s engine=%s model=%s", task.value, engine_key, model_ref)
         start = time.perf_counter()
         engine = self._resolve_engine(engine_key, engine_options or {})
 
@@ -93,6 +94,7 @@ class InferenceOrchestrator:
         finally:
             elapsed = time.perf_counter() - start
             yield ProgressEvent(stage="end", percent=100.0, message="Inference complete", data={"elapsed": elapsed})
+            logger.info("[orchestrator] DEBUG: exit run task=%s elapsed=%.3fs", task.value, elapsed)
 
     # ------------------------------------------------------------------
     def _resolve_engine(self, engine_key: str, engine_options: Mapping[str, object]) -> BaseInferenceEngine:

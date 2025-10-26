@@ -15,7 +15,7 @@ import logging
 import torch
 
 from .wan_te_loader import load_umt5_xxl_fp8, WanTEFp8Weights
-from .wan_te_cuda import linear_fp8
+from .wan_te_cuda import linear_fp8, attn_fp8, available as te_ext_available
 
 log = logging.getLogger("wan22.te.encoder")
 if not log.handlers:
@@ -53,14 +53,19 @@ def _proj_fp8(x: torch.Tensor, pack, device: torch.device) -> torch.Tensor:
     return linear_fp8(x, pack.w, b)
 
 
-def _attn_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+def _attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     # q/k/v: [B,H,L,D]
     B, H, L, D = q.shape
-    q2 = q.reshape(B*H, L, D)
-    k2 = k.reshape(B*H, L, D)
-    v2 = v.reshape(B*H, L, D)
-    out = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2, is_causal=causal)
-    return out.reshape(B, H, L, D)
+    impl = (os.environ.get('WAN_TE_ATTN', 'sdpa').lower().strip())
+    if impl == 'cuda' and te_ext_available():
+        out, _ = attn_fp8(q, k, v, None, bool(causal))
+        return out
+    else:
+        q2 = q.reshape(B*H, L, D)
+        k2 = k.reshape(B*H, L, D)
+        v2 = v.reshape(B*H, L, D)
+        out = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2, is_causal=causal)
+        return out.reshape(B, H, L, D)
 
 
 def encode_fp8(
@@ -121,7 +126,7 @@ def encode_fp8(
         k = k.view(B, L, H, D).permute(0, 2, 1, 3).contiguous()
         v = v.view(B, L, H, D).permute(0, 2, 1, 3).contiguous()
         # Attention (SDPA)
-        a = _attn_sdpa(q, k, v, causal=False, attn_mask=None)
+        a = _attn(q, k, v, causal=False, attn_mask=None)
         a = a.permute(0, 2, 1, 3).contiguous().view(B, L, C)
         o = _proj_fp8(a, blk['o'], dev)
         h = x + o
@@ -141,4 +146,3 @@ def encode_fp8(
         h = x2 + wo
 
     return h
-

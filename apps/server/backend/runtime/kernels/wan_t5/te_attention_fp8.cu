@@ -1,5 +1,5 @@
-// Skeleton CUDA kernel for FP8 attention (QK^T softmax PV) with tiling.
-// This is a placeholder: implement stream-K / block-wise softmax for stability.
+// Chunked attention on CUDA using ATen ops (no full LxL materialization).
+// Q,K,V are expected in [B,H,L,D]. We process queries in tiles along L to limit memory.
 
 #include <torch/extension.h>
 using torch::Tensor;
@@ -11,6 +11,12 @@ Tensor to_contig_cuda(const Tensor& t) {
   return t.contiguous();
 }
 
+inline int64_t env_chunk_or(const char* name, int64_t defv) {
+  const char* v = std::getenv(name);
+  if (!v) return defv;
+  try { return std::max<int64_t>(32, std::stoll(v)); } catch (...) { return defv; }
+}
+
 }
 
 std::vector<Tensor> te_attn_fp8_forward(
@@ -18,21 +24,46 @@ std::vector<Tensor> te_attn_fp8_forward(
     const c10::optional<Tensor>& attn_mask, bool causal, const int8_t fp8_format) {
   TORCH_CHECK(q.is_cuda() && k.is_cuda() && v.is_cuda(), "attn_fp8_forward: tensors must be CUDA");
   TORCH_CHECK(q.dim()==4 && k.dim()==4 && v.dim()==4, "attn_fp8_forward: expected [B,H,L,D]");
-  // TODO: dequant path if inputs are FP8; for now assume inputs are casted activations (fp16/bf16)
+  // Assume activations in compute dtype (fp16/bf16). We only tile along queries.
   auto B = q.size(0); auto H = q.size(1); auto L = q.size(2); auto D = q.size(3);
   auto opts = q.options();
   Tensor out = torch::empty_like(q);
-  // Minimal placeholder using SDPA (dispatch to PyTorch) to keep interface valid
-  // This lets us wire Python side and switch implementation later.
-  // Note: we deliberately call aten for now; replace with custom kernels.
-  Tensor mask = attn_mask.has_value() ? attn_mask.value() : Tensor();
-  // scaled_dot_product_attention expects [B*H, L, D]
+
+  // Reshape for batched matmul
   Tensor qv = q.reshape({B*H, L, D});
   Tensor kv = k.reshape({B*H, L, D});
   Tensor vv = v.reshape({B*H, L, D});
-  Tensor o = torch::scaled_dot_product_attention(qv, kv, vv, /*attn_mask=*/{}, causal);
-  out.copy_(o.reshape_as(q));
-  // Return (out, attn_probs?) second tensor reserved for debug/compat
+  Tensor kT = kv.transpose(1, 2); // [B*H, D, L]
+
+  // Chunk size for queries
+  int64_t chunk = env_chunk_or("WAN_TE_ATTN_CHUNK", 192);
+  double scale = 1.0 / std::sqrt(static_cast<double>(D));
+
+  for (int64_t s = 0; s < L; s += chunk) {
+    int64_t c = std::min<int64_t>(chunk, L - s);
+    Tensor q_chunk = qv.narrow(1, s, c);              // [B*H, c, D]
+    Tensor logits = torch::matmul(q_chunk, kT) * scale; // [B*H, c, L]
+    if (attn_mask.has_value()) {
+      // Not wired yet; keep strict: disallow for now
+      TORCH_CHECK(false, "attn_fp8_forward: attn_mask not supported in this version");
+    }
+    if (causal) {
+      // Simple causal mask per chunk: disallow keys > current absolute position
+      // Build a row-wise mask using arange on device
+      Tensor arL = torch::arange(L, q.device());        // [L]
+      for (int64_t i = 0; i < c; ++i) {
+        int64_t pos = s + i;
+        Tensor row = logits.select(1, i);               // [B*H, L]
+        Tensor mask = arL.gt(pos).to(row.dtype()) * (-1e9);
+        row.add_(mask);
+      }
+    }
+    // Stable softmax: subtract max
+    Tensor m = std::get<0>(logits.max(-1, true));
+    Tensor p = (logits - m).softmax(-1);
+    Tensor o_chunk = torch::matmul(p, vv);             // [B*H, c, D]
+    out.reshape({B*H, L, D}).narrow(1, s, c).copy_(o_chunk);
+  }
+
   return {out, Tensor()};
 }
-

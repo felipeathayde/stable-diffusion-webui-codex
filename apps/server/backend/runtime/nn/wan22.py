@@ -1981,10 +1981,25 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         if (i + 1) % 5 == 0:
             log.info("[wan22.gguf] high step %d/%d", i + 1, len(timesteps))
 
+    # Optional debug: decode High tokens to frames before handoff (expensive)
+    try:
+        _dbg_flag = str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1','true','yes','on')
+    except Exception:
+        _dbg_flag = False
+    if _dbg_flag:
+        try:
+            _li(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
+            # Preview decode using VAE from High tokens; output is discarded (debug only)
+            _ = _decode_tokens_to_frames(tokens=x, dit=hi_dit, grid=grid, device=dev, dtype=dt,
+                                         model_dir=os.path.dirname(hi_path), cfg=cfg)
+        except Exception as ex:
+            _li(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
+
     # Handoff: stay in latent space. Unembed HIGH tokens back to 36ch latent volume
     lat_hi = _patch_unembed3d(x, w, grid)  # [B,C_hi,T,H,W], typically C_hi=36 for I2V
     try:
         _li(log, "[wan22.gguf] handoff: high unembed → video_latents=%s", tuple(lat_hi.shape))
+        _li(log, "[wan22.gguf] INFO: High→Low handoff occurs in latent space (no VAE at handoff)")
     except Exception:
         pass
     if lvl >= 2:

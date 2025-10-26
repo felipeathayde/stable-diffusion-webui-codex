@@ -473,6 +473,12 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         vae = vae.to(device=dev, dtype=torch_dtype)
     finally:
         _mm.VAE_ALWAYS_TILED = _old
+    # Expect [B,C,T,H,W]; expand to T=1 if a single frame [B,C,H,W] is provided
+    if hasattr(video_latents, 'ndim'):
+        if video_latents.ndim == 4:
+            video_latents = video_latents.unsqueeze(2)
+        elif video_latents.ndim != 5:
+            raise RuntimeError(f"VAE decode expects 4D or 5D latents; got shape={tuple(getattr(video_latents,'shape',()))}")
     B, C, T, H, W = video_latents.shape
     frames: list[Image.Image] = []
     with torch.no_grad():
@@ -722,11 +728,19 @@ def _set_sdpa_settings(policy: Optional[str], chunk: Optional[int]) -> None:
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = False) -> torch.Tensor:
     pol = _SDPA_SETTINGS['policy']
     ch = _SDPA_SETTINGS['chunk']
-    ctx = torch.backends.cuda.sdp_kernel(
-        enable_flash=(pol == 'flash'),
-        enable_math=(pol == 'math'),
-        enable_mem_efficient=(pol == 'mem_efficient'),
-    ) if (q.is_cuda and hasattr(torch.backends, 'cuda')) else nullcontext()
+    # Prefer new API when available (avoid deprecation warnings)
+    try:
+        from torch.nn.attention import sdpa_kernel as _sdpa_kernel  # type: ignore[attr-defined]
+    except Exception:
+        _sdpa_kernel = None
+    if _sdpa_kernel is not None and q.is_cuda:
+        ctx = _sdpa_kernel(
+            enable_flash=(pol == 'flash'),
+            enable_math=(pol == 'math'),
+            enable_mem_efficient=(pol == 'mem_efficient'),
+        )
+    else:
+        ctx = nullcontext()
 
     if ch and ch > 0:
         with ctx:

@@ -25,6 +25,7 @@ import math
 from pathlib import Path
 
 import torch
+import os
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
@@ -740,6 +741,7 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = F
     ch = int(_SDPA_SETTINGS['chunk'])
     # Prefer new context manager torch.nn.attention.sdpa_kernel(backends=...) when available
     ctx = nullcontext()
+    eff = 'unknown'
     try:
         if q.is_cuda:
             from torch.nn.attention import sdpa_kernel as _sdpa_kernel  # type: ignore[attr-defined]
@@ -751,6 +753,12 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = F
                 'cudnn': getattr(SDPBackend, 'CUDNN_ATTENTION', SDPBackend.EFFICIENT_ATTENTION),
             }.get(pol, SDPBackend.EFFICIENT_ATTENTION)
             ctx = _sdpa_kernel(backend)
+            eff = {
+                SDPBackend.FLASH_ATTENTION: 'flash',
+                SDPBackend.EFFICIENT_ATTENTION: 'mem_efficient',
+                SDPBackend.MATH: 'math',
+                getattr(SDPBackend, 'CUDNN_ATTENTION', SDPBackend.EFFICIENT_ATTENTION): 'cudnn',
+            }.get(backend, pol)
     except Exception:
         # Fallback to legacy API (deprecated) only for compatibility on older torch builds
         try:
@@ -760,8 +768,32 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = F
                     enable_math=(pol == 'math'),
                     enable_mem_efficient=(pol == 'mem_efficient'),
                 )
+                # Infer effective selection from flags (approximate on legacy API)
+                try:
+                    _b = torch.backends.cuda
+                    if _b.is_flash_sdp_enabled():
+                        eff = 'flash'
+                    elif _b.is_mem_efficient_sdp_enabled():
+                        eff = 'mem_efficient'
+                    elif _b.is_math_sdp_enabled():
+                        eff = 'math'
+                except Exception:
+                    eff = pol
         except Exception:
             ctx = nullcontext()
+
+    # One-time or verbose logging of the SDPA backend decision
+    try:
+        verbose = str(os.getenv('WAN_SDPA_DEBUG', '0')).strip().lower() in ('1', 'true', 'yes')
+    except Exception:
+        verbose = False
+    global _LOG_ONCE
+    if verbose or not _LOG_ONCE.get('sdpa', False):
+        _LOG_ONCE['sdpa'] = True
+        try:
+            _li(None, "[wan22.gguf] sdpa: policy=%s effective=%s chunk=%d device=%s dtype=%s qkv=%s", pol, eff, ch, str(q.device), str(q.dtype), (tuple(q.shape), tuple(k.shape), tuple(v.shape)))
+        except Exception:
+            pass
 
     if ch and ch > 0:
         with ctx:

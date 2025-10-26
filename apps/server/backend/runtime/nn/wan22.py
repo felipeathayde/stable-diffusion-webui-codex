@@ -483,7 +483,8 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
     frames: list[Image.Image] = []
     with torch.no_grad():
         for t in range(T):
-            lat = video_latents[:, :, t]
+            # Keep 5D layout for WAN VAE decode: [B,C,1,H,W]
+            lat = video_latents[:, :, t:t+1]
             lat = (lat / sf) + sh
             img = vae.decode(lat).sample
             img0 = img[0].detach().clamp(0, 1)

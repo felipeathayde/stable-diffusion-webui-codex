@@ -480,6 +480,15 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         elif video_latents.ndim != 5:
             raise RuntimeError(f"VAE decode expects 4D or 5D latents; got shape={tuple(getattr(video_latents,'shape',()))}")
     B, C, T, H, W = video_latents.shape
+    # Hard guard: WAN VAE expects 16-channel latents. If not, the caller likely passed
+    # a concatenated I2V tensor (e.g., mask4+img16+lat16 → 36ch). Callers must slice
+    # to the 16 latent channels before decode (use _decode_tokens_to_frames).
+    if int(C) != 16:
+        raise RuntimeError(
+            f"WAN22 VAE decode expects 16 channels but received C={C}. "
+            "If using I2V checkpoints that embed mask+image+latents, unembed tokens "
+            "and slice the last 16 channels before decode (handled by _decode_tokens_to_frames)."
+        )
     frames: list[Image.Image] = []
     with torch.no_grad():
         for t in range(T):
@@ -1505,7 +1514,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         elif ((i + 1) % 5) == 0:
             log.info("[wan22.gguf] low step %d/%d (%.1f%%)", i + 1, total_lo, pct * 100.0)
 
-    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    # Decode via common helper to ensure 16ch slicing before VAE
+    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
     if getattr(cfg, 'aggressive_offload', True):
         _cuda_empty_cache(log, label='after-decode')
     _try_clear_cache()
@@ -1603,7 +1613,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
         pct = float(i + 1) / float(max(1, total_lo))
         yield {"type": "progress", "stage": "low", "step": i + 1, "total": total_lo, "percent": pct}
 
-    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    # Decode via common helper to ensure 16ch slicing before VAE
+    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames_lo}
@@ -1649,7 +1660,16 @@ def stream_img2vid(cfg: RunConfig, *, logger=None):
     lat_lo0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
     if lat_lo0.ndim == 4: lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-    w_lo, b_lo = _resolve_patch_weights(lo_dit.state); toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+    w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
+    # Align Cin for Low stage (handle I2V models expecting 36ch)
+    try:
+        expected_cin_lo = int(getattr(w_lo, 'shape', [0, 0, 0, 0, 0])[1])
+    except Exception:
+        expected_cin_lo = None
+    x_lo_in = lat_lo0
+    if expected_cin_lo is not None and int(lat_lo0.shape[1]) != expected_cin_lo:
+        x_lo_in = _assemble_i2v_input(lat_lo0, expected_cin_lo, logger=log)
+    toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     scheduler_lo = _make_scheduler(steps_lo, sampler=(getattr(cfg.low, 'sampler', None) if cfg.low else None), scheduler=(getattr(cfg.low, 'scheduler', None) if cfg.low else None))
     x_lo = toks_lo0.clone(); total_lo = len(scheduler_lo.timesteps)
@@ -1663,7 +1683,8 @@ def stream_img2vid(cfg: RunConfig, *, logger=None):
         x_lo = out.prev_sample
         pct = float(i + 1) / float(max(1, total_lo))
         yield {"type": "progress", "stage": "low", "step": i + 1, "total": total_lo, "percent": pct}
-    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    # Decode via common helper to ensure 16ch slicing before VAE
+    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames_lo}
@@ -1843,7 +1864,8 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         x_lo = out.prev_sample
         if (i + 1) % 5 == 0:
             log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
-    frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    # Decode via common helper to ensure 16ch slicing before VAE
+    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
     _try_clear_cache()
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")

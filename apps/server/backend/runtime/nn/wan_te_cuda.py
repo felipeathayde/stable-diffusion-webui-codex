@@ -27,12 +27,32 @@ log.setLevel(logging.INFO)
 log.propagate = False
 
 _ext = None
+_last_error: Optional[str] = None
 
 
 def _try_load_ext(build: bool = False) -> None:
     global _ext
+    global _last_error
     if _ext is not None:
         return
+    # Optional explicit path (env) where the compiled extension lives
+    try:
+        env_path = os.getenv('WAN_TE_EXT_DIR') or os.getenv('WAN_TE_EXT_PATH')
+    except Exception:
+        env_path = None
+    if env_path:
+        try:
+            p = env_path
+            if os.path.isfile(p):
+                p = os.path.dirname(p)
+            if os.path.isdir(p) and p not in sys.path:
+                sys.path.insert(0, p)
+            import wan_te_cuda as _loaded
+            _ext = _loaded
+            log.info("loaded wan_te_cuda extension from env path (%s)", p)
+            return
+        except Exception as ex:
+            log.info("wan_te_cuda not found in env path '%s': %s", env_path, ex)
     try:
         import wan_te_cuda as _loaded
         _ext = _loaded
@@ -59,22 +79,35 @@ def _try_load_ext(build: bool = False) -> None:
         from torch.utils.cpp_extension import load
         this_dir = os.path.dirname(__file__)
         src_dir = os.path.join(os.path.dirname(this_dir), 'kernels', 'wan_t5')
+        def _src(p: str) -> str:
+            return os.path.join(src_dir, p)
         sources = [
-            os.path.join(src_dir, 'te_binding.cpp'),
-            os.path.join(src_dir, 'te_attention_fp8.cu'),
-            os.path.join(src_dir, 'te_linear_fp8.cu'),
+            _src('te_binding.cpp'),
+            _src('te_attention_fp8.cu'),
+            _src('te_linear_fp8.cu'),
         ]
-        _mod = load(name='wan_te_cuda', sources=sources, extra_cflags=['-O3'], extra_cuda_cflags=['-O3', '--use_fast_math'])
+        kern = _src('te_attention_fp8_kernel.cu')
+        if os.path.isfile(kern):
+            sources.append(kern)
+        _mod = load(name='wan_te_cuda', sources=sources,
+                    extra_cflags=['-O3'],
+                    extra_cuda_cflags=['-O3', '--use_fast_math'])
         _ext = _mod
         log.info("built wan_te_cuda extension via JIT")
     except Exception as ex:
-        log.error("failed to build wan_te_cuda: %s", ex)
+        _last_error = f"failed to build wan_te_cuda via JIT: {ex}"
+        log.error(_last_error)
         _ext = None
 
 
 def available() -> bool:
-    _try_load_ext(build=os.environ.get('WAN_TE_BUILD', '0') in ('1', 'true', 'yes', 'on'))
+    # Always attempt JIT build if not found — exceptional fallback only
+    _try_load_ext(build=True)
     return _ext is not None
+
+
+def last_error() -> Optional[str]:
+    return _last_error
 
 
 class Fp8Weight:
@@ -96,4 +129,3 @@ def attn_fp8(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, attn_mask: Optio
     fmt = 0 if fp8_format == 'e4m3fn' else 1
     out, probs = torch.ops.wan_te_cuda.attn_fp8_forward(q, k, v, attn_mask if attn_mask is not None else None, bool(causal), int(fmt))
     return out, probs if probs.numel() > 0 else None
-

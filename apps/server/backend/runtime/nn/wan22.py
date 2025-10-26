@@ -284,6 +284,13 @@ def _get_text_context(
         except Exception as ex:
             raise RuntimeError(f"WAN22 TE CUDA kernel required but module not importable: {ex}") from ex
         if not _tecuda.available():
+            # Try to surface the last loader error for clarity
+            try:
+                last = _tecuda.last_error()
+            except Exception:
+                last = None
+            if last:
+                raise RuntimeError(f"WAN22 TE CUDA kernel required but not available ({last}).")
             raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda.")
         # Tokenize normally, then run experimental FP8 encoder path
         if te_impl_eff == 'cuda_fp8':

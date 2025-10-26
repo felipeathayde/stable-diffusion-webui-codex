@@ -25,6 +25,7 @@ import math
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 import os
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
@@ -828,6 +829,27 @@ def _rms_norm(x: torch.Tensor, w: Any) -> torch.Tensor:
     return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)) * w
 
 
+@_io
+def _layer_norm(x: torch.Tensor, w: Any | None = None, b: Any | None = None, eps: float = 1e-5) -> torch.Tensor:
+    """LayerNorm with optional affine params.
+    - If w/b are None: LN without affine (used for pre-norm of SA/FFN).
+    - If provided: cast to x device/dtype and apply as affine (used for norm3 before CA).
+    """
+    weight = None
+    bias = None
+    if w is not None:
+        w = dequantize_tensor(w)
+        if not torch.is_tensor(w):
+            w = torch.as_tensor(w)
+        weight = w.to(device=x.device, dtype=x.dtype)
+    if b is not None:
+        b = dequantize_tensor(b)
+        if not torch.is_tensor(b):
+            b = torch.as_tensor(b)
+        bias = b.to(device=x.device, dtype=x.dtype)
+    return F.layer_norm(x, (x.shape[-1],), weight, bias, eps=eps)
+
+
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
     # Fallback to env if not explicitly provided
     if policy is None:
@@ -1048,6 +1070,37 @@ def _sa(x: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads
     return x + out
 
 
+@_io
+def _sa_core(x_in: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int) -> torch.Tensor:
+    """Self-attention core that returns only the attention output (no residual, no scale/shift)."""
+    q = _linear(x_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
+    k = _linear(x_in, state[w.k_w], state.get(w.k_b), name=w.k_w)
+    v = _linear(x_in, state[w.v_w], state.get(w.v_b), name=w.v_w)
+    qh = _split_heads(q, heads)
+    kh = _split_heads(k, heads)
+    vh = _split_heads(v, heads)
+    ah = _sdpa(qh, kh, vh, causal=False)
+    a = _merge_heads(ah)
+    return _linear(a, state[w.o_w], state.get(w.o_b))
+
+
+@_io
+def _ca_core(x_in: torch.Tensor, ctx: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads: int) -> torch.Tensor:
+    """Cross-attention core that returns only the attention output (no residual, no scale/shift).
+    x_in is expected to be pre-normalized (norm3 when available).
+    """
+    q = _linear(x_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
+    k_in = _rms_norm(ctx, state[w.norm_k_w]) if w.norm_k_w else ctx
+    k = _linear(k_in, state[w.k_w], state.get(w.k_b), name=w.k_w)
+    v = _linear(ctx, state[w.v_w], state.get(w.v_b), name=w.v_w)
+    qh = _split_heads(q, heads)
+    kh = _split_heads(k, heads)
+    vh = _split_heads(v, heads)
+    ah = _sdpa(qh, kh, vh, causal=False)
+    a = _merge_heads(ah)
+    return _linear(a, state[w.o_w], state.get(w.o_b))
+
+
 class WanDiTGGUF:
     def __init__(self, stage_dir: str, *, logger=None) -> None:
         self._logger = logger
@@ -1153,8 +1206,8 @@ class WanDiTGGUF:
 
         h = x
         for bs in spec.blocks:
-            # per-block modulation slices
-            s_sa, b_sa, s_ca, b_ca, s_ffn, b_ffn = tproj[:, 0], tproj[:, 1], tproj[:, 2], tproj[:, 3], tproj[:, 4], tproj[:, 5]
+            # per-block modulation slices from tproj (+ optional modulation sum)
+            e = tproj
             if bs.modulation and bs.modulation in self.state:
                 mod = self.state[bs.modulation]
                 mod = dequantize_tensor(mod)
@@ -1162,22 +1215,42 @@ class WanDiTGGUF:
                     mod = torch.as_tensor(mod, device=device, dtype=tt)
                 else:
                     mod = mod.to(device=device, dtype=tt)
-                m = tproj * mod  # broadcast [B,6,C]
-                s_sa, b_sa, s_ca, b_ca, s_ffn, b_ffn = m[:, 0], m[:, 1], m[:, 2], m[:, 3], m[:, 4], m[:, 5]
+                # additive composition (ComfyUI semantics): e = tproj + mod
+                # broadcast along batch if needed
+                if mod.dim() == 2:  # [6,C]
+                    mod = mod.unsqueeze(0)
+                e = tproj + mod
 
-            # Self-attention
+            # Unpack e: [sa_shift, sa_scale, sa_gate, ffn_shift, ffn_scale, ffn_gate]
+            sa_shift = e[:, 0]
+            sa_scale = e[:, 1]
+            sa_gate  = e[:, 2]
+            ffn_shift = e[:, 3]
+            ffn_scale = e[:, 4]
+            ffn_gate  = e[:, 5]
+
+            # Self-attention with pre-norm LN (no affine) and gating
             if bs.self_attn.q_w and bs.self_attn.k_w and bs.self_attn.v_w and bs.self_attn.o_w:
-                h = _sa(h, w=bs.self_attn, state=self.state, heads=H, scale=s_sa, shift=b_sa)
-            # Cross-attention
-            h = _ca(h, ctx, w=bs.cross_attn, state=self.state, heads=H, scale=s_ca, shift=b_ca)
-            # FFN
-            if bs.ffn_in_w and bs.ffn_out_w and bs.norm3_w:
-                u = _rms_norm(h, self.state[bs.norm3_w])
-                u = u * (1 + s_ffn) + b_ffn
-                u = _linear(u, self.state[bs.ffn_in_w], self.state.get(bs.ffn_in_b), name=bs.ffn_in_w or f'ffn.{bs.index}.0.weight')
+                x_sa = _layer_norm(h)  # LN no affine
+                x_sa = x_sa * (1 + sa_scale[:, None, :]) + sa_shift[:, None, :]
+                sa_out = _sa_core(x_sa, w=bs.self_attn, state=self.state, heads=H)
+                h = h + sa_out * sa_gate[:, None, :]
+
+            # Cross-attention with norm3 (affine) when available; no scale/shift from e
+            x_ca = h
+            if bs.norm3_w:
+                x_ca = _layer_norm(h, self.state[bs.norm3_w], self.state.get(bs.norm3_b))
+            ca_out = _ca_core(x_ca, ctx, w=bs.cross_attn, state=self.state, heads=H)
+            h = h + ca_out
+
+            # FFN with pre-norm LN (no affine) and gating
+            if bs.ffn_in_w and bs.ffn_out_w:
+                x_ffn = _layer_norm(h)
+                x_ffn = x_ffn * (1 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]
+                u = _linear(x_ffn, self.state[bs.ffn_in_w], self.state.get(bs.ffn_in_b), name=bs.ffn_in_w or f'ffn.{bs.index}.0.weight')
                 u = u * torch.sigmoid(u)  # SiLU
                 u = _linear(u, self.state[bs.ffn_out_w], self.state.get(bs.ffn_out_b), name=bs.ffn_out_w or f'ffn.{bs.index}.2.weight')
-                h = h + u
+                h = h + u * ffn_gate[:, None, :]
         return h
 
 

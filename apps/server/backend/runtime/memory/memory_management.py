@@ -13,6 +13,20 @@ from apps.server.backend.config.args import args
 import logging
 
 _log = logging.getLogger("backend.memory")
+import os
+
+def _mm_log_enabled(level: str) -> bool:
+    env = {
+        'info': 'WAN_LOG_INFO',
+        'warn': 'WAN_LOG_WARN',
+        'error': 'WAN_LOG_ERROR',
+        'debug': 'WAN_LOG_DEBUG',
+    }.get(level, 'WAN_LOG_INFO')
+    val = os.getenv(env)
+    if val is None:
+        return False if level == 'debug' else True
+    s = val.strip().lower()
+    return s in ('1','true','yes','on')
 
 
 cpu = torch.device('cpu')
@@ -401,11 +415,21 @@ def module_size(module, exclude_device=None, include_device=None, return_split=F
 
 def module_move(module, device, recursive=True, excluded_pattens=[]):
     if recursive:
+        if _mm_log_enabled('debug'):
+            try:
+                _log.debug("[mem] move(recursive): module=%s → device=%s", module.__class__.__name__, str(device))
+            except Exception:
+                pass
         return module.to(device=device)
 
     for k, p in module.named_parameters(recurse=False, remove_duplicate=True):
         if k in excluded_pattens:
             continue
+        if _mm_log_enabled('debug'):
+            try:
+                _log.debug("[mem] move(param): %s.%s dtype=%s → device=%s", module.__class__.__name__, k, str(p.dtype), str(device))
+            except Exception:
+                pass
         setattr(module, k, utils.tensor2parameter(p.to(device=device)))
 
     return module
@@ -490,12 +514,22 @@ class LoadedModel:
             swap_counter = 0
 
             for m in gpu_modules:
+                if _mm_log_enabled('debug'):
+                    try:
+                        _log.debug("[mem] load(gpu): %s → device=%s", m.__class__.__name__, str(self.device))
+                    except Exception:
+                        pass
                 m.to(self.device)
                 mem_counter += m.total_mem
 
             for m in cpu_modules:
                 m.prev_parameters_manual_cast = m.parameters_manual_cast
                 m.parameters_manual_cast = True
+                if _mm_log_enabled('debug'):
+                    try:
+                        _log.debug("[mem] offload(cpu): %s → device=%s", m.__class__.__name__, str(self.model.offload_device))
+                    except Exception:
+                        pass
                 m.to(self.model.offload_device)
                 if pin_memory:
                     m._apply(lambda x: x.pin_memory())
@@ -507,8 +541,12 @@ class LoadedModel:
                 module_move(m, device=self.device, recursive=False, excluded_pattens=['weight'])
                 if hasattr(m, 'weight') and m.weight is not None:
                     if pin_memory:
+                        if _mm_log_enabled('debug'):
+                            _log.debug("[mem] offload(weight, pin): %s.weight dtype=%s", m.__class__.__name__, str(m.weight.dtype))
                         m.weight = utils.tensor2parameter(m.weight.to(self.model.offload_device).pin_memory())
                     else:
+                        if _mm_log_enabled('debug'):
+                            _log.debug("[mem] offload(weight): %s.weight dtype=%s", m.__class__.__name__, str(m.weight.dtype))
                         m.weight = utils.tensor2parameter(m.weight.to(self.model.offload_device))
                 mem_counter += m.extra_mem
                 swap_counter += m.weight_mem

@@ -188,30 +188,7 @@
                 <label class="label" for="seed">Seed</label>
                 <input id="seed" class="ui-input" type="number" v-model.number="state.seed" placeholder="-1 (random)" />
               </div>
-              <div>
-                <label class="label" for="offloadLevel">Offload Level</label>
-                <select id="offloadLevel" class="select-md" v-model.number="state.offloadLevel">
-                  <option :value="0">0 — Off</option>
-                  <option :value="1">1 — Light</option>
-                  <option :value="2">2 — Balanced</option>
-                  <option :value="3">3 — Aggressive</option>
-                </select>
-              </div>
-              <div>
-                <label class="label" for="teKernel">Text Encoder Kernel</label>
-                <select id="teKernel" class="select-md" v-model="state.teKernel">
-                  <option value="auto">Auto</option>
-                  <option value="hf-cpu">HF on CPU</option>
-                  <option value="hf-cuda">HF on CUDA</option>
-                  <option value="cuda-fp8">CUDA FP8 (experimental)</option>
-                </select>
-                <div v-if="state.teKernel === 'cuda-fp8'" class="mt-2">
-                  <label class="switch-label">
-                    <input type="checkbox" v-model="state.teKernelRequire" />
-                    <span>Require TE CUDA kernel</span>
-                  </label>
-                </div>
-              </div>
+              <!-- Offload level and Text Encoder kernel controls removed; backend reads env vars only -->
             </div>
           </div>
 
@@ -265,9 +242,7 @@ const state = reactive({
     loraPath: '', loraWeight: 1.0,
   },
   sampler: 'Euler', scheduler: 'Simple', wanFormat: 'gguf',
-  offloadLevel: 3,
-  teKernel: 'auto',
-  teKernelRequire: true,
+  // Offload level and TE kernel are controlled via env vars only
   seed: -1,
 })
 
@@ -367,17 +342,7 @@ async function generate(): Promise<void> {
       wan_text_encoder_path: tePath || undefined,
       wan_metadata_dir: metaDir || undefined,
     }
-    // Offload/kernel controls
-    ;(extras as any).gguf_offload_level = state.offloadLevel
-    if (state.teKernel === 'hf-cpu') {
-      ;(extras as any).gguf_te_device = 'cpu'
-    } else if (state.teKernel === 'hf-cuda') {
-      ;(extras as any).gguf_te_device = 'cuda'
-    } else if (state.teKernel === 'cuda-fp8') {
-      ;(extras as any).gguf_te_impl = 'cuda_fp8'
-      ;(extras as any).gguf_te_kernel_required = !!state.teKernelRequire
-      ;(extras as any).gguf_te_device = 'cuda'
-    }
+    // Offload/kernel controls removed (env-only: WAN_GGUF_OFFLOAD_LEVEL, WAN_TE_IMPL, WAN_TE_KERNEL_REQUIRED)
     if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = resolve(state.high.loraPath, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
     if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = resolve(state.low.loraPath, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
     if (state.useInitImage && state.initImageData) {

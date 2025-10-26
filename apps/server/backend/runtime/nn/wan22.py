@@ -70,9 +70,49 @@ def _resolve_i2v_order() -> str:
     except Exception:
         return 'lat_first'
 
+def _log_enabled(level: str) -> bool:
+    key = {
+        'info': 'WAN_LOG_INFO',
+        'warn': 'WAN_LOG_WARN',
+        'error': 'WAN_LOG_ERROR',
+        'debug': 'WAN_LOG_DEBUG',
+    }.get(level, 'WAN_LOG_INFO')
+    val = os.getenv(key)
+    if val is None:
+        # Default: info/warn/error on, debug off
+        return False if level == 'debug' else True
+    s = val.strip().lower()
+    return s in ('1', 'true', 'yes', 'on')
+
 def _li(logger, msg, *args):
+    if not _log_enabled('info'):
+        return
     try:
         _get_logger(logger).info(msg, *args)
+    except Exception:
+        pass
+
+def _lw(logger, msg, *args):
+    if not _log_enabled('warn'):
+        return
+    try:
+        _get_logger(logger).warning(msg, *args)
+    except Exception:
+        pass
+
+def _le(logger, msg, *args):
+    if not _log_enabled('error'):
+        return
+    try:
+        _get_logger(logger).error(msg, *args)
+    except Exception:
+        pass
+
+def _ld(logger, msg, *args):
+    if not _log_enabled('debug'):
+        return
+    try:
+        _get_logger(logger).debug(msg, *args)
     except Exception:
         pass
 
@@ -80,7 +120,7 @@ def _dbg(logger, name: str, where: str) -> None:
     if not _DEBUG_IO:
         return
     try:
-        _get_logger(logger).info("[wan22.gguf] DEBUG: %s de função %s", where, name)
+        _ld(logger, "[wan22.gguf] DEBUG: %s de função %s", where, name)
     except Exception:
         pass
 
@@ -111,10 +151,16 @@ def _patch_embed3d(video, w, b):
     W = w
     if hasattr(W, 'gguf_cls'):
         W = dequantize_tensor(W)
+    old_dtype = getattr(W, 'dtype', None)
     W = W.to(device=device, dtype=(torch.float32 if use_fp32 else dtype))
+    if _log_enabled('debug'):
+        _ld(None, "[wan22.gguf] dtype(cast): patch_embedding.weight from %s to %s", str(old_dtype), str(W.dtype))
     bias = None
     if b is not None:
+        old_bd = getattr(b, 'dtype', None)
         bias = b.to(device=device, dtype=(torch.float32 if use_fp32 else dtype))
+        if _log_enabled('debug'):
+            _ld(None, "[wan22.gguf] dtype(cast): patch_embedding.bias from %s to %s", str(old_bd), str(bias.dtype))
     B, C, T, H, Wd = video.shape
     kCout, kCin, kT, kH, kW = W.shape
     if C != kCin:
@@ -538,7 +584,7 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
                 if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
                     raise RuntimeError(f"WAN22 GGUF: non-finite latents before VAE decode (count={n_bad}). Enable WAN_I2V_LAT_STATS=1 to inspect distribution.")
                 if logger:
-                    _li(logger, "[wan22.gguf] WARN: VAE decode received non-finite latents (count=%d); continuing", n_bad)
+                    _lw(logger, "[wan22.gguf] WARN: VAE decode received non-finite latents (count=%d); continuing", n_bad)
     except Exception:
         pass
     if hasattr(video_latents, 'ndim'):
@@ -608,7 +654,7 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
                 if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
                     raise RuntimeError(f"WAN22 GGUF: VAE decode produced non-finite outputs (count={n_bad}). Consider lowering steps/cfg or enabling debug clamp.")
                 try:
-                    _li(logger, "[wan22.gguf] WARN: VAE decode produced non-finite values (count=%d); sanitizing.", n_bad)
+                    _lw(logger, "[wan22.gguf] WARN: VAE decode produced non-finite values (count=%d); sanitizing.", n_bad)
                 except Exception:
                     pass
                 x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=0.0)
@@ -820,16 +866,29 @@ def _try_clear_cache() -> None:
 
 
 @_io
-def _linear(x: torch.Tensor, w: Any, b: Any | None) -> torch.Tensor:
+def _linear(x: torch.Tensor, w: Any, b: Any | None, *, name: Optional[str] = None) -> torch.Tensor:
+    # Dequantize and dtypecast with optional debug logs
     w = dequantize_tensor(w)
     if not torch.is_tensor(w):
         w = torch.as_tensor(w)
-    w = w.to(device=x.device, dtype=x.dtype)
+    if _log_enabled('debug'):
+        _ld(None, "[wan22.gguf] dtype(create): %s dtype=%s device=%s shape=%s", str(name or '<weight>'), str(w.dtype), str(w.device), tuple(w.shape))
+    if w.dtype != x.dtype or w.device != x.device:
+        old = (str(w.dtype), str(w.device))
+        w = w.to(device=x.device, dtype=x.dtype)
+        if _log_enabled('debug'):
+            _ld(None, "[wan22.gguf] dtype(cast): %s from dtype=%s@%s to dtype=%s@%s", str(name or '<weight>'), old[0], old[1], str(w.dtype), str(w.device))
     if b is not None:
         b = dequantize_tensor(b)
         if not torch.is_tensor(b):
             b = torch.as_tensor(b)
-        b = b.to(device=x.device, dtype=x.dtype)
+        if _log_enabled('debug'):
+            _ld(None, "[wan22.gguf] dtype(create): %s dtype=%s device=%s shape=%s", str((name + ".bias") if name else '<bias>'), str(b.dtype), str(b.device), tuple(b.shape))
+        if b.dtype != x.dtype or b.device != x.device:
+            oldb = (str(b.dtype), str(b.device))
+            b = b.to(device=x.device, dtype=x.dtype)
+            if _log_enabled('debug'):
+                _ld(None, "[wan22.gguf] dtype(cast): %s from dtype=%s@%s to dtype=%s@%s", str((name + ".bias") if name else '<bias>'), oldb[0], oldb[1], str(b.dtype), str(b.device))
     return torch.nn.functional.linear(x, w, b)
 
 
@@ -967,9 +1026,9 @@ def _ca(x: torch.Tensor, ctx: torch.Tensor, *, w: CrossAttnWeights, state: Mappi
         q_in = q_in * (1 + scale)
     if shift is not None:
         q_in = q_in + shift
-    q = _linear(q_in, state[w.q_w], state.get(w.q_b))
-    k = _linear(_rms_norm(ctx, state[w.norm_k_w]) if w.norm_k_w else ctx, state[w.k_w], state.get(w.k_b))
-    v = _linear(ctx, state[w.v_w], state.get(w.v_b))
+    q = _linear(q_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
+    k = _linear(_rms_norm(ctx, state[w.norm_k_w]) if w.norm_k_w else ctx, state[w.k_w], state.get(w.k_b), name=w.k_w)
+    v = _linear(ctx, state[w.v_w], state.get(w.v_b), name=w.v_w)
     qh = _split_heads(q, heads)
     kh = _split_heads(k, heads)
     vh = _split_heads(v, heads)
@@ -986,9 +1045,9 @@ def _sa(x: torch.Tensor, *, w: CrossAttnWeights, state: Mapping[str, Any], heads
         q_in = q_in * (1 + scale)
     if shift is not None:
         q_in = q_in + shift
-    q = _linear(q_in, state[w.q_w], state.get(w.q_b))
-    k = _linear(_rms_norm(x, state[w.norm_k_w]) if w.norm_k_w else x, state[w.k_w], state.get(w.k_b))
-    v = _linear(x, state[w.v_w], state.get(w.v_b))
+    q = _linear(q_in, state[w.q_w], state.get(w.q_b), name=w.q_w)
+    k = _linear(_rms_norm(x, state[w.norm_k_w]) if w.norm_k_w else x, state[w.k_w], state.get(w.k_b), name=w.k_w)
+    v = _linear(x, state[w.v_w], state.get(w.v_b), name=w.v_w)
     qh = _split_heads(q, heads)
     kh = _split_heads(k, heads)
     vh = _split_heads(v, heads)
@@ -1080,10 +1139,10 @@ class WanDiTGGUF:
             emb = torch.nn.functional.pad(emb, (0, base_dim - emb.shape[1]))
         emb = emb.to(dtype=tt)
 
-        t5120 = _linear(emb, te0_w, te0_b)
+        t5120 = _linear(emb, te0_w, te0_b, name=spec.time_emb_0_w or 'time_embedding.0.weight')
         t5120 = t5120 * torch.sigmoid(t5120)  # SiLU
-        t5120 = _linear(t5120, te2_w, te2_b)
-        tproj = _linear(t5120, tp_w, tp_b).view(t5120.shape[0], 6, C)
+        t5120 = _linear(t5120, te2_w, te2_b, name=spec.time_emb_2_w or 'time_embedding.2.weight')
+        tproj = _linear(t5120, tp_w, tp_b, name=spec.time_proj_w or 'time_projection.1.weight').view(t5120.shape[0], 6, C)
 
         # Text embedding projection (if weights are present)
         ctx = cond
@@ -1092,10 +1151,10 @@ class WanDiTGGUF:
             te2_w = self.state.get(spec.text_emb_2_w); te2_b = self.state.get(spec.text_emb_2_b)
             if te0_w is None or te2_w is None:
                 raise RuntimeError("Missing text_embedding weights")
-            ctx = _linear(ctx, te0_w, te0_b)
+            ctx = _linear(ctx, te0_w, te0_b, name=spec.text_emb_0_w or 'text_embedding.0.weight')
             # GELU (approximate OK)
             ctx = torch.nn.functional.gelu(ctx)
-            ctx = _linear(ctx, te2_w, te2_b)
+            ctx = _linear(ctx, te2_w, te2_b, name=spec.text_emb_2_w or 'text_embedding.2.weight')
         else:
             # If no projection weights exist, require ctx dim to match d_model
             if ctx.shape[-1] != C:
@@ -1124,9 +1183,9 @@ class WanDiTGGUF:
             if bs.ffn_in_w and bs.ffn_out_w and bs.norm3_w:
                 u = _rms_norm(h, self.state[bs.norm3_w])
                 u = u * (1 + s_ffn) + b_ffn
-                u = _linear(u, self.state[bs.ffn_in_w], self.state.get(bs.ffn_in_b))
+                u = _linear(u, self.state[bs.ffn_in_w], self.state.get(bs.ffn_in_b), name=bs.ffn_in_w or f'ffn.{bs.index}.0.weight')
                 u = u * torch.sigmoid(u)  # SiLU
-                u = _linear(u, self.state[bs.ffn_out_w], self.state.get(bs.ffn_out_b))
+                u = _linear(u, self.state[bs.ffn_out_w], self.state.get(bs.ffn_out_b), name=bs.ffn_out_w or f'ffn.{bs.index}.2.weight')
                 h = h + u
         return h
 
@@ -1441,7 +1500,7 @@ def _sample_stage_tokens(
             bad = int((~torch.isfinite(eps)).sum().item())
             if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
                 raise RuntimeError(f"WAN22 GGUF: non-finite model_output at step {i+1}/{total} (count={bad}).")
-            _li(log, "[wan22.gguf] WARN: non-finite model_output at %d/%d (count=%d); continuing", i+1, total, bad)
+            _lw(log, "[wan22.gguf] WARN: non-finite model_output at %d/%d (count=%d); continuing", i+1, total, bad)
         # Euler step
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample
@@ -1449,7 +1508,7 @@ def _sample_stage_tokens(
             badx = int((~torch.isfinite(x)).sum().item())
             if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
                 raise RuntimeError(f"WAN22 GGUF: non-finite tokens after step {i+1}/{total} (count={badx}).")
-            _li(log, "[wan22.gguf] WARN: non-finite tokens after %d/%d (count=%d); continuing", i+1, total, badx)
+            _lw(log, "[wan22.gguf] WARN: non-finite tokens after %d/%d (count=%d); continuing", i+1, total, badx)
         pct = float(i + 1) / float(max(1, total))
         # Optional CUDA memory snapshot every N steps
         if log_mem_interval is not None:
@@ -1836,10 +1895,10 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
         _dbg_flag = False
     if _dbg_flag:
         try:
-            _li(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
+            _ld(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
             _ = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg, debug_preview=True)
         except Exception as ex:
-            _li(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
+            _ld(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
 
     # Proper handoff in latents: unembed High → embed Low (no VAE in-between)
     w_hi, b_hi = _resolve_patch_weights(hi_dit.state)
@@ -2099,12 +2158,12 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         _dbg_flag = False
     if _dbg_flag:
         try:
-            _li(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
+            _ld(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
             # Preview decode using VAE from High tokens; output is discarded (debug only)
             _ = _decode_tokens_to_frames(tokens=x, dit=hi_dit, grid=grid, device=dev, dtype=dt,
                                          model_dir=os.path.dirname(hi_path), cfg=cfg, debug_preview=True)
         except Exception as ex:
-            _li(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
+            _ld(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
 
     # Handoff: stay in latent space. Unembed HIGH tokens back to 36ch latent volume
     lat_hi = _patch_unembed3d(x, w, grid)  # [B,C_hi,T,H,W], typically C_hi=36 for I2V

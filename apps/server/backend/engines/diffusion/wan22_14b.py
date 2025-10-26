@@ -293,6 +293,14 @@ class Wan2214BEngine(BaseVideoEngine):
                 elif isinstance(ev, dict) and ev.get('type') == 'result':
                     frames = ev.get('frames', [])
                     yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "img2vid", "frames": len(frames)})})
+                elif isinstance(ev, dict) and ev.get('type') == 'error':
+                    err = ev.get('error')
+                    try:
+                        self._logger.error("[wan22.gguf] runtime error during img2vid: %s", err)
+                    except Exception:
+                        pass
+                    # Strict: surface the error to orchestrator/UI (no silent fallback)
+                    raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
             self._logger.info('[wan22_14b] DEBUG: depois de função img2vid')
             return
 

@@ -102,13 +102,6 @@ export function startImg2Vid(payload: Record<string, unknown>): Promise<Txt2ImgS
   })
 }
 
-export function saveTestRequest(payload: Record<string, unknown>): Promise<{ saved: string }> {
-  return requestJson<{ saved: string }>('/test/save', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
 export function fetchTaskResult(taskId: string): Promise<TaskResult> {
   return requestJson<TaskResult>(`/tasks/${taskId}`)
 }

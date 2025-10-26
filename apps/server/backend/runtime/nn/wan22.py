@@ -160,6 +160,8 @@ def _get_text_context(
     vae_dir: Optional[str] = None,
     model_key: Optional[str] = None,
     metadata_dir: Optional[str] = None,
+    offload_after: bool = True,
+    te_device: Optional[str] = None,
 ):
     """GGUF path: use Transformers tokenizer + encoder only; do NOT fall back to Diffusers.
 
@@ -229,7 +231,9 @@ def _get_text_context(
             "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required. Directory-based text encoders are not supported."
         )
 
-    dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    # Device for TE: explicit te_device overrides cfg.device; no silent fallback
+    use_dev_name = (te_device or device or 'cpu').lower().strip()
+    dev = torch.device('cuda' if use_dev_name == 'cuda' and torch.cuda.is_available() else 'cpu')
     enc = enc.to(dev)
     try:
         enc = enc.to(dtype=_as_dtype(dtype))
@@ -245,6 +249,14 @@ def _get_text_context(
 
     p = _do(prompt or '')
     n = _do(negative or '') if negative is not None else _do('')
+    # Aggressive offload: drop TE from VRAM immediately after use
+    if offload_after:
+        try:
+            enc.to('cpu')
+        except Exception:
+            pass
+        del enc
+        _cuda_empty_cache(logger=None, label='after-te')
     return p, n
 
 
@@ -280,7 +292,7 @@ def _get_scale_shift(vae) -> tuple[float, float]:
 
 
 @_io
-def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger=None):
+def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str | None = None, logger=None, offload_after: bool = True):
     import torch
     torch_dtype = _as_dtype(dtype)
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
@@ -327,11 +339,18 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
     with torch.no_grad():
         latents = vae.encode(init_image).latent_dist.sample()
         latents = (latents - sh) * sf
+    if offload_after:
+        try:
+            vae.to('cpu')
+        except Exception:
+            pass
+        del vae
+        _cuda_empty_cache(logger, label='after-vae-encode')
     return latents
 
 
 @_io
-def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None, logger=None):
+def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype: str, vae_dir: str | None = None, logger=None, offload_after: bool = True):
     import torch
     from PIL import Image
     torch_dtype = _as_dtype(dtype)
@@ -360,6 +379,13 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
             img0 = img[0].detach().clamp(0, 1)
             arr = (img0.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             frames.append(Image.fromarray(arr))
+    if offload_after:
+        try:
+            vae.to('cpu')
+        except Exception:
+            pass
+        del vae
+        _cuda_empty_cache(logger, label='after-vae-decode')
     return frames
 
 try:  # progress bar for long loops (non-fatal if unavailable)
@@ -845,6 +871,9 @@ class RunConfig:
     gguf_cache_policy: Optional[str] = None      # 'none' | 'cpu_lru'
     gguf_cache_limit_mb: Optional[int] = None    # MB limit for cpu_lru cache
     log_mem_interval: Optional[int] = None       # log CUDA mem every N steps if >0
+    # Aggressive offload controls
+    aggressive_offload: bool = True              # move modules off GPU immediately after use
+    te_device: Optional[str] = None              # 'cuda' | 'cpu' (None = follow cfg.device)
 
 def _as_dtype(dtype: str):
     return {
@@ -867,6 +896,21 @@ def _get_logger(logger: Any):
     lg.setLevel(logging.INFO)
     lg.propagate = False
     return lg
+
+def _cuda_empty_cache(logger=None, label: str = "gc") -> None:
+    try:
+        import torch
+        if not (getattr(torch, 'cuda', None) and torch.cuda.is_available()):
+            return
+        torch.cuda.synchronize()
+        alloc_before = torch.cuda.memory_allocated() // (1024 * 1024)
+        reserved_before = torch.cuda.memory_reserved() // (1024 * 1024)
+        torch.cuda.empty_cache()
+        alloc_after = torch.cuda.memory_allocated() // (1024 * 1024)
+        reserved_after = torch.cuda.memory_reserved() // (1024 * 1024)
+        _li(logger, "[wan22.gguf] cuda.gc(%s): alloc %d→%d MB reserved %d→%d MB", label, alloc_before, alloc_after, reserved_before, reserved_after)
+    except Exception:
+        pass
 
 
 def _resolve_patch_weights(state: Mapping[str, Any]) -> Tuple[Any, Any]:
@@ -1146,6 +1190,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
+        offload_after=bool(getattr(cfg, 'aggressive_offload', True)),
+        te_device=getattr(cfg, 'te_device', None),
     )
     if on_progress:
         try:
@@ -1167,6 +1213,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         str(dev), str(dt), grid, (token_shape[0], token_shape[1])
     )
     _log_cuda_mem(log, label='after-high-setup')
+    if getattr(cfg, 'aggressive_offload', True):
+        _cuda_empty_cache(log, label='pre-high')
     if on_progress:
         try:
             on_progress(stage='prepare', step=1, total=1, percent=0.15)
@@ -1212,6 +1260,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
 
     # Decode High to frames and seed Low with last frame (Low is mandatory)
     frames_hi = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    if getattr(cfg, 'aggressive_offload', True):
+        _cuda_empty_cache(log, label='after-high')
     if not frames_hi:
         raise RuntimeError("WAN22 GGUF: High stage produced no frames")
 
@@ -1275,6 +1325,8 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
             log.info("[wan22.gguf] low step %d/%d (%.1f%%)", i + 1, total_lo, pct * 100.0)
 
     frames_lo = _vae_decode_video(_patch_unembed3d(x_lo, w_lo, grid_lo), model_dir=os.path.dirname(lo_path), device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if getattr(cfg, 'aggressive_offload', True):
+        _cuda_empty_cache(log, label='after-decode')
     _try_clear_cache()
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
@@ -1483,6 +1535,8 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
+        offload_after=bool(getattr(cfg, 'aggressive_offload', True)),
+        te_device=getattr(cfg, 'te_device', None),
     )
     if on_progress:
         try:
@@ -1555,7 +1609,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
 
     # Prepare seed tokens for Low from seed_image
-    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log, offload_after=bool(getattr(cfg, 'aggressive_offload', True)))
     if lat_lo0.ndim == 4:
         lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)

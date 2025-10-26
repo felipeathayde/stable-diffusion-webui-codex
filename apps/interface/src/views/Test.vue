@@ -243,9 +243,9 @@ import type { GeneratedImage, TaskEvent } from '../api/types'
 const state = reactive({
   prompt: '',
   negative: '',
-  width: 360,
-  height: 240,
-  frames: 81,
+  width: 512,
+  height: 512,
+  frames: 90,
   fps: 15,
   useInitImage: true,
   initImageData: '',
@@ -266,7 +266,7 @@ const state = reactive({
   },
   sampler: 'Euler', scheduler: 'Simple', wanFormat: 'gguf',
   offloadLevel: 3,
-  teKernel: 'auto',
+  teKernel: 'cuda-fp8',
   teKernelRequire: true,
   seed: -1,
 })

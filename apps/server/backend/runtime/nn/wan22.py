@@ -28,9 +28,44 @@ import torch
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
+import logging
 from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
+
+# Debug helpers (lightweight)
+_LOG_ONCE = {
+    'patch_embed': False,
+    'patch_unembed': False,
+    'sdpa': False,
+}
+
+def _get_logger_legacy(logger: Any):
+    # Legacy duplicate; keep for compatibility if referenced elsewhere
+    import logging
+    if logger is not None:
+        return logger
+    lg = logging.getLogger("wan22.gguf")
+    if not lg.handlers:
+        h = logging.StreamHandler()
+        fmt = logging.Formatter('[wan22.gguf] %(levelname)s: %(message)s')
+        h.setFormatter(fmt)
+        lg.addHandler(h)
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    return lg
+
+def _li(logger, msg, *args):
+    try:
+        _get_logger(logger).info(msg, *args)
+    except Exception:
+        pass
+
+def _dbg(logger, name: str, where: str) -> None:
+    try:
+        _get_logger(logger).info("[wan22.gguf] DEBUG: %s de função %s", where, name)
+    except Exception:
+        pass
 
 def _patch_embed3d(video, w, b):
     import torch

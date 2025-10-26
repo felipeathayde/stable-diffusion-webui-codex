@@ -1308,8 +1308,8 @@ def _decode_tokens_to_frames(
     # If the model used I2V composition (mask4+img16+lat16 → C=36), keep only the latent channels for VAE
     try:
         C = int(video_latents.shape[1])
-        if C > 16 and (C % 16 == 0):
-            # Common cases: 36 or 32 → keep the last 16 channels as latent
+        if C != 16 and C >= 16:
+            # Common case: 36 (mask4+img16+lat16). General rule: keep the last 16 as latent channels.
             video_latents = video_latents[:, -16:, ...]
             _li(None, "[wan22.gguf] vae decode: sliced latents to 16ch from C=%d", C)
     except Exception:
@@ -1647,7 +1647,7 @@ def stream_img2vid(cfg: RunConfig, *, logger=None):
     scheduler_hi = _make_scheduler(steps_hi, sampler=(getattr(cfg.high, 'sampler', None) if cfg.high else None), scheduler=(getattr(cfg.high, 'scheduler', None) if cfg.high else None))
     total_hi = len(scheduler_hi.timesteps)
     yield {"type": "progress", "stage": "high", "step": 0, "total": total_hi, "percent": 0.0}
-    # Start from encoded init image latents for first step to warm VAE and token grids consistent
+    # Sample HIGH tokens in token space (no mid VAE decode)
     toks_hi = _sample_stage_tokens(
         dit=hi_dit, steps=steps_hi, cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
         prompt_embeds=prompt_embeds, negative_embeds=negative_embeds, grid=grid, token_shape=token_shape,
@@ -1656,19 +1656,21 @@ def stream_img2vid(cfg: RunConfig, *, logger=None):
         on_progress=lambda step,total,percent: None,
     )
     yield {"type": "progress", "stage": "high", "step": total_hi, "total": total_hi, "percent": 1.0}
-    # Seed low from cfg.init_image instead of last HIGH frame
-    lat_lo0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat_lo0.ndim == 4: lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    # Handoff: unembed HIGH tokens to latent volume and embed for LOW (no VAE decode)
+    w_hi, b_hi = _resolve_patch_weights(hi_dit.state)
+    lat_hi = _patch_unembed3d(toks_hi, w_hi, grid)
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
-    # Align Cin for Low stage (handle I2V models expecting 36ch)
     try:
         expected_cin_lo = int(getattr(w_lo, 'shape', [0, 0, 0, 0, 0])[1])
     except Exception:
         expected_cin_lo = None
-    x_lo_in = lat_lo0
-    if expected_cin_lo is not None and int(lat_lo0.shape[1]) != expected_cin_lo:
-        x_lo_in = _assemble_i2v_input(lat_lo0, expected_cin_lo, logger=log)
+    x_lo_in = lat_hi
+    if expected_cin_lo is not None and int(lat_hi.shape[1]) != expected_cin_lo:
+        if int(lat_hi.shape[1]) >= 16 and expected_cin_lo == 16:
+            x_lo_in = lat_hi[:, -16:, ...]
+        else:
+            x_lo_in = _assemble_i2v_input(lat_hi if int(lat_hi.shape[1]) == 16 else lat_hi[:, -16:, ...], expected_cin_lo, logger=log)
     toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     scheduler_lo = _make_scheduler(steps_lo, sampler=(getattr(cfg.low, 'sampler', None) if cfg.low else None), scheduler=(getattr(cfg.low, 'scheduler', None) if cfg.low else None))
@@ -1811,30 +1813,29 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         if (i + 1) % 5 == 0:
             log.info("[wan22.gguf] high step %d/%d", i + 1, len(timesteps))
 
-    # Decode High frames and seed Low with last frame latent
-    frames_hi = _decode_tokens_to_frames(tokens=x, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    # Handoff: stay in latent space. Unembed HIGH tokens back to 36ch latent volume
+    lat_hi = _patch_unembed3d(x, w, grid)  # [B,C_hi,T,H,W], typically C_hi=36 for I2V
+    try:
+        _li(log, "[wan22.gguf] handoff: high unembed → video_latents=%s", tuple(lat_hi.shape))
+    except Exception:
+        pass
     if lvl >= 2:
         _cuda_empty_cache(logger=log, label='after-high')
-    seed_image = frames_hi[-1] if frames_hi else None
 
-    # Low stage (mandatory): seed from last High frame
-    if seed_image is None:
-        raise RuntimeError("WAN22 GGUF: missing seed image for Low stage")
+    # Low stage (mandatory): seed from HIGH latents (no VAE in the middle)
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-
-    # Prepare seed tokens for Low from seed_image
-    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log, offload_after=(lvl >= 1))
-    if lat_lo0.ndim == 4:
-        lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
     w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
     try:
         expected_cin_lo = int(getattr(w_lo, 'shape', [0, 0, 0, 0, 0])[1])
     except Exception:
         expected_cin_lo = None
-    found_c_lo = int(lat_lo0.shape[1])
-    x_lo_in = lat_lo0
-    if expected_cin_lo is not None and found_c_lo != expected_cin_lo:
-        x_lo_in = _assemble_i2v_input(lat_lo0, expected_cin_lo, logger=log)
+    x_lo_in = lat_hi
+    if expected_cin_lo is not None and int(lat_hi.shape[1]) != expected_cin_lo:
+        # If Low expects 36 and we have 16 (or vice-versa), assemble/slice accordingly
+        if int(lat_hi.shape[1]) >= 16 and expected_cin_lo == 16:
+            x_lo_in = lat_hi[:, -16:, ...]
+        else:
+            x_lo_in = _assemble_i2v_input(lat_hi if int(lat_hi.shape[1]) == 16 else lat_hi[:, -16:, ...], expected_cin_lo, logger=log)
     toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)

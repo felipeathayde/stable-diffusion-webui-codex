@@ -182,10 +182,16 @@ def _patch_unembed3d(tokens, w, out_shape):
     if Cout != kCout:
         raise RuntimeError(f"patch_unembed: C_out mismatch: tokens C={Cout} vs weight {kCout}")
     T2, H2, W2 = out_shape
-    # Guard: if L != T2*H2*W2 (e.g., some graphs reduce T during sampling), infer T from L and spatial grid
+    # Guard: if L != T2*H2*W2 (e.g., when seed latents H/W differ from cfg, or T inferred),
+    # try to recompute T from L and spatial grid; if still mismatched, raise with a clear hint.
     expected_L = int(T2) * int(H2) * int(W2)
     if L != expected_L and H2 > 0 and W2 > 0 and (L % (H2 * W2) == 0):
         T2 = int(L // (H2 * W2))
+        expected_L = int(T2) * int(H2) * int(W2)
+    if L != expected_L:
+        raise RuntimeError(
+            f"patch_unembed: token length L={L} does not match grid (T,H',W')={out_shape} → expected {expected_L}. "
+            f"This usually means the seed latents spatial size didn't match cfg; ensure init_image latent H/W align to cfg height/width." )
     y = tokens.view(B, T2, H2, W2, Cout).permute(0, 4, 1, 2, 3).contiguous().to(device=device, dtype=dtype)
     video = torch.nn.functional.conv_transpose3d(y, W, bias=None, stride=(1, kH, kW), padding=(0, 0, 0))
     global _LOG_ONCE
@@ -728,7 +734,9 @@ _SDPA_SETTINGS = {
 
 
 def _set_sdpa_settings(policy: Optional[str], chunk: Optional[int]) -> None:
-    pol = (policy or _SDPA_SETTINGS['policy']).strip().lower()
+    # Allow override via env WAN_SDPA_POLICY when explicit policy is None
+    env_pol = os.getenv('WAN_SDPA_POLICY', '').strip().lower() if os.getenv('WAN_SDPA_POLICY') else None
+    pol = (policy or env_pol or _SDPA_SETTINGS['policy']).strip().lower()
     if pol not in ('mem_efficient', 'flash', 'math'):
         pol = _SDPA_SETTINGS['policy']
     ch = int(chunk) if (chunk is not None and int(chunk) > 0) else 0
@@ -1336,6 +1344,11 @@ def _decode_tokens_to_frames(
 ) -> List[object]:
     # Unembed tokens back to video latents and decode via VAE
     w, _b = _resolve_patch_weights(dit.state)
+    # Debug: token/grid shapes
+    try:
+        _li(None, "[wan22.gguf] unembed: tokens(L,C)=%s grid=%s", (int(tokens.shape[1]), int(tokens.shape[2])), grid)
+    except Exception:
+        pass
     video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]
     # If the model used I2V composition (mask4+img16+lat16 → C=36), keep only the latent channels for VAE
     try:
@@ -1794,11 +1807,7 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     H_lat = max(8, cfg.height // 8)
     W_lat = max(8, cfg.width // 8)
     T = max(1, int(cfg.num_frames))
-    grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
-    log.info(
-        "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
-        str(dev), str(dt), grid, (token_shape[0], token_shape[1])
-    )
+    # Defer grid/token inference: derive from actual seed latents to avoid H/W mismatch issues
     if on_progress:
         try:
             on_progress(stage='prepare', step=1, total=1, percent=0.15)
@@ -1806,9 +1815,10 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
             pass
     # For img2vid, we seed token space from VAE latents of the init image (repeated across T)
     lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    # Tile along time to match requested frames
+    # Tile along time to match requested frames and ensure H/W match cfg latents
     if lat0.ndim == 4:  # [B,C,H,W]
         lat0 = lat0.unsqueeze(2).repeat(1, 1, T, 1, 1)
+    lat0 = _resize_latents_hw(lat0, H=H_lat, W=W_lat)
     w, b = _resolve_patch_weights(hi_dit.state)
     # Validate/Assemble input channels for High stage
     try:
@@ -1820,7 +1830,12 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if expected_cin is not None and found_c != expected_cin:
         # For img2vid, some WAN22 I2V checkpoints expect 36 channels (mask4 + img16 + lat16)
         x_in = _assemble_i2v_input(lat0, expected_cin, logger=log)
-    seed_tokens, _ = _patch_embed3d(x_in.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
+    seed_tokens, grid = _patch_embed3d(x_in.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
+    token_shape = (int(seed_tokens.shape[1]), int(seed_tokens.shape[2]))
+    log.info(
+        "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
+        str(dev), str(dt), grid, (token_shape[0], token_shape[1])
+    )
 
     # Run sampler starting from seeded tokens (replace init noise)
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
@@ -1927,3 +1942,20 @@ def _get_logger(logger: Any):
     lg.setLevel(logging.INFO)
     lg.propagate = False
     return lg
+def _resize_latents_hw(x: torch.Tensor, *, H: int, W: int) -> torch.Tensor:
+    import torch.nn.functional as F
+    if x.ndim == 5:
+        B, C, T, h, w = x.shape
+        if h == H and w == W:
+            return x
+        xt = x.permute(0, 2, 1, 3, 4).contiguous().view(B * T, C, h, w)
+        xt = F.interpolate(xt, size=(int(H), int(W)), mode='bilinear', align_corners=False)
+        xt = xt.view(B, T, C, H, W).permute(0, 2, 1, 3, 4).contiguous()
+        return xt
+    if x.ndim == 4:
+        import torch.nn.functional as F  # type: ignore
+        B, C, h, w = x.shape
+        if h == H and w == W:
+            return x
+        return F.interpolate(x, size=(int(H), int(W)), mode='bilinear', align_corners=False)
+    return x

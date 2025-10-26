@@ -258,17 +258,15 @@ class Wan2214BEngine(BaseVideoEngine):
                 )
 
             import os
-            # Env-only controls: offload level and TE kernel requirement
+            # Env-only controls: offload level and TE implementation
             env_offload_lvl = os.getenv('WAN_GGUF_OFFLOAD_LEVEL')
             try:
                 offload_level_env = int(env_offload_lvl) if env_offload_lvl is not None else None
             except Exception:
                 offload_level_env = None
-            te_kernel_required_env = None
-            try:
-                te_kernel_required_env = str(os.getenv('WAN_TE_KERNEL_REQUIRED', '0')).strip().lower() in ('1','true','yes','on')
-            except Exception:
-                te_kernel_required_env = None
+            te_impl_env = (os.getenv('WAN_TE_IMPL', '').strip().lower() or None)
+            te_device_val = 'cuda' if te_impl_env == 'cuda_fp8' else None
+            te_kernel_required_val = True if te_impl_env == 'cuda_fp8' else None
             import os
             env_offload_lvl = os.getenv('WAN_GGUF_OFFLOAD_LEVEL')
             try:
@@ -280,6 +278,15 @@ class Wan2214BEngine(BaseVideoEngine):
                 te_kernel_required_env = str(os.getenv('WAN_TE_KERNEL_REQUIRED', '0')).strip().lower() in ('1','true','yes','on')
             except Exception:
                 te_kernel_required_env = None
+            # Env-only controls for this path as well
+            env_offload_lvl = os.getenv('WAN_GGUF_OFFLOAD_LEVEL')
+            try:
+                offload_level_env = int(env_offload_lvl) if env_offload_lvl is not None else None
+            except Exception:
+                offload_level_env = None
+            te_impl_env = (os.getenv('WAN_TE_IMPL', '').strip().lower() or None)
+            te_device_val = 'cuda' if te_impl_env == 'cuda_fp8' else None
+            te_kernel_required_val = True if te_impl_env == 'cuda_fp8' else None
             cfg = gguf.RunConfig(
                 width=int(getattr(request, 'width', 768) or 768),
                 height=int(getattr(request, 'height', 432) or 432),
@@ -302,9 +309,9 @@ class Wan2214BEngine(BaseVideoEngine):
                 log_mem_interval=(int(ex.get('gguf_log_mem_interval', 0)) if isinstance(ex, dict) and ex.get('gguf_log_mem_interval') else None),
                 aggressive_offload=bool(ex.get('gguf_offload', True)) if isinstance(ex, dict) else True,
                 offload_level=offload_level_env,
-                te_device=None,
-                te_impl=(os.getenv('WAN_TE_IMPL', '').strip().lower() or None),
-                te_kernel_required=te_kernel_required_env,
+                te_device=te_device_val,
+                te_impl=te_impl_env,
+                te_kernel_required=te_kernel_required_val,
                 high=_stage_from(ex_high),
                 low=_stage_from(ex_low),
             )
@@ -386,9 +393,10 @@ class Wan2214BEngine(BaseVideoEngine):
                 gguf_cache_policy=(ex.get('gguf_cache_policy') if isinstance(ex, dict) else None),
                 gguf_cache_limit_mb=(int(ex.get('gguf_cache_limit_mb', 0)) if isinstance(ex, dict) and ex.get('gguf_cache_limit_mb') else None),
                 log_mem_interval=(int(ex.get('gguf_log_mem_interval', 0)) if isinstance(ex, dict) and ex.get('gguf_log_mem_interval') else None),
-                te_device=None,
-                te_impl=(os.getenv('WAN_TE_IMPL', '').strip().lower() or None),
-                te_kernel_required=te_kernel_required_env,
+                offload_level=offload_level_env,
+                te_device=te_device_val,
+                te_impl=te_impl_env,
+                te_kernel_required=te_kernel_required_val,
                 high=_stage_from(ex_high),
                 low=_stage_from(ex_low),
             )

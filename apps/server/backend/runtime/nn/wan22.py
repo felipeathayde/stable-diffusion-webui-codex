@@ -1441,7 +1441,7 @@ def _sample_stage_tokens(
             bad = int((~torch.isfinite(eps)).sum().item())
             if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
                 raise RuntimeError(f"WAN22 GGUF: non-finite model_output at step {i+1}/{total} (count={bad}).")
-            _li(logger, "[wan22.gguf] WARN: non-finite model_output at %d/%d (count=%d); continuing", i+1, total, bad)
+            _li(log, "[wan22.gguf] WARN: non-finite model_output at %d/%d (count=%d); continuing", i+1, total, bad)
         # Euler step
         out = scheduler.step(model_output=eps, timestep=t, sample=x)
         x = out.prev_sample
@@ -1449,7 +1449,7 @@ def _sample_stage_tokens(
             badx = int((~torch.isfinite(x)).sum().item())
             if str(os.getenv('WAN_I2V_STRICT_VAE','0')).strip().lower() in ('1','true','yes','on'):
                 raise RuntimeError(f"WAN22 GGUF: non-finite tokens after step {i+1}/{total} (count={badx}).")
-            _li(logger, "[wan22.gguf] WARN: non-finite tokens after %d/%d (count=%d); continuing", i+1, total, badx)
+            _li(log, "[wan22.gguf] WARN: non-finite tokens after %d/%d (count=%d); continuing", i+1, total, badx)
         pct = float(i + 1) / float(max(1, total))
         # Optional CUDA memory snapshot every N steps
         if log_mem_interval is not None:
@@ -1510,6 +1510,21 @@ def _decode_tokens_to_frames(
                 _li(None, "[wan22.gguf] tokens stats: L=%d C=%d (all non-finite: %d)", int(tt.shape[1]), int(tt.shape[2]), n_bad)
     except Exception:
         pass
+    # Optional sanitize/clamp tokens in preview before unembed to help diagnostics
+    if debug_preview:
+        try:
+            import torch as _t
+            if str(os.getenv('WAN_I2V_DEBUG_SANITIZE_TOKENS','0')).strip().lower() in ('1','true','yes','on'):
+                tokens = _t.nan_to_num(tokens, nan=0.0, posinf=1.0, neginf=-1.0)
+                _li(None, "[wan22.gguf] debug: sanitized tokens (nan→0, ±inf→±1) for preview")
+            v = os.getenv('WAN_I2V_DEBUG_CLAMP', '').strip()
+            if v:
+                lim = float(v)
+                if lim > 0:
+                    tokens = _t.clamp(tokens, min=-lim, max=lim)
+                    _li(None, "[wan22.gguf] debug: clamped tokens to ±%.3f for preview", lim)
+        except Exception:
+            pass
     video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]
     # If the model used I2V composition (mask4 + img16 + lat16 → C=36), keep only the base latent channels for VAE.
     # Our I2V assembly feeds latents as the LAST 16 channels, matching (mask, image, latents) ordering.

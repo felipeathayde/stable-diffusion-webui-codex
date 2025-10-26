@@ -52,6 +52,18 @@ def _patch_embed3d(video, w, b):
     y = torch.nn.functional.conv3d(video, W, bias=bias, stride=(1, kH, kW), padding=(0, 0, 0))
     B2, Cout, T2, H2, W2 = y.shape
     tokens = y.permute(0, 2, 3, 4, 1).contiguous().view(B2, T2 * H2 * W2, Cout)
+    # One-time shape log for debugging
+    global _LOG_ONCE
+    if not _LOG_ONCE.get('patch_embed', False):
+        _LOG_ONCE['patch_embed'] = True
+        try:
+            from .nn import wan22 as _self  # self-module for _li
+        except Exception:
+            _self = None
+        try:
+            (_self or globals()).get('_li', lambda *a, **k: None)(None, "[wan22.gguf] patch_embed3d: video=%s W=%s tokens=%s grid=(%d,%d,%d)", tuple(video.shape), tuple(W.shape), tuple(tokens.shape), T2, H2, W2)
+        except Exception:
+            pass
     return tokens, (T2, H2, W2)
 
 
@@ -72,6 +84,13 @@ def _patch_unembed3d(tokens, w, out_shape):
     T2, H2, W2 = out_shape
     y = tokens.view(B, T2, H2, W2, Cout).permute(0, 4, 1, 2, 3).contiguous().to(device=device, dtype=dtype)
     video = torch.nn.functional.conv_transpose3d(y, W, bias=None, stride=(1, kH, kW), padding=(0, 0, 0))
+    global _LOG_ONCE
+    if not _LOG_ONCE.get('patch_unembed', False):
+        _LOG_ONCE['patch_unembed'] = True
+        try:
+            (_self or globals()).get('_li', lambda *a, **k: None)(None, "[wan22.gguf] patch_unembed3d: tokens=%s W=%s out=%s grid=%s", tuple(tokens.shape), tuple(W.shape), tuple(video.shape), out_shape)
+        except Exception:
+            pass
     return video
 
 

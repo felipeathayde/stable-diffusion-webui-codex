@@ -1123,6 +1123,8 @@ class RunConfig:
     # Aggressive offload controls
     aggressive_offload: bool = True              # legacy switch; see offload_level
     te_device: Optional[str] = None              # 'cuda' | 'cpu' (None = follow cfg.device)
+    te_impl: Optional[str] = None                # 'cuda_fp8' | 'hf' (None = default)
+    te_kernel_required: Optional[bool] = None    # if True, error if CUDA kernel unavailable
     # New: coarse-grained offload profile (takes precedence over aggressive_offload if provided)
     # 0 = off (keep resident), 1 = light (offload TE/VAE only), 2 = balanced (also clear between stages), 3 = aggressive (current behavior)
     offload_level: Optional[int] = None
@@ -1464,7 +1466,9 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
         offload_after=(lvl >= 1),
-        te_device=te_dev_eff,
+        te_device=(cfg.te_device or te_dev_eff),
+        te_impl=getattr(cfg, 'te_impl', None),
+        te_kernel_required=getattr(cfg, 'te_kernel_required', None),
     )
     if on_progress:
         try:
@@ -1635,6 +1639,9 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
         vae_dir=cfg.vae_dir,
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
+        te_device=getattr(cfg, 'te_device', None),
+        te_impl=getattr(cfg, 'te_impl', None),
+        te_kernel_required=getattr(cfg, 'te_kernel_required', None),
     )
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
@@ -1829,7 +1836,9 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         model_key=_model_key,
         metadata_dir=cfg.metadata_dir,
         offload_after=(lvl >= 1),
-        te_device=te_dev_eff,
+        te_device=(cfg.te_device or te_dev_eff),
+        te_impl=getattr(cfg, 'te_impl', None),
+        te_kernel_required=getattr(cfg, 'te_kernel_required', None),
     )
     if on_progress:
         try:

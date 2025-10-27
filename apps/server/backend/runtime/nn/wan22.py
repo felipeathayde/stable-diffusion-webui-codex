@@ -33,7 +33,17 @@ from apps.server.backend.runtime import memory_management
 import logging
 from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 from diffusers import AutoencoderKLWan  # type: ignore
-from .wan_latent_norms import resolve_norm
+# Local latent normalization (Comfy-inspired). Try relative first, then absolute for robustness.
+try:
+    from .wan_latent_norms import resolve_norm
+except Exception as _ex_rel:
+    try:
+        from apps.server.backend.runtime.nn.wan_latent_norms import resolve_norm  # type: ignore
+    except Exception as _ex_abs:  # pragma: no cover
+        raise ImportError(
+            "WAN latent norms module not found. Ensure apps/server/backend/runtime/nn/wan_latent_norms.py exists "
+            "and your working copy is up-to-date (git pull)."
+        ) from _ex_abs
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
 

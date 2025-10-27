@@ -1,7 +1,7 @@
 import torch
-from apps.server.backend import memory_management
-from apps.server.backend.runtime import ops
-from apps.server.backend.patchers import ModelPatcher
+from apps.backend import memory_management
+from apps.backend.runtime import ops
+from apps.backend.patchers import ModelPatcher
 
 from transformers import modeling_utils
 

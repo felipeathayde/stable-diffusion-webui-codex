@@ -5,8 +5,8 @@ import torch
 import numpy as np
 
 from modules import modelloader, paths, deepbooru_model, images, shared
-from apps.server.backend import memory_management
-from apps.server.backend.patchers import ModelPatcher
+from apps.backend import memory_management
+from apps.backend.patchers import ModelPatcher
 
 
 re_special = re.compile(r'([\\()])')

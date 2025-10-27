@@ -26,7 +26,7 @@
               </div>
               <div class="field-stack">
                 <label class="label" for="metadataDir">Metadata Dir (input list)</label>
-                <input id="metadataDir" class="ui-input" list="dl-meta" v-model="state.metadataDir" placeholder="apps/server/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <input id="metadataDir" class="ui-input" list="dl-meta" v-model="state.metadataDir" placeholder="apps/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-meta">
                   <option v-for="opt in options.metadata" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>

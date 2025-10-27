@@ -58,14 +58,14 @@ trace.json
 /test/results.xml
 coverage.xml
 **/tests/**/expectations
-# Keep codex/ docs under version control, but still ignore heavy reports.
+# Keep .sangoi/docs/ docs under version control, but still ignore heavy reports.
 # (Replace previous blanket ignore.)
-!codex/
-!codex/**
-codex/reports/pyright/
+!.sangoi/docs/
+!.sangoi/docs/**
+.sangoi/docs/reports/pyright/
 *tests/*
 snapshotLegacy.py
-codex/reports/pyright/
+.sangoi/docs/reports/pyright/
 
 # Local build caches and typecheck outputs
 /.tmp/

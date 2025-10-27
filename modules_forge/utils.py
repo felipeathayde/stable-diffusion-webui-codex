@@ -6,7 +6,7 @@ import random
 import string
 import cv2
 
-from apps.server.backend import memory_management
+from apps.backend import memory_management
 
 
 def prepare_free_memory(aggressive=False):

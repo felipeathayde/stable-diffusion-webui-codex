@@ -2,8 +2,8 @@ import torch
 import gradio as gr
 import math
 
-from apps.server.backend.runtime.sampling import calc_cond_uncond_batch
-from apps.server.backend.runtime import attention, memory_management
+from apps.backend.runtime.sampling import calc_cond_uncond_batch
+from apps.backend.runtime import attention, memory_management
 from torch import einsum
 from einops import rearrange, repeat
 from modules import scripts, shared

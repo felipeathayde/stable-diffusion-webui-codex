@@ -10,12 +10,13 @@ from modules.ui import plaintext_to_html
 from PIL import Image
 import gradio as gr
 from modules_forge import main_thread
+from apps.backend.core.engine_interface import TaskType
+from apps.backend.core.orchestrator import InferenceOrchestrator
+from apps.backend.core.requests import Txt2ImgRequest
+from apps.backend.core.requests import ProgressEvent, ResultEvent
+
 
 # New modular pipeline imports
-from apps.server.backend.core.engine_interface import TaskType
-from apps.server.backend.core.orchestrator import InferenceOrchestrator
-from apps.server.backend.core.requests import Txt2ImgRequest
-from apps.server.backend.core.requests import ProgressEvent, ResultEvent
 
 
 def _require(payload: dict, key: str):

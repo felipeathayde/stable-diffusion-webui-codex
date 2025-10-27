@@ -1,1 +1,1 @@
-from apps.server.backend.gguf import *  # re-export façade
+from apps.backend.gguf import *  # re-export façade

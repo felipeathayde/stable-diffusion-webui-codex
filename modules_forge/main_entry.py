@@ -7,8 +7,8 @@ import gradio as gr
 from gradio.context import Context
 from modules import shared, ui_common, sd_models, processing, infotext_utils, paths, sd_vae
 from modules import hashes as _hashes
-from apps.server.backend import memory_management, stream
-from apps.server.backend.config.args import dynamic_args
+from apps.backend import memory_management, stream
+from apps.backend.infra.config.args import dynamic_args
 
 
 total_vram = int(memory_management.total_vram)
@@ -177,8 +177,8 @@ def make_checkpoint_manager_ui():
     # Engine dropdown (model family) shown to the left of Checkpoint
     try:
         # Defer imports to UI build time
-        from apps.server.backend.core.registry import registry as _engine_registry
-        from apps.server.backend.engines import register_default_engines as _register_default_engines
+        from apps.backend.core.registry import registry as _engine_registry
+        from apps.backend.engines import register_default_engines as _register_default_engines
         _register_default_engines(replace=False)
         engine_choices = sorted(list(_engine_registry.list()))
         if not engine_choices:

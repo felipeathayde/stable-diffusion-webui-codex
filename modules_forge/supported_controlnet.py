@@ -3,10 +3,10 @@ import torch
 
 from huggingface_guess.detection import unet_config_from_diffusers_unet, model_config_from_unet
 from huggingface_guess.utils import unet_to_diffusers
-from apps.server.backend import memory_management
-from apps.server.backend.runtime.ops import using_forge_operations
-from apps.server.backend.runtime.nn.cnets import cldm
-from apps.server.backend.patchers.controlnet import ControlLora, ControlNet, load_t2i_adapter, apply_controlnet_advanced
+from apps.backend import memory_management
+from apps.backend.runtime.ops import using_forge_operations
+from apps.backend.runtime.sd.cnets import cldm
+from apps.backend.patchers.controlnet import ControlLora, ControlNet, load_t2i_adapter, apply_controlnet_advanced
 from modules_forge.shared import add_supported_control_model
 
 

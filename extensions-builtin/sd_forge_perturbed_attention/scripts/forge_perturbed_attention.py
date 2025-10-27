@@ -2,8 +2,8 @@ import gradio as gr
 
 from modules import scripts
 from modules.script_callbacks import on_cfg_denoiser, remove_current_script_callbacks
-from apps.server.backend.patchers import set_model_options_patch_replace
-from apps.server.backend.runtime.sampling import calc_cond_uncond_batch
+from apps.backend.patchers import set_model_options_patch_replace
+from apps.backend.runtime.sampling import calc_cond_uncond_batch
 from modules.ui_components import InputAccordion
 
 

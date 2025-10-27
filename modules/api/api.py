@@ -3,10 +3,8 @@ import os
 import time
 import datetime
 import uvicorn
-## removed: ipaddress/requests used by legacy decode; handled in MediaService
 import gradio as gr
 from threading import Lock
-## removed: BytesIO used by legacy decode
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.exceptions import HTTPException
@@ -21,15 +19,18 @@ from modules.shared import opts
 from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img, process_images, process_extra_images
 import modules.textual_inversion.textual_inversion
 from modules.shared import cmd_opts
-
-## removed: PngImagePlugin used by legacy encode
 from modules.realesrgan_model import get_realesrgan_models
 from modules import devices
 from typing import Any, Union, get_origin, get_args
-## removed: piexif used by legacy encode
 from contextlib import closing
 from modules.progress import create_task_id, current_task
-from apps.server.backend.services import ImageService, MediaService, OptionsService, SamplerService, ProgressService
+from apps.backend.services import ImageService, MediaService, OptionsService, SamplerService, ProgressService
+
+## removed: ipaddress/requests used by legacy decode; handled in MediaService
+## removed: BytesIO used by legacy decode
+
+## removed: PngImagePlugin used by legacy encode
+## removed: piexif used by legacy encode
 
 # Back-compat shims for extensions importing helpers from modules.api.api
 _media_compat = MediaService()

@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 from modules import devices, images, sd_vae_approx, sd_samplers, sd_vae_taesd, shared, sd_models
 from modules.shared import opts, state
-from apps.server.backend.runtime.sampling import sampling_prepare, sampling_cleanup
+from apps.backend.runtime.sampling import sampling_prepare, sampling_cleanup
 from modules import extra_networks
 import k_diffusion.sampling
 from modules_forge import main_entry

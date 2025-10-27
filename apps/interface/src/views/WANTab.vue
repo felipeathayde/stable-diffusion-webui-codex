@@ -59,7 +59,7 @@
           <div class="grid grid-3">
             <div>
               <label class="label" for="wanMeta">Metadata Dir (input list)</label>
-              <input id="wanMeta" class="ui-input" list="dl-meta-wan" v-model="assets.metadata" placeholder="apps/server/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <input id="wanMeta" class="ui-input" list="dl-meta-wan" v-model="assets.metadata" placeholder="apps/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
               <datalist id="dl-meta-wan">
                 <option v-for="m in inv.metadata" :key="m.path" :value="m.name">{{ m.name }}</option>
               </datalist>

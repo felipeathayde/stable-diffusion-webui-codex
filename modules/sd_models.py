@@ -18,10 +18,10 @@ from modules import paths, shared, modelloader, devices, script_callbacks, sd_va
 from modules.shared import opts, cmd_opts
 from modules.timer import Timer
 import numpy as np
-from apps.server.backend.runtime.models import forge_loader
-from apps.server.backend import memory_management
-from apps.server.backend.config.args import dynamic_args
-from apps.server.backend import utils as backend_utils
+from apps.backend.runtime.models import forge_loader
+from apps.backend import memory_management
+from apps.backend.infra.config.args import dynamic_args
+from apps.backend import utils as backend_utils
 
 
 model_dir = "Stable-diffusion"

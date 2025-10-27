@@ -15,12 +15,13 @@ import modules.processing as processing
 from modules.ui import plaintext_to_html
 import modules.scripts
 from modules_forge import main_thread
+from apps.backend.core.engine_interface import TaskType
+from apps.backend.core.orchestrator import InferenceOrchestrator
+from apps.backend.core.requests import Img2ImgRequest
+from apps.backend.core.requests import ProgressEvent, ResultEvent
+
 
 # New modular pipeline imports (Codex)
-from apps.server.backend.core.engine_interface import TaskType
-from apps.server.backend.core.orchestrator import InferenceOrchestrator
-from apps.server.backend.core.requests import Img2ImgRequest
-from apps.server.backend.core.requests import ProgressEvent, ResultEvent
 
 
 def process_batch(proc, input, output_dir, inpaint_mask_dir, args, to_scale=False, scale_by=1.0, use_png_info=False, png_info_props=None, png_info_dir=None):

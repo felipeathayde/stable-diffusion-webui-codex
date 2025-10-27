@@ -7,12 +7,19 @@
 from __future__ import division
 import torch
 from torch import Tensor
-from apps.server.backend import memory_management
-from apps.server.backend.runtime.misc import adaptive_resize
-from apps.server.backend.patchers import ModelPatcher
+from apps.backend import memory_management
+from apps.backend.runtime.misc import adaptive_resize
+from apps.backend.patchers import ModelPatcher
 
 from typing import List, Union, Tuple, Dict
-from apps.server.backend.patchers.controlnet import ControlNet, T2IAdapter
+from apps.backend.patchers.controlnet import ControlNet, T2IAdapter
+
+
+from enum import Enum
+
+
+import numpy as np
+from numpy import pi, exp, sqrt
 
 
 class ImageScale:
@@ -39,9 +46,6 @@ opt_f = 8
 def ceildiv(big, small):
     # Correct ceiling division that avoids floating-point errors and importing math.ceil.
     return -(big // -small)
-
-
-from enum import Enum
 
 
 class BlendMode(Enum):  # i.e. LayerType
@@ -382,10 +386,6 @@ class AbstractDiffusion:
             else:
                 control.cond_hint = self.control_params[tuple_key][param_id][batch_id]
             control = control.previous_controlnet
-
-
-import numpy as np
-from numpy import pi, exp, sqrt
 
 
 def gaussian_weights(tile_w: int, tile_h: int) -> Tensor:

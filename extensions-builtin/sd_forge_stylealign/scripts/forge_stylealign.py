@@ -2,7 +2,7 @@ import torch
 import gradio as gr
 
 from modules import scripts
-from apps.server.backend.runtime import attention
+from apps.backend.runtime import attention
 
 
 def sdp(q, k, v, transformer_options):

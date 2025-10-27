@@ -548,7 +548,7 @@ class UiSettings:
                     _cuda = {"error": str(_e)}
 
                 try:
-                    from apps.server.backend import memory_management as _mm
+                    from apps.backend import memory_management as _mm
                     vram_state = getattr(_mm, 'vram_state', None)
                     cpu_state = getattr(_mm, 'cpu_state', None)
                     flags = {

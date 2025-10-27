@@ -1,7 +1,7 @@
 import os
 import argparse
 
-from apps.server.backend import utils
+from apps.backend import utils
 from modules.paths_internal import models_path
 from pathlib import Path
 

@@ -1,14 +1,14 @@
 import os
 import torch
 import copy
-from apps.server.backend.patchers import lora as backend_lora
+from apps.backend.patchers import lora as backend_lora
 
 from modules_forge.shared import add_supported_control_model
 from modules_forge.supported_controlnet import ControlModelPatcher
-from apps.server.backend.runtime.sampling import sampling_prepare
-from apps.server.backend import utils
-from apps.server.backend import memory_management
-from apps.server.backend.patchers.lora import model_lora_keys_unet
+from apps.backend.runtime.sampling import sampling_prepare
+from apps.backend import utils
+from apps.backend import memory_management
+from apps.backend.patchers.lora import model_lora_keys_unet
 
 
 def is_model_loaded(model):

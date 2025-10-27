@@ -1,6 +1,6 @@
 # Interface (Vite + Vue)
 
-Regra essencial: sem estilos inline. Use apenas utilitários Tailwind + tokens documentados em `codex/frontend/STYLE_GUIDE.md`.
+Regra essencial: sem estilos inline. Use apenas utilitários Tailwind + tokens documentados em `.sangoi/docs/frontend/STYLE_GUIDE.md`.
 
 ## Dev
 - `python tools/services_tui.py` – inicia TUI para subir/monitorar API e Vite juntos (setas ↑↓ ou números para interagir).
@@ -17,4 +17,4 @@ Regra essencial: sem estilos inline. Use apenas utilitários Tailwind + tokens d
 - Estados por classes/atributos (`data-state`), não por estilos.
 - Não use classes internas de terceiros (ex.: `.svelte-xxxx`).
 
-Mais detalhes em `codex/frontend/STYLE_GUIDE.md`.
+Mais detalhes em `.sangoi/docs/frontend/STYLE_GUIDE.md`.

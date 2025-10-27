@@ -6,7 +6,7 @@ from modules import paths, shared, devices, script_callbacks, sd_models, extra_n
 
 import glob
 from copy import deepcopy
-from apps.server.backend import utils as backend_utils
+from apps.backend import utils as backend_utils
 
 
 vae_path = os.path.abspath(os.path.join(paths.models_path, "VAE"))

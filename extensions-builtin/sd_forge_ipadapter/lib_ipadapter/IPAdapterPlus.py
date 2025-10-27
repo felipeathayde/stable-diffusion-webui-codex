@@ -7,10 +7,10 @@ import contextlib
 import os
 import math
 
-from apps.server.backend.runtime import attention
-from apps.server.backend import memory_management, utils
-from apps.server.backend.runtime.misc import adaptive_resize
-from apps.server.backend.patchers.clipvision import clip_preprocess
+from apps.backend.runtime import attention
+from apps.backend import memory_management, utils
+from apps.backend.runtime.misc import adaptive_resize
+from apps.backend.patchers.clipvision import clip_preprocess
 from modules_forge.shared import controlnet_dir, models_path
 
 from torch import nn

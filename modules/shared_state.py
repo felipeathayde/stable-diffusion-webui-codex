@@ -7,7 +7,7 @@ import torch
 from contextlib import nullcontext
 
 from modules import errors, shared, devices
-from apps.server.backend.config.args import args
+from apps.backend.infra.config.args import args
 from typing import Optional
 
 log = logging.getLogger(__name__)

@@ -1,8 +1,8 @@
 import gradio as gr
 
-from apps.server.backend.engines.diffusion.flux_config import FLUX_DROPDOWN_KEYS, build_flux_option_info
-from apps.server.backend.core.engine_interface import TaskType
-from apps.server.backend.core.sampler_policy import allowed_samplers, allowed_schedulers
+from apps.backend.engines.flux.flux_config import FLUX_DROPDOWN_KEYS, build_flux_option_info
+from apps.backend.core.engine_interface import TaskType
+from apps.backend.core.sampler_policy import allowed_samplers, allowed_schedulers
 from modules import scripts, sd_samplers, sd_schedulers, shared
 from modules.infotext_utils import PasteField
 from modules.ui_components import FormRow, FormGroup

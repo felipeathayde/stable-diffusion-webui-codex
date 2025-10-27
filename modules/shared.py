@@ -7,7 +7,7 @@ from modules import shared_cmd_options, shared_gradio_themes, options, shared_it
 from modules.paths_internal import models_path, script_path, data_path, sd_configs_path, sd_default_config, sd_model_file, default_sd_model_file, extensions_dir, extensions_builtin_dir  # noqa: F401
 from modules import util
 from typing import TYPE_CHECKING
-from apps.server.backend import memory_management
+from apps.backend import memory_management
 
 if TYPE_CHECKING:
     from modules import shared_state, styles, interrogate, shared_total_tqdm, memmon

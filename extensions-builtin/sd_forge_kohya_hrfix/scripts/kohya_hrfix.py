@@ -2,7 +2,7 @@ import gradio as gr
 
 from modules import scripts, shared
 from modules.ui_components import InputAccordion
-from apps.server.backend.runtime.misc import adaptive_resize
+from apps.backend.runtime.misc import adaptive_resize
 
 
 class PatchModelAddDownscale:

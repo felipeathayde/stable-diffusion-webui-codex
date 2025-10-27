@@ -2,9 +2,9 @@ import cv2
 import torch
 
 from modules_forge.shared import add_supported_preprocessor, preprocessor_dir
-from apps.server.backend import memory_management
-from apps.server.backend.patchers import ModelPatcher
-from apps.server.backend.patchers import clipvision
+from apps.backend import memory_management
+from apps.backend.patchers import ModelPatcher
+from apps.backend.patchers import clipvision
 from modules_forge.utils import resize_image_with_pad
 from modules.modelloader import load_file_from_url
 from modules_forge.utils import numpy_to_pytorch

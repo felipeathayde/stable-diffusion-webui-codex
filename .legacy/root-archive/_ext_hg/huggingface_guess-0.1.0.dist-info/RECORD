@@ -1,0 +1,10 @@
+huggingface_guess/__init__.py,sha256=iSLeck-ZUYUWQUq4D4OU3-MxLoLBpX1AAnqG1f_Jh_4,723
+huggingface_guess/detection.py,sha256=P2wzMLFRIo_205DKkCgJFXR42z9o7Ho-vgjD742ohLY,30165
+huggingface_guess/diffusers_convert.py,sha256=0Xxvfdx9_RjNoTLfHGiMxe7cJ-lotpPe-P-NJ4sFt-4,10775
+huggingface_guess/latent.py,sha256=z6Zul1EhBIbXpD5OLVK1v5T5ZWQa4HyJYyVzEfMCDG4,5825
+huggingface_guess/model_list.py,sha256=VeLWrsu1HurnzShE4GuwQNhkmov26ynHS9kTKPjyyH4,22815
+huggingface_guess/utils.py,sha256=a3zGnXuQKHFjwsaE0NiHmMWwi2JOXj-_8LxV6DPzS7M,18846
+huggingface_guess-0.1.0.dist-info/METADATA,sha256=7hLsc9TSUB2ZHqGBJ7jTxvCVvJbnQ_wPtJg1D7SUlkM,993
+huggingface_guess-0.1.0.dist-info/WHEEL,sha256=1yFddiXMmvYK7QYTqtRNtX66WJ0Mz8PYEiEUoOUUxRY,87
+huggingface_guess-0.1.0.dist-info/licenses/LICENSE,sha256=IwGE9guuL-ryRPEKi6wFPI_zOhg7zDZbTYuHbSt_SAk,35823
+huggingface_guess-0.1.0.dist-info/RECORD,,

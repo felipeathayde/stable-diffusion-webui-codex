@@ -6,7 +6,7 @@ import modules.shared as shared
 from modules.script_callbacks import CFGDenoiserParams, cfg_denoiser_callback
 from modules.script_callbacks import CFGDenoisedParams, cfg_denoised_callback
 from modules.script_callbacks import AfterCFGCallbackParams, cfg_after_cfg_callback
-from apps.server.backend.runtime.sampling import sampling_function
+from apps.backend.runtime.sampling import sampling_function
 
 
 def catenate_conds(conds):

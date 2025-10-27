@@ -8,8 +8,8 @@ import torch
 import torch.hub
 
 from modules import devices, shared, errors
-from apps.server.backend import memory_management
-from apps.server.backend.patchers import ModelPatcher
+from apps.backend import memory_management
+from apps.backend.patchers import ModelPatcher
 
 
 clip_model_name = 'ViT-L/14'

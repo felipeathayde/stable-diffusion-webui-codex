@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - given-names: Lucas
+    family-names: Sangoi
+title: "Stable Diffusion WebUI Codex"
+date-released: 2025-10-27
+abstract: "Backend-first refactor of Stable Diffusion WebUI with Codex architecture, PyTorch-native runtimes, and modular interfaces under apps/backend and apps/interface."
+repository-code: "https://github.com/sangoi-exe/stable-diffusion-webui-codex"

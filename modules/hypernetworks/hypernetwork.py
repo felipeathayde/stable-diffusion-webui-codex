@@ -8,7 +8,7 @@ from contextlib import closing
 import torch
 import tqdm
 from einops import rearrange, repeat
-from apps.server.backend.runtime.nn.unet import default
+from apps.backend.runtime.common.nn.unet import default
 from modules import devices, sd_models, shared, sd_samplers, hashes, sd_hijack_checkpoint, errors
 from modules.textual_inversion import textual_inversion
 from torch import einsum

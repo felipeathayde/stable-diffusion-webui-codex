@@ -1,6 +1,6 @@
 import contextlib
 import torch
-from apps.server.backend import memory_management
+from apps.backend import memory_management
 
 
 def has_xpu() -> bool:

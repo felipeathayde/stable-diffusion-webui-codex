@@ -6,10 +6,10 @@ import torch
 import network
 import functools
 
-from apps.server.backend.config.args import dynamic_args
+from apps.backend.infra.config.args import dynamic_args
 from modules import shared, sd_models, errors, scripts
-from apps.server.backend import utils
-from apps.server.backend.patchers.lora import model_lora_keys_clip, model_lora_keys_unet, load_lora
+from apps.backend import utils
+from apps.backend.patchers.lora import model_lora_keys_clip, model_lora_keys_unet, load_lora
 
 
 def load_lora_for_models(model, clip, lora, strength_model, strength_clip, filename='default', online_mode=False):

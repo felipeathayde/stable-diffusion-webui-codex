@@ -1,7 +1,7 @@
 import gradio as gr
 
 from modules import scripts
-from apps.server.backend import memory_management
+from apps.backend import memory_management
 
 
 class NeverOOMForForge(scripts.Script):

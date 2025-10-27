@@ -1601,8 +1601,8 @@ def create_ui():
                     txt2vid_fps = gr.Slider(minimum=1, maximum=60, step=1, label="FPS", value=24, elem_id="txt2vid_fps")
                     txt2vid_num_frames = gr.Slider(minimum=8, maximum=256, step=1, label="Frames", value=16, elem_id="txt2vid_num_frames")
             with gr.Column(elem_id="txt2vid_controls_column"):
-                from apps.server.backend.core.engine_interface import TaskType as _TaskType
-                from apps.server.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
+                from apps.backend.core.engine_interface import TaskType as _TaskType
+                from apps.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
                 _engine = getattr(shared.opts, 'codex_engine', 'sd15')
                 _samplers = _allowed_samplers(str(_engine), _TaskType.TXT2VID)
                 _schedulers = _allowed_schedulers(str(_engine), _TaskType.TXT2VID)
@@ -1691,8 +1691,8 @@ def create_ui():
         # Filter video samplers/schedulers on engine change
         try:
             from modules_forge.main_entry import ui_codex_engine as _engine_dd
-            from apps.server.backend.core.engine_interface import TaskType as _TaskType
-            from apps.server.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
+            from apps.backend.core.engine_interface import TaskType as _TaskType
+            from apps.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
 
             def _update_vtxt(engine: str):
                 ek = engine or getattr(shared.opts, 'codex_engine', 'sd15')
@@ -1721,8 +1721,8 @@ def create_ui():
                     img2vid_fps = gr.Slider(minimum=1, maximum=60, step=1, label="FPS", value=24, elem_id="img2vid_fps")
                     img2vid_num_frames = gr.Slider(minimum=8, maximum=256, step=1, label="Frames", value=16, elem_id="img2vid_num_frames")
             with gr.Column(elem_id="img2vid_controls_column"):
-                from apps.server.backend.core.engine_interface import TaskType as _TaskType
-                from apps.server.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
+                from apps.backend.core.engine_interface import TaskType as _TaskType
+                from apps.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
                 _engine = getattr(shared.opts, 'codex_engine', 'sd15')
                 _samplers = _allowed_samplers(str(_engine), _TaskType.IMG2VID)
                 _schedulers = _allowed_schedulers(str(_engine), _TaskType.IMG2VID)
@@ -1802,8 +1802,8 @@ def create_ui():
         # Filter img2vid samplers/schedulers on engine change
         try:
             from modules_forge.main_entry import ui_codex_engine as _engine_dd
-            from apps.server.backend.core.engine_interface import TaskType as _TaskType
-            from apps.server.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
+            from apps.backend.core.engine_interface import TaskType as _TaskType
+            from apps.backend.core.sampler_policy import allowed_samplers as _allowed_samplers, allowed_schedulers as _allowed_schedulers
 
             def _update_vimg(engine: str):
                 ek = engine or getattr(shared.opts, 'codex_engine', 'sd15')
@@ -2041,7 +2041,7 @@ def setup_ui_api(app):
             cuda = {"error": str(e)}
 
         try:
-            from apps.server.backend import memory_management as _mm
+            from apps.backend import memory_management as _mm
             vram_state = getattr(_mm, 'vram_state', None)
             cpu_state = getattr(_mm, 'cpu_state', None)
             flags = {

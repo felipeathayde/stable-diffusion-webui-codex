@@ -7,7 +7,7 @@ from torchdiffeq import odeint
 import torchsde
 from tqdm.auto import trange, tqdm
 from k_diffusion import deis
-from apps.server.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 
 from . import utils
 

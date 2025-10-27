@@ -7,7 +7,7 @@ from modules.script_callbacks import ExtraNoiseParams, extra_noise_callback
 
 from modules.shared import opts
 import modules.shared as shared
-from apps.server.backend.runtime.sampling import sampling_prepare, sampling_cleanup
+from apps.backend.runtime.sampling import sampling_prepare, sampling_cleanup
 
 
 samplers_timesteps = [

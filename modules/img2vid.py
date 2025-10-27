@@ -8,9 +8,9 @@ from modules.shared import opts
 import modules.shared as shared
 from modules.ui import plaintext_to_html
 
-from apps.server.backend.core.engine_interface import TaskType
-from apps.server.backend.core.orchestrator import InferenceOrchestrator
-from apps.server.backend.core.requests import Img2VidRequest, ResultEvent
+from apps.backend.core.engine_interface import TaskType
+from apps.backend.core.orchestrator import InferenceOrchestrator
+from apps.backend.core.requests import Img2VidRequest, ResultEvent
 
 
 def img2vid_from_json(id_task: str, request: gr.Request, init_image, *rest):

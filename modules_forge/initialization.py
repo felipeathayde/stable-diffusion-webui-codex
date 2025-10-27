@@ -45,7 +45,7 @@ def initialize_forge():
             print(f'In extreme cases, if you want to force previous lowvram/medvram behaviors, '
                   f'please use --always-offload-from-vram')
 
-    from apps.server.backend.config.args import args
+    from apps.backend.infra.config.args import args
 
     if args.gpu_device_id is not None:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_device_id)
@@ -55,7 +55,7 @@ def initialize_forge():
         from modules_forge.cuda_malloc import try_cuda_malloc
         try_cuda_malloc()
 
-    from apps.server.backend import memory_management
+    from apps.backend import memory_management
     import torch
 
     monitor_module_moving()
@@ -68,7 +68,7 @@ def initialize_forge():
         from modules_forge.bnb_installer import try_install_bnb
         try_install_bnb()
 
-    from apps.server.backend.runtime.memory import stream
+    from apps.backend.runtime.memory import stream
     current_stream, mover_stream, stream_activated = stream.current_stream, stream.mover_stream, stream.stream_activated
     print('CUDA Using Stream:', stream.should_use_stream())
 

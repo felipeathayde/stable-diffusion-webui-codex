@@ -34,9 +34,9 @@ from blendmodes.blend import blendLayers, BlendType
 from modules.sd_models import apply_token_merging, forge_model_reload
 from modules_forge.utils import apply_circular_forge
 from modules_forge import main_entry
-from apps.server.backend import memory_management
-from apps.server.backend.runtime.modules.k_prediction import rescale_zero_terminal_snr_sigmas
-from apps.server.backend.engines.diffusion.txt2img import generate_txt2img
+from apps.backend import memory_management
+from apps.backend.runtime.modules.k_prediction import rescale_zero_terminal_snr_sigmas
+from apps.backend.use_cases.txt2img import generate_txt2img
 
 
 # some of those options should not be changed at all because they would break the model, so I removed them from options.
@@ -474,7 +474,7 @@ class StableDiffusionProcessing:
 
             cache[1] = function(shared.sd_model, required_prompts, steps, hires_steps, shared.opts.use_old_scheduling)
 
-            from apps.server.backend.runtime.text_processing import classic_engine as text_engine
+            from apps.backend.runtime.text_processing import classic_engine as text_engine
 
             last_extra_generation_params = text_engine.last_extra_generation_params.copy()
 

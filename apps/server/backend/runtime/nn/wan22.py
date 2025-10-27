@@ -33,7 +33,7 @@ from apps.server.backend.runtime import memory_management
 import logging
 from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
 from diffusers import AutoencoderKLWan  # type: ignore
-from apps.server.backend.runtime.nn.wan_latent_norms import resolve_norm
+from .wan_latent_norms import resolve_norm
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
 
@@ -499,7 +499,7 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
     import torch
     torch_dtype = _as_dtype(dtype)
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
-    # Choose latent normalization (env WAN_VAE_NORM: wan21|sd15|none)
+    # Choose latent normalization (env WAN_VAE_NORM: wan21|none)
     import os as _os
     norm = resolve_norm(_os.getenv('WAN_VAE_NORM', 'wan21'), channels=16)
     _log_latent_norm(logger, norm_name=norm.name, channels=norm.channels)
@@ -617,7 +617,8 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         for t in range(T):
             # Keep 5D layout for WAN VAE decode: [B,C,1,H,W]
             lat = video_latents[:, :, t:t+1]
-            lat = (lat / sf) + sh
+            # Reverse latent normalization before decoding to RGB
+            lat = norm.process_out(lat)
             img = vae.decode(lat).sample
             if t == 0 and logger:
                 try:

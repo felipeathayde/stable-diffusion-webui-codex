@@ -32,6 +32,8 @@ from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
 import logging
 from apps.server.backend.engines.diffusion.wan22_common import resolve_wan_repo_candidates
+from diffusers import AutoencoderKLWan  # type: ignore
+from apps.server.backend.runtime.nn.wan_latent_norms import resolve_norm
 # WAN DiT helpers are inlined here to keep the one-file-per-model convention,
 # matching flux/chroma. No dependence on legacy wan_gguf_core/*.
 
@@ -470,8 +472,6 @@ def _get_text_context(
 @_io
 def _load_vae(vae_path: Optional[str], *, torch_dtype):
     import os
-from diffusers import AutoencoderKLWan  # type: ignore
-from apps.server.backend.runtime.nn.wan_latent_norms import resolve_norm
     if not vae_path:
         raise RuntimeError('wan_vae_dir is required when running WAN GGUF (VAE path missing)')
     path = os.path.expanduser(str(vae_path))

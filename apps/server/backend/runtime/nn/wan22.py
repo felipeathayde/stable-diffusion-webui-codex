@@ -1616,9 +1616,9 @@ def _decode_tokens_to_frames(
         _li(None, "[wan22.gguf] unembed: tokens(L,C)=%s grid=%s", (int(tokens.shape[1]), int(tokens.shape[2])), grid)
     except Exception:
         pass
-    # Optional token stats for preview diagnostics
+    # Optional token stats for diagnostics (enabled by env WAN_I2V_LAT_STATS)
     try:
-        if debug_preview and str(os.getenv('WAN_I2V_LAT_STATS','0')).strip().lower() in ('1','true','yes','on'):
+        if str(os.getenv('WAN_I2V_LAT_STATS','0')).strip().lower() in ('1','true','yes','on'):
             import torch as _t
             tt = tokens.detach().to(device='cpu', dtype=_t.float32)
             finite = _t.isfinite(tt)

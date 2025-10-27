@@ -470,7 +470,8 @@ def _get_text_context(
 @_io
 def _load_vae(vae_path: Optional[str], *, torch_dtype):
     import os
-    from diffusers import AutoencoderKLWan  # type: ignore
+from diffusers import AutoencoderKLWan  # type: ignore
+from apps.server.backend.runtime.nn.wan_latent_norms import resolve_norm
     if not vae_path:
         raise RuntimeError('wan_vae_dir is required when running WAN GGUF (VAE path missing)')
     path = os.path.expanduser(str(vae_path))
@@ -485,17 +486,12 @@ def _load_vae(vae_path: Optional[str], *, torch_dtype):
 
 
 @_io
-def _get_scale_shift(vae) -> tuple[float, float]:
-    try:
-        cfg = getattr(vae, 'config', None) or {}
-        sf = float(getattr(cfg, 'scaling_factor', getattr(cfg, 'scaling_factor', 0.18215)))
-        sh = float(getattr(cfg, 'shift_factor', getattr(cfg, 'shift_factor', 0.0)))
-        if isinstance(cfg, dict):
-            sf = float(cfg.get('scaling_factor', sf))
-            sh = float(cfg.get('shift_factor', sh))
-        return sf, sh
-    except Exception:
-        return 0.18215, 0.0
+def _log_latent_norm(logger, *, norm_name: str, channels: int) -> None:
+    if logger:
+        try:
+            logger.info('[wan22.gguf] VAE latent norm=%s channels=%d', norm_name, channels)
+        except Exception:
+            pass
 
 
 @_io
@@ -503,12 +499,10 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
     import torch
     torch_dtype = _as_dtype(dtype)
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
-    sf, sh = _get_scale_shift(vae)
-    if logger:
-        try:
-            logger.info('[wan22.gguf] VAE encode scale=%.6f shift=%.6f', sf, sh)
-        except Exception:
-            pass
+    # Choose latent normalization (env WAN_VAE_NORM: wan21|sd15|none)
+    import os as _os
+    norm = resolve_norm(_os.getenv('WAN_VAE_NORM', 'wan21'), channels=16)
+    _log_latent_norm(logger, norm_name=norm.name, channels=norm.channels)
     target = 'cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu'
     from apps.server.backend.runtime.memory import memory_management as _mm
     _old = getattr(_mm, 'VAE_ALWAYS_TILED', False)
@@ -545,7 +539,8 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
             raise RuntimeError('init_image must be 4D (B,C,H,W) or 5D (B,C,T,H,W) after preprocessing')
     with torch.no_grad():
         latents = vae.encode(init_image).latent_dist.sample()
-        latents = (latents - sh) * sf
+        # Apply latent normalization for diffusion (Comfy-like)
+        latents = norm.process_in(latents)
     if offload_after:
         try:
             vae.to('cpu')
@@ -563,12 +558,9 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
     torch_dtype = _as_dtype(dtype)
     dev = torch.device('cuda' if device == 'cuda' and torch.cuda.is_available() else 'cpu')
     vae = _load_vae(vae_dir, torch_dtype=torch_dtype)
-    sf, sh = _get_scale_shift(vae)
-    if logger:
-        try:
-            logger.info('[wan22.gguf] VAE decode scale=%.6f shift=%.6f', sf, sh)
-        except Exception:
-            pass
+    import os as _os
+    norm = resolve_norm(_os.getenv('WAN_VAE_NORM', 'wan21'), channels=int(getattr(vae, 'latent_channels', 16) or 16))
+    _log_latent_norm(logger, norm_name=norm.name, channels=norm.channels)
     from apps.server.backend.runtime.memory import memory_management as _mm
     _old = getattr(_mm, 'VAE_ALWAYS_TILED', False)
     try:

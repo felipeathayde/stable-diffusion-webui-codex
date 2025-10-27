@@ -189,9 +189,11 @@ class Wan2214BEngine(BaseVideoEngine):
                 scheduler = str(ex_stage.get('scheduler') or getattr(request, 'scheduler', 'Automatic'))
                 steps = max(1, int(ex_stage.get('steps') or getattr(request, 'steps', 12) or 12))
                 cfg_scale = ex_stage.get('cfg_scale', getattr(request, 'cfg_scale', None))
+                flow_shift = ex_stage.get('flow_shift')
+                flow_shift = float(flow_shift) if flow_shift is not None else None
                 return gguf.StageConfig(
                     model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
-                    steps=steps, cfg_scale=cfg_scale,
+                    steps=steps, cfg_scale=cfg_scale, flow_shift=flow_shift,
                 )
 
             # Stage config helpers (prefer per-stage extras when provided)
@@ -210,9 +212,11 @@ class Wan2214BEngine(BaseVideoEngine):
                 scheduler = str(ex_stage.get('scheduler') or getattr(request, 'scheduler', 'Automatic'))
                 steps = max(1, int(ex_stage.get('steps') or getattr(request, 'steps', 12) or 12))
                 cfg_scale = ex_stage.get('cfg_scale', getattr(request, 'cfg_scale', None))
+                flow_shift = ex_stage.get('flow_shift')
+                flow_shift = float(flow_shift) if flow_shift is not None else None
                 return gguf.StageConfig(
                     model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
-                    steps=steps, cfg_scale=cfg_scale,
+                    steps=steps, cfg_scale=cfg_scale, flow_shift=flow_shift,
                 )
 
             # Stage config helpers (prefer per-stage extras when provided)
@@ -231,9 +235,11 @@ class Wan2214BEngine(BaseVideoEngine):
                 scheduler = str(ex_stage.get('scheduler') or getattr(request, 'scheduler', 'Automatic'))
                 steps = max(1, int(ex_stage.get('steps') or getattr(request, 'steps', 12) or 12))
                 cfg_scale = ex_stage.get('cfg_scale', getattr(request, 'cfg_scale', None))
+                flow_shift = ex_stage.get('flow_shift')
+                flow_shift = float(flow_shift) if flow_shift is not None else None
                 return gguf.StageConfig(
                     model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
-                    steps=steps, cfg_scale=cfg_scale,
+                    steps=steps, cfg_scale=cfg_scale, flow_shift=flow_shift,
                 )
 
             # Stage config helpers (prefer per-stage extras when provided)
@@ -252,9 +258,11 @@ class Wan2214BEngine(BaseVideoEngine):
                 scheduler = str(ex_stage.get('scheduler') or getattr(request, 'scheduler', 'Automatic'))
                 steps = max(1, int(ex_stage.get('steps') or getattr(request, 'steps', 12) or 12))
                 cfg_scale = ex_stage.get('cfg_scale', getattr(request, 'cfg_scale', None))
+                flow_shift = ex_stage.get('flow_shift')
+                flow_shift = float(flow_shift) if flow_shift is not None else None
                 return gguf.StageConfig(
                     model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
-                    steps=steps, cfg_scale=cfg_scale,
+                    steps=steps, cfg_scale=cfg_scale, flow_shift=flow_shift,
                 )
 
             import os
@@ -369,9 +377,11 @@ class Wan2214BEngine(BaseVideoEngine):
                 scheduler = str(ex_stage.get('scheduler') or getattr(request, 'scheduler', 'Automatic'))
                 steps = max(1, int(ex_stage.get('steps') or getattr(request, 'steps', 12) or 12))
                 cfg_scale = ex_stage.get('cfg_scale', getattr(request, 'cfg_scale', None))
+                flow_shift = ex_stage.get('flow_shift')
+                flow_shift = float(flow_shift) if flow_shift is not None else None
                 return gguf.StageConfig(
                     model_dir=model_p or '', sampler=sampler, scheduler=scheduler,
-                    steps=steps, cfg_scale=cfg_scale,
+                    steps=steps, cfg_scale=cfg_scale, flow_shift=flow_shift,
                 )
             # Env-only controls for offload/TE implementation (img2vid path)
             env_offload_lvl = os.getenv('WAN_GGUF_OFFLOAD_LEVEL')

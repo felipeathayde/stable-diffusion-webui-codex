@@ -26,7 +26,6 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-import os
 from apps.server.backend.runtime.utils import _load_gguf_state_dict, read_arbitrary_config
 from apps.server.backend.runtime.ops.operations_gguf import dequantize_tensor
 from apps.server.backend.runtime import memory_management
@@ -55,6 +54,9 @@ _LOG_ONCE = {
     'sdpa': False,
 }
 _SDPA_LOG_COUNT = 0
+
+WAN_FLOW_SHIFT_DEFAULT = 8.0
+WAN_FLOW_MULTIPLIER = 1000.0
 
 def _get_logger_legacy(logger: Any):
     # Legacy duplicate; keep for compatibility if referenced elsewhere
@@ -199,6 +201,356 @@ def _patch_embed3d(video, w, b):
             pass
     return tokens, (T2, H2, W2)
 
+
+def _repeat_to_length(x: torch.Tensor, target_len: int) -> torch.Tensor:
+    if x.shape[1] == target_len:
+        return x
+    if x.shape[1] <= 0:
+        raise RuntimeError("repeat_to_length: modulation tensor has zero length")
+    repeats = math.ceil(target_len / x.shape[1])
+    tiled = x.repeat(1, repeats, 1)
+    return tiled[:, :target_len]
+
+
+def _unpatchify_tokens(
+    patch_tokens: torch.Tensor,
+    grid: Tuple[int, int, int],
+    patch_size: Tuple[int, int, int],
+    latent_channels: int,
+) -> torch.Tensor:
+    B, L, feat = patch_tokens.shape
+    gT, gH, gW = (int(grid[0]), int(grid[1]), int(grid[2]))
+    pT, pH, pW = patch_size
+    patch_volume = int(pT * pH * pW)
+    if L != gT * gH * gW:
+        raise RuntimeError(
+            f"unpatchify: token length {L} does not match grid ({gT},{gH},{gW})"
+        )
+    expected_feat = latent_channels * patch_volume
+    if feat != expected_feat:
+        raise RuntimeError(
+            f"unpatchify: feature dim {feat} expected {expected_feat}"
+        )
+    x = patch_tokens.view(B, gT, gH, gW, pT, pH, pW, latent_channels)
+    x = x.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous()
+    return x.view(B, latent_channels, gT * pT, gH * pH, gW * pW)
+
+
+def _apply_head_and_unpatch(
+    tokens: torch.Tensor,
+    *,
+    spec: ModelSpec,
+    state: Mapping[str, Any],
+    tproj: torch.Tensor,
+    grid: Tuple[int, int, int],
+) -> torch.Tensor:
+    if spec.head_weight is None or spec.patch_kernel is None or spec.latent_channels is None:
+        raise RuntimeError(
+            "WAN22 GGUF: missing head weights or patch geometry; ensure the GGUF includes head.head.* tensors."
+        )
+    weight = state.get(spec.head_weight)
+    if weight is None:
+        raise RuntimeError(f"Missing head weight: {spec.head_weight}")
+    bias = state.get(spec.head_bias) if spec.head_bias else None
+
+    device = tokens.device
+    dtype = tokens.dtype
+
+    normed = _layer_norm(tokens)
+    token_len = tokens.shape[1]
+
+    shift = tokens.new_zeros(tokens.shape[0], token_len, tokens.shape[2])
+    scale = tokens.new_zeros_like(shift)
+    if spec.head_modulation and spec.head_modulation in state:
+        mod_param = state[spec.head_modulation]
+        mod_param = dequantize_tensor(mod_param)
+        if not torch.is_tensor(mod_param):
+            mod_param = torch.as_tensor(mod_param)
+        mod_param = mod_param.to(device=device, dtype=dtype)
+        tp = tproj.to(device=device, dtype=dtype)
+        if tp.ndim != 3:
+            tp = tp.view(tp.shape[0], -1, tp.shape[-1])
+        combined = mod_param.unsqueeze(0) + tp.unsqueeze(2)
+        shift6, scale6 = combined.unbind(dim=2)
+        shift = _repeat_to_length(shift6, token_len)
+        scale = _repeat_to_length(scale6, token_len)
+
+    fused = shift + normed * (1.0 + scale)
+    patches = _linear(fused, weight, bias, name=spec.head_weight)
+
+    return _unpatchify_tokens(patches, grid, spec.patch_kernel, spec.latent_channels)
+
+
+def _latent_dimensions(geom: PatchGeometry) -> Tuple[int, int, int]:
+    kT, kH, kW = geom.patch_kernel
+    return (
+        int(geom.grid[0] * kT),
+        int(geom.grid[1] * kH),
+        int(geom.grid[2] * kW),
+    )
+
+
+def _ensure_latent_shape(x: torch.Tensor, geom: PatchGeometry) -> torch.Tensor:
+    t_target, h_target, w_target = _latent_dimensions(geom)
+    if x.shape[2] == t_target and x.shape[3] == h_target and x.shape[4] == w_target:
+        return x
+    return _resize_latents_hw(x, H=h_target, W=w_target)
+
+
+@_io
+def _sample_stage_latents(
+    *,
+    dit: 'WanDiTGGUF',
+    geom: PatchGeometry,
+    steps: int,
+    cfg_scale: Optional[float],
+    prompt_embeds: torch.Tensor,
+    negative_embeds: torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype,
+    logger: Any,
+    sampler_name: Optional[str] = None,
+    scheduler_name: Optional[str] = None,
+    seed: Optional[int] = None,
+    state_init: Optional[torch.Tensor] = None,
+    on_progress: Optional[Any] = None,
+    log_mem_interval: Optional[int] = None,
+    flow_shift: float = WAN_FLOW_SHIFT_DEFAULT,
+    flow_multiplier: float = WAN_FLOW_MULTIPLIER,
+    stage_name: str = 'stage',
+) -> torch.Tensor:
+    gen = _sample_stage_latents_generator(
+        dit=dit,
+        geom=geom,
+        steps=steps,
+        cfg_scale=cfg_scale,
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=device,
+        dtype=dtype,
+        logger=logger,
+        sampler_name=sampler_name,
+        scheduler_name=scheduler_name,
+        seed=seed,
+        state_init=state_init,
+        log_mem_interval=log_mem_interval,
+        flow_shift=flow_shift,
+        flow_multiplier=flow_multiplier,
+        stage_name=stage_name,
+        emit_logs=(on_progress is None),
+    )
+    while True:
+        try:
+            event = next(gen)
+        except StopIteration as stop:
+            return stop.value
+        if on_progress:
+            payload = {k: event[k] for k in ('step', 'total', 'percent', 'eta_seconds', 'step_seconds') if k in event}
+            try:
+                on_progress(**payload)
+            except Exception:
+                pass
+
+
+@_io
+def _sample_stage_latents_generator(
+    *,
+    dit: 'WanDiTGGUF',
+    geom: PatchGeometry,
+    steps: int,
+    cfg_scale: Optional[float],
+    prompt_embeds: torch.Tensor,
+    negative_embeds: torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype,
+    logger: Any,
+    sampler_name: Optional[str] = None,
+    scheduler_name: Optional[str] = None,
+    seed: Optional[int] = None,
+    state_init: Optional[torch.Tensor] = None,
+    log_mem_interval: Optional[int] = None,
+    flow_shift: float = WAN_FLOW_SHIFT_DEFAULT,
+    flow_multiplier: float = WAN_FLOW_MULTIPLIER,
+    stage_name: str = 'stage',
+    emit_logs: bool = True,
+):
+    log = _get_logger(logger)
+    if geom.latent_channels is None:
+        raise RuntimeError("Patch geometry missing latent channel count")
+    t_lat, h_lat, w_lat = _latent_dimensions(geom)
+    steps = max(int(steps), 1)
+
+    batch = int(state_init.shape[0]) if state_init is not None else 1
+    shape = (batch, int(geom.latent_channels), t_lat, h_lat, w_lat)
+
+    if state_init is not None:
+        state = _ensure_latent_shape(state_init.to(device=device, dtype=dtype), geom).clone()
+    else:
+        if seed is not None and int(seed) >= 0:
+            generator = torch.Generator(device=device)
+            generator.manual_seed(int(seed))
+            state = torch.randn(shape, generator=generator, device=device, dtype=dtype)
+        else:
+            state = torch.randn(shape, device=device, dtype=dtype)
+        sigma_init = _time_snr_shift(flow_shift, 1.0) * flow_multiplier
+        state = state * float(sigma_init)
+
+    scheduler = _make_scheduler(steps, sampler=sampler_name, scheduler=scheduler_name)
+    timesteps = scheduler.timesteps
+    total = len(timesteps)
+
+    dtype_tag = {
+        torch.float16: 'fp16',
+        getattr(torch, 'bfloat16', torch.float16): 'bf16',
+        torch.float32: 'fp32',
+    }.get(dtype, 'fp32')
+
+    patch_w, patch_b = _resolve_patch_weights(dit.state)
+
+    flow_progress = torch.linspace(1.0, 0.0, total, device=device, dtype=torch.float32) if total > 1 else torch.ones(1, device=device, dtype=torch.float32)
+
+    yield {
+        "type": "progress",
+        "stage": stage_name,
+        "step": 0,
+        "total": total,
+        "percent": 0.0,
+    }
+
+    import time
+    t0 = time.perf_counter()
+    last = t0
+
+    for idx, timestep in enumerate(timesteps):
+        percent = float(flow_progress[idx].item()) if total > 1 else 1.0
+        sigma_value = _time_snr_shift(flow_shift, percent)
+        di_timestep = float(sigma_value * flow_multiplier)
+
+        tokens, grid_cur = _patch_embed3d(state, patch_w, patch_b)
+        if grid_cur != geom.grid:
+            try:
+                log.warning("[wan22.gguf] grid mismatch: expected %s got %s", geom.grid, grid_cur)
+            except Exception:
+                pass
+
+        eps_cond_tokens, tproj = dit.forward(tokens, di_timestep, prompt_embeds, dtype=dtype_tag, return_time_proj=True)
+        eps_uncond_tokens = dit.forward(tokens, di_timestep, negative_embeds, dtype=dtype_tag, return_time_proj=False)
+
+        eps_cond_latents = dit.tokens_to_latents(
+            eps_cond_tokens,
+            geom.grid,
+            timestep=di_timestep,
+            device=device,
+            dtype=dtype,
+            tproj=tproj,
+        )
+        eps_uncond_latents = dit.tokens_to_latents(
+            eps_uncond_tokens,
+            geom.grid,
+            timestep=di_timestep,
+            device=device,
+            dtype=dtype,
+            tproj=tproj,
+        )
+
+        eps = _cfg_merge(eps_uncond_latents, eps_cond_latents, cfg_scale)
+
+        out = scheduler.step(model_output=eps, timestep=timestep, sample=state)
+        state = out.prev_sample
+
+        pct = float(idx + 1) / float(max(1, total))
+        if log_mem_interval is not None:
+            try:
+                n = int(log_mem_interval or 0)
+                if n > 0 and ((idx + 1) % n) == 0:
+                    _log_cuda_mem(logger, label=f'{stage_name}-step-{idx + 1}')
+            except Exception:
+                pass
+
+        now = time.perf_counter()
+        step_dt = now - last
+        elapsed = now - t0
+        remain = max(0, total - (idx + 1))
+        eta = (elapsed / max(1, idx + 1)) * remain
+        last = now
+
+        if emit_logs and ((idx + 1) % 5 == 0 or idx + 1 == total):
+            log.info("[wan22.gguf] %s step %d/%d (%.1f%%)", stage_name.upper(), idx + 1, total, pct * 100.0)
+
+        yield {
+            "type": "progress",
+            "stage": stage_name,
+            "step": idx + 1,
+            "total": total,
+            "percent": pct,
+            "eta_seconds": eta,
+            "step_seconds": step_dt,
+        }
+
+    return state
+
+@_io
+def _decode_latents_to_frames(
+    *,
+    latents: torch.Tensor,
+    model_dir: str,
+    cfg: RunConfig,
+    logger=None,
+    debug_preview: bool = False,
+) -> List[object]:
+    x = latents
+    try:
+        _li(logger, "[wan22.gguf] decode latents: shape=%s", tuple(x.shape))
+    except Exception:
+        pass
+    if debug_preview:
+        try:
+            v = os.getenv('WAN_I2V_DEBUG_CLAMP', '').strip()
+            if v:
+                lim = float(v)
+                if lim > 0:
+                    x = torch.clamp(x, min=-lim, max=lim)
+        except Exception:
+            pass
+    C = int(x.shape[1])
+    if C != 16:
+        if C >= 16:
+            if _resolve_i2v_order() == 'lat_first':
+                x = x[:, :16, ...]
+            else:
+                x = x[:, -16:, ...]
+            try:
+                _li(logger, "[wan22.gguf] decode latents: sliced to 16 channels from C=%d", C)
+            except Exception:
+                pass
+        else:
+            raise RuntimeError(f"WAN22 GGUF: expected ≥16 latent channels for decode, got {C}")
+    return _vae_decode_video(x, model_dir=model_dir, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=logger)
+
+
+@_io
+def _prepare_stage_seed_latents(
+    latents: torch.Tensor,
+    target_geom: PatchGeometry,
+    *,
+    logger=None,
+) -> torch.Tensor:
+    c_src = int(latents.shape[1])
+    c_dst = int(target_geom.latent_channels)
+    if c_src == c_dst:
+        return _ensure_latent_shape(latents, target_geom)
+    if c_src >= 16 and c_dst == 16:
+        if _resolve_i2v_order() == 'lat_first':
+            sliced = latents[:, :16, ...]
+        else:
+            sliced = latents[:, -16:, ...]
+        return _ensure_latent_shape(sliced, target_geom)
+    if c_src == 16 and c_dst == 36:
+        assembled = _assemble_i2v_input(latents, c_dst, logger=_get_logger(logger))
+        return _ensure_latent_shape(assembled, target_geom)
+    raise RuntimeError(
+        f"Cannot adapt latent channels from {c_src} to {c_dst}; unsupported hand-off configuration"
+    )
 
 def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: logging.Logger | None = None) -> torch.Tensor:
     """Assemble I2V input volume to match expected Cin for patch embedding.
@@ -615,12 +967,12 @@ def _vae_decode_video(video_latents: Any, *, model_dir: str, device: str, dtype:
         pass
     # Hard guard: WAN VAE expects 16-channel latents. If not, the caller likely passed
     # a concatenated I2V tensor (e.g., mask4+img16+lat16 → 36ch). Callers must slice
-    # to the 16 latent channels before decode (use _decode_tokens_to_frames).
+    # to the 16 latent channels before decode (use _decode_latents_to_frames).
     if int(C) != 16:
         raise RuntimeError(
             f"WAN22 VAE decode expects 16 channels but received C={C}. "
             "If using I2V checkpoints that embed mask+image+latents, unembed tokens "
-            "and slice the last 16 channels before decode (handled by _decode_tokens_to_frames)."
+            "and slice the last 16 channels before decode (handled by _decode_latents_to_frames)."
         )
     frames: list[Image.Image] = []
     with torch.no_grad():
@@ -702,6 +1054,14 @@ class BlockSpec:
     norm3_b: Optional[str] = None
     modulation: Optional[str] = None  # [1,6,C]
 
+@dataclass(frozen=True)
+class PatchGeometry:
+    grid: Tuple[int, int, int]
+    token_count: int
+    token_dim: int
+    latent_channels: int
+    patch_kernel: Tuple[int, int, int]
+
 
 @dataclass
 class ModelSpec:
@@ -721,6 +1081,14 @@ class ModelSpec:
     text_emb_0_b: Optional[str] = None
     text_emb_2_w: Optional[str] = None
     text_emb_2_b: Optional[str] = None
+    # Patch/head geometry
+    patch_in_channels: Optional[int] = None
+    patch_out_channels: Optional[int] = None
+    patch_kernel: Optional[Tuple[int, int, int]] = None
+    patch_stride: Optional[Tuple[int, int, int]] = None
+    latent_channels: Optional[int] = None
+    head_weight: Optional[str] = None
+    head_bias: Optional[str] = None
 
 
 @_io
@@ -808,6 +1176,27 @@ def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
     text_emb_2_w = "text_embedding.2.weight" if "text_embedding.2.weight" in state else None
     text_emb_2_b = "text_embedding.2.bias" if "text_embedding.2.bias" in state else None
 
+    patch_shape = _shape_of(state, "patch_embedding.weight")
+    patch_in: Optional[int] = None
+    patch_out: Optional[int] = None
+    patch_kernel: Optional[Tuple[int, int, int]] = None
+    patch_stride: Optional[Tuple[int, int, int]] = None
+    if patch_shape and len(patch_shape) == 5:
+        patch_out = int(patch_shape[0])
+        patch_in = int(patch_shape[1])
+        patch_kernel = (int(patch_shape[2]), int(patch_shape[3]), int(patch_shape[4]))
+        patch_stride = (1, patch_kernel[1], patch_kernel[2])
+
+    head_weight = "head.head.weight" if "head.head.weight" in state else None
+    head_bias = "head.head.bias" if "head.head.bias" in state else None
+    latent_channels: Optional[int] = None
+    if head_weight and patch_kernel:
+        hw_shape = _shape_of(state, head_weight)
+        if hw_shape and len(hw_shape) == 2:
+            patch_volume = int(patch_kernel[0] * patch_kernel[1] * patch_kernel[2])
+            if patch_volume > 0 and hw_shape[0] % patch_volume == 0:
+                latent_channels = hw_shape[0] // patch_volume
+
     return ModelSpec(
         d_model=d_model, n_heads=heads, n_blocks=len(blocks), blocks=blocks,
         time_emb_0_w=time_emb_0_w, time_emb_0_b=time_emb_0_b,
@@ -816,6 +1205,10 @@ def derive_spec_from_state(state: Mapping[str, object]) -> ModelSpec:
         head_modulation=head_mod,
         text_emb_0_w=text_emb_0_w, text_emb_0_b=text_emb_0_b,
         text_emb_2_w=text_emb_2_w, text_emb_2_b=text_emb_2_b,
+        patch_in_channels=patch_in, patch_out_channels=patch_out,
+        patch_kernel=patch_kernel, patch_stride=patch_stride,
+        latent_channels=latent_channels,
+        head_weight=head_weight, head_bias=head_bias,
     )
 
 
@@ -1131,7 +1524,15 @@ class WanDiTGGUF:
             self._logger.info("[wan22.gguf] tensors=%d sample=%s", len(keys), keys[:3])
         return state
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor | float | int, cond: torch.Tensor, *, dtype: str = "bf16") -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor | float | int,
+        cond: torch.Tensor,
+        *,
+        dtype: str = "bf16",
+        return_time_proj: bool = False,
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
         spec = self.spec
         if spec.d_model is None or spec.n_heads is None or not spec.blocks:
             raise RuntimeError("WAN22 spec incomplete (d_model/heads/blocks)")
@@ -1150,23 +1551,6 @@ class WanDiTGGUF:
         x = x.to(device=device, dtype=tt)
 
         # Time embedding (sinusoidal -> 5120 -> proj -> [B,6,C])
-        te0_w = self.state.get(spec.time_emb_0_w)
-        te0_b = self.state.get(spec.time_emb_0_b)
-        te2_w = self.state.get(spec.time_emb_2_w)
-        te2_b = self.state.get(spec.time_emb_2_b)
-        tp_w = self.state.get(spec.time_proj_w)
-        tp_b = self.state.get(spec.time_proj_b)
-        for name, tensor in {
-            'time_embedding.0.weight': te0_w,
-            'time_embedding.0.bias': te0_b,
-            'time_embedding.2.weight': te2_w,
-            'time_embedding.2.bias': te2_b,
-            'time_projection.1.weight': tp_w,
-            'time_projection.1.bias': tp_b,
-        }.items():
-            if tensor is None:
-                raise RuntimeError(f"Missing weight: {name}")
-
         if isinstance(t, torch.Tensor):
             t_in = t.to(device=device, dtype=torch.float32).view(-1)
         elif isinstance(t, (int, float)):
@@ -1176,20 +1560,7 @@ class WanDiTGGUF:
         if t_in.numel() == 1 and x.shape[0] > 1:
             t_in = t_in.expand(x.shape[0])
 
-        base_dim = int(_shape_of(self.state, spec.time_emb_0_w)[-1] if _shape_of(self.state, spec.time_emb_0_w) else 256)
-        half = max(base_dim // 2, 1)
-        freq = torch.arange(half, device=device, dtype=torch.float32)
-        div_term = torch.exp(-math.log(10000.0) * freq / max(half - 1, 1))
-        angles = t_in[:, None] * div_term[None, :]
-        emb = torch.cat([torch.sin(angles), torch.cos(angles)], dim=1)
-        if emb.shape[1] != base_dim:
-            emb = torch.nn.functional.pad(emb, (0, base_dim - emb.shape[1]))
-        emb = emb.to(dtype=tt)
-
-        t5120 = _linear(emb, te0_w, te0_b, name=spec.time_emb_0_w or 'time_embedding.0.weight')
-        t5120 = t5120 * torch.sigmoid(t5120)  # SiLU
-        t5120 = _linear(t5120, te2_w, te2_b, name=spec.time_emb_2_w or 'time_embedding.2.weight')
-        tproj = _linear(t5120, tp_w, tp_b, name=spec.time_proj_w or 'time_projection.1.weight').view(t5120.shape[0], 6, C)
+        tproj = self._compute_time_proj(t_in, device=device, dtype=tt)
 
         # Text embedding projection (if weights are present)
         ctx = cond
@@ -1254,7 +1625,76 @@ class WanDiTGGUF:
                 u = u * torch.sigmoid(u)  # SiLU
                 u = _linear(u, self.state[bs.ffn_out_w], self.state.get(bs.ffn_out_b), name=bs.ffn_out_w or f'ffn.{bs.index}.2.weight')
                 h = h + u * ffn_gate[:, None, :]
+        if return_time_proj:
+            return h, tproj
         return h
+
+    def _compute_time_proj(
+        self,
+        t_in: torch.Tensor,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        spec = self.spec
+        if spec.d_model is None:
+            raise RuntimeError("Model spec missing d_model for time projection")
+
+        te0_w = self.state.get(spec.time_emb_0_w)
+        te0_b = self.state.get(spec.time_emb_0_b)
+        te2_w = self.state.get(spec.time_emb_2_w)
+        te2_b = self.state.get(spec.time_emb_2_b)
+        tp_w = self.state.get(spec.time_proj_w)
+        tp_b = self.state.get(spec.time_proj_b)
+        for name, tensor in {
+            'time_embedding.0.weight': te0_w,
+            'time_embedding.0.bias': te0_b,
+            'time_embedding.2.weight': te2_w,
+            'time_embedding.2.bias': te2_b,
+            'time_projection.1.weight': tp_w,
+            'time_projection.1.bias': tp_b,
+        }.items():
+            if tensor is None:
+                raise RuntimeError(f"Missing weight: {name}")
+
+        base_dim = int(_shape_of(self.state, spec.time_emb_0_w)[-1] if _shape_of(self.state, spec.time_emb_0_w) else 256)
+        half = max(base_dim // 2, 1)
+        freq = torch.arange(half, device=device, dtype=torch.float32)
+        div_term = torch.exp(-math.log(10000.0) * freq / max(half - 1, 1))
+        angles = t_in[:, None] * div_term[None, :]
+        emb = torch.cat([torch.sin(angles), torch.cos(angles)], dim=1)
+        if emb.shape[1] != base_dim:
+            emb = torch.nn.functional.pad(emb, (0, base_dim - emb.shape[1]))
+        emb = emb.to(dtype=dtype)
+
+        t5120 = _linear(emb, te0_w, te0_b, name=spec.time_emb_0_w or 'time_embedding.0.weight')
+        t5120 = t5120 * torch.sigmoid(t5120)
+        t5120 = _linear(t5120, te2_w, te2_b, name=spec.time_emb_2_w or 'time_embedding.2.weight')
+        tproj = _linear(t5120, tp_w, tp_b, name=spec.time_proj_w or 'time_projection.1.weight')
+        return tproj.view(t5120.shape[0], 6, spec.d_model)
+
+    def tokens_to_latents(
+        self,
+        tokens: torch.Tensor,
+        grid: Tuple[int, int, int],
+        *,
+        timestep: float | None = None,
+        device: torch.device,
+        dtype: torch.dtype,
+        tproj: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        tokens = tokens.to(device=device, dtype=dtype)
+        spec = self.spec
+        if spec.head_weight is None or spec.patch_kernel is None or spec.latent_channels is None:
+            raise RuntimeError(
+                "WAN22 GGUF: head weights missing; cannot reconstruct latents without head.head.* tensors."
+            )
+        proj = tproj
+        if proj is None:
+            time_value = float(0.0 if timestep is None else timestep)
+            t_in = torch.full((tokens.shape[0],), time_value, device=device, dtype=torch.float32)
+            proj = self._compute_time_proj(t_in, device=device, dtype=dtype)
+        return _apply_head_and_unpatch(tokens, spec=spec, state=self.state, tproj=proj, grid=grid)
 
 
 # ------------------------------ helpers for stage files
@@ -1312,6 +1752,7 @@ class StageConfig:
     scheduler: str
     steps: int
     cfg_scale: Optional[float]
+    flow_shift: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -1394,16 +1835,36 @@ def _resolve_patch_weights(state: Mapping[str, Any]) -> Tuple[Any, Any]:
     return w, b
 
 
-def _infer_latent_grid(dit: 'WanDiTGGUF', *, T: int, H_lat: int, W_lat: int, device: torch.device, dtype: torch.dtype) -> Tuple[Tuple[int, int, int], Tuple[int, int]]:
+def _infer_patch_geometry(
+    dit: 'WanDiTGGUF',
+    *,
+    T: int,
+    H_lat: int,
+    W_lat: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> PatchGeometry:
     w, b = _resolve_patch_weights(dit.state)
     # Probe with zeros to avoid guessing shapes; cheap and reliable
-    Cin = int(getattr(w, 'shape', [None, None, None, None, None])[1])
+    w_shape = getattr(w, 'shape', [None, None, None, None, None])
+    Cin = int(w_shape[1]) if len(w_shape) >= 2 and w_shape[1] is not None else None
     if Cin is None:
         raise RuntimeError("failed to read patch_embedding weight shape")
     vid = torch.zeros(1, Cin, T, H_lat, W_lat, device=device, dtype=dtype)
     tokens, grid = _patch_embed3d(vid, w, b)
     L, Cout = int(tokens.shape[1]), int(tokens.shape[2])
-    return (grid[0], grid[1], grid[2]), (L, Cout)
+    patch_kernel = (
+        int(w_shape[2] or 1),
+        int(w_shape[3] or 1),
+        int(w_shape[4] or 1),
+    )
+    return PatchGeometry(
+        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
+        token_count=L,
+        token_dim=Cout,
+        latent_channels=Cin,
+        patch_kernel=patch_kernel,
+    )
 
 
 @_io
@@ -1505,176 +1966,6 @@ def _time_snr_shift(alpha: float, t: float) -> float:
     return alpha * t / (1 + (alpha - 1) * t)
 
 
-def _sample_stage_tokens(
-    *,
-    dit: 'WanDiTGGUF',
-    steps: int,
-    cfg_scale: Optional[float],
-    prompt_embeds: torch.Tensor,
-    negative_embeds: torch.Tensor,
-    grid: Tuple[int, int, int],
-    token_shape: Tuple[int, int],
-    device: torch.device,
-    dtype: torch.dtype,
-    logger: Any,
-    sampler_name: Optional[str] = None,
-    scheduler_name: Optional[str] = None,
-    seed: Optional[int] = None,
-    on_progress: Optional[Any] = None,
-    log_mem_interval: Optional[int] = None,
-) -> torch.Tensor:
-    log = _get_logger(logger)
-    T2, H2, W2 = grid
-    L, Ctok = token_shape
-    # Initialize token space with Gaussian noise (seeded when provided)
-    if seed is not None and int(seed) >= 0:
-        g = torch.Generator(device=device)
-        g.manual_seed(int(seed))
-        x = torch.randn(1, L, Ctok, device=device, dtype=dtype, generator=g)
-    else:
-        x = torch.randn(1, L, Ctok, device=device, dtype=dtype)
-    # Scheduler em espaço de tokens (parametrizável)
-    scheduler = _make_scheduler(steps, sampler=sampler_name, scheduler=scheduler_name)
-    # Diffusers timesteps; map to DiT time in [0,1]
-    timesteps = scheduler.timesteps
-
-    def _t_from_idx(idx: int) -> float:
-        # FLOW mapping: percent -> sigma via time_snr_shift -> timestep = sigma * 1000
-        n = max(1, len(timesteps) - 1)
-        percent = float(idx) / float(n)
-        sigma = _time_snr_shift(1.0, 1.0 - percent)
-        return sigma * 1000.0
-
-    _log_t_mapping(scheduler, timesteps, 'stage', logger)
-    iterator = _tqdm(timesteps, desc="WAN22(stage)") if _tqdm else timesteps
-    total = len(timesteps)
-    if on_progress:
-        try:
-            on_progress(step=0, total=total, percent=0.0)
-        except Exception:
-            pass
-    import time
-    t0 = time.perf_counter()
-    last = t0
-    for i, t in enumerate(iterator):
-        # Model forward: conditional and unconditional
-        tt = _t_from_idx(i)
-        eps_cond = dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
-        eps_uncond = dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dtype])
-        eps = _cfg_merge(eps_uncond, eps_cond, cfg_scale)
-        # Guard: detect non-finite gradients/tokens early
-        if not torch.isfinite(eps).all():
-            bad = int((~torch.isfinite(eps)).sum().item())
-            raise RuntimeError(f"WAN22 GGUF: non-finite model_output at step {i+1}/{total} (count={bad}).")
-        # Euler step
-        out = scheduler.step(model_output=eps, timestep=t, sample=x)
-        x = out.prev_sample
-        if not torch.isfinite(x).all():
-            badx = int((~torch.isfinite(x)).sum().item())
-            raise RuntimeError(f"WAN22 GGUF: non-finite tokens after step {i+1}/{total} (count={badx}).")
-        pct = float(i + 1) / float(max(1, total))
-        # Optional CUDA memory snapshot every N steps
-        if log_mem_interval is not None:
-            try:
-                n = int(log_mem_interval or 0)
-                if n > 0 and ((i + 1) % n) == 0:
-                    _log_cuda_mem(logger, label=f'stage-step-{i+1}')
-            except Exception:
-                pass
-        if on_progress:
-            try:
-                now = time.perf_counter()
-                dt_step = now - last
-                elapsed = now - t0
-                remain = max(0, total - (i + 1))
-                eta = (elapsed / max(1, i + 1)) * remain
-                on_progress(step=i + 1, total=total, percent=pct, eta_seconds=eta, step_seconds=dt_step)
-                last = now
-            except Exception:
-                pass
-        elif (i + 1) % 5 == 0:
-            log.info("[wan22.gguf] step %d/%d (%.1f%%)", i + 1, total, pct * 100.0)
-    return x
-
-
-@_io
-def _decode_tokens_to_frames(
-    *,
-    tokens: torch.Tensor,
-    dit: 'WanDiTGGUF',
-    grid: Tuple[int, int, int],
-    device: torch.device,
-    dtype: torch.dtype,
-    model_dir: str,
-    cfg: RunConfig,
-    debug_preview: bool = False,
-) -> List[object]:
-    # Unembed tokens back to video latents and decode via VAE
-    w, _b = _resolve_patch_weights(dit.state)
-    # Debug: token/grid shapes
-    try:
-        _li(None, "[wan22.gguf] unembed: tokens(L,C)=%s grid=%s", (int(tokens.shape[1]), int(tokens.shape[2])), grid)
-    except Exception:
-        pass
-    # Optional token stats for diagnostics (enabled by env WAN_I2V_LAT_STATS)
-    try:
-        if str(os.getenv('WAN_I2V_LAT_STATS','0')).strip().lower() in ('1','true','yes','on'):
-            import torch as _t
-            tt = tokens.detach().to(device='cpu', dtype=_t.float32)
-            finite = _t.isfinite(tt)
-            n_total = int(tt.numel()); n_bad = int((~finite).sum().item())
-            if n_bad < n_total:
-                vals = tt[finite]
-                mn = float(vals.min().item()); mx = float(vals.max().item())
-                mean = float(vals.mean().item()); std = float(vals.std(unbiased=False).item())
-                _li(None, "[wan22.gguf] tokens stats: L=%d C=%d min=%.4f max=%.4f mean=%.4f std=%.4f bad=%d", int(tt.shape[1]), int(tt.shape[2]), mn, mx, mean, std, n_bad)
-            else:
-                _li(None, "[wan22.gguf] tokens stats: L=%d C=%d (all non-finite: %d)", int(tt.shape[1]), int(tt.shape[2]), n_bad)
-    except Exception:
-        pass
-    # Optional sanitize/clamp tokens in preview before unembed to help diagnostics
-    if debug_preview:
-        try:
-            import torch as _t
-            if str(os.getenv('WAN_I2V_DEBUG_SANITIZE_TOKENS','0')).strip().lower() in ('1','true','yes','on'):
-                tokens = _t.nan_to_num(tokens, nan=0.0, posinf=1.0, neginf=-1.0)
-                _li(None, "[wan22.gguf] debug: sanitized tokens (nan→0, ±inf→±1) for preview")
-            v = os.getenv('WAN_I2V_DEBUG_CLAMP', '').strip()
-            if v:
-                lim = float(v)
-                if lim > 0:
-                    tokens = _t.clamp(tokens, min=-lim, max=lim)
-                    _li(None, "[wan22.gguf] debug: clamped tokens to ±%.3f for preview", lim)
-        except Exception:
-            pass
-    video_latents = _patch_unembed3d(tokens, w, grid)  # [B,C,T,H,W]
-    # If the model used I2V composition (mask4 + img16 + lat16 → C=36), keep only the base latent channels for VAE.
-    # Our I2V assembly feeds latents as the LAST 16 channels, matching (mask, image, latents) ordering.
-    try:
-        C = int(video_latents.shape[1])
-        if C != 16 and C >= 16:
-            if _resolve_i2v_order() == 'lat_first':
-                video_latents = video_latents[:, :16, ...]
-                _li(None, "[wan22.gguf] vae decode: took first 16 base-latent channels from C=%d", C)
-            else:
-                video_latents = video_latents[:, -16:, ...]
-                _li(None, "[wan22.gguf] vae decode: took last 16 base-latent channels from C=%d", C)
-    except Exception:
-        pass
-    # Optional clamp for debug preview only (does not affect final decode)
-    if debug_preview:
-        try:
-            v = os.getenv('WAN_I2V_DEBUG_CLAMP', '').strip()
-            if v:
-                lim = float(v)
-                if lim > 0:
-                    import torch as _t
-                    video_latents = _t.clamp(video_latents, min=-lim, max=lim)
-                    _li(None, "[wan22.gguf] debug: clamped latents to ±%.3f for preview", lim)
-        except Exception:
-            pass
-    frames = _vae_decode_video(video_latents, model_dir=model_dir, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir)
-    return frames
 
 
 @_io
@@ -1695,33 +1986,31 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (txt2vid) requires .gguf for both stages")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
-    # Configure attention and GGUF cache according to cfg (defaults emphasize memory efficiency)
+
     _set_sdpa_settings(getattr(cfg, 'sdpa_policy', None), getattr(cfg, 'attn_chunk_size', None))
     _try_set_cache_policy(getattr(cfg, 'gguf_cache_policy', None), getattr(cfg, 'gguf_cache_limit_mb', 0))
-    # Early activity signal so the UI shows immediate progress
+
     if on_progress:
         try:
             on_progress(stage='prepare', step=0, total=1, percent=0.0)
         except Exception:
             pass
 
-    # Device & dtype
     dev_name = _resolve_device_name(getattr(cfg, 'device', 'auto'))
     dev = torch.device(dev_name)
     dt = _as_dtype(cfg.dtype)
 
-    # Prepare UNet (High stage) and text context
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
     if on_progress:
         try:
             on_progress(stage='prepare', step=0, total=1, percent=0.05)
         except Exception:
             pass
-    # Determine model key for tokenizer/encoder presets
+
     _p = os.path.basename(hi_path).lower()
     _variant = '5b' if '5b' in _p else '14b'
     _model_key = f"wan_t2v_{_variant}"
-    # Offload profile
+
     lvl = cfg.offload_level if cfg.offload_level is not None else (3 if getattr(cfg, 'aggressive_offload', True) else 0)
     te_dev_eff = getattr(cfg, 'te_device', None)
     if te_dev_eff is None:
@@ -1747,24 +2036,20 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         te_impl=getattr(cfg, 'te_impl', None),
         te_kernel_required=getattr(cfg, 'te_kernel_required', None),
     )
-    if on_progress:
-        try:
-            on_progress(stage='prepare', step=0, total=1, percent=0.1)
-        except Exception:
-            pass
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     if isinstance(negative_embeds, torch.Tensor):
         negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    # Infer latent grid and token shape from patch embedding
     H_lat = max(8, cfg.height // 8)
     W_lat = max(8, cfg.width // 8)
     T = max(1, int(cfg.num_frames))
-    grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    geom_hi = _infer_patch_geometry(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
     log.info(
-        "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
-        str(dev), str(dt), grid, (token_shape[0], token_shape[1])
+        "[wan22.gguf] HIGH geom: grid=%s kernel=%s cin=%d",
+        geom_hi.grid,
+        geom_hi.patch_kernel,
+        geom_hi.latent_channels,
     )
     _log_cuda_mem(log, label='after-high-setup')
     if getattr(cfg, 'aggressive_offload', True):
@@ -1775,28 +2060,26 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         except Exception:
             pass
 
-    # Sample tokens in High stage
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
     sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
+    flow_shift_hi = getattr(cfg.high, 'flow_shift', None) if cfg.high else None
     log.info(
         "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
-        steps_hi, sampler_hi, sched_hi, (getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale), cfg.seed,
+        steps_hi,
+        sampler_hi,
+        sched_hi,
+        (getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+        cfg.seed,
     )
-    total_hi = int(len(getattr(_make_scheduler(steps_hi), 'timesteps', list(range(steps_hi)))))
-    if on_progress:
-        try:
-            on_progress(stage='high', step=0, total=total_hi, percent=0.0)
-        except Exception:
-            pass
-    toks_hi = _sample_stage_tokens(
+
+    latents_hi = _sample_stage_latents(
         dit=hi_dit,
+        geom=geom_hi,
         steps=steps_hi,
         cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
         prompt_embeds=prompt_embeds,
         negative_embeds=negative_embeds,
-        grid=grid,
-        token_shape=token_shape,
         device=dev,
         dtype=dt,
         logger=log,
@@ -1805,81 +2088,63 @@ def run_txt2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         seed=cfg.seed,
         on_progress=(lambda **p: on_progress(stage='high', **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(flow_shift_hi) if flow_shift_hi is not None else WAN_FLOW_SHIFT_DEFAULT,
+        stage_name='high',
     )
-    if on_progress:
-        try:
-            on_progress(stage='high', step=total_hi, total=total_hi, percent=1.0)
-        except Exception:
-            pass
 
-    # Decode High to frames and seed Low with last frame (Low is mandatory)
-    frames_hi = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg)
+    if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1', 'true', 'yes', 'on'):
+        try:
+            _ = _decode_latents_to_frames(latents=latents_hi, model_dir=os.path.dirname(hi_path), cfg=cfg, logger=log, debug_preview=True)
+        except Exception:
+            _lw(log, "[wan22.gguf] debug high decode failed", exc_info=True)
+
     if getattr(cfg, 'aggressive_offload', True):
         _cuda_empty_cache(log, label='after-high')
-    if not frames_hi:
-        raise RuntimeError("WAN22 GGUF: High stage produced no frames")
 
-    seed_image = frames_hi[-1]
-    # Prepare Low UNet
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-    # Encode seed to latents → tokens for Low
-    lat_lo0 = _vae_encode_init(seed_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat_lo0.ndim == 4:
-        lat_lo0 = lat_lo0.unsqueeze(2).repeat(1, 1, T, 1, 1)
-    w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
-    toks_lo0, grid_lo = _patch_embed3d(lat_lo0.to(device=dev, dtype=dt), w_lo, b_lo)
+    geom_lo = _infer_patch_geometry(lo_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    log.info(
+        "[wan22.gguf] LOW geom: grid=%s kernel=%s cin=%d",
+        geom_lo.grid,
+        geom_lo.patch_kernel,
+        geom_lo.latent_channels,
+    )
 
-    # Low stage sampling (mandatory)
+    seed_latents = _prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
     sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
+    flow_shift_lo = getattr(cfg.low, 'flow_shift', None) if cfg.low else None
     log.info(
-        "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s (seeded from last HIGH frame)",
-        steps_lo, sampler_lo, sched_lo, (getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+        "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s",
+        steps_lo,
+        sampler_lo,
+        sched_lo,
+        (getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
     )
-    scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
-    x_lo = toks_lo0.clone()
-    _log_t_mapping(scheduler_lo, scheduler_lo.timesteps, 'low', log)
-    iterator_lo = _tqdm(scheduler_lo.timesteps, desc="WAN22(low)") if _tqdm else scheduler_lo.timesteps
-    total_lo = len(scheduler_lo.timesteps)
-    if on_progress:
-        try:
-            on_progress(stage='low', step=0, total=total_lo, percent=0.0)
-        except Exception:
-            pass
-    _log_cuda_mem(log, label='before-low')
-    def _t_from_idx_lo(idx: int) -> float:
-        try:
-            sigmas = getattr(scheduler_lo, 'sigmas', None)
-            if sigmas is not None and len(sigmas) == len(scheduler_lo.timesteps):
-                s = float(sigmas[idx])
-                s_min = float(sigmas[-1])
-                s_max = float(sigmas[0])
-                if s_max - s_min > 0:
-                    return max(0.0, min(1.0, (s - s_min) / (s_max - s_min)))
-        except Exception:
-            pass
-        n = max(1, len(scheduler_lo.timesteps) - 1)
-        return 1.0 - (float(idx) / float(n))
 
-    for i, t in enumerate(iterator_lo):
-        tt = _t_from_idx_lo(i)
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
-        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
-        x_lo = out.prev_sample
-        pct = float(i + 1) / float(max(1, total_lo))
-        if on_progress:
-            try:
-                on_progress(stage='low', step=i + 1, total=total_lo, percent=pct)
-            except Exception:
-                pass
-        elif ((i + 1) % 5) == 0:
-            log.info("[wan22.gguf] low step %d/%d (%.1f%%)", i + 1, total_lo, pct * 100.0)
+    latents_lo = _sample_stage_latents(
+        dit=lo_dit,
+        geom=geom_lo,
+        steps=steps_lo,
+        cfg_scale=(getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=sampler_lo,
+        scheduler_name=sched_lo,
+        seed=None,
+        state_init=seed_latents,
+        on_progress=(lambda **p: on_progress(stage='low', **p)) if on_progress else None,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(flow_shift_lo) if flow_shift_lo is not None else WAN_FLOW_SHIFT_DEFAULT,
+        stage_name='low',
+    )
 
-    # Decode via common helper to ensure 16ch slicing before VAE
-    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
+    frames_lo = _decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     if getattr(cfg, 'aggressive_offload', True):
         _cuda_empty_cache(log, label='after-decode')
     _try_clear_cache()
@@ -1900,7 +2165,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
     dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
     dt = _as_dtype(cfg.dtype)
 
-    # Prepare UNet (High) and text embeddings
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
     _p = os.path.basename(hi_path).lower()
     _variant = '5b' if '5b' in _p else '14b'
@@ -1928,183 +2192,98 @@ def stream_txt2vid(cfg: RunConfig, *, logger=None):
     H_lat = max(8, cfg.height // 8)
     W_lat = max(8, cfg.width // 8)
     T = max(1, int(cfg.num_frames))
-    grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
-    total_hi = int(len(getattr(_make_scheduler(int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)), 'timesteps', list(range(int(getattr(cfg.high, 'steps', 12) if cfg.high else 12))))))
-    yield {"type": "progress", "stage": "high", "step": 0, "total": total_hi, "percent": 0.0}
+    geom_hi = _infer_patch_geometry(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
+    sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
+    sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
+    flow_shift_hi = getattr(cfg.high, 'flow_shift', None) if cfg.high else None
 
-    toks_hi = _sample_stage_tokens(
+    latents_hi = yield from _sample_stage_latents_generator(
         dit=hi_dit,
-        steps=int(getattr(cfg.high, 'steps', 12) if cfg.high else 12),
+        geom=geom_hi,
+        steps=steps_hi,
         cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
         prompt_embeds=prompt_embeds,
         negative_embeds=negative_embeds,
-        grid=grid,
-        token_shape=token_shape,
         device=dev,
         dtype=dt,
         logger=log,
-        sampler_name=(getattr(cfg.high, 'sampler', None) if cfg.high else None),
-        scheduler_name=(getattr(cfg.high, 'scheduler', None) if cfg.high else None),
+        sampler_name=sampler_hi,
+        scheduler_name=sched_hi,
         seed=cfg.seed,
-    )  # type: ignore[arg-type]
+        state_init=None,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(flow_shift_hi) if flow_shift_hi is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        stage_name='high',
+        emit_logs=False,
+    )
 
-    # Cannot pass a lambda with yield directly; emulate by re-running progress here
-    yield {"type": "progress", "stage": "high", "step": total_hi, "total": total_hi, "percent": 1.0}
-
-    # Optional debug: decode High tokens to frames as if final (slice first 16 ch) BEFORE handoff
-    try:
-        _dbg_flag = str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1','true','yes','on')
-    except Exception:
-        _dbg_flag = False
-    if _dbg_flag:
+    if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1','true','yes','on'):
         try:
-            _ld(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
-            _ = _decode_tokens_to_frames(tokens=toks_hi, dit=hi_dit, grid=grid, device=dev, dtype=dt, model_dir=os.path.dirname(hi_path), cfg=cfg, debug_preview=True)
-        except Exception as ex:
-            _ld(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
+            _ = _decode_latents_to_frames(latents=latents_hi, model_dir=os.path.dirname(hi_path), cfg=cfg, logger=log, debug_preview=True)
+        except Exception:
+            _lw(log, "[wan22.gguf] debug high decode failed", exc_info=True)
 
-    # Proper handoff in latents: unembed High → embed Low (no VAE in-between)
-    w_hi, b_hi = _resolve_patch_weights(hi_dit.state)
-    lat_hi = _patch_unembed3d(toks_hi, w_hi, grid)  # [B, C_hi, T,H,W] (often C_hi=36)
-
-    # Low stage
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-    w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
-    cin_lo = int(getattr(w_lo, 'shape', [None, None, None, None, None])[1])
-    vol = lat_hi
-    if int(vol.shape[1]) > cin_lo:
-        # Reduce to base latents according to configured order
-        vol = vol[:, :cin_lo, ...] if _resolve_i2v_order() == 'lat_first' else vol[:, -cin_lo:, ...]
-    elif int(vol.shape[1]) < cin_lo:
-        vol = _assemble_i2v_input(vol, expected_cin=cin_lo, logger=log)
-    toks_lo0, grid_lo = _patch_embed3d(vol.to(device=dev, dtype=dt), w_lo, b_lo)
+    geom_lo = _infer_patch_geometry(lo_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    seed_latents = _prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
     sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
-    scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
-    x_lo = toks_lo0.clone()
-    total_lo = len(scheduler_lo.timesteps)
-    yield {"type": "progress", "stage": "low", "step": 0, "total": total_lo, "percent": 0.0}
-    for i, t in enumerate(scheduler_lo.timesteps):
-        tt = (1.0 - (float(i) / float(max(1, total_lo - 1)))) * 1000.0
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
-        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
-        x_lo = out.prev_sample
-        pct = float(i + 1) / float(max(1, total_lo))
-        yield {"type": "progress", "stage": "low", "step": i + 1, "total": total_lo, "percent": pct}
+    flow_shift_lo = getattr(cfg.low, 'flow_shift', None) if cfg.low else None
 
-    # Decode via common helper to ensure 16ch slicing before VAE
-    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
+    latents_lo = yield from _sample_stage_latents_generator(
+        dit=lo_dit,
+        geom=geom_lo,
+        steps=steps_lo,
+        cfg_scale=(getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=sampler_lo,
+        scheduler_name=sched_lo,
+        seed=None,
+        state_init=seed_latents,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(flow_shift_lo) if flow_shift_lo is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        stage_name='low',
+        emit_logs=False,
+    )
+
+    frames_lo = _decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     if not frames_lo:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames_lo}
 
 
-def stream_img2vid(cfg: RunConfig, *, logger=None):
-    # Reuse txt2vid streaming after forcing seed image path
-    log = _get_logger(logger)
-    if cfg.init_image is None:
-        raise RuntimeError("img2vid requires init_image for GGUF path")
-    # The rest mirrors stream_txt2vid, but seeds low stage from cfg.init_image
-    hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
-    lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
-    if not hi_path or not lo_path:
-        raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
-    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
-    dt = _as_dtype(cfg.dtype)
-    hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
-    _p = os.path.basename(hi_path).lower(); _variant = '5b' if '5b' in _p else '14b'; _model_key = f"wan_t2v_{_variant}"
-    prompt_embeds, negative_embeds = _get_text_context(
-        model_dir=os.path.dirname(hi_path), prompt=cfg.prompt or "", negative=cfg.negative_prompt,
-        device=cfg.device, dtype=cfg.dtype, text_encoder_dir=cfg.text_encoder_dir, tokenizer_dir=cfg.tokenizer_dir,
-        vae_dir=cfg.vae_dir, model_key=_model_key, metadata_dir=cfg.metadata_dir,
-    )
-    if isinstance(prompt_embeds, torch.Tensor): prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
-    if isinstance(negative_embeds, torch.Tensor): negative_embeds = negative_embeds.to(device=dev, dtype=dt)
-    H_lat = max(8, cfg.height // 8); W_lat = max(8, cfg.width // 8); T = max(1, int(cfg.num_frames))
-    grid, token_shape = _infer_latent_grid(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
-    steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
-    scheduler_hi = _make_scheduler(steps_hi, sampler=(getattr(cfg.high, 'sampler', None) if cfg.high else None), scheduler=(getattr(cfg.high, 'scheduler', None) if cfg.high else None))
-    total_hi = len(scheduler_hi.timesteps)
-    yield {"type": "progress", "stage": "high", "step": 0, "total": total_hi, "percent": 0.0}
-    # Sample HIGH tokens in token space (no mid VAE decode)
-    toks_hi = _sample_stage_tokens(
-        dit=hi_dit, steps=steps_hi, cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
-        prompt_embeds=prompt_embeds, negative_embeds=negative_embeds, grid=grid, token_shape=token_shape,
-        device=dev, dtype=dt, logger=log, sampler_name=(getattr(cfg.high, 'sampler', None) if cfg.high else None),
-        scheduler_name=(getattr(cfg.high, 'scheduler', None) if cfg.high else None), seed=cfg.seed,
-        on_progress=lambda step,total,percent: None,
-    )
-    yield {"type": "progress", "stage": "high", "step": total_hi, "total": total_hi, "percent": 1.0}
-    # Handoff: unembed HIGH tokens to latent volume and embed for LOW (no VAE decode)
-    w_hi, b_hi = _resolve_patch_weights(hi_dit.state)
-    lat_hi = _patch_unembed3d(toks_hi, w_hi, grid)
-    lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-    w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
-    try:
-        expected_cin_lo = int(getattr(w_lo, 'shape', [0, 0, 0, 0, 0])[1])
-    except Exception:
-        expected_cin_lo = None
-    x_lo_in = lat_hi
-    if expected_cin_lo is not None and int(lat_hi.shape[1]) != expected_cin_lo:
-        if int(lat_hi.shape[1]) >= 16 and expected_cin_lo == 16:
-            x_lo_in = lat_hi[:, -16:, ...]
-        else:
-            x_lo_in = _assemble_i2v_input(lat_hi if int(lat_hi.shape[1]) == 16 else lat_hi[:, -16:, ...], expected_cin_lo, logger=log)
-    toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
-    steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
-    scheduler_lo = _make_scheduler(steps_lo, sampler=(getattr(cfg.low, 'sampler', None) if cfg.low else None), scheduler=(getattr(cfg.low, 'scheduler', None) if cfg.low else None))
-    x_lo = toks_lo0.clone(); total_lo = len(scheduler_lo.timesteps)
-    yield {"type": "progress", "stage": "low", "step": 0, "total": total_lo, "percent": 0.0}
-    for i, t in enumerate(scheduler_lo.timesteps):
-        tt = (1.0 - (float(i) / float(max(1, total_lo - 1)))) * 1000.0
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
-        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
-        x_lo = out.prev_sample
-        pct = float(i + 1) / float(max(1, total_lo))
-        yield {"type": "progress", "stage": "low", "step": i + 1, "total": total_lo, "percent": pct}
-    # Decode via common helper to ensure 16ch slicing before VAE
-    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
-    if not frames_lo:
-        raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
-    yield {"type": "result", "frames": frames_lo}
-
-
-@_io
 def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object]:
     log = _get_logger(logger)
     hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
     lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
     if not hi_path or not lo_path:
         raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
+    if cfg.init_image is None:
+        raise RuntimeError("img2vid requires init_image for GGUF path")
     log.info("[wan22.gguf] high=%s low=%s", hi_path, lo_path)
-    # Configure attention and GGUF cache
+
     _set_sdpa_settings(getattr(cfg, 'sdpa_policy', None), getattr(cfg, 'attn_chunk_size', None))
     _try_set_cache_policy(getattr(cfg, 'gguf_cache_policy', None), getattr(cfg, 'gguf_cache_limit_mb', 0))
-    # Echo debug-flag to confirm pickup from environment
-    try:
-        _li(log, "[wan22.gguf] debug-flags: HI_DECODE=%s ORDER=%s", 'on' if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE','0')).strip().lower() in ('1','true','yes','on') else 'off', _resolve_i2v_order())
-    except Exception:
-        pass
+
     if on_progress:
         try:
             on_progress(stage='prepare', step=0, total=1, percent=0.0)
         except Exception:
             pass
 
-    if cfg.init_image is None:
-        raise RuntimeError("img2vid requires init_image for GGUF path")
-
     dev_name = _resolve_device_name(getattr(cfg, 'device', 'auto'))
     dev = torch.device(dev_name)
     dt = _as_dtype(cfg.dtype)
 
-    # Prepare UNet (High)
     hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
     if on_progress:
         try:
@@ -2112,19 +2291,16 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         except Exception:
             pass
 
-    # Text embeds
     _p = os.path.basename(hi_path).lower()
     _variant = '5b' if '5b' in _p else '14b'
     _model_key = f"wan_i2v_{_variant}"
-    # Offload profile for this run (align with txt2vid)
     lvl = cfg.offload_level if cfg.offload_level is not None else (3 if getattr(cfg, 'aggressive_offload', True) else 0)
-    te_dev_eff = getattr(cfg, 'te_device', None)
-    if te_dev_eff is None:
-        te_dev_eff = 'cuda' if lvl <= 1 else 'cpu'
+    te_dev_eff = getattr(cfg, 'te_device', None) or ('cuda' if lvl <= 1 else 'cpu')
     te_impl_val = (getattr(cfg, 'te_impl', None) or os.getenv('WAN_TE_IMPL', 'hf')).lower()
     te_required_val = (te_impl_val == 'cuda_fp8')
     _li(logger, "[wan22.gguf] offload profile: level=%s te_device=%s te_impl=%s te_required=%s",
         lvl, te_dev_eff, te_impl_val, str(te_required_val).lower())
+
     prompt_embeds, negative_embeds = _get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -2141,154 +2317,195 @@ def run_img2vid(cfg: RunConfig, *, logger=None, on_progress=None) -> List[object
         te_impl=getattr(cfg, 'te_impl', None),
         te_kernel_required=getattr(cfg, 'te_kernel_required', None),
     )
-    if on_progress:
-        try:
-            on_progress(stage='prepare', step=0, total=1, percent=0.1)
-        except Exception:
-            pass
     if isinstance(prompt_embeds, torch.Tensor):
         prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     if isinstance(negative_embeds, torch.Tensor):
         negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    # Encode init image to latents → tokens
     H_lat = max(8, cfg.height // 8)
     W_lat = max(8, cfg.width // 8)
     T = max(1, int(cfg.num_frames))
-    # Defer grid/token inference: derive from actual seed latents to avoid H/W mismatch issues
-    if on_progress:
-        try:
-            on_progress(stage='prepare', step=1, total=1, percent=0.15)
-        except Exception:
-            pass
-    # For img2vid, we seed token space from VAE latents of the init image (repeated across T)
-    lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    # Tile along time to match requested frames and ensure H/W match cfg latents
-    if lat0.ndim == 4:  # [B,C,H,W]
-        lat0 = lat0.unsqueeze(2).repeat(1, 1, T, 1, 1)
-    lat0 = _resize_latents_hw(lat0, H=H_lat, W=W_lat)
-    w, b = _resolve_patch_weights(hi_dit.state)
-    # Validate/Assemble input channels for High stage
-    try:
-        expected_cin = int(getattr(w, 'shape', [0, 0, 0, 0, 0])[1])
-    except Exception:
-        expected_cin = None
-    found_c = int(lat0.shape[1])
-    x_in = lat0
-    if expected_cin is not None and found_c != expected_cin:
-        # For img2vid, some WAN22 I2V checkpoints expect 36 channels (mask4 + img16 + lat16)
-        x_in = _assemble_i2v_input(lat0, expected_cin, logger=log)
-    seed_tokens, grid = _patch_embed3d(x_in.to(device=dev, dtype=dt), w, b)  # [1, L, Ctok]
-    token_shape = (int(seed_tokens.shape[1]), int(seed_tokens.shape[2]))
-    log.info(
-        "[wan22.gguf] device=%s dtype=%s grid(T,H',W')=%s token(L,C)=%s",
-        str(dev), str(dt), grid, (token_shape[0], token_shape[1])
-    )
 
-    # Run sampler starting from seeded tokens (replace init noise)
+    lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat0.ndim == 4:
+        lat0 = lat0.unsqueeze(2)
+    lat0 = lat0.repeat(1, 1, T, 1, 1)
+    lat0 = _resize_latents_hw(lat0, H=H_lat, W=W_lat)
+
+    geom_hi = _infer_patch_geometry(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    seed_hi = _prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
+
     steps_hi = int(getattr(cfg.high, 'steps', 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, 'sampler', None) if cfg.high else None
     sched_hi = getattr(cfg.high, 'scheduler', None) if cfg.high else None
-    log.info(
-        "[wan22.gguf] HIGH(img2vid): steps=%s sampler=%s scheduler=%s cfg_scale=%s (seeded from init image)",
-        steps_hi, sampler_hi, sched_hi, (getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+    flow_shift_hi = getattr(cfg.high, 'flow_shift', None) if cfg.high else None
+
+    latents_hi = _sample_stage_latents(
+        dit=hi_dit,
+        geom=geom_hi,
+        steps=steps_hi,
+        cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=sampler_hi,
+        scheduler_name=sched_hi,
+        seed=None,
+        state_init=seed_hi,
+        on_progress=(lambda **p: on_progress(stage='high', **p)) if on_progress else None,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(flow_shift_hi) if flow_shift_hi is not None else WAN_FLOW_SHIFT_DEFAULT,
+        stage_name='high',
     )
-    scheduler = _make_scheduler(steps_hi, sampler=sampler_hi, scheduler=sched_hi)
-    timesteps = scheduler.timesteps
-    x = seed_tokens.clone()
-    _log_t_mapping(scheduler, timesteps, 'high', log)
-    iterator = _tqdm(timesteps, desc="WAN22(high)") if _tqdm else timesteps
-    def _t_from_idx_high(idx: int) -> float:
-        n = max(1, len(timesteps) - 1)
-        percent = float(idx) / float(n)
-        sigma = _time_snr_shift(1.0, 1.0 - percent)
-        return sigma * 1000.0
 
-    for i, t in enumerate(iterator):
-        tt = _t_from_idx_high(i)
-        eps_c = hi_dit.forward(x, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = hi_dit.forward(x, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale)
-        out = scheduler.step(model_output=eps, timestep=t, sample=x)
-        x = out.prev_sample
-        if (i + 1) % 5 == 0:
-            log.info("[wan22.gguf] high step %d/%d", i + 1, len(timesteps))
-
-    # Optional debug: decode High tokens to frames before handoff (expensive)
-    try:
-        _dbg_flag = str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1','true','yes','on')
-    except Exception:
-        _dbg_flag = False
-    if _dbg_flag:
+    if str(os.getenv('WAN_I2V_DEBUG_HI_DECODE', '0')).strip().lower() in ('1','true','yes','on'):
         try:
-            _ld(log, "[wan22.gguf] DEBUG: decoding High stage tokens before handoff (env WAN_I2V_DEBUG_HI_DECODE=1)")
-            # Preview decode using VAE from High tokens; output is discarded (debug only)
-            _ = _decode_tokens_to_frames(tokens=x, dit=hi_dit, grid=grid, device=dev, dtype=dt,
-                                         model_dir=os.path.dirname(hi_path), cfg=cfg, debug_preview=True)
-        except Exception as ex:
-            _ld(log, "[wan22.gguf] DEBUG: High decode failed: %s", ex)
+            _ = _decode_latents_to_frames(latents=latents_hi, model_dir=os.path.dirname(hi_path), cfg=cfg, logger=log, debug_preview=True)
+        except Exception:
+            _lw(log, "[wan22.gguf] debug high decode failed", exc_info=True)
 
-    # Handoff: stay in latent space. Unembed HIGH tokens back to 36ch latent volume
-    lat_hi = _patch_unembed3d(x, w, grid)  # [B,C_hi,T,H,W], typically C_hi=36 for I2V
-    try:
-        _li(log, "[wan22.gguf] handoff: high unembed → video_latents=%s", tuple(lat_hi.shape))
-        _li(log, "[wan22.gguf] INFO: High→Low handoff occurs in latent space (no VAE at handoff)")
-    except Exception:
-        pass
     if lvl >= 2:
         _cuda_empty_cache(logger=log, label='after-high')
 
-    # Low stage (mandatory): seed from HIGH latents (no VAE in the middle)
     lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
-    w_lo, b_lo = _resolve_patch_weights(lo_dit.state)
-    try:
-        expected_cin_lo = int(getattr(w_lo, 'shape', [0, 0, 0, 0, 0])[1])
-    except Exception:
-        expected_cin_lo = None
-    x_lo_in = lat_hi
-    if expected_cin_lo is not None and int(lat_hi.shape[1]) != expected_cin_lo:
-        # If Low expects 36 and we have 16 (or vice-versa), assemble/slice accordingly
-        if int(lat_hi.shape[1]) >= 16 and expected_cin_lo == 16:
-            x_lo_in = lat_hi[:, :16, ...] if _resolve_i2v_order() == 'lat_first' else lat_hi[:, -16:, ...]
-        else:
-            base16 = lat_hi[:, :16, ...] if int(lat_hi.shape[1]) >= 16 and _resolve_i2v_order() == 'lat_first' else (
-                lat_hi[:, -16:, ...] if int(lat_hi.shape[1]) >= 16 else lat_hi)
-            x_lo_in = _assemble_i2v_input(base16, expected_cin_lo, logger=log)
-    toks_lo0, grid_lo = _patch_embed3d(x_lo_in.to(device=dev, dtype=dt), w_lo, b_lo)
+    geom_lo = _infer_patch_geometry(lo_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    seed_lo = _prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
 
     steps_lo = int(getattr(cfg.low, 'steps', 12) if cfg.low else 12)
     sampler_lo = getattr(cfg.low, 'sampler', None) if cfg.low else None
     sched_lo = getattr(cfg.low, 'scheduler', None) if cfg.low else None
-    log.info(
-        "[wan22.gguf] LOW(img2vid): steps=%s sampler=%s scheduler=%s cfg_scale=%s (seeded from last HIGH frame)",
-        steps_lo, sampler_lo, sched_lo, (getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
-    )
-    scheduler_lo = _make_scheduler(steps_lo, sampler=sampler_lo, scheduler=sched_lo)
-    tlist_lo = scheduler_lo.timesteps
-    x_lo = toks_lo0.clone()
-    _log_t_mapping(scheduler_lo, tlist_lo, 'low(img2vid)', log)
-    iterator_lo = _tqdm(tlist_lo, desc="WAN22(low)") if _tqdm else tlist_lo
-    def _t_from_idx_lo(idx: int) -> float:
-        n = max(1, len(scheduler_lo.timesteps) - 1)
-        percent = float(idx) / float(n)
-        sigma = _time_snr_shift(1.0, 1.0 - percent)
-        return sigma * 1000.0
+    flow_shift_lo = getattr(cfg.low, 'flow_shift', None) if cfg.low else None
 
-    for i, t in enumerate(iterator_lo):
-        tt = _t_from_idx_lo(i)
-        eps_c = lo_dit.forward(x_lo, tt, prompt_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps_u = lo_dit.forward(x_lo, tt, negative_embeds, dtype={torch.float16: 'fp16', getattr(torch, 'bfloat16', torch.float16): 'bf16', torch.float32: 'fp32'}[dt])
-        eps = _cfg_merge(eps_u, eps_c, getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale)
-        out = scheduler_lo.step(model_output=eps, timestep=t, sample=x_lo)
-        x_lo = out.prev_sample
-        if (i + 1) % 5 == 0:
-            log.info("[wan22.gguf] low step %d/%d", i + 1, len(tlist_lo))
-    # Decode via common helper to ensure 16ch slicing before VAE
-    frames_lo = _decode_tokens_to_frames(tokens=x_lo, dit=lo_dit, grid=grid_lo, device=dev, dtype=dt, model_dir=os.path.dirname(lo_path), cfg=cfg)
+    latents_lo = _sample_stage_latents(
+        dit=lo_dit,
+        geom=geom_lo,
+        steps=steps_lo,
+        cfg_scale=(getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=sampler_lo,
+        scheduler_name=sched_lo,
+        seed=None,
+        state_init=seed_lo,
+        on_progress=(lambda **p: on_progress(stage='low', **p)) if on_progress else None,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(flow_shift_lo) if flow_shift_lo is not None else WAN_FLOW_SHIFT_DEFAULT,
+        stage_name='low',
+    )
+
+    frames = _decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     _try_clear_cache()
-    if not frames_lo:
+    if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
-    return frames_lo
+    return frames
+
+
+def stream_img2vid(cfg: RunConfig, *, logger=None):
+    log = _get_logger(logger)
+    if cfg.init_image is None:
+        raise RuntimeError("img2vid requires init_image for GGUF path")
+
+    hi_path = _pick_stage_gguf(getattr(cfg.high, 'model_dir', None) if cfg.high else None, 'high')
+    lo_path = _pick_stage_gguf(getattr(cfg.low, 'model_dir', None) if cfg.low else None, 'low')
+    if not hi_path or not lo_path:
+        raise RuntimeError("WAN22 GGUF (img2vid) requires .gguf for both stages")
+
+    dev = torch.device('cuda' if cfg.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    dt = _as_dtype(cfg.dtype)
+
+    hi_dit = WanDiTGGUF(os.path.dirname(hi_path), logger=log)
+    _p = os.path.basename(hi_path).lower()
+    _variant = '5b' if '5b' in _p else '14b'
+    _model_key = f"wan_i2v_{_variant}"
+
+    prompt_embeds, negative_embeds = _get_text_context(
+        model_dir=os.path.dirname(hi_path),
+        prompt=cfg.prompt or "",
+        negative=cfg.negative_prompt,
+        device=cfg.device,
+        dtype=cfg.dtype,
+        text_encoder_dir=cfg.text_encoder_dir,
+        tokenizer_dir=cfg.tokenizer_dir,
+        vae_dir=cfg.vae_dir,
+        model_key=_model_key,
+        metadata_dir=cfg.metadata_dir,
+        te_device=getattr(cfg, 'te_device', None),
+        te_impl=getattr(cfg, 'te_impl', None),
+        te_kernel_required=getattr(cfg, 'te_kernel_required', None),
+    )
+    if isinstance(prompt_embeds, torch.Tensor):
+        prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
+    if isinstance(negative_embeds, torch.Tensor):
+        negative_embeds = negative_embeds.to(device=dev, dtype=dt)
+
+    H_lat = max(8, cfg.height // 8)
+    W_lat = max(8, cfg.width // 8)
+    T = max(1, int(cfg.num_frames))
+
+    lat0 = _vae_encode_init(cfg.init_image, device=cfg.device, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat0.ndim == 4:
+        lat0 = lat0.unsqueeze(2)
+    lat0 = lat0.repeat(1, 1, T, 1, 1)
+    lat0 = _resize_latents_hw(lat0, H=H_lat, W=W_lat)
+
+    geom_hi = _infer_patch_geometry(hi_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    seed_hi = _prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
+
+    latents_hi = yield from _sample_stage_latents_generator(
+        dit=hi_dit,
+        geom=geom_hi,
+        steps=int(getattr(cfg.high, 'steps', 12) if cfg.high else 12),
+        cfg_scale=(getattr(cfg.high, 'cfg_scale', None) if cfg.high else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=(getattr(cfg.high, 'sampler', None) if cfg.high else None),
+        scheduler_name=(getattr(cfg.high, 'scheduler', None) if cfg.high else None),
+        seed=None,
+        state_init=seed_hi,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(getattr(cfg.high, 'flow_shift', WAN_FLOW_SHIFT_DEFAULT) if cfg.high else WAN_FLOW_SHIFT_DEFAULT),
+        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        stage_name='high',
+        emit_logs=False,
+    )
+
+    lo_dit = WanDiTGGUF(os.path.dirname(lo_path), logger=log)
+    geom_lo = _infer_patch_geometry(lo_dit, T=T, H_lat=H_lat, W_lat=W_lat, device=dev, dtype=dt)
+    seed_lo = _prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+
+    latents_lo = yield from _sample_stage_latents_generator(
+        dit=lo_dit,
+        geom=geom_lo,
+        steps=int(getattr(cfg.low, 'steps', 12) if cfg.low else 12),
+        cfg_scale=(getattr(cfg.low, 'cfg_scale', None) if cfg.low else cfg.guidance_scale),
+        prompt_embeds=prompt_embeds,
+        negative_embeds=negative_embeds,
+        device=dev,
+        dtype=dt,
+        logger=log,
+        sampler_name=(getattr(cfg.low, 'sampler', None) if cfg.low else None),
+        scheduler_name=(getattr(cfg.low, 'scheduler', None) if cfg.low else None),
+        seed=None,
+        state_init=seed_lo,
+        log_mem_interval=getattr(cfg, 'log_mem_interval', None),
+        flow_shift=float(getattr(cfg.low, 'flow_shift', WAN_FLOW_SHIFT_DEFAULT) if cfg.low else WAN_FLOW_SHIFT_DEFAULT),
+        flow_multiplier=WAN_FLOW_MULTIPLIER,
+        stage_name='low',
+        emit_logs=False,
+    )
+
+    frames = _decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
+    if not frames:
+        raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
+    yield {"type": "result", "frames": frames}
 
 
 __all__ = [

@@ -195,6 +195,7 @@ class Wan225BEngine(BaseVideoEngine):
                     scheduler=str(getattr(request, 'scheduler', 'Automatic')),
                     steps=max(1, int(getattr(request, 'steps', 12) or 12)),
                     cfg_scale=getattr(request, 'cfg_scale', None),
+                    flow_shift=float((ex.get('wan_high', {}) or {}).get('flow_shift')) if isinstance(ex, dict) and ex.get('wan_high') and (ex.get('wan_high', {}).get('flow_shift') is not None) else None,
                 ),
                 low=gguf.StageConfig(
                     model_dir=self._comp.model_dir or '',
@@ -202,6 +203,7 @@ class Wan225BEngine(BaseVideoEngine):
                     scheduler=str(getattr(request, 'scheduler', 'Automatic')),
                     steps=max(1, int(getattr(request, 'steps', 12) or 12)),
                     cfg_scale=getattr(request, 'cfg_scale', None),
+                    flow_shift=float((ex.get('wan_low', {}) or {}).get('flow_shift')) if isinstance(ex, dict) and ex.get('wan_low') and (ex.get('wan_low', {}).get('flow_shift') is not None) else None,
                 ),
             )
             for ev in stream_run(gguf.run_txt2vid, cfg=cfg, logger=self._logger):

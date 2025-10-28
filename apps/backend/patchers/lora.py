@@ -1,55 +1,32 @@
 import torch
 
-import packages_3rdparty.webui_lora_collection.lora as lora_utils_webui
-import packages_3rdparty.comfyui_lora_collection.lora as lora_utils_comfyui
-
+from apps.backend.runtime.adapters.lora import (
+    convert_specs_to_patch_dict,
+    model_lora_keys_clip as mapping_clip,
+    model_lora_keys_unet as mapping_unet,
+)
+from apps.backend.runtime.adapters.lora.loader import parse_lora_tensors
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime import utils
-
-
 from apps.backend.runtime import ops as operations
 
 
 extra_weight_calculators = {}
-lora_collection_priority = [lora_utils_webui, lora_utils_comfyui]
 
 
-def get_function(function_name: str):
-    for lora_collection in lora_collection_priority:
-        if hasattr(lora_collection, function_name):
-            return getattr(lora_collection, function_name)
+def load_lora(lora_tensors, to_load):
+    specs, loaded = parse_lora_tensors(lora_tensors, to_load)
+    patch_dict = convert_specs_to_patch_dict(specs)
+    remaining = {k: v for k, v in lora_tensors.items() if k not in loaded}
+    return patch_dict, remaining
 
 
-def load_lora(lora, to_load):
-    patch_dict, remaining_dict = get_function('load_lora')(lora, to_load)
-    return patch_dict, remaining_dict
+def model_lora_keys_clip(model, key_map=None):
+    return mapping_clip(model, {} if key_map is None else key_map)
 
 
-def inner_str(k, prefix="", suffix=""):
-    return k[len(prefix):-len(suffix)]
-
-
-def model_lora_keys_clip(model, key_map={}):
-    model_keys, key_maps = get_function('model_lora_keys_clip')(model, key_map)
-
-    for model_key in model_keys:
-        if model_key.endswith(".weight"):
-            if model_key.startswith("t5xxl.transformer."):
-                for prefix in ['te1', 'te2', 'te3']:
-                    formatted = inner_str(model_key, "t5xxl.transformer.", ".weight")
-                    formatted = formatted.replace(".", "_")
-                    formatted = f"lora_{prefix}_{formatted}"
-                    key_map[formatted] = model_key
-
-    return key_maps
-
-
-def model_lora_keys_unet(model, key_map={}):
-    model_keys, key_maps = get_function('model_lora_keys_unet')(model, key_map)
-
-    # TODO: OFT
-
-    return key_maps
+def model_lora_keys_unet(model, key_map=None):
+    return mapping_unet(model, {} if key_map is None else key_map)
 
 
 @torch.inference_mode()

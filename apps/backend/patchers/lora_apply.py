@@ -30,8 +30,8 @@ def _build_to_load_maps(engine) -> Tuple[Dict[str, str], Dict[str, str]]:
     """Return LoRA-key → model-param maps for UNet and CLIP encoders."""
     unet_model = engine.forge_objects_after_applying_lora.unet.model
     clip_model = engine.forge_objects_after_applying_lora.clip.cond_stage_model
-    _sdk_u, unet_map = model_lora_keys_unet(unet_model)
-    _sdk_c, clip_map = model_lora_keys_clip(clip_model)
+    unet_map = model_lora_keys_unet(unet_model)
+    clip_map = model_lora_keys_clip(clip_model)
     return unet_map, clip_map
 
 
@@ -88,4 +88,3 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
 
 
 __all__ = ["apply_loras_to_engine", "AppliedStats"]
-

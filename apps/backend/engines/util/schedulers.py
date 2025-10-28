@@ -23,6 +23,7 @@ class SamplerKind(str, Enum):
     DPM2M_SDE = "dpm++ 2m sde"
     PLMS = "plms"
     PNDM = "pndm"
+    UNI_PC = "uni-pc"
 
     @staticmethod
     def from_string(name: str) -> "SamplerKind":
@@ -30,6 +31,12 @@ class SamplerKind(str, Enum):
         for member in SamplerKind:
             if key == member.value:
                 return member
+        aliases = {
+            "uni_pc": SamplerKind.UNI_PC,
+            "unipc": SamplerKind.UNI_PC,
+        }
+        if key in aliases:
+            return aliases[key]
         raise ValueError(f"Unsupported sampler '{name}'. Valid: {[m.value for m in SamplerKind]}")
 
 
@@ -52,6 +59,7 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
         DPMSolverMultistepScheduler,
         LMSDiscreteScheduler,
         PNDMScheduler,
+        UniPCMultistepScheduler,
     )
 
     allowed = {
@@ -62,6 +70,7 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
         SamplerKind.DPM2M_SDE: DPMSolverMultistepScheduler,
         SamplerKind.PLMS: LMSDiscreteScheduler,
         SamplerKind.PNDM: PNDMScheduler,
+        SamplerKind.UNI_PC: UniPCMultistepScheduler,
     }
 
     kind = SamplerKind.from_string(wanted_sampler)

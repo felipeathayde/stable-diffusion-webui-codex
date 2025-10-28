@@ -17,6 +17,7 @@ SAMPLER_NAME: Dict[SamplerKind, str] = {
     SamplerKind.DPM2M_SDE: "DPM++ 2M SDE",
     SamplerKind.PLMS: "PLMS",
     SamplerKind.PNDM: "PNDM",
+    SamplerKind.UNI_PC: "UniPC",
 }
 
 # Baseline sets used unless an engine overrides them.
@@ -29,6 +30,7 @@ DEFAULT_IMAGE_SAMPLERS: List[str] = [
     SAMPLER_NAME[SamplerKind.DDIM],
     SAMPLER_NAME[SamplerKind.PLMS],
     SAMPLER_NAME[SamplerKind.PNDM],
+    SAMPLER_NAME[SamplerKind.UNI_PC],
 ]
 DEFAULT_IMAGE_SCHEDULERS: List[str] = ["Automatic", "Karras", "Simple"]
 
@@ -40,6 +42,7 @@ DEFAULT_VIDEO_SAMPLERS: List[str] = [
     SAMPLER_NAME[SamplerKind.DPM2M_SDE],
     SAMPLER_NAME[SamplerKind.DDIM],
     SAMPLER_NAME[SamplerKind.PNDM],
+    SAMPLER_NAME[SamplerKind.UNI_PC],
 ]
 DEFAULT_VIDEO_SCHEDULERS: List[str] = ["Automatic", "Karras"]
 

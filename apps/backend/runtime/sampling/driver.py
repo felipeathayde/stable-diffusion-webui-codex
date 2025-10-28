@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, List
 import os
 import logging
 
@@ -8,7 +8,17 @@ import torch
 
 from . import sampling_function_inner, sampling_prepare, sampling_cleanup
 from .condition import compile_conditions
+from .context import SamplingContext, build_sampling_context
 from ...core.state import state as backend_state
+from apps.backend.engines.util.schedulers import SamplerKind
+
+
+_LMS_COEFFS = {
+    1: (1.0,),
+    2: (3.0 / 2.0, -1.0 / 2.0),
+    3: (23.0 / 12.0, -16.0 / 12.0, 5.0 / 12.0),
+    4: (55.0 / 24.0, -59.0 / 24.0, 37.0 / 24.0, -9.0 / 24.0),
+}
 
 
 class CodexSampler:
@@ -26,17 +36,6 @@ class CodexSampler:
         self._logger = logging.getLogger(__name__ + ".CodexSampler")
         self._log_enabled = str(os.getenv("CODEX_LOG_SAMPLER", "0")).lower() in ("1","true","yes","on")
 
-    def _sigma_bounds(self, model) -> tuple[float, float]:
-        pred = getattr(model, "predictor", None)
-        if pred is None:
-            raise RuntimeError("Model predictor missing; cannot derive sigma schedule")
-        smin = float(getattr(pred, "sigma_min").item() if hasattr(pred.sigma_min, "item") else pred.sigma_min)
-        smax = float(getattr(pred, "sigma_max").item() if hasattr(pred.sigma_max, "item") else pred.sigma_max)
-        # ensure smax >= smin
-        if smax < smin:
-            smin, smax = smax, smin
-        return smin, smax
-
     @torch.inference_mode()
     def sample(
         self,
@@ -49,6 +48,7 @@ class CodexSampler:
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
         preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
+        context: SamplingContext | None = None,
     ) -> torch.Tensor:
         unet = self.sd_model.forge_objects.unet
         model = unet.model
@@ -64,9 +64,20 @@ class CodexSampler:
         # Prepare GPU residency and model options
         sampling_prepare(unet, noise)
 
-        # Initial latent at sigma_max
-        smin, smax = self._sigma_bounds(model)
-        sigmas = torch.linspace(smax, smin, steps + 1, device=noise.device, dtype=noise.dtype)
+        scheduler_name = getattr(processing, "scheduler", None)
+        if context is None:
+            context = build_sampling_context(
+                self.sd_model,
+                sampler_name=self.algorithm,
+                scheduler_name=scheduler_name,
+                steps=steps,
+                noise_source=os.getenv("CODEX_NOISE_SOURCE"),
+                eta_noise_seed_delta=int(getattr(processing, "eta_noise_seed_delta", 0) or 0),
+                device=noise.device,
+                dtype=noise.dtype,
+            )
+        sigmas = context.sigmas.to(device=noise.device, dtype=noise.dtype)
+        steps = context.steps
         # Starting latent
         start_idx = int(start_at_step or 0)
         start_idx = max(0, min(start_idx, steps - 1))
@@ -105,8 +116,21 @@ class CodexSampler:
         sigma_prev: Optional[float] = None
         strict = str(os.getenv("CODEX_SAMPLER_STRICT", "1")).lower() in ("1","true","yes","on")
         import time as _time
-        preview_interval = int(os.getenv("CODEX_PREVIEW_INTERVAL", "0") or 0)
+        preview_interval = context.preview_interval
         t0 = _time.perf_counter()
+        use_progress = context.enable_progress
+        progress_bar = None
+        if use_progress:
+            from tqdm.auto import tqdm
+
+            progress_bar = tqdm(total=steps - start_idx, desc="sampling", leave=False)
+
+        sampler_kind = context.sampler_kind
+        if sampler_kind is SamplerKind.AUTOMATIC:
+            sampler_kind = SamplerKind.EULER_A
+
+        eps_history: List[torch.Tensor] = []
+
         for i in range(start_idx, steps):
             sigma = sigmas[i]
             sigma_next = sigmas[i + 1]
@@ -129,10 +153,14 @@ class CodexSampler:
             if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
                 raise RuntimeError(f"NaN encountered at step {i+1}")
 
-            if self.algorithm in ("euler", "euler ode", "ode"):
+            eps_history.append(eps.detach())
+            if len(eps_history) > 4:
+                eps_history.pop(0)
+
+            if sampler_kind is SamplerKind.EULER:
                 # Euler ODE update: x_{t+1} = x_t - (sigma - sigma_next) * eps
                 x = x - (float(sigma) - float(sigma_next)) * eps
-            elif self.algorithm in ("euler a", "euler_ancestral", "ancestral"):
+            elif sampler_kind is SamplerKind.EULER_A:
                 # Euler ancestral: split into deterministic step + noise
                 sigma = float(sigma); sigma_next = float(sigma_next)
                 if sigma_next <= 0.0:
@@ -148,7 +176,7 @@ class CodexSampler:
                     # add fresh noise
                     noise = torch.randn_like(x)
                     x = x + sigma_up * noise
-            elif self.algorithm in ("dpm++ 2m", "dpmpp 2m"):
+            elif sampler_kind is SamplerKind.DPM2M:
                 # DPM++ 2M (multistep, ODE) using single eval per step after a Heun bootstrap
                 h = float(sigma_next) - float(sigma)
                 if eps_prev is None or sigma_prev is None:
@@ -171,7 +199,7 @@ class CodexSampler:
                 # update history
                 eps_prev = eps.detach()
                 sigma_prev = float(sigma)
-            elif self.algorithm in ("dpm++ 2m sde", "dpmpp 2m sde"):
+            elif sampler_kind is SamplerKind.DPM2M_SDE:
                 # DPM++ 2M SDE: same multistep core plus an ancestral noise term
                 h = float(sigma_next) - float(sigma)
                 if eps_prev is None or sigma_prev is None:
@@ -199,16 +227,40 @@ class CodexSampler:
                     x = x + sigma_up * torch.randn_like(x)
                 eps_prev = eps.detach()
                 sigma_prev = float(sigma)
-            elif self.algorithm in ("ddim",):
+            elif sampler_kind is SamplerKind.DDIM:
                 # Deterministic DDIM-like step in sigma domain (eta=0)
                 x = denoised + float(sigma_next) * eps
+            elif sampler_kind in (SamplerKind.PLMS, SamplerKind.PNDM):
+                order = min(len(eps_history), 4)
+                coeffs = _LMS_COEFFS[order]
+                derivative = torch.zeros_like(x)
+                for idx_coeff, coeff in enumerate(coeffs):
+                    derivative = derivative + coeff * eps_history[-(idx_coeff + 1)]
+                delta = float(sigma) - float(sigma_next)
+                x = x - delta * derivative
+            elif sampler_kind is SamplerKind.UNI_PC:
+                delta = float(sigma) - float(sigma_next)
+                x_pred = x - delta * eps
+                sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
+                denoised_next = sampling_function_inner(
+                    model,
+                    x_pred,
+                    sigma_next_batch,
+                    compiled_uncond,
+                    compiled_cond,
+                    cfg_scale,
+                    unet.model_options,
+                    seed=None,
+                    return_full=False,
+                )
+                eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
+                x = x - delta * 0.5 * (eps + eps_next)
             else:
-                # default to Euler A
-                sigma = float(sigma); sigma_next = float(sigma_next)
-                sigma_up_sq = max(sigma_next**2 * (sigma**2 - sigma_next**2) / max(sigma**2, 1e-8), 0.0)
-                sigma_up = sigma_up_sq ** 0.5
-                sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
-                x = denoised + sigma_down * eps + sigma_up * torch.randn_like(x)
+                raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
+
+            if sampler_kind not in (SamplerKind.DPM2M, SamplerKind.DPM2M_SDE):
+                sigma_prev = float(sigma)
+                eps_prev = eps.detach()
 
             # Optional preview callback on denoised (x0)
             if preview_callback is not None and (preview_interval > 0 and ((i+1) % preview_interval == 0) or (i+1) == steps):
@@ -221,7 +273,13 @@ class CodexSampler:
                 self._logger.info("step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f dt=%.2fms", i+1, steps, float(sigma), float(sigma_next), float(x.norm().item()), (_time.perf_counter()-t0)*1000.0)
                 t0 = _time.perf_counter()
 
+            if progress_bar is not None:
+                progress_bar.update(1)
+
             backend_state.tick(sampling_step=i + 1)
+
+        if progress_bar is not None:
+            progress_bar.close()
 
         sampling_cleanup(unet)
         return x

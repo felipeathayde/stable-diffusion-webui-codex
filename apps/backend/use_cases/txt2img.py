@@ -6,34 +6,36 @@ import logging
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import os
 
 from apps.backend.core import devices
-from apps.backend.core.rng import ImageRNG
+from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
+from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.sampling.driver import CodexSampler
+from apps.backend.runtime.sampling.context import build_sampling_context
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
+from apps.backend.runtime.processing.conditioners import (
+    decode_latent_batch,
+    txt2img_conditioning,
+    img2img_conditioning,
+)
+from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
 
 from apps.backend.patchers.token_merging import apply_token_merging, SkipWritingToConfig
 from apps.backend.codex import main as codex_main
 from loader import load_engine as _load_engine, EngineLoadOptions
 from apps.backend.codex import lora as codex_lora
 from apps.backend.patchers.lora_apply import apply_loras_to_engine
-from apps.backend.core.state import state as backend_state
 from PIL import Image
+
+_RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
 
 class _ExtraNetworksShim:
     @staticmethod
     def activate(processing, data):
         raise NotImplementedError("Extra networks activation is not implemented natively yet")
-
-
-def _decode_latent_batch(model, batch, target_device=None) -> torch.Tensor:
-    """Decode latents using the engine VAE (native)."""
-    decoded = model.decode_first_stage(batch)
-    if target_device is not None:
-        decoded = decoded.to(target_device)
-    return decoded
 
 
 def _prepare_first_pass_from_image(processing) -> tuple[torch.Tensor | None, torch.Tensor | None]:
@@ -129,13 +131,44 @@ class Txt2ImgRuntime:
         subseed_strength: float,
         prompts: Sequence[str],
     ) -> None:
+        if not isinstance(processing, CodexProcessingTxt2Img):
+            raise TypeError("Txt2ImgRuntime expects CodexProcessingTxt2Img")
         self.processing = processing
+        self.processing.cfg_scale = getattr(self.processing, "guidance_scale", 7.0)
         self.conditioning = conditioning
         self.unconditional_conditioning = unconditional_conditioning
         self.seeds = seeds
         self.subseeds = subseeds
         self.subseed_strength = subseed_strength
         self.prompts = prompts
+        self._noise_settings: NoiseSettings | None = None
+
+    def _resolve_noise_settings(self) -> NoiseSettings:
+        source = None
+        eta_delta = 0
+        overrides = getattr(self.processing, "override_settings", {})
+        if isinstance(overrides, dict):
+            source = overrides.get("randn_source") or overrides.get("noise_source")
+            eta_delta = overrides.get("eta_noise_seed_delta", eta_delta)
+        metadata = getattr(self.processing, "metadata", {})
+        if isinstance(metadata, dict):
+            source = metadata.get("randn_source", source)
+        if hasattr(self.processing, "noise_source") and getattr(self.processing, "noise_source"):
+            source = getattr(self.processing, "noise_source")
+        env_source = os.getenv("CODEX_NOISE_SOURCE")
+        if source is None and env_source:
+            source = env_source
+
+        try:
+            source_kind = NoiseSourceKind.from_string(source) if source else NoiseSourceKind.GPU
+        except ValueError:
+            source_kind = NoiseSourceKind.GPU
+        settings = NoiseSettings(
+            source=source_kind,
+            eta_noise_seed_delta=int(getattr(self.processing, "eta_noise_seed_delta", eta_delta) or eta_delta or 0),
+        )
+        self.processing.eta_noise_seed_delta = settings.eta_noise_seed_delta
+        return settings
 
     def generate(self):
         # Parse extra-network tags and clean prompts first (may override size)
@@ -160,13 +193,15 @@ class Txt2ImgRuntime:
         self.processing.negative_prompts = getattr(
             self.processing, "negative_prompts", [getattr(self.processing, "negative_prompt", "")]
         )
+        self.processing.prepare_prompt_data()
         self._run_process_scripts()
 
         samples, decoded_samples = _prepare_first_pass_from_image(self.processing)
         # Apply prompt-level controls for cfg/steps/seed if present
         try:
             if 'cfg' in prompt_controls:
-                self.processing.cfg_scale = float(prompt_controls['cfg'])
+                self.processing.guidance_scale = float(prompt_controls['cfg'])
+                self.processing.cfg_scale = self.processing.guidance_scale
             if 'steps' in prompt_controls:
                 self.processing.steps = int(float(prompt_controls['steps']))
             if 'seed' in prompt_controls:
@@ -183,7 +218,7 @@ class Txt2ImgRuntime:
             try:
                 if prompt_controls.get('tiling') is True:
                     memory_management.VAE_ALWAYS_TILED = True
-                samples = self._run_base_sampling()
+                samples = self._run_sampling(prompt_loras, prompt_controls)
                 decoded_samples = self._maybe_decode_for_hr(samples)
             finally:
                 memory_management.VAE_ALWAYS_TILED = _old_tiled
@@ -193,13 +228,11 @@ class Txt2ImgRuntime:
 
         _reload_for_hires(self.processing)
 
-        return self.processing.sample_hr_pass(
+        return self._run_hires_pass(
             samples,
             decoded_samples,
-            self.seeds,
-            self.subseeds,
-            self.subseed_strength,
-            self.prompts,
+            prompt_loras,
+            prompt_controls,
         )
 
     def _ensure_sampler(self) -> None:
@@ -215,6 +248,7 @@ class Txt2ImgRuntime:
             self.processing.height // 8,
             self.processing.width // 8,
         )
+        self._noise_settings = self._resolve_noise_settings()
         self.processing.rng = ImageRNG(
             shape,
             self.seeds,
@@ -222,10 +256,23 @@ class Txt2ImgRuntime:
             subseed_strength=self.subseed_strength,
             seed_resize_from_h=getattr(self.processing, "seed_resize_from_h", 0),
             seed_resize_from_w=getattr(self.processing, "seed_resize_from_w", 0),
+            settings=self._noise_settings,
         )
 
-    def _run_base_sampling(self):
-        noise = self.processing.rng.next()
+    def _run_sampling(
+        self,
+        prompt_loras,
+        prompt_controls,
+        *,
+        noise: torch.Tensor | None = None,
+        image_conditioning: torch.Tensor | None = None,
+        init_latent: torch.Tensor | None = None,
+        start_at_step: int | None = None,
+    ) -> torch.Tensor:
+        if noise is None:
+            if self.processing.rng is None:
+                raise RuntimeError("RNG not initialised for sampling")
+            noise = self.processing.rng.next()
 
         model = self.processing.sd_model
 
@@ -234,31 +281,35 @@ class Txt2ImgRuntime:
 
         self._run_before_and_process_batch_hooks()
 
-        # Merge global selections with prompt-local LoRAs (dedupe by path)
         selections = codex_lora.get_selections() + prompt_loras
-        # dedupe
         seen = set(); merged = []
-        for s in selections:
-            if s.path in seen:
+        for sel in selections:
+            if sel.path in seen:
                 continue
-            seen.add(s.path); merged.append(s)
+            seen.add(sel.path); merged.append(sel)
         if merged:
             stats = apply_loras_to_engine(model, merged)
-            logging.info("[native] Applied %d LoRA(s), %d params touched (prompt+global)", stats.files, stats.params_touched)
+            logging.info(
+                "[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched
+            )
         model.forge_objects = model.forge_objects_after_applying_lora.shallow_copy()
-        # Controls: clip_skip, sampler, scheduler, token merge
-        cs = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None
-        if cs is not None and hasattr(self.processing.sd_model, 'set_clip_skip'):
-            self.processing.sd_model.set_clip_skip(cs)
+
+        clip_skip = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None
+        if clip_skip is not None and hasattr(self.processing.sd_model, 'set_clip_skip'):
+            self.processing.sd_model.set_clip_skip(clip_skip)
         if 'sampler' in prompt_controls:
             self.processing.sampler_name = str(prompt_controls['sampler'])
-        # Token merging with strategy (allow override via tag)
-        strat = prompt_controls.get('token_merge_strategy') or getattr(self.processing, 'get_token_merging_strategy', lambda: None)()
-        if not strat:
-            strat = os.getenv('CODEX_TOKEN_MERGE_STRATEGY', 'avg')
+
+        strategy = prompt_controls.get('token_merge_strategy') or getattr(
+            self.processing, 'get_token_merging_strategy', lambda: None
+        )()
+        if not strategy:
+            strategy = os.getenv('CODEX_TOKEN_MERGE_STRATEGY', 'avg')
         ratio_override = prompt_controls.get('token_merge_ratio', None)
-        ratio = float(ratio_override) if ratio_override is not None else float(self.processing.get_token_merging_ratio())
-        apply_token_merging(model, ratio, strategy=strat)
+        ratio = float(ratio_override) if ratio_override is not None else float(
+            self.processing.get_token_merging_ratio(for_hires=bool(init_latent is not None))
+        )
+        apply_token_merging(model, ratio, strategy=strategy)
 
         if self.processing.scripts is not None:
             self.processing.scripts.process_before_every_sampling(
@@ -274,29 +325,48 @@ class Txt2ImgRuntime:
             self.processing.modified_noise = None
 
         def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
-            # decode x0 (denoised) to an image preview on CPU
-            img = _decode_latent_batch(self.processing.sd_model, denoised_latent, target_device=devices.cpu())
-            # convert BCHW [-1,1] to HWC, [0,255] uint8 and then PIL
+            img = decode_latent_batch(self.processing.sd_model, denoised_latent, target_device=devices.cpu())
             arr = img[0].detach().float().cpu().clamp(-1, 1)
             arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
             backend_state.set_current_image(Image.fromarray(arr, mode='RGB'))
+
+        if image_conditioning is None:
+            image_conditioning = txt2img_conditioning(
+                self.processing.sd_model,
+                noise,
+                self.processing.width,
+                self.processing.height,
+            )
+
+        sampler_name = getattr(self.processing, "sampler_name", None) or self.processing.sampler.algorithm
+        scheduler_name = getattr(self.processing, "scheduler", None)
+        context = build_sampling_context(
+            self.processing.sd_model,
+            sampler_name=sampler_name,
+            scheduler_name=scheduler_name,
+            steps=int(getattr(self.processing, "steps", 20) or 20),
+            noise_source=(self._noise_settings.source.value if self._noise_settings else None),
+            eta_noise_seed_delta=(self._noise_settings.eta_noise_seed_delta if self._noise_settings else int(getattr(self.processing, "eta_noise_seed_delta", 0) or 0)),
+            device=noise.device,
+            dtype=noise.dtype,
+        )
 
         samples = self.processing.sampler.sample(
             self.processing,
             noise,
             self.conditioning,
             self.unconditional_conditioning,
-            image_conditioning=self.processing.txt2img_image_conditioning(noise),
+            image_conditioning=image_conditioning,
+            init_latent=init_latent,
+            start_at_step=start_at_step,
             preview_callback=_preview_cb,
+            context=context,
         )
 
         samples = self._run_post_sample_hooks(samples)
-
-        # Native backend state is updated by services; no legacy shared.state here.
-
-        del noise
         devices.torch_gc()
         return samples
+
 
     def _maybe_decode_for_hr(self, samples):
         if not self.processing.enable_hr:
@@ -373,11 +443,132 @@ class Txt2ImgRuntime:
             logging.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
 
     def _set_shared_job(self):
-        if getattr(self.processing, "n_iter", 1) <= 1:
+        if getattr(self.processing, "iterations", 1) <= 1:
             return
-        state = getattr(shared, "state", None)
-        if state is not None:
-            state.job = f"Batch 1 out of {self.processing.n_iter}"
+        backend_state.begin(job=f"Batch 1 out of {self.processing.iterations}")
+
+    def _latents_to_pil(self, decoded: torch.Tensor) -> list[Image.Image]:
+        images: list[Image.Image] = []
+        for sample in decoded:
+            arr = sample.detach().float().cpu().clamp(-1, 1)
+            arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
+            images.append(Image.fromarray(arr, mode='RGB'))
+        return images
+
+    def _pil_to_tensor(self, images: list[Image.Image]) -> torch.Tensor:
+        arrays = []
+        for img in images:
+            arr = np.array(img.convert('RGB')).astype(np.float32) / 255.0
+            arr = arr * 2.0 - 1.0
+            arr = np.moveaxis(arr, 2, 0)
+            arrays.append(arr)
+        tensor = torch.from_numpy(np.stack(arrays, axis=0))
+        return tensor.to(devices.default_device(), dtype=torch.float32)
+
+    def _run_hires_pass(
+        self,
+        base_samples: torch.Tensor,
+        decoded_samples: torch.Tensor | None,
+        base_prompt_loras,
+        base_prompt_controls,
+    ) -> torch.Tensor:
+        processing = self.processing
+        hi_cfg = processing.hires
+        processing.ensure_hires_prompts()
+
+        target_width = hi_cfg.resize_x or int(processing.width * hi_cfg.scale)
+        target_height = hi_cfg.resize_y or int(processing.height * hi_cfg.scale)
+        steps = hi_cfg.second_pass_steps or processing.steps
+        denoise = float(hi_cfg.denoise)
+
+        hr_cleaned_prompts, hr_prompt_loras, hr_prompt_controls = parse_prompts_with_extras(
+            list(processing.hr_prompts or processing.all_prompts or self.prompts)
+        )
+
+        original = {
+            "prompts": processing.prompts,
+            "negative_prompts": getattr(processing, "negative_prompts", []),
+            "width": processing.width,
+            "height": processing.height,
+            "guidance_scale": processing.guidance_scale,
+            "steps": processing.steps,
+        }
+
+        processing.prompts = hr_cleaned_prompts
+        processing.negative_prompts = processing.hr_negative_prompts or original["negative_prompts"]
+        processing.width = target_width
+        processing.height = target_height
+        processing.guidance_scale = hi_cfg.cfg or processing.guidance_scale
+        processing.cfg_scale = processing.guidance_scale
+        processing.steps = steps
+        processing.prepare_prompt_data()
+
+        if processing.latent_scale_mode is not None:
+            mode = processing.latent_scale_mode.get("mode", "bilinear")
+            antialias = bool(processing.latent_scale_mode.get("antialias", False))
+            latents = F.interpolate(
+                base_samples,
+                size=(target_height // 8, target_width // 8),
+                mode=mode,
+                align_corners=False if mode in {"bilinear", "bicubic"} else None,
+                antialias=antialias,
+            )
+            tensor = decode_latent_batch(processing.sd_model, latents, target_device=devices.cpu())
+            image_conditioning = txt2img_conditioning(
+                processing.sd_model,
+                latents,
+                target_width,
+                target_height,
+            )
+        else:
+            if decoded_samples is None:
+                decoded_samples = decode_latent_batch(processing.sd_model, base_samples, target_device=devices.cpu())
+            pil_images = self._latents_to_pil(decoded_samples)
+            upscaled = [img.resize((target_width, target_height), _RESAMPLE_LANCZOS) for img in pil_images]
+            tensor = self._pil_to_tensor(upscaled)
+            latents = processing.sd_model.encode_first_stage(tensor)
+            image_conditioning = img2img_conditioning(
+                processing.sd_model,
+                tensor,
+                latents,
+                image_mask=getattr(processing, "image_mask", None),
+                round_mask=getattr(processing, "round_image_mask", True),
+            )
+
+        shape = (latents.shape[1], latents.shape[2], latents.shape[3])
+        hires_settings = self._noise_settings or self._resolve_noise_settings()
+        rng = ImageRNG(
+            shape,
+            self.seeds,
+            subseeds=self.subseeds,
+            subseed_strength=self.subseed_strength,
+            seed_resize_from_h=getattr(processing, "seed_resize_from_h", 0),
+            seed_resize_from_w=getattr(processing, "seed_resize_from_w", 0),
+            settings=hires_settings,
+        )
+        noise = rng.next().to(latents)
+
+        start_index = max(0, min(int(round(denoise * steps)), steps - 1))
+
+        samples = self._run_sampling(
+            hr_prompt_loras,
+            hr_prompt_controls,
+            noise=noise,
+            image_conditioning=image_conditioning,
+            init_latent=latents,
+            start_at_step=start_index,
+        )
+
+        processing.prompts = original["prompts"]
+        processing.negative_prompts = original["negative_prompts"]
+        processing.width = original["width"]
+        processing.height = original["height"]
+        processing.guidance_scale = original["guidance_scale"]
+        processing.cfg_scale = processing.guidance_scale
+        processing.steps = original["steps"]
+        processing.prepare_prompt_data()
+
+        return samples
 
 
 def generate_txt2img(

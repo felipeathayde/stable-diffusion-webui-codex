@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from typing import Mapping, Any, List
+
+from apps.backend.runtime.model_registry.detectors.base import REGISTRY, ModelDetector
+from apps.backend.runtime.model_registry.errors import AmbiguousModelError, UnknownModelError
+from apps.backend.runtime.model_registry.signals import SignalBundle, build_bundle
+from apps.backend.runtime.model_registry.specs import ModelSignature
+
+
+def detect_from_state_dict(state_dict: Mapping[str, Any]) -> ModelSignature:
+    bundle = build_bundle(state_dict)
+    matches: List[ModelDetector] = []
+    for detector in REGISTRY.detectors:
+        try:
+            if detector.matches(bundle):
+                matches.append(detector)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise UnknownModelError(f"detector {detector.__class__.__name__} failed", detail={"error": str(exc)}) from exc
+    if not matches:
+        raise UnknownModelError("No model detector matched state dict", detail={"keys": len(bundle.keys)})
+    if len(matches) > 1:
+        raise AmbiguousModelError(
+            "Multiple detectors matched state dict",
+            matches=[det.__class__.__name__ for det in matches],
+        )
+    return matches[0].build_signature(bundle)

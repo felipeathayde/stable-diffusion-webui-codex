@@ -6,14 +6,14 @@ from typing import Optional
 from dataclasses import dataclass
 from typing import Optional
 
-from apps.backend.infra.registry.checkpoints import list_checkpoints
+from apps.backend.runtime.models import api as model_api
 from apps.backend.runtime.models.loader import forge_loader, load_engine_from_diffusers
 from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
 from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as _apply_accel
 
 
 def _find_checkpoint_by_name(name: str):
-    for entry in list_checkpoints():
+    for entry in model_api.list_checkpoints():
         if entry.name == name or entry.title == name:
             return entry
     return None
@@ -67,11 +67,10 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     # If options not provided, derive defaults from registry metadata when possible
     if options is None:
         try:
-            from apps.backend.infra.registry.checkpoints import describe_checkpoints as _describe
-            info = {i["name"]: i for i in _describe()}
+            info = {item["name"]: item for item in model_api.list_checkpoints_as_dict(refresh=False)}
             hint = info.get(entry.name)
             if hint and isinstance(hint.get("default_dtype"), str):
-                options = EngineLoadOptions(dtype=hint.get("default_dtype"))
+                options = EngineLoadOptions(dtype=str(hint["default_dtype"]))
         except Exception:
             options = None
     if entry.metadata.get("format") == "diffusers" or os.path.isfile(os.path.join(entry.path, "model_index.json")):

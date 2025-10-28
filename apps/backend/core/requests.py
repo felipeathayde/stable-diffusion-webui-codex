@@ -73,6 +73,7 @@ class Img2ImgRequest(BaseRequest):
     height: int = 512
     steps: int = 20
     extras: Mapping[str, Any] = field(default_factory=dict)
+    highres_fix: Optional[Mapping[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -100,4 +101,3 @@ class Img2VidRequest(BaseRequest):
 # Convenience tuple for type checkers / consumers that need to accept either
 ImageRequest = Union[Txt2ImgRequest, Img2ImgRequest]
 VideoRequest = Union[Txt2VidRequest, Img2VidRequest]
-

@@ -22,6 +22,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
 
+from apps.backend.runtime.models import api as model_api
+from apps.backend.interfaces.api import codex_api
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -65,14 +68,14 @@ def ensure_initialized() -> None:
 
     # Configure root logging so engine/runtime INFO logs are visible in console
     try:
+        from apps.backend.runtime import logging as runtime_logging
+
+        runtime_logging.setup_logging(level="INFO")
+    except Exception:
+        # Fall back to a minimal configuration on failure.
         root = logging.getLogger()
         if not root.handlers:
-            # Avoid duplicating prefixes/timestamps — outer harness already prints them
             logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-        else:
-            root.setLevel(logging.INFO)
-    except Exception:
-        pass
 
     _initialized = True
 
@@ -491,9 +494,8 @@ def build_app() -> FastAPI:
         # Heuristics based on current selected checkpoint title/path and registry metadata
         try:
             from apps.backend.codex import main as _codex
-            from apps.backend.infra.registry.checkpoints import describe_checkpoints as _describe
             current = getattr(_codex, "_SELECTIONS").checkpoint_name
-            infos = _describe()
+            infos = model_api.list_checkpoints_as_dict(refresh=False)
             target = None
             for i in infos:
                 if i.get('name') == current or i.get('title') == current:
@@ -827,8 +829,7 @@ def build_app() -> FastAPI:
         if not sel_value:
             raise HTTPException(status_code=409, detail='preset has no model selector')
 
-        from apps.backend.infra.registry.checkpoints import describe_checkpoints as _describe
-        infos = _describe()
+        infos = model_api.list_checkpoints_as_dict(refresh=False)
         titles = [str(i.get('title') or i.get('name') or '') for i in infos]
         target: Optional[str] = None
         if sel_type == 'exact':
@@ -913,7 +914,7 @@ def build_app() -> FastAPI:
 
         Response shape remains compatible: fields include title/name/filename/metadata.
         """
-        from apps.backend.infra.registry.checkpoints import list_checkpoints as _list_ckpt, describe_checkpoints as _describe_ckpt
+        from apps.backend.runtime.models import api as _model_api
 
         def _serialize(entry) -> Dict[str, Any]:
             return {
@@ -925,9 +926,9 @@ def build_app() -> FastAPI:
                 "metadata": entry.metadata,
             }
 
-        entries = _list_ckpt()
+        entries = _model_api.list_checkpoints()
         models = [_serialize(e) for e in entries]
-        models_info = _describe_ckpt()
+        models_info = _model_api.list_checkpoints_as_dict()
         # Current selection: track via codex options when available
         try:
             from apps.backend.codex import main as _codex
@@ -1000,6 +1001,7 @@ def build_app() -> FastAPI:
             (SamplerKind.DPM2M_SDE.value, ["dpmpp_2m_sde", "dpm++ 2m sde"]),
             (SamplerKind.PLMS.value, ["lms"]),
             (SamplerKind.PNDM.value, ["pndm"]),
+            (SamplerKind.UNI_PC.value, ["unipc", "uni_pc"]),
         ]
         samplers = [{"name": n, "aliases": a, "options": {}} for n, a in kinds]
         return {"samplers": samplers}
@@ -1276,6 +1278,8 @@ def build_app() -> FastAPI:
         sampler_name = _p.require(payload, 'txt2img_sampling')
         scheduler_name = _p.require(payload, 'txt2img_scheduler')
         seed_val = _p.as_int(payload, 'txt2img_seed')
+        noise_source = payload.get('txt2img_randn_source') or payload.get('txt2img_noise_source')
+        ensd_raw = payload.get('txt2img_eta_noise_seed_delta')
 
         if enable_hr:
             denoising_strength = _p.as_float(payload, 'txt2img_denoising_strength')
@@ -1308,6 +1312,27 @@ def build_app() -> FastAPI:
             hr_cfg = cfg_scale
             hr_distilled_cfg = distilled_cfg_scale
 
+        extras: Dict[str, Any] = {}
+        if noise_source:
+            extras['randn_source'] = str(noise_source)
+        if ensd_raw is not None:
+            try:
+                extras['eta_noise_seed_delta'] = int(float(ensd_raw))
+            except Exception:
+                raise HTTPException(status_code=400, detail="txt2img_eta_noise_seed_delta must be numeric")
+
+        metadata = {
+            "mode": _opts_snapshot().codex_mode,
+            "styles": prompt_styles,
+            "distilled_cfg_scale": distilled_cfg_scale,
+            "hr": bool(enable_hr),
+            "n_iter": n_iter,
+        }
+        if noise_source:
+            metadata["randn_source"] = str(noise_source)
+        if 'eta_noise_seed_delta' in extras:
+            metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
+
         req = Txt2ImgRequest(
             task=TaskType.TXT2IMG,
             prompt=prompt,
@@ -1320,13 +1345,7 @@ def build_app() -> FastAPI:
             scheduler=str(scheduler_name),
             seed=seed_val,
             batch_size=batch_size,
-            metadata={
-                "mode": _opts_snapshot().codex_mode,
-                "styles": prompt_styles,
-                "distilled_cfg_scale": distilled_cfg_scale,
-                "hr": bool(enable_hr),
-                "n_iter": n_iter,
-            },
+            metadata=metadata,
             highres_fix={
                 "enable": bool(enable_hr),
                 "denoise": denoising_strength,
@@ -1344,7 +1363,7 @@ def build_app() -> FastAPI:
                 "hr_cfg": hr_cfg,
                 "hr_distilled_cfg": hr_distilled_cfg,
             },
-            extras={},
+            extras=extras,
         )
 
         snap = _opts_snapshot()
@@ -1455,6 +1474,46 @@ def build_app() -> FastAPI:
         sampler_name = _p.require(payload, 'img2img_sampling')
         scheduler_name = _p.require(payload, 'img2img_scheduler')
         seed_val = _p.as_int(payload, 'img2img_seed')
+        noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
+        ensd_raw = payload.get('img2img_eta_noise_seed_delta')
+
+        enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
+        if enable_hr:
+            hr_data = {
+                "enable": True,
+                "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
+                "resize_x": _p.as_int(payload, 'img2img_hr_resize_x') if 'img2img_hr_resize_x' in payload else 0,
+                "resize_y": _p.as_int(payload, 'img2img_hr_resize_y') if 'img2img_hr_resize_y' in payload else 0,
+                "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
+                "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
+                "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
+                "hr_prompt": payload.get('img2img_hr_prompt', ''),
+                "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
+                "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,
+                "hr_distilled_cfg": _p.as_float(payload, 'img2img_hr_distilled_cfg') if 'img2img_hr_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
+            }
+        else:
+            hr_data = {"enable": False}
+
+        extras: Dict[str, Any] = {}
+        if noise_source:
+            extras['randn_source'] = str(noise_source)
+        if ensd_raw is not None:
+            try:
+                extras['eta_noise_seed_delta'] = int(float(ensd_raw))
+            except Exception:
+                raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
+
+        metadata = {
+            "styles": styles,
+            "distilled_cfg_scale": distilled_cfg_scale,
+            "image_cfg_scale": image_cfg_scale,
+            "batch_count": batch_count,
+        }
+        if noise_source:
+            metadata["randn_source"] = str(noise_source)
+        if 'eta_noise_seed_delta' in extras:
+            metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
         req = Img2ImgRequest(
             task=TaskType.IMG2IMG,
@@ -1465,18 +1524,15 @@ def build_app() -> FastAPI:
             seed=seed_val,
             guidance_scale=cfg_scale,
             batch_size=batch_size,
-            metadata={
-                "styles": styles,
-                "distilled_cfg_scale": distilled_cfg_scale,
-                "image_cfg_scale": image_cfg_scale,
-                "batch_count": batch_count,
-            },
+            metadata=metadata,
             init_image=init_image,
             mask=mask_image,
             denoise_strength=denoise,
             width=width_val,
             height=height_val,
             steps=steps_val,
+            extras=extras,
+            highres_fix=hr_data if hr_data.get("enable") else None,
         )
 
         snap = _opts_snapshot()
@@ -1903,6 +1959,7 @@ def build_app() -> FastAPI:
         return StreamingResponse(event_stream(), media_type='text/event-stream')
 
     # Legacy callbacks are not used in the native backend entrypoint
+    app.include_router(codex_api.router)
     return app
 
 

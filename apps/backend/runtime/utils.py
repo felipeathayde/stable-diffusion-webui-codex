@@ -1,12 +1,14 @@
 import json
 import os
 
-from apps.backend import gguf
+from collections.abc import MutableMapping
+
 import safetensors.torch
 import torch
-from collections.abc import MutableMapping
 from safetensors.torch import safe_open
 
+from apps.backend import gguf
+from apps.backend.runtime.models import safety as model_safety
 from apps.backend.runtime.misc import checkpoint_pickle
 from apps.backend.runtime.ops.operations_gguf import ParameterGGUF
 
@@ -158,7 +160,7 @@ def read_arbitrary_config(directory):
     return config_data
 
 
-def load_torch_file(ckpt, safe_load=False, device=None):
+def load_torch_file(ckpt, safe_load=True, device=None):
     if isinstance(device, str):
         device = torch.device(device)
     if device is None:
@@ -261,23 +263,12 @@ class LazySafetensorsDict(MutableMapping):
 
 
 def _load_pickled_checkpoint(path, device, safe_load):
-    if safe_load and not _torch_supports_weights_only():
-        print("Warning torch.load doesn't support weights_only on this pytorch version, loading unsafely.")
-        safe_load = False
-
     if safe_load:
-        return torch.load(path, map_location=device, weights_only=True)
-
+        try:
+            return model_safety.safe_torch_load(path, map_location=device)
+        except model_safety.UnsafeCheckpointError:
+            raise
     return torch.load(path, map_location=device, pickle_module=checkpoint_pickle)
-
-
-def _torch_supports_weights_only():
-    try:
-        return 'weights_only' in torch.load.__code__.co_varnames
-    except AttributeError:
-        return False
-
-
 def set_attr(obj, attr, value):
     attrs = attr.split(".")
     for name in attrs[:-1]:

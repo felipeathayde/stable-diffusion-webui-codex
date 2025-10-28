@@ -22,12 +22,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
 
-from apps.backend.runtime.models import api as model_api
-from apps.backend.interfaces.api import codex_api
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from apps.backend.interfaces.api import codex_api
+from apps.backend.runtime.models import api as model_api
 
 try:
     from colorama import Fore, Style  # type: ignore

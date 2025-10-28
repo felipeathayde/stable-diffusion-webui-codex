@@ -12,9 +12,10 @@ Status: Active
 - `interface/` — Vue 3 + Vite application that replaces the legacy Gradio UI. Includes build tooling, public assets, and source modules.
 
 ## Key Files
-- `launcher.py` — Process launcher used by CLI/TUI tooling to start backend and interface services.
+- `launcher/` — Package exposing launcher infrastructure (`checks`, `services`, `profiles`, `paths`).
+- `tui_bios.py` — Curses-based TUI entrypoint that drives the launcher package.
 - `__init__.py` — Marks `apps` as a Python package so relative imports resolve cleanly across backend modules.
 
 ## Notes
-- New code must target `apps/backend` and `apps/interface`. The launcher lives at `apps/launcher.py`.
+- New code must target `apps/backend` and `apps/interface`. The launcher lives under `apps/launcher/` with the TUI at `apps/tui_bios.py`.
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.

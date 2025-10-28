@@ -14,6 +14,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "SCRIPT=%ROOT%tools\tui_bios.py"
+set "SCRIPT=%ROOT%apps\tui_bios.py"
 
 "%PY_BIN%" "%SCRIPT%" %*

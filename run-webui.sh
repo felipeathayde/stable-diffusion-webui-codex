@@ -13,4 +13,4 @@ if ! command -v "${PY_BIN}" >/dev/null 2>&1; then
   fi
 fi
 
-exec "${PY_BIN}" "${ROOT_DIR}/tools/tui_bios.py" "$@"
+exec "${PY_BIN}" "${ROOT_DIR}/apps/tui_bios.py" "$@"

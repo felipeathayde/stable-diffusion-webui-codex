@@ -11,7 +11,7 @@ Status
   - `apps/backend/runtime/**`
   - `apps/backend/infra/**`
   - `apps/backend/interfaces/**`
-- Only the process launcher remains under `apps/launcher.py` for CLI/TUI support.
+- The process launcher now lives under `apps/launcher/` (package) with the BIOS TUI at `apps/tui_bios.py`.
 
 Guidance
 - Use `apps.backend.*` imports nativamente. Se alguma façade exposta ainda for necessária, exporte via `apps/backend/__init__.py`.

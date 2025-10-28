@@ -8,7 +8,6 @@ import torch
 from safetensors.torch import safe_open
 
 from apps.backend import gguf
-from apps.backend.runtime.models import safety as model_safety
 from apps.backend.runtime.misc import checkpoint_pickle
 from apps.backend.runtime.ops.operations_gguf import ParameterGGUF
 
@@ -264,6 +263,7 @@ class LazySafetensorsDict(MutableMapping):
 
 def _load_pickled_checkpoint(path, device, safe_load):
     if safe_load:
+        from apps.backend.runtime.models import safety as model_safety
         try:
             return model_safety.safe_torch_load(path, map_location=device)
         except model_safety.UnsafeCheckpointError:

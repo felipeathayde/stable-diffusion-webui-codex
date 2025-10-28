@@ -8,8 +8,8 @@ from apps.backend.codex import lora as codex_lora
 from apps.backend.patchers.lora_apply import apply_loras_to_engine
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
-from video import VideoInterpolationOptions
-from interpolation import maybe_interpolate
+from apps.backend.core.params.video import VideoInterpolationOptions
+from apps.backend.video.interpolation import maybe_interpolate
 
 
 def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceEvent]:

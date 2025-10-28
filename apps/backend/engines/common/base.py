@@ -1,9 +1,6 @@
 import torch
 import safetensors.torch as sf
 
-from apps.backend.runtime import utils
-
-
 class ForgeObjects:
     def __init__(self, unet, clip, vae, clipvision):
         self.unet = unet

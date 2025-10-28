@@ -1,6 +1,5 @@
 import torch
 
-from huggingface_guess import model_list
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.vae import VAE

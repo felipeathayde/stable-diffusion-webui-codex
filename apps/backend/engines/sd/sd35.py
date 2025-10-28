@@ -1,6 +1,8 @@
+import os
+from types import SimpleNamespace
+
 import torch
 
-from huggingface_guess import model_list
 from apps.backend.engines.common.base import ForgeDiffusionEngine, ForgeObjects
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.vae import VAE
@@ -10,8 +12,6 @@ from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngin
 from args import dynamic_args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.modules.k_prediction import PredictionDiscreteFlow
-from types import SimpleNamespace
-import os
 
 def _opts():
     # Minimal native options shim (no legacy dependency)

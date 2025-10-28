@@ -19,6 +19,11 @@ from typing import Any, Callable
 
 import torch
 
+if hasattr(torch.storage, "_TypedStorage"):
+    _FALLBACK_STORAGE = torch.storage._TypedStorage  # type: ignore[attr-defined]
+else:  # torch 2.4+ removed _TypedStorage; fall back to the generic Storage base class
+    _FALLBACK_STORAGE = getattr(torch.storage, "TypedStorage", torch.Storage)
+
 from apps.backend.runtime import errors as runtime_errors
 
 _ALLOWED_GLOBALS = {
@@ -26,13 +31,13 @@ _ALLOWED_GLOBALS = {
     ("torch._utils", "_rebuild_tensor_v2"): torch._utils._rebuild_tensor_v2,
     ("torch._utils", "_rebuild_parameter"): torch._utils._rebuild_parameter,
     ("torch._utils", "_rebuild_device_tensor_from_numpy"): torch._utils._rebuild_device_tensor_from_numpy,
-    ("torch", "FloatStorage"): getattr(torch, "FloatStorage", torch.storage._TypedStorage),
-    ("torch", "HalfStorage"): getattr(torch, "HalfStorage", torch.storage._TypedStorage),
-    ("torch", "DoubleStorage"): getattr(torch, "DoubleStorage", torch.storage._TypedStorage),
-    ("torch", "LongStorage"): getattr(torch, "LongStorage", torch.storage._TypedStorage),
-    ("torch", "IntStorage"): getattr(torch, "IntStorage", torch.storage._TypedStorage),
-    ("torch", "ByteStorage"): getattr(torch, "ByteStorage", torch.storage._TypedStorage),
-    ("torch", "BFloat16Storage"): getattr(torch, "BFloat16Storage", torch.storage._TypedStorage),
+    ("torch", "FloatStorage"): getattr(torch, "FloatStorage", _FALLBACK_STORAGE),
+    ("torch", "HalfStorage"): getattr(torch, "HalfStorage", _FALLBACK_STORAGE),
+    ("torch", "DoubleStorage"): getattr(torch, "DoubleStorage", _FALLBACK_STORAGE),
+    ("torch", "LongStorage"): getattr(torch, "LongStorage", _FALLBACK_STORAGE),
+    ("torch", "IntStorage"): getattr(torch, "IntStorage", _FALLBACK_STORAGE),
+    ("torch", "ByteStorage"): getattr(torch, "ByteStorage", _FALLBACK_STORAGE),
+    ("torch", "BFloat16Storage"): getattr(torch, "BFloat16Storage", _FALLBACK_STORAGE),
     ("torch", "float32"): getattr(torch, "float32"),
     ("torch", "float16"): getattr(torch, "float16"),
     ("torch", "bfloat16"): getattr(torch, "bfloat16"),

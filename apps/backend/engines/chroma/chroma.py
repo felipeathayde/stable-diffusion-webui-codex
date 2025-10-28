@@ -5,7 +5,7 @@ from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.vae import VAE
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
-from args import dynamic_args
+from apps.backend.core.dynamic import args as dynamic_args
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.memory import memory_management
 

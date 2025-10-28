@@ -5,7 +5,7 @@ from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.vae import VAE
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
-from args import dynamic_args
+from apps.backend.core.dynamic import args as dynamic_args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.common.nn.unet import Timestep
 

@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, List, Optional
+
+
+class ModelFamily(Enum):
+    SD15 = "sd15"
+    SD20 = "sd20"
+    SDXL = "sdxl"
+    SDXL_REFINER = "sdxl_refiner"
+    SD3 = "sd3"
+    FLUX = "flux"
+    STABLE_CASCADE = "stable_cascade"
+    KOALA = "koala"
+    ZERO123 = "zero123"
+    WAN22 = "wan22"
+    AURA = "aura"
+    HUNYUAN = "hunyuan"
+    SVD = "svd"
+    STABLE_AUDIO = "stable_audio"
+    UPSCALER = "upscaler"
+    OTHER = "other"
+
+
+class PredictionKind(Enum):
+    EPSILON = "eps"
+    V_PREDICTION = "v_prediction"
+    EDM = "edm"
+    FLOW = "flow"
+    V_CONTINUOUS = "v_continuous"
+
+
+class LatentFormat(Enum):
+    SD_V1 = "sd_v1"
+    SD_V2 = "sd_v2"
+    SD_XL = "sd_xl"
+    SD_3 = "sd_3"
+    FLOW16 = "flow16"
+    CASCADE = "cascade"
+    OTHER = "other"
+
+
+class QuantizationKind(Enum):
+    NONE = "none"
+    NF4 = "nf4"
+    FP4 = "fp4"
+    GGUF = "gguf"
+
+
+@dataclass
+class QuantizationHint:
+    kind: QuantizationKind = QuantizationKind.NONE
+    detail: Optional[str] = None
+
+
+@dataclass
+class TextEncoderSignature:
+    name: str
+    key_prefix: str
+    expected_dim: Optional[int] = None
+    tokenizer_hint: Optional[str] = None
+
+
+@dataclass
+class VAESignature:
+    key_prefix: str
+    latent_channels: int
+
+
+@dataclass
+class UNetSignature:
+    channels_in: int
+    channels_out: int
+    context_dim: Optional[int]
+    temporal: bool
+    depth: Optional[int]
+    key_prefixes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ModelSignature:
+    family: ModelFamily
+    repo_hint: Optional[str]
+    prediction: PredictionKind
+    latent_format: LatentFormat
+    quantization: QuantizationHint
+    unet: UNetSignature
+    text_encoders: List[TextEncoderSignature]
+    vae: Optional[VAESignature]
+    extras: Dict[str, object] = field(default_factory=dict)
+
+
+__all__ = [
+    "ModelFamily",
+    "PredictionKind",
+    "LatentFormat",
+    "QuantizationKind",
+    "QuantizationHint",
+    "TextEncoderSignature",
+    "VAESignature",
+    "UNetSignature",
+    "ModelSignature",
+]

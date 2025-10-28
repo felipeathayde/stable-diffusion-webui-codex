@@ -19,10 +19,8 @@ from typing import Any, Callable
 
 import torch
 
-if hasattr(torch.storage, "_TypedStorage"):
-    _FALLBACK_STORAGE = torch.storage._TypedStorage  # type: ignore[attr-defined]
-else:  # torch 2.4+ removed _TypedStorage; fall back to the generic Storage base class
-    _FALLBACK_STORAGE = getattr(torch.storage, "TypedStorage", torch.Storage)
+if not hasattr(torch, "UntypedStorage"):  # pragma: no cover - unsupported torch build
+    raise RuntimeError("Unsupported torch build: torch.UntypedStorage unavailable; checkpoint safety cannot run.")
 
 from apps.backend.runtime import errors as runtime_errors
 
@@ -31,13 +29,14 @@ _ALLOWED_GLOBALS = {
     ("torch._utils", "_rebuild_tensor_v2"): torch._utils._rebuild_tensor_v2,
     ("torch._utils", "_rebuild_parameter"): torch._utils._rebuild_parameter,
     ("torch._utils", "_rebuild_device_tensor_from_numpy"): torch._utils._rebuild_device_tensor_from_numpy,
-    ("torch", "FloatStorage"): getattr(torch, "FloatStorage", _FALLBACK_STORAGE),
-    ("torch", "HalfStorage"): getattr(torch, "HalfStorage", _FALLBACK_STORAGE),
-    ("torch", "DoubleStorage"): getattr(torch, "DoubleStorage", _FALLBACK_STORAGE),
-    ("torch", "LongStorage"): getattr(torch, "LongStorage", _FALLBACK_STORAGE),
-    ("torch", "IntStorage"): getattr(torch, "IntStorage", _FALLBACK_STORAGE),
-    ("torch", "ByteStorage"): getattr(torch, "ByteStorage", _FALLBACK_STORAGE),
-    ("torch", "BFloat16Storage"): getattr(torch, "BFloat16Storage", _FALLBACK_STORAGE),
+    ("torch", "UntypedStorage"): torch.UntypedStorage,
+    ("torch", "FloatStorage"): getattr(torch, "FloatStorage", torch.UntypedStorage),
+    ("torch", "HalfStorage"): getattr(torch, "HalfStorage", torch.UntypedStorage),
+    ("torch", "DoubleStorage"): getattr(torch, "DoubleStorage", torch.UntypedStorage),
+    ("torch", "LongStorage"): getattr(torch, "LongStorage", torch.UntypedStorage),
+    ("torch", "IntStorage"): getattr(torch, "IntStorage", torch.UntypedStorage),
+    ("torch", "ByteStorage"): getattr(torch, "ByteStorage", torch.UntypedStorage),
+    ("torch", "BFloat16Storage"): getattr(torch, "BFloat16Storage", torch.UntypedStorage),
     ("torch", "float32"): getattr(torch, "float32"),
     ("torch", "float16"): getattr(torch, "float16"),
     ("torch", "bfloat16"): getattr(torch, "bfloat16"),

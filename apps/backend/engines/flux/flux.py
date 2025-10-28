@@ -12,8 +12,6 @@ from apps.backend.runtime.memory import memory_management
 
 
 class Flux(ForgeDiffusionEngine):
-    matched_guesses = [model_list.Flux, model_list.FluxSchnell]
-
     def __init__(self, estimated_config, huggingface_components):
         super().__init__(estimated_config, huggingface_components)
         self.is_inpaint = False

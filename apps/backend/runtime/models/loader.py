@@ -43,6 +43,36 @@ possible_models = [StableDiffusion, StableDiffusion2, StableDiffusionXLRefiner, 
 
 
 def _collect_guess_classes(keyword: str) -> tuple[type, ...]:
+    keyword = keyword.lower()
+    matches = []
+    for attr in dir(huggingface_guess.model_list):
+        candidate = getattr(huggingface_guess.model_list, attr, None)
+        if isinstance(candidate, type) and keyword in attr.lower():
+            matches.append(candidate)
+    return tuple(matches)
+
+
+StableDiffusion.matched_guesses = _collect_guess_classes("sd15")
+StableDiffusion2.matched_guesses = _collect_guess_classes("sd2")
+StableDiffusionXL.matched_guesses = _collect_guess_classes("sdxl")
+StableDiffusionXLRefiner.matched_guesses = tuple(
+    cls for cls in StableDiffusionXL.matched_guesses if "refiner" in cls.__name__.lower()
+) or _collect_guess_classes("refiner")
+StableDiffusion3.matched_guesses = _collect_guess_classes("sd3")
+Flux.matched_guesses = _collect_guess_classes("flux")
+Chroma.matched_guesses = _collect_guess_classes("chroma")
+
+_sd3_cls = getattr(huggingface_guess.model_list, "SD3", None)
+if isinstance(_sd3_cls, type):
+    _sd3_cls.unet_target = "transformer"
+
+    def _sd3_clip_target(self, state_dict=None):
+        return {'clip_l': 'text_encoder', 'clip_g': 'text_encoder_2', 't5xxl': 'text_encoder_3'}
+
+    _sd3_cls.clip_target = _sd3_clip_target
+
+
+def _collect_guess_classes(keyword: str) -> tuple[type, ...]:
     out: list[type] = []
     kw = keyword.lower()
     for attr in dir(huggingface_guess.model_list):

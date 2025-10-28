@@ -18,7 +18,7 @@ class ForgeObjects:
 
 
 class ForgeDiffusionEngine:
-    matched_guesses = []
+    matched_guesses: tuple = ()
 
     def __init__(self, estimated_config, huggingface_components):
         self.model_config = estimated_config

@@ -19,17 +19,7 @@ def _opts():
     return SimpleNamespace(sd3_enable_t5=enable_t5)
 
 
-##  patch SD3 Class in huggingface_guess.model_list
-def SD3_clip_target(self, state_dict={}):
-        return {'clip_l': 'text_encoder', 'clip_g': 'text_encoder_2', 't5xxl': 'text_encoder_3'}
-
-model_list.SD3.unet_target = 'transformer'
-model_list.SD3.clip_target = SD3_clip_target
-##  end patch
-
 class StableDiffusion3(ForgeDiffusionEngine):
-    matched_guesses = [model_list.SD3]
-
     def __init__(self, estimated_config, huggingface_components):
         super().__init__(estimated_config, huggingface_components)
         self.is_inpaint = False

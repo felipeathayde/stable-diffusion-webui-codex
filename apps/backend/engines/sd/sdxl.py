@@ -24,8 +24,6 @@ def _opts():
 
 
 class StableDiffusionXL(CodexDiffusionEngine):
-    matched_guesses = [model_list.SDXL]
-
     def __init__(self, estimated_config, huggingface_components):
         super().__init__(estimated_config, huggingface_components)
 
@@ -162,8 +160,6 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
 
 class StableDiffusionXLRefiner(CodexDiffusionEngine):
-    matched_guesses = [model_list.SDXLRefiner]
-
     def __init__(self, estimated_config, huggingface_components):
         super().__init__(estimated_config, huggingface_components)
 

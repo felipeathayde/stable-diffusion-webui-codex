@@ -13,8 +13,6 @@ from apps.backend.runtime import utils
 
 
 class StableDiffusion2(ForgeDiffusionEngine):
-    matched_guesses = [model_list.SD20]
-
     def __init__(self, estimated_config, huggingface_components):
         super().__init__(estimated_config, huggingface_components)
 

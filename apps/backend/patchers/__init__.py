@@ -31,7 +31,6 @@ _EXPORTS = {
     # lora
     "LoraLoader": (".lora", "LoraLoader"),
     "extra_weight_calculators": (".lora", "extra_weight_calculators"),
-    "lora_collection_priority": (".lora", "lora_collection_priority"),
     "model_lora_keys_clip": (".lora", "model_lora_keys_clip"),
     "model_lora_keys_unet": (".lora", "model_lora_keys_unet"),
     "load_lora": (".lora", "load_lora"),

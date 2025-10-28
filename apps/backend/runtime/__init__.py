@@ -18,15 +18,17 @@ from . import utils, trace, shared  # lightweight, no facade recursion
 from .memory import memory_management, stream
 
 # 3) Remainder modules that may rely on memory
-from . import attention, logging, models, nn, ops, text_processing
+from . import attention, errors, logging, models, nn, ops, processing, text_processing
 
 __all__ = [
     "attention",
+    "errors",
     "logging",
     "memory_management",
     "models",
     "nn",
     "ops",
+    "processing",
     "shared",
     "stream",
     "text_processing",

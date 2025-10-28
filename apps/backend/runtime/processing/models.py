@@ -1,0 +1,321 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+import logging
+import math
+
+logger = logging.getLogger(__name__)
+
+
+def _repeat_to_length(values: Sequence[Any], length: int, *, default: Any) -> List[Any]:
+    if length <= 0:
+        return []
+    if not values:
+        return [default for _ in range(length)]
+    result = list(values)
+    if len(result) >= length:
+        return result[:length]
+    if len(result) == 1:
+        result = result * length
+    else:
+        factor = math.ceil(length / len(result))
+        result = (result * factor)[:length]
+    if len(result) < length:
+        result.extend(default for _ in range(length - len(result)))
+    return result[:length]
+
+
+@dataclass
+class CodexHighResConfig:
+    """Configuration for high-resolution (second-pass) rendering."""
+
+    enabled: bool = False
+    scale: float = 1.0
+    denoise: float = 0.0
+    upscaler: Optional[str] = None
+    second_pass_steps: int = 0
+    resize_x: int = 0
+    resize_y: int = 0
+    prompt: str = ""
+    negative_prompt: str = ""
+    cfg: float = 7.0
+    distilled_cfg: float = 3.5
+    sampler_name: Optional[str] = None
+    scheduler: Optional[str] = None
+    additional_modules: Tuple[str, ...] = field(default_factory=tuple)
+    checkpoint_name: Optional[str] = None
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "scale": self.scale,
+            "denoise": self.denoise,
+            "upscaler": self.upscaler,
+            "second_pass_steps": self.second_pass_steps,
+            "resize_x": self.resize_x,
+            "resize_y": self.resize_y,
+            "prompt": self.prompt,
+            "negative_prompt": self.negative_prompt,
+            "cfg": self.cfg,
+            "distilled_cfg": self.distilled_cfg,
+            "sampler_name": self.sampler_name,
+            "scheduler": self.scheduler,
+            "additional_modules": list(self.additional_modules),
+            "checkpoint_name": self.checkpoint_name,
+        }
+
+    def update_from_payload(self, payload: Dict[str, Any]) -> None:
+        self.enabled = bool(payload.get("enabled", self.enabled))
+        self.scale = float(payload.get("scale", self.scale))
+        self.denoise = float(payload.get("denoise", self.denoise))
+        self.upscaler = payload.get("upscaler", self.upscaler)
+        self.second_pass_steps = int(payload.get("second_pass_steps", self.second_pass_steps))
+        self.resize_x = int(payload.get("resize_x", self.resize_x))
+        self.resize_y = int(payload.get("resize_y", self.resize_y))
+        self.prompt = str(payload.get("prompt", self.prompt))
+        self.negative_prompt = str(payload.get("negative_prompt", self.negative_prompt))
+        self.cfg = float(payload.get("cfg", self.cfg))
+        self.distilled_cfg = float(payload.get("distilled_cfg", self.distilled_cfg))
+        self.sampler_name = payload.get("sampler_name", self.sampler_name)
+        self.scheduler = payload.get("scheduler", self.scheduler)
+        modules = payload.get("additional_modules")
+        if modules is not None:
+            if isinstance(modules, (list, tuple)):
+                self.additional_modules = tuple(str(m) for m in modules)
+            else:
+                self.additional_modules = (str(modules),)
+        if "checkpoint_name" in payload:
+            self.checkpoint_name = payload.get("checkpoint_name")
+
+
+@dataclass
+class CodexProcessingBase:
+    """Reusable description of a generation run.
+
+    Unlike the legacy ``modules.processing`` classes this dataclass keeps state
+    lightweight and free of side effects. Higher-level orchestration fills in
+    runtime-only attributes (sampler, rng, etc.) explicitly.
+    """
+
+    prompt: str = ""
+    negative_prompt: str = ""
+    prompts: Sequence[str] = field(default_factory=list)
+    negative_prompts: Sequence[str] = field(default_factory=list)
+    styles: Sequence[str] = field(default_factory=list)
+    width: int = 512
+    height: int = 512
+    steps: int = 20
+    guidance_scale: float = 7.0
+    distilled_guidance_scale: float = 3.5
+    batch_size: int = 1
+    iterations: int = 1
+    seed: int = -1
+    subseed: int = -1
+    seeds: Sequence[int] = field(default_factory=list)
+    subseeds: Sequence[int] = field(default_factory=list)
+    subseed_strength: float = 0.0
+    seed_resize_from_h: int = 0
+    seed_resize_from_w: int = 0
+    sampler_name: Optional[str] = None
+    scheduler: Optional[str] = None
+    user: str = "api"
+    disable_extra_networks: bool = False
+    token_merging_ratio: float = 0.0
+    token_merging_ratio_hr: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    extra_generation_params: Dict[str, Any] = field(default_factory=dict)
+    override_settings: Dict[str, Any] = field(default_factory=dict)
+    eta_noise_seed_delta: int = 0
+
+    # Runtime-assigned attributes (populated by orchestrator/use-cases)
+    sd_model: Any = None
+    sampler: Any = None
+    rng: Any = None
+    scripts: Any = None
+    script_args: Sequence[Any] = field(default_factory=tuple)
+    modified_noise: Any = None
+
+    # Derived collections populated by ``prepare_prompt_data``
+    all_prompts: List[str] = field(default_factory=list, init=False)
+    all_negative_prompts: List[str] = field(default_factory=list, init=False)
+    all_seeds: List[int] = field(default_factory=list, init=False)
+    all_subseeds: List[int] = field(default_factory=list, init=False)
+    prompts_prepared: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        self.prompts = list(self.prompts)
+        self.negative_prompts = list(self.negative_prompts)
+        self.styles = list(self.styles)
+        self.seeds = list(self.seeds)
+        self.subseeds = list(self.subseeds)
+
+    @property
+    def batch_total(self) -> int:
+        return max(1, int(self.batch_size) * max(1, int(self.iterations)))
+
+    @property
+    def primary_prompt(self) -> str:
+        if self.prompts:
+            return self.prompts[0]
+        return self.prompt
+
+    @property
+    def primary_negative_prompt(self) -> str:
+        if self.negative_prompts:
+            return self.negative_prompts[0]
+        return self.negative_prompt
+
+    def prepare_prompt_data(self) -> None:
+        total = self.batch_total
+        prompts = _repeat_to_length(self.prompts, total, default=self.prompt)
+        negatives = _repeat_to_length(self.negative_prompts, total, default=self.negative_prompt)
+        seeds = _repeat_to_length(self.seeds, total, default=self.seed)
+        subseeds = _repeat_to_length(self.subseeds, total, default=self.subseed)
+        self.all_prompts = prompts
+        self.all_negative_prompts = negatives
+        self.all_seeds = seeds
+        self.all_subseeds = subseeds
+        self.prompts_prepared = True
+
+    def iteration_slice(self, iteration_index: int) -> slice:
+        if iteration_index < 0:
+            raise ValueError("iteration index must be non-negative")
+        start = iteration_index * max(1, self.batch_size)
+        end = start + max(1, self.batch_size)
+        return slice(start, end)
+
+    def get_prompts_for_iteration(self, iteration_index: int) -> Tuple[List[str], List[str]]:
+        if not self.prompts_prepared:
+            self.prepare_prompt_data()
+        span = self.iteration_slice(iteration_index)
+        return self.all_prompts[span], self.all_negative_prompts[span]
+
+    def get_seeds_for_iteration(self, iteration_index: int) -> Tuple[List[int], List[int]]:
+        if not self.prompts_prepared:
+            self.prepare_prompt_data()
+        span = self.iteration_slice(iteration_index)
+        return self.all_seeds[span], self.all_subseeds[span]
+
+    def iter_batches(self) -> Iterable[Tuple[int, str, str, int, int]]:
+        if not self.prompts_prepared:
+            self.prepare_prompt_data()
+        for idx in range(self.batch_total):
+            yield (
+                idx,
+                self.all_prompts[idx],
+                self.all_negative_prompts[idx],
+                self.all_seeds[idx],
+                self.all_subseeds[idx],
+            )
+
+    def get_token_merging_ratio(self, *, for_hires: bool = False) -> float:
+        if for_hires:
+            if self.token_merging_ratio_hr > 0:
+                return self.token_merging_ratio_hr
+            return self.token_merging_ratio or 0.0
+        return self.token_merging_ratio or 0.0
+
+    def set_scripts(self, scripts: Any, script_args: Optional[Sequence[Any]] = None) -> None:
+        self.scripts = scripts
+        if script_args is not None:
+            self.script_args = list(script_args)
+
+    def update_override(self, key: str, value: Any) -> None:
+        self.override_settings[str(key)] = value
+
+    def update_extra_param(self, key: str, value: Any) -> None:
+        self.extra_generation_params[str(key)] = value
+
+
+@dataclass
+class CodexProcessingTxt2Img(CodexProcessingBase):
+    """Processing description for txt2img tasks."""
+
+    hires: CodexHighResConfig = field(default_factory=CodexHighResConfig)
+    firstpass_image: Any = None
+    latent_scale_mode: Optional[Dict[str, Any]] = None
+    enable_hr: bool = False
+    hr_upscale_to_x: int = 0
+    hr_upscale_to_y: int = 0
+    hr_second_pass_steps: int = 0
+    hr_sampler_name: Optional[str] = None
+    hr_scheduler: Optional[str] = None
+    hr_checkpoint_name: Optional[str] = None
+    hr_additional_modules: Sequence[str] = field(default_factory=list)
+    hr_cfg: float = 7.0
+    hr_distilled_cfg: float = 3.5
+    hr_prompts: List[str] = field(default_factory=list, init=False)
+    hr_negative_prompts: List[str] = field(default_factory=list, init=False)
+    firstpass_use_distilled_cfg_scale: bool = False
+
+    def enable_hires(self, *, cfg: CodexHighResConfig) -> None:
+        self.hires = cfg
+        self.enable_hr = cfg.enabled
+        if cfg.enabled:
+            self.update_extra_param("Hires Distilled CFG Scale", cfg.distilled_cfg)
+            self.hr_second_pass_steps = cfg.second_pass_steps
+            self.hr_upscale_to_x = cfg.resize_x or int(self.width * cfg.scale)
+            self.hr_upscale_to_y = cfg.resize_y or int(self.height * cfg.scale)
+            self.hr_sampler_name = cfg.sampler_name
+            self.hr_scheduler = cfg.scheduler
+            self.hr_checkpoint_name = cfg.checkpoint_name
+            self.hr_additional_modules = cfg.additional_modules
+            self.hr_cfg = cfg.cfg
+            self.hr_distilled_cfg = cfg.distilled_cfg
+        else:
+            self.hr_second_pass_steps = 0
+            self.hr_upscale_to_x = 0
+            self.hr_upscale_to_y = 0
+            self.hr_sampler_name = None
+            self.hr_scheduler = None
+            self.hr_checkpoint_name = None
+            self.hr_additional_modules = []
+
+    def ensure_hires_prompts(self) -> None:
+        if not self.enable_hr:
+            self.hr_prompts = []
+            self.hr_negative_prompts = []
+            return
+        total = self.batch_total
+        self.hr_prompts = _repeat_to_length([self.hires.prompt] if self.hires.prompt else [], total, default=self.primary_prompt)
+        self.hr_negative_prompts = _repeat_to_length(
+            [self.hires.negative_prompt] if self.hires.negative_prompt else [],
+            total,
+            default=self.primary_negative_prompt,
+        )
+
+
+@dataclass
+class CodexProcessingImg2Img(CodexProcessingBase):
+    """Processing description for img2img tasks."""
+
+    hires: CodexHighResConfig = field(default_factory=CodexHighResConfig)
+    init_image: Any = None
+    init_images: Sequence[Any] = field(default_factory=list)
+    denoising_strength: float = 0.75
+    image_cfg_scale: Optional[float] = None
+    mask: Any = None
+    mask_blur: int = 4
+    mask_blur_x: int = 4
+    mask_blur_y: int = 4
+    mask_round: bool = True
+    inpainting_fill: int = 0
+    inpaint_full_res: bool = True
+    inpaint_full_res_padding: int = 0
+    inpainting_mask_invert: int = 0
+    initial_noise_multiplier: Optional[float] = None
+    latent_mask: Any = None
+    resize_mode: int = 0
+    round_image_mask: bool = True
+    image_mask: Any = None
+
+    def enable_hires(self, cfg: CodexHighResConfig) -> None:
+        self.hires = cfg
+
+    def has_mask(self) -> bool:
+        return self.mask is not None or self.image_mask is not None
+
+    def set_mask(self, mask: Any) -> None:
+        self.mask = mask
+        self.image_mask = mask

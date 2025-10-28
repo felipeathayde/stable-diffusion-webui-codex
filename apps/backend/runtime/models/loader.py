@@ -42,6 +42,27 @@ from apps.backend.engines.chroma.chroma import Chroma
 possible_models = [StableDiffusion, StableDiffusion2, StableDiffusionXLRefiner, StableDiffusionXL, StableDiffusion3, Chroma, Flux]
 
 
+def _collect_guess_classes(keyword: str) -> tuple[type, ...]:
+    out: list[type] = []
+    kw = keyword.lower()
+    for attr in dir(huggingface_guess.model_list):
+        obj = getattr(huggingface_guess.model_list, attr, None)
+        if isinstance(obj, type) and kw in attr.lower():
+            out.append(obj)
+    return tuple(out)
+
+
+StableDiffusion.matched_guesses = _collect_guess_classes("sd15")
+StableDiffusion2.matched_guesses = _collect_guess_classes("sd2")
+StableDiffusionXL.matched_guesses = _collect_guess_classes("sdxl")
+StableDiffusionXLRefiner.matched_guesses = tuple(
+    cls for cls in StableDiffusionXL.matched_guesses if "refiner" in cls.__name__.lower()
+) or _collect_guess_classes("sdxlrefiner")
+StableDiffusion3.matched_guesses = _collect_guess_classes("sd3")
+Flux.matched_guesses = _collect_guess_classes("flux")
+Chroma.matched_guesses = _collect_guess_classes("chroma")
+
+
 logging.getLogger("diffusers").setLevel(logging.ERROR)
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 dir_path = str(_BACKEND_ROOT)

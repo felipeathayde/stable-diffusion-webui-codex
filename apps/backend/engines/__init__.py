@@ -12,10 +12,7 @@ from apps.backend.engines.wan22.wan22_5b import Wan225BEngine
 def register_default_engines(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     """Register the canonical set of engines into the provided registry."""
 
-    try:
-        registration = import_module("apps.server.backend.engines.registration")
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError("apps.server.backend.engines.registration is unavailable; cannot register default engines") from exc
+    registration = import_module("apps.backend.engines.registration")
 
     registration.register_sd15(registry=registry, replace=replace)
     registration.register_sdxl(registry=registry, replace=replace)

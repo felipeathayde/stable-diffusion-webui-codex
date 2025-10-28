@@ -1,6 +1,6 @@
 # Backend Shim Inventory (2025-10-27)
 
-All shims removed — legacy `backend/` package deleted in favor of the unified tree under `apps/backend` (with façade compatibility under `apps.server`).
+All shims removed — legacy `backend/` package deleted in favor of the unified tree under `apps/backend`.
 
 Status
 - Restructure date: 2025-10-27
@@ -11,8 +11,8 @@ Status
   - `apps/backend/runtime/**`
   - `apps/backend/infra/**`
   - `apps/backend/interfaces/**`
-- Compatibility shims retained at `apps/server/run_api.py` and `apps/server/settings_*` to ease transition.
+- Only the process launcher remains under `apps/launcher.py` for CLI/TUI support.
 
 Guidance
 - Use `apps.backend.*` imports nativamente. Se alguma façade exposta ainda for necessária, exporte via `apps/backend/__init__.py`.
-- Evite depender de `apps.server.*` — mantido apenas como compatibilidade temporária.
+- Evite depender de `apps.server.*` — o namespace foi eliminado; use `apps.backend.*` e `apps.launcher`.

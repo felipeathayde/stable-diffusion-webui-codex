@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-report_dir="$root_dir/.sangoi/docs/reports/pyright"
+report_dir="$root_dir/.sangoi/reports/tooling/pyright"
 mkdir -p "$report_dir"
 
 ts="$(date -u +%Y%m%d-%H%M%S)"

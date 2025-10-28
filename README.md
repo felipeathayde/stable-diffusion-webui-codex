@@ -57,8 +57,8 @@ AGPL §13 (Network Use)
 - Frontend JS type-safety:
   - Strict checks: `npm run typecheck` (uses `tsconfig.json` with `allowJs` + `checkJs` + `noEmit`).
   - Optional build: `npm run build:ts` (uses `tsconfig.build.json`).
-  - See: `.sangoi/docs/frontend-js-type-safety.md` for the migration rationale, helpers, and patterns.
-  - See: `.sangoi/docs/frontend-guidelines.md` for module→hook→helper mapping and integration tips.
+  - See: `.sangoi/frontend/guidelines/frontend-architecture-guide.md` for the migration rationale, helpers, and patterns.
+  - See: `.sangoi/frontend/guidelines/frontend-style-guide.md` for module→hook→helper mapping and integration tips.
 
 # Installing Forge
 

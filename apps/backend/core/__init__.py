@@ -1,4 +1,4 @@
-"""Core backend aliases exposed under apps.server.backend.core."""
+"""Core backend aliases exposed under apps.backend.core."""
 
 from .engine_interface import *
 from .orchestrator import *

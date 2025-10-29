@@ -160,7 +160,7 @@ class Txt2ImgRuntime:
             self.processing.sampler_name, self.processing.sd_model
         )
         latent_channels = getattr(
-            self.processing.sd_model.forge_objects_after_applying_lora.vae,
+            self.processing.sd_model.codex_objects_after_applying_lora.vae,
             "latent_channels",
             4,
         )
@@ -183,12 +183,12 @@ class Txt2ImgRuntime:
 
         model = self.processing.sd_model
 
-        if hasattr(model, "forge_objects_original") and model.forge_objects_original is not None:
-            model.forge_objects = model.forge_objects_original.shallow_copy()
+        if hasattr(model, "codex_objects_original") and model.codex_objects_original is not None:
+            model.codex_objects = model.codex_objects_original.shallow_copy()
 
         self._run_before_and_process_batch_hooks()
 
-        model.forge_objects = model.forge_objects_after_applying_lora.shallow_copy()
+        model.codex_objects = model.codex_objects_after_applying_lora.shallow_copy()
         apply_token_merging(
             model, self.processing.get_token_merging_ratio()
         )

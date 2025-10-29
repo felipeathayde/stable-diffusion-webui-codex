@@ -9,15 +9,28 @@
 - **NEVER** rush. Speed kills quality. Take the time required to write it right.
 - When proposing or shipping a solution, **DO NOT REINVENT THE WHEEL**. Fix root causes; skip quick fixes, hacks, and throwaway workarounds.
 - Break big tasks in small subtasks for a smooth implementation.
-- **NEVER** remove, disable, or narrow existing features to hide errors; preserve functional parity and user-facing behavior.
+- **NEVER** remove, disable, or narrow existing features to hide errors.
 - **DO NOT** add catch-all helpers or duplicate checks.
 - **ENSURE** verbose, actionable logs to support debugging.
-- Rename variables or functions **ONLY** when strictly necessary.
 - Written code **MUST** be strong and reliable with zero fluff.
 - Choose clear, descriptive names for variables and functions.
+- Rename variables or functions **ONLY** when strictly necessary.
 - Update or add documentation when behaviour or configuration surfaces change.
 - Use progress bars in Python for time-consuming operations.
-- The user handles testing in an external environment, smoke tests are not needed.
+- Do not include tests of any kind in your plans.
+- Keep each subfolder’s `AGENTS.md` up to date. Whenever you modify, update, or add implementations in a subfolder, update that subfolder’s `AGENTS.md` in the same commit/PR.
+
+---
+
+## On any terminal command failure, append or update an entry in `COMMON_MISTAKES.md` using the template below.
+
+```
+**Wrong command:** `<exact command>`
+**Cause + fix:** `<root cause and the correction applied>`
+**Correct command:** `<single correct command>`
+```
+
+---
 
 # Goal
 - This workplace is a `rebuild from scratch` of the classic A1111 Stable Diffusion WebUI.
@@ -40,6 +53,32 @@
 2) Inspect equivalents under `/.refs/ComfyUI`;
 3) Only then draft a plan for a native implementation (**DO NOT** copy code verbatim);
 4) Then start the implementation.
+
+## Legacy Code Policy
+- `legacy/` is a historical read-only reference. DO NOT modify, move, or remove files under `legacy/`.
+- Use `legacy/` only for behavior lookups/diffs. Fixes must go into non-legacy code.
+- Do not introduce new dependencies from active code to modules in `legacy/`.
+- If you need logic from there, port it to the relevant directory inside `/apps`.
+
+## Model Loading (Research Reference)
+- For efficient and safe model loading guidance (PyTorch 2.9, Diffusers/Accelerate, SafeTensors, GGUF), see:
+- .sangoi/research/models/model-loading-efficient-2025-10.md
+  - Apply those practices for new loaders/engines (e.g., WAN GGUF path): SafeTensors preferred, `torch.load(..., weights_only=True, mmap=True)`, Diffusers with `low_cpu_mem_usage`/`device_map`, and GGUF bake/dequantize once before sampling.
+
+## Frontend CSS Guidelines (Semantic, No Utility Dump)
+- Prefer semantic, per-component class names over generic utility helpers.
+- Each view/component should own its styles under `src/styles/components/` or `src/styles/views/`.
+- Do not add ad‑hoc helpers like `.ml-sm`, `.w-220`, `.btn-generate`. If a pattern is reused, define a semantic class that describes intent in its context.
+- No inline styles or `<style scoped>` in Vue SFCs. Move rules into the appropriate CSS file and import via `src/styles.css` using `@layer components`.
+- Use `rem` for all measurements. Coherent exceptions are tolerable.
+
+---
+
+## End-of-task documentation:
+- Log each task under `.sangoi/task-logs/` (create if missing). If present, follow `.sangoi/task-guidelines.md`. Summarize user-visible highlights in `.sangoi/CHANGELOG.md`.
+- WHEN YOU FINISH A FUCKING TASK, MAKE A GODDAMN ATOMIC COMMIT AND PUSH IT.
+
+---
 
 ## Git Workflow & Hygiene
 - Prefer GitHub CLI `gh` for remote actions (PRs, issues, merges, branch mgmt). Keep raw `git` for local work.
@@ -73,8 +112,12 @@
 7) `rg -n '<<<<<<<|=======|>>>>>>>' || true`
 8) `git push -u origin $(git branch --show-current)`
 
+---
+
 ## Global python enviroment
 - Use the global python env in `~/.venv`.
+
+---
 
 ## Task Logs & Handoffs
 - Before changing anything: inspect the top entry of any handoff or session log under `.sangoi/` (e.g., `.sangoi/task-logs/` or `.sangoi/handoffs/`). If absent, create a new log entry.
@@ -85,27 +128,7 @@
   - Next steps / open risks / TODOs
 - Keep entries concise and action-oriented; prefer file paths and commands over prose. Link user-facing changes in `.sangoi/CHANGELOG.md`.
 
-## Model Loading (Research Reference)
-- For efficient and safe model loading guidance (PyTorch 2.9, Diffusers/Accelerate, SafeTensors, GGUF), see:
-- .sangoi/research/models/model-loading-efficient-2025-10.md
-  - Apply those practices for new loaders/engines (e.g., WAN GGUF path): SafeTensors preferred, `torch.load(..., weights_only=True, mmap=True)`, Diffusers with `low_cpu_mem_usage`/`device_map`, and GGUF bake/dequantize once before sampling.
-
-## Frontend CSS Guidelines (Semantic, No Utility Dump)
-- Prefer semantic, per-component class names over generic utility helpers.
-- Each view/component should own its styles under `src/styles/components/` or `src/styles/views/`.
-- Do not add ad‑hoc helpers like `.ml-sm`, `.w-220`, `.btn-generate`. If a pattern is reused, define a semantic class that describes intent in its context.
-- No inline styles or `<style scoped>` in Vue SFCs. Move rules into the appropriate CSS file and import via `src/styles.css` using `@layer components`.
-- Use `rem` for all measurements. Coherent exceptions are tolerable.
-
-## End-of-task documentation:
-- Log each task under `.sangoi/task-logs/` (create if missing). If present, follow `.sangoi/task-guidelines.md`. Summarize user-visible highlights in `.sangoi/CHANGELOG.md`.
-- WHEN YOU FINISH A FUCKING TASK, MAKE A GODDAMN ATOMIC COMMIT AND PUSH IT. DO NOT use `git add -A` or similar, for fuck’s sake.
-
-## Legacy Code Policy
-- `legacy/` is a historical read-only reference. DO NOT modify, move, or remove files under `legacy/`.
-- Use `legacy/` only for behavior lookups/diffs. Fixes must go into non-legacy code.
-- Do not introduce new dependencies from active code to modules in `legacy/`.
-- If you need logic from there, port it to the relevant directory inside `/apps`.
+---
 
 # Extras
-- Não use `python -m py_compile` ou derivados.
+- Do not use `python -m py_compile` or any variants.

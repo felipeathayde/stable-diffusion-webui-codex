@@ -9,11 +9,11 @@ fp_group = parser.add_mutually_exclusive_group()
 fp_group.add_argument("--all-in-fp32", action="store_true")
 fp_group.add_argument("--all-in-fp16", action="store_true")
 
-fpunet_group = parser.add_mutually_exclusive_group()
-fpunet_group.add_argument("--unet-in-bf16", action="store_true")
-fpunet_group.add_argument("--unet-in-fp16", action="store_true")
-fpunet_group.add_argument("--unet-in-fp8-e4m3fn", action="store_true")
-fpunet_group.add_argument("--unet-in-fp8-e5m2", action="store_true")
+fpcore_group = parser.add_mutually_exclusive_group()
+fpcore_group.add_argument("--core-in-bf16", action="store_true")
+fpcore_group.add_argument("--core-in-fp16", action="store_true")
+fpcore_group.add_argument("--core-in-fp8-e4m3fn", action="store_true")
+fpcore_group.add_argument("--core-in-fp8-e5m2", action="store_true")
 
 fpvae_group = parser.add_mutually_exclusive_group()
 fpvae_group.add_argument("--vae-in-fp16", action="store_true")
@@ -70,7 +70,13 @@ parser.add_argument("--swap-method", choices=["blocked", "async"], default="bloc
 parser.add_argument("--gpu-prefer-construct", action="store_true",
                     help="Prefer constructing models directly on GPU (OOM now raises; no implicit fallback)")
 
-args = parser.parse_known_args()[0]
+parsed_args, _unknown = parser.parse_known_args()
+deprecated_flags = [arg for arg in _unknown if arg.startswith("--unet-in-")]
+if deprecated_flags:
+    bad = ", ".join(deprecated_flags)
+    raise RuntimeError(f"Deprecated precision flag(s) detected: {bad}. Use '--core-in-*' variants instead.")
+
+args = parsed_args
 
 # Environment overrides (webui.settings.bat or process env)
 # Prefer explicit dtype selections via env without requiring CLI flags.
@@ -83,25 +89,25 @@ def _truthy(v: str | None) -> bool:
     return t in ("1", "true", "yes", "on")
 
 
-def _set_unet_dtype(val: str | None) -> None:
+def _set_core_dtype(val: str | None) -> None:
     if not val:
         return
     v = val.strip().lower()
     # Clear mutually exclusive flags first
-    args.unet_in_bf16 = False
-    args.unet_in_fp16 = False
-    args.unet_in_fp8_e4m3fn = False
-    args.unet_in_fp8_e5m2 = False
+    args.core_in_bf16 = False
+    args.core_in_fp16 = False
+    args.core_in_fp8_e4m3fn = False
+    args.core_in_fp8_e5m2 = False
     if v == "bf16" or v == "bfloat16":
-        args.unet_in_bf16 = True
+        args.core_in_bf16 = True
     elif v == "fp16" or v == "half":
-        args.unet_in_fp16 = True
+        args.core_in_fp16 = True
     elif v in ("fp8_e4m3fn", "fp8-e4m3fn", "fp8_e4"):  # shorthand tolerant
-        args.unet_in_fp8_e4m3fn = True
+        args.core_in_fp8_e4m3fn = True
     elif v in ("fp8_e5m2", "fp8-e5m2", "fp8_e5"):
-        args.unet_in_fp8_e5m2 = True
+        args.core_in_fp8_e5m2 = True
     elif v == "fp32" or v == "float" or v == "single":
-        # No explicit unet_in_fp32 flag; leaving all False makes unet fall back to fp32.
+        # No explicit core_in_fp32 flag; leaving all False makes the core fall back to fp32.
         pass
 
 
@@ -128,7 +134,14 @@ def _set_vae_dtype(val: str | None) -> None:
 if _truthy(_env.get("CODEX_VAE_IN_CPU")):
     args.vae_in_cpu = True
 
-_set_unet_dtype(_env.get("CODEX_UNET_DTYPE") or _env.get("WEBUI_UNET_DTYPE"))
+legacy_env = _env.get("CODEX_UNET_DTYPE") or _env.get("WEBUI_UNET_DTYPE")
+if legacy_env:
+    raise RuntimeError(
+        "Detected legacy environment variable CODEX_UNET_DTYPE/WEBUI_UNET_DTYPE. "
+        "Rename to CODEX_CORE_DTYPE (or WEBUI_CORE_DTYPE) and retry."
+    )
+
+_set_core_dtype(_env.get("CODEX_CORE_DTYPE") or _env.get("WEBUI_CORE_DTYPE"))
 _set_vae_dtype(_env.get("CODEX_VAE_DTYPE") or _env.get("WEBUI_VAE_DTYPE"))
 
 # Global all-fp32 override if user insists

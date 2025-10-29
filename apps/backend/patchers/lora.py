@@ -350,7 +350,7 @@ class LoraLoader:
         # Restore
 
         for m in set(self.online_backup):
-            del m.forge_online_loras
+            del m.codex_online_loras
 
         self.online_backup = []
 
@@ -375,10 +375,10 @@ class LoraLoader:
                 raise ValueError(f"Wrong LoRA Key: {key}")
 
             if online_mode:
-                if not hasattr(parent_layer, 'forge_online_loras'):
-                    parent_layer.forge_online_loras = {}
+                if not hasattr(parent_layer, 'codex_online_loras'):
+                    parent_layer.codex_online_loras = {}
 
-                parent_layer.forge_online_loras[child_key] = current_patches
+                parent_layer.codex_online_loras[child_key] = current_patches
                 self.online_backup.append(parent_layer)
                 continue
 

@@ -10,6 +10,7 @@ Status: Active
 ## Key Subdirectories
 - `attention/` — Attention backends and related kernels.
 - `adapters/` — Runtime adapters (e.g., LoRA, SafeTensors helpers).
+- `model_parser/` — Codex-native checkpoint parser plans and conversions replacing `huggingface_guess`.
 - `text_processing/` — Tokenization, prompt parsing, and textual inversion helpers.
 - `sampling/` — Sigma builders, schedulers, Philox integration, and sampling drivers.
 - `memory/` — VRAM/CPU memory policies and management helpers.
@@ -17,7 +18,7 @@ Status: Active
 - `models/` — Model registry/load helpers (checkpoints, VAEs, etc.).
 - `{sd, flux, chroma, wan22}/` — Model/runtime specific implementations.
 - `processing/` — High-level input preprocessing utilities shared by use cases.
-- `common/` — Shared building blocks (e.g., UNet wrappers) used across runtimes.
+- `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
 - `modules/` — Compatibility wrappers expected by legacy callers (will shrink over time).
 - `kernels/` — Custom CUDA/C++ kernels where required.

@@ -1,4 +1,4 @@
-# Only include samplers that are not already in A1111
+# Only include samplers that are not already in the legacy A1111 stack
 
 import torch
 

@@ -3,13 +3,14 @@ from __future__ import annotations
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks, has_all_keys
 from apps.backend.runtime.model_registry.specs import (
+    CodexCoreArchitecture,
+    CodexCoreSignature,
     LatentFormat,
     ModelFamily,
     ModelSignature,
     PredictionKind,
     QuantizationHint,
     TextEncoderSignature,
-    UNetSignature,
     VAESignature,
 )
 
@@ -32,6 +33,9 @@ class StableDiffusion3Detector:
         channels_out = _shape(bundle, "final_layer.linear.weight", 0) or channels_in
         context_dim = _shape(bundle, "context_embedder.weight", 0) or 4096
         depth = count_blocks(bundle.keys, "joint_blocks.{}.")
+        has_dual_blocks = bundle.has_prefix("dual_blocks.")
+
+        variant, family, repo = _classify_variant(depth=depth, has_dual_blocks=has_dual_blocks)
 
         text_encoders = [
             TextEncoderSignature(
@@ -57,15 +61,17 @@ class StableDiffusion3Detector:
 
         extras = {
             "joint_blocks": depth,
+            "variant": variant,
         }
 
         return ModelSignature(
-            family=ModelFamily.SD3,
-            repo_hint="stabilityai/stable-diffusion-3-medium-diffusers",
+            family=family,
+            repo_hint=repo,
             prediction=PredictionKind.EPSILON,
             latent_format=LatentFormat.SD_3,
             quantization=QuantizationHint(),
-            unet=UNetSignature(
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.DIT,
                 channels_in=channels_in,
                 channels_out=channels_out,
                 context_dim=context_dim,
@@ -84,6 +90,15 @@ def _shape(bundle: SignalBundle, key: str, dim: int) -> int | None:
     if not shape or len(shape) <= dim:
         return None
     return int(shape[dim])
+
+
+def _classify_variant(*, depth: int, has_dual_blocks: bool) -> tuple[str, ModelFamily, str]:
+    """Infer SD3/SD3.5 variant heuristically from transformer depth & structure."""
+    if depth >= 35:
+        return "sd35_large", ModelFamily.SD35, "stabilityai/stable-diffusion-3.5-large"
+    if depth >= 24 and has_dual_blocks:
+        return "sd35_medium", ModelFamily.SD35, "stabilityai/stable-diffusion-3.5-medium"
+    return "sd3_medium", ModelFamily.SD3, "stabilityai/stable-diffusion-3-medium-diffusers"
 
 
 REGISTRY.register(StableDiffusion3Detector())

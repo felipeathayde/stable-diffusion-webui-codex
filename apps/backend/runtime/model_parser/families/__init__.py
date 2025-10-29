@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from typing import Callable, Dict
+
+from apps.backend.runtime.model_registry.specs import ModelFamily, ModelSignature
+
+from ..errors import UnsupportedFamilyError
+from ..specs import ParserPlanBundle
+from . import chroma, flux, sd1, sd2, sd3, sdxl, wan22
+
+
+_BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
+    ModelFamily.SD15: sd1.build_plan,
+    ModelFamily.SD20: sd2.build_plan,
+    ModelFamily.SDXL: sdxl.build_plan,
+    ModelFamily.SDXL_REFINER: sdxl.build_plan,
+    ModelFamily.SD3: sd3.build_plan,
+    ModelFamily.SD35: sd3.build_plan,
+    ModelFamily.FLUX: flux.build_plan,
+    ModelFamily.CHROMA: chroma.build_plan,
+    ModelFamily.WAN22: wan22.build_plan,
+}
+
+
+def resolve_plan(signature: ModelSignature) -> ParserPlanBundle:
+    builder = _BUILDERS.get(signature.family)
+    if builder is None:
+        raise UnsupportedFamilyError(signature.family.value)
+    return builder(signature)

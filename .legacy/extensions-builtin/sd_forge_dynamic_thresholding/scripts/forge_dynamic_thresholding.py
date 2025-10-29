@@ -53,13 +53,13 @@ class DynamicThresholdingForForge(scripts.Script):
         if not enabled:
             return
 
-        unet = p.sd_model.forge_objects.unet
+        unet = p.sd_model.codex_objects.unet
 
         unet = opDynamicThresholdingNode(unet, mimic_scale, threshold_percentile, mimic_mode, mimic_scale_min,
                                          cfg_mode, cfg_scale_min, sched_val, separate_feature_channels,
                                          scaling_startpoint, variability_measure, interpolate_phi)[0]
 
-        p.sd_model.forge_objects.unet = unet
+        p.sd_model.codex_objects.unet = unet
 
         # Below codes will add some logs to the texts below the image outputs on UI.
         # The extra_generation_params does not influence results.

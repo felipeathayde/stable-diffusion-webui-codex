@@ -82,11 +82,11 @@ class KohyaHRFixForForge(scripts.Script):
         if not enabled:
             return
 
-        unet = p.sd_model.forge_objects.unet
+        unet = p.sd_model.codex_objects.unet
 
         unet = opPatchModelAddDownscale.patch(unet, block_number, downscale_factor, start_percent, end_percent, downscale_after_skip, downscale_method, upscale_method)[0]
 
-        p.sd_model.forge_objects.unet = unet
+        p.sd_model.codex_objects.unet = unet
 
         p.extra_generation_params.update(dict(
             kohya_hrfix_enabled=enabled,

@@ -189,7 +189,7 @@ def apply_refiner(cfg_denoiser, x):
     cfg_denoiser.p.extra_generation_params['Refiner'] = refiner_checkpoint_info.short_title
     cfg_denoiser.p.extra_generation_params['Refiner switch at'] = refiner_switch_at
     
-    sampling_cleanup(sd_models.model_data.get_sd_model().forge_objects.unet)
+    sampling_cleanup(sd_models.model_data.get_sd_model().codex_objects.unet)
     
     with sd_models.SkipWritingToConfig():
         fp_checkpoint = getattr(shared.opts, 'sd_model_checkpoint')
@@ -207,7 +207,7 @@ def apply_refiner(cfg_denoiser, x):
     cfg_denoiser.p.setup_conds()
     cfg_denoiser.update_inner_model()
     
-    sampling_prepare(sd_models.model_data.get_sd_model().forge_objects.unet, x=x)
+    sampling_prepare(sd_models.model_data.get_sd_model().codex_objects.unet, x=x)
     return True
 
 

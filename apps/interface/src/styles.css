@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Tokens styled after A1111 dark theme */
+/* Tokens styled after Codex dark theme */
 :root,
 :root.light {
   --app-header-h: 3.25rem;
@@ -119,7 +119,7 @@
   .main-header-qs { padding-bottom: 0.25rem; }
   .main-content { flex: 1; padding: var(--space-lg) var(--content-px); display: flex; flex-direction: column; gap: var(--space-lg); background: hsla(0,0%,100%,0.02); }
 
-  /* Horizontal tabs (A1111-like) */
+  /* Horizontal tabs (Codex-like) */
   .tabs-nav { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem var(--content-px); padding-bottom: 0; border-bottom: 0.0625rem solid hsla(0,0%,100%,0.08); background: hsla(0,0%,100%,0.02); }
   .tab-link { padding: 0.45rem 0.85rem; border-radius: 0.5rem 0.5rem 0 0; border: 0.0625rem solid transparent; color: hsla(0,0%,100%,0.8); text-transform: lowercase; font-weight: 600; position: relative; top: 0; }
   .tab-link.router-link-active { background: var(--color-panel); border-color: var(--color-border); border-bottom-color: transparent; color: var(--color-foreground); margin-bottom: -0.0625rem; z-index: 2; }
@@ -237,7 +237,7 @@
   /* Icon button (shared) */
   .btn-icon { width: 2rem; height: 2rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 0.5rem; border: 0.0625rem solid hsla(0,0%,100%,0.12); background: hsla(0,0%,100%,0.06); }
   .btn-icon:hover { background: hsla(0,0%,100%,0.12); }
-  /* Unified slider style (A1111-like, centered thumb) */
+  /* Unified slider style (Codex-like, centered thumb) */
   .slider { width: 100%; appearance: none; -webkit-appearance: none; -moz-appearance: none; height: 1.75rem; background: transparent; }
   /* WebKit */
   .slider::-webkit-slider-runnable-track { height: 0.375rem; border-radius: 999rem; background: hsla(0,0%,100%,0.14); }

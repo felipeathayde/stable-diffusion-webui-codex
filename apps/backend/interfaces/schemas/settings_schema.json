@@ -1123,7 +1123,7 @@
     },
     {
       "key": "sd_model_checkpoint",
-      "label": "(Managed by Forge)",
+      "label": "(Managed by Codex)",
       "type": "text",
       "section": "sd",
       "default": null,
@@ -1159,7 +1159,7 @@
     },
     {
       "key": "CLIP_stop_at_last_layers",
-      "label": "(Managed by Forge)",
+      "label": "(Managed by Codex)",
       "type": "number",
       "section": "sd",
       "default": 1,
@@ -1247,7 +1247,7 @@
     },
     {
       "key": "sd_vae",
-      "label": "(Managed by Forge)",
+      "label": "(Managed by Codex)",
       "type": "text",
       "section": "vae",
       "default": "Automatic",
@@ -1354,7 +1354,7 @@
       "choices_source": "lambda"
     },
     {
-      "key": "forge_try_reproduce",
+      "key": "codex_try_reproduce",
       "label": "Try to reproduce the results from external software",
       "type": "radio",
       "section": "compatibility",

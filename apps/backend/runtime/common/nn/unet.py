@@ -54,7 +54,7 @@ def apply_control(h, control, name):
 
 def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
     # Consistent with Kohya to reduce differences between model training and inference.
-    # Will be 0.005% slower than ComfyUI but Forge outweigh image quality than speed.
+    # Will be 0.005% slower than ComfyUI but Codex prioritizes image quality over speed.
     if not repeat_only:
         half = dim // 2
         freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(device=timesteps.device)

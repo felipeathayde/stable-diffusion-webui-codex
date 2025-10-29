@@ -176,7 +176,7 @@ class CFGDenoiser(torch.nn.Module):
         uncond = prompt_parser.reconstruct_cond_batch(uncond, self.step) if uncond is not None else None
 
         if self.mask is not None:
-            predictor = self.inner_model.inner_model.forge_objects.unet.model.predictor
+            predictor = self.inner_model.inner_model.codex_objects.unet.model.predictor
             noisy_initial_latent = predictor.noise_scaling(sigma[:, None, None, None], torch.randn_like(self.init_latent).to(self.init_latent), self.init_latent, max_denoise=False)
             x = x * self.nmask + noisy_initial_latent * self.mask
 

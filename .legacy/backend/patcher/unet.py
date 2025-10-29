@@ -132,13 +132,13 @@ class UnetPatcher(ModelPatcher):
         class ExampleScript(scripts.Script):
 
             def process_batch(self, p, *args, **kwargs):
-                unet = p.sd_model.forge_objects.unet.clone()
+                unet = p.sd_model.codex_objects.unet.clone()
 
                 def modifier(x):
                     return x ** 0.5
 
                 unet.add_alphas_cumprod_modifier(modifier)
-                p.sd_model.forge_objects.unet = unet
+                p.sd_model.codex_objects.unet = unet
 
                 return
 

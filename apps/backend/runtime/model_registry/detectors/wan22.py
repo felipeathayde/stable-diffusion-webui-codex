@@ -7,13 +7,14 @@ import torch
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks
 from apps.backend.runtime.model_registry.specs import (
+    CodexCoreArchitecture,
+    CodexCoreSignature,
     LatentFormat,
     ModelFamily,
     ModelSignature,
     PredictionKind,
     QuantizationHint,
     TextEncoderSignature,
-    UNetSignature,
     VAESignature,
 )
 
@@ -47,7 +48,7 @@ class Wan22Detector(ModelDetector):
 
         num_layers = count_blocks(bundle.keys, f"{prefix}blocks.{{}}.")
 
-        model_type = _detect_model_type(bundle, prefix)
+        model_type = _detect_model_type(bundle, prefix, in_channels)
 
         vae_sig: Optional[VAESignature] = None
         vae_key = _find_key(bundle, "decoder.conv_out.weight", search_prefix="vae.")
@@ -60,6 +61,7 @@ class Wan22Detector(ModelDetector):
             "model_type": model_type,
             "patch_size": patch_size,
             "blocks": num_layers,
+            "channels_in": in_channels,
         }
 
         text_encoders = _collect_text_encoders(bundle, prefix)
@@ -70,7 +72,8 @@ class Wan22Detector(ModelDetector):
             prediction=PredictionKind.FLOW,
             latent_format=LatentFormat.WAN22,
             quantization=QuantizationHint(),
-            unet=UNetSignature(
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.DIT,
                 channels_in=in_channels,
                 channels_out=latent_channels,
                 context_dim=model_dim,
@@ -115,27 +118,6 @@ def _infer_latent_channels(head_shape: tuple[int, ...], patch_size: tuple[int, i
     return int(a)
 
 
-def _detect_model_type(bundle: SignalBundle, prefix: str) -> str:
-    checks = {
-        "vace": f"{prefix}vace_patch_embedding.weight",
-        "camera": f"{prefix}control_adapter.conv.weight",
-        "camera_2.2": f"{prefix}control_adapter.conv.weight",
-        "s2v": f"{prefix}casual_audio_encoder.encoder.final_linear.weight",
-        "humo": f"{prefix}audio_proj.audio_proj_glob_1.layer.bias",
-        "animate": f"{prefix}face_adapter.fuser_blocks.0.k_norm.weight",
-    }
-    for model_type, key in checks.items():
-        if key in bundle.state_dict:
-            if model_type == "camera" and f"{prefix}control_adapter.conv.weight" in bundle.state_dict:
-                if f"{prefix}img_emb.proj.0.bias" in bundle.state_dict:
-                    return "camera"
-                return "camera_2.2"
-            return model_type
-    if f"{prefix}img_emb.proj.0.bias" in bundle.state_dict:
-        return "i2v"
-    return "t2v"
-
-
 def _collect_text_encoders(bundle: SignalBundle, prefix: str) -> list[TextEncoderSignature]:
     encoders: list[TextEncoderSignature] = []
     # UMT5 XXL
@@ -178,6 +160,22 @@ def _find_key(bundle: SignalBundle, suffix: str, *, search_prefix: str | None = 
         if key.endswith(suffix):
             candidates.append(key)
     return min(candidates, key=len) if candidates else None
+
+
+def _detect_model_type(bundle: SignalBundle, prefix: str, in_channels: int) -> str:
+    checks = {
+        "vace": f"{prefix}vace_patch_embedding.weight",
+        "s2v": f"{prefix}casual_audio_encoder.encoder.final_linear.weight",
+        "animate": f"{prefix}face_adapter.fuser_blocks.0.k_norm.weight",
+    }
+    for model_type, key in checks.items():
+        if key in bundle.state_dict:
+            return model_type
+    if in_channels >= 48:
+        return "ti2v"
+    if f"{prefix}img_emb.proj.0.bias" in bundle.state_dict:
+        return "i2v"
+    return "t2v"
 
 
 REGISTRY.register(Wan22Detector())

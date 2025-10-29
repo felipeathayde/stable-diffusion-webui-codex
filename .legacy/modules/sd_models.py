@@ -461,8 +461,8 @@ def apply_token_merging(sd_model, token_merging_ratio):
 
     from backend.misc.tomesd import TomePatcher
 
-    sd_model.forge_objects.unet = TomePatcher().patch(
-        model=sd_model.forge_objects.unet,
+    sd_model.codex_objects.unet = TomePatcher().patch(
+        model=sd_model.codex_objects.unet,
         ratio=token_merging_ratio
     )
 

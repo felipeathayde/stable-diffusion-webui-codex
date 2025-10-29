@@ -134,7 +134,7 @@ class Img2ImgRuntime:
         # Prepare sampler
         algo = getattr(self.processing, "sampler_name", None)
         self.processing.sampler = CodexSampler(self.processing.sd_model, algorithm=algo)
-        latent_channels = getattr(self.processing.sd_model.forge_objects_after_applying_lora.vae, "latent_channels", 4)
+        latent_channels = getattr(self.processing.sd_model.codex_objects_after_applying_lora.vae, "latent_channels", 4)
         shape = (latent_channels, self.processing.height // 8, self.processing.width // 8)
         self._noise_settings = self._resolve_noise_settings()
 
@@ -153,8 +153,8 @@ class Img2ImgRuntime:
         noise = noise_rng.next().to(init_latent)
 
         # Apply LoRA and token merging
-        if hasattr(self.processing.sd_model, "forge_objects_original") and self.processing.sd_model.forge_objects_original is not None:
-            self.processing.sd_model.forge_objects = self.processing.sd_model.forge_objects_original.shallow_copy()
+        if hasattr(self.processing.sd_model, "codex_objects_original") and self.processing.sd_model.codex_objects_original is not None:
+            self.processing.sd_model.codex_objects = self.processing.sd_model.codex_objects_original.shallow_copy()
         # Merge global selections with prompt-local LoRAs
         try:
             selections = codex_lora.get_selections() + prompt_loras
@@ -171,7 +171,7 @@ class Img2ImgRuntime:
                 print(f"[native] img2img applied {stats.files} LoRA(s), {stats.params_touched} params touched")
             except Exception:
                 pass
-        self.processing.sd_model.forge_objects = self.processing.sd_model.forge_objects_after_applying_lora.shallow_copy()
+        self.processing.sd_model.codex_objects = self.processing.sd_model.codex_objects_after_applying_lora.shallow_copy()
         # Controls: clip_skip, sampler, scheduler, token merge
         try:
             cs = int(prompt_controls.get('clip_skip')) if 'clip_skip' in prompt_controls else None

@@ -1,7 +1,9 @@
 import torch
 import safetensors.torch as sf
 
-class ForgeObjects:
+from apps.backend.runtime.adapters import utils
+
+class CodexObjects:
     def __init__(self, unet, clip, vae, clipvision):
         self.unet = unet
         self.clip = clip
@@ -9,7 +11,7 @@ class ForgeObjects:
         self.clipvision = clipvision
 
     def shallow_copy(self):
-        return ForgeObjects(
+        return CodexObjects(
             self.unet,
             self.clip,
             self.vae,
@@ -17,16 +19,16 @@ class ForgeObjects:
         )
 
 
-class ForgeDiffusionEngine:
+class CodexDiffusionEngine:
     matched_guesses: tuple = ()
 
-    def __init__(self, estimated_config, huggingface_components):
+    def __init__(self, estimated_config, codex_components):
         self.model_config = estimated_config
         self.is_inpaint = estimated_config.inpaint_model()
 
-        self.forge_objects = None
-        self.forge_objects_original = None
-        self.forge_objects_after_applying_lora = None
+        self.codex_objects = None
+        self.codex_objects_original = None
+        self.codex_objects_after_applying_lora = None
 
         self.current_lora_hash = str([])
 
@@ -65,53 +67,6 @@ class ForgeDiffusionEngine:
         return
 
     def save_unet(self, filename):
-        sd = utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model)
+        sd = utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model)
         sf.save_file(sd, filename)
         return filename
-
-    def save_checkpoint(self, filename):
-        sd = {}
-        sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
-        )
-        sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.clip.cond_stage_model, prefix='text_encoders.')
-        )
-        sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.vae.first_stage_model, prefix='vae.')
-        )
-        sf.save_file(sd, filename)
-        return filename
-
-
-# Forward-looking aliases using Codex naming. Keep legacy Forge* for compat.
-class CodexObjects(ForgeObjects):
-    pass
-
-
-class CodexDiffusionEngine(ForgeDiffusionEngine):
-    # Provide property aliases so code may use codex_* while legacy modules still use forge_*
-    @property
-    def codex_objects(self):  # noqa: D401
-        """Alias to forge_objects for migration."""
-        return self.forge_objects
-
-    @codex_objects.setter
-    def codex_objects(self, value):
-        self.forge_objects = value
-
-    @property
-    def codex_objects_original(self):
-        return self.forge_objects_original
-
-    @codex_objects_original.setter
-    def codex_objects_original(self, value):
-        self.forge_objects_original = value
-
-    @property
-    def codex_objects_after_applying_lora(self):
-        return self.forge_objects_after_applying_lora
-
-    @codex_objects_after_applying_lora.setter
-    def codex_objects_after_applying_lora(self, value):
-        self.forge_objects_after_applying_lora = value

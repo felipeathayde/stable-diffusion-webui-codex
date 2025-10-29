@@ -935,13 +935,13 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
                 # hiresfix quickbutton may not need reload of firstpass model
                 sd_models.forge_model_reload()  # model can be changed for example by refiner, hiresfix
 
-            p.sd_model.forge_objects = p.sd_model.forge_objects_original.shallow_copy()
+            p.sd_model.codex_objects = p.sd_model.codex_objects_original.shallow_copy()
             p.prompts = p.all_prompts[n * p.batch_size:(n + 1) * p.batch_size]
             p.negative_prompts = p.all_negative_prompts[n * p.batch_size:(n + 1) * p.batch_size]
             p.seeds = p.all_seeds[n * p.batch_size:(n + 1) * p.batch_size]
             p.subseeds = p.all_subseeds[n * p.batch_size:(n + 1) * p.batch_size]
 
-            latent_channels = shared.sd_model.forge_objects.vae.latent_channels
+            latent_channels = shared.sd_model.codex_objects.vae.latent_channels
             p.rng = rng.ImageRNG((latent_channels, p.height // opt_f, p.width // opt_f), p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength, seed_resize_from_h=p.seed_resize_from_h, seed_resize_from_w=p.seed_resize_from_w)
 
             if p.scripts is not None:
@@ -955,7 +955,7 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
             if not p.disable_extra_networks:
                 extra_networks.activate(p, p.extra_network_data)
 
-            p.sd_model.forge_objects = p.sd_model.forge_objects_after_applying_lora.shallow_copy()
+            p.sd_model.codex_objects = p.sd_model.codex_objects_after_applying_lora.shallow_copy()
 
             if p.scripts is not None:
                 p.scripts.process_batch(p, batch_number=n, prompts=p.prompts, seeds=p.seeds, subseeds=p.subseeds)
@@ -985,8 +985,8 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
             sigmas_backup = None
             if (opts.sd_noise_schedule == "Zero Terminal SNR" or (hasattr(p.sd_model.model_config, 'ztsnr') and p.sd_model.model_config.ztsnr)) and p is not None:
                 p.extra_generation_params['Noise Schedule'] = opts.sd_noise_schedule
-                sigmas_backup = p.sd_model.forge_objects.unet.model.predictor.sigmas
-                p.sd_model.forge_objects.unet.model.predictor.set_sigmas(rescale_zero_terminal_snr_sigmas(p.sd_model.forge_objects.unet.model.predictor.sigmas))
+                sigmas_backup = p.sd_model.codex_objects.unet.model.predictor.sigmas
+                p.sd_model.codex_objects.unet.model.predictor.set_sigmas(rescale_zero_terminal_snr_sigmas(p.sd_model.codex_objects.unet.model.predictor.sigmas))
 
             samples_ddim = p.sample(conditioning=p.c, unconditional_conditioning=p.uc, seeds=p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength, prompts=p.prompts)
 
@@ -994,7 +994,7 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
                 p.latents_after_sampling.append(x_sample)
 
             if sigmas_backup is not None:
-                p.sd_model.forge_objects.unet.model.predictor.set_sigmas(sigmas_backup)
+                p.sd_model.codex_objects.unet.model.predictor.set_sigmas(sigmas_backup)
 
             if p.scripts is not None:
                 ps = scripts.PostSampleArgs(samples_ddim)
@@ -1442,7 +1442,7 @@ class StableDiffusionProcessingTxt2Img(StableDiffusionProcessing):
                 uc=self.hr_uc,
             )
 
-        self.sd_model.forge_objects = self.sd_model.forge_objects_after_applying_lora.shallow_copy()
+        self.sd_model.codex_objects = self.sd_model.codex_objects_after_applying_lora.shallow_copy()
         apply_token_merging(self.sd_model, self.get_token_merging_ratio(for_hr=True))
 
         if self.scripts is not None:
@@ -1775,7 +1775,7 @@ class StableDiffusionProcessingImg2Img(StableDiffusionProcessing):
             self.extra_generation_params["Noise multiplier"] = self.initial_noise_multiplier
             x *= self.initial_noise_multiplier
 
-        self.sd_model.forge_objects = self.sd_model.forge_objects_after_applying_lora.shallow_copy()
+        self.sd_model.codex_objects = self.sd_model.codex_objects_after_applying_lora.shallow_copy()
         apply_token_merging(self.sd_model, self.get_token_merging_ratio())
 
         if self.scripts is not None:

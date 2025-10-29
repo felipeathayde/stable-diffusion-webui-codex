@@ -30,7 +30,7 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
 
     # Native LoRA application (errors propagate)
     sels = codex_lora.get_selections()
-    if sels and hasattr(engine, 'forge_objects_after_applying_lora'):
+    if sels and hasattr(engine, 'codex_objects_after_applying_lora'):
         apply_loras_to_engine(engine, sels)
         if logger:
             logger.info("[native] img2vid applied %d LoRA(s)", len(sels))

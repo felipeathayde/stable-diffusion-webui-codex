@@ -28,7 +28,7 @@ class CompVisTimestepsDenoiser(torch.nn.Module):
     def __init__(self, model, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.inner_model = model
-        self.inner_model.alphas_cumprod = 1.0 / (self.inner_model.forge_objects.unet.model.predictor.sigmas ** 2.0 + 1.0)
+        self.inner_model.alphas_cumprod = 1.0 / (self.inner_model.codex_objects.unet.model.predictor.sigmas ** 2.0 + 1.0)
 
     def forward(self, input, timesteps, **kwargs):
         return self.inner_model.apply_model(input, timesteps, **kwargs)
@@ -72,8 +72,8 @@ class CompVisSampler(sd_samplers_common.Sampler):
         return timesteps
 
     def sample_img2img(self, p, x, noise, conditioning, unconditional_conditioning, steps=None, image_conditioning=None):
-        unet_patcher = self.model_wrap.inner_model.forge_objects.unet
-        sampling_prepare(self.model_wrap.inner_model.forge_objects.unet, x=x)
+        unet_patcher = self.model_wrap.inner_model.codex_objects.unet
+        sampling_prepare(self.model_wrap.inner_model.codex_objects.unet, x=x)
 
         self.model_wrap.inner_model.alphas_cumprod = self.model_wrap.inner_model.alphas_cumprod.to(x.device)
 
@@ -122,8 +122,8 @@ class CompVisSampler(sd_samplers_common.Sampler):
         return samples
 
     def sample(self, p, x, conditioning, unconditional_conditioning, steps=None, image_conditioning=None):
-        unet_patcher = self.model_wrap.inner_model.forge_objects.unet
-        sampling_prepare(self.model_wrap.inner_model.forge_objects.unet, x=x)
+        unet_patcher = self.model_wrap.inner_model.codex_objects.unet
+        sampling_prepare(self.model_wrap.inner_model.codex_objects.unet, x=x)
 
         self.model_wrap.inner_model.alphas_cumprod = self.model_wrap.inner_model.alphas_cumprod.to(x.device)
 

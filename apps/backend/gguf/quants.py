@@ -324,7 +324,7 @@ class Q4_0(__Quant, qtype=GGMLQuantizationType.Q4_0):
 
     @classmethod
     def quantize_blocks_pytorch(cls, blocks, block_size, type_size, parent) -> torch.Tensor:
-        # Copyright Forge 2024, AGPL V3 + CC-BY SA
+        # Copyright Codex 2024, AGPL V3 + CC-BY SA
 
         n_blocks = blocks.shape[0]
 
@@ -468,7 +468,7 @@ class Q5_0(__Quant, qtype=GGMLQuantizationType.Q5_0):
 
     @classmethod
     def quantize_blocks_pytorch(cls, blocks, block_size, type_size, parent) -> torch.Tensor:
-        # Copyright Forge 2024, AGPL V3 + CC-BY SA
+        # Copyright Codex 2024, AGPL V3 + CC-BY SA
 
         n_blocks = blocks.shape[0]
 
@@ -612,7 +612,7 @@ class Q8_0(__Quant, qtype=GGMLQuantizationType.Q8_0):
 
     @classmethod
     def quantize_blocks_pytorch(cls, blocks, block_size, type_size, parent) -> torch.Tensor:
-        # Copyright Forge 2024, AGPL V3 + CC-BY SA
+        # Copyright Codex 2024, AGPL V3 + CC-BY SA
         d = torch.abs(blocks).max(dim=1, keepdim=True).values / 127
         ids = torch.where(d == 0, torch.zeros_like(d), 1 / d)
         qs = torch.round(blocks * ids)
@@ -790,7 +790,7 @@ class Q4_K(__Quant, qtype=GGMLQuantizationType.Q4_K):
 
     @classmethod
     def bake_inner(cls, parameter):  # Only compute one time when model load
-        # Copyright Forge 2024
+        # Copyright Codex 2024
 
         blocks = parameter.data
         n_blocks = blocks.shape[0]

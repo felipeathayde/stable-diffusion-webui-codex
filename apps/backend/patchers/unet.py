@@ -35,7 +35,7 @@ class UnetPatcher(ModelPatcher):
         return n
 
     def add_extra_preserved_memory_during_sampling(self, memory_in_bytes: int):
-        # Use this to ask Forge to preserve a certain amount of memory during sampling.
+        # Use this to ask Codex to preserve a certain amount of memory during sampling.
         # If GPU VRAM is 8 GB, and memory_in_bytes is 2GB, i.e., memory_in_bytes = 2 * 1024 * 1024 * 1024
         # Then the sampling will always use less than 6GB memory by dynamically offload modules to CPU RAM.
         # You can estimate this using memory_management.module_size(any_pytorch_model) to get size of any pytorch models.
@@ -43,17 +43,17 @@ class UnetPatcher(ModelPatcher):
         return
 
     def add_extra_model_patcher_during_sampling(self, model_patcher: ModelPatcher):
-        # Use this to ask Forge to move extra model patchers to GPU during sampling.
+        # Use this to ask Codex to move extra model patchers to GPU during sampling.
         # This method will manage GPU memory perfectly.
         self.extra_model_patchers_during_sampling.append(model_patcher)
         return
 
     def add_extra_torch_module_during_sampling(self, m: torch.nn.Module, cast_to_unet_dtype: bool = True):
         # Use this method to bind an extra torch.nn.Module to this UNet during sampling.
-        # This model `m` will be delegated to Forge memory management system.
+        # This model `m` will be delegated to Codex memory management system.
         # `m` will be loaded to GPU everytime when sampling starts.
         # `m` will be unloaded if necessary.
-        # `m` will influence Forge's judgement about use GPU memory or
+        # `m` will influence Codex's judgement about use GPU memory or
         # capacity and decide whether to use module offload to make user's batch size larger.
         # Use cast_to_unet_dtype if you want `m` to have same dtype with unet during sampling.
 
@@ -125,20 +125,20 @@ class UnetPatcher(ModelPatcher):
     def add_alphas_cumprod_modifier(self, modifier, ensure_uniqueness=False):
         """
 
-        For some reasons, this function only works in A1111's Script.process_batch(self, p, *args, **kwargs)
+        For some reasons, this function only works in Codex's Script.process_batch(self, p, *args, **kwargs)
 
         For example, below is a worked modification:
 
         class ExampleScript(scripts.Script):
 
             def process_batch(self, p, *args, **kwargs):
-                unet = p.sd_model.forge_objects.unet.clone()
+                unet = p.sd_model.codex_objects.unet.clone()
 
                 def modifier(x):
                     return x ** 0.5
 
                 unet.add_alphas_cumprod_modifier(modifier)
-                p.sd_model.forge_objects.unet = unet
+                p.sd_model.codex_objects.unet = unet
 
                 return
 

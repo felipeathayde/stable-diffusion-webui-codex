@@ -1,4 +1,4 @@
-# Copyright Forge 2024
+# Copyright Codex 2024
 
 import time
 import torch
@@ -17,7 +17,7 @@ stash = {}
 
 def get_weight_and_bias(layer, weight_args=None, bias_args=None, weight_fn=None, bias_fn=None):
     scale_weight = getattr(layer, 'scale_weight', None)
-    patches = getattr(layer, 'forge_online_loras', None)
+    patches = getattr(layer, 'codex_online_loras', None)
     weight_patches, bias_patches = None, None
 
     if patches is not None:
@@ -126,7 +126,7 @@ current_manual_cast_enabled = False
 current_bnb_dtype = None
 
 
-class ForgeOperations:
+class CodexOperations:
     class Linear(torch.nn.Module):
         def __init__(self, in_features, out_features, *args, **kwargs):
             super().__init__()
@@ -365,10 +365,10 @@ class ForgeOperations:
 
 
 try:
-    from .operations_bnb import ForgeLoader4Bit, ForgeParams4bit, functional_linear_4bits, functional_dequantize_4bit
+    from .operations_bnb import CodexLoader4Bit, CodexParams4bit, functional_linear_4bits, functional_dequantize_4bit
 
-    class ForgeOperationsBNB4bits(ForgeOperations):
-        class Linear(ForgeLoader4Bit):
+    class CodexOperationsBNB4bits(CodexOperations):
+        class Linear(CodexLoader4Bit):
             def __init__(self, *args, **kwargs):
                 super().__init__(device=current_device, dtype=current_dtype, quant_type=current_bnb_dtype)
                 self.parameters_manual_cast = current_manual_cast_enabled
@@ -379,7 +379,7 @@ try:
                     # And it only invokes one time, and most linear does not have bias
                     self.bias = utils.tensor2parameter(self.bias.to(x.dtype))
 
-                if hasattr(self, 'forge_online_loras'):
+                if hasattr(self, 'codex_online_loras'):
                     weight, bias, signal = weights_manual_cast(self, x, weight_fn=functional_dequantize_4bit, bias_fn=None, skip_bias_dtype=True)
                     with main_stream_worker(weight, bias, signal):
                         return torch.nn.functional.linear(x, weight, bias)
@@ -404,7 +404,7 @@ except Exception:
     bnb_avaliable = False
 
 
-class ForgeOperationsGGUF(ForgeOperations):
+class CodexOperationsGGUF(CodexOperations):
     class Linear(torch.nn.Module):
         def __init__(self, *args, **kwargs):
             super().__init__()
@@ -488,18 +488,18 @@ class ForgeOperationsGGUF(ForgeOperations):
 
 
 @contextlib.contextmanager
-def using_forge_operations(operations=None, device=None, dtype=None, manual_cast_enabled=False, bnb_dtype=None):
+def using_codex_operations(operations=None, device=None, dtype=None, manual_cast_enabled=False, bnb_dtype=None):
     global current_device, current_dtype, current_manual_cast_enabled, current_bnb_dtype
 
     current_device, current_dtype, current_manual_cast_enabled, current_bnb_dtype = device, dtype, manual_cast_enabled, bnb_dtype
 
     if operations is None:
         if bnb_dtype in ['gguf']:
-            operations = ForgeOperationsGGUF
+            operations = CodexOperationsGGUF
         elif bnb_avaliable and bnb_dtype in ['nf4', 'fp4']:
-            operations = ForgeOperationsBNB4bits
+            operations = CodexOperationsBNB4bits
         else:
-            operations = ForgeOperations
+            operations = CodexOperations
 
     op_names = ['Linear', 'Conv1d', 'Conv2d', 'Conv3d', 'ConvTranspose1d', 'ConvTranspose2d', 'ConvTranspose3d', 'GroupNorm', 'LayerNorm', 'Embedding']
     backups = {op_name: getattr(torch.nn, op_name) for op_name in op_names}
@@ -568,7 +568,7 @@ class DynamicSwapInstaller:
     @staticmethod
     def _install_module(module: torch.nn.Module, target_device: torch.device):
         original_class = module.__class__
-        module.__dict__['forge_backup_original_class'] = original_class
+        module.__dict__['codex_backup_original_class'] = original_class
 
         def hacked_get_attr(self, name: str):
             if '_parameters' in self.__dict__:
@@ -595,8 +595,8 @@ class DynamicSwapInstaller:
 
     @staticmethod
     def _uninstall_module(module: torch.nn.Module):
-        if 'forge_backup_original_class' in module.__dict__:
-            module.__class__ = module.__dict__.pop('forge_backup_original_class')
+        if 'codex_backup_original_class' in module.__dict__:
+            module.__class__ = module.__dict__.pop('codex_backup_original_class')
         return
 
     @staticmethod

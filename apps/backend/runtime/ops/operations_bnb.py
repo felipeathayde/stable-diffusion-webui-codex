@@ -1,4 +1,4 @@
-# Copyright Forge 2024
+# Copyright Codex 2024
 
 import torch
 import bitsandbytes as bnb
@@ -63,7 +63,7 @@ def copy_quant_state(state: QuantState, device: torch.device = None) -> QuantSta
     )
 
 
-class ForgeParams4bit(Params4bit):
+class CodexParams4bit(Params4bit):
     def _quantize(self, device):
         memory_management.signal_empty_cache = True
         return super()._quantize(device)
@@ -73,7 +73,7 @@ class ForgeParams4bit(Params4bit):
         if device is not None and device.type == "cuda" and not self.bnb_quantized:
             return self._quantize(device)
         else:
-            return ForgeParams4bit(
+            return CodexParams4bit(
                 torch.nn.Parameter.to(self, device=device, dtype=dtype, non_blocking=non_blocking),
                 requires_grad=self.requires_grad,
                 quant_state=copy_quant_state(self.quant_state, device),
@@ -85,7 +85,7 @@ class ForgeParams4bit(Params4bit):
             )
 
     def pin_memory(self, device=None):
-        return ForgeParams4bit(
+        return CodexParams4bit(
             torch.Tensor.pin_memory(self, device=device),
             requires_grad=self.requires_grad,
             quant_state=self.quant_state,
@@ -97,7 +97,7 @@ class ForgeParams4bit(Params4bit):
         )
 
 
-class ForgeLoader4Bit(torch.nn.Module):
+class CodexLoader4Bit(torch.nn.Module):
     def __init__(self, *, device, dtype, quant_type, **kwargs):
         super().__init__()
         self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
@@ -124,7 +124,7 @@ class ForgeLoader4Bit(torch.nn.Module):
         if any('bitsandbytes' in k for k in quant_state_keys):
             quant_state_dict = {k: state_dict[prefix + "weight." + k] for k in quant_state_keys}
 
-            self.weight = ForgeParams4bit.from_prequantized(
+            self.weight = CodexParams4bit.from_prequantized(
                 data=state_dict[prefix + 'weight'],
                 quantized_stats=quant_state_dict,
                 requires_grad=False,
@@ -137,7 +137,7 @@ class ForgeLoader4Bit(torch.nn.Module):
             del self.dummy
         elif hasattr(self, 'dummy'):
             if prefix + 'weight' in state_dict:
-                self.weight = ForgeParams4bit(
+                self.weight = CodexParams4bit(
                     state_dict[prefix + 'weight'].to(self.dummy),
                     requires_grad=False,
                     compress_statistics=False,
@@ -155,7 +155,7 @@ class ForgeLoader4Bit(torch.nn.Module):
 
     def reload_weight(self, weight):
         weight_original_device = weight.device
-        weight = ForgeParams4bit(
+        weight = CodexParams4bit(
             weight,
             requires_grad=False,
             compress_statistics=self.weight.compress_statistics,

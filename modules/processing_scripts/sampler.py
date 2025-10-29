@@ -26,7 +26,7 @@ class ScriptSampler(scripts.ScriptBuiltinUI):
         sampler_names = allowed_samplers(str(engine_key), task)
         scheduler_names = allowed_schedulers(str(engine_key), task)
 
-        preset = getattr(shared.opts, 'forge_preset', 'all')
+        preset = getattr(shared.opts, 'codex_preset', 'all')
         def _defaults(tab: str):
             if preset == 'xl':
                 return (

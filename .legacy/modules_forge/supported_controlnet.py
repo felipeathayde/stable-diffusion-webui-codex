@@ -146,7 +146,7 @@ class ControlNetPatcher(ControlModelPatcher):
         super().__init__(model_patcher)
 
     def process_before_every_sampling(self, process, cond, mask, *args, **kwargs):
-        unet = process.sd_model.forge_objects.unet
+        unet = process.sd_model.codex_objects.unet
 
         unet = apply_controlnet_advanced(
             unet=unet,
@@ -162,7 +162,7 @@ class ControlNetPatcher(ControlModelPatcher):
             advanced_mask_weighting=self.advanced_mask_weighting
         )
 
-        process.sd_model.forge_objects.unet = unet
+        process.sd_model.codex_objects.unet = unet
         return
 
 

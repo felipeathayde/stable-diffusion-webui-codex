@@ -71,9 +71,9 @@ class StableDiffusionXL(ForgeDiffusionEngine):
 
         self.embedder = Timestep(256)
 
-        self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
-        self.forge_objects_original = self.forge_objects.shallow_copy()
-        self.forge_objects_after_applying_lora = self.forge_objects.shallow_copy()
+        self.codex_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
+        self.codex_objects_original = self.codex_objects.shallow_copy()
+        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
         # WebUI Legacy
         self.is_sdxl = True
@@ -84,7 +84,7 @@ class StableDiffusionXL(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
-        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+        memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
         cond_l = self.text_processing_engine_l(prompt)
         cond_g, clip_pooled = self.text_processing_engine_g(prompt)
@@ -127,28 +127,28 @@ class StableDiffusionXL(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x):
-        sample = self.forge_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.forge_objects.vae.first_stage_model.process_in(sample)
+        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
     def decode_first_stage(self, x):
-        sample = self.forge_objects.vae.first_stage_model.process_out(x)
-        sample = self.forge_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+        sample = self.codex_objects.vae.first_stage_model.process_out(x)
+        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
 
     def save_checkpoint(self, filename):
         sd = {}
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
         )
         sd.update(
             model_list.SDXL.process_clip_state_dict_for_saving(self,
-                utils.get_state_dict_after_quant(self.forge_objects.clip.cond_stage_model, prefix='')
+                utils.get_state_dict_after_quant(self.codex_objects.clip.cond_stage_model, prefix='')
             )
         )
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.vae.first_stage_model, prefix='first_stage_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.vae.first_stage_model, prefix='first_stage_model.')
         )
         sf.save_file(sd, filename)
         return filename
@@ -193,9 +193,9 @@ class StableDiffusionXLRefiner(ForgeDiffusionEngine):
 
         self.embedder = Timestep(256)
 
-        self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
-        self.forge_objects_original = self.forge_objects.shallow_copy()
-        self.forge_objects_after_applying_lora = self.forge_objects.shallow_copy()
+        self.codex_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
+        self.codex_objects_original = self.codex_objects.shallow_copy()
+        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
         # WebUI Legacy
         self.is_sdxl = True
@@ -205,7 +205,7 @@ class StableDiffusionXLRefiner(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
-        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+        memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
         cond_g, clip_pooled = self.text_processing_engine_g(prompt)
 
@@ -245,28 +245,28 @@ class StableDiffusionXLRefiner(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x):
-        sample = self.forge_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.forge_objects.vae.first_stage_model.process_in(sample)
+        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
     def decode_first_stage(self, x):
-        sample = self.forge_objects.vae.first_stage_model.process_out(x)
-        sample = self.forge_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+        sample = self.codex_objects.vae.first_stage_model.process_out(x)
+        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
 
     def save_checkpoint(self, filename):
         sd = {}
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
         )
         sd.update(
             model_list.SDXLRefiner.process_clip_state_dict_for_saving(self,
-                utils.get_state_dict_after_quant(self.forge_objects.clip.cond_stage_model, prefix='')
+                utils.get_state_dict_after_quant(self.codex_objects.clip.cond_stage_model, prefix='')
             )
         )
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.vae.first_stage_model, prefix='first_stage_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.vae.first_stage_model, prefix='first_stage_model.')
         )
         sf.save_file(sd, filename)
         return filename

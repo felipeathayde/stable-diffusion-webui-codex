@@ -27,9 +27,9 @@ class ForgeDiffusionEngine:
         self.model_config = estimated_config
         self.is_inpaint = estimated_config.inpaint_model()
 
-        self.forge_objects = None
-        self.forge_objects_original = None
-        self.forge_objects_after_applying_lora = None
+        self.codex_objects = None
+        self.codex_objects_original = None
+        self.codex_objects_after_applying_lora = None
 
         self.current_lora_hash = str([])
 
@@ -68,20 +68,20 @@ class ForgeDiffusionEngine:
         return
 
     def save_unet(self, filename):
-        sd = utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model)
+        sd = utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model)
         sf.save_file(sd, filename)
         return filename
 
     def save_checkpoint(self, filename):
         sd = {}
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
         )
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.clip.cond_stage_model, prefix='text_encoders.')
+            utils.get_state_dict_after_quant(self.codex_objects.clip.cond_stage_model, prefix='text_encoders.')
         )
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.vae.first_stage_model, prefix='vae.')
+            utils.get_state_dict_after_quant(self.codex_objects.vae.first_stage_model, prefix='vae.')
         )
         sf.save_file(sd, filename)
         return filename

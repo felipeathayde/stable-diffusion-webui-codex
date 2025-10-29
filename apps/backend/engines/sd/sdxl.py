@@ -24,25 +24,26 @@ def _opts():
 
 
 class StableDiffusionXL(CodexDiffusionEngine):
-    def __init__(self, estimated_config, huggingface_components):
-        super().__init__(estimated_config, huggingface_components)
+    def __init__(self, estimated_config, codex_components):
+        super().__init__(estimated_config, codex_components)
 
         clip = CLIP(
             model_dict={
-                'clip_l': huggingface_components['text_encoder'],
-                'clip_g': huggingface_components['text_encoder_2']
+                'clip_l': codex_components['text_encoder'],
+                'clip_g': codex_components['text_encoder_2']
             },
             tokenizer_dict={
-                'clip_l': huggingface_components['tokenizer'],
-                'clip_g': huggingface_components['tokenizer_2']
-            }
+                'clip_l': codex_components['tokenizer'],
+                'clip_g': codex_components['tokenizer_2']
+            },
+            model_config=estimated_config,
         )
 
-        vae = VAE(model=huggingface_components['vae'])
+        vae = VAE(model=codex_components['vae'])
 
         unet = UnetPatcher.from_model(
-            model=huggingface_components['unet'],
-            diffusers_scheduler=huggingface_components['scheduler'],
+            model=codex_components['unet'],
+            diffusers_scheduler=codex_components['scheduler'],
             config=estimated_config
         )
 
@@ -145,38 +146,35 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def save_checkpoint(self, filename):
         sd = {}
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
         )
         sd.update(
             model_list.SDXL.process_clip_state_dict_for_saving(self,
-                utils.get_state_dict_after_quant(self.forge_objects.clip.cond_stage_model, prefix='')
+                utils.get_state_dict_after_quant(self.codex_objects.clip.cond_stage_model, prefix='')
             )
         )
         sd.update(
-            utils.get_state_dict_after_quant(self.forge_objects.vae.first_stage_model, prefix='first_stage_model.')
+            utils.get_state_dict_after_quant(self.codex_objects.vae.first_stage_model, prefix='first_stage_model.')
         )
         sf.save_file(sd, filename)
         return filename
 
 
 class StableDiffusionXLRefiner(CodexDiffusionEngine):
-    def __init__(self, estimated_config, huggingface_components):
-        super().__init__(estimated_config, huggingface_components)
+    def __init__(self, estimated_config, codex_components):
+        super().__init__(estimated_config, codex_components)
 
         clip = CLIP(
-            model_dict={
-                'clip_g': huggingface_components['text_encoder']
-            },
-            tokenizer_dict={
-                'clip_g': huggingface_components['tokenizer'],
-            }
+            model_dict={'clip_g': codex_components['text_encoder']},
+            tokenizer_dict={'clip_g': codex_components['tokenizer']},
+            model_config=estimated_config,
         )
 
-        vae = VAE(model=huggingface_components['vae'])
+        vae = VAE(model=codex_components['vae'])
 
         unet = UnetPatcher.from_model(
-            model=huggingface_components['unet'],
-            diffusers_scheduler=huggingface_components['scheduler'],
+            model=codex_components['unet'],
+            diffusers_scheduler=codex_components['scheduler'],
             config=estimated_config
         )
 

@@ -72,12 +72,12 @@ class FooocusInpaintPatcher(ControlModelPatcher):
         cond_original = kwargs['cond_original']
         mask_original = kwargs['mask_original']
 
-        unet_original = process.sd_model.forge_objects.unet.clone()
-        unet = process.sd_model.forge_objects.unet.clone()
-        vae = process.sd_model.forge_objects.vae
+        unet_original = process.sd_model.codex_objects.unet.clone()
+        unet = process.sd_model.codex_objects.unet.clone()
+        vae = process.sd_model.codex_objects.vae
 
         latent_image = vae.encode(cond_original.movedim(1, -1))
-        latent_image = process.sd_model.forge_objects.vae.first_stage_model.process_in(latent_image)
+        latent_image = process.sd_model.codex_objects.vae.first_stage_model.process_in(latent_image)
         latent_mask = torch.nn.functional.max_pool2d(mask_original, (8, 8)).round().to(cond)
         feed = torch.cat([
             latent_mask.to(device=torch.device('cpu'), dtype=torch.float32),
@@ -124,7 +124,7 @@ class FooocusInpaintPatcher(ControlModelPatcher):
 
         unet.add_conditioning_modifier(conditioning_modifier)
 
-        process.sd_model.forge_objects.unet = unet
+        process.sd_model.codex_objects.unet = unet
         return
 
 

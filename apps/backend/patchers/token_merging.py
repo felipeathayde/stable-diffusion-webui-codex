@@ -86,7 +86,7 @@ def apply_token_merging(engine, ratio: float | int | None, strategy: str | None 
     - Ratio in [0,1). 0 disables. Values >= 0.95 are capped.
     """
     r = float(ratio or 0.0)
-    unet_patcher = getattr(getattr(engine, "forge_objects", engine), "unet", None)
+    unet_patcher = getattr(getattr(engine, "codex_objects", None), "unet", None)
     if unet_patcher is None:
         return
     # Clear previous setting if turning off

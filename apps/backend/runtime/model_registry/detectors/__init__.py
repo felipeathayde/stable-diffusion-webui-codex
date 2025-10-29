@@ -6,8 +6,10 @@ from .sd_v1 import StableDiffusionV1Detector
 from .sd3 import StableDiffusion3Detector
 from .flux import FluxDetector, FluxSchnellDetector
 from .aura import AuraFlowDetector
+from .chroma import ChromaDetector
 from .stable_cascade import StableCascadeStageBDetector, StableCascadeStageCDetector
 from .wan22 import Wan22Detector
+from .qwen_image import QwenImageDetector
 
 __all__ = [
     "StableDiffusionV1Detector",
@@ -15,7 +17,9 @@ __all__ = [
     "FluxDetector",
     "FluxSchnellDetector",
     "AuraFlowDetector",
+    "ChromaDetector",
     "StableCascadeStageBDetector",
     "StableCascadeStageCDetector",
     "Wan22Detector",
+    "QwenImageDetector",
 ]

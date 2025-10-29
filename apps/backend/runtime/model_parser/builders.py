@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+from typing import Dict
+
+from apps.backend.runtime.model_registry.specs import ModelSignature, QuantizationHint, QuantizationKind, ModelFamily
+
+from .errors import ValidationError
+from .specs import CodexComponent, CodexEstimatedConfig, ParserContext
+from .quantization import detect_quantization
+
+
+_CORE_CONFIG_PRESETS: Dict[ModelFamily, Dict[str, object]] = {
+    ModelFamily.SD15: {
+        "use_checkpoint": False,
+        "image_size": 32,
+        "out_channels": 4,
+        "use_spatial_transformer": True,
+        "legacy": False,
+        "adm_in_channels": None,
+        "in_channels": 4,
+        "model_channels": 320,
+        "num_res_blocks": [2, 2, 2, 2],
+        "transformer_depth": [1, 1, 1, 1, 1, 1, 0, 0],
+        "channel_mult": [1, 2, 4, 4],
+        "transformer_depth_middle": 1,
+        "use_linear_in_transformer": False,
+        "context_dim": 768,
+        "num_head_channels": 64,
+        "transformer_depth_output": [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0],
+        "use_temporal_attention": False,
+        "use_temporal_resblock": False,
+    },
+    ModelFamily.SD20: {
+        "use_checkpoint": False,
+        "image_size": 32,
+        "out_channels": 4,
+        "use_spatial_transformer": True,
+        "legacy": False,
+        "adm_in_channels": None,
+        "in_channels": 4,
+        "model_channels": 320,
+        "num_res_blocks": [2, 2, 2, 2],
+        "transformer_depth": [1, 1, 1, 1, 1, 1, 0, 0],
+        "channel_mult": [1, 2, 4, 4],
+        "transformer_depth_middle": 1,
+        "use_linear_in_transformer": True,
+        "context_dim": 1024,
+        "num_head_channels": 64,
+        "transformer_depth_output": [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0],
+        "use_temporal_attention": False,
+        "use_temporal_resblock": False,
+    },
+    ModelFamily.SDXL: {
+        "use_checkpoint": False,
+        "image_size": 32,
+        "out_channels": 4,
+        "use_spatial_transformer": True,
+        "legacy": False,
+        "num_classes": "sequential",
+        "adm_in_channels": 2816,
+        "in_channels": 4,
+        "model_channels": 320,
+        "num_res_blocks": [2, 2, 2],
+        "transformer_depth": [0, 0, 2, 2, 10, 10],
+        "channel_mult": [1, 2, 4],
+        "transformer_depth_middle": 10,
+        "use_linear_in_transformer": True,
+        "context_dim": 2048,
+        "num_head_channels": 64,
+        "transformer_depth_output": [0, 0, 0, 2, 2, 2, 10, 10, 10],
+        "use_temporal_attention": False,
+        "use_temporal_resblock": False,
+    },
+    ModelFamily.SDXL_REFINER: {
+        "use_checkpoint": False,
+        "image_size": 32,
+        "out_channels": 4,
+        "use_spatial_transformer": True,
+        "legacy": False,
+        "num_classes": "sequential",
+        "adm_in_channels": 2560,
+        "in_channels": 4,
+        "model_channels": 384,
+        "num_res_blocks": [2, 2, 2, 2],
+        "transformer_depth": [0, 0, 4, 4, 4, 4, 0, 0],
+        "channel_mult": [1, 2, 4, 4],
+        "transformer_depth_middle": 4,
+        "use_linear_in_transformer": True,
+        "context_dim": 1280,
+        "num_head_channels": 64,
+        "transformer_depth_output": [0, 0, 0, 4, 4, 4, 4, 4, 4, 0, 0, 0],
+        "use_temporal_attention": False,
+        "use_temporal_resblock": False,
+    },
+}
+
+
+def register_text_encoder(context: ParserContext, alias: str, component: str) -> None:
+    mapping = context.metadata.setdefault("text_encoder_map", {})
+    mapping[alias] = component
+
+
+def build_estimated_config(
+    context: ParserContext,
+    signature: ModelSignature,
+    *,
+    repo_override: str | None = None,
+    extra_metadata: Dict[str, object] | None = None,
+) -> CodexEstimatedConfig:
+    repo_id = repo_override or signature.repo_hint or ""
+    if not repo_id:
+        raise ValidationError("Model signature missing repository hint", component="config")
+
+    components = {
+        name: CodexComponent(name=name, state_dict=component.tensors)
+        for name, component in context.components.items()
+        if component.tensors
+    }
+
+    text_map = dict(context.metadata.get("text_encoder_map", {}))
+    extras = dict(signature.extras or {})
+    if extra_metadata:
+        extras.update(extra_metadata)
+
+    detected = detect_quantization(context)
+    quantization = signature.quantization
+    if detected.kind != QuantizationKind.NONE:
+        if quantization.kind not in (QuantizationKind.NONE, detected.kind):
+            raise ValidationError(
+                f"Detected quantization {detected.kind.value} conflicts with signature {quantization.kind.value}",
+                component="config",
+            )
+        quantization = detected
+        extras.setdefault("parser_quantization_detected", detected.kind.value)
+
+    core_config = dict(_CORE_CONFIG_PRESETS.get(signature.family, {}))
+    if core_config and "dtype" not in core_config:
+        core_config["dtype"] = None
+
+    return CodexEstimatedConfig(
+        signature=signature,
+        repo_id=repo_id,
+        family=signature.family,
+        prediction=signature.prediction,
+        latent_format=signature.latent_format,
+        quantization=quantization,
+        components=components,
+        text_encoder_map=text_map,
+        extras=extras,
+        core_config=core_config,
+    )
+
+
+__all__ = ["register_text_encoder", "build_estimated_config"]

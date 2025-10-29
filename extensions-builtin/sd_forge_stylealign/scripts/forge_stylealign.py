@@ -35,7 +35,7 @@ class StyleAlignForForge(scripts.Script):
         if not shared_attention:
             return
 
-        unet = p.sd_model.forge_objects.unet.clone()
+        unet = p.sd_model.codex_objects.unet.clone()
 
         def join(x):
             b, f, c = x.shape
@@ -87,7 +87,7 @@ class StyleAlignForForge(scripts.Script):
 
         unet.set_model_replace_all(attn1_proc, 'attn1')
 
-        p.sd_model.forge_objects.unet = unet
+        p.sd_model.codex_objects.unet = unet
 
         # Below codes will add some logs to the texts below the image outputs on UI.
         # The extra_generation_params does not influence results.

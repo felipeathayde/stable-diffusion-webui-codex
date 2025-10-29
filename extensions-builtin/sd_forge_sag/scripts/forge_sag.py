@@ -211,11 +211,11 @@ class SAGForForge(scripts.Script):
             print("Self Attention Guidance (hires pass) requires Hires CFG > 1")
             return
 
-        unet = p.sd_model.forge_objects.unet
+        unet = p.sd_model.codex_objects.unet
 
         unet = opSelfAttentionGuidance.patch(unet, scale, blur_sigma, threshold)[0]
 
-        p.sd_model.forge_objects.unet = unet
+        p.sd_model.codex_objects.unet = unet
 
         p.extra_generation_params.update(dict(
             sag_enabled     = enabled,

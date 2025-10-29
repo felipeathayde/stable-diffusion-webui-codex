@@ -54,14 +54,14 @@ device_interrogate: torch.device = memory_management.text_encoder_device()  # fo
 device_gfpgan: torch.device = memory_management.get_torch_device()  # will be managed by memory management system
 device_esrgan: torch.device = memory_management.get_torch_device()  # will be managed by memory management system
 device_codeformer: torch.device = memory_management.get_torch_device()  # will be managed by memory management system
-dtype: torch.dtype = torch.float32 if memory_management.unet_dtype() is torch.float32 else torch.float16
+dtype: torch.dtype = torch.float32 if memory_management.core_dtype() is torch.float32 else torch.float16
 dtype_vae: torch.dtype = memory_management.vae_dtype()
-dtype_unet: torch.dtype = memory_management.unet_dtype()
-dtype_inference: torch.dtype = memory_management.unet_dtype()
-unet_needs_upcast = False
+dtype_core: torch.dtype = memory_management.core_dtype()
+dtype_inference: torch.dtype = memory_management.core_dtype()
+core_needs_upcast = False
 
 
-def cond_cast_unet(input):
+def cond_cast_core(input):
     return input
 
 

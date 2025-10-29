@@ -60,7 +60,7 @@ class CFGDenoiserKDiffusion(sd_samplers_cfg_denoiser.CFGDenoiser):
     @property
     def inner_model(self):
         if self.model_wrap is None:
-            self.model_wrap = k_diffusion.external.ForgeScheduleLinker(shared.sd_model.forge_objects.unet.model.predictor)
+            self.model_wrap = k_diffusion.external.ForgeScheduleLinker(shared.sd_model.codex_objects.unet.model.predictor)
             self.model_wrap.inner_model = shared.sd_model
 
         return self.model_wrap
@@ -134,8 +134,8 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
         return sigmas.cpu()
 
     def sample_img2img(self, p, x, noise, conditioning, unconditional_conditioning, steps=None, image_conditioning=None):
-        unet_patcher = self.model_wrap.inner_model.forge_objects.unet
-        sampling_prepare(self.model_wrap.inner_model.forge_objects.unet, x=x)
+        unet_patcher = self.model_wrap.inner_model.codex_objects.unet
+        sampling_prepare(self.model_wrap.inner_model.codex_objects.unet, x=x)
 
         steps, t_enc = sd_samplers_common.setup_img2img_steps(p, steps)
 
@@ -194,8 +194,8 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
         return samples
 
     def sample(self, p, x, conditioning, unconditional_conditioning, steps=None, image_conditioning=None):
-        unet_patcher = self.model_wrap.inner_model.forge_objects.unet
-        sampling_prepare(self.model_wrap.inner_model.forge_objects.unet, x=x)
+        unet_patcher = self.model_wrap.inner_model.codex_objects.unet
+        sampling_prepare(self.model_wrap.inner_model.codex_objects.unet, x=x)
 
         steps = steps or p.steps
 

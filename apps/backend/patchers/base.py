@@ -1,8 +1,7 @@
-# Model Patching System, Copyright Forge 2024
+# Model Patching System, Copyright Codex 2024
 
-# API Templates partially extracted From ComfyUI, the actual implementation for those APIs
-# are from Forge, implemented from scratch (after forge-v1.0.1), and may have
-# certain level of differences.
+# API Templates partially extracted From ComfyUI; the implementation here is
+# native Codex code implemented from scratch and may differ from the originals.
 
 
 import copy
@@ -259,7 +258,7 @@ class ModelPatcher:
                     sd.pop(k)
         return sd
 
-    def forge_patch_model(self, target_device=None):
+    def codex_patch_model(self, target_device=None):
         for k, item in self.object_patches.items():
             old = utils.get_attr(self.model, k)
 
@@ -274,7 +273,7 @@ class ModelPatcher:
 
         return self.model
 
-    def forge_unpatch_model(self, target_device=None):
+    def codex_unpatch_model(self, target_device=None):
         if target_device is not None:
             self.model.to(target_device)
             self.current_device = target_device

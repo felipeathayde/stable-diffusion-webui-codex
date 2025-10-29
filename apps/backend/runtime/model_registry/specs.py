@@ -11,10 +11,13 @@ class ModelFamily(Enum):
     SDXL = "sdxl"
     SDXL_REFINER = "sdxl_refiner"
     SD3 = "sd3"
+    SD35 = "sd35"
     FLUX = "flux"
     STABLE_CASCADE = "stable_cascade"
+    CHROMA = "chroma"
     KOALA = "koala"
     ZERO123 = "zero123"
+    QWEN_IMAGE = "qwen_image"
     WAN22 = "wan22"
     AURA = "aura"
     HUNYUAN = "hunyuan"
@@ -38,8 +41,10 @@ class LatentFormat(Enum):
     SD_XL = "sd_xl"
     SD_3 = "sd_3"
     FLOW16 = "flow16"
+    CHROMA_RADIANCE = "chroma_radiance"
     CASCADE = "cascade"
     WAN22 = "wan22"
+    QWEN_IMAGE = "qwen_image"
     OTHER = "other"
 
 
@@ -70,8 +75,16 @@ class VAESignature:
     latent_channels: int
 
 
+class CodexCoreArchitecture(Enum):
+    UNET = "unet"
+    DIT = "dit"
+    TRANSFORMER = "transformer"
+    FLOW_TRANSFORMER = "flow_transformer"
+
+
 @dataclass
-class UNetSignature:
+class CodexCoreSignature:
+    architecture: CodexCoreArchitecture
     channels_in: int
     channels_out: int
     context_dim: Optional[int]
@@ -87,7 +100,7 @@ class ModelSignature:
     prediction: PredictionKind
     latent_format: LatentFormat
     quantization: QuantizationHint
-    unet: UNetSignature
+    core: CodexCoreSignature
     text_encoders: List[TextEncoderSignature]
     vae: Optional[VAESignature]
     extras: Dict[str, object] = field(default_factory=dict)
@@ -101,6 +114,7 @@ __all__ = [
     "QuantizationHint",
     "TextEncoderSignature",
     "VAESignature",
-    "UNetSignature",
+    "CodexCoreArchitecture",
+    "CodexCoreSignature",
     "ModelSignature",
 ]

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from apps.backend.runtime.models import api as model_api
-from apps.backend.runtime.models.loader import forge_loader, load_engine_from_diffusers
+from apps.backend.runtime.models.loader import codex_loader, load_engine_from_diffusers
 from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
 from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as _apply_accel
 
@@ -49,7 +49,7 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     """Load an engine instance by checkpoint name or path.
 
     - If a diffusers repo directory is detected (has model_index.json), load via native diffusers loader.
-    - If a file path to a state dict is given, use forge_loader.
+    - If a file path to a state dict is given, use codex_loader.
     - Otherwise, resolve by registry name and load accordingly.
     """
     path = name_or_path
@@ -59,7 +59,7 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
             return _apply_runtime_options(load_engine_from_diffusers(path), options)
         raise ValueError(f"Not a diffusers repo (missing model_index.json): {path}")
     if os.path.isfile(path):
-        return _apply_runtime_options(forge_loader(path), options)
+        return _apply_runtime_options(codex_loader(path), options)
 
     entry = _find_checkpoint_by_name(name_or_path)
     if entry is None:
@@ -75,7 +75,7 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
             options = None
     if entry.metadata.get("format") == "diffusers" or os.path.isfile(os.path.join(entry.path, "model_index.json")):
         return _apply_runtime_options(load_engine_from_diffusers(entry.path), options)
-    return _apply_runtime_options(forge_loader(entry.filename), options)
+    return _apply_runtime_options(codex_loader(entry.filename), options)
 
 
 __all__ = ["load_engine", "EngineLoadOptions"]

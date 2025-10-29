@@ -9,7 +9,7 @@ SETTINGS_PATH = os.path.join(os.getcwd(), 'apps', 'settings_values.json')
 
 
 class OptionsService:
-    """Native options/config service (no A1111 dependency).
+    """Native options/config service (no legacy WebUI dependency).
 
     Reads/writes a JSON settings file under apps/settings_values.json.
     """

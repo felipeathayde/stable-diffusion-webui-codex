@@ -84,7 +84,7 @@ def build_sampling_context(
     dtype: Optional[torch.dtype] = None,
 ) -> SamplingContext:
     sampler_kind = SamplerKind.from_string(sampler_name or "automatic")
-    predictor = getattr(sd_model.forge_objects.unet, "model", None)
+    predictor = getattr(sd_model.codex_objects.unet, "model", None)
     if predictor is None or getattr(predictor, "predictor", None) is None:
         raise RuntimeError("sd_model does not expose a predictor for sigma bounds")
 
@@ -137,4 +137,3 @@ __all__ = [
     "build_sampling_context",
     "build_sigma_schedule",
 ]
-

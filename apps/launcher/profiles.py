@@ -23,7 +23,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_ATTN_CHUNK_SIZE": os.getenv("CODEX_ATTN_CHUNK_SIZE", "0"),
         "CODEX_GGUF_CACHE_POLICY": os.getenv("CODEX_GGUF_CACHE_POLICY", "none"),
         "CODEX_GGUF_CACHE_LIMIT_MB": os.getenv("CODEX_GGUF_CACHE_LIMIT_MB", "0"),
-        "CODEX_UNET_DTYPE": os.getenv("CODEX_UNET_DTYPE", "fp16"),
+        "CODEX_CORE_DTYPE": os.getenv("CODEX_CORE_DTYPE", "fp16"),
         "CODEX_VAE_DTYPE": os.getenv("CODEX_VAE_DTYPE", "fp16"),
         "CODEX_VAE_IN_CPU": os.getenv("CODEX_VAE_IN_CPU", "0"),
         "CODEX_VAE_DEVICE": os.getenv("CODEX_VAE_DEVICE", ""),

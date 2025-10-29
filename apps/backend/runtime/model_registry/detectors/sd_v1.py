@@ -8,6 +8,8 @@ import torch
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks, has_all_keys
 from apps.backend.runtime.model_registry.specs import (
+    CodexCoreArchitecture,
+    CodexCoreSignature,
     LatentFormat,
     ModelFamily,
     ModelSignature,
@@ -15,7 +17,6 @@ from apps.backend.runtime.model_registry.specs import (
     QuantizationHint,
     QuantizationKind,
     TextEncoderSignature,
-    UNetSignature,
     VAESignature,
 )
 
@@ -62,7 +63,8 @@ class StableDiffusionV1Detector:
             prediction=PredictionKind.EPSILON,
             latent_format=LatentFormat.SD_V1,
             quantization=quant_hint,
-            unet=UNetSignature(
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.UNET,
                 channels_in=channels_in,
                 channels_out=channels_out,
                 context_dim=context_dim,

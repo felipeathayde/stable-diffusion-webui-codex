@@ -57,7 +57,7 @@ class PerturbedAttentionGuidanceForForge(scripts.Script):
         PerturbedAttentionGuidanceForForge.PAG_end = end_step
         on_cfg_denoiser(self.denoiser_callback)
 
-        unet = p.sd_model.forge_objects.unet.clone()
+        unet = p.sd_model.codex_objects.unet.clone()
 
         def attn_proc(q, k, v, to):
             return v
@@ -84,7 +84,7 @@ class PerturbedAttentionGuidanceForForge(scripts.Script):
 
         unet.set_model_sampler_post_cfg_function(post_cfg_function)
 
-        p.sd_model.forge_objects.unet = unet
+        p.sd_model.codex_objects.unet = unet
 
         p.extra_generation_params.update(dict(
             pagi_enabled     = enabled,

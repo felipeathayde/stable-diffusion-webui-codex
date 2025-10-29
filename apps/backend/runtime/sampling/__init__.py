@@ -1,6 +1,6 @@
 # Started from some codes from early ComfyUI and then 80% rewritten,
-# mainly for supporting different special control methods in Forge
-# Copyright Forge 2024
+# mainly for supporting different special control methods in Codex
+# Copyright Codex 2024
 
 
 import torch
@@ -323,7 +323,7 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
 
 
 def sampling_function(self, denoiser_params, cond_scale, cond_composition):
-    unet_patcher = self.inner_model.inner_model.forge_objects.unet
+    unet_patcher = self.inner_model.inner_model.codex_objects.unet
     model = unet_patcher.model
     control = unet_patcher.controlnet_linked_list
     extra_concat_condition = unet_patcher.extra_concat_condition

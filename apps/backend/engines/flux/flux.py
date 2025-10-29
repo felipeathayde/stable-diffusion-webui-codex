@@ -1,6 +1,6 @@
 import torch
 
-from apps.backend.engines.common.base import ForgeDiffusionEngine, ForgeObjects
+from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.vae import VAE
 from apps.backend.patchers.unet import UnetPatcher
@@ -11,23 +11,24 @@ from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.memory import memory_management
 
 
-class Flux(ForgeDiffusionEngine):
-    def __init__(self, estimated_config, huggingface_components):
-        super().__init__(estimated_config, huggingface_components)
+class Flux(CodexDiffusionEngine):
+    def __init__(self, estimated_config, codex_components):
+        super().__init__(estimated_config, codex_components)
         self.is_inpaint = False
 
         clip = CLIP(
             model_dict={
-                'clip_l': huggingface_components['text_encoder'],
-                't5xxl': huggingface_components['text_encoder_2']
+                'clip_l': codex_components['text_encoder'],
+                't5xxl': codex_components['text_encoder_2']
             },
             tokenizer_dict={
-                'clip_l': huggingface_components['tokenizer'],
-                't5xxl': huggingface_components['tokenizer_2']
-            }
+                'clip_l': codex_components['tokenizer'],
+                't5xxl': codex_components['tokenizer_2']
+            },
+            model_config=estimated_config,
         )
 
-        vae = VAE(model=huggingface_components['vae'])
+        vae = VAE(model=codex_components['vae'])
 
         if 'schnell' in estimated_config.huggingface_repo.lower():
             k_predictor = FlowMatchEulerPrediction(
@@ -44,7 +45,7 @@ class Flux(ForgeDiffusionEngine):
             self.use_distilled_cfg_scale = True
 
         unet = UnetPatcher.from_model(
-            model=huggingface_components['transformer'],
+            model=codex_components['transformer'],
             diffusers_scheduler=None,
             k_predictor=k_predictor,
             config=estimated_config
@@ -70,16 +71,16 @@ class Flux(ForgeDiffusionEngine):
             emphasis_name=dynamic_args['emphasis_name'],
         )
 
-        self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
-        self.forge_objects_original = self.forge_objects.shallow_copy()
-        self.forge_objects_after_applying_lora = self.forge_objects.shallow_copy()
+        self.codex_objects = CodexObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
+        self.codex_objects_original = self.codex_objects.shallow_copy()
+        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
     def set_clip_skip(self, clip_skip):
         self.text_processing_engine_l.clip_skip = clip_skip
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
-        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+        memory_management.load_model_gpu(self.codex_objects.clip.patcher)
         cond_l, pooled_l = self.text_processing_engine_l(prompt)
         cond_t5 = self.text_processing_engine_t5(prompt)
         cond = dict(crossattn=cond_t5, vector=pooled_l)
@@ -100,12 +101,12 @@ class Flux(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x):
-        sample = self.forge_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.forge_objects.vae.first_stage_model.process_in(sample)
+        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
     def decode_first_stage(self, x):
-        sample = self.forge_objects.vae.first_stage_model.process_out(x)
-        sample = self.forge_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+        sample = self.codex_objects.vae.first_stage_model.process_out(x)
+        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)

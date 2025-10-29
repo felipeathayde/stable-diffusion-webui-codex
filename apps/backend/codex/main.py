@@ -22,8 +22,7 @@ _SELECTIONS = _Selections()
 def modules_change(spec: Any, *, save: bool, refresh: bool) -> bool:
     """Apply additional modules selection nativamente.
 
-    For now we set `opts.forge_additional_modules` when present (legacy compat)
-    and mirror into `opts.codex_additional_modules` for forward use.
+    Reserved for future hooks wiring `opts.codex_additional_modules`.
     Returns True if the selection changed.
     """
     before = list(_SELECTIONS.additional_modules)

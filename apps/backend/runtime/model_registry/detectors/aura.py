@@ -3,13 +3,14 @@ from __future__ import annotations
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks, has_all_keys
 from apps.backend.runtime.model_registry.specs import (
+    CodexCoreArchitecture,
+    CodexCoreSignature,
     LatentFormat,
     ModelFamily,
     ModelSignature,
     PredictionKind,
     QuantizationHint,
     TextEncoderSignature,
-    UNetSignature,
     VAESignature,
 )
 
@@ -71,7 +72,8 @@ class AuraFlowDetector:
             prediction=PredictionKind.FLOW,
             latent_format=LatentFormat.SD_XL,
             quantization=QuantizationHint(),
-            unet=UNetSignature(
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.FLOW_TRANSFORMER,
                 channels_in=channels_in_val,
                 channels_out=channels_out_val,
                 context_dim=cond_seq_dim,

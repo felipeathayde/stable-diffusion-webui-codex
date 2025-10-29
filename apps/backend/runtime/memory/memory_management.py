@@ -497,10 +497,10 @@ class LoadedModel:
         self.model.model_patches_to(self.model.model_dtype())
 
         try:
-            self.real_model = self.model.forge_patch_model(patch_model_to)
+            self.real_model = self.model.codex_patch_model(patch_model_to)
             self.model.current_device = self.model.load_device
         except Exception as e:
-            self.model.forge_unpatch_model(self.model.offload_device)
+            self.model.codex_unpatch_model(self.model.offload_device)
             self.model_unload()
             raise e
 
@@ -579,9 +579,9 @@ class LoadedModel:
             self.model_accelerated = False
 
         if avoid_model_moving:
-            self.model.forge_unpatch_model()
+            self.model.codex_unpatch_model()
         else:
-            self.model.forge_unpatch_model(self.model.offload_device)
+            self.model.codex_unpatch_model(self.model.offload_device)
             self.model.model_patches_to(self.model.offload_device)
 
     def __eq__(self, other):
@@ -784,14 +784,14 @@ def dtype_size(dtype):
     return dtype_size
 
 
-def unet_offload_device():
+def core_offload_device():
     policy = getattr(args, 'swap_policy', 'cpu')
     if policy == 'never':
         return get_torch_device()
     return torch.device("cpu")
 
 
-def unet_inital_load_device(parameters, dtype):
+def core_initial_load_device(parameters, dtype):
     torch_dev = get_torch_device()
     if vram_state == VRAMState.HIGH_VRAM:
         return torch_dev
@@ -810,17 +810,17 @@ def unet_inital_load_device(parameters, dtype):
         return cpu_dev
 
 
-def unet_dtype(device=None, model_params=0, supported_dtypes=[torch.float16, torch.bfloat16, torch.float32]):
-    if args.unet_in_bf16:
+def core_dtype(device=None, model_params=0, supported_dtypes=[torch.float16, torch.bfloat16, torch.float32]):
+    if args.core_in_bf16:
         return torch.bfloat16
 
-    if args.unet_in_fp16:
+    if args.core_in_fp16:
         return torch.float16
 
-    if args.unet_in_fp8_e4m3fn:
+    if args.core_in_fp8_e4m3fn:
         return torch.float8_e4m3fn
 
-    if args.unet_in_fp8_e5m2:
+    if args.core_in_fp8_e5m2:
         return torch.float8_e5m2
 
     for candidate in supported_dtypes:

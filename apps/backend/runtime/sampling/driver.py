@@ -50,7 +50,7 @@ class CodexSampler:
         preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
         context: SamplingContext | None = None,
     ) -> torch.Tensor:
-        unet = self.sd_model.forge_objects.unet
+        unet = self.sd_model.codex_objects.unet
         model = unet.model
 
         steps = int(getattr(processing, "steps", 20))

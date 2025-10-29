@@ -7,7 +7,7 @@ from apps.backend.runtime.models.state_dict import state_dict_prefix_replace
 from apps.backend.runtime import utils
 from apps.backend.runtime.sd.cnets import cldm, t2i_adapter
 from .base import ModelPatcher
-from apps.backend.runtime.ops.operations import using_forge_operations, ForgeOperations, main_stream_worker, weights_manual_cast
+from apps.backend.runtime.ops.operations import using_codex_operations, CodexOperations, main_stream_worker, weights_manual_cast
 
 
 def apply_controlnet_advanced(
@@ -286,7 +286,7 @@ class ControlNet(ControlBase):
         super().__init__(device)
         self.control_model = control_model
         self.load_device = load_device
-        self.control_model_wrapped = ModelPatcher(self.control_model, load_device=load_device, offload_device=memory_management.unet_offload_device())
+        self.control_model_wrapped = ModelPatcher(self.control_model, load_device=load_device, offload_device=memory_management.core_offload_device())
         self.global_average_pooling = global_average_pooling
         self.model_sampling_current = None
         self.manual_cast_dtype = manual_cast_dtype
@@ -359,7 +359,7 @@ class ControlNet(ControlBase):
         super().cleanup()
 
 
-class ControlLoraOps(ForgeOperations):
+class ControlLoraOps(CodexOperations):
     class Linear(torch.nn.Module):
         def __init__(self, in_features: int, out_features: int, bias: bool = True, device=None, dtype=None) -> None:
             super().__init__()
@@ -440,7 +440,7 @@ class ControlLora(ControlNet):
 
         self.manual_cast_dtype = model.computation_dtype
 
-        with using_forge_operations(operations=ControlLoraOps, dtype=dtype, manual_cast_enabled=self.manual_cast_dtype != dtype):
+        with using_codex_operations(operations=ControlLoraOps, dtype=dtype, manual_cast_enabled=self.manual_cast_dtype != dtype):
             self.control_model = cldm.ControlNet(**controlnet_config)
 
         self.control_model.to(device=memory_management.get_torch_device(), dtype=dtype)

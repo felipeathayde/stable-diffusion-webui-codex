@@ -87,9 +87,9 @@ class StableDiffusion3(ForgeDiffusionEngine):
             emphasis_name=dynamic_args['emphasis_name'],
         )
 
-        self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
-        self.forge_objects_original = self.forge_objects.shallow_copy()
-        self.forge_objects_after_applying_lora = self.forge_objects.shallow_copy()
+        self.codex_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
+        self.codex_objects_original = self.codex_objects.shallow_copy()
+        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
         # WebUI Legacy
         self.is_sd3 = True
@@ -100,7 +100,7 @@ class StableDiffusion3(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
-        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+        memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
         cond_g, g_pooled = self.text_processing_engine_g(prompt)
         cond_l, l_pooled = self.text_processing_engine_l(prompt)
@@ -137,13 +137,13 @@ class StableDiffusion3(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x):
-        sample = self.forge_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.forge_objects.vae.first_stage_model.process_in(sample)
+        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
     def decode_first_stage(self, x):
-        sample = self.forge_objects.vae.first_stage_model.process_out(x)
-        sample = self.forge_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+        sample = self.codex_objects.vae.first_stage_model.process_out(x)
+        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
 
         return sample.to(x)

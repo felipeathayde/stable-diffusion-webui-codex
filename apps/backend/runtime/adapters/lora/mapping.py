@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict
 
 from apps.backend.runtime.misc.diffusers_state_dict import unet_to_diffusers
+from apps.backend.runtime.model_registry.specs import CodexCoreArchitecture
 
 
 LORA_CLIP_MAP = {
@@ -27,50 +28,58 @@ def model_lora_keys_clip(model, key_map: Dict[str, str] | None = None) -> Dict[s
     out = dict(key_map or {})
     _register_generic_weights(state_keys, out)
 
-    clip_l_seen = False
-    clip_g_seen = False
+    config = getattr(model, "model_config", None)
+    text_map = getattr(config, "text_encoder_map", {}) if config else {}
 
-    for layer in range(32):
-        for suffix, mapped in LORA_CLIP_MAP.items():
-            k_l = f"clip_l.transformer.text_model.encoder.layers.{layer}.{suffix}.weight"
-            if k_l in state_keys:
-                clip_l_seen = True
-                out[f"lora_te1_text_model_encoder_layers_{layer}_{mapped}"] = k_l
-                out[f"text_encoder.text_model.encoder.layers.{layer}.{suffix}"] = k_l
-                out[f"lora_te_text_model_encoder_layers_{layer}_{mapped}"] = k_l
-            k_g = f"clip_g.transformer.text_model.encoder.layers.{layer}.{suffix}.weight"
-            if k_g in state_keys:
-                clip_g_seen = True
-                if clip_l_seen:
-                    out[f"lora_te2_text_model_encoder_layers_{layer}_{mapped}"] = k_g
-                    out[f"text_encoder_2.text_model.encoder.layers.{layer}.{suffix}"] = k_g
-                else:
-                    out[f"lora_te_text_model_encoder_layers_{layer}_{mapped}"] = k_g
-                out[f"lora_prior_te_text_model_encoder_layers_{layer}_{mapped}"] = k_g
-            k_h = f"clip_h.transformer.text_model.encoder.layers.{layer}.{suffix}.weight"
-            if k_h in state_keys:
-                out[f"lora_te1_text_model_encoder_layers_{layer}_{mapped}"] = k_h
-                out[f"text_encoder.text_model.encoder.layers.{layer}.{suffix}"] = k_h
+    alias_set = {key.split(".")[0] for key in state_keys if "." in key}
+    preferred_order = ["clip_l", "clip_g", "clip_h", "t5xxl", "t5"]
+    alias_order = [alias for alias in preferred_order if alias in alias_set]
+    alias_order.extend(sorted(alias_set - set(alias_order)))
 
-    for key in state_keys:
-        if key.endswith(".weight"):
-            if key.startswith("t5xxl.transformer."):
-                logical = key[len("t5xxl.transformer.") : -len(".weight")].replace(".", "_")
-                index = 1 + int(clip_l_seen) + int(clip_g_seen)
-                out[f"lora_te{index}_{logical}"] = key
-                if clip_l_seen and index == 2:
-                    out[f"lora_te{index+1}_{logical}"] = key
-            if key.startswith("hydit_clip.transformer.bert."):
-                logical = key[len("hydit_clip.transformer.bert.") : -len(".weight")].replace(".", "_")
-                out[f"lora_te1_{logical}"] = key
+    alias_indices: Dict[str, int] = {}
+    for alias in alias_order:
+        alias_indices[alias] = len(alias_indices) + 1
 
-    proj = "clip_g.transformer.text_projection.weight"
-    if proj in state_keys:
-        out["lora_te2_text_projection"] = proj
-        out["lora_prior_te_text_projection"] = proj
-    proj_l = "clip_l.transformer.text_projection.weight"
-    if proj_l in state_keys:
-        out["lora_te1_text_projection"] = proj_l
+    def _component_for_alias(alias: str) -> str | None:
+        if alias in text_map:
+            return text_map[alias]
+        if alias == "clip_l" or alias == "clip_h":
+            return "text_encoder"
+        if alias == "clip_g":
+            return "text_encoder_2"
+        if alias.startswith("t5"):
+            index = alias_indices.get(alias, 0)
+            return f"text_encoder_{index}" if index > 1 else "text_encoder"
+        return None
+
+    for alias in alias_order:
+        alias_index = alias_indices[alias]
+        component_name = _component_for_alias(alias)
+
+        # CLIP-style layers
+        for layer in range(32):
+            for suffix, mapped in LORA_CLIP_MAP.items():
+                key = f"{alias}.transformer.text_model.encoder.layers.{layer}.{suffix}.weight"
+                if key not in state_keys:
+                    continue
+                out[f"lora_te{alias_index}_text_model_encoder_layers_{layer}_{mapped}"] = key
+                out[f"lora_te_text_model_encoder_layers_{layer}_{mapped}"] = key
+                if component_name:
+                    out[f"{component_name}.text_model.encoder.layers.{layer}.{suffix}"] = key
+
+        # T5-style layers
+        for key in state_keys:
+            if not key.startswith(f"{alias}.transformer.") or not key.endswith(".weight"):
+                continue
+            logical = key[len(f"{alias}.transformer.") : -len(".weight")].replace(".", "_")
+            out[f"lora_te{alias_index}_{logical}"] = key
+            if component_name:
+                out[f"{component_name}.{logical}"] = key
+
+        proj_key = f"{alias}.transformer.text_projection.weight"
+        if proj_key in state_keys:
+            out[f"lora_te{alias_index}_text_projection"] = proj_key
+            out["lora_prior_te_text_projection"] = proj_key
 
     return out
 
@@ -89,9 +98,14 @@ def model_lora_keys_unet(model, key_map: Dict[str, str] | None = None) -> Dict[s
             else:
                 out[key] = key
 
-    unet_config = getattr(getattr(model, "model_config", None), "unet_config", None)
-    if isinstance(unet_config, dict):
-        diffusers_keys = unet_to_diffusers(unet_config)
+    model_config = getattr(model, "model_config", None)
+    core_config = getattr(model_config, "core_config", None)
+    core_signature = getattr(getattr(model_config, "signature", None), "core", None)
+    if (
+        isinstance(core_config, dict)
+        and getattr(core_signature, "architecture", None) == CodexCoreArchitecture.UNET
+    ):
+        diffusers_keys = unet_to_diffusers(core_config)
         for diff_key, mapped in diffusers_keys.items():
             if not diff_key.endswith(".weight"):
                 continue

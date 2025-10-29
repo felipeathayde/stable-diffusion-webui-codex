@@ -20,7 +20,7 @@ def _encode_images(images: Iterable[Any]) -> List[Dict[str, str]]:
 
 
 class ImageService:
-    """Native image generation service over Codex engines (no A1111 dependency)."""
+    """Native image generation service over Codex engines (no legacy WebUI dependency)."""
 
     def __init__(self) -> None:
         self._orch = InferenceOrchestrator()

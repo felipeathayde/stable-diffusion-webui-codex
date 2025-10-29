@@ -57,16 +57,16 @@ class PreprocessorReference(Preprocessor):
         if process.sd_model.is_sdxl:
             style_fidelity = style_fidelity ** 3.0  # sdxl is very sensitive to reference so we lower the weights
 
-        vae = process.sd_model.forge_objects.vae
+        vae = process.sd_model.codex_objects.vae
         # This is a powerful VAE with integrated memory management, bf16, and tiled fallback.
 
         latent_image = vae.encode(cond.movedim(1, -1))
-        latent_image = process.sd_model.forge_objects.vae.first_stage_model.process_in(latent_image)
+        latent_image = process.sd_model.codex_objects.vae.first_stage_model.process_in(latent_image)
 
         gen_seed = process.seeds[0] + 1
         gen_cpu = torch.Generator().manual_seed(gen_seed)
 
-        unet = process.sd_model.forge_objects.unet.clone()
+        unet = process.sd_model.codex_objects.unet.clone()
         sigma_max = unet.model.predictor.percent_to_sigma(start_percent)
         sigma_min = unet.model.predictor.percent_to_sigma(end_percent)
 
@@ -188,7 +188,7 @@ class PreprocessorReference(Preprocessor):
         unet.add_conditioning_modifier(conditioning_modifier)
         unet.set_model_replace_all(attn1_proc, 'attn1')
 
-        process.sd_model.forge_objects.unet = unet
+        process.sd_model.codex_objects.unet = unet
 
         return cond, mask
 

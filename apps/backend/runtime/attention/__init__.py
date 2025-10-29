@@ -424,7 +424,7 @@ else:
     attention_function_single_head_spatial = normal_attention_single_head_spatial
 
 
-class AttentionProcessorForge:
+class AttentionProcessorCodex:
     def __call__(self, attn, hidden_states, encoder_hidden_states, attention_mask=None, temb=None, *args, **kwargs):
         residual = hidden_states
 

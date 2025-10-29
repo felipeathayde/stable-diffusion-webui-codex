@@ -1,5 +1,5 @@
-# Single File Implementation of Flux with aggressive optimizations, Copyright Forge 2024
-# If used outside Forge, only non-commercial use is allowed.
+# Single File Implementation of Flux with aggressive optimizations, Copyright Codex 2024
+# If used outside Codex, only non-commercial use is allowed.
 # See also https://github.com/black-forest-labs/flux
 
 

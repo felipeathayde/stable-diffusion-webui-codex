@@ -5,13 +5,14 @@ from typing import Optional
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks
 from apps.backend.runtime.model_registry.specs import (
+    CodexCoreArchitecture,
+    CodexCoreSignature,
     LatentFormat,
     ModelFamily,
     ModelSignature,
     PredictionKind,
     QuantizationHint,
     TextEncoderSignature,
-    UNetSignature,
     VAESignature,
 )
 
@@ -38,7 +39,8 @@ class StableCascadeStageCDetector:
             prediction=PredictionKind.EPSILON,
             latent_format=LatentFormat.CASCADE,
             quantization=QuantizationHint(),
-            unet=UNetSignature(
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.DIT,
                 channels_in=16,
                 channels_out=16,
                 context_dim=2048,
@@ -90,7 +92,8 @@ class StableCascadeStageBDetector:
             prediction=PredictionKind.EPSILON,
             latent_format=LatentFormat.CASCADE,
             quantization=QuantizationHint(),
-            unet=UNetSignature(
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.DIT,
                 channels_in=4,
                 channels_out=4,
                 context_dim=1280,

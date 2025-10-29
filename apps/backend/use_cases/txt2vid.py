@@ -22,7 +22,7 @@ def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceE
 
     # Native LoRA application (error on failure)
     sels = codex_lora.get_selections()
-    if sels and hasattr(engine, "forge_objects_after_applying_lora"):
+    if sels and hasattr(engine, "codex_objects_after_applying_lora"):
         apply_loras_to_engine(engine, sels)
         if logger:
             logger.info("[native] txt2vid applied %d LoRA(s)", len(sels))

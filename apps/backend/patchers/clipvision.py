@@ -101,7 +101,7 @@ class ClipVisionModel:
         else:
             self.dtype = torch.float32
 
-        with operations.using_forge_operations():
+        with operations.using_codex_operations():
             with modeling_utils.no_init_weights():
                 self.model = CLIPVisionModelWithProjection(config)
 

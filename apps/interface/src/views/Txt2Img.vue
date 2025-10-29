@@ -1,7 +1,7 @@
 <template>
   <section class="panels">
     
-    <!-- Left column: Prompt + Parameters (like A1111) -->
+    <!-- Left column: Prompt + Parameters (Codex layout) -->
     <div class="panel-stack" ref="leftStack">
       <div class="panel">
         <div class="panel-header"><span>Prompt</span>
@@ -73,7 +73,7 @@
       </div>
     </div>
 
-    <!-- Right column: Preview/Gallery + Info (like A1111) -->
+    <!-- Right column: Preview/Gallery + Info (Codex layout) -->
     <div class="panel-stack">
       <div class="panel">
         <div class="panel-header three-cols results-sticky"><span>Results</span>

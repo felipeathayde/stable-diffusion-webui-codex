@@ -374,7 +374,7 @@ def create_ui():
 
                     elif category == "cfg":
                         with gr.Row(elem_id="txt2img_cfg_row"):
-                            _flux_preset = getattr(shared.opts, 'forge_preset', 'all') == 'flux'
+                            _flux_preset = getattr(shared.opts, 'codex_preset', 'all') == 'flux'
                             distilled_cfg_scale = gr.Slider(minimum=0.0, maximum=30.0, step=0.1, label='Distilled CFG Scale', value=3.5, elem_id="txt2img_distilled_cfg_scale", interactive=_flux_preset)
                             cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.1, label='CFG Scale', value=7.0, elem_id="txt2img_cfg_scale")
                             cfg_scale.change(lambda x: gr.update(interactive=(x != 1)), inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
@@ -420,7 +420,7 @@ def create_ui():
                                     hr_resize_y = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize height to", value=0, elem_id="txt2img_hr_resize_y")
 
                                 with FormRow(elem_id="txt2img_hires_fix_row_cfg", variant="compact"):
-                                    _flux_preset2 = getattr(shared.opts, 'forge_preset', 'all') == 'flux'
+                                    _flux_preset2 = getattr(shared.opts, 'codex_preset', 'all') == 'flux'
                                     hr_distilled_cfg = gr.Slider(minimum=0.0, maximum=30.0, step=0.1, label="Hires Distilled CFG Scale", value=3.5, elem_id="txt2img_hr_distilled_cfg", interactive=_flux_preset2)
                                     hr_cfg = gr.Slider(minimum=1.0, maximum=30.0, step=0.1, label="Hires CFG Scale", value=7.0, elem_id="txt2img_hr_cfg")
 
@@ -1214,7 +1214,7 @@ def create_ui():
 
                     elif category == "cfg":
                         with gr.Row(elem_id="img2img_cfg_row"):
-                            _flux_preset3 = getattr(shared.opts, 'forge_preset', 'all') == 'flux'
+                            _flux_preset3 = getattr(shared.opts, 'codex_preset', 'all') == 'flux'
                             distilled_cfg_scale = gr.Slider(minimum=0.0, maximum=30.0, step=0.1, label='Distilled CFG Scale', value=3.5, elem_id="img2img_distilled_cfg_scale", interactive=_flux_preset3)
                             cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.1, label='CFG Scale', value=7.0, elem_id="img2img_cfg_scale")
                             image_cfg_scale = gr.Slider(minimum=0, maximum=3.0, step=0.05, label='Image CFG Scale', value=1.5, elem_id="img2img_image_cfg_scale", visible=False)

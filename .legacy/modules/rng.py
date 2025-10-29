@@ -4,7 +4,7 @@ from modules import devices, rng_philox, shared
 
 
 def get_noise_source_type():
-    if shared.opts.forge_try_reproduce in ['ComfyUI', 'DrawThings']:
+    if shared.opts.codex_try_reproduce in ['ComfyUI', 'DrawThings']:
         return "CPU"
 
     return shared.opts.randn_source

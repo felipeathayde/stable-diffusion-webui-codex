@@ -7,6 +7,7 @@ from .sd3 import StableDiffusion3Detector
 from .flux import FluxDetector, FluxSchnellDetector
 from .aura import AuraFlowDetector
 from .stable_cascade import StableCascadeStageBDetector, StableCascadeStageCDetector
+from .wan22 import Wan22Detector
 
 __all__ = [
     "StableDiffusionV1Detector",
@@ -16,4 +17,5 @@ __all__ = [
     "AuraFlowDetector",
     "StableCascadeStageBDetector",
     "StableCascadeStageCDetector",
+    "Wan22Detector",
 ]

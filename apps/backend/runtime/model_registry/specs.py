@@ -39,6 +39,7 @@ class LatentFormat(Enum):
     SD_3 = "sd_3"
     FLOW16 = "flow16"
     CASCADE = "cascade"
+    WAN22 = "wan22"
     OTHER = "other"
 
 

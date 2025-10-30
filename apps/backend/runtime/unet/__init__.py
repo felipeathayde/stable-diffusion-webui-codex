@@ -1,9 +1,7 @@
-"""Compatibility wrapper for Codex UNet modules."""
-
 from __future__ import annotations
 
-from apps.backend.runtime.unet import UNet2DConditionModel, UNetConfig
-from apps.backend.runtime.unet.layers import (
+from .config import UNetConfig
+from .layers import (
     BasicTransformerBlock,
     CrossAttention,
     Downsample,
@@ -16,7 +14,8 @@ from apps.backend.runtime.unet.layers import (
     TimestepEmbedSequential,
     Upsample,
 )
-from apps.backend.runtime.unet.utils import (
+from .model import UNet2DConditionModel
+from .utils import (
     apply_control,
     avg_pool_nd,
     checkpoint,

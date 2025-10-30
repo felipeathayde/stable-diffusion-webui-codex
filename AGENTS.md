@@ -9,6 +9,7 @@
 - **NEVER** rush. Speed kills quality. Take the time required to write it right.
 - When proposing or shipping a solution, **DO NOT REINVENT THE WHEEL**. Fix root causes; skip quick fixes, hacks, and throwaway workarounds.
 - Break big tasks in small subtasks for a smooth implementation.
+- ANY KIND OF SHIM IS FORBIDDEN.
 - **NEVER** remove, disable, or narrow existing features to hide errors.
 - **DO NOT** add catch-all helpers or duplicate checks.
 - **ENSURE** verbose, actionable logs to support debugging.
@@ -43,10 +44,10 @@
 - Read the source thoroughly; list risks/side effects/globals.
 - Any approach that considers keeping or copying any part of the legacy code will be summarily rejected.
 - Re‑design to Codex style: dataclasses/enums, small modules, explicit errors, clear names.
-- Add validation points (logs, invariants, device/dtype/shape checks) and a clean migration path (no shims).
+- Add validation points (logs, invariants, device/dtype/shape checks) and a clean migration path.
 - Acceptance: no legacy imports, clear API, explicit errors, rationale documented (include the five options summary), docs updated.
 - Use `Codex` as a prefix or suffix wherever it actually makes sense.
-- Absolute ban on shims.
+
 - Ban imports outside `/apps` (only `apps.*` allowed).
 - Unported feature: raise `NotImplementedError("<feature> not yet ported")`.
 

@@ -53,6 +53,30 @@ from .forge_q8_0 import (
     quantize_numpy as _q80_quantize_numpy,
     quantize_torch as _q80_quantize_torch,
 )
+from .k_family.forge_q2_k import (
+    dequantize_numpy as _q2k_dequantize_numpy,
+    dequantize_torch as _q2k_dequantize_torch,
+)
+from .k_family.forge_q3_k import (
+    dequantize_numpy as _q3k_dequantize_numpy,
+    dequantize_torch as _q3k_dequantize_torch,
+)
+from .k_family.forge_q4_k import (
+    bake_pytorch as _q4k_bake_pytorch,
+    dequantize_numpy as _q4k_dequantize_numpy,
+    dequantize_torch as _q4k_dequantize_torch,
+    get_scale_min_numpy as _q4k_scale_min_numpy,
+    get_scale_min_pytorch as _q4k_scale_min_pytorch,
+    K_SCALE_SIZE as _Q4_K_SCALE_SIZE,
+)
+from .k_family.forge_q5_k import (
+    dequantize_numpy as _q5k_dequantize_numpy,
+    dequantize_torch as _q5k_dequantize_torch,
+)
+from .k_family.forge_q6_k import (
+    dequantize_numpy as _q6k_dequantize_numpy,
+    dequantize_torch as _q6k_dequantize_torch,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -408,198 +432,55 @@ class Q2_K(CodexQuantKernel, qtype=GGMLQuantizationType.Q2_K):
 class Q3_K(CodexQuantKernel, qtype=GGMLQuantizationType.Q3_K):
     @classmethod
     def dequantize_blocks(cls, blocks: np.ndarray) -> np.ndarray:
-        n_blocks = blocks.shape[0]
-
-        hmask, rest = np.hsplit(blocks, [QK_K // 8])
-        qs, rest = np.hsplit(rest, [QK_K // 4])
-        scales, d = np.hsplit(rest, [12])
-
-        d = d.view(np.float16).astype(np.float32)
-
-        # The scales are packed at 6-bit each in this pattern:
-        #  0: IIIIAAAA
-        #  1: JJJJBBBB
-        #  2: KKKKCCCC
-        #  3: LLLLDDDD
-        #  4: MMMMEEEE
-        #  5: NNNNFFFF
-        #  6: OOOOGGGG
-        #  7: PPPPHHHH
-        #  8: MMIIEEAA
-        #  9: NNJJFFBB
-        # 10: OOKKGGCC
-        # 11: PPLLHHDD
-        lscales, hscales = np.hsplit(scales, [8])
-        lscales = lscales.reshape((n_blocks, 1, 8)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 2, 1))
-        lscales = lscales.reshape((n_blocks, 16))
-        hscales = hscales.reshape((n_blocks, 1, 4)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 4, 1))
-        hscales = hscales.reshape((n_blocks, 16))
-        scales = (lscales & np.uint8(0x0F)) | ((hscales & np.uint8(0x03)) << np.uint8(4))
-        scales = (scales.astype(np.int8) - np.int8(32)).astype(np.float32)
-
-        dl = (d * scales).reshape((n_blocks, 16, 1))
-
-        ql = qs.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 1, 4, 1))
-        qh = hmask.reshape(n_blocks, -1, 1, 32) >> np.array([i for i in range(8)], dtype=np.uint8).reshape((1, 1, 8, 1))
-        ql = ql.reshape((n_blocks, 16, QK_K // 16)) & np.uint8(3)
-        qh = (qh.reshape((n_blocks, 16, QK_K // 16)) & np.uint8(1))
-        qh = qh ^ np.uint8(1)  # strangely, the offset is zero when the bitmask is 1
-        q = (ql.astype(np.int8) - (qh << np.uint8(2)).astype(np.int8)).astype(np.float32)
-
-        return (dl * q).reshape((n_blocks, QK_K))
+        return _q3k_dequantize_numpy(blocks)
 
     @classmethod
     def dequantize_blocks_pytorch(cls, blocks, block_size, type_size, parameter) -> torch.Tensor:
-        # (c) City96 || Apache-2.0 (apache.org/licenses/LICENSE-2.0)
-        n_blocks = blocks.shape[0]
-        hmask, qs, scales, d = quick_split(blocks, [QK_K // 8, QK_K // 4, 12])
-        d = d.view(torch.float16).to(parameter.computation_dtype)
-        lscales, hscales = scales[:, :8], scales[:, 8:]
-        lscales = lscales.reshape((n_blocks, 1, 8)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 2, 1))
-        lscales = lscales.reshape((n_blocks, 16))
-        hscales = hscales.reshape((n_blocks, 1, 4)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 4, 1))
-        hscales = hscales.reshape((n_blocks, 16))
-        scales = (lscales & 0x0F) | ((hscales & 0x03) << 4)
-        scales = (scales.to(torch.int8) - 32)
-        dl = (d * scales).reshape((n_blocks, 16, 1))
-        ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
-        qh = hmask.reshape(n_blocks, -1, 1, 32) >> torch.tensor([i for i in range(8)], device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
-        ql = ql.reshape((n_blocks, 16, QK_K // 16)) & 3
-        qh = (qh.reshape((n_blocks, 16, QK_K // 16)) & 1) ^ 1
-        q = (ql.to(torch.int8) - (qh << 2).to(torch.int8))
-        return (dl * q).reshape((n_blocks, QK_K))
+        return _q3k_dequantize_torch(blocks, parameter)
 
 
 class Q4_K(CodexQuantKernel, qtype=GGMLQuantizationType.Q4_K):
-    K_SCALE_SIZE = 12
+    K_SCALE_SIZE = _Q4_K_SCALE_SIZE
 
     @staticmethod
     def get_scale_min(scales: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        n_blocks = scales.shape[0]
-        scales = scales.view(np.uint8)
-        scales = scales.reshape((n_blocks, 3, 4))
-        d, m, m_d = np.split(scales, 3, axis=-2)
-
-        sc = np.concatenate([d & 0x3F, (m_d & 0x0F) | ((d >> 2) & 0x30)], axis=-1)
-        min = np.concatenate([m & 0x3F, (m_d >> 4) | ((m >> 2) & 0x30)], axis=-1)
-
-        return (sc.reshape((n_blocks, 8)), min.reshape((n_blocks, 8)))
+        return _q4k_scale_min_numpy(scales)
 
     @staticmethod
     def get_scale_min_pytorch(scales):
-        n_blocks = scales.shape[0]
-        scales = scales.view(torch.uint8)
-        scales = scales.reshape((n_blocks, 3, 4))
-        d, m, m_d = torch.split(scales, scales.shape[-2] // 3, dim=-2)
-        sc = torch.cat([d & 0x3F, (m_d & 0x0F) | ((d >> 2) & 0x30)], dim=-1)
-        min = torch.cat([m & 0x3F, (m_d >> 4) | ((m >> 2) & 0x30)], dim=-1)
-        return (sc.reshape((n_blocks, 8)), min.reshape((n_blocks, 8)))
+        return _q4k_scale_min_pytorch(scales)
 
     @classmethod
     def dequantize_blocks(cls, blocks: np.ndarray) -> np.ndarray:
-        n_blocks = blocks.shape[0]
+        return _q4k_dequantize_numpy(blocks)
 
-        d, rest = np.hsplit(blocks, [2])
-        dmin, rest = np.hsplit(rest, [2])
-        scales, qs = np.hsplit(rest, [cls.K_SCALE_SIZE])
+    @classmethod
+    def bake_inner(cls, parameter):
+        _q4k_bake_pytorch(parameter)
 
-        d = d.view(np.float16).astype(np.float32)
-        dmin = dmin.view(np.float16).astype(np.float32)
-
-        sc, m = Q4_K.get_scale_min(scales)
-
-        d = (d * sc.astype(np.float32)).reshape((n_blocks, -1, 1))
-        dm = (dmin * m.astype(np.float32)).reshape((n_blocks, -1, 1))
-
-        qs = qs.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
-        qs = (qs & np.uint8(0x0F)).reshape((n_blocks, -1, 32)).astype(np.float32)
-
-        return (d * qs - dm).reshape((n_blocks, QK_K))
+    @classmethod
+    def dequantize_blocks_pytorch(cls, blocks, block_size, type_size, parameter) -> torch.Tensor:
+        return _q4k_dequantize_torch(blocks, parameter)
 
 
 class Q5_K(CodexQuantKernel, qtype=GGMLQuantizationType.Q5_K):
     @classmethod
     def dequantize_blocks(cls, blocks: np.ndarray) -> np.ndarray:
-        n_blocks = blocks.shape[0]
-
-        d, rest = np.hsplit(blocks, [2])
-        dmin, rest = np.hsplit(rest, [2])
-        scales, rest = np.hsplit(rest, [Q4_K.K_SCALE_SIZE])
-        qh, qs = np.hsplit(rest, [QK_K // 8])
-
-        d = d.view(np.float16).astype(np.float32)
-        dmin = dmin.view(np.float16).astype(np.float32)
-
-        sc, m = _q4k_scale_min_numpy(scales)
-
-        d = (d * sc.astype(np.float32)).reshape((n_blocks, -1, 1))
-        dm = (dmin * m.astype(np.float32)).reshape((n_blocks, -1, 1))
-
-        ql = qs.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
-        qh = qh.reshape((n_blocks, -1, 1, 32)) >> np.array([i for i in range(8)], dtype=np.uint8).reshape((1, 1, 8, 1))
-        ql = (ql & np.uint8(0x0F)).reshape((n_blocks, -1, 32))
-        qh = (qh & np.uint8(0x01)).reshape((n_blocks, -1, 32))
-        q = (ql | (qh << np.uint8(4))).astype(np.float32)
-
-        return (d * q - dm).reshape((n_blocks, QK_K))
+        return _q5k_dequantize_numpy(blocks)
 
     @classmethod
     def dequantize_blocks_pytorch(cls, blocks, block_size, type_size, parameter) -> torch.Tensor:
-        # (c) City96 || Apache-2.0 (apache.org/licenses/LICENSE-2.0)
-        QK_K = 256
-        K_SCALE_SIZE = 12
-        n_blocks = blocks.shape[0]
-        d, dmin, scales, qh, qs = quick_split(blocks, [2, 2, K_SCALE_SIZE, QK_K // 8])
-        d = d.view(torch.float16).to(parameter.computation_dtype)
-        dmin = dmin.view(torch.float16).to(parameter.computation_dtype)
-        sc, m = _q4k_scale_min_numpy_pytorch(scales)
-        d = (d * sc).reshape((n_blocks, -1, 1))
-        dm = (dmin * m).reshape((n_blocks, -1, 1))
-        ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
-        qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([i for i in range(8)], device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
-        ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
-        qh = (qh & 0x01).reshape((n_blocks, -1, 32))
-        q = (ql | (qh << 4))
-        return (d * q - dm).reshape((n_blocks, QK_K))
+        return _q5k_dequantize_torch(blocks, parameter)
 
 
 class Q6_K(CodexQuantKernel, qtype=GGMLQuantizationType.Q6_K):
     @classmethod
     def dequantize_blocks(cls, blocks: np.ndarray) -> np.ndarray:
-        n_blocks = blocks.shape[0]
-
-        ql, rest = np.hsplit(blocks, [QK_K // 2])
-        qh, rest = np.hsplit(rest, [QK_K // 4])
-        scales, d = np.hsplit(rest, [QK_K // 16])
-
-        scales = scales.view(np.int8).astype(np.float32)
-        d = d.view(np.float16).astype(np.float32)
-        d = (d * scales).reshape((n_blocks, QK_K // 16, 1))
-
-        ql = ql.reshape((n_blocks, -1, 1, 64)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
-        ql = (ql & np.uint8(0x0F)).reshape((n_blocks, -1, 32))
-        qh = qh.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 1, 4, 1))
-        qh = (qh & np.uint8(0x03)).reshape((n_blocks, -1, 32))
-        q = (ql | (qh << np.uint8(4))).astype(np.int8) - np.int8(32)
-        q = q.reshape((n_blocks, QK_K // 16, -1)).astype(np.float32)
-
-        return (d * q).reshape((n_blocks, QK_K))
+        return _q6k_dequantize_numpy(blocks)
 
     @classmethod
     def dequantize_blocks_pytorch(cls, blocks, block_size, type_size, parameter) -> torch.Tensor:
-        # Written by ChatGPT
-        n_blocks = blocks.shape[0]
-        ql, qh, scales, d, = quick_split(blocks, [QK_K // 2, QK_K // 4, QK_K // 16])
-        scales = scales.view(torch.int8).to(parameter.computation_dtype)
-        d = d.view(torch.float16).to(parameter.computation_dtype)
-        d = (d * scales).reshape((n_blocks, QK_K // 16, 1))
-        ql = ql.reshape((n_blocks, -1, 1, 64)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
-        ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
-        qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
-        qh = (qh & 0x03).reshape((n_blocks, -1, 32))
-        q = (ql | (qh << 4)).to(torch.int8) - 32
-        q = q.reshape((n_blocks, QK_K // 16, -1))
-        return (d * q).reshape((n_blocks, QK_K))
+        return _q6k_dequantize_torch(blocks, parameter)
 
 
 class IQ2_XXS(CodexQuantKernel, qtype=GGMLQuantizationType.IQ2_XXS):
@@ -1215,188 +1096,3 @@ class IQ4_XS(CodexQuantKernel, qtype=GGMLQuantizationType.IQ4_XS):
 
         return (dl * qs).reshape((n_blocks, -1))
 
-def _q2k_dequantize_numpy(blocks: np.ndarray) -> np.ndarray:
-    n_blocks = blocks.shape[0]
-    scales, rest = np.hsplit(blocks, [QK_K // 16])
-    qs, rest = np.hsplit(rest, [QK_K // 4])
-    d, dmin = np.hsplit(rest, [2])
-
-    d = d.view(np.float16).astype(np.float32)
-    dmin = dmin.view(np.float16).astype(np.float32)
-
-    dl = (d * (scales & 0xF).astype(np.float32)).reshape((n_blocks, QK_K // 16, 1))
-    ml = (dmin * (scales >> 4).astype(np.float32)).reshape((n_blocks, QK_K // 16, 1))
-
-    shift = np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 1, 4, 1))
-    qs = (qs.reshape((n_blocks, -1, 1, 32)) >> shift) & np.uint8(3)
-    qs = qs.reshape((n_blocks, QK_K // 16, 16)).astype(np.float32)
-    return (dl * qs - ml).reshape((n_blocks, -1))
-
-
-def _q2k_dequantize_torch(blocks: torch.Tensor, parameter: Any) -> torch.Tensor:
-    n_blocks = blocks.shape[0]
-    scales, qs, d, dmin = quick_split(blocks, [QK_K // 16, QK_K // 4, 2])
-    d = d.view(torch.float16).to(parameter.computation_dtype)
-    dmin = dmin.view(torch.float16).to(parameter.computation_dtype)
-    dl = (d * (scales & 0xF)).reshape((n_blocks, QK_K // 16, 1))
-    ml = (dmin * (scales >> 4)).reshape((n_blocks, QK_K // 16, 1))
-    shift = torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
-    qs = (qs.reshape((n_blocks, -1, 1, 32)) >> shift) & 3
-    qs = qs.reshape((n_blocks, QK_K // 16, 16)).to(parameter.computation_dtype)
-    return (dl * qs - ml).reshape((n_blocks, -1))
-
-
-def _q3k_dequantize_numpy(blocks: np.ndarray, grid: np.ndarray, ksigns: bytes) -> np.ndarray:
-    n_blocks = blocks.shape[0]
-    hmask, rest = np.hsplit(blocks, [QK_K // 8])
-    qs, rest = np.hsplit(rest, [QK_K // 4])
-    scales, d = np.hsplit(rest, [12])
-
-    d = d.view(np.float16).astype(np.float32)
-
-    lscales, hscales = np.hsplit(scales, [8])
-    lscales = lscales.reshape((n_blocks, 1, 8)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 2, 1))
-    lscales = lscales.reshape((n_blocks, 16))
-    hscales = hscales.reshape((n_blocks, 1, 4)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 4, 1))
-    hscales = hscales.reshape((n_blocks, 16))
-    scales = (lscales & 0x0F) | ((hscales & 0x03) << np.uint8(4))
-    scales = (scales.astype(np.int8) - np.int8(32)).astype(np.float32)
-
-    dl = (d * scales).reshape((n_blocks, 16, 1))
-
-    ql = qs.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 1, 4, 1))
-    qh = hmask.reshape((n_blocks, -1, 1, 32)) >> np.arange(8, dtype=np.uint8).reshape((1, 1, 8, 1))
-    ql = ql.reshape((n_blocks, 16, QK_K // 16)) & np.uint8(3)
-    qh = (qh.reshape((n_blocks, 16, QK_K // 16)) & np.uint8(1)) ^ np.uint8(1)
-    q = (ql.astype(np.int8) - (qh << np.uint8(2)).astype(np.int8)).astype(np.float32)
-
-    signs = np.frombuffer(ksigns, dtype=np.uint8).reshape((1, 1, 1, 128))
-    idx = (qs.reshape((n_blocks, -1, 1)) >> np.array([0, 7, 14, 21], dtype=np.uint32).reshape((1, 1, 4))) & 0x7F
-    sign_bits = np.take_along_axis(signs, idx, axis=-1)
-    sign_bits = sign_bits.reshape((n_blocks, -1, 4, 8)) >> np.arange(8, dtype=np.uint8).reshape((1, 1, 1, 8))
-    sign_bits = np.where((sign_bits & 1) == 0, np.float32(1), np.float32(-1))
-
-    grid_vals = np.take_along_axis(grid, qs.reshape((n_blocks, -1, 1, 1)).view(np.uint8), axis=-2)
-    grid_vals = grid_vals.reshape((n_blocks, -1, 4, 8))
-
-    return (dl.reshape((n_blocks, 16, 1)) * q.reshape((n_blocks, 16, -1)) * sign_bits.reshape((n_blocks, 16, -1))).reshape((n_blocks, QK_K))
-
-
-def _q4k_scale_min_numpy(scales: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    n_blocks = scales.shape[0]
-    scales = scales.view(np.uint8)
-    scales = scales.reshape((n_blocks, 3, 4))
-    d, m, m_d = np.split(scales, 3, axis=-2)
-    sc = np.concatenate([d & 0x3F, (m_d & 0x0F) | ((d >> 2) & 0x30)], axis=-1)
-    mn = np.concatenate([m & 0x3F, (m_d >> 4) | ((m >> 2) & 0x30)], axis=-1)
-    return (sc.reshape((n_blocks, 8)), mn.reshape((n_blocks, 8)))
-
-
-def _q4k_scale_min_torch(scales: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    n_blocks = scales.shape[0]
-    scales = scales.view(torch.uint8)
-    scales = scales.reshape((n_blocks, 3, 4))
-    d, m, m_d = torch.split(scales, scales.shape[-2] // 3, dim=-2)
-    sc = torch.cat([d & 0x3F, (m_d & 0x0F) | ((d >> 2) & 0x30)], dim=-1)
-    mn = torch.cat([m & 0x3F, (m_d >> 4) | ((m >> 2) & 0x30)], dim=-1)
-    return (sc.reshape((n_blocks, 8)), mn.reshape((n_blocks, 8)))
-
-
-def _q4k_dequantize_numpy(blocks: np.ndarray) -> np.ndarray:
-    n_blocks = blocks.shape[0]
-    d, rest = np.hsplit(blocks, [2])
-    dmin, rest = np.hsplit(rest, [2])
-    scales, qs = np.hsplit(rest, [Q4_K.K_SCALE_SIZE])
-
-    d = d.view(np.float16).astype(np.float32)
-    dmin = dmin.view(np.float16).astype(np.float32)
-    sc, mn = _q4k_scale_min_numpy(scales)
-    d = (d * sc.astype(np.float32)).reshape((n_blocks, -1, 1))
-    dm = (dmin * mn.astype(np.float32)).reshape((n_blocks, -1, 1))
-    qs = qs.reshape((n_blocks, -1, 1, 32))
-    qs = change_4bits_order(qs)
-    qs = qs.reshape((n_blocks, -1, 32)).astype(np.float32)
-    return (d * qs - dm).reshape((n_blocks, QK_K))
-
-
-def _q4k_dequantize_torch(blocks: torch.Tensor, parameter: Any) -> torch.Tensor:
-    n_blocks = blocks.shape[0]
-    d, dmin, scales, qs = quick_split(blocks, [2, 2, Q4_K.K_SCALE_SIZE])
-    d = d.view(torch.float16).to(parameter.computation_dtype)
-    dmin = dmin.view(torch.float16).to(parameter.computation_dtype)
-    sc, mn = _q4k_scale_min_numpy_pytorch(scales)
-    d = (d * sc).reshape((n_blocks, -1, 1))
-    dm = (dmin * mn).reshape((n_blocks, -1, 1))
-    qs = change_4bits_order(qs.reshape((n_blocks, -1, 1, 32)))
-    qs = qs.reshape((n_blocks, -1, 32)).to(parameter.computation_dtype)
-    return (d * qs - dm).reshape((n_blocks, QK_K))
-
-
-def _q5k_dequantize_numpy(blocks: np.ndarray) -> np.ndarray:
-    n_blocks = blocks.shape[0]
-    d, rest = np.hsplit(blocks, [2])
-    dmin, rest = np.hsplit(rest, [2])
-    scales, rest = np.hsplit(rest, [Q4_K.K_SCALE_SIZE])
-    qh, qs = np.hsplit(rest, [QK_K // 8])
-    d = d.view(np.float16).astype(np.float32)
-    dmin = dmin.view(np.float16).astype(np.float32)
-    sc, mn = _q4k_scale_min_numpy(scales)
-    d = (d * sc.astype(np.float32)).reshape((n_blocks, -1, 1))
-    dm = (dmin * mn.astype(np.float32)).reshape((n_blocks, -1, 1))
-    ql = qs.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
-    qh_bits = qh.reshape((n_blocks, -1, 1, 32)) >> np.arange(8, dtype=np.uint8).reshape((1, 1, 8, 1))
-    ql = (ql & np.uint8(0x0F)).reshape((n_blocks, -1, 32))
-    qh_bits = (qh_bits & np.uint8(1)).reshape((n_blocks, -1, 32))
-    q = (ql | (qh_bits << np.uint8(4))).astype(np.float32)
-    return (d * q - dm).reshape((n_blocks, QK_K))
-
-
-def _q5k_dequantize_torch(blocks: torch.Tensor, parameter: Any) -> torch.Tensor:
-    n_blocks = blocks.shape[0]
-    d, dmin, scales, qh, qs = quick_split(blocks, [2, 2, Q4_K.K_SCALE_SIZE, QK_K // 8])
-    d = d.view(torch.float16).to(parameter.computation_dtype)
-    dmin = dmin.view(torch.float16).to(parameter.computation_dtype)
-    sc, mn = _q4k_scale_min_numpy_pytorch(scales)
-    d = (d * sc).reshape((n_blocks, -1, 1))
-    dm = (dmin * mn).reshape((n_blocks, -1, 1))
-    ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
-    qh_bits = qh.reshape((n_blocks, -1, 1, 32)) >> torch.arange(8, device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
-    ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
-    qh_bits = (qh_bits & 1).reshape((n_blocks, -1, 32))
-    q = (ql | (qh_bits << 4)).to(parameter.computation_dtype)
-    return (d * q - dm).reshape((n_blocks, QK_K))
-
-
-def _q6k_dequantize_numpy(blocks: np.ndarray) -> np.ndarray:
-    n_blocks = blocks.shape[0]
-    ql, rest = np.hsplit(blocks, [QK_K // 2])
-    qh, rest = np.hsplit(rest, [QK_K // 4])
-    scales, d = np.hsplit(rest, [QK_K // 16])
-
-    scales = scales.view(np.int8).astype(np.float32)
-    d = d.view(np.float16).astype(np.float32)
-    d = (d * scales).reshape((n_blocks, QK_K // 16, 1))
-
-    ql = ql.reshape((n_blocks, -1, 1, 64)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
-    ql = (ql & np.uint8(0x0F)).reshape((n_blocks, -1, 32))
-    qh = qh.reshape((n_blocks, -1, 1, 32)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 1, 4, 1))
-    qh = (qh & np.uint8(0x03)).reshape((n_blocks, -1, 32))
-    q = (ql | (qh << np.uint8(4))).astype(np.int8) - np.int8(32)
-    q = q.reshape((n_blocks, QK_K // 16, -1)).astype(np.float32)
-
-    return (d * q).reshape((n_blocks, QK_K))
-
-
-def _q6k_dequantize_torch(blocks: torch.Tensor, parameter: Any) -> torch.Tensor:
-    n_blocks = blocks.shape[0]
-    ql, qh, scales, d = quick_split(blocks, [QK_K // 2, QK_K // 4, QK_K // 16])
-    scales = scales.view(torch.int8).to(parameter.computation_dtype)
-    d = d.view(torch.float16).to(parameter.computation_dtype)
-    d = (d * scales).reshape((n_blocks, QK_K // 16, 1))
-    ql = ql.reshape((n_blocks, -1, 1, 64)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
-    ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
-    qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
-    qh = (qh & 0x03).reshape((n_blocks, -1, 32))
-    q = (ql | (qh << 4)).to(parameter.computation_dtype) - 32
-    q = q.reshape((n_blocks, QK_K // 16, -1))
-    return (d * q).reshape((n_blocks, QK_K))

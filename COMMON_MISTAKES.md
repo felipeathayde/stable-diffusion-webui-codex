@@ -24,3 +24,57 @@
 **Wrong command:** `git diff --staged --check`
 **Cause + fix:** `Staged files contain trailing whitespace and missing EOF newlines; clean lint offenders before re-running.`
 **Correct command:** `git diff --staged --check`
+
+**Wrong command:** `python - <<'PY'
+import importlib
+mod = importlib.import_module('apps.backend.use_cases.txt2img')
+print('loaded', hasattr(mod, 'generate_txt2img'))
+PY`
+**Cause + fix:** `Importing the module pulls optional backend dependencies (e.g., safetensors) that are unavailable in this environment; validate syntax without loading heavy modules.`
+**Correct command:** `python - <<'PY'
+import ast, pathlib
+path = pathlib.Path('apps/backend/use_cases/txt2img.py')
+ast.parse(path.read_text())
+print('syntax ok')
+PY`
+
+**Wrong command:** `python - <<'PY'
+import ast, pathlib
+files = [
+    pathlib.Path('apps/backend/gguf/quants/__init__.py'),
+    pathlib.Path('apps/backend/gguf/quants/registry.py'),
+    pathlib.Path('apps/backend/gguf/quants/utils.py'),
+    pathlib.Path('apps/backend/gguf/quants/kernels/__init__.py'),
+    pathlib.Path('apps/backend/gguf/quants/kernels/base/__init__.py'),
+]
+for path in files:
+    ast.parse(path.read_text())
+print('syntax ok')
+PY`
+**Cause + fix:** `Residual patch markers remained in the file after editing, leaving invalid syntax. Remove stray '*** End Patch' lines before re-running the parser.`
+**Correct command:** `python - <<'PY'
+import ast, pathlib
+files = [
+    pathlib.Path('apps/backend/gguf/quants/__init__.py'),
+    pathlib.Path('apps/backend/gguf/quants/registry.py'),
+    pathlib.Path('apps/backend/gguf/quants/utils.py'),
+    pathlib.Path('apps/backend/gguf/quants/kernels/__init__.py'),
+    pathlib.Path('apps/backend/gguf/quants/kernels/base/__init__.py'),
+]
+for path in files:
+    ast.parse(path.read_text())
+print('syntax ok')
+PY`
+
+**Wrong command:** `python - <<'PY'
+import importlib
+mod = importlib.import_module('apps.backend.gguf.quants')
+print('kernels:', sorted(name for name in ['Q4_0','Q5_0','Q8_0'] if hasattr(mod, name)))
+PY`
+**Cause + fix:** `Importing the package pulls apps.backend.__init__, which depends on optional safetensors; avoid runtime imports when lightweight structural checks suffice.`
+**Correct command:** `python - <<'PY'
+import ast, pathlib
+path = pathlib.Path('apps/backend/gguf/quants/__init__.py')
+ast.parse(path.read_text())
+print('syntax ok')
+PY`

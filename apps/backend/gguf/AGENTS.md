@@ -1,7 +1,7 @@
 # apps/backend/gguf Overview
-Date: 2025-10-28
+Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-10-30
 Status: Active
 
 ## Purpose
@@ -10,10 +10,14 @@ Status: Active
 ## Key Files
 - `gguf_reader.py` / `gguf_writer.py` — IO helpers for reading/writing GGUF tensors and metadata.
 - `metadata.py` / `constants.py` / `tensor_mapping.py` — Schema definitions and tensor routing helpers.
-- `quants.py` / `quick_4bits_ops.py` — Quantization utilities.
+- `quants/` package — Quantization registry (`registry.py`), helpers (`utils.py`), and kernel families.
+- `quants/kernels/base/forge_*.py` — Forge-derived BF16/Q4/Q5/Q8 math preserved under MIT license headers.
+- `quick_4bits_ops.py` — Shared bit-packing helpers used by kernel bake paths.
 - `lazy.py` / `utility.py` — Lazy-loading helpers and shared GGUF utilities.
 - `vocab.py` — Vocabulary parsing for GGUF tokenizers.
 
 ## Notes
 - Keep GGUF support centralized here so runtimes/engines can depend on a single implementation.
 - When updating GGUF spec support, document changes and align with WAN22 runtime expectations.
+- The quantization stack is moving to `QuantKernel` registry abstractions; new kernels should register through the shared helpers rather than introducing standalone classes.
+- Forge-derived low-level kernels now live in `quants/kernels/base/forge_*.py`; keep them immutable except for upstream syncs and add new math in Codex-specific wrappers.

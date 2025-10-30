@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ....constants import QK_K
+from ....constants import GGML_QUANT_SIZES, GGMLQuantizationType
 
 __all__ = [
     "KVALUES",
@@ -17,6 +17,7 @@ __all__ = [
 
 
 KVALUES: tuple[int, ...] = (-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113)
+BLOCK_SIZE = GGML_QUANT_SIZES[GGMLQuantizationType.IQ4_NL][0]
 
 
 def dequantize_numpy(blocks: np.ndarray) -> np.ndarray:
@@ -26,7 +27,7 @@ def dequantize_numpy(blocks: np.ndarray) -> np.ndarray:
 
     d = d.view(np.float16).astype(np.float32)
 
-    qs = qs.reshape((n_blocks, -1, 1, QK_K // 2)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
+    qs = qs.reshape((n_blocks, -1, 1, BLOCK_SIZE // 2)) >> np.array([0, 4], dtype=np.uint8).reshape((1, 1, 2, 1))
 
     qs = (qs & np.uint8(0x0F)).reshape((n_blocks, -1, 1))
 

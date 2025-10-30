@@ -78,3 +78,19 @@ path = pathlib.Path('apps/backend/gguf/quants/__init__.py')
 ast.parse(path.read_text())
 print('syntax ok')
 PY`
+
+**Wrong command:** `python tools/gguf/compare_codex_forge.py --iterations 1 --blocks 2 --log-level DEBUG`
+**Cause + fix:** `System interpreter lacks project dependencies (numpy, torch); use the repository's virtualenv when executing tooling.`
+**Correct command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --iterations 1 --blocks 2 --log-level DEBUG`
+
+**Wrong command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --iterations 1 --blocks 2 --log-level DEBUG`
+**Cause + fix:** `IQ-family layouts still being ported; limit comparisons to supported K-family until the IQ metadata is in place.`
+**Correct command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --types Q2_K Q3_K Q4_K Q5_K Q6_K`
+
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** `The blanket find walks into legacy submodules under .legacy/, so git add aborts on nested .git refs; prune the legacy tree (or stage files explicitly).`
+**Correct command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+
+**Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** `Repository .gitignore filters *_m.py, so the new Forge IQ modules stay ignored and git add aborts; whitelist the directory before rerunning.`
+**Correct command:** `printf '!apps/backend/gguf/quants/kernels/iq_family/forge_*.py\n' >> .gitignore && git add .gitignore`

@@ -13,6 +13,7 @@ Status: Active
 - `quants/` package — Quantization registry (`registry.py`), helpers (`utils.py`), and kernel families.
 - `quants/kernels/base/forge_*.py` — Forge-derived BF16/Q4/Q5/Q8 math preserved under MIT license headers.
 - `quants/kernels/k_family/forge_*.py` — Forge-derived Q2_K–Q6_K families, imported verbatim per kernel with MIT attribution.
+- `quants/kernels/iq_family/forge_*.py` — Forge-derived IQ family (IQ1/IQ2/IQ3/IQ4) kernels split per quantization variant with MIT attribution.
 - `quick_4bits_ops.py` — Shared bit-packing helpers used by kernel bake paths.
 - `lazy.py` / `utility.py` — Lazy-loading helpers and shared GGUF utilities.
 - `vocab.py` — Vocabulary parsing for GGUF tokenizers.
@@ -22,3 +23,5 @@ Status: Active
 - When updating GGUF spec support, document changes and align with WAN22 runtime expectations.
 - The quantization stack is moving to `QuantKernel` registry abstractions; new kernels should register through the shared helpers rather than introducing standalone classes.
 - Forge-derived low-level kernels now live in `quants/kernels/base/forge_*.py` (base types) and `quants/kernels/k_family/forge_*.py` (Q2_K–Q6_K); keep them immutable except for upstream syncs and add new math in Codex-specific wrappers.
+- IQ-family kernels follow the same split: wrappers in `kerns/base/__init__.py` delegate to `quants/kernels/iq_family/forge_*.py`; keep wrappers limited to registry glue/logging and surface TODOs via explicit exceptions.
+- Developer harness `tools/gguf/compare_codex_forge.py` exercises Codex vs Forge dequantization; by default it covers the K-family with IQ support gated behind explicit `--types` selection while layouts are finalized.

@@ -365,12 +365,13 @@ class CodexOperations:
 
 
 try:
-    from .operations_bnb import CodexLoader4Bit, CodexParams4bit, functional_linear_4bits, functional_dequantize_4bit
+    from .operations_bnb import BnbQuantConfig, CodexLoader4Bit, CodexParams4bit, functional_linear_4bits, functional_dequantize_4bit
 
     class CodexOperationsBNB4bits(CodexOperations):
         class Linear(CodexLoader4Bit):
             def __init__(self, *args, **kwargs):
-                super().__init__(device=current_device, dtype=current_dtype, quant_type=current_bnb_dtype)
+                config = BnbQuantConfig(blocksize=64, quant_type=current_bnb_dtype or "4bit")
+                super().__init__(device=current_device, dtype=current_dtype, quant_config=config)
                 self.parameters_manual_cast = current_manual_cast_enabled
 
             def forward(self, x):

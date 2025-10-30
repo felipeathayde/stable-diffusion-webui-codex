@@ -1,6 +1,12 @@
 **Wrong command:** `rg -n "huggingface_guess" legacy`
 **Cause + fix:** Repository archives legacy code under `.legacy/`, so the command targeted a non-existent `legacy/` directory; point ripgrep at `.legacy/` instead.
 **Correct command:** `rg -n "huggingface_guess" .legacy`
+**Wrong command:** `rg -n "iq1" legacy -g"*.py"`
+**Cause + fix:** Repository archives legacy sources under `.legacy/`; point ripgrep at `.legacy/` instead of the non-existent `legacy/` path.
+**Correct command:** `rg -n "iq1" .legacy -g"*.py"`
+**Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, `.refs/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
+**Correct command:** `git add AGENTS.md THIRD_PARTY_NOTICES.md COMMON_MISTAKES.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-docs-legacy-paths.md .sangoi/handoffs/2025-10-30-docs-legacy-paths.md`
 **Wrong command:** `cat .sangoi/task-guidelines.md`
 **Cause + fix:** Task guidelines file lives under `.sangoi/templates/document-guidelines.md`; referencing the old path triggers a file-not-found.
 **Correct command:** `cat .sangoi/templates/document-guidelines.md`

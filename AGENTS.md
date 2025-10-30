@@ -57,9 +57,9 @@
 4) Then start the implementation.
 
 ## Legacy Code Policy
-- `legacy/` is a historical read-only reference. DO NOT modify, move, or remove files under `legacy/`.
-- Use `legacy/` only for behavior lookups/diffs. Fixes must go into non-legacy code.
-- Do not introduce new dependencies from active code to modules in `legacy/`.
+- `.legacy/` is a historical read-only reference. DO NOT modify, move, or remove files under `.legacy/`.
+- Use `.legacy/` only for behavior lookups/diffs. Fixes must go into non-legacy code.
+- Do not introduce new dependencies from active code to modules in `.legacy/`.
 - If you need logic from there, port it to the relevant directory inside `/apps`.
 
 ## Model Loading (Research Reference)

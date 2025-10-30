@@ -23,65 +23,42 @@ def apply_controlnet_advanced(
         advanced_sigma_weighting=None,
         advanced_mask_weighting=None
 ):
-    """
-
-    # positive_advanced_weighting or negative_advanced_weighting
-
-    Unet has input, middle, output blocks, and we can give different weights to each layers in all blocks.
-    Below is an example for stronger control in middle block.
-    This is helpful for some high-res fix passes.
-
-        positive_advanced_weighting = {
-            'input': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2],
-            'middle': [1.0],
-            'output': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
-        }
-        negative_advanced_weighting = {
-            'input': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2],
-            'middle': [1.0],
-            'output': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
-        }
-
-    # advanced_frame_weighting
-
-    The advanced_frame_weighting is a weight applied to each image in a batch.
-    The length of this list must be same with batch size
-    For example, if batch size is 5, you can use advanced_frame_weighting = [0, 0.25, 0.5, 0.75, 1.0]
-    If you view the 5 images as 5 frames in a video, this will lead to progressively stronger control over time.
-
-    # advanced_sigma_weighting
-
-    The advanced_sigma_weighting allows you to dynamically compute control
-    weights given diffusion timestep (sigma).
-    For example below code can softly make beginning steps stronger than ending steps.
-
-        sigma_max = unet.model.model_sampling.sigma_max
-        sigma_min = unet.model.model_sampling.sigma_min
-        advanced_sigma_weighting = lambda s: (s - sigma_min) / (sigma_max - sigma_min)
-
-    # advanced_mask_weighting
-
-    A mask can be applied to control signals.
-    This should be a tensor with shape B 1 H W where the H and W can be arbitrary.
-    This mask will be resized automatically to match the shape of all injection layers.
-
-    """
-
-    cnet = controlnet.copy().set_cond_hint(image_bchw, strength, (start_percent, end_percent))
-    cnet.positive_advanced_weighting = positive_advanced_weighting
-    cnet.negative_advanced_weighting = negative_advanced_weighting
-    cnet.advanced_frame_weighting = advanced_frame_weighting
-    cnet.advanced_sigma_weighting = advanced_sigma_weighting
+    control_clone = controlnet.copy().set_cond_hint(image_bchw, strength, (start_percent, end_percent))
+    control_clone.positive_advanced_weighting = positive_advanced_weighting
+    control_clone.negative_advanced_weighting = negative_advanced_weighting
+    control_clone.advanced_frame_weighting = advanced_frame_weighting
+    control_clone.advanced_sigma_weighting = advanced_sigma_weighting
 
     if advanced_mask_weighting is not None:
-        assert isinstance(advanced_mask_weighting, torch.Tensor)
+        if not isinstance(advanced_mask_weighting, torch.Tensor):
+            raise TypeError("advanced_mask_weighting must be a torch.Tensor")
         B, C, H, W = advanced_mask_weighting.shape
-        assert B > 0 and C == 1 and H > 0 and W > 0
+        if B <= 0 or C != 1 or H <= 0 or W <= 0:
+            raise ValueError("advanced_mask_weighting must be shaped [B, 1, H, W] with positive dimensions")
+    control_clone.advanced_mask_weighting = advanced_mask_weighting
 
-    cnet.advanced_mask_weighting = advanced_mask_weighting
+    request = ControlRequest(
+        image=image_bchw,
+        strength=strength,
+        start_percent=start_percent,
+        end_percent=end_percent,
+        weight_schedule=ControlWeightSchedule(
+            positive=positive_advanced_weighting,
+            negative=negative_advanced_weighting,
+            frame=advanced_frame_weighting,
+            sigma=advanced_sigma_weighting,
+        ),
+    )
+    request.mask_config.mask = advanced_mask_weighting
+
+    node = ControlNode(
+        config=ControlNodeConfig(name="advanced", model_type="controlnet"),
+        request=request,
+        control=control_clone,
+    )
 
     m = unet.clone()
-    m.add_patched_controlnet(cnet)
+    m.add_control_node(node)
     return m
 
 
@@ -197,26 +174,20 @@ class ControlBase:
 
     def pre_run(self, model, percent_to_timestep_function):
         self.timestep_range = (percent_to_timestep_function(self.timestep_percent_range[0]), percent_to_timestep_function(self.timestep_percent_range[1]))
-        if self.previous_controlnet is not None:
-            self.previous_controlnet.pre_run(model, percent_to_timestep_function)
 
     def set_previous_controlnet(self, controlnet):
         self.previous_controlnet = controlnet
         return self
 
     def cleanup(self):
-        if self.previous_controlnet is not None:
-            self.previous_controlnet.cleanup()
         if self.cond_hint is not None:
             del self.cond_hint
             self.cond_hint = None
         self.timestep_range = None
+        self.previous_controlnet = None
 
     def get_models(self):
-        out = []
-        if self.previous_controlnet is not None:
-            out += self.previous_controlnet.get_models()
-        return out
+        return []
 
     def copy_to(self, c):
         c.cond_hint_original = self.cond_hint_original
@@ -225,8 +196,6 @@ class ControlBase:
         c.global_average_pooling = self.global_average_pooling
 
     def inference_memory_requirements(self, dtype):
-        if self.previous_controlnet is not None:
-            return self.previous_controlnet.inference_memory_requirements(dtype)
         return 0
 
     def control_merge(self, control_input, control_output, control_prev, output_dtype):

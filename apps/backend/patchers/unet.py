@@ -3,11 +3,13 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 import torch
 
 from apps.backend.runtime.common.nn.unet.layers import SpatialTransformer
+from apps.backend.runtime.controlnet import ControlNode, ControlNodeConfig, ControlRequest, ControlWeightSchedule
+from apps.backend.runtime.controlnet.runtime import build_composite
 from apps.backend.runtime.modules.k_model import KModel
 from .base import ModelPatcher
 
@@ -40,30 +42,6 @@ class SamplingReservation:
         self.auxiliary_patchers.append(patcher)
 
 
-@dataclass
-class ControlNetChain:
-    head: Optional[Any] = None
-
-    def clone(self) -> "ControlNetChain":
-        # ControlNet patchers maintain their own state; we just reference the chain head.
-        return ControlNetChain(head=self.head)
-
-    def prepend(self, controlnet: Any) -> None:
-        if not hasattr(controlnet, "set_previous_controlnet"):
-            raise TypeError("controlnet must expose set_previous_controlnet")
-        if not hasattr(controlnet, "previous_controlnet"):
-            raise TypeError("controlnet must expose previous_controlnet")
-        controlnet.set_previous_controlnet(self.head)
-        self.head = controlnet
-        logger.debug("Added ControlNet %s to UNet chain", controlnet)
-
-    def iter(self) -> Iterable[Any]:
-        pointer = self.head
-        while pointer is not None:
-            yield pointer
-            pointer = getattr(pointer, "previous_controlnet", None)
-
-
 class UnetPatcher(ModelPatcher):
     """Codex-specific UNet patcher with validated state helpers."""
 
@@ -81,33 +59,53 @@ class UnetPatcher(ModelPatcher):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._controlnets = ControlNetChain()
+        self._control_nodes: List[ControlNode] = []
         self._sampling = SamplingReservation()
         self.extra_concat_condition: Optional[torch.Tensor] = None
+        self._active_control = None
 
     def clone(self):
         clone = self.__class__(self.model, self.load_device, self.offload_device, self.size, self.current_device)
         clone.lora_patches = self.lora_patches.copy()
         clone.object_patches = self.object_patches.copy()
         clone.model_options = copy.deepcopy(self.model_options)
-        clone._controlnets = self._controlnets.clone()
+        clone._control_nodes = [self._clone_control_node(node) for node in self._control_nodes]
         clone._sampling = self._sampling.clone()
         clone.extra_concat_condition = self.extra_concat_condition
+        clone._active_control = None
         logger.debug("Cloned UnetPatcher %s -> %s", id(self), id(clone))
         return clone
 
     @property
-    def controlnet_linked_list(self) -> Optional[Any]:
-        return self._controlnets.head
+    @property
+    def control_nodes(self) -> List[ControlNode]:
+        return list(self._control_nodes)
 
-    @controlnet_linked_list.setter
-    def controlnet_linked_list(self, controlnet: Optional[Any]) -> None:
-        if controlnet is None:
-            self._controlnets.head = None
-            return
-        if not hasattr(controlnet, "previous_controlnet"):
-            raise TypeError("controlnet must provide previous_controlnet attribute")
-        self._controlnets.head = controlnet
+    def activate_control(self):
+        self._active_control = build_composite(self.control_nodes)
+        return self._active_control
+
+    def clear_control(self) -> None:
+        self._active_control = None
+
+    @property
+    def controlnet_linked_list(self):
+        return self._active_control or build_composite(self.control_nodes)
+
+    def _clone_control_node(self, node: ControlNode) -> ControlNode:
+        control = node.control
+        control_copy = control.copy() if hasattr(control, "copy") else copy.deepcopy(control)
+        request = copy.deepcopy(node.request)
+        config = copy.deepcopy(node.config)
+        return ControlNode(config=config, request=request, control=control_copy)
+
+    def add_control_node(self, node: ControlNode) -> None:
+        if not isinstance(node, ControlNode):
+            raise TypeError("Expected ControlNode instance")
+        self._control_nodes.append(node)
+        logger.debug("Appended ControlNode %s", node.config.name)
+        self.clear_control()
+
 
     @property
     def extra_preserved_memory_during_sampling(self) -> int:
@@ -171,10 +169,39 @@ class UnetPatcher(ModelPatcher):
         return patcher
 
     def add_patched_controlnet(self, controlnet: Any) -> None:
-        raise NotImplementedError("ControlNet not yet ported")
+        request = self._build_request_from_control(controlnet)
+        config = ControlNodeConfig(
+            name=getattr(controlnet, "name", controlnet.__class__.__name__),
+            model_type=controlnet.__class__.__name__.lower(),
+        )
+        node = ControlNode(config=config, request=request, control=controlnet)
+        self.add_control_node(node)
+
+    def _build_request_from_control(self, controlnet: Any) -> ControlRequest:
+        image = getattr(controlnet, "cond_hint_original", None)
+        if image is None:
+            raise ValueError("ControlNet cond_hint_original must be set before adding to UNet")
+        strength = getattr(controlnet, "strength", 1.0)
+        start_percent, end_percent = getattr(controlnet, "timestep_percent_range", (0.0, 1.0))
+        schedule = ControlWeightSchedule(
+            positive=getattr(controlnet, "positive_advanced_weighting", None),
+            negative=getattr(controlnet, "negative_advanced_weighting", None),
+            frame=getattr(controlnet, "advanced_frame_weighting", None),
+            sigma=getattr(controlnet, "advanced_sigma_weighting", None),
+        )
+        request = ControlRequest(
+            image=image,
+            strength=strength,
+            start_percent=start_percent,
+            end_percent=end_percent,
+            weight_schedule=schedule,
+        )
+        mask = getattr(controlnet, "advanced_mask_weighting", None)
+        request.mask_config.mask = mask
+        return request
 
     def list_controlnets(self) -> List[Any]:
-        return list(self._controlnets.iter())
+        return [node.control for node in self._control_nodes]
 
     def append_model_option(self, key: str, value: Any, ensure_uniqueness: bool = False) -> None:
         bucket = self.model_options.setdefault(key, [])

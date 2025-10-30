@@ -258,11 +258,8 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
 
         c['transformer_options'] = transformer_options
 
-        if control is not None:
-            p = control
-            while p is not None:
-                p.transformer_options = transformer_options
-                p = p.previous_controlnet
+        if control:
+            control.set_transformer_options(transformer_options)
             control_cond = c.copy()  # get_control may change items in this dict, so we need to copy it
             c['control'] = control.get_control(input_x, timestep_, control_cond, len(cond_or_uncond))
             c['control_model'] = control
@@ -349,12 +346,12 @@ def sampling_function(self, denoiser_params, cond_scale, cond_composition):
             for i in range(len(cond)):
                 cond[i]['model_conds']['c_concat'] = Condition(image_cond_in)
 
-    if control is not None:
+    if control:
         for h in cond:
             h['control'] = control
-        if uncond is not None:
-            for h in uncond:
-                h['control'] = control
+    if control and uncond is not None:
+        for h in uncond:
+            h['control'] = control
 
     for modifier in model_options.get('conditioning_modifiers', []):
         model, x, timestep, uncond, cond, cond_scale, model_options, seed = modifier(model, x, timestep, uncond, cond, cond_scale, model_options, seed)
@@ -372,9 +369,10 @@ def sampling_prepare(unet, x):
     additional_inference_memory = unet.extra_preserved_memory_during_sampling
     additional_model_patchers = unet.extra_model_patchers_during_sampling
 
-    if unet.controlnet_linked_list is not None:
-        additional_inference_memory += unet.controlnet_linked_list.inference_memory_requirements(unet.model_dtype())
-        additional_model_patchers += unet.controlnet_linked_list.get_models()
+    control_runtime = unet.activate_control()
+    if control_runtime:
+        additional_inference_memory += control_runtime.inference_memory_requirements(unet.model_dtype())
+        additional_model_patchers += control_runtime.get_models()
 
     if unet.has_online_lora():
         lora_memory = utils.nested_compute_size(unet.lora_patches, element_size=utils.dtype_to_element_size(unet.model.computation_dtype))
@@ -393,8 +391,8 @@ def sampling_prepare(unet, x):
 
     percent_to_timestep_function = lambda p: real_model.predictor.percent_to_sigma(p)
 
-    for cnet in unet.list_controlnets():
-        cnet.pre_run(real_model, percent_to_timestep_function)
+    if control_runtime:
+        control_runtime.prepare(real_model, percent_to_timestep_function)
 
     return
 
@@ -402,7 +400,9 @@ def sampling_prepare(unet, x):
 def sampling_cleanup(unet):
     if unet.has_online_lora():
         utils.nested_move_to_device(unet.lora_patches, device=unet.offload_device)
-    for cnet in unet.list_controlnets():
-        cnet.cleanup()
+    control_runtime = unet.controlnet_linked_list
+    if control_runtime:
+        control_runtime.cleanup()
+    unet.clear_control()
     cleanup_cache()
     return

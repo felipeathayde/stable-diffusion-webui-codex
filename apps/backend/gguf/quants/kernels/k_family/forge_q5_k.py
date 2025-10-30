@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from ....constants import QK_K
-from ....utils import quick_split
+from ...utils import quick_split
 from .forge_q4_k import get_scale_min_numpy, get_scale_min_pytorch, K_SCALE_SIZE
 
 __all__ = [

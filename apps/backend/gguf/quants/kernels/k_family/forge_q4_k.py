@@ -7,7 +7,7 @@ import torch
 
 from ....constants import QK_K
 from ....quick_4bits_ops import change_4bits_order
-from ....utils import quick_split
+from ...utils import quick_split
 
 __all__ = [
     "get_scale_min_numpy",

@@ -10,10 +10,32 @@ from .models import (
     CodexProcessingImg2Img,
     CodexProcessingTxt2Img,
 )
+from .datatypes import (
+    PromptContext,
+    ConditioningPayload,
+    SamplingPlan,
+    HiResPlan,
+    InitImageBundle,
+    GenerationResult,
+    ExtraNetworkDescriptor,
+    AppliedExtra,
+    VideoPlan,
+    VideoResult,
+)
 
 __all__ = [
     "CodexProcessingBase",
     "CodexProcessingTxt2Img",
     "CodexProcessingImg2Img",
     "CodexHighResConfig",
+    "PromptContext",
+    "ConditioningPayload",
+    "SamplingPlan",
+    "HiResPlan",
+    "InitImageBundle",
+    "GenerationResult",
+    "ExtraNetworkDescriptor",
+    "AppliedExtra",
+    "VideoPlan",
+    "VideoResult",
 ]

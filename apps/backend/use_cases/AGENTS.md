@@ -1,7 +1,7 @@
 # apps/backend/use_cases Overview
-Date: 2025-10-28
+Date: 2025-10-30
 Owner: Backend Use-Case Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-10-30
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 ## Key Files
 - `txt2img.py`, `img2img.py`, `txt2vid.py`, `img2vid.py` — Task-specific pipelines that bind request parameters, engines, runtimes, and services.
 - `__init__.py` — Exposes helpers to orchestrator modules in `apps/backend/core`.
+- Shared orchestration logic now lives in `apps/backend/runtime/workflows/`; use cases should prefer these helpers over bespoke copies of sampler/prompt setup.
 
 ## Notes
 - Introduza novos use cases sempre que uma combinação de tarefa + modo precisar de orquestração própria; mantenha a lógica focalizada em preparar entradas, chamar engines e relatar progresso, delegando detalhes de modelo para `engines/` ou `runtime/`.

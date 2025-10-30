@@ -1,68 +1,75 @@
 from __future__ import annotations
 
 import time
-from typing import Iterator, List, Any, Optional
+from typing import Any, Iterator
 
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
-from apps.backend.codex import lora as codex_lora
-from apps.backend.patchers.lora_apply import apply_loras_to_engine
-from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
+from apps.backend.runtime.processing.datatypes import VideoPlan
+from apps.backend.runtime.workflows import (
+    apply_engine_loras,
+    build_video_plan,
+    build_video_result,
+    configure_sampler,
+    export_video,
+)
 
 
-def run_txt2vid(*, engine, comp, request: Txt2VidRequest) -> Iterator[InferenceEvent]:
-    """Generic txt2vid flow using Diffusers when available; GGUF path todo.
+def _run_pipeline(pipe: Any, plan: VideoPlan, request: Txt2VidRequest) -> list[Any]:
+    output = pipe(
+        prompt=request.prompt,
+        negative_prompt=getattr(request, "negative_prompt", None),
+        num_frames=plan.frames,
+        num_inference_steps=plan.steps,
+        height=plan.height,
+        width=plan.width,
+        guidance_scale=plan.guidance_scale,
+    )
+    if hasattr(output, "frames"):
+        return list(output.frames[0])
+    if hasattr(output, "images"):
+        return list(output.images)
+    raise RuntimeError("txt2vid pipeline returned no frames")
 
-    Expects `comp` to have fields: pipeline, device, dtype, model_dir, high_dir, low_dir.
-    """
+
+def run_txt2vid(
+    *,
+    engine,
+    comp,
+    request: Txt2VidRequest,
+) -> Iterator[InferenceEvent]:
     logger = getattr(engine, "_logger", None)
+    plan = build_video_plan(request)
     start = time.perf_counter()
+
     yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid")
 
     pipe = getattr(comp, "pipeline", None)
-
-    # Native LoRA application (error on failure)
-    sels = codex_lora.get_selections()
-    if sels and hasattr(engine, "codex_objects_after_applying_lora"):
-        apply_loras_to_engine(engine, sels)
-        if logger:
-            logger.info("[native] txt2vid applied %d LoRA(s)", len(sels))
-
     if pipe is None:
         raise RuntimeError("txt2vid requires a Diffusers pipeline; none found in components")
 
-    # Sampler/Scheduler mapping
-    sampler = getattr(request, "sampler", "Automatic")
-    scheduler = getattr(request, "scheduler", "Automatic")
-    outcome = apply_sampler_scheduler(pipe, SamplerKind.from_string(sampler), scheduler)
-    for w in outcome.warnings:
-        if logger:
-            logger.warning("txt2vid: %s", w)
+    apply_engine_loras(engine, logger)
+
+    sampler_outcome = configure_sampler(pipe, plan, logger)
 
     yield ProgressEvent(stage="run", percent=5.0, message="Running pipeline")
-    out = pipe(
-        prompt=request.prompt,
-        negative_prompt=getattr(request, "negative_prompt", None),
-        num_frames=int(getattr(request, "num_frames", 16) or 16),
-        num_inference_steps=max(1, int(getattr(request, "steps", 12) or 12)),
-        height=int(getattr(request, "height", 432) or 432),
-        width=int(getattr(request, "width", 768) or 768),
-        guidance_scale=getattr(request, "cfg_scale", None),
+    frames = _run_pipeline(pipe, plan, request)
+
+    video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None))
+
+    elapsed = time.perf_counter() - start
+    result = build_video_result(
+        engine,
+        frames,
+        plan,
+        sampler_outcome,
+        elapsed=elapsed,
+        task="txt2vid",
+        extra=plan.extras,
+        video_meta=video_meta,
     )
-    frames: List[object] = list(out.frames[0]) if hasattr(out, "frames") else []
 
-    fps = int(getattr(request, "fps", 24) or 24)
-    # Delegate export to engine helper if present
-    video_opts = getattr(request, "video_options", None)
-    video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
-
-    info = {
-        "engine": getattr(engine, "engine_id", "unknown"),
-        "task": "txt2vid",
-        "elapsed": round(time.perf_counter() - start, 3),
-        "frames": len(frames),
-        "sampler_in": outcome.sampler_in,
-        "scheduler_in": outcome.scheduler_in,
-        "sampler": outcome.sampler_effective,
-        "scheduler": outcome.scheduler_effective,
+    payload = {
+        "images": result.frames,
+        "info": engine._to_json(result.metadata),  # type: ignore[attr-defined]
     }
-    yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
+    yield ResultEvent(payload=payload)

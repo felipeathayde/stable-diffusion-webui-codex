@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from ....constants import QK_K
-from ....utils import quick_split
+from ...utils import quick_split
 
 __all__ = [
     "dequantize_numpy",

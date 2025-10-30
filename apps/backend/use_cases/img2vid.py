@@ -1,26 +1,59 @@
 from __future__ import annotations
 
 import time
-from typing import Iterator, List, Any, Optional
+from typing import Any, Iterator
 
-from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Img2VidRequest
-from apps.backend.codex import lora as codex_lora
-from apps.backend.patchers.lora_apply import apply_loras_to_engine
-from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
-from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.core.params.video import VideoInterpolationOptions
+from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent
+from apps.backend.engines.wan22.wan22_common import WanStageOptions
+from apps.backend.runtime.processing.datatypes import VideoPlan
+from apps.backend.runtime.workflows import (
+    apply_engine_loras,
+    build_video_plan,
+    build_video_result,
+    configure_sampler,
+    export_video,
+)
 from apps.backend.video.interpolation import maybe_interpolate
 
 
-def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceEvent]:
-    """Generic img2vid flow with optional two-stage High→Low and VFI.
+def _run_stage(
+    pipe: Any,
+    plan: VideoPlan,
+    *,
+    prompt: str,
+    negative_prompt: str | None,
+    init_image: Any | None,
+) -> list[Any]:
+    if pipe is None:
+        raise RuntimeError("img2vid requires a Diffusers pipeline (single or per-stage)")
+    output = pipe(
+        image=init_image,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        num_frames=plan.frames,
+        num_inference_steps=plan.steps,
+        height=plan.height,
+        width=plan.width,
+        guidance_scale=plan.guidance_scale,
+    )
+    if hasattr(output, "frames"):
+        return list(output.frames[0])
+    raise RuntimeError("img2vid pipeline returned no frames")
 
-    Expects `comp` to have: pipeline (or stage pipelines), model_dir, high_dir, low_dir, device, dtype.
-    """
+
+def run_img2vid(
+    *,
+    engine,
+    comp,
+    request: Img2VidRequest,
+) -> Iterator[InferenceEvent]:
     logger = getattr(engine, "_logger", None)
-    start = time.perf_counter()
     if getattr(request, "init_image", None) is None:
         raise RuntimeError("img2vid requires 'init_image'")
+
+    plan = build_video_plan(request)
+    start = time.perf_counter()
 
     yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid")
 
@@ -28,100 +61,85 @@ def run_img2vid(*, engine, comp, request: Img2VidRequest) -> Iterator[InferenceE
     high_model = getattr(comp, "pipeline_high", None)
     low_model = getattr(comp, "pipeline_low", None)
 
-    # Native LoRA application (errors propagate)
-    sels = codex_lora.get_selections()
-    if sels and hasattr(engine, 'codex_objects_after_applying_lora'):
-        apply_loras_to_engine(engine, sels)
-        if logger:
-            logger.info("[native] img2vid applied %d LoRA(s)", len(sels))
+    apply_engine_loras(engine, logger)
 
-    # Require diffusers pipelines; no GGUF fallback here
-    if high_model is None and low_model is None and pipe is None:
-        raise RuntimeError("img2vid requires a Diffusers pipeline (single or per-stage); none found in components")
-
-    # Stage 1 (High)
     active_pipe_hi = high_model or pipe
     if active_pipe_hi is None:
         raise RuntimeError("img2vid requires a Diffusers pipeline (single or per-stage)")
-    outcome = apply_sampler_scheduler(
-        active_pipe_hi,
-        SamplerKind.from_string(getattr(request, "sampler", "Automatic")),
-        getattr(request, "scheduler", "Automatic"),
-    )
-    for w in outcome.warnings:
-        if logger:
-            logger.warning("img2vid: %s", w)
+
+    outcome_hi = configure_sampler(active_pipe_hi, plan, logger)
+
     yield ProgressEvent(stage="run_high", percent=5.0, message="Stage 1 (High Noise)")
-    out_hi = active_pipe_hi(
-        image=getattr(request, "init_image", None),
+    frames_hi = _run_stage(
+        active_pipe_hi,
+        plan,
         prompt=request.prompt,
         negative_prompt=getattr(request, "negative_prompt", None),
-        num_frames=int(getattr(request, "num_frames", 16) or 16),
-        num_inference_steps=max(1, int(getattr(request, "steps", 12) or 12)),
-        height=int(getattr(request, "height", 432) or 432),
-        width=int(getattr(request, "width", 768) or 768),
-        guidance_scale=getattr(request, "cfg_scale", None),
+        init_image=getattr(request, "init_image", None),
     )
-    frames_hi: List[object] = list(out_hi.frames[0]) if hasattr(out_hi, "frames") else []
 
-    # Stage 2 (Low) — seed with last frame of High
-    frames: List[object]
     active_pipe_lo = low_model or pipe
-    extras = getattr(request, "extras", {}) or {}
-    lo = WanStageOptions.from_mapping(extras.get("wan_low")) if isinstance(extras, dict) else None
+    outcome_lo = None
+    frames = list(frames_hi)
+    extras = dict(plan.extras)
+
     if active_pipe_lo is not None and frames_hi:
-        # Apply LoRA per-stage if available (best-effort)
-        if isinstance(lo, WanStageOptions) and lo.lora_path:
-            if hasattr(active_pipe_lo, "load_lora_weights"):
-                active_pipe_lo.load_lora_weights(lo.lora_path)  # type: ignore[attr-defined]
-        outcome_lo = apply_sampler_scheduler(
-            active_pipe_lo,
-            SamplerKind.from_string(getattr(request, "sampler", "Automatic")),
-            getattr(request, "scheduler", "Automatic"),
-        )
-        for w in outcome_lo.warnings:
-            if logger:
-                logger.warning("img2vid(low): %s", w)
+        wan_low_cfg = extras.get("wan_low")
+        wan_opts = WanStageOptions.from_mapping(wan_low_cfg) if isinstance(wan_low_cfg, dict) else None
+        if wan_opts and wan_opts.lora_path and hasattr(active_pipe_lo, "load_lora_weights"):
+            active_pipe_lo.load_lora_weights(wan_opts.lora_path)  # type: ignore[attr-defined]
+
+        outcome_lo = configure_sampler(active_pipe_lo, plan, logger)
         yield ProgressEvent(stage="run_low", percent=50.0, message="Stage 2 (Low Noise)")
-        seed_image = frames_hi[-1]
-        out_lo = active_pipe_lo(
-            image=seed_image,
+        frames = _run_stage(
+            active_pipe_lo,
+            plan,
             prompt=request.prompt,
             negative_prompt=getattr(request, "negative_prompt", None),
-            num_frames=int(getattr(request, "num_frames", 16) or 16),
-            num_inference_steps=max(1, int(getattr(request, "steps", 12) or 12)),
-            height=int(getattr(request, "height", 432) or 432),
-            width=int(getattr(request, "width", 768) or 768),
-            guidance_scale=getattr(request, "cfg_scale", None),
+            init_image=frames_hi[-1],
         )
-        frames = list(out_lo.frames[0]) if hasattr(out_lo, "frames") else frames_hi
-    else:
-        frames = frames_hi
 
-    # Optional interpolation (VFI)
     vfi_opts = None
-    vi = (getattr(request, 'extras', {}) or {}).get('video_interpolation')
-    if isinstance(vi, dict):
-        vfi = VideoInterpolationOptions(
-            enabled=bool(vi.get('enabled', False)),
-            model=str(vi.get('model')) if vi.get('model') is not None else None,
-            times=int(vi.get('times')) if vi.get('times') is not None else None,
+    vfi_cfg = extras.get("video_interpolation") if isinstance(extras, dict) else None
+    if isinstance(vfi_cfg, dict):
+        vio = VideoInterpolationOptions(
+            enabled=bool(vfi_cfg.get("enabled", False)),
+            model=str(vfi_cfg.get("model")) if vfi_cfg.get("model") is not None else None,
+            times=int(vfi_cfg.get("times")) if vfi_cfg.get("times") is not None else None,
         )
-        vfi_opts = vfi.as_dict()
-        if vfi.enabled and (vfi.times or 0) > 1:
+        vfi_opts = vio.as_dict()
+        if vio.enabled and (vio.times or 0) > 1:
             yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
-            frames, vfi_meta = maybe_interpolate(frames, enabled=vfi.enabled, model=vfi.model, times=vfi.times or 2, logger=logger)
-            vfi_opts = {**vfi_opts, **{"result": vfi_meta}}
+            frames, vfi_meta = maybe_interpolate(frames, enabled=vio.enabled, model=vio.model, times=vio.times or 2, logger=logger)
+            vfi_opts = {**vfi_opts, "result": vfi_meta}
 
-    fps = int(getattr(request, "fps", 24) or 24)
-    video_opts = getattr(request, "video_options", None)
-    video_meta = engine._maybe_export_video(frames, fps=fps, options=video_opts)  # type: ignore[attr-defined]
+    video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None))
 
-    info = {
-        "engine": getattr(engine, "engine_id", "unknown"),
-        "task": "img2vid",
-        "elapsed": round(time.perf_counter() - start, 3),
-        "frames": len(frames),
-        "video_interpolation": vfi_opts,
+    extra_meta: dict[str, Any] = dict(extras) if isinstance(extras, dict) else {}
+    if vfi_opts is not None:
+        extra_meta["video_interpolation"] = vfi_opts
+    if outcome_lo is not None:
+        extra_meta["sampler_low"] = {
+            "sampler_in": getattr(outcome_lo, "sampler_in", None),
+            "scheduler_in": getattr(outcome_lo, "scheduler_in", None),
+            "sampler": getattr(outcome_lo, "sampler_effective", None),
+            "scheduler": getattr(outcome_lo, "scheduler_effective", None),
+        }
+
+    elapsed = time.perf_counter() - start
+    result = build_video_result(
+        engine,
+        frames,
+        plan,
+        outcome_hi,
+        elapsed=elapsed,
+        task="img2vid",
+        extra=extra_meta,
+        video_meta=video_meta,
+    )
+
+    payload = {
+        "images": result.frames,
+        "info": engine._to_json(result.metadata),  # type: ignore[attr-defined]
     }
-    yield ResultEvent(payload={"images": frames, "info": engine._to_json(info)})  # type: ignore[attr-defined]
+    yield ResultEvent(payload=payload)

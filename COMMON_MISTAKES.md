@@ -94,3 +94,7 @@ PY`
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** `Repository .gitignore filters *_m.py, so the new Forge IQ modules stay ignored and git add aborts; whitelist the directory before rerunning.`
 **Correct command:** `printf '!apps/backend/gguf/quants/kernels/iq_family/forge_*.py\n' >> .gitignore && git add .gitignore`
+
+**Wrong command:** `git commit -m "feat(gguf): port iq-family forge kernels"`
+**Cause + fix:** `Global git identity isn't configured in this workspace; set user.name and user.email before committing.`
+**Correct command:** `git config --global user.name "Lucas Sangoi" && git config --global user.email "lucas@sangoi.dev"`

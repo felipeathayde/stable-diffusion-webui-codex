@@ -1,7 +1,7 @@
 # apps/backend/runtime Overview
-Date: 2025-10-28
+Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-10-30
 Status: Active
 
 ## Purpose
@@ -18,6 +18,7 @@ Status: Active
 - `models/` — Model registry/load helpers (checkpoints, VAEs, etc.).
 - `{sd, flux, chroma, wan22}/` — Model/runtime specific implementations.
 - `processing/` — High-level input preprocessing utilities shared by use cases.
+- `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
 - `modules/` — Compatibility wrappers expected by legacy callers (will shrink over time).

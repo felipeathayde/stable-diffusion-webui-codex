@@ -2,7 +2,7 @@
 ⚠️ **PRIME DIRECTIVE** - **DO NOT** write ad-hoc code fixated on output. Results emerge from code crafted with quality, resilience, and clarity.
 ⚠️ **DO NOT** create ANY fallback, fucking hell; errors must throw an exception with the fucking cause of the error. This includes `ImportError`, motherfucker.
 
-- **BEFORE** any implementation enumerate 5+ viable approaches, then suggest the most **ROBUST NON-LAZY**. You may combine useful parts across options.
+- **BEFORE** any task, enumerate 5+ viable approaches, then suggest the most **ROBUST NON-LAZY**. You may combine useful parts across options. For a sequence of similar tasks, follow the implementation approach established by the user's initial choice.
 - **ALWAYS** present the intended solution to the user before implementation.
 - When in doubt, **RESEARCH** with web.run or **ASK** the user.
 - Any time you consult web.run, document all pertinent findings in a `.md` file before you finish.
@@ -19,6 +19,8 @@
 - Use progress bars in Python for time-consuming operations.
 - Do not include tests of any kind in your plans.
 - Keep each subfolder’s `AGENTS.md` up to date. Whenever you modify, update, or add implementations in a subfolder, update that subfolder’s `AGENTS.md` in the same commit/PR.
+- Treat every directive, backlog note, and follow-up as authored within this pairing (no assumptions about other teams or owners); if context is missing after a session reset, confirm with the user instead of inferring new stakeholders.
+- Read `COMMON_MISTAKES.md` to avoid repeating past mistakes.
 
 ---
 

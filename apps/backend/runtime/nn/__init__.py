@@ -15,8 +15,8 @@ from apps.backend.runtime.common.nn.unet import (
     Downsample,
 )
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
+from apps.backend.runtime.flux import FluxTransformer2DModel, FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
 from apps.backend.runtime.flux.flux import (
-    FluxTransformer2DModel,
     attention,
     rope,
     timestep_embedding as flux_timestep_embedding,
@@ -35,6 +35,9 @@ __all__ = [
     "ChromaTransformer2DModel",
     "Dummy",
     "EmbedND",
+    "FluxArchitectureConfig",
+    "FluxGuidanceConfig",
+    "FluxPositionalConfig",
     "FluxTransformer2DModel",
     "IntegratedCLIP",
     "IntegratedT5",

@@ -17,3 +17,4 @@ Status: Active
 - Patchers should operate on runtime objects provided by `runtime/` and `engines/` without duplicating loading logic.
 - When introducing new patch behaviour, add explicit configuration flags/options and document them in `.sangoi/backend/`.
 - Mutator methods must raise on invalid payloads (no fallbacks) and emit backend debug logs; see `UnetPatcher` for baseline validation patterns.
+- ControlNet integration is pending reimplementation; calls to `UnetPatcher.add_patched_controlnet` raise `NotImplementedError("ControlNet not yet ported")` until the native Codex flow lands.

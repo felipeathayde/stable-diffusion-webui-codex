@@ -171,7 +171,7 @@ class UnetPatcher(ModelPatcher):
         return patcher
 
     def add_patched_controlnet(self, controlnet: Any) -> None:
-        self._controlnets.prepend(controlnet)
+        raise NotImplementedError("ControlNet not yet ported")
 
     def list_controlnets(self) -> List[Any]:
         return list(self._controlnets.iter())

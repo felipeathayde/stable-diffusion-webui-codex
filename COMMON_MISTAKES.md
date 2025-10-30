@@ -104,3 +104,7 @@ PY`
 **Wrong command:** `git commit -m "feat(gguf): port iq-family forge kernels"`
 **Cause + fix:** `Global git identity isn't configured in this workspace; set user.name and user.email before committing.`
 **Correct command:** `git config --global user.name "Lucas Sangoi" && git config --global user.email "lucas@sangoi.dev"`
+
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** `The bulk add traverses .legacy submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
+**Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`

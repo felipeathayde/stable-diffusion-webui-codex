@@ -27,9 +27,9 @@ def dequantize_numpy(blocks: np.ndarray, grid: np.ndarray) -> np.ndarray:
     n_blocks = blocks.shape[0]
 
     d, rest = np.hsplit(blocks, [2])
-    qs, rest = np.hsplit(rest, [QK_K // 4])
-    qh, rest = np.hsplit(rest, [QK_K // 32])
-    signs, scales = np.hsplit(rest, [QK_K // 8])
+    qs, rest = np.hsplit(rest, [QK_K // 8])
+    signs, rest = np.hsplit(rest, [QK_K // 8])
+    qh, scales = np.hsplit(rest, [QK_K // 32])
 
     d = d.view(np.float16).astype(np.float32)
 
@@ -42,13 +42,13 @@ def dequantize_numpy(blocks: np.ndarray, grid: np.ndarray) -> np.ndarray:
     signs = signs.reshape((n_blocks, -1, 1)) >> np.array([i for i in range(8)], dtype=np.uint8).reshape((1, 1, 8))
     signs = signs & np.uint8(0x01)
     signs = np.where(signs == 0, np.float32(1), np.float32(-1))
-    signs = signs.reshape((n_blocks, -1, 4, 8))
+    signs = signs.reshape((n_blocks, -1, 2, 8))
 
-    qh = qh.reshape((n_blocks, -1, 1)) >> np.array([i for i in range(8)], dtype=np.uint8)
-    qh = (qh & 0x01).astype(np.uint16).reshape((n_blocks, -1))
-    qs = qs.astype(np.uint16) | (qh << 8)
+    qh = qh.reshape((n_blocks, -1, 1)) >> np.array([0, 2, 4, 6], dtype=np.uint8).reshape((1, 1, 4))
+    qh = (qh & 0x03).astype(np.uint16).reshape((n_blocks, -1))
+    qs = qs.astype(np.uint16) | (qh << np.uint16(8))
 
     grid = np.take_along_axis(grid, qs.reshape((n_blocks, -1, 1, 1)), axis=-2)
-    grid = grid.reshape((n_blocks, -1, 4, 8))
+    grid = grid.reshape((n_blocks, -1, 2, 8))
 
     return (db * grid * signs).reshape((n_blocks, QK_K))

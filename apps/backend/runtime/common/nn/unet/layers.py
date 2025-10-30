@@ -100,7 +100,6 @@ class CrossAttention(nn.Module):
         k = self.to_k(context)
         if value is not None:
             v = self.to_v(value)
-            del value
         else:
             v = self.to_v(context)
         out = attention_function(q, k, v, self.heads, mask)
@@ -192,9 +191,7 @@ class BasicTransformerBlock(nn.Module):
                 n, context_attn1, value_attn1 = modifier(n, context_attn1, value_attn1, extra_options)
         transformer_block = (block[0], block[1], block_index) if block is not None else None
         attn1_replace_patch = transformer_patches_replace.get("attn1", {})
-        block_attn1 = transformer_block
-        if block_attn1 not in attn1_replace_patch:
-            block_attn1 = block
+        block_attn1 = transformer_block if transformer_block in attn1_replace_patch else block
         if block_attn1 in attn1_replace_patch:
             if context_attn1 is None:
                 context_attn1 = n
@@ -225,9 +222,7 @@ class BasicTransformerBlock(nn.Module):
                 for modifier in patch:
                     n, context_attn2, value_attn2 = modifier(n, context_attn2, value_attn2, extra_options)
             attn2_replace_patch = transformer_patches_replace.get("attn2", {})
-            block_attn2 = transformer_block
-            if block_attn2 not in attn2_replace_patch:
-                block_attn2 = block
+            block_attn2 = transformer_block if transformer_block in attn2_replace_patch else block
             if block_attn2 in attn2_replace_patch:
                 if value_attn2 is None:
                     value_attn2 = context_attn2
@@ -298,22 +293,22 @@ class SpatialTransformer(nn.Module):
         if not isinstance(context, list):
             context = [context] * len(self.transformer_blocks)
         b, c, h, w = x.shape
-        x_in = x
+        residual = x
         x = self.norm(x)
         if not self.use_linear:
             x = self.proj_in(x)
         x = rearrange(x, "b c h w -> b (h w) c").contiguous()
         if self.use_linear:
             x = self.proj_in(x)
-        for block_index, block in enumerate(self.transformer_blocks):
-            transformer_options["block_index"] = block_index
-            x = block(x, context=context[block_index], transformer_options=transformer_options)
+        for index, block in enumerate(self.transformer_blocks):
+            transformer_options["block_index"] = index
+            x = block(x, context=context[index], transformer_options=transformer_options)
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w).contiguous()
         if not self.use_linear:
             x = self.proj_out(x)
-        return x + x_in
+        return x + residual
 
 
 class Upsample(nn.Module):
@@ -493,4 +488,5 @@ __all__ = [
     "TimestepBlock",
     "TimestepEmbedSequential",
     "Upsample",
+    "GEGLU",
 ]

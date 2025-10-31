@@ -9,3 +9,4 @@ Status: Active
 
 ## Notes
 - Ensure scheduler and runtime dependencies stay in sync with `apps/backend/runtime/flux/`.
+- Shared assembly helpers live in `spec.py`; extend specs there and reuse them across Flux-like engines (Flux, Chroma distilled variants).

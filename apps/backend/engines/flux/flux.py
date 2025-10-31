@@ -1,112 +1,74 @@
+from __future__ import annotations
+
+import logging
+from typing import Iterable, List
+
 import torch
 
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.patchers.clip import CLIP
-from apps.backend.patchers.vae import VAE
-from apps.backend.patchers.unet import UnetPatcher
-from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
-from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
-from apps.backend.infra.config.args import dynamic_args
-from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
+from apps.backend.engines.flux.spec import FLUX_SPEC, assemble_flux_runtime
 from apps.backend.runtime.memory import memory_management
+
+logger = logging.getLogger("backend.engines.flux")
 
 
 class Flux(CodexDiffusionEngine):
+    """Codex native Flux engine."""
+
     def __init__(self, estimated_config, codex_components):
         super().__init__(estimated_config, codex_components)
-        self.is_inpaint = False
+        runtime = assemble_flux_runtime(spec=FLUX_SPEC, estimated_config=estimated_config, codex_components=codex_components)
+        self._runtime = runtime
+        self._guidance_default = FLUX_SPEC.distilled_cfg_scale_default
 
-        clip = CLIP(
-            model_dict={
-                'clip_l': codex_components['text_encoder'],
-                't5xxl': codex_components['text_encoder_2']
-            },
-            tokenizer_dict={
-                'clip_l': codex_components['tokenizer'],
-                't5xxl': codex_components['tokenizer_2']
-            },
-            model_config=estimated_config,
+        self.codex_objects = CodexObjects(
+            unet=runtime.unet,
+            clip=runtime.clip,
+            vae=runtime.vae,
+            clipvision=None,
         )
-
-        vae = VAE(model=codex_components['vae'])
-
-        if 'schnell' in estimated_config.huggingface_repo.lower():
-            k_predictor = FlowMatchEulerPrediction(
-                mu=1.0
-            )
-        else:
-            k_predictor = FlowMatchEulerPrediction(
-                seq_len=4096,
-                base_seq_len=256,
-                max_seq_len=4096,
-                base_shift=0.5,
-                max_shift=1.15,
-            )
-            self.use_distilled_cfg_scale = True
-
-        unet = UnetPatcher.from_model(
-            model=codex_components['transformer'],
-            diffusers_scheduler=None,
-            k_predictor=k_predictor,
-            config=estimated_config
-        )
-
-        self.text_processing_engine_l = ClassicTextProcessingEngine(
-            text_encoder=clip.cond_stage_model.clip_l,
-            tokenizer=clip.tokenizer.clip_l,
-            embedding_dir=dynamic_args['embedding_dir'],
-            embedding_key='clip_l',
-            embedding_expected_shape=768,
-            emphasis_name=dynamic_args['emphasis_name'],
-            text_projection=False,
-            minimal_clip_skip=1,
-            clip_skip=1,
-            return_pooled=True,
-            final_layer_norm=True,
-        )
-
-        self.text_processing_engine_t5 = T5TextProcessingEngine(
-            text_encoder=clip.cond_stage_model.t5xxl,
-            tokenizer=clip.tokenizer.t5xxl,
-            emphasis_name=dynamic_args['emphasis_name'],
-        )
-
-        self.codex_objects = CodexObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
         self.codex_objects_original = self.codex_objects.shallow_copy()
         self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
+        self.use_distilled_cfg_scale = runtime.use_distilled_cfg
+        logger.debug("Flux engine initialised (distilled cfg=%s)", self.use_distilled_cfg_scale)
 
-    def set_clip_skip(self, clip_skip):
-        self.text_processing_engine_l.clip_skip = clip_skip
+    def set_clip_skip(self, clip_skip: int) -> None:
+        self._runtime.set_clip_skip(clip_skip)
+        logger.debug("Flux clip skip set to %d", clip_skip)
 
     @torch.inference_mode()
-    def get_learned_conditioning(self, prompt: list[str]):
+    def get_learned_conditioning(self, prompt: List[str]):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
-        cond_l, pooled_l = self.text_processing_engine_l(prompt)
-        cond_t5 = self.text_processing_engine_t5(prompt)
-        cond = dict(crossattn=cond_t5, vector=pooled_l)
+        clip_branch = self._runtime.text.clip_text
+        cond_l, pooled_l = (clip_branch(prompt) if clip_branch is not None else (None, None))
+        cond_t5 = self._runtime.text.t5_text(prompt)
+        cond = {"crossattn": cond_t5}
+
+        if pooled_l is not None:
+            cond["vector"] = pooled_l
 
         if self.use_distilled_cfg_scale:
-            distilled_cfg_scale = getattr(prompt, 'distilled_cfg_scale', 3.5) or 3.5
-            cond['guidance'] = torch.FloatTensor([distilled_cfg_scale] * len(prompt))
-            print(f'Distilled CFG Scale: {distilled_cfg_scale}')
+            distilled_cfg_scale = getattr(prompt, "distilled_cfg_scale", self._guidance_default) or self._guidance_default
+            cond["guidance"] = torch.full((len(prompt),), float(distilled_cfg_scale), dtype=torch.float32)
+            logger.debug("Flux distilled cfg scale=%s", distilled_cfg_scale)
         else:
-            print('Distilled CFG Scale will be ignored for Schnell')
+            logger.debug("Flux distilled cfg disabled (schnell variant)")
 
         return cond
 
     @torch.inference_mode()
-    def get_prompt_lengths_on_ui(self, prompt):
-        token_count = len(self.text_processing_engine_t5.tokenize([prompt])[0])
+    def get_prompt_lengths_on_ui(self, prompt: str):
+        token_count = len(self._runtime.text.t5_text.tokenize([prompt])[0])
         return token_count, max(255, token_count)
 
     @torch.inference_mode()
-    def encode_first_stage(self, x):
+    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
         sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
-    def decode_first_stage(self, x):
+    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         sample = self.codex_objects.vae.first_stage_model.process_out(x)
         sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)

@@ -9,3 +9,4 @@ Status: Active
 
 ## Notes
 - Align runtime and engine changes; move shared pieces into `runtime/chroma/` when appropriate.
+- Chroma reuses the Flux engine toolkit (`apps/backend/engines/flux/spec.py`); add new Chromas by extending those specs instead of duplicating wiring.

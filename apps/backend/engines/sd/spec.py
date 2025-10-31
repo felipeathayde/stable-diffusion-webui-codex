@@ -49,7 +49,7 @@ def _resolve_attr(obj: object, attr_path: str, *, context: str) -> object:
 
 
 @dataclass(frozen=True, slots=True)
-class SDTextBranchSpec:
+class SDClassicBranchSpec:
     identifier: str
     clip_attr: str
     embedding_expected_shape: int
@@ -72,11 +72,25 @@ class SDTextBranchSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class SDT5BranchSpec:
+    identifier: str
+    clip_attr: str
+    min_length: int = 75
+
+    def __post_init__(self) -> None:
+        if not self.identifier:
+            raise ValueError("identifier must be provided")
+        if self.min_length <= 0:
+            raise ValueError("min_length must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class SDEngineSpec:
     name: str
     clip_model_keys: Mapping[str, str]
     tokenizer_keys: Mapping[str, str]
-    text_branches: Tuple[SDTextBranchSpec, ...]
+    classic_branches: Tuple[SDClassicBranchSpec, ...]
+    t5_branches: Tuple[SDT5BranchSpec, ...] = ()
     unet_key: str = "unet"
     vae_key: str = "vae"
     scheduler_key: str = "scheduler"
@@ -84,21 +98,23 @@ class SDEngineSpec:
     emphasis_arg: str = "emphasis_name"
 
     def __post_init__(self) -> None:
-        if not self.text_branches:
-            raise ValueError("text_branches must not be empty")
+        if not self.classic_branches and not self.t5_branches:
+            raise ValueError("At least one text branch must be defined")
         if set(self.clip_model_keys.keys()) != set(self.tokenizer_keys.keys()):
             raise ValueError("clip_model_keys and tokenizer_keys must have identical keys")
-        branch_ids = {branch.identifier for branch in self.text_branches}
-        if branch_ids != set(self.clip_model_keys.keys()):
-            raise ValueError("text branch identifiers must match clip/tokenizer mapping keys")
+        expected_aliases = {branch.identifier for branch in self.classic_branches} | {
+            branch.identifier for branch in self.t5_branches
+        }
+        if expected_aliases != set(self.clip_model_keys.keys()):
+            raise ValueError("Branch identifiers must match clip/tokenizer aliases")
 
     @property
-    def branch_order(self) -> Tuple[str, ...]:
-        return tuple(branch.identifier for branch in self.text_branches)
+    def classic_order(self) -> Tuple[str, ...]:
+        return tuple(branch.identifier for branch in self.classic_branches)
 
     @property
-    def primary_branch(self) -> str:
-        return self.text_branches[0].identifier
+    def t5_order(self) -> Tuple[str, ...]:
+        return tuple(branch.identifier for branch in self.t5_branches)
 
 
 @dataclass(slots=True)
@@ -106,30 +122,39 @@ class SDEngineRuntime:
     clip: CLIP
     vae: VAE
     unet: UnetPatcher
-    scheduler: object
-    text_engines: Dict[str, ClassicTextProcessingEngine]
-    branch_specs: Dict[str, SDTextBranchSpec]
-    branch_order: Tuple[str, ...]
+    scheduler: object | None
+    classic_text: Dict[str, ClassicTextProcessingEngine]
+    classic_specs: Dict[str, SDClassicBranchSpec]
+    classic_order: Tuple[str, ...]
+    t5_text: Dict[str, T5TextProcessingEngine]
+    t5_specs: Dict[str, SDT5BranchSpec]
 
     def set_clip_skip(self, clip_skip: int) -> None:
         if not isinstance(clip_skip, int):
             raise TypeError("clip_skip must be an integer")
-        for identifier, spec in self.branch_specs.items():
+        for identifier, spec in self.classic_specs.items():
             if clip_skip < spec.minimal_clip_skip:
                 raise ValueError(
                     f"Clip skip {clip_skip} is below minimal {spec.minimal_clip_skip} for branch '{identifier}'."
                 )
-            engine = self.text_engines[identifier]
-            engine.clip_skip = clip_skip
+            self.classic_text[identifier].clip_skip = clip_skip
 
-    def primary_text_engine(self) -> ClassicTextProcessingEngine:
-        return self.text_engines[self.branch_order[0]]
+    def primary_classic(self) -> ClassicTextProcessingEngine:
+        if not self.classic_order:
+            raise RuntimeError("No classic branches available")
+        return self.classic_text[self.classic_order[0]]
 
-    def text_engine(self, identifier: str) -> ClassicTextProcessingEngine:
+    def classic_engine(self, identifier: str) -> ClassicTextProcessingEngine:
         try:
-            return self.text_engines[identifier]
+            return self.classic_text[identifier]
         except KeyError as error:
-            raise KeyError(f"Unknown text branch '{identifier}'.") from error
+            raise KeyError(f"Unknown classic branch '{identifier}'.") from error
+
+    def t5_engine(self, identifier: str) -> T5TextProcessingEngine:
+        try:
+            return self.t5_text[identifier]
+        except KeyError as error:
+            raise KeyError(f"Unknown T5 branch '{identifier}'.") from error
 
 
 def assemble_engine_runtime(
@@ -137,12 +162,12 @@ def assemble_engine_runtime(
     estimated_config,
     components: Mapping[str, object],
 ) -> SDEngineRuntime:
-    logger.debug("Assembling SD engine '%s' with branches: %s", spec.name, spec.branch_order)
+    logger.debug("Assembling SD engine '%s'", spec.name)
 
     clip_model_dict: MutableMapping[str, object] = {}
     tokenizer_dict: MutableMapping[str, object] = {}
 
-    for identifier in spec.branch_order:
+    for identifier in spec.clip_model_keys:
         model_component_key = spec.clip_model_keys[identifier]
         tokenizer_component_key = spec.tokenizer_keys[identifier]
         clip_model_dict[identifier] = _require_component(components, model_component_key, f"{spec.name}.text_encoder")
@@ -156,17 +181,19 @@ def assemble_engine_runtime(
     logger.debug("VAE wrapper instantiated for '%s'.", spec.name)
 
     unet_model = _require_component(components, spec.unet_key, f"{spec.name}.unet")
-    scheduler = _require_component(components, spec.scheduler_key, f"{spec.name}.scheduler")
+    scheduler = components.get(spec.scheduler_key)
+    if scheduler is None:
+        logger.debug("No scheduler provided for '%s' (using None)", spec.name)
     unet = UnetPatcher.from_model(model=unet_model, diffusers_scheduler=scheduler, config=estimated_config)
     logger.debug("UNet patcher created for '%s'.", spec.name)
 
     embedding_dir = _require_dynamic_arg(spec.embedding_dir_arg)
     emphasis_name = _require_dynamic_arg(spec.emphasis_arg)
 
-    text_engines: Dict[str, ClassicTextProcessingEngine] = {}
-    branch_specs: Dict[str, SDTextBranchSpec] = {}
+    classic_text: Dict[str, ClassicTextProcessingEngine] = {}
+    classic_specs: Dict[str, SDClassicBranchSpec] = {}
 
-    for branch in spec.text_branches:
+    for branch in spec.classic_branches:
         text_encoder = _resolve_attr(
             clip.cond_stage_model,
             branch.clip_attr,
@@ -192,23 +219,51 @@ def assemble_engine_runtime(
             final_layer_norm=branch.final_layer_norm,
         )
 
-        text_engines[branch.identifier] = engine
-        branch_specs[branch.identifier] = branch
+        classic_text[branch.identifier] = engine
+        classic_specs[branch.identifier] = branch
         logger.debug(
-            "Text engine branch '%s' initialised for '%s' (clip_skip=%d).",
+            "Classic text branch '%s' initialised for '%s' (clip_skip=%d).",
             branch.identifier,
             spec.name,
             branch.default_clip_skip,
         )
+
+    t5_text: Dict[str, T5TextProcessingEngine] = {}
+    t5_specs: Dict[str, SDT5BranchSpec] = {}
+
+    for branch in spec.t5_branches:
+        text_encoder = _resolve_attr(
+            clip.cond_stage_model,
+            branch.clip_attr,
+            context=f"{spec.name}.{branch.identifier}.cond_stage_model",
+        )
+        tokenizer = _resolve_attr(
+            clip.tokenizer,
+            branch.clip_attr,
+            context=f"{spec.name}.{branch.identifier}.tokenizer",
+        )
+
+        engine = T5TextProcessingEngine(
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            emphasis_name=emphasis_name,
+            min_length=branch.min_length,
+        )
+
+        t5_text[branch.identifier] = engine
+        t5_specs[branch.identifier] = branch
+        logger.debug("T5 text branch '%s' initialised for '%s'", branch.identifier, spec.name)
 
     return SDEngineRuntime(
         clip=clip,
         vae=vae,
         unet=unet,
         scheduler=scheduler,
-        text_engines=text_engines,
-        branch_specs=branch_specs,
-        branch_order=spec.branch_order,
+        classic_text=classic_text,
+        classic_specs=classic_specs,
+        classic_order=spec.classic_order,
+        t5_text=t5_text,
+        t5_specs=t5_specs,
     )
 
 
@@ -216,8 +271,8 @@ SD15_SPEC = SDEngineSpec(
     name="sd15",
     clip_model_keys={"clip_l": "text_encoder"},
     tokenizer_keys={"clip_l": "tokenizer"},
-    text_branches=(
-        SDTextBranchSpec(
+    classic_branches=(
+        SDClassicBranchSpec(
             identifier="clip_l",
             clip_attr="clip_l",
             embedding_expected_shape=768,
@@ -234,8 +289,8 @@ SD20_SPEC = SDEngineSpec(
     name="sd20",
     clip_model_keys={"clip_h": "text_encoder"},
     tokenizer_keys={"clip_h": "tokenizer"},
-    text_branches=(
-        SDTextBranchSpec(
+    classic_branches=(
+        SDClassicBranchSpec(
             identifier="clip_h",
             clip_attr="clip_h",
             embedding_expected_shape=1024,
@@ -252,8 +307,8 @@ SDXL_SPEC = SDEngineSpec(
     name="sdxl",
     clip_model_keys={"clip_l": "text_encoder", "clip_g": "text_encoder_2"},
     tokenizer_keys={"clip_l": "tokenizer", "clip_g": "tokenizer_2"},
-    text_branches=(
-        SDTextBranchSpec(
+    classic_branches=(
+        SDClassicBranchSpec(
             identifier="clip_l",
             clip_attr="clip_l",
             embedding_expected_shape=2048,
@@ -263,7 +318,7 @@ SDXL_SPEC = SDEngineSpec(
             return_pooled=False,
             final_layer_norm=False,
         ),
-        SDTextBranchSpec(
+        SDClassicBranchSpec(
             identifier="clip_g",
             clip_attr="clip_g",
             embedding_expected_shape=2048,
@@ -280,8 +335,8 @@ SDXL_REFINER_SPEC = SDEngineSpec(
     name="sdxl_refiner",
     clip_model_keys={"clip_g": "text_encoder"},
     tokenizer_keys={"clip_g": "tokenizer"},
-    text_branches=(
-        SDTextBranchSpec(
+    classic_branches=(
+        SDClassicBranchSpec(
             identifier="clip_g",
             clip_attr="clip_g",
             embedding_expected_shape=2048,
@@ -294,9 +349,53 @@ SDXL_REFINER_SPEC = SDEngineSpec(
     ),
 )
 
+SD35_SPEC = SDEngineSpec(
+    name="sd35",
+    clip_model_keys={
+        "clip_l": "text_encoder",
+        "clip_g": "text_encoder_2",
+        "t5xxl": "text_encoder_3",
+    },
+    tokenizer_keys={
+        "clip_l": "tokenizer",
+        "clip_g": "tokenizer_2",
+        "t5xxl": "tokenizer_3",
+    },
+    classic_branches=(
+        SDClassicBranchSpec(
+            identifier="clip_l",
+            clip_attr="clip_l",
+            embedding_expected_shape=768,
+            minimal_clip_skip=1,
+            default_clip_skip=1,
+            text_projection=True,
+            return_pooled=True,
+            final_layer_norm=False,
+        ),
+        SDClassicBranchSpec(
+            identifier="clip_g",
+            clip_attr="clip_g",
+            embedding_expected_shape=1280,
+            minimal_clip_skip=1,
+            default_clip_skip=1,
+            text_projection=True,
+            return_pooled=True,
+            final_layer_norm=False,
+        ),
+    ),
+    t5_branches=(
+        SDT5BranchSpec(
+            identifier="t5xxl",
+            clip_attr="t5xxl",
+            min_length=256,
+        ),
+    ),
+)
+
 
 __all__ = [
-    "SDTextBranchSpec",
+    "SDClassicBranchSpec",
+    "SDT5BranchSpec",
     "SDEngineSpec",
     "SDEngineRuntime",
     "SDEngineConfigurationError",
@@ -305,4 +404,5 @@ __all__ = [
     "SD20_SPEC",
     "SDXL_SPEC",
     "SDXL_REFINER_SPEC",
+    "SD35_SPEC",
 ]

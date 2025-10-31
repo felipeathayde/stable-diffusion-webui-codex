@@ -20,7 +20,7 @@ class StableDiffusion2(CodexDiffusionEngine):
 
         runtime = assemble_engine_runtime(SD20_SPEC, estimated_config, codex_components)
         self._runtime = runtime
-        self._primary_branch = runtime.branch_order[0]
+        self._primary_branch = runtime.classic_order[0]
 
         self.codex_objects = CodexObjects(
             unet=runtime.unet,
@@ -35,8 +35,8 @@ class StableDiffusion2(CodexDiffusionEngine):
 
         logger.debug(
             "StableDiffusion2 initialised with branches=%s clip_skip=%d",
-            runtime.branch_order,
-            runtime.text_engine(self._primary_branch).clip_skip,
+            runtime.classic_order,
+            runtime.classic_engine(self._primary_branch).clip_skip,
         )
 
     def set_clip_skip(self, clip_skip: int) -> None:
@@ -46,13 +46,13 @@ class StableDiffusion2(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
-        conditioning = self._runtime.primary_text_engine()(prompt)
+        conditioning = self._runtime.primary_classic()(prompt)
         logger.debug("Generated conditioning for %d prompts.", len(prompt))
         return conditioning
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
-        engine = self._runtime.primary_text_engine()
+        engine = self._runtime.primary_classic()
         _, token_count = engine.process_texts([prompt])
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target

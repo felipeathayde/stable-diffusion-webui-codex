@@ -55,8 +55,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         logger.debug(
             "StableDiffusionXL initialised with branches=%s clip_skip=%d",
-            runtime.branch_order,
-            runtime.text_engine("clip_l").clip_skip,
+            runtime.classic_order,
+            runtime.classic_engine("clip_l").clip_skip,
         )
 
     def set_clip_skip(self, clip_skip: int) -> None:
@@ -67,8 +67,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
-        cond_l = self._runtime.text_engine("clip_l")(prompt)
-        cond_g, pooled = self._runtime.text_engine("clip_g")(prompt)
+        cond_l, pooled_l = self._runtime.classic_engine("clip_l")(prompt)
+        cond_g, pooled_g = self._runtime.classic_engine("clip_g")(prompt)
 
         width, height, is_negative = _prompt_meta(prompt)
         opts = _opts()
@@ -82,16 +82,17 @@ class StableDiffusionXL(CodexDiffusionEngine):
             self.embedder(torch.tensor([width])),
         ]
 
-        flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled.shape[0], 1).to(pooled)
+        flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled_g.shape[0], 1).to(pooled_g)
 
         if is_negative and all(x == "" for x in prompt):
-            pooled = torch.zeros_like(pooled)
+            pooled_l = torch.zeros_like(pooled_l)
+            pooled_g = torch.zeros_like(pooled_g)
             cond_l = torch.zeros_like(cond_l)
             cond_g = torch.zeros_like(cond_g)
 
         cond = {
             "crossattn": torch.cat([cond_l, cond_g], dim=2),
-            "vector": torch.cat([pooled, flat], dim=1),
+            "vector": torch.cat([pooled_g, flat], dim=1),
         }
 
         logger.debug("Generated SDXL conditioning for %d prompts.", len(prompt))
@@ -99,7 +100,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
-        engine = self._runtime.text_engine("clip_l")
+        engine = self._runtime.classic_engine("clip_l")
         _, token_count = engine.process_texts([prompt])
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target
@@ -140,7 +141,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
         self.is_sdxl = True
 
-        logger.debug("StableDiffusionXLRefiner initialised with clip_skip=%d", runtime.text_engine("clip_g").clip_skip)
+        logger.debug("StableDiffusionXLRefiner initialised with clip_skip=%d", runtime.classic_engine("clip_g").clip_skip)
 
     def set_clip_skip(self, clip_skip: int) -> None:
         self._runtime.set_clip_skip(clip_skip)
@@ -150,7 +151,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
-        cond_g, pooled = self._runtime.text_engine("clip_g")(prompt)
+        cond_g, pooled = self._runtime.classic_engine("clip_g")(prompt)
 
         width, height, is_negative = _prompt_meta(prompt)
         opts = _opts()
@@ -179,7 +180,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
-        engine = self._runtime.text_engine("clip_g")
+        engine = self._runtime.classic_engine("clip_g")
         _, token_count = engine.process_texts([prompt])
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target

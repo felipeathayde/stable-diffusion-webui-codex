@@ -1,158 +1,197 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Sequence, Tuple
+
 import torch
 
-from collections import namedtuple
-from . import parsing, emphasis
-from apps.backend.runtime.memory import memory_management
 from apps.backend.infra.config.args import dynamic_args
+from apps.backend.runtime.memory import memory_management
+from . import emphasis, parsing
+
+logger = logging.getLogger("backend.runtime.text_processing.t5_engine")
+
+from collections import namedtuple
+
+PromptChunkFix = namedtuple("PromptChunkFix", ["offset", "embedding"])
 
 
-PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
-
-
+@dataclass
 class PromptChunk:
-    def __init__(self):
-        self.tokens = []
-        self.multipliers = []
+    tokens: List[int] = field(default_factory=list)
+    multipliers: List[float] = field(default_factory=list)
+
+    def append(self, token: int, weight: float) -> None:
+        self.tokens.append(token)
+        self.multipliers.append(weight)
+
+    def pad(self, target_length: int, pad_token: int, pad_multiplier: float = 1.0) -> None:
+        deficit = target_length - len(self.tokens)
+        if deficit <= 0:
+            return
+        self.tokens.extend([pad_token] * deficit)
+        self.multipliers.extend([pad_multiplier] * deficit)
+
+    def clone(self) -> "PromptChunk":
+        return PromptChunk(tokens=self.tokens.copy(), multipliers=self.multipliers.copy())
+
+
+@dataclass
+class PromptEncoding:
+    chunks: List[PromptChunk]
+    token_count: int
+
+    @property
+    def max_chunk_length(self) -> int:
+        return max((len(chunk.tokens) for chunk in self.chunks), default=0)
 
 
 class T5TextProcessingEngine:
-    def __init__(self, text_encoder, tokenizer, emphasis_name="Original", min_length=256):
+    """Codex-native prompt encoder for T5-based text encoders."""
+
+    def __init__(self, text_encoder, tokenizer, emphasis_name: str = "Original", min_length: int = 256):
         super().__init__()
+        if min_length <= 0:
+            raise ValueError("min_length must be positive")
 
         self.text_encoder = text_encoder.transformer
         self.tokenizer = tokenizer
-
-        # Use dynamic args (Codex config) for emphasis selection
-        self.emphasis = emphasis.get_current_option(dynamic_args.get('emphasis_name', 'original'))()
+        self.emphasis_name = emphasis_name
         self.min_length = min_length
         self.id_end = 1
         self.id_pad = 0
 
         vocab = self.tokenizer.get_vocab()
+        self.comma_token = vocab.get(",</w>", None)
+        self.token_mults: Dict[int, float] = self._compute_token_multipliers(vocab)
 
-        self.comma_token = vocab.get(',</w>', None)
+        self._ensure_emphasis_instance()
 
-        self.token_mults = {}
+    def _ensure_emphasis_instance(self) -> None:
+        emphasis_key = dynamic_args.get("emphasis_name", self.emphasis_name)
+        emphasis_cls = emphasis.get_current_option(emphasis_key)
+        self.emphasis = emphasis_cls()
+        logger.debug("Initialized emphasis strategy '%s'", emphasis_key)
 
-        tokens_with_parens = [(k, v) for k, v in vocab.items() if '(' in k or ')' in k or '[' in k or ']' in k]
-        for text, ident in tokens_with_parens:
+    @staticmethod
+    def _compute_token_multipliers(vocab: Dict[str, int]) -> Dict[int, float]:
+        token_mults: Dict[int, float] = {}
+        for text, identifier in vocab.items():
             mult = 1.0
-            for c in text:
-                if c == '[':
+            for char in text:
+                if char == "[":
                     mult /= 1.1
-                if c == ']':
+                elif char == "]":
                     mult *= 1.1
-                if c == '(':
+                elif char == "(":
                     mult *= 1.1
-                if c == ')':
+                elif char == ")":
                     mult /= 1.1
-
             if mult != 1.0:
-                self.token_mults[ident] = mult
+                token_mults[identifier] = mult
+        return token_mults
 
-    def tokenize(self, texts):
-        tokenized = self.tokenizer(texts, truncation=False, add_special_tokens=False)["input_ids"]
-        return tokenized
+    def tokenize(self, texts: Sequence[str]) -> List[List[int]]:
+        if not isinstance(texts, Sequence):
+            raise TypeError("texts must be a sequence of strings")
+        result = self.tokenizer(texts, truncation=False, add_special_tokens=False)["input_ids"]
+        logger.debug("Tokenized %d prompts", len(result))
+        return result
 
-    def encode_with_transformers(self, tokens):
+    def encode_with_transformers(self, tokens: torch.Tensor) -> torch.Tensor:
         device = memory_management.text_encoder_device()
-        tokens = tokens.to(device)
-        self.text_encoder.shared.to(device=device, dtype=torch.float32)
+        tokens = tokens.to(device=device, dtype=torch.long)
+        if hasattr(self.text_encoder, "shared"):
+            self.text_encoder.shared.to(device=device, dtype=torch.float32)
+        outputs = self.text_encoder(input_ids=tokens)
+        return outputs
 
-        z = self.text_encoder(
-            input_ids=tokens,
-        )
+    def _finalize_chunk(self, chunk: PromptChunk, chunks: List[PromptChunk]) -> None:
+        chunk.append(self.id_end, 1.0)
+        current_length = len(chunk.tokens)
+        remaining = self.min_length - current_length
+        if remaining > 0:
+            chunk.pad(self.min_length, self.id_pad)
+        chunks.append(chunk)
 
-        return z
-
-    def tokenize_line(self, line):
+    def tokenize_line(self, line: str) -> PromptEncoding:
         parsed = parsing.parse_prompt_attention(line, self.emphasis.name)
+        tokenized_segments = self.tokenize([text for text, _ in parsed])
 
-        tokenized = self.tokenize([text for text, _ in parsed])
-
-        chunks = []
+        chunks: List[PromptChunk] = []
         chunk = PromptChunk()
         token_count = 0
 
-        def next_chunk():
-            nonlocal token_count
-            nonlocal chunk
-
-            chunk.tokens = chunk.tokens + [self.id_end]
-            chunk.multipliers = chunk.multipliers + [1.0]
-            current_chunk_length = len(chunk.tokens)
-
-            token_count += current_chunk_length
-            remaining_count = self.min_length - current_chunk_length
-
-            if remaining_count > 0:
-                chunk.tokens += [self.id_pad] * remaining_count
-                chunk.multipliers += [1.0] * remaining_count
-
-            chunks.append(chunk)
+        def next_chunk() -> None:
+            nonlocal chunk, token_count
+            self._finalize_chunk(chunk, chunks)
+            token_count += len(chunks[-1].tokens)
             chunk = PromptChunk()
 
-        for tokens, (text, weight) in zip(tokenized, parsed):
-            if text == 'BREAK' and weight == -1:
+        for tokens, (text, weight) in zip(tokenized_segments, parsed):
+            if text == "BREAK" and weight == -1:
                 next_chunk()
                 continue
-
-            position = 0
-            while position < len(tokens):
-                token = tokens[position]
-                chunk.tokens.append(token)
-                chunk.multipliers.append(weight)
-                position += 1
+            for token in tokens:
+                chunk.append(token, weight)
 
         if chunk.tokens or not chunks:
             next_chunk()
 
-        return chunks, token_count
+        encoding = PromptEncoding(chunks=chunks, token_count=token_count)
+        logger.debug(
+            "Tokenized line '%s' into %d chunk(s) (%d tokens)",
+            line,
+            len(encoding.chunks),
+            encoding.token_count,
+        )
+        return encoding
 
-    def __call__(self, texts):
-        zs = []
-        cache = {}
+    def __call__(self, texts: Sequence[str]) -> torch.Tensor:
+        if not texts:
+            raise ValueError("No prompts provided to T5TextProcessingEngine")
 
-        self.emphasis = emphasis.get_current_option(dynamic_args.get('emphasis_name', 'original'))()
+        self._ensure_emphasis_instance()
+
+        cache: Dict[str, List[torch.Tensor]] = {}
+        embeddings: List[torch.Tensor] = []
 
         for line in texts:
             if line in cache:
-                line_z_values = cache[line]
-            else:
-                chunks, token_count = self.tokenize_line(line)
-                line_z_values = []
+                embeddings.extend(cache[line])
+                continue
 
-                #   pad all chunks to length of longest chunk
-                max_tokens = 0
-                for chunk in chunks:
-                    max_tokens = max (len(chunk.tokens), max_tokens)
+            encoding = self.tokenize_line(line)
+            max_len = max(encoding.max_chunk_length, self.min_length)
+            chunk_embeddings: List[torch.Tensor] = []
 
-                for chunk in chunks:
-                    tokens = chunk.tokens
-                    multipliers = chunk.multipliers
-                    
-                    remaining_count = max_tokens - len(tokens)
-                    if remaining_count > 0:
-                        tokens += [self.id_pad] * remaining_count
-                        multipliers += [1.0] * remaining_count
+            for chunk in encoding.chunks:
+                padded_chunk = chunk.clone()
+                padded_chunk.pad(max_len, self.id_pad)
+                embedding = self.process_tokens([padded_chunk.tokens], [padded_chunk.multipliers])[0]
+                chunk_embeddings.append(embedding)
 
-                    z = self.process_tokens([tokens], [multipliers])[0]
-                    line_z_values.append(z)
-                cache[line] = line_z_values
+            cache[line] = chunk_embeddings
+            embeddings.extend(chunk_embeddings)
 
-            zs.extend(line_z_values)
+        stacked = torch.stack(embeddings)
+        logger.debug("Generated T5 embeddings shape=%s", tuple(stacked.shape))
+        return stacked
 
-        return torch.stack(zs)
+    def process_tokens(self, batch_tokens: Sequence[Sequence[int]], batch_multipliers: Sequence[Sequence[float]]) -> torch.Tensor:
+        if len(batch_tokens) != len(batch_multipliers):
+            raise ValueError("batch_tokens and batch_multipliers must have the same length")
+        if not batch_tokens:
+            return torch.empty(0)
 
-    def process_tokens(self, batch_tokens, batch_multipliers):
-        tokens = torch.asarray(batch_tokens)
+        tokens = torch.tensor(batch_tokens, dtype=torch.long)
+        encoded = self.encode_with_transformers(tokens)
 
-        z = self.encode_with_transformers(tokens)
-
+        multipliers = torch.tensor(batch_multipliers, dtype=encoded.dtype, device=encoded.device)
         self.emphasis.tokens = batch_tokens
-        self.emphasis.multipliers = torch.asarray(batch_multipliers).to(z)
-        self.emphasis.z = z
+        self.emphasis.multipliers = multipliers
+        self.emphasis.z = encoded
         self.emphasis.after_transformers()
-        z = self.emphasis.z
 
-        return z
+        return self.emphasis.z

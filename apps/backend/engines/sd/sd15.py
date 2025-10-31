@@ -68,6 +68,3 @@ class StableDiffusion(CodexDiffusionEngine):
         sample = self.codex_objects.vae.first_stage_model.process_out(x)
         sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
-
-    def save_checkpoint(self, filename: str):
-        raise NotImplementedError("sd15 checkpoint saving not yet ported")

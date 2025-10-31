@@ -116,8 +116,6 @@ class StableDiffusionXL(CodexDiffusionEngine):
         sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
 
-    def save_checkpoint(self, filename: str):
-        raise NotImplementedError("sdxl checkpoint saving not yet ported")
 
 
 class StableDiffusionXLRefiner(CodexDiffusionEngine):
@@ -197,6 +195,3 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         sample = self.codex_objects.vae.first_stage_model.process_out(x)
         sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
-
-    def save_checkpoint(self, filename: str):
-        raise NotImplementedError("sdxl refiner checkpoint saving not yet ported")

@@ -8,7 +8,7 @@ REM User configuration (edit lines below as needed)
 REM Leave commented to keep defaults/heuristics
 REM ----------------------------------------------------
 set CODEX_LOG_LEVEL=DEBUG
-set CODEX_UNET_DTYPE=bf16
+set CODEX_CORE_DTYPE=bf16
 set CODEX_VAE_DTYPE=fp32
 set CODEX_VAE_IN_CPU=0
 set CODEX_ALL_IN_FP32=0
@@ -48,7 +48,7 @@ if defined CODEX_LOG_LEVEL (
 ) else (
   echo [log] CODEX_LOG_LEVEL not set; defaulting to DEBUG
 )
-if defined CODEX_UNET_DTYPE echo [log] UNet dtype=%CODEX_UNET_DTYPE%
+if defined CODEX_CORE_DTYPE echo [log] UNet dtype=%CODEX_CORE_DTYPE%
 if defined CODEX_VAE_DTYPE  echo [log] VAE dtype=%CODEX_VAE_DTYPE%
 if defined CODEX_VAE_IN_CPU echo [log] VAE on CPU=%CODEX_VAE_IN_CPU%
 if defined CODEX_TRACE_TORCH echo [log] TRACE_TORCH=%CODEX_TRACE_TORCH% (limit=%CODEX_TRACE_LIMIT%)

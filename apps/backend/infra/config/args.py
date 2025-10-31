@@ -145,7 +145,7 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         ns.vae_in_cpu = True
 
     legacy_core_env = None
-    for key in ("CODEX_UNET_DTYPE", "WEBUI_UNET_DTYPE"):
+    for key in ("CODEX_CORE_DTYPE", "WEBUI_UNET_DTYPE"):
         value = env.get(key)
         if value:
             legacy_core_env = value

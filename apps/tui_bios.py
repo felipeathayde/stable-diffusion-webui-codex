@@ -186,7 +186,7 @@ class BIOSApp:
         gguf_pol = env.get("CODEX_GGUF_CACHE_POLICY", "none")
         gguf_lim = env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0")
         offload_lvl = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
-        unet_dtype = env.get("CODEX_UNET_DTYPE", "fp16")
+        unet_dtype = env.get("CODEX_CORE_DTYPE", "fp16")
         vae_dtype = env.get("CODEX_VAE_DTYPE", "fp16")
         # VAE device label: Auto/GPU/CPU (prefer CODEX_VAE_DEVICE if set)
         _vae_dev = env.get("CODEX_VAE_DEVICE", "").strip().lower()
@@ -295,7 +295,7 @@ class BIOSApp:
             "DiT/UNet DType": [
                 "Numerical dtype for the main denoiser (DiT/UNet).",
                 "fp16/bf16 recommended. fp32 only for diagnostics (slow/high VRAM).",
-                "Applied via CODEX_UNET_DTYPE.",
+                "Applied via CODEX_CORE_DTYPE.",
             ],
             "VAE DType": [
                 "VAE precision (fp16/bf16/fp32).",
@@ -475,12 +475,12 @@ class BIOSApp:
                 env["CODEX_GGUF_CACHE_LIMIT_MB"] = val
         elif action == "cycle_unet_dtype":
             order = ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
-            cur = env.get("CODEX_UNET_DTYPE", "fp16")
+            cur = env.get("CODEX_CORE_DTYPE", "fp16")
             try:
                 i = (order.index(cur) + 1) % len(order)
             except ValueError:
                 i = 0
-            env["CODEX_UNET_DTYPE"] = order[i]
+            env["CODEX_CORE_DTYPE"] = order[i]
         elif action == "cycle_vae_dtype":
             order = ["fp16", "bf16", "fp32"]
             cur = env.get("CODEX_VAE_DTYPE", "fp16")
@@ -878,7 +878,7 @@ class BIOSApp:
             'cycle_offload_lvl': env.get('WAN_GGUF_OFFLOAD_LEVEL', '3'),
             'cycle_attn_backend': env.get('CODEX_ATTENTION_BACKEND', 'torch-sdpa'),
             'cycle_gguf_pol': env.get('CODEX_GGUF_CACHE_POLICY', 'none'),
-            'cycle_unet_dtype': env.get('CODEX_UNET_DTYPE', 'fp16'),
+            'cycle_unet_dtype': env.get('CODEX_CORE_DTYPE', 'fp16'),
             'cycle_vae_dtype': env.get('CODEX_VAE_DTYPE', 'fp16'),
             'cycle_swap_pol': env.get('CODEX_SWAP_POLICY', 'cpu'),
             'cycle_swap_mth': env.get('CODEX_SWAP_METHOD', 'blocked'),
@@ -938,7 +938,7 @@ class BIOSApp:
         elif action == 'cycle_gguf_pol':
             env['CODEX_GGUF_CACHE_POLICY'] = value
         elif action == 'cycle_unet_dtype':
-            env['CODEX_UNET_DTYPE'] = value
+            env['CODEX_CORE_DTYPE'] = value
         elif action == 'cycle_vae_dtype':
             env['CODEX_VAE_DTYPE'] = value
         elif action == 'cycle_swap_pol':

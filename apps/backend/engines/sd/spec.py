@@ -212,10 +212,97 @@ def assemble_engine_runtime(
     )
 
 
+SD15_SPEC = SDEngineSpec(
+    name="sd15",
+    clip_model_keys={"clip_l": "text_encoder"},
+    tokenizer_keys={"clip_l": "tokenizer"},
+    text_branches=(
+        SDTextBranchSpec(
+            identifier="clip_l",
+            clip_attr="clip_l",
+            embedding_expected_shape=768,
+            minimal_clip_skip=1,
+            default_clip_skip=1,
+            text_projection=False,
+            return_pooled=False,
+            final_layer_norm=True,
+        ),
+    ),
+)
+
+SD20_SPEC = SDEngineSpec(
+    name="sd20",
+    clip_model_keys={"clip_h": "text_encoder"},
+    tokenizer_keys={"clip_h": "tokenizer"},
+    text_branches=(
+        SDTextBranchSpec(
+            identifier="clip_h",
+            clip_attr="clip_h",
+            embedding_expected_shape=1024,
+            minimal_clip_skip=1,
+            default_clip_skip=1,
+            text_projection=False,
+            return_pooled=False,
+            final_layer_norm=True,
+        ),
+    ),
+)
+
+SDXL_SPEC = SDEngineSpec(
+    name="sdxl",
+    clip_model_keys={"clip_l": "text_encoder", "clip_g": "text_encoder_2"},
+    tokenizer_keys={"clip_l": "tokenizer", "clip_g": "tokenizer_2"},
+    text_branches=(
+        SDTextBranchSpec(
+            identifier="clip_l",
+            clip_attr="clip_l",
+            embedding_expected_shape=2048,
+            minimal_clip_skip=2,
+            default_clip_skip=2,
+            text_projection=False,
+            return_pooled=False,
+            final_layer_norm=False,
+        ),
+        SDTextBranchSpec(
+            identifier="clip_g",
+            clip_attr="clip_g",
+            embedding_expected_shape=2048,
+            minimal_clip_skip=2,
+            default_clip_skip=2,
+            text_projection=True,
+            return_pooled=True,
+            final_layer_norm=False,
+        ),
+    ),
+)
+
+SDXL_REFINER_SPEC = SDEngineSpec(
+    name="sdxl_refiner",
+    clip_model_keys={"clip_g": "text_encoder"},
+    tokenizer_keys={"clip_g": "tokenizer"},
+    text_branches=(
+        SDTextBranchSpec(
+            identifier="clip_g",
+            clip_attr="clip_g",
+            embedding_expected_shape=2048,
+            minimal_clip_skip=2,
+            default_clip_skip=2,
+            text_projection=True,
+            return_pooled=True,
+            final_layer_norm=False,
+        ),
+    ),
+)
+
+
 __all__ = [
     "SDTextBranchSpec",
     "SDEngineSpec",
     "SDEngineRuntime",
     "SDEngineConfigurationError",
     "assemble_engine_runtime",
+    "SD15_SPEC",
+    "SD20_SPEC",
+    "SDXL_SPEC",
+    "SDXL_REFINER_SPEC",
 ]

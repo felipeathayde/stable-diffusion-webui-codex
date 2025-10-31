@@ -1,94 +1,73 @@
+from __future__ import annotations
+
+import logging
+from typing import List
+
 import torch
 
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.patchers.clip import CLIP
-from apps.backend.patchers.vae import VAE
-from apps.backend.patchers.unet import UnetPatcher
-from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
-from apps.backend.infra.config.args import dynamic_args
+from apps.backend.engines.sd.spec import SD15_SPEC, assemble_engine_runtime
 from apps.backend.runtime.memory import memory_management
 
-import safetensors.torch as sf
-from apps.backend.runtime import utils
+logger = logging.getLogger("backend.engines.sd.sd15")
 
 
 class StableDiffusion(CodexDiffusionEngine):
+    """Codex-native Stable Diffusion 1.x engine."""
+
     def __init__(self, estimated_config, codex_components):
         super().__init__(estimated_config, codex_components)
 
-        clip = CLIP(
-            model_dict={'clip_l': codex_components['text_encoder']},
-            tokenizer_dict={'clip_l': codex_components['tokenizer']},
-            model_config=estimated_config,
+        runtime = assemble_engine_runtime(SD15_SPEC, estimated_config, codex_components)
+        self._runtime = runtime
+        self._primary_branch = runtime.branch_order[0]
+
+        self.codex_objects = CodexObjects(
+            unet=runtime.unet,
+            clip=runtime.clip,
+            vae=runtime.vae,
+            clipvision=None,
         )
-
-        vae = VAE(model=codex_components['vae'])
-
-        unet = UnetPatcher.from_model(
-            model=codex_components['unet'],
-            diffusers_scheduler=codex_components['scheduler'],
-            config=estimated_config
-        )
-
-        self.text_processing_engine = ClassicTextProcessingEngine(
-            text_encoder=clip.cond_stage_model.clip_l,
-            tokenizer=clip.tokenizer.clip_l,
-            embedding_dir=dynamic_args['embedding_dir'],
-            embedding_key='clip_l',
-            embedding_expected_shape=768,
-            emphasis_name=dynamic_args['emphasis_name'],
-            text_projection=False,
-            minimal_clip_skip=1,
-            clip_skip=1,
-            return_pooled=False,
-            final_layer_norm=True,
-        )
-
-        self.codex_objects = CodexObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
         self.codex_objects_original = self.codex_objects.shallow_copy()
         self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
-        # WebUI Legacy
         self.is_sd1 = True
 
-    def set_clip_skip(self, clip_skip):
-        self.text_processing_engine.clip_skip = clip_skip
+        logger.debug(
+            "StableDiffusion initialised with branch=%s clip_skip=%d",
+            self._primary_branch,
+            runtime.text_engine(self._primary_branch).clip_skip,
+        )
+
+    def set_clip_skip(self, clip_skip: int) -> None:
+        self._runtime.set_clip_skip(clip_skip)
+        logger.debug("Clip skip set to %d for SD15.", clip_skip)
 
     @torch.inference_mode()
-    def get_learned_conditioning(self, prompt: list[str]):
+    def get_learned_conditioning(self, prompt: List[str]):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
-        cond = self.text_processing_engine(prompt)
-        return cond
+        conditioning = self._runtime.primary_text_engine()(prompt)
+        logger.debug("Generated conditioning for %d prompts (SD15).", len(prompt))
+        return conditioning
 
     @torch.inference_mode()
-    def get_prompt_lengths_on_ui(self, prompt):
-        _, token_count = self.text_processing_engine.process_texts([prompt])
-        return token_count, self.text_processing_engine.get_target_prompt_token_count(token_count)
+    def get_prompt_lengths_on_ui(self, prompt: str):
+        engine = self._runtime.primary_text_engine()
+        _, token_count = engine.process_texts([prompt])
+        target = engine.get_target_prompt_token_count(token_count)
+        return token_count, target
 
     @torch.inference_mode()
-    def encode_first_stage(self, x):
+    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
         sample = self.codex_objects.vae.first_stage_model.process_in(sample)
         return sample.to(x)
 
     @torch.inference_mode()
-    def decode_first_stage(self, x):
+    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         sample = self.codex_objects.vae.first_stage_model.process_out(x)
         sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
         return sample.to(x)
 
-    def save_checkpoint(self, filename):
-        sd = {}
-        sd.update(
-            utils.get_state_dict_after_quant(self.codex_objects.unet.model.diffusion_model, prefix='model.diffusion_model.')
-        )
-        sd.update(
-            model_list.SD15.process_clip_state_dict_for_saving(self, 
-                utils.get_state_dict_after_quant(self.codex_objects.clip.cond_stage_model, prefix='')
-            )
-        )
-        sd.update(
-            utils.get_state_dict_after_quant(self.codex_objects.vae.first_stage_model, prefix='first_stage_model.')
-        )
-        sf.save_file(sd, filename)
-        return filename
+    def save_checkpoint(self, filename: str):
+        raise NotImplementedError("sd15 checkpoint saving not yet ported")

@@ -6,33 +6,10 @@ from typing import List
 import torch
 
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.sd.spec import (
-    SDEngineSpec,
-    SDTextBranchSpec,
-    assemble_engine_runtime,
-)
+from apps.backend.engines.sd.spec import SD20_SPEC, assemble_engine_runtime
 from apps.backend.runtime.memory import memory_management
 
 logger = logging.getLogger("backend.engines.sd.sd20")
-
-
-SD20_SPEC = SDEngineSpec(
-    name="sd20",
-    clip_model_keys={"clip_h": "text_encoder"},
-    tokenizer_keys={"clip_h": "tokenizer"},
-    text_branches=(
-        SDTextBranchSpec(
-            identifier="clip_h",
-            clip_attr="clip_h",
-            embedding_expected_shape=1024,
-            minimal_clip_skip=1,
-            default_clip_skip=1,
-            text_projection=False,
-            return_pooled=False,
-            final_layer_norm=True,
-        ),
-    ),
-)
 
 
 class StableDiffusion2(CodexDiffusionEngine):

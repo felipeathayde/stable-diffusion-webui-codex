@@ -5,7 +5,7 @@ from apps.backend.runtime.attention import attention_function
 
 from .geometry import apply_rotary_embeddings, build_rotary_frequencies as rope, timestep_embedding
 from .embed import EmbedND, MLPEmbedder
-from .components import RMSNorm, QKNorm, DoubleStreamBlock, SingleStreamBlock, LastLayer
+from .components import RMSNorm, QKNorm, DoubleStreamBlock, SingleStreamBlock, LastLayer, SelfAttention
 from .model import FluxTransformer2DModel
 
 
@@ -28,6 +28,7 @@ __all__ = [
     "DoubleStreamBlock",
     "SingleStreamBlock",
     "LastLayer",
+    "SelfAttention",
     "attention",
     "rope",
     "apply_rope",

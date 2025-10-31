@@ -1,0 +1,610 @@
+"""Codex-native memory management service."""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Iterable, List, MutableSequence, Optional, Sequence, Tuple
+
+import torch
+
+from .config import (
+    AttentionBackend,
+    AttentionConfig,
+    ComponentPolicy,
+    DeviceBackend,
+    DeviceRole,
+    HardwareProbe,
+    MemoryBudgets,
+    PrecisionFlags,
+    RuntimeMemoryConfig,
+    SwapConfig,
+    SwapMethod,
+    SwapPolicy,
+)
+from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoadError
+
+
+logger = logging.getLogger("backend.memory.manager")
+
+
+def _detect_oom_exception() -> type[BaseException]:
+    try:
+        return torch.cuda.OutOfMemoryError  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover
+        return RuntimeError
+
+
+def _probe_hardware() -> HardwareProbe:
+    probe = HardwareProbe()
+    try:
+        probe.cuda_available = torch.cuda.is_available()
+        probe.cuda_device_count = torch.cuda.device_count() if probe.cuda_available else 0
+    except Exception:  # pragma: no cover
+        probe.cuda_available = False
+        probe.cuda_device_count = 0
+
+    try:
+        probe.mps_available = bool(torch.backends.mps.is_available())
+    except Exception:  # pragma: no cover
+        probe.mps_available = False
+
+    try:  # pragma: no cover
+        probe.xpu_available = bool(getattr(torch, "xpu", None) and torch.xpu.is_available())  # type: ignore[attr-defined]
+    except Exception:
+        probe.xpu_available = False
+
+    probe.directml_available = bool(os.getenv("DIRECTML_PATH"))  # best effort
+
+    try:
+        mem_total = torch.cuda.get_device_properties(0).total_memory if probe.cuda_available else None
+        if mem_total is not None:
+            probe.total_vram_mb = int(mem_total // (1024 * 1024))
+    except Exception:  # pragma: no cover
+        probe.total_vram_mb = None
+
+    try:
+        import psutil  # type: ignore
+
+        probe.total_ram_mb = int(psutil.virtual_memory().total // (1024 * 1024))
+    except Exception:  # pragma: no cover
+        probe.total_ram_mb = None
+
+    try:
+        probe.bf16_support = bool(torch.cuda.is_bf16_supported()) if probe.cuda_available else False
+    except Exception:  # pragma: no cover
+        probe.bf16_support = False
+
+    probe.fp8_support = False
+    if probe.cuda_available:
+        try:
+            cc = torch.cuda.get_device_properties(torch.cuda.current_device()).major
+            probe.fp8_support = cc >= 9
+        except Exception:  # pragma: no cover
+            probe.fp8_support = False
+
+    try:
+        import xformers  # type: ignore
+
+        probe.xformers_available = True
+        probe.xformers_version = getattr(getattr(xformers, "version", None), "__version__", None)
+    except Exception:
+        probe.xformers_available = False
+        probe.xformers_version = None
+
+    return probe
+
+
+@dataclass
+class _LoadedModelRecord:
+    """Internal bookkeeping for loaded models."""
+
+    model: object
+    load_device: torch.device
+    offload_device: torch.device
+    storage_dtype: torch.dtype
+    inclusive_memory: int = 0
+    exclusive_memory: int = 0
+    model_accelerated: bool = False
+
+    def __hash__(self) -> int:
+        return hash(id(self.model))
+
+    def matches(self, other: object) -> bool:
+        return self.model is other
+
+
+class CodexMemoryManager:
+    """Central service coordinating device/dtype selection and model lifecycle."""
+
+    def __init__(
+        self,
+        config: RuntimeMemoryConfig,
+        *,
+        probe: HardwareProbe | None = None,
+    ) -> None:
+        self._config = config
+        self._probe = probe or _probe_hardware()
+        self._oom_exception: type[BaseException] = _detect_oom_exception()
+        self._loaded_models: MutableSequence[_LoadedModelRecord] = []
+        self._signal_empty_cache: bool = False
+        self._vae_always_tiled: bool = False
+        self._primary_device: torch.device = self._resolve_primary_device()
+        self._cpu_device = torch.device("cpu")
+        self._attention = config.attention
+        self._swap = config.swap
+        self._budgets = config.budgets
+
+        self._log_probe()
+        self._apply_deterministic_mode()
+        self._configure_attention()
+
+    # --------------------------------------------------------------------- setup helpers
+    def _log_probe(self) -> None:
+        logger.debug("hardware probe: %s", self._probe.to_dict())
+
+    def _apply_deterministic_mode(self) -> None:
+        if self._config.deterministic_algorithms:
+            logger.info("Enabling deterministic torch algorithms (warn_only=True).")
+            torch.use_deterministic_algorithms(True, warn_only=True)
+
+    def _configure_attention(self) -> None:
+        if self._attention.backend == AttentionBackend.PYTORCH and self._probe.cuda_available:
+            try:
+                torch.backends.cuda.enable_math_sdp(True)
+                if self._attention.enable_flash:
+                    torch.backends.cuda.enable_flash_sdp(True)
+                if self._attention.enable_mem_efficient:
+                    torch.backends.cuda.enable_mem_efficient_sdp(True)
+            except Exception:  # pragma: no cover
+                logger.debug("Failed to enable PyTorch SDP backends.", exc_info=True)
+
+    # --------------------------------------------------------------------- device/dtype
+    def _resolve_primary_device(self) -> torch.device:
+        cfg = self._config
+        backend = cfg.device_backend
+        probe = self._probe
+
+        def choose_cuda() -> torch.device:
+            if not probe.cuda_available:
+                raise MemoryConfigurationError("CUDA requested but not available.")
+            index = cfg.gpu_device_id or torch.cuda.current_device()
+            return torch.device("cuda", index)
+
+        if backend == DeviceBackend.AUTO:
+            if probe.cuda_available:
+                return choose_cuda()
+            if probe.mps_available:
+                return torch.device("mps")
+            if probe.xpu_available:
+                return torch.device("xpu")
+            if cfg.allow_directml and probe.directml_available:
+                return torch.device("dml")
+            return torch.device("cpu")
+        if backend == DeviceBackend.CUDA:
+            return choose_cuda()
+        if backend == DeviceBackend.MPS:
+            if not probe.mps_available:
+                raise MemoryConfigurationError("MPS backend requested but not available.")
+            return torch.device("mps")
+        if backend == DeviceBackend.XPU:
+            if not probe.xpu_available:
+                raise MemoryConfigurationError("XPU backend requested but not available.")
+            return torch.device("xpu")
+        if backend == DeviceBackend.DIRECTML:
+            if not cfg.allow_directml:
+                raise MemoryConfigurationError("DirectML backend disabled by configuration.")
+            return torch.device("dml")
+        return torch.device("cpu")
+
+    # --------------------------------------------------------------------- public accessors
+    @property
+    def oom_exception(self) -> type[BaseException]:
+        return self._oom_exception
+
+    @property
+    def cpu_device(self) -> torch.device:
+        return self._cpu_device
+
+    @property
+    def signal_empty_cache(self) -> bool:
+        return self._signal_empty_cache
+
+    @signal_empty_cache.setter
+    def signal_empty_cache(self, value: bool) -> None:
+        self._signal_empty_cache = bool(value)
+
+    @property
+    def vae_always_tiled(self) -> bool:
+        return self._vae_always_tiled
+
+    @vae_always_tiled.setter
+    def vae_always_tiled(self, value: bool) -> None:
+        self._vae_always_tiled = bool(value)
+
+    def primary_device(self) -> torch.device:
+        return self._primary_device
+
+    def get_device(self, role: DeviceRole) -> torch.device:
+        policy = self._config.component_policy(role)
+        backend = policy.preferred_backend
+        if backend == DeviceBackend.AUTO:
+            if role == DeviceRole.TEXT_ENCODER and self._swap.policy != SwapPolicy.NEVER:
+                return self._primary_device if self._primary_device.type != "cpu" else self._cpu_device
+            if role == DeviceRole.VAE and policy.allow_offload:
+                return self._primary_device if self._primary_device.type != "cpu" else self._cpu_device
+            return self._primary_device
+        if backend == DeviceBackend.CUDA:
+            if not self._probe.cuda_available:
+                raise MemoryConfigurationError("CUDA device requested for role but unsupported.")
+            return torch.device("cuda", self._primary_device.index if self._primary_device.type == "cuda" else 0)
+        if backend == DeviceBackend.MPS:
+            if not self._probe.mps_available:
+                raise MemoryConfigurationError("MPS device requested for role but unsupported.")
+            return torch.device("mps")
+        if backend == DeviceBackend.XPU:
+            if not self._probe.xpu_available:
+                raise MemoryConfigurationError("XPU device requested for role but unsupported.")
+            return torch.device("xpu")
+        if backend == DeviceBackend.DIRECTML:
+            if not self._config.allow_directml:
+                raise MemoryConfigurationError("DirectML requested but disabled.")
+            return torch.device("dml")
+        return self._cpu_device
+
+    def get_offload_device(self, role: DeviceRole) -> torch.device:
+        policy = self._config.component_policy(role)
+        if not policy.allow_offload or self._swap.policy == SwapPolicy.NEVER:
+            return self.get_device(role)
+        if self._swap.policy == SwapPolicy.SHARED and self._primary_device.type != "cpu":
+            return torch.device("cpu")
+        return torch.device("cpu")
+
+    def dtype_for_role(
+        self,
+        role: DeviceRole,
+        *,
+        supported: Sequence[torch.dtype] = (torch.float16, torch.bfloat16, torch.float32),
+    ) -> torch.dtype:
+
+        def clamp_dtype(preferred: Sequence[torch.dtype]) -> torch.dtype:
+            for dtype in preferred:
+                if dtype in supported:
+                    return dtype
+            return supported[-1]
+
+        flags = self._config.precision
+        policy = self._config.component_policy(role)
+        if policy.forced_dtype:
+            try:
+                return getattr(torch, policy.forced_dtype)
+            except AttributeError as exc:
+                raise MemoryConfigurationError(f"Unsupported dtype '{policy.forced_dtype}' for {role.value}.") from exc
+
+        preferred: List[torch.dtype] = []
+        if flags.all_fp32:
+            preferred.append(torch.float32)
+        if flags.all_fp16:
+            preferred.append(torch.float16)
+
+        if role == DeviceRole.CORE:
+            if flags.core_fp16:
+                preferred.append(torch.float16)
+            if flags.core_bf16:
+                preferred.append(torch.bfloat16)
+            if flags.core_fp8_e4m3fn and self._probe.fp8_support:
+                preferred.append(torch.float16)  # map fp8 to fp16 runtime
+            if flags.core_fp8_e5m2 and self._probe.fp8_support:
+                preferred.append(torch.float16)
+        elif role == DeviceRole.TEXT_ENCODER:
+            if flags.clip_fp16:
+                preferred.append(torch.float16)
+            if flags.clip_fp32:
+                preferred.append(torch.float32)
+        elif role == DeviceRole.VAE:
+            if flags.vae_bf16:
+                preferred.append(torch.bfloat16)
+            if flags.vae_fp16:
+                preferred.append(torch.float16)
+            if flags.vae_fp32:
+                preferred.append(torch.float32)
+
+        if torch.bfloat16 in supported and self._probe.bf16_support:
+            preferred.append(torch.bfloat16)
+        preferred.append(torch.float16)
+        preferred.append(torch.float32)
+        return clamp_dtype(preferred)
+
+    # --------------------------------------------------------------------- tensor helpers
+    def module_size(
+        self,
+        module,
+        *,
+        exclude_device: torch.device | None = None,
+        include_device: torch.device | None = None,
+        return_split: bool = False,
+    ) -> int | Tuple[int, int, int]:
+        module_mem = 0
+        weight_mem = 0
+
+        state_dict = module.state_dict()
+        for key, tensor in state_dict.items():
+            if exclude_device is not None and tensor.device == exclude_device:
+                continue
+            if include_device is not None and tensor.device != include_device:
+                continue
+
+            element_size = tensor.element_size()
+            module_mem += tensor.nelement() * element_size
+            if return_split and key.endswith(("weight", "bias")):
+                weight_mem += tensor.nelement() * element_size
+
+        if return_split:
+            return module_mem, weight_mem, module_mem - weight_mem
+        return module_mem
+
+    def cast_to_device(self, tensor: torch.Tensor, device: torch.device, dtype: torch.dtype | None, *, copy: bool = False) -> torch.Tensor:
+        target_dtype = dtype or tensor.dtype
+        if tensor.device == device and tensor.dtype == target_dtype and not copy:
+            return tensor
+        if copy:
+            tensor = tensor.clone()
+        return tensor.to(device=device, dtype=target_dtype)
+
+    # --------------------------------------------------------------------- memory metrics
+    def get_free_memory(self, device: torch.device | None = None, *, return_torch_stats: bool = False) -> int | Tuple[int, int]:
+        device = device or self._primary_device
+
+        if device.type == "cpu":
+            import psutil  # type: ignore
+
+            virtual = psutil.virtual_memory()
+            total = virtual.available
+            return (total, total) if return_torch_stats else total
+
+        if device.type == "cuda":
+            stats = torch.cuda.memory_stats(device)
+            torch_reserved = stats.get("reserved_bytes.all.current", 0)
+            free, total = torch.cuda.mem_get_info(device)
+            if return_torch_stats:
+                return free, max(torch_reserved, free)
+            return free
+
+        if device.type == "xpu":
+            stats = torch.xpu.memory_stats(device)  # type: ignore[attr-defined]
+            torch_reserved = stats.get("reserved_bytes.all.current", 0)
+            free = torch_reserved  # best effort
+            return (free, torch_reserved) if return_torch_stats else free
+
+        if return_torch_stats:
+            return 0, 0
+        return 0
+
+    def minimum_inference_memory(self) -> int:
+        return max(self._budgets.minimum_inference_mb * 1024 * 1024, 0)
+
+    # --------------------------------------------------------------------- dtype helpers
+    def should_use_fp16(
+        self,
+        *,
+        device: torch.device | None = None,
+        model_params: int = 0,
+        prioritize_performance: bool = True,
+        manual_cast: bool = False,
+    ) -> bool:
+        device = device or self._primary_device
+        if device.type == "cpu":
+            return False
+        if manual_cast:
+            return True
+        if self._config.precision.all_fp32:
+            return False
+        if not prioritize_performance:
+            return False
+        return True
+
+    def should_use_bf16(
+        self,
+        *,
+        device: torch.device | None = None,
+        model_params: int = 0,
+        prioritize_performance: bool = True,
+        manual_cast: bool = False,
+    ) -> bool:
+        if not self._probe.bf16_support:
+            return False
+        if manual_cast:
+            return True
+        if not prioritize_performance:
+            return False
+        return True
+
+    # --------------------------------------------------------------------- attention helpers
+    def xformers_enabled(self) -> bool:
+        if self._config.disable_xformers:
+            return False
+        return self._probe.xformers_available and self._attention.backend == AttentionBackend.XFORMERS
+
+    def xformers_enabled_vae(self) -> bool:
+        return self.xformers_enabled() and self._config.enable_xformers_vae
+
+    def force_upcast_attention_dtype(self) -> torch.dtype:
+        if self._attention.force_upcast:
+            return torch.float32
+        return torch.float16
+
+    def pytorch_attention_enabled(self) -> bool:
+        return self._attention.backend == AttentionBackend.PYTORCH
+
+    # --------------------------------------------------------------------- cache helpers
+    def soft_empty_cache(self, force: bool = False) -> None:
+        if self._primary_device.type == "cuda":
+            torch.cuda.empty_cache()
+        if force:
+            self._signal_empty_cache = False
+
+    def unload_all_models(self) -> None:
+        for record in list(self._loaded_models):
+            self._unload_record(record, avoid_model_moving=True)
+        self._loaded_models.clear()
+        logger.info("Unloaded all models, cache cleared.")
+
+    def loaded_models(self) -> Tuple[_LoadedModelRecord, ...]:
+        return tuple(self._loaded_models)
+
+    def unload_model_clones(self, model: object) -> None:
+        if not hasattr(model, "is_clone"):
+            return
+        predicate = getattr(model, "is_clone")
+        if not callable(predicate):
+            return
+        for index in range(len(self._loaded_models) - 1, -1, -1):
+            record = self._loaded_models[index]
+            try:
+                matches = predicate(record.model)
+            except Exception:  # pragma: no cover
+                matches = False
+            if matches:
+                self._unload_record(record, avoid_model_moving=True)
+                self._loaded_models.pop(index)
+
+    # --------------------------------------------------------------------- load/unload
+    def load_models(
+        self,
+        models: Sequence[object],
+        *,
+        memory_required: int = 0,
+        hard_memory_preservation: int = 0,
+    ) -> None:
+        if not models:
+            return
+
+        execution_start = time.perf_counter()
+        memory_budget = max(self.minimum_inference_memory(), memory_required) + hard_memory_preservation
+        models_to_load: List[_LoadedModelRecord] = []
+        already_loaded: List[_LoadedModelRecord] = []
+
+        for model in models:
+            record = self._find_loaded_model(model)
+            if record:
+                already_loaded.append(record)
+            else:
+                models_to_load.append(self._create_record(model))
+
+        if models_to_load:
+            self._allocate_memory(models_to_load, memory_budget, already_loaded)
+            for record in models_to_load:
+                self._load_record(record)
+                self._loaded_models.insert(0, record)
+        else:
+            self._cleanup_for_loaded_models(already_loaded, memory_budget)
+
+        elapsed = time.perf_counter() - execution_start
+        logger.info("Model load completed (%d new, %d existing) in %.2fs.", len(models_to_load), len(already_loaded), elapsed)
+
+    def load_model(self, model: object) -> None:
+        self.load_models([model])
+
+    def free_memory(
+        self,
+        memory_required: int,
+        *,
+        device: torch.device | None = None,
+        keep_loaded: Sequence[_LoadedModelRecord] | None = None,
+        free_all: bool = False,
+    ) -> None:
+        device = device or self._primary_device
+        keep_loaded = keep_loaded or ()
+        release_candidates = [record for record in self._loaded_models if record not in keep_loaded]
+        released = 0
+
+        for record in release_candidates:
+            self._unload_record(record, avoid_model_moving=free_all)
+            self._loaded_models.remove(record)
+            released += record.exclusive_memory
+            if not free_all and released >= memory_required:
+                break
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        logger.debug("Freed %d bytes on %s (required=%d).", released, device, memory_required)
+
+    # --------------------------------------------------------------------- internals
+    def _find_loaded_model(self, model: object) -> _LoadedModelRecord | None:
+        for record in self._loaded_models:
+            if record.matches(model):
+                return record
+        return None
+
+    def _create_record(self, model: object) -> _LoadedModelRecord:
+        load_device = getattr(model, "load_device", self._primary_device)
+        offload_device = getattr(model, "offload_device", self.get_offload_device(DeviceRole.CORE))
+        storage_dtype_getter = getattr(model, "model_dtype", None)
+        storage_dtype = storage_dtype_getter() if callable(storage_dtype_getter) else torch.float32
+        return _LoadedModelRecord(
+            model=model,
+            load_device=load_device,
+            offload_device=offload_device,
+            storage_dtype=storage_dtype,
+        )
+
+    def _load_record(self, record: _LoadedModelRecord) -> None:
+        model = record.model
+        try:
+            model.model_patches_to(record.load_device)
+            model.model_patches_to(record.storage_dtype)
+            model.codex_patch_model(record.load_device)
+            if hasattr(model, "current_device"):
+                setattr(model, "current_device", record.load_device)
+            record.inclusive_memory = self.module_size(model.model)
+            record.exclusive_memory = record.inclusive_memory
+            record.model_accelerated = True
+            logger.debug("Loaded model %s to %s (memory=%d).", model, record.load_device, record.inclusive_memory)
+        except self._oom_exception as exc:
+            raise MemoryLoadError(f"OOM while loading {model}: {exc}") from exc
+        except Exception as exc:
+            raise MemoryLoadError(f"Failed to load model {model}: {exc}") from exc
+
+    def _unload_record(self, record: _LoadedModelRecord, *, avoid_model_moving: bool = False) -> None:
+        try:
+            if hasattr(record.model, "codex_unpatch_model"):
+                offload_device = record.offload_device if not avoid_model_moving else self._cpu_device
+                record.model.codex_unpatch_model(offload_device)
+            record.model_accelerated = False
+            logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to unload model %s: %s", record.model, exc, exc_info=True)
+
+    def _cleanup_for_loaded_models(self, records: Sequence[_LoadedModelRecord], memory_budget: int) -> None:
+        devices = {record.load_device for record in records if record.load_device.type != "cpu"}
+        for device in devices:
+            self.free_memory(memory_budget, device=device, keep_loaded=records)
+
+    def _allocate_memory(
+        self,
+        records: Sequence[_LoadedModelRecord],
+        memory_budget: int,
+        already_loaded: Sequence[_LoadedModelRecord],
+    ) -> None:
+        total_required: dict[torch.device, int] = {}
+        for record in records:
+            record.inclusive_memory = self.module_size(record.model.model)
+            record.exclusive_memory = record.inclusive_memory
+            total_required[record.load_device] = total_required.get(record.load_device, 0) + record.inclusive_memory
+
+        for device, requirement in total_required.items():
+            target = requirement + memory_budget
+            self.free_memory(target, device=device, keep_loaded=already_loaded)
+
+    # --------------------------------------------------------------------- factory
+    @classmethod
+    def create(cls, config: RuntimeMemoryConfig, probe: HardwareProbe | None = None) -> "CodexMemoryManager":
+        if probe is None:
+            probe = _probe_hardware()
+        if config.device_backend == DeviceBackend.CUDA and not probe.cuda_available:
+            raise HardwareProbeError("CUDA backend requested but no CUDA device detected.")
+        return cls(config, probe=probe)
+__all__ = ["CodexMemoryManager"]

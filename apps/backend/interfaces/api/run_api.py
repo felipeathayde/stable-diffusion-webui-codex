@@ -1334,6 +1334,7 @@ def build_app() -> FastAPI:
             metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
         engine_override = payload.get('engine') or payload.get('codex_engine')
+        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
 
         req = Txt2ImgRequest(
             task=TaskType.TXT2IMG,
@@ -1370,7 +1371,7 @@ def build_app() -> FastAPI:
 
         snap = _opts_snapshot()
         engine_key = engine_override or snap.codex_engine
-        model_ref = snap.sd_model_checkpoint
+        model_ref = model_override or snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
     def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]

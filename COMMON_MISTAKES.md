@@ -31,6 +31,10 @@
 **Cause + fix:** `Staged files contain trailing whitespace and missing EOF newlines; clean lint offenders before re-running.`
 **Correct command:** `git diff --staged --check`
 
+**Wrong command:** `rg -n "bnb_avaliable" apps/backend/runtime/ops`
+**Cause + fix:** `Typo in the search term; the code exposes "_BNB_AVAILABLE" (double 'l').`
+**Correct command:** `rg -n "_BNB_AVAILABLE" apps/backend/runtime/ops`
+
 **Wrong command:** `python - <<'PY'
 import importlib
 mod = importlib.import_module('apps.backend.use_cases.txt2img')

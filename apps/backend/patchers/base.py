@@ -1,75 +1,245 @@
-# Model Patching System, Copyright Codex 2024
-
-# API Templates partially extracted From ComfyUI; the implementation here is
-# native Codex code implemented from scratch and may differ from the originals.
-
+from __future__ import annotations
 
 import copy
 import inspect
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Tuple
 
-from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime import utils
-from .lora import LoraLoader
 from apps.backend.runtime import trace as _trace
+from apps.backend.runtime import utils
+from apps.backend.runtime.memory import memory_management
+from .lora import CodexLoraLoader
+
+logger = logging.getLogger("backend.patchers.base")
+
+LoraPatchKey = Tuple[str, float, float, bool]
+PatchEntry = List[Any]
 
 
-def set_model_options_patch_replace(model_options, patch, name, block_name, number, transformer_index=None):
-    to = model_options["transformer_options"].copy()
+@dataclass
+class LoraPatchRegistry:
+    """Tracks LoRA patch bundles keyed by filename/strength."""
 
-    if "patches_replace" not in to:
-        to["patches_replace"] = {}
+    data: Dict[LoraPatchKey, Dict[str, List[PatchEntry]]] = field(default_factory=dict)
+
+    def clone(self) -> "LoraPatchRegistry":
+        return LoraPatchRegistry(copy.deepcopy(self.data))
+
+    def add_patch(
+        self,
+        key: LoraPatchKey,
+        parameter: str,
+        strength_patch: float,
+        tensor: Any,
+        strength_model: float,
+        offset: Any,
+        function: Any,
+    ) -> None:
+        bucket = self.data.setdefault(key, {})
+        entries = bucket.setdefault(parameter, [])
+        entry = [strength_patch, tensor, strength_model, offset, function]
+        entries.append(entry)
+        logger.debug(
+            "Registered LoRA patch bundle=%s parameter=%s entries=%d",
+            key[0],
+            parameter,
+            len(entries),
+        )
+
+    def has_online_lora(self) -> bool:
+        return any(key[3] for key in self.data)
+
+    @classmethod
+    def from_mapping(cls, mapping: MutableMapping[LoraPatchKey, Dict[str, List[PatchEntry]]]) -> "LoraPatchRegistry":
+        registry = cls()
+        for key, target_map in mapping.items():
+            if not isinstance(key, tuple) or len(key) != 4:
+                raise ValueError(f"Invalid LoRA patch key {key!r}")
+            filename, strength_patch, strength_model, online_mode = key
+            for parameter, entries in target_map.items():
+                if not isinstance(entries, Iterable):
+                    raise TypeError("LoRA patch entries must be iterable")
+                registry.data.setdefault(key, {})[parameter] = [list(entry) for entry in entries]
+        return registry
+
+
+@dataclass
+class ObjectPatchRegistry:
+    """Maintains object attribute patches and their backups."""
+
+    active: Dict[str, Any] = field(default_factory=dict)
+    backup: Dict[str, Any] = field(default_factory=dict)
+
+    def clone(self) -> "ObjectPatchRegistry":
+        return ObjectPatchRegistry(active=self.active.copy(), backup=self.backup.copy())
+
+    def register(self, name: str, value: Any) -> None:
+        logger.debug("Registered object patch %s", name)
+        self.active[name] = value
+
+    def get(self, name: str, model: Any) -> Any:
+        if name in self.active:
+            return self.active[name]
+        if name in self.backup:
+            return self.backup[name]
+        return utils.get_attr(model, name)
+
+    def apply_to_model(self, model: Any) -> None:
+        for name, value in self.active.items():
+            previous = utils.get_attr(model, name)
+            if name not in self.backup:
+                self.backup[name] = previous
+            utils.set_attr_raw(model, name, value)
+            logger.debug("Applied object patch %s", name)
+
+    def restore(self, model: Any) -> None:
+        for name, original in self.backup.items():
+            utils.set_attr_raw(model, name, original)
+            logger.debug("Restored object patch %s", name)
+        self.backup.clear()
+
+
+def _ensure_transformer_options(model_options: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    transformer_options = model_options.setdefault("transformer_options", {})
+    if not isinstance(transformer_options, MutableMapping):
+        raise TypeError("transformer_options must be a mapping")
+    return transformer_options
+
+
+def _copy_transformer_options(model_options: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    transformer_options = _ensure_transformer_options(model_options)
+    copied = transformer_options.copy()
+    model_options["transformer_options"] = copied
+    return copied
+
+
+def set_model_options_patch_replace(
+    model_options: MutableMapping[str, Any],
+    patch: Any,
+    name: str,
+    block_name: str,
+    number: int,
+    transformer_index: Optional[int] = None,
+) -> MutableMapping[str, Any]:
+    transformer_options = _copy_transformer_options(model_options)
+
+    patches_replace = transformer_options.get("patches_replace")
+    if patches_replace is None:
+        patches_replace = {}
     else:
-        to["patches_replace"] = to["patches_replace"].copy()
+        patches_replace = patches_replace.copy()
 
-    if name not in to["patches_replace"]:
-        to["patches_replace"][name] = {}
+    target = patches_replace.get(name)
+    if target is None:
+        target = {}
     else:
-        to["patches_replace"][name] = to["patches_replace"][name].copy()
+        target = target.copy()
 
     if transformer_index is not None:
         block = (block_name, number, transformer_index)
     else:
         block = (block_name, number)
-    to["patches_replace"][name][block] = patch
-    model_options["transformer_options"] = to
+
+    target[block] = patch
+    patches_replace[name] = target
+    transformer_options["patches_replace"] = patches_replace
+
+    logger.debug(
+        "Registered transformer replace patch name=%s block=%s number=%s transformer_index=%s",
+        name,
+        block_name,
+        number,
+        transformer_index,
+    )
     return model_options
 
 
-def set_model_options_post_cfg_function(model_options, post_cfg_function, disable_cfg1_optimization=False):
-    model_options["sampler_post_cfg_function"] = model_options.get("sampler_post_cfg_function", []) + [post_cfg_function]
+def set_model_options_post_cfg_function(
+    model_options: MutableMapping[str, Any],
+    post_cfg_function: Any,
+    disable_cfg1_optimization: bool = False,
+) -> MutableMapping[str, Any]:
+    funcs = list(model_options.get("sampler_post_cfg_function", []))
+    funcs.append(post_cfg_function)
+    model_options["sampler_post_cfg_function"] = funcs
     if disable_cfg1_optimization:
         model_options["disable_cfg1_optimization"] = True
+    logger.debug("Registered sampler post-cfg function %s", getattr(post_cfg_function, "__name__", post_cfg_function))
     return model_options
 
 
-def set_model_options_pre_cfg_function(model_options, pre_cfg_function, disable_cfg1_optimization=False):
-    model_options["sampler_pre_cfg_function"] = model_options.get("sampler_pre_cfg_function", []) + [pre_cfg_function]
+def set_model_options_pre_cfg_function(
+    model_options: MutableMapping[str, Any],
+    pre_cfg_function: Any,
+    disable_cfg1_optimization: bool = False,
+) -> MutableMapping[str, Any]:
+    funcs = list(model_options.get("sampler_pre_cfg_function", []))
+    funcs.append(pre_cfg_function)
+    model_options["sampler_pre_cfg_function"] = funcs
     if disable_cfg1_optimization:
         model_options["disable_cfg1_optimization"] = True
+    logger.debug("Registered sampler pre-cfg function %s", getattr(pre_cfg_function, "__name__", pre_cfg_function))
     return model_options
 
 
 class ModelPatcher:
+    """Codex-native model patcher with typed registries and lifecycle hooks."""
+
     def __init__(self, model, load_device, offload_device, size=0, current_device=None, **kwargs):
         self.size = size
         self.model = model
-        self.lora_patches = {}
-        self.object_patches = {}
-        self.object_patches_backup = {}
-        self.model_options = {"transformer_options": {}}
+        self._lora_registry = LoraPatchRegistry()
+        self._object_registry = ObjectPatchRegistry()
+        self._model_options: Dict[str, Any] = {"transformer_options": {}}
+        self.patches: Dict[str, List[Any]] = {}
         self.model_size()
         self.load_device = load_device
         self.offload_device = offload_device
 
-        if not hasattr(model, 'lora_loader'):
-            model.lora_loader = LoraLoader(model)
+        if not hasattr(model, "lora_loader") or not isinstance(model.lora_loader, CodexLoraLoader):
+            model.lora_loader = CodexLoraLoader(model)
 
-        self.lora_loader: LoraLoader = model.lora_loader
+        self.lora_loader: CodexLoraLoader = model.lora_loader
 
         if current_device is None:
             self.current_device = self.offload_device
         else:
             self.current_device = current_device
+
+    @property
+    def lora_patches(self) -> Dict[LoraPatchKey, Dict[str, List[PatchEntry]]]:
+        return self._lora_registry.data
+
+    @lora_patches.setter
+    def lora_patches(self, value: Dict[LoraPatchKey, Dict[str, List[PatchEntry]]]) -> None:
+        self._lora_registry = LoraPatchRegistry.from_mapping(value)
+
+    @property
+    def object_patches(self) -> Dict[str, Any]:
+        return self._object_registry.active
+
+    @object_patches.setter
+    def object_patches(self, value: Dict[str, Any]) -> None:
+        self._object_registry = ObjectPatchRegistry(active=value.copy(), backup={})
+
+    @property
+    def object_patches_backup(self) -> Dict[str, Any]:
+        return self._object_registry.backup
+
+    @object_patches_backup.setter
+    def object_patches_backup(self, value: Dict[str, Any]) -> None:
+        self._object_registry.backup = value.copy()
+
+    @property
+    def model_options(self) -> Dict[str, Any]:
+        return self._model_options
+
+    @model_options.setter
+    def model_options(self, value: Dict[str, Any]) -> None:
+        if "transformer_options" not in value:
+            value = {**value, "transformer_options": {}}
+        self._model_options = copy.deepcopy(value)
 
     def model_size(self):
         if self.size > 0:
@@ -78,52 +248,71 @@ class ModelPatcher:
         return self.size
 
     def clone(self):
-        n = ModelPatcher(self.model, self.load_device, self.offload_device, self.size, self.current_device)
-        n.lora_patches = self.lora_patches.copy()
-        n.object_patches = self.object_patches.copy()
-        n.model_options = copy.deepcopy(self.model_options)
-        return n
+        clone = self.__class__(self.model, self.load_device, self.offload_device, self.size, self.current_device)
+        clone._lora_registry = self._lora_registry.clone()
+        clone._object_registry = self._object_registry.clone()
+        clone._model_options = copy.deepcopy(self._model_options)
+        clone.lora_loader = self.lora_loader
+        clone.patches = copy.deepcopy(self.patches)
+        logger.debug("Cloned ModelPatcher %s -> %s", id(self), id(clone))
+        return clone
 
     def is_clone(self, other):
-        if hasattr(other, 'model') and self.model is other.model:
+        if hasattr(other, "model") and self.model is other.model:
             return True
         return False
 
-    def add_patches(self, *, filename, patches, strength_patch=1.0, strength_model=1.0, online_mode=False):
-        lora_identifier = (filename, strength_patch, strength_model, online_mode)
-        this_patches = {}
-
-        p = set()
+    def add_patches(
+        self,
+        *,
+        filename: str,
+        patches: MutableMapping[str, Any],
+        strength_patch: float = 1.0,
+        strength_model: float = 1.0,
+        online_mode: bool = False,
+    ) -> set:
+        lora_identifier: LoraPatchKey = (filename, strength_patch, strength_model, online_mode)
+        matched = set()
         model_keys = set(k for k, _ in self.model.named_parameters())
 
-        for k in patches:
+        for key in patches:
             offset = None
             function = None
 
-            if isinstance(k, str):
-                key = k
+            if isinstance(key, str):
+                parameter = key
             else:
-                offset = k[1]
-                key = k[0]
-                if len(k) > 2:
-                    function = k[2]
+                parameter = key[0]
+                offset = key[1]
+                if len(key) > 2:
+                    function = key[2]
 
-            if key in model_keys:
-                p.add(k)
-                current_patches = this_patches.get(key, [])
-                current_patches.append([strength_patch, patches[k], strength_model, offset, function])
-                this_patches[key] = current_patches
+            if parameter in model_keys:
+                matched.add(key)
+                tensor = patches[key]
+                self._lora_registry.add_patch(
+                    lora_identifier,
+                    parameter,
+                    strength_patch,
+                    tensor,
+                    strength_model,
+                    offset,
+                    function,
+                )
 
-        self.lora_patches[lora_identifier] = this_patches
-        return p
+        logger.debug(
+            "Registered %d LoRA patches from %s (online=%s)",
+            len(matched),
+            filename,
+            online_mode,
+        )
+        return matched
 
     def has_online_lora(self):
-        for (filename, strength_patch, strength_model, online_mode), this_patches in self.lora_patches.items():
-            if online_mode:
-                return True
-        return False
+        return self._lora_registry.has_online_lora()
 
     def refresh_loras(self):
+        logger.debug("Refreshing LoRA loader with %d bundles", len(self._lora_registry.data))
         self.lora_loader.refresh(lora_patches=self.lora_patches, offload_device=self.offload_device)
         return
 
@@ -132,41 +321,67 @@ class ModelPatcher:
 
     def set_model_sampler_cfg_function(self, sampler_cfg_function, disable_cfg1_optimization=False):
         if len(inspect.signature(sampler_cfg_function).parameters) == 3:
-            self.model_options["sampler_cfg_function"] = lambda args: sampler_cfg_function(args["cond"], args["uncond"], args["cond_scale"])  # Old way
+            self.model_options["sampler_cfg_function"] = lambda args: sampler_cfg_function(
+                args["cond"],
+                args["uncond"],
+                args["cond_scale"],
+            )
         else:
             self.model_options["sampler_cfg_function"] = sampler_cfg_function
         if disable_cfg1_optimization:
             self.model_options["disable_cfg1_optimization"] = True
+        logger.debug("Registered sampler cfg function %s", getattr(sampler_cfg_function, "__name__", sampler_cfg_function))
 
     def set_model_sampler_post_cfg_function(self, post_cfg_function, disable_cfg1_optimization=False):
-        self.model_options = set_model_options_post_cfg_function(self.model_options, post_cfg_function, disable_cfg1_optimization)
+        self.model_options = set_model_options_post_cfg_function(
+            self.model_options,
+            post_cfg_function,
+            disable_cfg1_optimization,
+        )
 
     def set_model_sampler_pre_cfg_function(self, pre_cfg_function, disable_cfg1_optimization=False):
-        self.model_options = set_model_options_pre_cfg_function(self.model_options, pre_cfg_function, disable_cfg1_optimization)
+        self.model_options = set_model_options_pre_cfg_function(
+            self.model_options,
+            pre_cfg_function,
+            disable_cfg1_optimization,
+        )
 
     def set_model_unet_function_wrapper(self, unet_wrapper_function):
         self.model_options["model_function_wrapper"] = unet_wrapper_function
+        logger.debug("Registered model_function_wrapper %s", unet_wrapper_function)
 
     def set_model_vae_encode_wrapper(self, wrapper_function):
         self.model_options["model_vae_encode_wrapper"] = wrapper_function
+        logger.debug("Registered model_vae_encode_wrapper %s", wrapper_function)
 
     def set_model_vae_decode_wrapper(self, wrapper_function):
         self.model_options["model_vae_decode_wrapper"] = wrapper_function
+        logger.debug("Registered model_vae_decode_wrapper %s", wrapper_function)
 
     def set_model_vae_regulation(self, vae_regulation):
         self.model_options["model_vae_regulation"] = vae_regulation
+        logger.debug("Registered model_vae_regulation %s", vae_regulation)
 
     def set_model_denoise_mask_function(self, denoise_mask_function):
         self.model_options["denoise_mask_function"] = denoise_mask_function
+        logger.debug("Registered denoise_mask_function %s", denoise_mask_function)
 
     def set_model_patch(self, patch, name):
-        to = self.model_options["transformer_options"]
-        if "patches" not in to:
-            to["patches"] = {}
-        to["patches"][name] = to["patches"].get(name, []) + [patch]
+        transformer_options = _ensure_transformer_options(self.model_options)
+        patches = transformer_options.setdefault("patches", {})
+        bucket = patches.setdefault(name, [])
+        bucket.append(patch)
+        logger.debug("Registered transformer patch %s (size=%d)", name, len(bucket))
 
     def set_model_patch_replace(self, patch, name, block_name, number, transformer_index=None):
-        self.model_options = set_model_options_patch_replace(self.model_options, patch, name, block_name, number, transformer_index=transformer_index)
+        self.model_options = set_model_options_patch_replace(
+            self.model_options,
+            patch,
+            name,
+            block_name,
+            number,
+            transformer_index=transformer_index,
+        )
 
     def set_model_attn1_patch(self, patch):
         self.set_model_patch(patch, "attn1_patch")
@@ -196,40 +411,32 @@ class ModelPatcher:
         self.set_model_patch(patch, "output_block_patch")
 
     def add_object_patch(self, name, obj):
-        self.object_patches[name] = obj
+        self._object_registry.register(name, obj)
 
     def get_model_object(self, name):
-        if name in self.object_patches:
-            return self.object_patches[name]
-        else:
-            if name in self.object_patches_backup:
-                return self.object_patches_backup[name]
-            else:
-                return utils.get_attr(self.model, name)
+        return self._object_registry.get(name, self.model)
 
     def model_patches_to(self, device):
-        to = self.model_options["transformer_options"]
-        if "patches" in to:
-            patches = to["patches"]
-            for name in patches:
-                patch_list = patches[name]
-                for i in range(len(patch_list)):
-                    if hasattr(patch_list[i], "to"):
-                        _trace.event("patch_to", name=name, idx=i, device=str(device))
-                        patch_list[i] = patch_list[i].to(device)
-        if "patches_replace" in to:
-            patches = to["patches_replace"]
-            for name in patches:
-                patch_list = patches[name]
-                for k in patch_list:
-                    if hasattr(patch_list[k], "to"):
-                        _trace.event("patch_replace_to", name=name, key=str(k), device=str(device))
-                        patch_list[k] = patch_list[k].to(device)
-        if "model_function_wrapper" in self.model_options:
-            wrap_func = self.model_options["model_function_wrapper"]
-            if hasattr(wrap_func, "to"):
-                _trace.event("wrapper_to", device=str(device))
-                self.model_options["model_function_wrapper"] = wrap_func.to(device)
+        transformer_options = self.model_options.get("transformer_options", {})
+        patches = transformer_options.get("patches", {})
+        for name, patch_list in patches.items():
+            for idx, patch in enumerate(list(patch_list)):
+                if hasattr(patch, "to"):
+                    _trace.event("patch_to", name=name, idx=idx, device=str(device))
+                    patch_list[idx] = patch.to(device)
+                    logger.debug("Moved patch %s[%d] to %s", name, idx, device)
+        patches_replace = transformer_options.get("patches_replace", {})
+        for name, patch_map in patches_replace.items():
+            for key, patch in list(patch_map.items()):
+                if hasattr(patch, "to"):
+                    _trace.event("patch_replace_to", name=name, key=str(key), device=str(device))
+                    patch_map[key] = patch.to(device)
+                    logger.debug("Moved replace patch %s[%s] to %s", name, key, device)
+        wrapper = self.model_options.get("model_function_wrapper")
+        if hasattr(wrapper, "to"):
+            _trace.event("wrapper_to", device=str(device))
+            self.model_options["model_function_wrapper"] = wrapper.to(device)
+            logger.debug("Moved model_function_wrapper to %s", device)
 
     def model_dtype(self):
         if hasattr(self.model, "get_dtype"):
@@ -238,15 +445,15 @@ class ModelPatcher:
     def get_key_patches(self, filter_prefix=None):
         memory_management.unload_model_clones(self)
         model_sd = self.model_state_dict()
+        patches_dict = self.patches
         p = {}
-        for k in model_sd:
-            if filter_prefix is not None:
-                if not k.startswith(filter_prefix):
-                    continue
-            if k in self.patches:
-                p[k] = [model_sd[k]] + self.patches[k]
+        for key, value in model_sd.items():
+            if filter_prefix is not None and not key.startswith(filter_prefix):
+                continue
+            if key in patches_dict:
+                p[key] = [value] + patches_dict[key]
             else:
-                p[k] = (model_sd[k],)
+                p[key] = (value,)
         return p
 
     def model_state_dict(self, filter_prefix=None):
@@ -259,17 +466,12 @@ class ModelPatcher:
         return sd
 
     def codex_patch_model(self, target_device=None):
-        for k, item in self.object_patches.items():
-            old = utils.get_attr(self.model, k)
-
-            if k not in self.object_patches_backup:
-                self.object_patches_backup[k] = old
-
-            utils.set_attr_raw(self.model, k, item)
+        self._object_registry.apply_to_model(self.model)
 
         if target_device is not None:
             self.model.to(target_device)
             self.current_device = target_device
+            logger.debug("Moved model to device %s during patch", target_device)
 
         return self.model
 
@@ -277,11 +479,7 @@ class ModelPatcher:
         if target_device is not None:
             self.model.to(target_device)
             self.current_device = target_device
+            logger.debug("Moved model to device %s during unpatch", target_device)
 
-        keys = list(self.object_patches_backup.keys())
-
-        for k in keys:
-            utils.set_attr_raw(self.model, k, self.object_patches_backup[k])
-
-        self.object_patches_backup = {}
+        self._object_registry.restore(self.model)
         return

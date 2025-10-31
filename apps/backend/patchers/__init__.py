@@ -35,6 +35,7 @@ _EXPORTS = {
     "model_lora_keys_unet": (".lora", "model_lora_keys_unet"),
     "load_lora": (".lora", "load_lora"),
     "merge_lora_to_weight": (".lora", "merge_lora_to_weight"),
+    "CodexLoraLoader": (".lora", "CodexLoraLoader"),
     # unet
     "UnetPatcher": (".unet", "UnetPatcher"),
     # vae

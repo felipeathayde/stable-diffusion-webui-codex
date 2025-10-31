@@ -19,6 +19,7 @@
         >{{ t.title }}</RouterLink>
         <!-- Restore original Txt2Img view alongside model tabs -->
         <RouterLink class="tab-link" to="/txt2img">txt2img</RouterLink>
+        <RouterLink class="tab-link" to="/sdxl">sdxl</RouterLink>
         <RouterLink class="tab-link" to="/test">test</RouterLink>
         <!-- Utilities on the right -->
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>

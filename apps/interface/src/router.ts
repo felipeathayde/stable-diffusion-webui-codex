@@ -9,6 +9,7 @@ const ModelTabView = () => import('./views/ModelTabView.vue')
 const WorkflowsList = () => import('./views/WorkflowsList.vue')
 const Txt2Img = () => import('./views/Txt2Img.vue')
 const Test = () => import('./views/Test.vue')
+const Sdxl = () => import('./views/Sdxl.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -23,6 +24,7 @@ const router = createRouter({
     { path: '/models', component: ModelsList },
     { path: '/models/:tabId', component: ModelTabView },
     { path: '/txt2img', component: Txt2Img },
+    { path: '/sdxl', component: Sdxl },
     { path: '/test', component: Test },
     { path: '/workflows', component: WorkflowsList },
     { path: '/upscale', component: Upscale },

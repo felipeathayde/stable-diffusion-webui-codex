@@ -9,3 +9,4 @@ Status: Active
 
 ## Notes
 - Keep SD engine logic aligned with runtime helpers under `runtime/sd/`.
+- Shared assembly helpers live in `spec.py` — define engine specs (dataclasses) there and assemble components via `assemble_engine_runtime` to ensure consistent validation/logging across SD variants.

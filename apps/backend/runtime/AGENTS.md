@@ -1,7 +1,7 @@
 # apps/backend/runtime Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-10-30
+Last Review: 2025-10-31
 Status: Active
 
 ## Purpose
@@ -17,6 +17,7 @@ Status: Active
 - `ops/` — Low-level tensor operations leveraged by engines.
 - `models/` — Model registry/load helpers (checkpoints, VAEs, etc.).
 - `{sd, flux, chroma, wan22}/` — Model/runtime specific implementations.
+- `vision/` — Vision encoder runtimes (clip specs/registry/encoders) shared across engines and patchers.
 - `processing/` — High-level input preprocessing utilities shared by use cases.
 - `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.

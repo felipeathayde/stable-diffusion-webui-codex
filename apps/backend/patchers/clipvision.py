@@ -1,191 +1,152 @@
+from __future__ import annotations
+
+import logging
+from typing import Mapping, MutableMapping
+
 import torch
 
-from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime import ops as operations
-from apps.backend.runtime.models.state_dict import transformers_convert, state_dict_prefix_replace
 from apps.backend.runtime.utils import load_torch_file
-from .base import ModelPatcher
-from transformers import modeling_utils, CLIPVisionConfig, CLIPVisionModelWithProjection
+from apps.backend.runtime.vision.clip import (
+    ClipVisionEncoder,
+    ClipVisionError,
+    ClipVisionLoadError,
+    ClipVisionOutput,
+    ClipVisionPreprocessSpec,
+    ClipVisionVariant,
+    cleaned_state_dict,
+    convert_openclip_checkpoint,
+    detect_variant_from_state_dict,
+    get_variant_spec,
+    preprocess_image,
+    rekey_vision_state_dict,
+    summarize_state_dict,
+)
+
+logger = logging.getLogger("backend.patchers.clipvision")
+
+_DEFAULT_PREPROCESS = ClipVisionPreprocessSpec(
+    image_size=224,
+    mean=(0.48145466, 0.4578275, 0.40821073),
+    std=(0.26862954, 0.26130258, 0.27577711),
+)
+
+CLIP_VISION_G = dict(get_variant_spec(ClipVisionVariant.G).to_huggingface_kwargs())
+CLIP_VISION_H = dict(get_variant_spec(ClipVisionVariant.H).to_huggingface_kwargs())
+CLIP_VISION_VITL = dict(get_variant_spec(ClipVisionVariant.VIT_L).to_huggingface_kwargs())
 
 
-CLIP_VISION_G = {
-  "attention_dropout": 0.0,
-  "dropout": 0.0,
-  "hidden_act": "gelu",
-  "hidden_size": 1664,
-  "image_size": 224,
-  "initializer_factor": 1.0,
-  "initializer_range": 0.02,
-  "intermediate_size": 8192,
-  "layer_norm_eps": 1e-05,
-  "model_type": "clip_vision_model",
-  "num_attention_heads": 16,
-  "num_channels": 3,
-  "num_hidden_layers": 48,
-  "patch_size": 14,
-  "projection_dim": 1280,
-  "torch_dtype": "float32"
-}
-
-CLIP_VISION_H = {
-  "attention_dropout": 0.0,
-  "dropout": 0.0,
-  "hidden_act": "gelu",
-  "hidden_size": 1280,
-  "image_size": 224,
-  "initializer_factor": 1.0,
-  "initializer_range": 0.02,
-  "intermediate_size": 5120,
-  "layer_norm_eps": 1e-05,
-  "model_type": "clip_vision_model",
-  "num_attention_heads": 16,
-  "num_channels": 3,
-  "num_hidden_layers": 32,
-  "patch_size": 14,
-  "projection_dim": 1024,
-  "torch_dtype": "float32"
-}
-
-
-CLIP_VISION_VITL = {
-  "attention_dropout": 0.0,
-  "dropout": 0.0,
-  "hidden_act": "quick_gelu",
-  "hidden_size": 1024,
-  "image_size": 224,
-  "initializer_factor": 1.0,
-  "initializer_range": 0.02,
-  "intermediate_size": 4096,
-  "layer_norm_eps": 1e-05,
-  "model_type": "clip_vision_model",
-  "num_attention_heads": 16,
-  "num_channels": 3,
-  "num_hidden_layers": 24,
-  "patch_size": 14,
-  "projection_dim": 768,
-  "torch_dtype": "float32"
-}
-
-
-class Output:
-    def __getitem__(self, key):
-        return getattr(self, key)
-
+class Output(ClipVisionOutput):
     def __setitem__(self, key, item):
         setattr(self, key, item)
 
 
-def clip_preprocess(image, size=224):
-    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=image.device, dtype=image.dtype)
-    std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=image.device, dtype=image.dtype)
-    image = image.movedim(-1, 1)
-    if not (image.shape[2] == size and image.shape[3] == size):
-        scale = (size / min(image.shape[2], image.shape[3]))
-        image = torch.nn.functional.interpolate(image, size=(round(scale * image.shape[2]), round(scale * image.shape[3])), mode="bicubic", antialias=True)
-        h = (image.shape[2] - size) // 2
-        w = (image.shape[3] - size) // 2
-        image = image[:, :, h:h + size, w:w + size]
-    image = torch.clip((255. * image), 0, 255).round() / 255.0
-    return (image - mean.view([3, 1, 1])) / std.view([3, 1, 1])
-
-
 class ClipVisionModel:
-    def __init__(self, config):
-        config = CLIPVisionConfig(**config)
+    def __init__(self):
+        self.encoder: ClipVisionEncoder | None = None
+        self.spec = None
+        self.patcher = None
+        self.model: torch.nn.Module | None = None
+        self.load_device: torch.device | None = None
+        self.offload_device: torch.device | None = None
+        self.dtype: torch.dtype | None = None
 
-        self.load_device = memory_management.text_encoder_device()
-        self.offload_device = memory_management.text_encoder_offload_device()
-
-        if memory_management.should_use_fp16(self.load_device, prioritize_performance=False):
-            self.dtype = torch.float16
-        else:
-            self.dtype = torch.float32
-
-        with operations.using_codex_operations():
-            with modeling_utils.no_init_weights():
-                self.model = CLIPVisionModelWithProjection(config)
-
-        self.model.to(self.dtype)
-        self.patcher = ModelPatcher(
-            self.model,
-            load_device=self.load_device,
-            offload_device=self.offload_device
+    def load_sd(self, state_dict: Mapping[str, torch.Tensor]):
+        encoder = ClipVisionEncoder.from_state_dict(state_dict)
+        self.encoder = encoder
+        self.spec = encoder.spec
+        self.patcher = encoder.patcher
+        self.model = encoder.model
+        self.load_device = encoder.load_device
+        self.offload_device = encoder.offload_device
+        self.dtype = encoder.runtime_dtype
+        logger.info(
+            "Loaded clip vision encoder variant=%s tensors=%d",
+            encoder.spec.variant.value,
+            sum(p.numel() for p in encoder.model.parameters()),
         )
-
-    def load_sd(self, sd):
-        return self.model.load_state_dict(sd, strict=False)
+        return [], []
 
     def get_sd(self):
-        return self.model.state_dict()
+        if self.encoder is None:
+            raise ClipVisionLoadError("Clip vision encoder is not loaded.")
+        return dict(self.encoder.model.state_dict())
 
-    def encode_image(self, image):
-        memory_management.load_model_gpu(self.patcher)
-        pixel_values = clip_preprocess(image.to(self.load_device))
-        outputs = self.model(pixel_values=pixel_values, output_hidden_states=True)
+    def encode_image(self, image: torch.Tensor) -> Output:
+        if self.encoder is None:
+            raise ClipVisionLoadError("Clip vision encoder is not loaded.")
+        result = self.encoder.encode(image, crop=True)
+        return Output(
+            last_hidden_state=result.last_hidden_state,
+            penultimate_hidden_states=result.penultimate_hidden_states,
+            image_embeds=result.image_embeds,
+            all_hidden_states=result.all_hidden_states,
+            mm_projected=result.mm_projected,
+        )
 
-        o = Output()
-        o["last_hidden_state"] = outputs.last_hidden_state.to(memory_management.intermediate_device())
-        o["penultimate_hidden_states"] = outputs.hidden_states[-2].to(memory_management.intermediate_device())
-        o["image_embeds"] = outputs.image_embeds.to(memory_management.intermediate_device())
 
-        return o
-
-
-def convert_to_transformers(sd, prefix):
-    sd_k = sd.keys()
-    if "{}transformer.resblocks.0.attn.in_proj_weight".format(prefix) in sd_k:
-        keys_to_replace = {
-            "{}class_embedding".format(prefix): "vision_model.embeddings.class_embedding",
-            "{}conv1.weight".format(prefix): "vision_model.embeddings.patch_embedding.weight",
-            "{}positional_embedding".format(prefix): "vision_model.embeddings.position_embedding.weight",
-            "{}ln_post.bias".format(prefix): "vision_model.post_layernorm.bias",
-            "{}ln_post.weight".format(prefix): "vision_model.post_layernorm.weight",
-            "{}ln_pre.bias".format(prefix): "vision_model.pre_layrnorm.bias",
-            "{}ln_pre.weight".format(prefix): "vision_model.pre_layrnorm.weight",
-        }
-
-        for x in keys_to_replace:
-            if x in sd_k:
-                sd[keys_to_replace[x]] = sd.pop(x)
-
-        if "{}proj".format(prefix) in sd_k:
-            sd['visual_projection.weight'] = sd.pop("{}proj".format(prefix)).transpose(0, 1)
-
-        sd = transformers_convert(sd, prefix, "vision_model.", 48)
+def clip_preprocess(image: torch.Tensor, size: int = 224) -> torch.Tensor:
+    if size != _DEFAULT_PREPROCESS.image_size:
+        spec = ClipVisionPreprocessSpec(
+            image_size=size,
+            mean=_DEFAULT_PREPROCESS.mean,
+            std=_DEFAULT_PREPROCESS.std,
+        )
     else:
-        replace_prefix = {prefix: ""}
-        sd = state_dict_prefix_replace(sd, replace_prefix)
-    return sd
+        spec = _DEFAULT_PREPROCESS
+    return preprocess_image(image, spec, crop=True)
 
 
-def load_clipvision_from_sd(sd, prefix="", convert_keys=False):
+def _normalize_state_dict(
+    state_dict: Mapping[str, torch.Tensor],
+    *,
+    prefix: str = "",
+    convert_keys: bool = False,
+) -> MutableMapping[str, torch.Tensor]:
+    working: MutableMapping[str, torch.Tensor] = dict(state_dict)
     if convert_keys:
-        sd = convert_to_transformers(sd, prefix)
-    if "vision_model.encoder.layers.47.layer_norm1.weight" in sd:
-        config = CLIP_VISION_G
-    elif "vision_model.encoder.layers.30.layer_norm1.weight" in sd:
-        config = CLIP_VISION_H
-    elif "vision_model.encoder.layers.22.layer_norm1.weight" in sd:
-        config = CLIP_VISION_VITL
-    else:
-        return None
+        logger.debug("Converting OpenCLIP clip vision state dict with prefix '%s'.", prefix or "visual.")
+        convert_openclip_checkpoint(working, prefix=prefix or "visual.")
+    elif prefix:
+        logger.debug("Re-keying clip vision state dict with prefix '%s'.", prefix)
+        rekey_vision_state_dict(working, prefix=prefix)
+    variant = detect_variant_from_state_dict(working)
+    spec = get_variant_spec(variant)
+    logger.debug("Detected clip vision variant %s.", spec.variant.value)
+    filtered = cleaned_state_dict(
+        working,
+        keep_prefixes=(
+            "vision_model.",
+            "visual_projection.",
+            "multi_modal_projector.",
+            "mm_projector.",
+        ),
+    )
+    if not filtered:
+        raise ClipVisionLoadError("Clip vision state dict contains no recognised parameters after filtering.")
+    tensors, params = summarize_state_dict(filtered)
+    logger.debug("Filtered clip vision state dict: tensors=%d params=%d", tensors, params)
+    return filtered
 
-    clip = ClipVisionModel(config)
-    m, u = clip.load_sd(sd)
-    if len(m) > 0:
-        print("extra clip vision:", m)
-    u = set(u)
-    keys = list(sd.keys())
-    for k in keys:
-        if k not in u:
-            t = sd.pop(k)
-            del t
-    return clip
+
+def load_clipvision_from_sd(
+    state_dict: Mapping[str, torch.Tensor],
+    prefix: str = "",
+    convert_keys: bool = False,
+) -> ClipVisionModel:
+    normalized = _normalize_state_dict(state_dict, prefix=prefix, convert_keys=convert_keys)
+    model = ClipVisionModel()
+    model.load_sd(normalized)
+    return model
 
 
-def load(ckpt_path):
-    sd = load_torch_file(ckpt_path)
-    if "visual.transformer.resblocks.0.attn.in_proj_weight" in sd:
-        return load_clipvision_from_sd(sd, prefix="visual.", convert_keys=True)
-    else:
-        return load_clipvision_from_sd(sd)
+def load(ckpt_path: str) -> ClipVisionModel:
+    try:
+        state_dict = load_torch_file(ckpt_path)
+    except Exception as exc:  # pragma: no cover - IO guard
+        raise ClipVisionError(f"Failed to load clip vision checkpoint '{ckpt_path}': {exc}") from exc
+    convert_required = "visual.transformer.resblocks.0.attn.in_proj_weight" in state_dict
+    return load_clipvision_from_sd(
+        state_dict,
+        prefix="visual." if convert_required else "",
+        convert_keys=convert_required,
+    )

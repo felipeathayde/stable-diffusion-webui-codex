@@ -129,6 +129,7 @@ class RuntimeMemoryConfig:
 
     device_backend: DeviceBackend = DeviceBackend.AUTO
     gpu_device_id: Optional[int] = None
+    gpu_prefer_construct: bool = False
     precision: PrecisionFlags = field(default_factory=PrecisionFlags)
     swap: SwapConfig = field(default_factory=SwapConfig)
     attention: AttentionConfig = field(default_factory=AttentionConfig)

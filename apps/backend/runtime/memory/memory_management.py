@@ -29,6 +29,7 @@ class VRAMState(SimpleNamespace):
 _CONFIG = legacy_args.memory_config
 _MANAGER = CodexMemoryManager.create(_CONFIG)
 
+memory_config = _CONFIG
 OOM_EXCEPTION = _MANAGER.oom_exception
 cpu = _MANAGER.cpu_device
 
@@ -268,10 +269,13 @@ __all__ = [
     "xformers_enabled",
     "xformers_enabled_vae",
     "args",
+    "memory_config",
 ]
 
 
 def __getattr__(name: str):
+    if name == "memory_config":
+        return memory_config
     if name == "signal_empty_cache":
         return _MANAGER.signal_empty_cache
     if name == "VAE_ALWAYS_TILED":
@@ -292,4 +296,4 @@ def __setattr__(name: str, value):
 
 
 def __dir__():
-    return sorted(set(globals().keys()) | {"signal_empty_cache", "VAE_ALWAYS_TILED"})
+    return sorted(set(globals().keys()) | {"signal_empty_cache", "VAE_ALWAYS_TILED", "memory_config"})

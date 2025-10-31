@@ -269,12 +269,14 @@ def _load_huggingface_component(
         computation_dtype = memory_management.get_computation_dtype(load_device, parameters=0, supported_dtypes=supported_dtypes)
         offload_device = memory_management.core_offload_device()
 
+        mem_config = memory_management.memory_config
+
         if storage_dtype in ["nf4", "fp4", "gguf"]:
             initial_device = memory_management.core_initial_load_device(parameters=0, dtype=computation_dtype)
             with using_codex_operations(device=initial_device, dtype=computation_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
                 model = model_ctor(config_json)
         else:
-            prefer_gpu = getattr(memory_management.args, "gpu_prefer_construct", False)
+            prefer_gpu = bool(getattr(mem_config, "gpu_prefer_construct", False))
             construct_device = load_device if prefer_gpu else memory_management.core_initial_load_device(parameters=0, dtype=storage_dtype)
             initial_device = construct_device
             construct_dtype = storage_dtype
@@ -302,7 +304,13 @@ def _load_huggingface_component(
                 with using_codex_operations(**to_args, manual_cast_enabled=need_manual_cast):
                     model = model_ctor(config_json).to(**to_args)
             except memory_management.OOM_EXCEPTION as exc:
-                policy = getattr(memory_management.args, "swap_policy", "cpu")
+                policy = getattr(mem_config.swap, "policy", None)
+                if hasattr(policy, "value"):
+                    policy_value = policy.value
+                elif policy is not None:
+                    policy_value = str(policy)
+                else:
+                    policy_value = "cpu"
                 _trace.event("construct_oom", policy=policy, component=module_name, architecture=architecture_value)
                 raise RuntimeError(
                     "Core construction OOM for component={comp} (architecture={arch}) on device={dev} with dtype={dtype}. "
@@ -313,8 +321,8 @@ def _load_huggingface_component(
                     arch=architecture_value,
                     dev=str(construct_device),
                     dtype=str(construct_dtype),
-                    policy=str(policy),
-                    prefer=str(getattr(memory_management.args, "gpu_prefer_construct", False)),
+                    policy=str(policy_value),
+                    prefer=str(bool(getattr(mem_config, "gpu_prefer_construct", False))),
                 )) from exc
 
         _trace.event("load_state_dict", module=module_name, architecture=architecture_value, tensors=len(state_dict))

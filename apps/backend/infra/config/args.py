@@ -218,6 +218,7 @@ def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
     config = RuntimeMemoryConfig(
         device_backend=DeviceBackend.AUTO,
         gpu_device_id=ns.gpu_device_id,
+        gpu_prefer_construct=ns.gpu_prefer_construct,
         precision=precision,
         swap=swap,
         attention=attention,

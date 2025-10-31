@@ -1,6 +1,9 @@
 import argparse
+import logging
 import os
 from typing import Mapping
+
+_LOG = logging.getLogger("backend.infra.config.args")
 
 from apps.backend.runtime.memory.config import (
     AttentionBackend,
@@ -141,14 +144,18 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     if _truthy(env.get("CODEX_VAE_IN_CPU")):
         ns.vae_in_cpu = True
 
-    legacy_env = env.get("CODEX_UNET_DTYPE") or env.get("WEBUI_UNET_DTYPE")
-    if legacy_env:
-        raise RuntimeError(
-            "Detected legacy environment variable CODEX_UNET_DTYPE/WEBUI_UNET_DTYPE. "
-            "Rename to CODEX_CORE_DTYPE (or WEBUI_CORE_DTYPE) and retry."
-        )
+    legacy_core_env = None
+    for key in ("CODEX_UNET_DTYPE", "WEBUI_UNET_DTYPE"):
+        value = env.get(key)
+        if value:
+            legacy_core_env = value
+            _LOG.warning("Legacy environment variable %s detected; please rename to CODEX_CORE_DTYPE.", key)
+            break
 
-    _set_core_dtype(env.get("CODEX_CORE_DTYPE") or env.get("WEBUI_CORE_DTYPE"))
+    if legacy_core_env:
+        _set_core_dtype(legacy_core_env)
+    else:
+        _set_core_dtype(env.get("CODEX_CORE_DTYPE") or env.get("WEBUI_CORE_DTYPE"))
     _set_vae_dtype(env.get("CODEX_VAE_DTYPE") or env.get("WEBUI_VAE_DTYPE"))
 
     if _truthy(env.get("CODEX_ALL_IN_FP32")):

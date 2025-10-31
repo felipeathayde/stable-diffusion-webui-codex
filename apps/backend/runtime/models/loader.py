@@ -16,6 +16,7 @@ from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet import UNet2DConditionModel
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import SwapPolicy
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
 from apps.backend.runtime.model_registry import detect_from_state_dict as registry_detect

@@ -82,7 +82,12 @@ class UnetPatcher(ModelPatcher):
         return list(self._control_nodes)
 
     def activate_control(self):
-        self._active_control = build_composite(self.control_nodes)
+        nodes = self.control_nodes
+        self._active_control = build_composite(nodes)
+        logger.debug(
+            "Activated control composite with %d nodes",
+            len(nodes),
+        )
         return self._active_control
 
     def clear_control(self) -> None:

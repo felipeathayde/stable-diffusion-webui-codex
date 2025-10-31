@@ -6,10 +6,14 @@
 import torch
 import math
 import collections
+import logging
 
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime import utils
 from apps.backend.runtime.ops import cleanup_cache
+
+
+logger = logging.getLogger("backend.runtime.sampling")
 from .condition import Condition, compile_conditions, compile_weighted_conditions
 from apps.backend.infra.config.args import dynamic_args, args
 
@@ -256,12 +260,25 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         transformer_options["cond_mark"] = compute_cond_mark(cond_or_uncond=cond_or_uncond, sigmas=timestep)
         transformer_options["cond_indices"], transformer_options["uncond_indices"] = compute_cond_indices(cond_or_uncond=cond_or_uncond, sigmas=timestep)
 
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Control batch: size=%d cond=%d uncond=%d sigma_shape=%s",
+                len(cond_or_uncond),
+                sum(1 for flag in cond_or_uncond if flag == COND),
+                sum(1 for flag in cond_or_uncond if flag != COND),
+                tuple(timestep.shape),
+            )
+
         c['transformer_options'] = transformer_options
 
         if control:
             control.set_transformer_options(transformer_options)
             control_cond = c.copy()  # get_control may change items in this dict, so we need to copy it
-            c['control'] = control.get_control(input_x, timestep_, control_cond, len(cond_or_uncond))
+            try:
+                c['control'] = control.get_control(input_x, timestep_, control_cond, len(cond_or_uncond))
+            except Exception as err:
+                logger.error("ControlNet get_control failed: %s", err, exc_info=True)
+                raise
             c['control_model'] = control
 
         if 'model_function_wrapper' in model_options:
@@ -373,6 +390,11 @@ def sampling_prepare(unet, x):
     if control_runtime:
         additional_inference_memory += control_runtime.inference_memory_requirements(unet.model_dtype())
         additional_model_patchers += control_runtime.get_models()
+        logger.debug(
+            "Control runtime activated: extra_memory=%s models=%d",
+            additional_inference_memory,
+            len(additional_model_patchers),
+        )
 
     if unet.has_online_lora():
         lora_memory = utils.nested_compute_size(unet.lora_patches, element_size=utils.dtype_to_element_size(unet.model.computation_dtype))
@@ -393,6 +415,7 @@ def sampling_prepare(unet, x):
 
     if control_runtime:
         control_runtime.prepare(real_model, percent_to_timestep_function)
+        logger.debug("Control runtime prepared with model %s", type(real_model).__name__)
 
     return
 
@@ -403,6 +426,7 @@ def sampling_cleanup(unet):
     control_runtime = unet.controlnet_linked_list
     if control_runtime:
         control_runtime.cleanup()
+        logger.debug("Control runtime cleaned up after sampling")
     unet.clear_control()
     cleanup_cache()
     return

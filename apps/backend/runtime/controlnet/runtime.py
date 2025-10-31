@@ -25,17 +25,34 @@ class ControlComposite:
             control.set_previous_controlnet(previous)
             previous = control
         self.head = previous
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Linked control chain: %s",
+                [node.config.name for node in self.graph.nodes],
+            )
 
     def prepare(self, model, percent_to_sigma) -> None:
-        logger.debug("Preparing %d control nodes", len(self.graph.nodes))
+        node_count = len(self.graph.nodes)
+        logger.debug("Preparing %d control nodes", node_count)
         self._update_links()
         for node in self.graph.nodes:
+            logger.debug(
+                "Pre-run control '%s' (model_type=%s)",
+                node.config.name,
+                node.config.model_type,
+            )
+            node.prepare(model, percent_to_sigma)
+            node.control.configure_weighting(
+                node.request.weight_schedule,
+                mask=node.request.mask_config.mask,
+            )
             node.control.pre_run(model, percent_to_sigma)
 
     def cleanup(self) -> None:
         for node in self.graph.nodes:
             node.control.cleanup()
         self.head = None
+        logger.debug("Control composite cleaned up")
 
     def inference_memory_requirements(self, dtype: torch.dtype) -> int:
         total = 0
@@ -55,7 +72,15 @@ class ControlComposite:
 
     def get_control(self, x_noisy, t, cond, batched_number):
         if self.head is None:
+            logger.debug("Control composite inactive; returning None")
             return None
+        logger.debug(
+            "Executing control chain on batch=%d shape=%s dtype=%s device=%s",
+            x_noisy.shape[0],
+            tuple(x_noisy.shape),
+            x_noisy.dtype,
+            x_noisy.device,
+        )
         return self.head.get_control(x_noisy, t, cond, batched_number)
 
     def __bool__(self):
@@ -65,6 +90,8 @@ class ControlComposite:
 def build_composite(nodes: Iterable[ControlNode]) -> Optional[ControlComposite]:
     nodes_list = list(nodes)
     if not nodes_list:
+        logger.debug("No control nodes provided; composite not created")
         return None
     graph = ControlGraph(nodes=nodes_list)
+    logger.debug("Created control composite with %d nodes", len(nodes_list))
     return ControlComposite(graph)

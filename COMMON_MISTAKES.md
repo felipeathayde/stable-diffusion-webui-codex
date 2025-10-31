@@ -8,7 +8,7 @@
 **Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, `.refs/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
 **Correct command:** `git add AGENTS.md THIRD_PARTY_NOTICES.md COMMON_MISTAKES.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-docs-legacy-paths.md .sangoi/handoffs/2025-10-30-docs-legacy-paths.md`
 **Wrong command:** `cat .sangoi/task-guidelines.md`
-**Cause + fix:** Task guidelines file lives under `.sangoi/templates/document-guidelines.md`; referencing the old path triggers a file-not-found.
+**Cause + fix:** Task guidelines file lives under `.sangoi/templates/document-guidelines.md`; referencing the old path triggers a file-not-found. Repeated slip—double-check the path before running.
 **Correct command:** `cat .sangoi/templates/document-guidelines.md`
 **Wrong command:** `rg -ni "unet" apps/frontend`
 **Cause + fix:** The project tree does not contain `apps/frontend`; scope the search to existing frontend paths under `apps/interface` instead of a missing directory.
@@ -108,3 +108,19 @@ PY`
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `The bulk add traverses .legacy submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
 **Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`
+**Wrong command:** `python - <<'PY'
+from apps.backend.patchers.controlnet import ControlNet, ControlLora, apply_controlnet_advanced
+from apps.backend.runtime.controlnet import ControlRequest
+print('import ok')
+PY`
+**Cause + fix:** `Importing backend modules pulls optional deps (safetensors) unavailable in this environment; rely on ast.parse or targeted module imports that avoid heavy dependencies.`
+**Correct command:** `python - <<'PY'
+import ast, pathlib
+for path in pathlib.Path('apps/backend/patchers/controlnet').rglob('*.py'):
+    ast.parse(path.read_text())
+print('syntax ok')
+PY`
+
+**Wrong command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet.py`
+**Cause + fix:** `UNet runtime is organized as a package; the model definition lives under apps/backend/runtime/common/nn/unet/model.py.`
+**Correct command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet/model.py`

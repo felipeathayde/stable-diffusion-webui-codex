@@ -21,14 +21,15 @@ class Flux(CodexDiffusionEngine):
         self._runtime = runtime
         self._guidance_default = FLUX_SPEC.distilled_cfg_scale_default
 
-        self.codex_objects = CodexObjects(
-            unet=runtime.unet,
-            clip=runtime.clip,
-            vae=runtime.vae,
-            clipvision=None,
+        self.bind_components(
+            CodexObjects(
+                unet=runtime.unet,
+                clip=runtime.clip,
+                vae=runtime.vae,
+                clipvision=None,
+            ),
+            label="flux",
         )
-        self.codex_objects_original = self.codex_objects.shallow_copy()
-        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Flux engine initialised (distilled cfg=%s)", self.use_distilled_cfg_scale)
 

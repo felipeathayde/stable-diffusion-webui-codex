@@ -29,16 +29,16 @@ class StableDiffusion3(CodexDiffusionEngine):
         runtime = assemble_engine_runtime(SD35_SPEC, estimated_config, codex_components)
         self._runtime = runtime
 
-        self.codex_objects = CodexObjects(
-            unet=runtime.unet,
-            clip=runtime.clip,
-            vae=runtime.vae,
-            clipvision=None,
+        self.bind_components(
+            CodexObjects(
+                unet=runtime.unet,
+                clip=runtime.clip,
+                vae=runtime.vae,
+                clipvision=None,
+            ),
+            label="sd35",
         )
-        self.codex_objects_original = self.codex_objects.shallow_copy()
-        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
-
-        self.is_sd3 = True
+        self.register_model_family("sd3")
 
         logger.debug("StableDiffusion3 initialised with classic branches=%s", runtime.classic_order)
 

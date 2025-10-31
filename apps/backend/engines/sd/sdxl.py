@@ -42,16 +42,16 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         self.embedder = Timestep(256)
 
-        self.codex_objects = CodexObjects(
-            unet=runtime.unet,
-            clip=runtime.clip,
-            vae=runtime.vae,
-            clipvision=None,
+        self.bind_components(
+            CodexObjects(
+                unet=runtime.unet,
+                clip=runtime.clip,
+                vae=runtime.vae,
+                clipvision=None,
+            ),
+            label="sdxl-base",
         )
-        self.codex_objects_original = self.codex_objects.shallow_copy()
-        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
-
-        self.is_sdxl = True
+        self.register_model_family("sdxl")
 
         logger.debug(
             "StableDiffusionXL initialised with branches=%s clip_skip=%d",
@@ -130,16 +130,16 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
         self.embedder = Timestep(256)
 
-        self.codex_objects = CodexObjects(
-            unet=runtime.unet,
-            clip=runtime.clip,
-            vae=runtime.vae,
-            clipvision=None,
+        self.bind_components(
+            CodexObjects(
+                unet=runtime.unet,
+                clip=runtime.clip,
+                vae=runtime.vae,
+                clipvision=None,
+            ),
+            label="sdxl-refiner",
         )
-        self.codex_objects_original = self.codex_objects.shallow_copy()
-        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
-
-        self.is_sdxl = True
+        self.register_model_family("sdxl")
 
         logger.debug("StableDiffusionXLRefiner initialised with clip_skip=%d", runtime.classic_engine("clip_g").clip_skip)
 

@@ -125,6 +125,14 @@ for path in pathlib.Path('apps/backend/patchers/controlnet').rglob('*.py'):
 print('syntax ok')
 PY`
 
+**Wrong command:** `sed -n '1,160p' .sangoi/task-guidelines.md`
+**Cause + fix:** `Task guidelines were relocated to .sangoi/templates/document-guidelines.md; target the existing path to avoid file-not-found errors.`
+**Correct command:** `sed -n '1,160p' .sangoi/templates/document-guidelines.md`
+
+**Wrong command:** `sed -n '1,200p' apps/backend/runtime/adapters/utils.py`
+**Cause + fix:** `Runtime adapters do not expose a utils.py file; utility helpers live under apps/backend/runtime/utils.py.`
+**Correct command:** `sed -n '1,200p' apps/backend/runtime/utils.py`
+
 **Wrong command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet.py`
 **Cause + fix:** `UNet runtime is organized as a package; the model definition lives under apps/backend/runtime/common/nn/unet/model.py.`
 **Correct command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet/model.py`

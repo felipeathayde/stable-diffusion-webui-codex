@@ -22,16 +22,16 @@ class StableDiffusion2(CodexDiffusionEngine):
         self._runtime = runtime
         self._primary_branch = runtime.classic_order[0]
 
-        self.codex_objects = CodexObjects(
-            unet=runtime.unet,
-            clip=runtime.clip,
-            vae=runtime.vae,
-            clipvision=None,
+        self.bind_components(
+            CodexObjects(
+                unet=runtime.unet,
+                clip=runtime.clip,
+                vae=runtime.vae,
+                clipvision=None,
+            ),
+            label="sd20",
         )
-        self.codex_objects_original = self.codex_objects.shallow_copy()
-        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
-
-        self.is_sd2 = True
+        self.register_model_family("sd2")
 
         logger.debug(
             "StableDiffusion2 initialised with branches=%s clip_skip=%d",

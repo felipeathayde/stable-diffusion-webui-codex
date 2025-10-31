@@ -20,14 +20,15 @@ class Chroma(CodexDiffusionEngine):
         runtime = assemble_flux_runtime(spec=CHROMA_SPEC, estimated_config=estimated_config, codex_components=codex_components)
         self._runtime = runtime
 
-        self.codex_objects = CodexObjects(
-            unet=runtime.unet,
-            clip=runtime.clip,
-            vae=runtime.vae,
-            clipvision=None,
+        self.bind_components(
+            CodexObjects(
+                unet=runtime.unet,
+                clip=runtime.clip,
+                vae=runtime.vae,
+                clipvision=None,
+            ),
+            label="chroma",
         )
-        self.codex_objects_original = self.codex_objects.shallow_copy()
-        self.codex_objects_after_applying_lora = self.codex_objects.shallow_copy()
 
         logger.debug("Chroma engine initialised")
 

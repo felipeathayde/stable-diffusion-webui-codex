@@ -1,69 +1,149 @@
-# Copyright Codex 2024
+from __future__ import annotations
 
-import time
-import torch
 import contextlib
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
 
-from apps.backend.runtime.memory import memory_management, stream
-from apps.backend.runtime import utils
+import torch
+
 from apps.backend.patchers.lora import merge_lora_to_weight
-
-
+from apps.backend.runtime import utils
+from apps.backend.runtime.memory import memory_management, stream
 from .operations_gguf import dequantize_tensor
 
+logger = logging.getLogger("backend.runtime.ops.operations")
 
-stash = {}
+
+@dataclass
+class OperationContext:
+    device: Optional[torch.device] = None
+    dtype: Optional[torch.dtype] = None
+    manual_cast_enabled: bool = False
+    bnb_dtype: Optional[str] = None
+
+    def describe(self) -> str:
+        return (
+            f"device={self.device}, dtype={self.dtype}, manual_cast={self.manual_cast_enabled}, "
+            f"bnb_dtype={self.bnb_dtype}"
+        )
 
 
-def get_weight_and_bias(layer, weight_args=None, bias_args=None, weight_fn=None, bias_fn=None):
-    scale_weight = getattr(layer, 'scale_weight', None)
-    patches = getattr(layer, 'codex_online_loras', None)
-    weight_patches, bias_patches = None, None
+@dataclass
+class StreamStashEntry:
+    weight: Optional[torch.Tensor]
+    bias: Optional[torch.Tensor]
+    event: torch.cuda.Event
 
-    if patches is not None:
-        weight_patches = patches.get('weight', None)
 
-    if patches is not None:
-        bias_patches = patches.get('bias', None)
+@dataclass
+class StreamStash:
+    entries: Dict[int, StreamStashEntry] = field(default_factory=dict)
+
+    def add(self, weight: Optional[torch.Tensor], bias: Optional[torch.Tensor], event: torch.cuda.Event) -> None:
+        if event is None:
+            return
+        self.entries[id(event)] = StreamStashEntry(weight=weight, bias=bias, event=event)
+
+    def collect_finished(self) -> None:
+        finished = [key for key, entry in self.entries.items() if entry.event.query()]
+        for key in finished:
+            self.entries.pop(key, None)
+
+    def clear(self) -> None:
+        self.entries.clear()
+
+
+_operation_context = OperationContext()
+_stream_stash = StreamStash()
+
+
+def get_operation_context() -> OperationContext:
+    return _operation_context
+
+
+def _resolve_device(default: Optional[torch.device] = None) -> Optional[torch.device]:
+    ctx = get_operation_context()
+    return ctx.device if ctx.device is not None else default
+
+
+def _resolve_dtype(default: torch.dtype = torch.float32) -> torch.dtype:
+    ctx = get_operation_context()
+    return ctx.dtype if ctx.dtype is not None else default
+
+
+def get_weight_and_bias(
+    layer,
+    weight_args: Optional[Dict[str, object]] = None,
+    bias_args: Optional[Dict[str, object]] = None,
+    weight_fn=None,
+    bias_fn=None,
+) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    scale_weight = getattr(layer, "scale_weight", None)
+    patches = getattr(layer, "codex_online_loras", None)
+    if patches is None:
+        patches = getattr(layer, "forge_online_loras", None)
+
+    weight_patches = patches.get("weight") if patches is not None else None
+    bias_patches = patches.get("bias") if patches is not None else None
 
     weight = None
     if layer.weight is not None:
         weight = layer.weight
         if weight_fn is not None:
-            if weight_args is not None:
-                fn_device = weight_args.get('device', None)
-                if fn_device is not None:
-                    weight = weight.to(device=fn_device)
+            if weight_args is not None and (device := weight_args.get("device")) is not None:
+                weight = weight.to(device=device)
             weight = weight_fn(weight)
         if weight_args is not None:
             weight = weight.to(**weight_args)
         if scale_weight is not None:
-            weight = weight*scale_weight.to(device=weight.device, dtype=weight.dtype)
+            weight = weight * scale_weight.to(device=weight.device, dtype=weight.dtype)
         if weight_patches is not None:
-            weight = merge_lora_to_weight(patches=weight_patches, weight=weight, key="online weight lora", computation_dtype=weight.dtype)
+            weight = merge_lora_to_weight(
+                patches=weight_patches,
+                weight=weight,
+                key="online weight lora",
+                computation_dtype=weight.dtype,
+            )
 
     bias = None
     if layer.bias is not None:
         bias = layer.bias
         if bias_fn is not None:
-            if bias_args is not None:
-                fn_device = bias_args.get('device', None)
-                if fn_device is not None:
-                    bias = bias.to(device=fn_device)
+            if bias_args is not None and (device := bias_args.get("device")) is not None:
+                bias = bias.to(device=device)
             bias = bias_fn(bias)
         if bias_args is not None:
             bias = bias.to(**bias_args)
         if bias_patches is not None:
-            bias = merge_lora_to_weight(patches=bias_patches, weight=bias, key="online bias lora", computation_dtype=bias.dtype)
+            bias = merge_lora_to_weight(
+                patches=bias_patches,
+                weight=bias,
+                key="online bias lora",
+                computation_dtype=bias.dtype,
+            )
+
+    logger.debug(
+        "Fetched weight/bias for %s (weight=%s, bias=%s, patches=%s)",
+        layer.__class__.__name__,
+        "yes" if weight is not None else "no",
+        "yes" if bias is not None else "no",
+        patches is not None,
+    )
     return weight, bias
 
 
-def weights_manual_cast(layer, x, skip_weight_dtype=False, skip_bias_dtype=False, weight_fn=None, bias_fn=None):
+def weights_manual_cast(
+    layer,
+    x: torch.Tensor,
+    skip_weight_dtype: bool = False,
+    skip_bias_dtype: bool = False,
+    weight_fn=None,
+    bias_fn=None,
+):
     weight, bias, signal = None, None, None
-    non_blocking = True
-
-    if getattr(x.device, 'type', None) == 'mps':
-        non_blocking = False
+    non_blocking = getattr(x.device, "type", None) != "mps"
 
     target_dtype = x.dtype
     target_device = x.device
@@ -98,16 +178,9 @@ def main_stream_worker(weight, bias, signal):
         stream.current_stream.wait_event(signal)
         yield
         finished_signal = stream.current_stream.record_event()
-        stash[id(finished_signal)] = (weight, bias, finished_signal)
+        _stream_stash.add(weight, bias, finished_signal)
 
-    garbage = []
-    for k, (w, b, s) in stash.items():
-        if s.query():
-            garbage.append(k)
-
-    for k in garbage:
-        del stash[k]
-    return
+    _stream_stash.collect_finished()
 
 
 def cleanup_cache():
@@ -116,202 +189,218 @@ def cleanup_cache():
 
     stream.current_stream.synchronize()
     stream.mover_stream.synchronize()
-    stash.clear()
-    return
+    _stream_stash.clear()
 
 
-current_device = None
-current_dtype = None
-current_manual_cast_enabled = False
-current_bnb_dtype = None
+def _select_operations_class(context: OperationContext, override=None):
+    if override is not None:
+        return override
+    if context.bnb_dtype in {"gguf"}:
+        return CodexOperationsGGUF
+    if _BNB_AVAILABLE and context.bnb_dtype in {"nf4", "fp4"}:
+        return CodexOperationsBNB4bits
+    return CodexOperations
 
 
 class CodexOperations:
     class Linear(torch.nn.Module):
         def __init__(self, in_features, out_features, *args, **kwargs):
             super().__init__()
-            # Metadata
+            ctx = get_operation_context()
             self.in_features = int(in_features)
             self.out_features = int(out_features)
-            self.has_bias = bool(kwargs.get('bias', True))
+            self.has_bias = bool(kwargs.get("bias", True))
 
-            # Register parameters so model.state_dict() can see them and loaders can populate.
-            device = current_device
-            dtype = current_dtype
-            w = torch.empty((self.out_features, self.in_features), device=device, dtype=dtype)
-            torch.nn.init.xavier_uniform_(w)
-            self.weight = torch.nn.Parameter(w)
-            self.bias = torch.nn.Parameter(torch.zeros((self.out_features,), device=device, dtype=dtype)) if self.has_bias else None
+            device = ctx.device
+            dtype = ctx.dtype or torch.float32
+            weight = torch.empty((self.out_features, self.in_features), device=device, dtype=dtype)
+            torch.nn.init.xavier_uniform_(weight)
+            self.weight = torch.nn.Parameter(weight)
+            self.bias = (
+                torch.nn.Parameter(torch.zeros((self.out_features,), device=device, dtype=dtype))
+                if self.has_bias
+                else None
+            )
             self.scale_weight = None
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self.parameters_manual_cast = ctx.manual_cast_enabled
 
         def _ensure_params(self, device, dtype):
             if self.weight is not None:
                 return
-            # Initialize with a sane default to avoid NoneType at runtime.
-            # Use xavier_uniform for weights and zeros for bias.
-            w = torch.empty((self.out_features, self.in_features), device=device, dtype=dtype)
-            torch.nn.init.xavier_uniform_(w)
-            self.weight = torch.nn.Parameter(w)
+            weight = torch.empty((self.out_features, self.in_features), device=device, dtype=dtype)
+            torch.nn.init.xavier_uniform_(weight)
+            self.weight = torch.nn.Parameter(weight)
             if self.has_bias:
-                b = torch.zeros((self.out_features,), device=device, dtype=dtype)
-                self.bias = torch.nn.Parameter(b)
+                self.bias = torch.nn.Parameter(torch.zeros((self.out_features,), device=device, dtype=dtype))
             else:
                 self.bias = None
 
         def forward(self, x):
-            # Ensure we have materialized params even if checkpoint lacked matches
             self._ensure_params(x.device, x.dtype)
             if self.parameters_manual_cast:
                 weight, bias, signal = weights_manual_cast(self, x)
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.linear(x, weight, bias)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                return torch.nn.functional.linear(x, weight, bias)
+            weight, bias = get_weight_and_bias(self)
+            return torch.nn.functional.linear(x, weight, bias)
 
-    class Conv2d(torch.nn.Conv2d):
+    class _BaseConvMixin:
+        def _init_common(self):
+            ctx = get_operation_context()
+            self.parameters_manual_cast = ctx.manual_cast_enabled
 
+        def _forward_conv(self, x, forward_fn):
+            if self.parameters_manual_cast:
+                weight, bias, signal = weights_manual_cast(self, x)
+                with main_stream_worker(weight, bias, signal):
+                    return forward_fn(x, weight, bias)
+            weight, bias = get_weight_and_bias(self)
+            return forward_fn(x, weight, bias)
+
+    class Conv2d(_BaseConvMixin, torch.nn.Conv2d):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self._init_common()
 
         def reset_parameters(self):
             return None
 
         def forward(self, x):
-            if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x)
-                with main_stream_worker(weight, bias, signal):
-                    return self._conv_forward(x, weight, bias)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                return super()._conv_forward(x, weight, bias)
+            return self._forward_conv(x, super()._conv_forward)
 
-    class Conv3d(torch.nn.Conv3d):
-
+    class Conv3d(_BaseConvMixin, torch.nn.Conv3d):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self._init_common()
 
         def reset_parameters(self):
             return None
 
         def forward(self, x):
-            if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x)
-                with main_stream_worker(weight, bias, signal):
-                    return self._conv_forward(x, weight, bias)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                return super()._conv_forward(input, weight, bias)
+            return self._forward_conv(x, super()._conv_forward)
 
-    class Conv1d(torch.nn.Conv1d):
-
+    class Conv1d(_BaseConvMixin, torch.nn.Conv1d):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self._init_common()
 
         def reset_parameters(self):
             return None
 
         def forward(self, x):
-            if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x)
-                with main_stream_worker(weight, bias, signal):
-                    return self._conv_forward(x, weight, bias)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                return super()._conv_forward(input, weight, bias)
+            return self._forward_conv(x, super()._conv_forward)
 
-    class ConvTranspose2d(torch.nn.ConvTranspose2d):
-
+    class ConvTranspose2d(_BaseConvMixin, torch.nn.ConvTranspose2d):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self._init_common()
 
         def reset_parameters(self):
             return None
 
         def forward(self, x, output_size=None):
-            if self.parameters_manual_cast:
-                num_spatial_dims = 2
-                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
+            def fn(_x, weight, bias):
+                output_padding = self._output_padding(
+                    _x, output_size, self.stride, self.padding, self.kernel_size, 2, self.dilation
+                )
+                return torch.nn.functional.conv_transpose2d(
+                    _x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation
+                )
 
+            if self.parameters_manual_cast:
                 weight, bias, signal = weights_manual_cast(self, x)
                 with main_stream_worker(weight, bias, signal):
-                    return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                num_spatial_dims = 2
-                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
-                return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
+                    return fn(x, weight, bias)
+            weight, bias = get_weight_and_bias(self)
+            return fn(x, weight, bias)
 
-    class ConvTranspose1d(torch.nn.ConvTranspose1d):
-
+    class ConvTranspose1d(_BaseConvMixin, torch.nn.ConvTranspose1d):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self._init_common()
 
         def reset_parameters(self):
             return None
 
         def forward(self, x, output_size=None):
-            if self.parameters_manual_cast:
-                num_spatial_dims = 1
-                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
+            def fn(_x, weight, bias):
+                output_padding = self._output_padding(
+                    _x, output_size, self.stride, self.padding, self.kernel_size, 1, self.dilation
+                )
+                return torch.nn.functional.conv_transpose1d(
+                    _x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation
+                )
 
+            if self.parameters_manual_cast:
                 weight, bias, signal = weights_manual_cast(self, x)
                 with main_stream_worker(weight, bias, signal):
-                    return torch.nn.functional.conv_transpose1d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                num_spatial_dims = 1
-                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
-                return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
+                    return fn(x, weight, bias)
+            weight, bias = get_weight_and_bias(self)
+            return fn(x, weight, bias)
 
-    class ConvTranspose3d(torch.nn.ConvTranspose3d):
-
+    class ConvTranspose3d(_BaseConvMixin, torch.nn.ConvTranspose3d):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self._init_common()
 
         def reset_parameters(self):
             return None
 
         def forward(self, x, output_size=None):
-            if self.parameters_manual_cast:
-                num_spatial_dims = 3
-                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
+            def fn(_x, weight, bias):
+                output_padding = self._output_padding(
+                    _x, output_size, self.stride, self.padding, self.kernel_size, 3, self.dilation
+                )
+                return torch.nn.functional.conv_transpose3d(
+                    _x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation
+                )
 
+            if self.parameters_manual_cast:
                 weight, bias, signal = weights_manual_cast(self, x)
                 with main_stream_worker(weight, bias, signal):
-                    return torch.nn.functional.conv_transpose3d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
-            else:
-                weight, bias = get_weight_and_bias(self)
-                num_spatial_dims = 3
-                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
-                return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
+                    return fn(x, weight, bias)
+            weight, bias = get_weight_and_bias(self)
+            return fn(x, weight, bias)
 
     class GroupNorm(torch.nn.GroupNorm):
-
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self.parameters_manual_cast = ctx.manual_cast_enabled
 
         def reset_parameters(self):
             return None
@@ -321,16 +410,17 @@ class CodexOperations:
                 weight, bias, signal = weights_manual_cast(self, x)
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.group_norm(x, self.num_groups, weight, bias, self.eps)
-            else:
-                return super().forward(x)
+            return super().forward(x)
 
     class LayerNorm(torch.nn.LayerNorm):
-
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
-            kwargs['dtype'] = current_dtype
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
+            if ctx.dtype is not None:
+                kwargs["dtype"] = ctx.dtype
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self.parameters_manual_cast = ctx.manual_cast_enabled
 
         def reset_parameters(self):
             return None
@@ -340,15 +430,15 @@ class CodexOperations:
                 weight, bias, signal = weights_manual_cast(self, x)
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
-            else:
-                return super().forward(x)
+            return super().forward(x)
 
     class Embedding(torch.nn.Embedding):
-
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self.parameters_manual_cast = ctx.manual_cast_enabled
             self.bias = None
 
         def reset_parameters(self):
@@ -357,170 +447,257 @@ class CodexOperations:
 
         def forward(self, x):
             if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x, skip_weight_dtype=True, skip_bias_dtype=True)
+                weight, bias, signal = weights_manual_cast(
+                    self,
+                    x,
+                    skip_weight_dtype=True,
+                    skip_bias_dtype=True,
+                )
                 with main_stream_worker(weight, bias, signal):
-                    return torch.nn.functional.embedding(x, weight, self.padding_idx, self.max_norm, self.norm_type, self.scale_grad_by_freq, self.sparse)
-            else:
-                return super().forward(x)
+                    return torch.nn.functional.embedding(
+                        x,
+                        weight,
+                        self.padding_idx,
+                        self.max_norm,
+                        self.norm_type,
+                        self.scale_grad_by_freq,
+                        self.sparse,
+                    )
+            return super().forward(x)
 
 
 try:
-    from .operations_bnb import BnbQuantConfig, CodexLoader4Bit, CodexParams4bit, functional_linear_4bits, functional_dequantize_4bit
+    from .operations_bnb import (
+        BnbQuantConfig,
+        CodexLoader4Bit,
+        CodexParams4bit,
+        functional_dequantize_4bit,
+        functional_linear_4bits,
+    )
+
+    _BNB_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    _BNB_AVAILABLE = False
+
+
+if _BNB_AVAILABLE:
 
     class CodexOperationsBNB4bits(CodexOperations):
         class Linear(CodexLoader4Bit):
             def __init__(self, *args, **kwargs):
-                config = BnbQuantConfig(blocksize=64, quant_type=current_bnb_dtype or "4bit")
-                super().__init__(device=current_device, dtype=current_dtype, quant_config=config)
-                self.parameters_manual_cast = current_manual_cast_enabled
+                ctx = get_operation_context()
+                quant_type = ctx.bnb_dtype or "4bit"
+                config = BnbQuantConfig(blocksize=64, quant_type=quant_type)
+                super().__init__(device=ctx.device, dtype=ctx.dtype, quant_config=config)
+                self.parameters_manual_cast = ctx.manual_cast_enabled
 
             def forward(self, x):
                 if self.bias is not None and self.bias.dtype != x.dtype:
-                    # Maybe this can also be set to all non-bnb ops since the cost is very low.
-                    # And it only invokes one time, and most linear does not have bias
                     self.bias = utils.tensor2parameter(self.bias.to(x.dtype))
 
-                if hasattr(self, 'codex_online_loras'):
-                    weight, bias, signal = weights_manual_cast(self, x, weight_fn=functional_dequantize_4bit, bias_fn=None, skip_bias_dtype=True)
+                if hasattr(self, "codex_online_loras"):
+                    weight, bias, signal = weights_manual_cast(
+                        self,
+                        x,
+                        weight_fn=functional_dequantize_4bit,
+                        bias_fn=None,
+                        skip_bias_dtype=True,
+                    )
                     with main_stream_worker(weight, bias, signal):
                         return torch.nn.functional.linear(x, weight, bias)
 
                 if not self.parameters_manual_cast:
                     return functional_linear_4bits(x, self.weight, self.bias)
-                elif not self.weight.bnb_quantized:
-                    assert x.device.type == 'cuda', 'BNB Must Use CUDA as Computation Device!'
+
+                if not self.weight.bnb_quantized:
+                    if x.device.type != "cuda":
+                        raise AssertionError("BNB 4-bit quantization requires CUDA device.")
                     layer_original_device = self.weight.device
                     self.weight = self.weight._quantize(x.device)
                     bias = self.bias.to(x.device) if self.bias is not None else None
                     out = functional_linear_4bits(x, self.weight, bias)
                     self.weight = self.weight.to(layer_original_device)
                     return out
-                else:
-                    weight, bias, signal = weights_manual_cast(self, x, skip_weight_dtype=True, skip_bias_dtype=True)
-                    with main_stream_worker(weight, bias, signal):
-                        return functional_linear_4bits(x, weight, bias)
 
-    bnb_avaliable = True
-except Exception:
-    bnb_avaliable = False
+                weight, bias, signal = weights_manual_cast(
+                    self,
+                    x,
+                    skip_weight_dtype=True,
+                    skip_bias_dtype=True,
+                )
+                with main_stream_worker(weight, bias, signal):
+                    return functional_linear_4bits(x, weight, bias)
+
+else:
+
+    class CodexOperationsBNB4bits(CodexOperations):  # pragma: no cover - fallback
+        pass
 
 
 class CodexOperationsGGUF(CodexOperations):
     class Linear(torch.nn.Module):
         def __init__(self, *args, **kwargs):
             super().__init__()
-            self.dummy = torch.nn.Parameter(torch.empty(1, device=current_device, dtype=current_dtype))
+            ctx = get_operation_context()
+            dtype = ctx.dtype or torch.float32
+            device = ctx.device
+            self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
             self.weight = None
             self.bias = None
-            self.parameters_manual_cast = current_manual_cast_enabled
+            self.parameters_manual_cast = ctx.manual_cast_enabled
 
-        def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
-            if hasattr(self, 'dummy'):
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
                 computation_dtype = self.dummy.dtype
-                if computation_dtype not in [torch.float16, torch.bfloat16]:
-                    # GGUF cast only supports 16bits otherwise super slow
+                if computation_dtype not in (torch.float16, torch.bfloat16):
                     computation_dtype = torch.float16
-                if prefix + 'weight' in state_dict:
-                    self.weight = state_dict[prefix + 'weight'].to(device=self.dummy.device)
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"].to(device=self.dummy.device)
                     self.weight.computation_dtype = computation_dtype
-                if prefix + 'bias' in state_dict:
-                    self.bias = state_dict[prefix + 'bias'].to(device=self.dummy.device)
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"].to(device=self.dummy.device)
                     self.bias.computation_dtype = computation_dtype
                 del self.dummy
             else:
-                if prefix + 'weight' in state_dict:
-                    self.weight = state_dict[prefix + 'weight']
-                if prefix + 'bias' in state_dict:
-                    self.bias = state_dict[prefix + 'bias']
-            return
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
 
         def _apply(self, fn, recurse=True):
-            for k, p in self.named_parameters(recurse=False, remove_duplicate=True):
-                setattr(self, k, utils.tensor2parameter(fn(p)))
+            for name, param in self.named_parameters(recurse=False, remove_duplicate=True):
+                setattr(self, name, utils.tensor2parameter(fn(param)))
             return self
 
         def forward(self, x):
             if self.bias is not None and self.bias.dtype != x.dtype:
                 self.bias = utils.tensor2parameter(dequantize_tensor(self.bias).to(x.dtype))
-
-            if self.weight is not None and self.weight.dtype != x.dtype and getattr(self.weight, 'gguf_cls', None) is None:
+            if self.weight is not None and self.weight.dtype != x.dtype and getattr(self.weight, "gguf_cls", None) is None:
                 self.weight = utils.tensor2parameter(self.weight.to(x.dtype))
-
-            weight, bias, signal = weights_manual_cast(self, x, weight_fn=dequantize_tensor, bias_fn=None, skip_bias_dtype=True)
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=None,
+                skip_bias_dtype=True,
+            )
             with main_stream_worker(weight, bias, signal):
                 return torch.nn.functional.linear(x, weight, bias)
 
     class Embedding(torch.nn.Embedding):
         def __init__(self, *args, **kwargs):
-            kwargs['device'] = current_device
+            ctx = get_operation_context()
+            if ctx.device is not None:
+                kwargs["device"] = ctx.device
             super().__init__(*args, **kwargs)
-            self.parameters_manual_cast = current_manual_cast_enabled
-            self.dummy = torch.nn.Parameter(torch.empty(1, device=current_device, dtype=current_dtype))
+            self.parameters_manual_cast = ctx.manual_cast_enabled
+            dtype = ctx.dtype or torch.float32
+            device = ctx.device
+            self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
             self.bias = None
 
         def reset_parameters(self):
             self.bias = None
             return None
 
-        def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
-            if hasattr(self, 'dummy'):
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
                 computation_dtype = self.dummy.dtype
-                if computation_dtype not in [torch.float16, torch.bfloat16]:
-                    # GGUF cast only supports 16bits otherwise super slow
+                if computation_dtype not in (torch.float16, torch.bfloat16):
                     computation_dtype = torch.float16
-                if prefix + 'weight' in state_dict:
-                    self.weight = state_dict[prefix + 'weight'].to(device=self.dummy.device)
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"].to(device=self.dummy.device)
                     self.weight.computation_dtype = computation_dtype
                 del self.dummy
             else:
-                if prefix + 'weight' in state_dict:
-                    self.weight = state_dict[prefix + 'weight']
-            return
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
 
         def _apply(self, fn, recurse=True):
-            for k, p in self.named_parameters(recurse=False, remove_duplicate=True):
-                setattr(self, k, utils.tensor2parameter(fn(p)))
+            for name, param in self.named_parameters(recurse=False, remove_duplicate=True):
+                setattr(self, name, utils.tensor2parameter(fn(param)))
             return self
 
         def forward(self, x):
-            weight, bias, signal = weights_manual_cast(self, x, weight_fn=dequantize_tensor, skip_weight_dtype=True, skip_bias_dtype=True)
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                skip_weight_dtype=True,
+                skip_bias_dtype=True,
+            )
             with main_stream_worker(weight, bias, signal):
-                return torch.nn.functional.embedding(x, weight, self.padding_idx, self.max_norm, self.norm_type, self.scale_grad_by_freq, self.sparse)
+                return torch.nn.functional.embedding(
+                    x,
+                    weight,
+                    self.padding_idx,
+                    self.max_norm,
+                    self.norm_type,
+                    self.scale_grad_by_freq,
+                    self.sparse,
+                )
 
 
 @contextlib.contextmanager
 def using_codex_operations(operations=None, device=None, dtype=None, manual_cast_enabled=False, bnb_dtype=None):
-    global current_device, current_dtype, current_manual_cast_enabled, current_bnb_dtype
+    global _operation_context
+    previous_context = _operation_context
+    _operation_context = OperationContext(
+        device=device,
+        dtype=dtype,
+        manual_cast_enabled=manual_cast_enabled,
+        bnb_dtype=bnb_dtype,
+    )
 
-    current_device, current_dtype, current_manual_cast_enabled, current_bnb_dtype = device, dtype, manual_cast_enabled, bnb_dtype
-
-    if operations is None:
-        if bnb_dtype in ['gguf']:
-            operations = CodexOperationsGGUF
-        elif bnb_avaliable and bnb_dtype in ['nf4', 'fp4']:
-            operations = CodexOperationsBNB4bits
-        else:
-            operations = CodexOperations
-
-    op_names = ['Linear', 'Conv1d', 'Conv2d', 'Conv3d', 'ConvTranspose1d', 'ConvTranspose2d', 'ConvTranspose3d', 'GroupNorm', 'LayerNorm', 'Embedding']
-    backups = {op_name: getattr(torch.nn, op_name) for op_name in op_names}
+    operations_class = _select_operations_class(_operation_context, operations)
+    op_names = [
+        "Linear",
+        "Conv1d",
+        "Conv2d",
+        "Conv3d",
+        "ConvTranspose1d",
+        "ConvTranspose2d",
+        "ConvTranspose3d",
+        "GroupNorm",
+        "LayerNorm",
+        "Embedding",
+    ]
+    backups = {name: getattr(torch.nn, name) for name in op_names}
 
     try:
-        for op_name in op_names:
-            setattr(torch.nn, op_name, getattr(operations, op_name))
-
+        for name in op_names:
+            setattr(torch.nn, name, getattr(operations_class, name))
+        logger.debug("Installed Codex operations (%s) with context %s", operations_class.__name__, _operation_context.describe())
         yield
-
     finally:
-        for op_name in op_names:
-            setattr(torch.nn, op_name, backups[op_name])
-    return
+        for name, original in backups.items():
+            setattr(torch.nn, name, original)
+        logger.debug("Restored torch.nn operations to originals")
+        _operation_context = previous_context
 
 
 def shift_manual_cast(model, enabled):
-    for m in model.modules():
-        if hasattr(m, 'parameters_manual_cast'):
-            m.parameters_manual_cast = enabled
+    for module in model.modules():
+        if hasattr(module, "parameters_manual_cast"):
+            module.parameters_manual_cast = enabled
     return
 
 
@@ -528,7 +705,7 @@ def shift_manual_cast(model, enabled):
 def automatic_memory_management():
     memory_management.free_memory(
         memory_required=3 * 1024 * 1024 * 1024,
-        device=memory_management.get_torch_device()
+        device=memory_management.get_torch_device(),
     )
 
     module_list = []
@@ -559,55 +736,49 @@ def automatic_memory_management():
         module.cpu()
 
     memory_management.soft_empty_cache()
-    end = time.perf_counter()
-
-    print(f'Automatic Memory Management: {len(module_list)} Modules in {(end - start):.2f} seconds.')
-    return
+    elapsed = time.perf_counter() - start
+    print(f"Automatic Memory Management: {len(module_list)} Modules in {elapsed:.2f} seconds.")
 
 
 class DynamicSwapInstaller:
     @staticmethod
     def _install_module(module: torch.nn.Module, target_device: torch.device):
         original_class = module.__class__
-        module.__dict__['codex_backup_original_class'] = original_class
+        module.__dict__["codex_backup_original_class"] = original_class
 
         def hacked_get_attr(self, name: str):
-            if '_parameters' in self.__dict__:
-                _parameters = self.__dict__['_parameters']
-                if name in _parameters:
-                    p = _parameters[name]
-                    if p is None:
+            if "_parameters" in self.__dict__:
+                parameters = self.__dict__["_parameters"]
+                if name in parameters:
+                    param = parameters[name]
+                    if param is None:
                         return None
-                    if p.__class__ == torch.nn.Parameter:
-                        return torch.nn.Parameter(p.to(target_device), requires_grad=p.requires_grad)
-                    else:
-                        return p.to(target_device)
-            if '_buffers' in self.__dict__:
-                _buffers = self.__dict__['_buffers']
-                if name in _buffers:
-                    return _buffers[name].to(target_device)
+                    if isinstance(param, torch.nn.Parameter):
+                        return torch.nn.Parameter(param.to(target_device), requires_grad=param.requires_grad)
+                    return param.to(target_device)
+            if "_buffers" in self.__dict__:
+                buffers = self.__dict__["_buffers"]
+                if name in buffers:
+                    return buffers[name].to(target_device)
             return super(original_class, self).__getattr__(name)
 
-        module.__class__ = type('DynamicSwap_' + original_class.__name__, (original_class,), {
-            '__getattr__': hacked_get_attr,
-        })
-
-        return
+        module.__class__ = type(
+            "DynamicSwap_" + original_class.__name__,
+            (original_class,),
+            {"__getattr__": hacked_get_attr},
+        )
 
     @staticmethod
     def _uninstall_module(module: torch.nn.Module):
-        if 'codex_backup_original_class' in module.__dict__:
-            module.__class__ = module.__dict__.pop('codex_backup_original_class')
-        return
+        if "codex_backup_original_class" in module.__dict__:
+            module.__class__ = module.__dict__.pop("codex_backup_original_class")
 
     @staticmethod
     def install_model(model: torch.nn.Module, target_device: torch.device):
-        for m in model.modules():
-            DynamicSwapInstaller._install_module(m, target_device)
-        return
+        for module in model.modules():
+            DynamicSwapInstaller._install_module(module, target_device)
 
     @staticmethod
     def uninstall_model(model: torch.nn.Module):
-        for m in model.modules():
-            DynamicSwapInstaller._uninstall_module(m)
-        return
+        for module in model.modules():
+            DynamicSwapInstaller._uninstall_module(module)

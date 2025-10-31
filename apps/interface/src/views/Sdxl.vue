@@ -34,6 +34,17 @@
       <div class="panel">
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
+          <div class="form-field">
+            <label class="ui-label">Model Checkpoint</label>
+            <input
+              class="ui-input"
+              type="text"
+              :value="store.selectedModel"
+              placeholder="Enter SDXL checkpoint"
+              @change="onModelInputChange"
+            />
+            <p class="caption">SDXL uses the built-in VAE safetensor automatically.</p>
+          </div>
           <GenerationSettingsCard
             :samplers="store.samplers"
             :schedulers="store.schedulers"
@@ -156,6 +167,13 @@ function onInsertToken(token: string): void {
 function onGenerate(event: Event): void {
   event.preventDefault()
   void store.generate()
+}
+
+function onModelInputChange(event: Event): void {
+  const value = (event.target as HTMLInputElement).value.trim()
+  if (value && value !== store.selectedModel) {
+    void store.updateModel(value)
+  }
 }
 
 function toDataUrl(image: GeneratedImage): string {

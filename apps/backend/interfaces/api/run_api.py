@@ -1333,6 +1333,8 @@ def build_app() -> FastAPI:
         if 'eta_noise_seed_delta' in extras:
             metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
+        engine_override = payload.get('engine') or payload.get('codex_engine')
+
         req = Txt2ImgRequest(
             task=TaskType.TXT2IMG,
             prompt=prompt,
@@ -1367,7 +1369,7 @@ def build_app() -> FastAPI:
         )
 
         snap = _opts_snapshot()
-        engine_key = snap.codex_engine
+        engine_key = engine_override or snap.codex_engine
         model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 

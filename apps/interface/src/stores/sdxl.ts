@@ -130,6 +130,8 @@ export const useSdxlStore = defineStore('sdxl', () => {
   function buildPayload(): Record<string, unknown> {
     return {
       __strict_version: 1,
+      codex_engine: ENGINE_ID,
+      engine: ENGINE_ID,
       txt2img_prompt: prompt.value,
       txt2img_neg_prompt: negativePrompt.value,
       txt2img_styles: styles.value,

@@ -1,10 +1,81 @@
 import torch
 import math
 import itertools
+import logging
 
 from tqdm import trange
 from apps.backend.runtime.memory import memory_management
 from .base import ModelPatcher
+
+logger = logging.getLogger("backend.patchers.vae")
+
+
+class _NormalizingFirstStage:
+    """Adapter that guarantees process_in/out around a diffusers VAE.
+
+    - process_in: (x - shift) * scale
+    - process_out: (x / scale) + shift
+    Also proxies encode/decode/to/attributes to the wrapped object.
+    """
+
+    def __init__(self, base, *, scale: float, shift: float) -> None:
+        self._base = base
+        self._scale = float(scale)
+        self._shift = float(shift)
+
+    # Proxy core API used by VAE wrapper
+    def encode(self, *args, **kwargs):  # noqa: D401
+        return self._base.encode(*args, **kwargs)
+
+    def decode(self, *args, **kwargs):  # noqa: D401
+        return self._base.decode(*args, **kwargs)
+
+    def to(self, *args, **kwargs):  # noqa: D401
+        return self._base.to(*args, **kwargs)
+
+    # Normalization API expected by engines
+    def process_in(self, x: torch.Tensor) -> torch.Tensor:
+        if not torch.is_tensor(x):
+            raise TypeError("process_in expects a torch.Tensor")
+        return (x - self._shift) * self._scale
+
+    def process_out(self, x: torch.Tensor) -> torch.Tensor:
+        if not torch.is_tensor(x):
+            raise TypeError("process_out expects a torch.Tensor")
+        return (x / self._scale) + self._shift
+
+    def __getattr__(self, name: str):
+        # Delegate any other attribute access to the base VAE
+        return getattr(self._base, name)
+
+    @staticmethod
+    def wrap(base):
+        cfg = getattr(base, "config", None)
+        if cfg is None:
+            raise RuntimeError("VAE model is missing config; cannot determine scaling_factor for normalization")
+        # Attempt to fetch values from attribute or mapping-like config
+        scale = None
+        shift = 0.0
+        if hasattr(cfg, "scaling_factor"):
+            scale = getattr(cfg, "scaling_factor")
+        elif isinstance(cfg, dict):
+            scale = cfg.get("scaling_factor")
+            shift = cfg.get("shift_factor", 0.0)
+        else:
+            try:
+                scale = cfg.get("scaling_factor")  # type: ignore[attr-defined]
+                shift = cfg.get("shift_factor", 0.0)  # type: ignore[attr-defined]
+            except Exception:
+                scale = None
+        if hasattr(cfg, "shift_factor"):
+            try:
+                shift = float(getattr(cfg, "shift_factor"))
+            except Exception:
+                shift = 0.0
+        if scale is None:
+            raise RuntimeError("VAE config missing 'scaling_factor'; engines require normalization semantics")
+        logger.info("[VAE] normalization enabled: scaling_factor=%s shift_factor=%s", scale, shift)
+        return _NormalizingFirstStage(base, scale=float(scale), shift=float(shift))
 
 
 @torch.inference_mode()
@@ -67,7 +138,8 @@ class VAE:
         self.downscale_ratio = int(2 ** (len(model.config.down_block_types) - 1))
         self.latent_channels = int(model.config.latent_channels)
 
-        self.first_stage_model = model.eval()
+        # Ensure process_in/out are always available via adapter
+        self.first_stage_model = _NormalizingFirstStage.wrap(model.eval())
 
         if device is None:
             device = memory_management.vae_device()

@@ -12,7 +12,7 @@
       <label class="label-muted">Mode</label>
       <div class="qs-row">
         <select class="select-md" :value="store.currentMode" @change="onModeChange">
-          <option v-for="m in store.modeChoices" :key="m" :value="m">{{ m }}</option>
+          <option v-for="m in filteredModeChoices" :key="m" :value="m">{{ m }}</option>
         </select>
       </div>
     </div>
@@ -20,7 +20,7 @@
       <label class="label-muted">Checkpoint</label>
       <div class="qs-row">
         <select class="select-md" :value="store.currentModel" @change="onModelChange">
-          <option v-for="model in store.models" :key="model.title" :value="model.title">
+          <option v-for="model in filteredModels" :key="model.title" :value="model.title">
             {{ model.title }}
           </option>
         </select>
@@ -31,7 +31,7 @@
       <label class="label-muted">VAE</label>
       <div class="qs-row">
         <select class="select-md" :value="store.currentVae" @change="onVaeChange">
-          <option v-for="v in store.vaeChoices" :key="v" :value="v">{{ v }}</option>
+          <option v-for="v in filteredVaeChoices" :key="v" :value="v">{{ v }}</option>
         </select>
       </div>
     </div>
@@ -50,7 +50,7 @@
       <label class="label-muted">Diffusion in Low Bits</label>
       <div class="qs-row">
         <select class="select-md" :value="store.currentUnetDtype" @change="onUnetDtypeChange">
-          <option v-for="opt in store.unetDtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+          <option v-for="opt in filteredUnetDtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
         </select>
       </div>
     </div>
@@ -88,21 +88,27 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useRoute } from 'vue-router'
 import { useUiBlocksStore } from '../stores/ui_blocks'
+import { useModelTabsStore } from '../stores/model_tabs'
+import { fetchModelInventory } from '../api/client'
 
 const store = useQuicksettingsStore()
 const presets = useUiPresetsStore()
 const route = useRoute()
 const selectedPreset = ref('')
 const uiBlocks = useUiBlocksStore()
+const tabsStore = useModelTabsStore()
+const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
 
 onMounted(() => {
   void store.init()
   void presets.init(currentTab())
+  void loadInventory()
 })
 
 watch(() => route.path, async () => {
   await presets.init(currentTab())
   selectedPreset.value = ''
+  await loadInventory()
 })
 
 function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
@@ -114,6 +120,62 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
 }
 
 const presetChoices = computed(() => presets.namesFor(currentTab()))
+const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => tabsStore.activeTab?.type ?? 'sd15')
+
+async function loadInventory(): Promise<void> {
+  try {
+    const inv = await fetchModelInventory()
+    inventoryVaes.value = inv.vaes
+  } catch (e) {
+    inventoryVaes.value = []
+  }
+}
+
+function modelMatchesFamily(meta: Record<string, unknown> | undefined, title: string, file: string, family: string): boolean {
+  const fam = String((meta?.['family'] as string) || (meta?.['model_family'] as string) || '').toLowerCase()
+  const t = (title || '').toLowerCase(); const f = (file || '').toLowerCase()
+  if (fam) return fam.includes(family)
+  if (family === 'sdxl') return t.includes('sdxl') || f.includes('sdxl')
+  if (family === 'sd15') return t.includes('1.5') || t.includes('sd15') || f.includes('sd15') || f.includes('v1-5')
+  if (family === 'flux') return t.includes('flux') || f.includes('flux')
+  if (family === 'wan') return t.includes('wan') || f.includes('wan')
+  return true
+}
+
+const filteredModels = computed(() => {
+  const fam = activeFamily.value
+  return store.models.filter(m => modelMatchesFamily(m.metadata as Record<string, unknown> | undefined, m.title, m.filename, fam))
+})
+
+function isVaeForFamily(name: string, fam: string): boolean {
+  const rec = inventoryVaes.value.find(v => v.name === name || v.path.endsWith('/' + name))
+  const scale = rec?.scaling_factor ?? null
+  if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
+  if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
+  if (fam === 'flux') return (scale !== null) ? Math.abs(Number(scale) - 0.3611) < 1e-3 : /flux/i.test(name)
+  return true
+}
+
+const filteredVaeChoices = computed(() => {
+  const fam = activeFamily.value
+  return (store.vaeChoices.length ? store.vaeChoices : ['Automatic']).filter(v => v === 'Automatic' || isVaeForFamily(v, fam))
+})
+
+const filteredModeChoices = computed(() => {
+  const fam = activeFamily.value
+  const base = store.modeChoices
+  if (fam === 'sdxl') return base.filter(m => ['Normal','Lightning','Turbo'].includes(m))
+  if (fam === 'sd15') return base.filter(m => ['Normal','LCM','Turbo'].includes(m))
+  if (fam === 'flux') return base.filter(m => ['Normal'].includes(m))
+  return base
+})
+
+const filteredUnetDtypeChoices = computed(() => {
+  const fam = activeFamily.value
+  const base = store.unetDtypeChoices
+  if (fam === 'flux') return base.filter(x => /Automatic|float8|fp16/i.test(x))
+  return base
+})
 const hideCheckpoint = computed(() => {
   const p = route.path
   // In model tabs (/models), the tab manages model dirs (e.g., WAN 2.2); hide checkpoint there.

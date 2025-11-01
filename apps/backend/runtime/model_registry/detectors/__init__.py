@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .sd_v1 import StableDiffusionV1Detector
+from .sdxl import StableDiffusionXLDetector, StableDiffusionXLRefinerDetector
 from .sd3 import StableDiffusion3Detector
 from .flux import FluxDetector, FluxSchnellDetector
 from .aura import AuraFlowDetector
@@ -13,6 +14,8 @@ from .qwen_image import QwenImageDetector
 
 __all__ = [
     "StableDiffusionV1Detector",
+    "StableDiffusionXLDetector",
+    "StableDiffusionXLRefinerDetector",
     "StableDiffusion3Detector",
     "FluxDetector",
     "FluxSchnellDetector",

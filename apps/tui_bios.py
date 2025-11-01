@@ -5,8 +5,9 @@ Settings persist under ``.sangoi/launcher/`` segmented in meta/areas/models.
 
 Tabs
 - Main: status + actions (Start/Restart/Kill API/UI)
-- Advanced: runtime options (Services in new terminal)
-- Security: environment toggles (WAN_SDPA_DEBUG)
+- Runtime: engine/runtime options (attention backend, dtypes, swap policy)
+- WAN: WAN22 runtime controls (I2V order, TE placement, debug toggles)
+- Logging: configure Codex log level and WAN logging output
 - Logs: combined logs with scrolling
 - Exit: Save and Exit / Exit Without Saving
 
@@ -47,7 +48,7 @@ from apps.launcher import (
     run_launch_checks,
 )
 class BIOSApp:
-    TABS = ["Main", "Advanced", "Security", "Logs", "Exit"]
+    TABS = ["Main", "Runtime", "WAN", "Logging", "Logs", "Exit"]
 
     def __init__(self, stdscr) -> None:
         self.stdscr = stdscr
@@ -162,6 +163,14 @@ class BIOSApp:
         self.store.save()
 
     # --------------- content per tab -----------------------------------
+    def _ensure_log_file(self) -> str:
+        logs_dir = PROJECT_ROOT / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        log_path = logs_dir / f"codex-{stamp}.log"
+        return str(log_path)
+
+
     def _items_main(self) -> List[Tuple[str, str, str]]:
         out: List[Tuple[str, str, str]] = []
         for name in ("API", "UI"):
@@ -177,7 +186,7 @@ class BIOSApp:
             out.append((f"Kill {name}", "", "kill"))
         return out
 
-    def _items_advanced(self) -> List[Tuple[str, str, str]]:
+    def _items_runtime(self) -> List[Tuple[str, str, str]]:
         env = self.env
         ext = "Enabled" if self.meta.external_terminal else "Disabled"
         pol = self.meta.sdpa_policy
@@ -185,33 +194,22 @@ class BIOSApp:
         attn_chunk = env.get("CODEX_ATTN_CHUNK_SIZE", "0")
         gguf_pol = env.get("CODEX_GGUF_CACHE_POLICY", "none")
         gguf_lim = env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0")
-        offload_lvl = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
         unet_dtype = env.get("CODEX_CORE_DTYPE", "fp16")
         vae_dtype = env.get("CODEX_VAE_DTYPE", "fp16")
-        # VAE device label: Auto/GPU/CPU (prefer CODEX_VAE_DEVICE if set)
-        _vae_dev = env.get("CODEX_VAE_DEVICE", "").strip().lower()
-        if _vae_dev == "cpu":
+        vae_device_raw = env.get("CODEX_VAE_DEVICE", "").strip().lower()
+        if vae_device_raw == "cpu":
             vae_dev_label = "CPU"
-        elif _vae_dev in ("cuda", "gpu"):
+        elif vae_device_raw in ("cuda", "gpu"):
             vae_dev_label = "GPU"
         else:
-            vae_cpu_flag = env.get("CODEX_VAE_IN_CPU", "0").lower() in ("1","true","yes","on")
+            vae_cpu_flag = env.get("CODEX_VAE_IN_CPU", "0").lower() in ("1", "true", "yes", "on")
             vae_dev_label = "CPU" if vae_cpu_flag else "Auto"
-        all_fp32 = "Enabled" if env.get("CODEX_ALL_IN_FP32", "0").lower() in ("1","true","yes","on") else "Disabled"
+        all_fp32 = "Enabled" if env.get("CODEX_ALL_IN_FP32", "0").lower() in ("1", "true", "yes", "on") else "Disabled"
         swap_pol = env.get("CODEX_SWAP_POLICY", "cpu")
         swap_mth = env.get("CODEX_SWAP_METHOD", "blocked")
-        te_impl = env.get("WAN_TE_IMPL", "hf")
-        te_fp8_label = "Enabled" if te_impl == "cuda_fp8" else "Disabled"
-        te_dev_env = env.get("WAN_TE_DEVICE", "").strip().lower()
-        te_dev_label = "CPU" if te_dev_env == "cpu" else ("GPU" if te_dev_env in ("cuda", "gpu") else "Auto")
         return [
             ("Services in new terminal", f"[{ext}]", "toggle_extterm"),
-            ("I2V Concat Order", f"[{env.get('WAN_I2V_ORDER','lat_first')}]", "cycle_i2v_order"),
-            ("GGUF Offload Level", f"[{offload_lvl}]", "cycle_offload_lvl"),
             ("SDPA Policy", f"[{pol}]", "cycle_sdpa"),
-            ("Use cuda fp8 (TE)", f"[{te_fp8_label}]", "toggle_te_fp8"),
-            ("TE Device", f"[{te_dev_label}]", "select_te_dev"),
-            # Removed: TE CUDA Required — derived from WAN_TE_IMPL
             ("Attention Backend", f"[{attn_backend}]", "cycle_attn_backend"),
             ("Attn Chunk Size", f"[{attn_chunk}]", "edit_attn_chunk"),
             ("GGUF Cache Policy", f"[{gguf_pol}]", "cycle_gguf_pol"),
@@ -224,26 +222,53 @@ class BIOSApp:
             ("Swap Method", f"[{swap_mth}]", "cycle_swap_mth"),
         ]
 
-    def _items_security(self) -> List[Tuple[str, str, str]]:
-        v = self.env.get("WAN_SDPA_DEBUG", "0")
-        label = "Enabled" if v.lower() in ("1", "true", "yes", "on") else "Disabled"
-        dbg_hi = self.env.get("WAN_I2V_DEBUG_HI_DECODE", "0")
-        label_hi = "Enabled" if dbg_hi.lower() in ("1", "true", "yes", "on") else "Disabled"
-        lat_stats = self.env.get("WAN_I2V_LAT_STATS", "0")
-        label_lat = "Enabled" if lat_stats.lower() in ("1", "true", "yes", "on") else "Disabled"
-        strict_vae = self.env.get("WAN_I2V_STRICT_VAE", "0")
-        label_strict = "Enabled" if strict_vae.lower() in ("1", "true", "yes", "on") else "Disabled"
-        conv32 = self.env.get("WAN_I2V_CONV32", "0")
-        label_conv32 = "Enabled" if conv32.lower() in ("1", "true", "yes", "on") else "Disabled"
+    def _items_wan(self) -> List[Tuple[str, str, str]]:
+        env = self.env
+        order = env.get("WAN_I2V_ORDER", "lat_first")
+        offload_lvl = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
+        te_impl = env.get("WAN_TE_IMPL", "hf")
+        te_fp8_label = "Enabled" if te_impl == "cuda_fp8" else "Disabled"
+        te_dev_env = env.get("WAN_TE_DEVICE", "").strip().lower()
+        te_dev_label = "CPU" if te_dev_env == "cpu" else ("GPU" if te_dev_env in ("cuda", "gpu") else "Auto")
+        sdpa_dbg = env.get("WAN_SDPA_DEBUG", "0").lower() in ("1", "true", "yes", "on")
+        dbg_hi = env.get("WAN_I2V_DEBUG_HI_DECODE", "0").lower() in ("1", "true", "yes", "on")
+        lat_stats = env.get("WAN_I2V_LAT_STATS", "0").lower() in ("1", "true", "yes", "on")
+        conv32 = env.get("WAN_I2V_CONV32", "0").lower() in ("1", "true", "yes", "on")
+        sanitize = env.get("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0").lower() in ("1", "true", "yes", "on")
+        clamp = env.get("WAN_I2V_DEBUG_CLAMP", "")
+        clamp_label = clamp if clamp else "Disabled"
         return [
-            ("WAN_SDPA_DEBUG", f"[{label}]", "toggle_sdpa_debug"),
-            ("WAN_I2V_DEBUG_HI_DECODE", f"[{label_hi}]", "toggle_hi_decode_debug"),
-            ("WAN_I2V_LAT_STATS", f"[{label_lat}]", "toggle_lat_stats"),
-            ("WAN_I2V_CONV32", f"[{label_conv32}]", "toggle_conv32"),
-            ("WAN_LOG_INFO", f"[{self.env.get('WAN_LOG_INFO','1')}]", "toggle_log_info"),
-            ("WAN_LOG_WARN", f"[{self.env.get('WAN_LOG_WARN','1')}]", "toggle_log_warn"),
-            ("WAN_LOG_ERROR", f"[{self.env.get('WAN_LOG_ERROR','1')}]", "toggle_log_error"),
-            ("WAN_LOG_DEBUG", f"[{self.env.get('WAN_LOG_DEBUG','0')}]", "toggle_log_debug"),
+            ("I2V Concat Order", f"[{order}]", "cycle_i2v_order"),
+            ("GGUF Offload Level", f"[{offload_lvl}]", "cycle_offload_lvl"),
+            ("Use cuda fp8 (TE)", f"[{te_fp8_label}]", "toggle_te_fp8"),
+            ("TE Device", f"[{te_dev_label}]", "select_te_dev"),
+            ("WAN_SDPA_DEBUG", f"[{'Enabled' if sdpa_dbg else 'Disabled'}]", "toggle_sdpa_debug"),
+            ("WAN_I2V_DEBUG_HI_DECODE", f"[{'Enabled' if dbg_hi else 'Disabled'}]", "toggle_hi_decode_debug"),
+            ("WAN_I2V_LAT_STATS", f"[{'Enabled' if lat_stats else 'Disabled'}]", "toggle_lat_stats"),
+            ("WAN_I2V_CONV32", f"[{'Enabled' if conv32 else 'Disabled'}]", "toggle_conv32"),
+            ("WAN_I2V_DEBUG_SANITIZE_TOKENS", f"[{'Enabled' if sanitize else 'Disabled'}]", "toggle_sanitize_tokens"),
+            ("WAN_I2V_DEBUG_CLAMP", f"[{clamp_label}]", "edit_debug_clamp"),
+        ]
+
+    def _items_logging(self) -> List[Tuple[str, str, str]]:
+        env = self.env
+        level = env.get("CODEX_LOG_LEVEL", "DEBUG").upper()
+        log_file = env.get("CODEX_LOG_FILE", "")
+        if log_file:
+            file_label = f"Enabled ({Path(log_file).name})"
+        else:
+            file_label = "Disabled"
+        info = env.get("WAN_LOG_INFO", "1")
+        warn = env.get("WAN_LOG_WARN", "1")
+        err = env.get("WAN_LOG_ERROR", "1")
+        dbg = env.get("WAN_LOG_DEBUG", "0")
+        return [
+            ("Codex Log Level", f"[{level}]", "cycle_log_level"),
+            ("Write Codex Log File", f"[{file_label}]", "toggle_log_file"),
+            ("WAN_LOG_INFO", f"[{info}]", "toggle_log_info"),
+            ("WAN_LOG_WARN", f"[{warn}]", "toggle_log_warn"),
+            ("WAN_LOG_ERROR", f"[{err}]", "toggle_log_error"),
+            ("WAN_LOG_DEBUG", f"[{dbg}]", "toggle_log_debug"),
         ]
 
     def _help_for(self, tab: str, key: str) -> List[str]:
@@ -352,6 +377,14 @@ class BIOSApp:
                 "before unembedding to latents. Helps visualize bad tokens",
                 "without touching the actual pipeline output.",
             ],
+            "Codex Log Level": [
+                "Set the global log verbosity for Codex backend (DEBUG/INFO/WARNING/ERROR/CRITICAL).",
+                "Applied via CODEX_LOG_LEVEL.",
+            ],
+            "Write Codex Log File": [
+                "Toggle writing backend logs to logs/codex-<timestamp>.log.",
+                "Enabled state sets CODEX_LOG_FILE automatically; disable to stop logging to file.",
+            ],
             "WAN_LOG_INFO": [
                 "Enable/disable info-level logs from WAN runtime.",
             ],
@@ -399,22 +432,14 @@ class BIOSApp:
             time.sleep(0.2)
             svc.kill() if hasattr(svc, 'kill') else None
 
-    def _act_advanced(self, idx: int) -> None:
-        items = self._items_advanced()
+    def _act_runtime(self, idx: int) -> None:
+        items = self._items_runtime()
         if not (0 <= idx < len(items)):
             return
-        key, _val, action = items[idx]
+        _key, _val, action = items[idx]
         env = self.env
         if action == "toggle_extterm":
             self.meta.external_terminal = not self.meta.external_terminal
-        elif action == "toggle_te_fp8":
-            # Binary toggle: hf <-> cuda_fp8
-            cur = env.get("WAN_TE_IMPL", "hf").strip().lower()
-            env["WAN_TE_IMPL"] = "cuda_fp8" if cur != "cuda_fp8" else "hf"
-        elif action == "toggle_te_dev":
-            cur = env.get("WAN_TE_DEVICE", "").strip().lower()
-            # Default to GPU if unset; toggle CPU<->GPU
-            env["WAN_TE_DEVICE"] = "cpu" if cur not in ("cpu",) else "cuda"
         elif action == "cycle_sdpa":
             order = ["flash", "mem_efficient", "math"]
             cur = self.meta.sdpa_policy
@@ -424,31 +449,6 @@ class BIOSApp:
                 i = 0
             self.meta.sdpa_policy = order[i]
             env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
-        elif action == "cycle_i2v_order":
-            order = ["lat_first", "lat_last"]
-            cur = env.get("WAN_I2V_ORDER", "lat_first")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["WAN_I2V_ORDER"] = order[i]
-        elif action == "cycle_te_impl":
-            order = ["hf", "cuda_fp8"]
-            cur = env.get("WAN_TE_IMPL", "hf")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["WAN_TE_IMPL"] = order[i]
-        elif action == "cycle_offload_lvl":
-            order = ["0", "1", "2", "3"]
-            cur = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["WAN_GGUF_OFFLOAD_LEVEL"] = order[i]
-        # Removed: toggle_te_required — implied by TE implementation
         elif action == "cycle_attn_backend":
             order = ["torch-sdpa", "xformers", "sage"]
             cur = env.get("CODEX_ATTENTION_BACKEND", "torch-sdpa")
@@ -489,12 +489,19 @@ class BIOSApp:
             except ValueError:
                 i = 0
             env["CODEX_VAE_DTYPE"] = order[i]
-        elif action == "toggle_vae_cpu":
-            cur = env.get("CODEX_VAE_IN_CPU", "0").strip().lower()
-            env["CODEX_VAE_IN_CPU"] = "0" if cur in ("1","true","yes","on") else "1"
+        elif action == "select_vae_dev":
+            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
+            cur = env.get("CODEX_VAE_DEVICE", "").strip().lower()
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            nxt = order[i]
+            env["CODEX_VAE_DEVICE"] = nxt
+            env["CODEX_VAE_IN_CPU"] = "1" if nxt == "cpu" else "0"
         elif action == "toggle_all_fp32":
             cur = env.get("CODEX_ALL_IN_FP32", "0").strip().lower()
-            env["CODEX_ALL_IN_FP32"] = "0" if cur in ("1","true","yes","on") else "1"
+            env["CODEX_ALL_IN_FP32"] = "0" if cur in ("1", "true", "yes", "on") else "1"
         elif action == "cycle_swap_pol":
             order = ["never", "cpu", "shared"]
             cur = env.get("CODEX_SWAP_POLICY", "cpu")
@@ -511,11 +518,33 @@ class BIOSApp:
             except ValueError:
                 i = 0
             env["CODEX_SWAP_METHOD"] = order[i]
-        elif action == "toggle_gpu_pref":
-            cur = env.get("CODEX_GPU_PREFER_CONSTRUCT", "0").strip().lower()
-            env["CODEX_GPU_PREFER_CONSTRUCT"] = "0" if cur in ("1","true","yes","on") else "1"
+
+    def _act_wan(self, idx: int) -> None:
+        items = self._items_wan()
+        if not (0 <= idx < len(items)):
+            return
+        _key, _val, action = items[idx]
+        env = self.env
+        if action == "cycle_i2v_order":
+            order = ["lat_first", "lat_last"]
+            cur = env.get("WAN_I2V_ORDER", "lat_first")
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            env["WAN_I2V_ORDER"] = order[i]
+        elif action == "cycle_offload_lvl":
+            order = ["0", "1", "2", "3"]
+            cur = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            env["WAN_GGUF_OFFLOAD_LEVEL"] = order[i]
+        elif action == "toggle_te_fp8":
+            cur = env.get("WAN_TE_IMPL", "hf").strip().lower()
+            env["WAN_TE_IMPL"] = "cuda_fp8" if cur != "cuda_fp8" else "hf"
         elif action == "select_te_dev":
-            # Cycle TE device with +/- as a fallback to popup
             order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
             cur = env.get("WAN_TE_DEVICE", "").strip().lower()
             try:
@@ -523,70 +552,71 @@ class BIOSApp:
             except ValueError:
                 i = 0
             env["WAN_TE_DEVICE"] = order[i]
-        elif action == "select_vae_dev":
-            # Cycle VAE device with +/- as a fallback to popup
-            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
-            cur = env.get("CODEX_VAE_DEVICE", "").strip().lower()
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            nxt = order[i]
-            env["CODEX_VAE_DEVICE"] = nxt
-            # Keep mirror for legacy toggle
-            env["CODEX_VAE_IN_CPU"] = "1" if nxt == "cpu" else "0"
-
-    def _act_security(self, idx: int) -> None:
-        items = self._items_security()
-        if not (0 <= idx < len(items)):
-            return
-        key, _val, action = items[idx]
-        if action == "toggle_sdpa_debug":
-            cur = self.env.get("WAN_SDPA_DEBUG", "0").strip().lower()
-            nxt = "1" if cur in ("0", "", "false", "no") else "0"
-            self.env["WAN_SDPA_DEBUG"] = nxt
+        elif action == "toggle_sdpa_debug":
+            cur = env.get("WAN_SDPA_DEBUG", "0").strip().lower()
+            env["WAN_SDPA_DEBUG"] = "1" if cur in ("0", "", "false", "no") else "0"
         elif action == "toggle_hi_decode_debug":
-            cur = self.env.get("WAN_I2V_DEBUG_HI_DECODE", "0").strip().lower()
-            nxt = "1" if cur in ("0", "", "false", "no") else "0"
-            self.env["WAN_I2V_DEBUG_HI_DECODE"] = nxt
+            cur = env.get("WAN_I2V_DEBUG_HI_DECODE", "0").strip().lower()
+            env["WAN_I2V_DEBUG_HI_DECODE"] = "1" if cur in ("0", "", "false", "no") else "0"
         elif action == "toggle_lat_stats":
-            cur = self.env.get("WAN_I2V_LAT_STATS", "0").strip().lower()
-            nxt = "1" if cur in ("0", "", "false", "no") else "0"
-            self.env["WAN_I2V_LAT_STATS"] = nxt
-        # removed toggle_strict_vae (now hard error on non-finite)
+            cur = env.get("WAN_I2V_LAT_STATS", "0").strip().lower()
+            env["WAN_I2V_LAT_STATS"] = "1" if cur in ("0", "", "false", "no") else "0"
+        elif action == "toggle_conv32":
+            cur = env.get("WAN_I2V_CONV32", "0").strip().lower()
+            env["WAN_I2V_CONV32"] = "1" if cur in ("0", "", "false", "no") else "0"
+        elif action == "toggle_sanitize_tokens":
+            cur = env.get("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0").strip().lower()
+            env["WAN_I2V_DEBUG_SANITIZE_TOKENS"] = "1" if cur in ("0", "", "false", "no") else "0"
         elif action == "edit_debug_clamp":
             val = self._prompt("Debug clamp (abs, empty to disable): ")
             if val is None:
                 return
             val = val.strip()
-            if val == "":
-                self.env["WAN_I2V_DEBUG_CLAMP"] = ""
+            if not val:
+                env["WAN_I2V_DEBUG_CLAMP"] = ""
                 return
             try:
                 float(val)
-                self.env["WAN_I2V_DEBUG_CLAMP"] = val
             except Exception:
                 self.message = "Invalid clamp value; expect float or empty"
-        elif action == "toggle_conv32":
-            cur = self.env.get("WAN_I2V_CONV32", "0").strip().lower()
-            nxt = "1" if cur in ("0", "", "false", "no") else "0"
-            self.env["WAN_I2V_CONV32"] = nxt
-        elif action == "toggle_sanitize_tokens":
-            cur = self.env.get("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0").strip().lower()
-            nxt = "1" if cur in ("0", "", "false", "no") else "0"
-            self.env["WAN_I2V_DEBUG_SANITIZE_TOKENS"] = nxt
+            else:
+                env["WAN_I2V_DEBUG_CLAMP"] = val
+    def _act_logging(self, idx: int) -> None:
+        items = self._items_logging()
+        if not (0 <= idx < len(items)):
+            return
+        _key, _val, action = items[idx]
+        env = self.env
+        if action == "cycle_log_level":
+            order = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            cur = env.get("CODEX_LOG_LEVEL", "DEBUG").upper()
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            env["CODEX_LOG_LEVEL"] = order[i]
+        elif action == "toggle_log_file":
+            current = env.get("CODEX_LOG_FILE", "").strip()
+            if current:
+                env.pop("CODEX_LOG_FILE", None)
+                self.message = "File logging disabled"
+            else:
+                log_path = self._ensure_log_file()
+                env["CODEX_LOG_FILE"] = log_path
+                self.message = f"Logging to {Path(log_path).name}"
         elif action == "toggle_log_info":
-            cur = self.env.get("WAN_LOG_INFO", "1").strip().lower()
-            self.env["WAN_LOG_INFO"] = "0" if cur in ("1","true","yes","on") else "1"
+            cur = env.get("WAN_LOG_INFO", "1").strip().lower()
+            env["WAN_LOG_INFO"] = "0" if cur in ("1", "true", "yes", "on") else "1"
         elif action == "toggle_log_warn":
-            cur = self.env.get("WAN_LOG_WARN", "1").strip().lower()
-            self.env["WAN_LOG_WARN"] = "0" if cur in ("1","true","yes","on") else "1"
+            cur = env.get("WAN_LOG_WARN", "1").strip().lower()
+            env["WAN_LOG_WARN"] = "0" if cur in ("1", "true", "yes", "on") else "1"
         elif action == "toggle_log_error":
-            cur = self.env.get("WAN_LOG_ERROR", "1").strip().lower()
-            self.env["WAN_LOG_ERROR"] = "0" if cur in ("1","true","yes","on") else "1"
+            cur = env.get("WAN_LOG_ERROR", "1").strip().lower()
+            env["WAN_LOG_ERROR"] = "0" if cur in ("1", "true", "yes", "on") else "1"
         elif action == "toggle_log_debug":
-            cur = self.env.get("WAN_LOG_DEBUG", "0").strip().lower()
-            self.env["WAN_LOG_DEBUG"] = "0" if cur in ("1","true","yes","on") else "1"
+            cur = env.get("WAN_LOG_DEBUG", "0").strip().lower()
+            env["WAN_LOG_DEBUG"] = "0" if cur in ("1", "true", "yes", "on") else "1"
+
 
     def _log_lines(self) -> List[str]:
         return self.log_buffer.snapshot()
@@ -622,15 +652,22 @@ class BIOSApp:
                 self.stdscr.attroff(attr)
             self._draw_help(top, left_w, right_w, height, self._help_for("Exit", options[self.sel_index]))
         else:
-            if self.TABS[self.tab_index] == "Main":
+            tab_name = self.TABS[self.tab_index]
+            if tab_name == "Main":
                 items = self._items_main()
-            elif self.TABS[self.tab_index] == "Advanced":
-                items = self._items_advanced()
+            elif tab_name == "Runtime":
+                items = self._items_runtime()
+            elif tab_name == "WAN":
+                items = self._items_wan()
+            elif tab_name == "Logging":
+                items = self._items_logging()
             else:
-                items = self._items_security()
+                items = []
+            if self.sel_index >= len(items):
+                self.sel_index = max(0, len(items) - 1)
             # draw items (name left, value right)
             label_w = 28  # widened label column
-            if self.TABS[self.tab_index] == "Main":
+            if tab_name == "Main":
                 # Two-row layout: first the statuses (even indices 0 and 4), then actions
                 status_lines = [items[0], items[4]] if len(items) >= 8 else items[:2]
                 action_lines = [it for it in items if it[2] in ("start", "restart", "kill")]
@@ -669,8 +706,8 @@ class BIOSApp:
                     self.stdscr.attroff(attr)
             # help
             key = items[self.sel_index][0] if items else ""
-            help_lines = self._help_for(self.TABS[self.tab_index], key)
-            if self.TABS[self.tab_index] == "Advanced" and self.launch_checks:
+            help_lines = self._help_for(tab_name, key)
+            if tab_name == "Runtime" and self.launch_checks:
                 help_lines = help_lines + ["", "Launch Checks:"]
                 for chk in self.launch_checks:
                     status = "OK" if chk.ok else "FAIL"
@@ -725,14 +762,14 @@ class BIOSApp:
             self.tab_index = (self.tab_index - 1) % len(self.TABS)
             self.sel_index = 0
             self.meta.tab_index = self.tab_index
-            if self.TABS[self.tab_index] == "Advanced":
+            if self.TABS[self.tab_index] == "Runtime":
                 self.launch_checks = run_launch_checks()
             return
         if ch in (curses.KEY_RIGHT,):
             self.tab_index = (self.tab_index + 1) % len(self.TABS)
             self.sel_index = 0
             self.meta.tab_index = self.tab_index
-            if self.TABS[self.tab_index] == "Advanced":
+            if self.TABS[self.tab_index] == "Runtime":
                 self.launch_checks = run_launch_checks()
             return
         if ch in (curses.KEY_UP, ord('k')):
@@ -744,21 +781,25 @@ class BIOSApp:
         if ch in (curses.KEY_ENTER, ord('\n'), ord('\r'), 10, 13, 343):
             if tab == "Main":
                 self._act_main(self.sel_index)
-            elif tab == "Advanced":
+            elif tab == "Runtime":
                 # Open BIOS-style popup for multi-choice fields
-                self._act_advanced_popup_or_apply(self.sel_index)
-            elif tab == "Security":
-                self._act_security(self.sel_index)
+                self._act_runtime_popup_or_apply(self.sel_index)
+            elif tab == "WAN":
+                self._act_wan_popup_or_apply(self.sel_index)
+            elif tab == "Logging":
+                self._act_logging(self.sel_index)
             elif tab == "Exit":
                 if self.sel_index % 2 == 0:
                     self._persist()
                 raise SystemExit
             return
         if ch in (ord('+'), ord('-')):
-            if tab == "Advanced":
-                self._act_advanced(self.sel_index)
-            elif tab == "Security":
-                self._act_security(self.sel_index)
+            if tab == "Runtime":
+                self._act_runtime(self.sel_index)
+            elif tab == "WAN":
+                self._act_wan(self.sel_index)
+            elif tab == "Logging":
+                self._act_logging(self.sel_index)
             return
         if tab == "Logs":
             logs = self._log_lines()
@@ -846,45 +887,38 @@ class BIOSApp:
             self.popup_active = False
             return
 
-    def _act_advanced_popup_or_apply(self, idx: int) -> None:
-        items = self._items_advanced()
+    def _act_runtime_popup_or_apply(self, idx: int) -> None:
+        items = self._items_runtime()
         if not (0 <= idx < len(items)):
             return
-        key, val, action = items[idx]
+        key, _val, action = items[idx]
         env = self.env
-        # Define options per action
         choices_map = {
             'cycle_sdpa': ["flash", "mem_efficient", "math"],
-            'cycle_te_impl': ["hf", "cuda_fp8"],
-            'cycle_offload_lvl': ["0", "1", "2", "3"],
             'cycle_attn_backend': ["torch-sdpa", "xformers", "sage"],
             'cycle_gguf_pol': ["none", "cpu_lru"],
             'cycle_unet_dtype': ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
             'cycle_vae_dtype': ["fp16", "bf16", "fp32"],
             'cycle_swap_pol': ["never", "cpu", "shared"],
             'cycle_swap_mth': ["blocked", "async"],
-            'cycle_i2v_order': ["lat_first", "lat_last"],
-            'select_te_dev': ["Auto", "GPU", "CPU"],
             'select_vae_dev': ["Auto", "GPU", "CPU"],
         }
         if action not in choices_map:
-            # Default: execute normal action
-            return self._act_advanced(idx)
+            return self._act_runtime(idx)
         options = choices_map[action]
-        # Determine current index based on env
         cur_val = {
             'cycle_sdpa': self.meta.sdpa_policy,
-            'cycle_te_impl': env.get('WAN_TE_IMPL', 'hf'),
-            'cycle_offload_lvl': env.get('WAN_GGUF_OFFLOAD_LEVEL', '3'),
             'cycle_attn_backend': env.get('CODEX_ATTENTION_BACKEND', 'torch-sdpa'),
             'cycle_gguf_pol': env.get('CODEX_GGUF_CACHE_POLICY', 'none'),
             'cycle_unet_dtype': env.get('CODEX_CORE_DTYPE', 'fp16'),
             'cycle_vae_dtype': env.get('CODEX_VAE_DTYPE', 'fp16'),
             'cycle_swap_pol': env.get('CODEX_SWAP_POLICY', 'cpu'),
             'cycle_swap_mth': env.get('CODEX_SWAP_METHOD', 'blocked'),
-            'cycle_i2v_order': env.get('WAN_I2V_ORDER', 'lat_first'),
-            'select_te_dev': (lambda v: 'GPU' if v in ('cuda','gpu') else ('CPU' if v=='cpu' else 'Auto'))(env.get('WAN_TE_DEVICE','').strip().lower()),
-            'select_vae_dev': (lambda v, c: ('GPU' if v in ('cuda','gpu') else ('CPU' if v=='cpu' else ('CPU' if c else 'Auto'))))(env.get('CODEX_VAE_DEVICE','').strip().lower(), env.get('CODEX_VAE_IN_CPU','0').strip().lower() in ('1','true','yes','on')),
+            'select_vae_dev': (
+                'GPU' if env.get('CODEX_VAE_DEVICE', '').strip().lower() in ('cuda', 'gpu') else
+                'CPU' if env.get('CODEX_VAE_DEVICE', '').strip().lower() == 'cpu' or env.get('CODEX_VAE_IN_CPU', '0').strip().lower() in ('1', 'true', 'yes', 'on') else
+                'Auto'
+            ),
         }[action]
         try:
             sel = options.index(cur_val)
@@ -892,6 +926,36 @@ class BIOSApp:
             sel = 0
         self.popup_selection = (key, options, sel, action)
         self._draw_select_popup(key, options, sel)
+    def _act_wan_popup_or_apply(self, idx: int) -> None:
+        items = self._items_wan()
+        if not (0 <= idx < len(items)):
+            return
+        key, _val, action = items[idx]
+        env = self.env
+        choices_map = {
+            'cycle_i2v_order': ["lat_first", "lat_last"],
+            'cycle_offload_lvl': ["0", "1", "2", "3"],
+            'select_te_dev': ["Auto", "GPU", "CPU"],
+        }
+        if action not in choices_map:
+            return self._act_wan(idx)
+        options = choices_map[action]
+        cur_val = {
+            'cycle_i2v_order': env.get('WAN_I2V_ORDER', 'lat_first'),
+            'cycle_offload_lvl': env.get('WAN_GGUF_OFFLOAD_LEVEL', '3'),
+            'select_te_dev': (
+                'GPU' if env.get('WAN_TE_DEVICE', '').strip().lower() in ('cuda', 'gpu') else
+                'CPU' if env.get('WAN_TE_DEVICE', '').strip().lower() == 'cpu' else
+                'Auto'
+            ),
+        }[action]
+        try:
+            sel = options.index(cur_val)
+        except ValueError:
+            sel = 0
+        self.popup_selection = (key, options, sel, action)
+        self._draw_select_popup(key, options, sel)
+
 
     def _draw_select_popup(self, title: str, options: List[str], index: int) -> None:
         self.popup_active = True

@@ -910,6 +910,13 @@ def build_app() -> FastAPI:
 
     # Optional calltrace instrumentation (entry/exit logs) controlled by env
     try:
+        # Expand convenience flag: CODEX_CALLTRACE_ALL=1 ⇒ predefined include list
+        if str(os.getenv("CODEX_CALLTRACE_ALL", "0")).lower() in ("1","true","yes","on"):
+            os.environ.setdefault(
+                "CODEX_CALLTRACE_INCLUDE",
+                "apps.backend.runtime.workflows,apps.backend.runtime.sampling,apps.backend.runtime.text_processing,apps.backend.engines",
+            )
+            os.environ.setdefault("CODEX_CALLTRACE", "1")
         from apps.backend.runtime.logging.calltrace import setup_from_env as _setup_calltrace
         _setup_calltrace()
     except Exception as e:

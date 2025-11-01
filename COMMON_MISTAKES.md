@@ -153,3 +153,6 @@ PY`
 **Wrong command:** `apply_patch << 'PATCH' ... (missing *** End Patch / stray smart quotes in timeout_ms)`
 **Cause + fix:** `Patch here-doc ended without the required terminator and used a curly quote in timeout_ms, making the JSON invalid. Always end with '*** End Patch' and avoid smart quotes.`
 **Correct command:** `apply_patch << 'PATCH'\n*** Begin Patch\n*** Add File: .sangoi/handoffs/2025-11-01-backend-modules-audit.md\n+<content>\n*** End Patch\nPATCH`
+**Wrong command:** `python3 tools/diagnostics/dry_run_pipeline.py`
+**Cause + fix:** `The environment lacks torch; importing runtime helpers pulls torch and fails. Use the static dry-run that avoids PyTorch imports.`
+**Correct command:** `python3 tools/diagnostics/dry_run_pipeline_static.py`

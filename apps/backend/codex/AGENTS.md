@@ -1,7 +1,7 @@
 # apps/backend/codex Overview
 Date: 2025-10-28
 Owner: Backend Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-11-01
 Status: Transitional
 
 ## Purpose
@@ -9,11 +9,11 @@ Status: Transitional
 
 ## Key Files
 - `initialization.py` — Entry points executed during CLI/TUI startup.
-- `loader.py` — Legacy loader helpers referenced by compatibility layers.
+- `loader.py` — Bundle-aware loader helpers for compatibility layers; instantiates engines via the registry.
 - `options.py` — Accessors bridging to the native options store during the transition.
 - `lora.py` — Shared LoRA selection state consumed by legacy surfaces.
 - `main.py` — Historical CLI entry helper retained for reference.
 
 ## Notes
-- New features should target the native services/options stack; keep this package stable until all legacy paths are retired.
+- New features should target the native services/options stack; keep this package stable until all legacy paths are retired. Loader helpers now surface `DiffusionModelBundle` objects and delegate to the engine registry.
 - Once the last compatibility consumers migrate, archive this package under `.sangoi/deprecated/` and update the documentation.

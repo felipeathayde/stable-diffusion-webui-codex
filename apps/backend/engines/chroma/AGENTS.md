@@ -1,7 +1,7 @@
 # apps/backend/engines/chroma Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-11-01
 Status: Active
 
 ## Purpose
@@ -9,4 +9,5 @@ Status: Active
 
 ## Notes
 - Align runtime and engine changes; move shared pieces into `runtime/chroma/` when appropriate.
-- Chroma reuses the Flux engine toolkit (`apps/backend/engines/flux/spec.py`); add new Chromas by extending those specs instead of duplicating wiring.
+- Chroma reuses the Flux engine toolkit (`apps/backend/engines/flux/spec.py`); extend specs and rely on `_build_components` to assemble runtime state during `load()`.
+- Engine capabilities now advertise txt2img/img2img support and enforce runtime guards before accessing Flux structures.

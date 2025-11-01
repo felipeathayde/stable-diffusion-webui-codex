@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-import os
-from typing import Optional
-
+import contextlib
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from apps.backend.runtime.models import api as model_api
-from apps.backend.runtime.models.loader import codex_loader, load_engine_from_diffusers
-from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
+from apps.backend.core.registry import create_engine
+from apps.backend.engines import register_default_engines
 from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as _apply_accel
-
-
-def _find_checkpoint_by_name(name: str):
-    for entry in model_api.list_checkpoints():
-        if entry.name == name or entry.title == name:
-            return entry
-    return None
+from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
+from apps.backend.runtime.models.loader import (
+    DiffusionModelBundle,
+    FAMILY_TO_ENGINE_KEY,
+    resolve_diffusion_bundle,
+)
 
 
 @dataclass
@@ -45,37 +41,53 @@ def _apply_runtime_options(engine, opts: EngineLoadOptions | None):
     return engine
 
 
+def _options_to_kwargs(opts: EngineLoadOptions | None) -> Dict[str, Any]:
+    if opts is None:
+        return {}
+    payload: Dict[str, Any] = {}
+    if opts.device is not None:
+        payload["device"] = str(opts.device)
+    if opts.dtype is not None:
+        payload["dtype"] = str(opts.dtype)
+    if opts.vae_path is not None:
+        payload["vae_path"] = str(opts.vae_path)
+    if opts.attention_backend is not None:
+        payload["attention_backend"] = str(opts.attention_backend)
+    if opts.accelerator is not None:
+        payload["accelerator"] = str(opts.accelerator)
+    return payload
+
+
+def _ensure_registry_ready() -> None:
+    register_default_engines(replace=False)
+
+
+def _instantiate_engine(bundle: DiffusionModelBundle):
+    engine_key = FAMILY_TO_ENGINE_KEY.get(bundle.family)
+    if engine_key is None:
+        raise NotImplementedError(f"Model family {bundle.family.value} is not registered with Codex engines.")
+    _ensure_registry_ready()
+    return create_engine(engine_key)
+
+
 def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
-    """Load an engine instance by checkpoint name or path.
+    """Load and initialize a Codex diffusion engine for direct use."""
 
-    - If a diffusers repo directory is detected (has model_index.json), load via native diffusers loader.
-    - If a file path to a state dict is given, use codex_loader.
-    - Otherwise, resolve by registry name and load accordingly.
-    """
-    path = name_or_path
-    if os.path.isdir(path):
-        mi = os.path.join(path, "model_index.json")
-        if os.path.isfile(mi):
-            return _apply_runtime_options(load_engine_from_diffusers(path), options)
-        raise ValueError(f"Not a diffusers repo (missing model_index.json): {path}")
-    if os.path.isfile(path):
-        return _apply_runtime_options(codex_loader(path), options)
+    bundle = resolve_diffusion_bundle(name_or_path)
+    engine = _instantiate_engine(bundle)
 
-    entry = _find_checkpoint_by_name(name_or_path)
-    if entry is None:
-        raise ValueError(f"Checkpoint not found: {name_or_path}")
-    # If options not provided, derive defaults from registry metadata when possible
-    if options is None:
-        try:
-            info = {item["name"]: item for item in model_api.list_checkpoints_as_dict(refresh=False)}
-            hint = info.get(entry.name)
-            if hint and isinstance(hint.get("default_dtype"), str):
-                options = EngineLoadOptions(dtype=str(hint["default_dtype"]))
-        except Exception:
-            options = None
-    if entry.metadata.get("format") == "diffusers" or os.path.isfile(os.path.join(entry.path, "model_index.json")):
-        return _apply_runtime_options(load_engine_from_diffusers(entry.path), options)
-    return _apply_runtime_options(codex_loader(entry.filename), options)
+    load_kwargs = _options_to_kwargs(options)
+    load_kwargs["_bundle"] = bundle
+
+    try:
+        engine.load(name_or_path, **load_kwargs)
+    except Exception:
+        # Ensure partially-initialised engines don't linger loaded.
+        with contextlib.suppress(Exception):
+            engine.unload()
+        raise
+
+    return _apply_runtime_options(engine, options)
 
 
 __all__ = ["load_engine", "EngineLoadOptions"]

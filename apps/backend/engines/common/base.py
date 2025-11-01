@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import safetensors.torch as sf
 import torch
 
+from apps.backend.core.engine_interface import BaseInferenceEngine
+from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 from apps.backend.runtime.utils import get_state_dict_after_quant
 
 
@@ -140,9 +143,10 @@ class _ComponentTracker:
         return self._after_lora
 
 
-class CodexDiffusionEngine:
+class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     """Common foundation for Codex diffusion engines."""
 
+    engine_id = "codex.diffusion"
     matched_guesses: tuple[str, ...] = ()
 
     _MODEL_FAMILY_FLAGS: dict[str, str] = {
@@ -152,20 +156,20 @@ class CodexDiffusionEngine:
         "sdxl": "is_sdxl",
     }
 
-    def __init__(self, estimated_config, codex_components) -> None:  # noqa: D401
+    def __init__(self) -> None:  # noqa: D401
+        super().__init__()
         self._logger = logging.getLogger(self.__class__.__name__)
-        self.model_config = estimated_config
-        try:
-            self.is_inpaint = bool(estimated_config.inpaint_model())
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError("Failed to determine inpaint capability.") from exc
-
+        self.model_config: Any | None = None
+        self.is_inpaint: bool = False
         self.current_lora_hash = "[]"
         self._component_tracker = _ComponentTracker(logger=self._logger)
         self._model_families: set[str] = set()
         self._tiling_enabled = False
         self._use_distilled_cfg_scale = False
-        self._component_source = codex_components
+        self._component_source: Mapping[str, Any] | None = None
+        self._current_bundle: DiffusionModelBundle | None = None
+        self._current_model_ref: str | None = None
+        self._load_options: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ Components
     def bind_components(self, components: CodexObjects, *, label: str | None = None) -> None:
@@ -200,6 +204,92 @@ class CodexDiffusionEngine:
     def snapshot_after_lora(self) -> None:
         """Capture the current components as the LoRA-applied snapshot."""
         self._component_tracker.snapshot_after_lora()
+
+    # ------------------------------------------------------------------ Lifecycle
+    def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
+        raw_options: dict[str, Any] = dict(options)
+        bundle_obj = raw_options.pop("_bundle", None)
+        if bundle_obj is None:
+            bundle = resolve_diffusion_bundle(model_ref)
+        elif isinstance(bundle_obj, DiffusionModelBundle):
+            bundle = bundle_obj
+        else:
+            raise TypeError("_bundle must be a DiffusionModelBundle when provided.")
+
+        self._logger.info("[engine] Loading %s (ref=%s, source=%s)", self.engine_id, model_ref, bundle.source)
+        self._reset_state()
+
+        self._current_bundle = bundle
+        self._current_model_ref = model_ref
+        self._component_source = bundle.components
+        self._load_options = raw_options
+
+        self.model_config = bundle.estimated_config
+        try:
+            self.is_inpaint = bool(bundle.estimated_config.inpaint_model())
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("Failed to determine inpaint capability.") from exc
+
+        components = self._build_components(bundle, options=self._load_options)
+        self.bind_components(components, label=self.engine_id)
+        self.snapshot_after_lora()
+
+        self.mark_loaded()
+        self._logger.info(
+            "[engine] Loaded %s (families=%s)",
+            self.engine_id,
+            ",".join(sorted(self._model_families)) or "unknown",
+        )
+
+    def unload(self) -> None:  # type: ignore[override]
+        if not self._is_loaded:
+            return
+        self._logger.info("[engine] Unloading %s", self.engine_id)
+        try:
+            self._on_unload()
+        finally:
+            self._reset_state()
+            self.model_config = None
+            self.is_inpaint = False
+            self._component_source = None
+            self._current_bundle = None
+            self._current_model_ref = None
+            self._load_options = {}
+            self.mark_unloaded()
+
+    def _reset_state(self) -> None:
+        self._component_tracker = _ComponentTracker(logger=self._logger)
+        self._model_families.clear()
+        self._tiling_enabled = False
+        self._use_distilled_cfg_scale = False
+        self.current_lora_hash = "[]"
+
+    @abstractmethod
+    def _build_components(
+        self,
+        bundle: DiffusionModelBundle,
+        *,
+        options: Mapping[str, Any],
+    ) -> CodexObjects:
+        """Construct CodexObjects for the provided bundle."""
+
+    def _on_unload(self) -> None:
+        """Subclass hook to release additional state on unload."""
+        return None
+
+    @property
+    def model_ref(self) -> Optional[str]:
+        return self._current_model_ref
+
+    def status(self) -> Mapping[str, Any]:  # type: ignore[override]
+        data = dict(super().status())
+        if self._current_model_ref is not None:
+            data["model_ref"] = self._current_model_ref
+        if self._current_bundle is not None:
+            data["bundle_source"] = self._current_bundle.source
+        if self._model_families:
+            data["families"] = tuple(sorted(self._model_families))
+        return data
 
     # ------------------------------------------------------------------ Model families
     def register_model_family(self, family: str) -> None:

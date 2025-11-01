@@ -3,13 +3,15 @@ from __future__ import annotations
 import logging
 import os
 from types import SimpleNamespace
-from typing import List
+from typing import Any, List, Mapping, Optional
 
 import torch
 
+from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.sd.spec import SD35_SPEC, assemble_engine_runtime
+from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime, assemble_engine_runtime
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 
 logger = logging.getLogger("backend.engines.sd.sd35")
@@ -23,38 +25,63 @@ def _opts():
 class StableDiffusion3(CodexDiffusionEngine):
     """Codex-native Stable Diffusion 3 engine."""
 
-    def __init__(self, estimated_config, codex_components):
-        super().__init__(estimated_config, codex_components)
+    engine_id = "sd35"
 
-        runtime = assemble_engine_runtime(SD35_SPEC, estimated_config, codex_components)
-        self._runtime = runtime
+    def __init__(self) -> None:
+        super().__init__()
+        self._runtime: Optional[SDEngineRuntime] = None
 
-        self.bind_components(
-            CodexObjects(
-                unet=runtime.unet,
-                clip=runtime.clip,
-                vae=runtime.vae,
-                clipvision=None,
-            ),
-            label="sd35",
+    def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
+        return EngineCapabilities(
+            engine_id=self.engine_id,
+            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            model_types=("sd35", "sd3"),
+            devices=("cpu", "cuda"),
+            precision=("fp16", "bf16", "fp32"),
         )
+
+    def _build_components(
+        self,
+        bundle: DiffusionModelBundle,
+        *,
+        options: Mapping[str, Any],
+    ) -> CodexObjects:
+        runtime = assemble_engine_runtime(SD35_SPEC, bundle.estimated_config, bundle.components)
+        self._runtime = runtime
         self.register_model_family("sd3")
 
-        logger.debug("StableDiffusion3 initialised with classic branches=%s", runtime.classic_order)
+        logger.debug("StableDiffusion3 runtime prepared with classic branches=%s", runtime.classic_order)
+
+        return CodexObjects(
+            unet=runtime.unet,
+            clip=runtime.clip,
+            vae=runtime.vae,
+            clipvision=None,
+        )
+
+    def _on_unload(self) -> None:
+        self._runtime = None
+
+    def _require_runtime(self) -> SDEngineRuntime:
+        if self._runtime is None:
+            raise RuntimeError("StableDiffusion3 runtime is not initialised; call load() first.")
+        return self._runtime
 
     def set_clip_skip(self, clip_skip: int):
-        self._runtime.set_clip_skip(clip_skip)
+        runtime = self._require_runtime()
+        runtime.set_clip_skip(clip_skip)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
+        runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
-        cond_l, pooled_l = self._runtime.classic_engine("clip_l")(prompt)
-        cond_g, pooled_g = self._runtime.classic_engine("clip_g")(prompt)
+        cond_l, pooled_l = runtime.classic_engine("clip_l")(prompt)
+        cond_g, pooled_g = runtime.classic_engine("clip_g")(prompt)
 
         opts = _opts()
         if opts.sd3_enable_t5:
-            cond_t5 = self._runtime.t5_engine("t5xxl")(prompt)
+            cond_t5 = runtime.t5_engine("t5xxl")(prompt)
         else:
             cond_t5 = torch.zeros((len(prompt), 256, 4096), device=cond_l.device, dtype=cond_l.dtype)
 
@@ -82,7 +109,8 @@ class StableDiffusion3(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
-        engine = self._runtime.t5_engine("t5xxl")
+        runtime = self._require_runtime()
+        engine = runtime.t5_engine("t5xxl")
         token_count = len(engine.tokenize([prompt])[0])
         return token_count, max(255, token_count)
 

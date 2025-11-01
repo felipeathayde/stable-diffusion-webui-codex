@@ -1,13 +1,15 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-10-31
+Last Review: 2025-11-01
 Status: Active
 
 ## Purpose
 - Shared engine utilities (base classes, mixins, helpers) reused across SD, Flux, Chroma, WAN22 engines.
 
 ## Notes
-- `CodexDiffusionEngine` now owns a component tracker (`bind_components`) that keeps active/original/LoRA snapshots; use the setter instead of manually cloning.
-- Model family flags (`is_sd1`, `is_sd2`, `is_sd3`, `is_sdxl`) are exposed as read-only properties; call `register_model_family(...)` during engine initialisation.
+- `CodexDiffusionEngine` now subclasses `BaseInferenceEngine`; implement `_build_components(bundle, *, options)` to assemble runtime objects during `load()`.
+- Engines receive pre-materialised `DiffusionModelBundle` instances; avoid invoking legacy loaders inside subclasses.
+- Model family flags (`is_sd1`, `is_sd2`, `is_sd3`, `is_sdxl`) remain read-only; call `register_model_family(...)` inside `_build_components` after deriving the runtime.
+- Lifecycle hooks: `_on_unload()` lets subclasses clear caches, while `status()` now reports `model_ref`, bundle source, and registered families.
 - Tiling/CFG scale toggles remain available but emit structured logs when changed.

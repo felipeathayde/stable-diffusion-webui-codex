@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from typing import Iterable, List, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Tuple
 
 import torch
 
+from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, assemble_engine_runtime
+from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime, assemble_engine_runtime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.common.nn.unet import Timestep
+from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.sd.sdxl")
 
@@ -34,41 +36,65 @@ def _prompt_meta(prompt: Iterable[str]) -> Tuple[int, int, bool]:
 class StableDiffusionXL(CodexDiffusionEngine):
     """Codex-native SDXL base engine."""
 
-    def __init__(self, estimated_config, codex_components):
-        super().__init__(estimated_config, codex_components)
+    engine_id = "sdxl"
 
-        runtime = assemble_engine_runtime(SDXL_SPEC, estimated_config, codex_components)
-        self._runtime = runtime
-
+    def __init__(self) -> None:
+        super().__init__()
+        self._runtime: Optional[SDEngineRuntime] = None
         self.embedder = Timestep(256)
 
-        self.bind_components(
-            CodexObjects(
-                unet=runtime.unet,
-                clip=runtime.clip,
-                vae=runtime.vae,
-                clipvision=None,
-            ),
-            label="sdxl-base",
+    def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
+        return EngineCapabilities(
+            engine_id=self.engine_id,
+            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            model_types=("sdxl",),
+            devices=("cpu", "cuda"),
+            precision=("fp16", "bf16", "fp32"),
         )
+
+    def _build_components(
+        self,
+        bundle: DiffusionModelBundle,
+        *,
+        options: Mapping[str, Any],
+    ) -> CodexObjects:
+        runtime = assemble_engine_runtime(SDXL_SPEC, bundle.estimated_config, bundle.components)
+        self._runtime = runtime
         self.register_model_family("sdxl")
 
         logger.debug(
-            "StableDiffusionXL initialised with branches=%s clip_skip=%d",
+            "StableDiffusionXL runtime prepared with branches=%s clip_skip=%d",
             runtime.classic_order,
             runtime.classic_engine("clip_l").clip_skip,
         )
 
+        return CodexObjects(
+            unet=runtime.unet,
+            clip=runtime.clip,
+            vae=runtime.vae,
+            clipvision=None,
+        )
+
+    def _on_unload(self) -> None:
+        self._runtime = None
+
+    def _require_runtime(self) -> SDEngineRuntime:
+        if self._runtime is None:
+            raise RuntimeError("StableDiffusionXL runtime is not initialised; call load() first.")
+        return self._runtime
+
     def set_clip_skip(self, clip_skip: int) -> None:
-        self._runtime.set_clip_skip(clip_skip)
+        runtime = self._require_runtime()
+        runtime.set_clip_skip(clip_skip)
         logger.debug("Clip skip set to %d for SDXL.", clip_skip)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
+        runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
-        cond_l, pooled_l = self._runtime.classic_engine("clip_l")(prompt)
-        cond_g, pooled_g = self._runtime.classic_engine("clip_g")(prompt)
+        cond_l, pooled_l = runtime.classic_engine("clip_l")(prompt)
+        cond_g, pooled_g = runtime.classic_engine("clip_g")(prompt)
 
         width, height, is_negative = _prompt_meta(prompt)
         opts = _opts()
@@ -100,7 +126,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
-        engine = self._runtime.classic_engine("clip_l")
+        runtime = self._require_runtime()
+        engine = runtime.classic_engine("clip_l")
         _, token_count = engine.process_texts([prompt])
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target
@@ -122,36 +149,63 @@ class StableDiffusionXL(CodexDiffusionEngine):
 class StableDiffusionXLRefiner(CodexDiffusionEngine):
     """Codex-native SDXL refiner engine."""
 
-    def __init__(self, estimated_config, codex_components):
-        super().__init__(estimated_config, codex_components)
+    engine_id = "sdxl_refiner"
 
-        runtime = assemble_engine_runtime(SDXL_REFINER_SPEC, estimated_config, codex_components)
-        self._runtime = runtime
-
+    def __init__(self) -> None:
+        super().__init__()
+        self._runtime: Optional[SDEngineRuntime] = None
         self.embedder = Timestep(256)
 
-        self.bind_components(
-            CodexObjects(
-                unet=runtime.unet,
-                clip=runtime.clip,
-                vae=runtime.vae,
-                clipvision=None,
-            ),
-            label="sdxl-refiner",
+    def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
+        return EngineCapabilities(
+            engine_id=self.engine_id,
+            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            model_types=("sdxl_refiner",),
+            devices=("cpu", "cuda"),
+            precision=("fp16", "bf16", "fp32"),
         )
+
+    def _build_components(
+        self,
+        bundle: DiffusionModelBundle,
+        *,
+        options: Mapping[str, Any],
+    ) -> CodexObjects:
+        runtime = assemble_engine_runtime(SDXL_REFINER_SPEC, bundle.estimated_config, bundle.components)
+        self._runtime = runtime
         self.register_model_family("sdxl")
 
-        logger.debug("StableDiffusionXLRefiner initialised with clip_skip=%d", runtime.classic_engine("clip_g").clip_skip)
+        logger.debug(
+            "StableDiffusionXLRefiner runtime prepared with clip_skip=%d",
+            runtime.classic_engine("clip_g").clip_skip,
+        )
+
+        return CodexObjects(
+            unet=runtime.unet,
+            clip=runtime.clip,
+            vae=runtime.vae,
+            clipvision=None,
+        )
+
+    def _on_unload(self) -> None:
+        self._runtime = None
+
+    def _require_runtime(self) -> SDEngineRuntime:
+        if self._runtime is None:
+            raise RuntimeError("StableDiffusionXLRefiner runtime is not initialised; call load() first.")
+        return self._runtime
 
     def set_clip_skip(self, clip_skip: int) -> None:
-        self._runtime.set_clip_skip(clip_skip)
+        runtime = self._require_runtime()
+        runtime.set_clip_skip(clip_skip)
         logger.debug("Clip skip set to %d for SDXL refiner.", clip_skip)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
+        runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
 
-        cond_g, pooled = self._runtime.classic_engine("clip_g")(prompt)
+        cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
 
         width, height, is_negative = _prompt_meta(prompt)
         opts = _opts()
@@ -180,7 +234,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
-        engine = self._runtime.classic_engine("clip_g")
+        runtime = self._require_runtime()
+        engine = runtime.classic_engine("clip_g")
         _, token_count = engine.process_texts([prompt])
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target

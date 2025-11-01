@@ -112,6 +112,9 @@ PY`
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `The bulk add traverses .legacy submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
 **Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`
+**Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** `The search still walks cached/ignored directories, so git add aborts on gitignored paths; enumerate the known changed sources explicitly instead of mass-adding.`
+**Correct command:** `git add apps/backend/runtime/models/loader.py apps/backend/codex/loader.py apps/backend/engines/common/base.py apps/backend/engines/{AGENTS.md,common/AGENTS.md,sd/AGENTS.md,flux/AGENTS.md,chroma/AGENTS.md} apps/backend/engines/sd/{sd15.py,sd20.py,sd35.py,sdxl.py} apps/backend/engines/flux/flux.py apps/backend/engines/chroma/chroma.py apps/backend/runtime/models/AGENTS.md apps/backend/codex/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-11-01-diffusion-engine-lifecycle.md .sangoi/handoffs/2025-11-01-diffusion-engine-lifecycle.md`
 **Wrong command:** `python - <<'PY'
 from apps.backend.patchers.controlnet import ControlNet, ControlLora, apply_controlnet_advanced
 from apps.backend.runtime.controlnet import ControlRequest

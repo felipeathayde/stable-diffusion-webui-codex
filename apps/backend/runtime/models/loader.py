@@ -2,9 +2,9 @@ import importlib
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 import torch
 from diffusers import DiffusionPipeline
@@ -37,27 +37,10 @@ from apps.backend.runtime.utils import (
 )
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
-
-from apps.backend.engines.chroma.chroma import Chroma
-from apps.backend.engines.flux.flux import Flux
-from apps.backend.engines.sd.sd15 import StableDiffusion
-from apps.backend.engines.sd.sd20 import StableDiffusion2
-from apps.backend.engines.sd.sdxl import StableDiffusionXL, StableDiffusionXLRefiner
-from apps.backend.engines.sd.sd35 import StableDiffusion3
+from apps.backend.runtime.models import api as model_api
 
 _LOG = logging.getLogger(__name__)
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
-
-ENGINE_BY_FAMILY: Dict[ModelFamily, type] = {
-    ModelFamily.SD15: StableDiffusion,
-    ModelFamily.SD20: StableDiffusion2,
-    ModelFamily.SDXL: StableDiffusionXL,
-    ModelFamily.SDXL_REFINER: StableDiffusionXLRefiner,
-    ModelFamily.SD3: StableDiffusion3,
-    ModelFamily.SD35: StableDiffusion3,
-    ModelFamily.FLUX: Flux,
-    ModelFamily.CHROMA: Chroma,
-}
 
 SUPPORTED_INFERENCE_DTYPES: Dict[ModelFamily, tuple[torch.dtype, ...]] = {
     ModelFamily.FLUX: (torch.bfloat16, torch.float16, torch.float32),
@@ -84,6 +67,42 @@ PREDICTION_TYPE_MAP = {
 class ParsedCheckpoint:
     signature: ModelSignature
     config: CodexEstimatedConfig
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionModelBundle:
+    """Fully materialised diffusion checkpoint ready for engine binding."""
+
+    model_ref: str
+    family: ModelFamily
+    estimated_config: Any
+    components: Dict[str, Any]
+    signature: Optional[ModelSignature] = None
+    source: str = "state_dict"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
+    "sdxl": ModelFamily.SDXL,
+    "sdxl_refiner": ModelFamily.SDXL_REFINER,
+    "flux": ModelFamily.FLUX,
+    "sd35": ModelFamily.SD35,
+    "sd3": ModelFamily.SD3,
+    "chroma": ModelFamily.CHROMA,
+    "sd20": ModelFamily.SD20,
+    "sd15": ModelFamily.SD15,
+}
+
+FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
+    ModelFamily.SDXL_REFINER: "sdxl_refiner",
+    ModelFamily.SDXL: "sdxl",
+    ModelFamily.FLUX: "flux",
+    ModelFamily.SD35: "sd35",
+    ModelFamily.SD3: "sd35",
+    ModelFamily.CHROMA: "chroma",
+    ModelFamily.SD20: "sd20",
+    ModelFamily.SD15: "sd15",
+}
 
 
 def _supported_inference_dtypes(family: ModelFamily) -> tuple[torch.dtype, ...]:
@@ -122,6 +141,27 @@ def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> 
             config = config.replace_components(replacements)
 
     return ParsedCheckpoint(signature=signature, config=config)
+
+
+def _build_diffusion_bundle(
+    *,
+    model_ref: str,
+    family: ModelFamily,
+    estimated_config: Any,
+    components: Dict[str, Any],
+    signature: Optional[ModelSignature] = None,
+    source: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> DiffusionModelBundle:
+    return DiffusionModelBundle(
+        model_ref=model_ref,
+        family=family,
+        estimated_config=estimated_config,
+        components=dict(components),
+        signature=signature,
+        source=source,
+        metadata=dict(metadata or {}),
+    )
 
 
 def _load_component_config(component_path: str) -> Dict[str, Any]:
@@ -423,11 +463,19 @@ def codex_loader(sd_path: str, additional_state_dicts=None):
 
     _apply_prediction_type(codex_components, parsed, yaml_prediction)
 
-    engine_cls = ENGINE_BY_FAMILY.get(parsed.signature.family)
-    if engine_cls is None:
-        raise NotImplementedError(f"Model family {parsed.signature.family.value} is not yet supported by the Codex loader")
+    metadata = {"repo_id": repo_name}
+    if yaml_prediction:
+        metadata["prediction_type"] = yaml_prediction
 
-    return engine_cls(estimated_config=config, codex_components=codex_components)
+    return _build_diffusion_bundle(
+        model_ref=sd_path,
+        family=parsed.signature.family,
+        estimated_config=config,
+        components=codex_components,
+        signature=parsed.signature,
+        source="state_dict",
+        metadata=metadata,
+    )
 
 
 # ------------------------------ Native diffusers repo loader (no state dict)
@@ -459,7 +507,7 @@ def _detect_engine_from_config(config: dict) -> str:
     raise ValueError("Unable to determine engine from diffusers config")
 
 
-def load_engine_from_diffusers(repo_dir: str):
+def load_engine_from_diffusers(repo_dir: str) -> DiffusionModelBundle:
     config: dict = DiffusionPipeline.load_config(repo_dir)
     comps = {}
     for name, (lib_name, cls_name) in (
@@ -469,6 +517,9 @@ def load_engine_from_diffusers(repo_dir: str):
         comps[name] = cls.from_pretrained(os.path.join(repo_dir, name), local_files_only=True)
 
     engine_key = _detect_engine_from_config(config)
+    family = ENGINE_KEY_TO_FAMILY.get(engine_key)
+    if family is None:
+        raise ValueError(f"Unsupported engine key from diffusers config: {engine_key}")
     core_config = {}
     try:
         for k in ("unet", "transformer"):
@@ -484,16 +535,43 @@ def load_engine_from_diffusers(repo_dir: str):
 
     est = _SimpleEstimated(huggingface_repo=os.path.basename(repo_dir), core_config=core_config)
 
-    if engine_key == "sdxl":
-        return StableDiffusionXL(estimated_config=est, codex_components=comps)
-    if engine_key == "flux":
-        return Flux(estimated_config=est, codex_components=comps)
-    if engine_key == "sd35":
-        return StableDiffusion3(estimated_config=est, codex_components=comps)
-    if engine_key == "chroma":
-        return Chroma(estimated_config=est, codex_components=comps)
-    if engine_key == "sd20":
-        return StableDiffusion2(estimated_config=est, codex_components=comps)
-    if engine_key == "sd15":
-        return StableDiffusion(estimated_config=est, codex_components=comps)
-    raise ValueError(f"Unsupported engine key from diffusers config: {engine_key}")
+    return _build_diffusion_bundle(
+        model_ref=repo_dir,
+        family=family,
+        estimated_config=est,
+        components=comps,
+        source="diffusers",
+        metadata={"engine_key": engine_key, "core_config": core_config},
+    )
+
+
+def resolve_diffusion_bundle(
+    model_ref: str,
+    *,
+    additional_state_dicts: Optional[list[str]] = None,
+) -> DiffusionModelBundle:
+    """Resolve a diffusion model reference into a fully loaded bundle."""
+
+    if os.path.isdir(model_ref):
+        index = os.path.join(model_ref, "model_index.json")
+        if os.path.isfile(index):
+            return load_engine_from_diffusers(model_ref)
+        raise ValueError(f"Not a diffusers repository (missing model_index.json): {model_ref}")
+
+    if os.path.isfile(model_ref):
+        return codex_loader(model_ref, additional_state_dicts=additional_state_dicts)
+
+    record = model_api.find_checkpoint(model_ref)
+    if record is None:
+        raise ValueError(f"Checkpoint not found: {model_ref}")
+
+    # Determine format via metadata or filesystem inspection
+    metadata = getattr(record, "metadata", {}) or {}
+    if isinstance(metadata, dict) and metadata.get("format") == "diffusers":
+        return load_engine_from_diffusers(record.path)
+
+    repo_index = os.path.join(record.path, "model_index.json")
+    if os.path.isfile(repo_index):
+        return load_engine_from_diffusers(record.path)
+
+    return codex_loader(record.filename, additional_state_dicts=additional_state_dicts)

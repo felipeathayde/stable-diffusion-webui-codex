@@ -139,3 +139,17 @@ PY`
 **Wrong command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet.py`
 **Cause + fix:** `UNet runtime is organized as a package; the model definition lives under apps/backend/runtime/common/nn/unet/model.py.`
 **Correct command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet/model.py`
+
+**Wrong command:** `rg -n "^apps/" /tmp/recent_files.txt | cut -d: -f1 | sort -u | xargs -I{} sed -n '1,99999p' {}`
+**Cause + fix:** `The -n flag prints line numbers; piping those into sed as file paths produced 'No such file or directory'. We only needed to filter lines that start with apps/.`
+**Correct command:** `rg "^apps/" /tmp/recent_files.txt | sort -u | head -n 100`
+
+**Wrong command:** `rg -n "^\s*(from|import)\s+(?!apps\b|__future__\b|typing\b|dataclasses\b|enum\b|logging\b|pathlib\b|re\b|os\b|sys\b|json\b|time\b|math\b|torch\b|diffusers\b|safetensors\b|transformers\b|tqdm\b|numpy\b|PIL\b|cv2\b|functools\b|contextlib\b|itertools\b|collections\b|importlib\b|types\b|typing_extensions\b|subprocess\b|tempfile\b|shutil\b|concurrent\b|asyncio\b|urllib\b|requests\b|pydantic\b|rich\b|jinja2\b|yaml\b|onnx\b|tensorrt\b|xformers\b|accelerate\b|peft\b|jsonschema\b|scipy\b|skimage\b|einops\b)" apps`
+**Cause + fix:** `ripgrep without PCRE2 does not support look-around; the negative look-ahead triggered a regex parse error. Use --pcre2 or split into a pipeline without look-around.`
+**Correct command:** `rg --pcre2 -n "^\s*(from|import)\s+(?!apps\b)" apps`
+**Wrong command:** `rg -n "from\\s+apps\\.backend\\.engines\\.(sd|flux|chroma)\\.(?!__init__)" apps/backend/engines`
+**Cause + fix:** `ripgrep does not support look-around by default; the negative look-ahead broke the regex. Use --pcre2 or filter by pipe.`
+**Correct command:** `rg --pcre2 -n "from\\s+apps\\.backend\\.engines\\.(sd|flux|chroma)\\.(?!__init__)" apps/backend/engines`
+**Wrong command:** `apply_patch << 'PATCH' ... (missing *** End Patch / stray smart quotes in timeout_ms)`
+**Cause + fix:** `Patch here-doc ended without the required terminator and used a curly quote in timeout_ms, making the JSON invalid. Always end with '*** End Patch' and avoid smart quotes.`
+**Correct command:** `apply_patch << 'PATCH'\n*** Begin Patch\n*** Add File: .sangoi/handoffs/2025-11-01-backend-modules-audit.md\n+<content>\n*** End Patch\nPATCH`

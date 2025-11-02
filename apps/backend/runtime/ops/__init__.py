@@ -1,7 +1,33 @@
-"""Operational helpers (bnb, gguf, swap) for backend runtime."""
+"""Operational helpers (bnb, gguf, swap) for backend runtime (lazy exports).
 
-from .operations import *  # noqa: F401,F403
-from .operations_bnb import *  # noqa: F401,F403
-from .operations_gguf import *  # noqa: F401,F403
+Do not import heavy submodules at package import time; expose attributes
+on-demand to avoid circular imports (e.g., when `utils` imports `ops.operations_gguf`).
+"""
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+_SUBMODULES = (
+    "apps.backend.runtime.ops.operations",
+    "apps.backend.runtime.ops.operations_bnb",
+    "apps.backend.runtime.ops.operations_gguf",
+)
+
+_CACHE = {}
+
+
+def __getattr__(name: str):  # pragma: no cover - import-time indirection
+    if name in _CACHE:
+        return _CACHE[name]
+    import importlib
+    for modpath in _SUBMODULES:
+        try:
+            mod = importlib.import_module(modpath)
+            if hasattr(mod, name):
+                obj = getattr(mod, name)
+                _CACHE[name] = obj
+                return obj
+        except Exception:
+            # Ignore import errors to allow other modules to satisfy the symbol
+            continue
+    raise AttributeError(name)
+
+
+__all__ = []

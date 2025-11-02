@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 import torch
-
-from apps.backend.patchers.lora import merge_lora_to_weight
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management, stream
 from .operations_gguf import dequantize_tensor
@@ -100,6 +98,8 @@ def get_weight_and_bias(
         if scale_weight is not None:
             weight = weight * scale_weight.to(device=weight.device, dtype=weight.dtype)
         if weight_patches is not None:
+            # Local import to avoid circular imports during package init
+            from apps.backend.patchers.lora import merge_lora_to_weight
             weight = merge_lora_to_weight(
                 patches=weight_patches,
                 weight=weight,
@@ -117,6 +117,7 @@ def get_weight_and_bias(
         if bias_args is not None:
             bias = bias.to(**bias_args)
         if bias_patches is not None:
+            from apps.backend.patchers.lora import merge_lora_to_weight
             bias = merge_lora_to_weight(
                 patches=bias_patches,
                 weight=bias,

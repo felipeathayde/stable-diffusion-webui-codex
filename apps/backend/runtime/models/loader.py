@@ -115,7 +115,6 @@ def _prediction_type_value(prediction: PredictionKind) -> str:
 
 
 def _load_state_dict(path: str) -> Mapping[str, Any]:
-    print(f"[loader] load_torch_file_start path='{path}'", flush=True)
     _trace.event("load_torch_file_start", path=str(path))
     # Resolve the initial load device explicitly (no 'auto' fallback)
     initial_device = memory_management.core_initial_load_device(parameters=0, dtype=None)
@@ -124,25 +123,18 @@ def _load_state_dict(path: str) -> Mapping[str, Any]:
         tensor_count = len(sd.keys())  # type: ignore[attr-defined]
     except Exception:
         tensor_count = -1
-    print(
-        f"[loader] load_torch_file_done path='{path}' type='{type(sd).__name__}' tensors={tensor_count} map_device='{getattr(initial_device, 'type', 'unknown')}'",
-        flush=True,
-    )
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
 
 
 def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> ParsedCheckpoint:
-    print(f"[loader] parse_checkpoint start path='{primary_path}'", flush=True)
     base_state = _load_state_dict(primary_path)
     signature = registry_detect(base_state)
-    print(f"[loader] registry_detect family='{getattr(signature, 'family', None)}' kind='{getattr(signature, 'kind', None)}'", flush=True)
     config = parse_state_dict(base_state, signature)
     try:
         comp_names = list(getattr(config, 'components', {}).keys())
     except Exception:
         comp_names = []
-    print(f"[loader] parse_state_dict ok components={comp_names}", flush=True)
 
     if additional_paths:
         replacements: Dict[str, Mapping[str, Any]] = {}
@@ -221,11 +213,9 @@ def _load_huggingface_component(
         config_json = AutoencoderKLWan.load_config(component_path)
         vae_device = memory_management.vae_device()
         vae_dtype = memory_management.vae_dtype(device=vae_device)
-        print(f"[loader] vae_construct device='{vae_device}' dtype='{vae_dtype}'", flush=True)
         _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype))
         with using_codex_operations(device=vae_device, dtype=vae_dtype, manual_cast_enabled=True):
             model = AutoencoderKLWan.from_config(config_json)
-        print(f"[loader] vae_load_state_dict tensors={len(state_dict)}", flush=True)
         _trace.event("load_state_dict", module="vae", tensors=len(state_dict))
         try:
             from .state_dict import safe_load_state_dict as _safe_load
@@ -241,7 +231,6 @@ def _load_huggingface_component(
         te_device = memory_management.text_encoder_device()
         te_dtype = memory_management.text_encoder_dtype(device=te_device)
         to_args = dict(device=te_device, dtype=te_dtype)
-        print(f"[loader] clip_construct device='{te_device}' dtype='{te_dtype}'", flush=True)
         with modeling_utils.no_init_weights():
             with using_codex_operations(**to_args, manual_cast_enabled=True):
                 model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=True).to(**to_args)
@@ -454,7 +443,6 @@ def _apply_prediction_type(codex_components: Dict[str, Any], parsed: ParsedCheck
 
 @torch.inference_mode()
 def codex_loader(sd_path: str, additional_state_dicts=None):
-    print(f"[loader] codex_loader enter sd_path='{sd_path}'", flush=True)
     try:
         parsed = _parse_checkpoint(sd_path, additional_state_dicts or [])
     except ModelRegistryError as exc:
@@ -472,9 +460,7 @@ def codex_loader(sd_path: str, additional_state_dicts=None):
     include = ("config", "tokenizer", "scheduler")  # strictly minimal; no weights
     ensure_repo_minimal_files(repo_name, local_repo_path, offline=offline, include=include)
 
-    print(f"[loader] DiffusionPipeline.load_config path='{local_repo_path}'", flush=True)
     pipeline_config = DiffusionPipeline.load_config(local_repo_path)
-    print(f"[loader] pipeline_config keys={list(pipeline_config.keys())}", flush=True)
     codex_components: Dict[str, Any] = {}
 
     for component_name, component_info in pipeline_config.items():
@@ -482,7 +468,6 @@ def codex_loader(sd_path: str, additional_state_dicts=None):
             continue
         lib_name, cls_name = component_info
         component_sd = component_states.get(component_name)
-        print(f"[loader] load component name='{component_name}' cls='{lib_name}.{cls_name}'", flush=True)
         component_obj = _load_huggingface_component(
             parsed,
             component_name,
@@ -494,7 +479,6 @@ def codex_loader(sd_path: str, additional_state_dicts=None):
         if component_sd is not None:
             component_states.pop(component_name, None)
         if component_obj is not None:
-            print(f"[loader] component ok name='{component_name}'", flush=True)
             codex_components[component_name] = component_obj
 
     yaml_prediction = None
@@ -610,16 +594,13 @@ def resolve_diffusion_bundle(
     additional_state_dicts: Optional[list[str]] = None,
 ) -> DiffusionModelBundle:
     """Resolve a diffusion model reference into a fully loaded bundle."""
-    print(f"[loader] resolve_diffusion_bundle model_ref='{model_ref}'", flush=True)
     if os.path.isdir(model_ref):
         index = os.path.join(model_ref, "model_index.json")
         if os.path.isfile(index):
-            print(f"[loader] detected diffusers repo at '{model_ref}'", flush=True)
             return load_engine_from_diffusers(model_ref)
         raise ValueError(f"Not a diffusers repository (missing model_index.json): {model_ref}")
 
     if os.path.isfile(model_ref):
-        print(f"[loader] detected state_dict file at '{model_ref}'", flush=True)
         return codex_loader(model_ref, additional_state_dicts=additional_state_dicts)
 
     record = model_api.find_checkpoint(model_ref)
@@ -629,12 +610,9 @@ def resolve_diffusion_bundle(
     # Determine format via metadata or filesystem inspection
     metadata = getattr(record, "metadata", {}) or {}
     if isinstance(metadata, dict) and metadata.get("format") == "diffusers":
-        print(f"[loader] registry metadata indicates diffusers for '{record.path}'", flush=True)
         return load_engine_from_diffusers(record.path)
 
     repo_index = os.path.join(record.path, "model_index.json")
     if os.path.isfile(repo_index):
-        print(f"[loader] found model_index.json under '{record.path}'", flush=True)
         return load_engine_from_diffusers(record.path)
-    print(f"[loader] falling back to state_dict filename='{record.filename}'", flush=True)
     return codex_loader(record.filename, additional_state_dicts=additional_state_dicts)

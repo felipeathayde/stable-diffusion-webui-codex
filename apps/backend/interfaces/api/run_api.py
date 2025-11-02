@@ -1393,7 +1393,14 @@ def build_app() -> FastAPI:
         return encoded
 
     def _require_explicit_device(payload: Dict[str, Any]) -> str:
-        dev = str(payload.get('codex_device') or "").strip().lower()
+        # Accept explicit aliases from payload only (no options fallback)
+        raw = (
+            payload.get('codex_device')
+            or payload.get('device')
+            or payload.get('codex_diffusion_device')
+            or ""
+        )
+        dev = str(raw).strip().lower()
         allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
         if dev not in allowed:
             raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")

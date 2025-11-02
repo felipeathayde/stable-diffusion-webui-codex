@@ -37,7 +37,6 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
                     device = getattr(getattr(t, 'device', None), 'type', None)
                 except Exception:
                     pass
-            print(f"[parser] split component='{split.name}' count={length} sample_key='{sample_key}' dtype={dtype} device={device}", flush=True)
         except Exception:
             pass
         # Do NOT materialize the whole component here; keep the filtered mapping lazy.
@@ -50,19 +49,11 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             # Optional components may omit converters.
             continue
         trace_event("parser_convert_start", component=converter.component, function=converter.function.__name__)
-        try:
-            print(f"[parser] convert start component='{converter.component}' func='{converter.function.__name__}'", flush=True)
-        except Exception:
-            pass
         updated = converter.function(dict(component.tensors.items()), context)
         if not isinstance(updated, dict):
             raise TypeError(f"Converter {converter.function.__name__} must return dict, got {type(updated)!r}")
         component.tensors = updated
         trace_event("parser_convert_done", component=converter.component, keys=len(component.tensors))
-        try:
-            print(f"[parser] convert done component='{converter.component}' keys={len(component.tensors)}", flush=True)
-        except Exception:
-            pass
 
     # Run validations
     for validation in plan.validations:

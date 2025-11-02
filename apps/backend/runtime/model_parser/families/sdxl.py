@@ -76,7 +76,6 @@ def _validate_clip_l(context):
         logging.getLogger("backend.model_parser.sdxl").warning(
             "SDXL CLIP-L validation: missing %s; proceeding with partial encoder.", key
         )
-        print(f"[parser][warn] SDXL CLIP-L missing '{key}'; continuing.", flush=True)
 
 
 def _validate_clip_g(context):
@@ -87,4 +86,3 @@ def _validate_clip_g(context):
         logging.getLogger("backend.model_parser.sdxl").warning(
             "SDXL CLIP-G validation: missing %s; proceeding with partial encoder.", key
         )
-        print(f"[parser][warn] SDXL CLIP-G missing '{key}'; continuing.", flush=True)

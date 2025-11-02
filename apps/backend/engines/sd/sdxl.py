@@ -153,9 +153,21 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
+        out_l = runtime.classic_engine("clip_l")(prompt)
+        if isinstance(out_l, tuple) and len(out_l) == 2:
+            cond_l, _ = out_l
+        else:
+            cond_l = out_l
 
-        cond_l, pooled_l = runtime.classic_engine("clip_l")(prompt)
-        cond_g, pooled_g = runtime.classic_engine("clip_g")(prompt)
+        out_g = runtime.classic_engine("clip_g")(prompt)
+        if isinstance(out_g, tuple) and len(out_g) == 2:
+            cond_g, pooled_g = out_g
+        else:
+            # Fallback: older engines attach pooled on the tensor
+            pooled_g = getattr(out_g, "pooled", None)
+            cond_g = out_g
+            if pooled_g is None:
+                raise RuntimeError("SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector.")
 
         width, height, is_negative = _prompt_meta(prompt)
         opts = _opts()

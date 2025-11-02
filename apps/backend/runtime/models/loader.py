@@ -299,16 +299,20 @@ def _load_huggingface_component(
     if cls_name in {"UNet2DConditionModel", "FluxTransformer2DModel", "SD3Transformer2DModel", "ChromaTransformer2DModel"}:
         if state_dict is None:
             return None
-        config_json = _load_component_config(component_path)
+        # Choose configuration source per family/model class
+        if cls_name == "UNet2DConditionModel" and family in (ModelFamily.SD15, ModelFamily.SD20, ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+            config_json = dict(config.core_config or {})
+        else:
+            config_json = _load_component_config(component_path)
         core_arch = config.signature.core.architecture
         core_label = _CORE_ARCH_LABELS.get(core_arch, "Core")
         architecture_value = core_arch.value
         module_name = component_name or ("unet" if core_arch is CodexCoreArchitecture.UNET else "transformer")
 
         if cls_name == "UNet2DConditionModel":
-            # Use diffusers UNet for SDXL/modern configs; our legacy UNet class expects LDM-style args
-            from diffusers import UNet2DConditionModel as _DiffusersUNet
-            model_ctor = lambda cfg: _DiffusersUNet.from_config(cfg)
+            # For SD15/SD20/SDXL families use Codex legacy UNet with LDM-style config
+            from apps.backend.runtime.common.nn.unet import UNet2DConditionModel as _CodexUNet
+            model_ctor = lambda cfg: _CodexUNet.from_config(cfg)
         elif cls_name == "FluxTransformer2DModel":
             from apps.backend.runtime.flux.flux import FluxTransformer2DModel
             model_ctor = lambda cfg: FluxTransformer2DModel(**cfg)
@@ -396,7 +400,7 @@ def _load_huggingface_component(
         except Exception:
             load_state_dict(model, state_dict, log_name=core_label)
 
-        model.config = config_json
+        # Avoid assigning to model.config (read-only on diffusers models)
         model.storage_dtype = storage_dtype
         model.computation_dtype = computation_dtype
         model.load_device = load_device

@@ -159,8 +159,8 @@ PY`
 **Wrong command:** `python - <<'PY'
 from apps.backend.runtime.logging import calltrace
 PY`
-**Cause + fix:** `The calltrace module was removed; pipeline debugging now lives in apps/backend/runtime/logging/pipeline_debug.py.`
+**Cause + fix:** `The calltrace module was removed; pipeline debugging now lives in apps/backend/runtime/pipeline_debug.py.`
 **Correct command:** `python - <<'PY'
-from apps.backend.runtime.logging.pipeline_debug import set_pipeline_debug
+from apps.backend.runtime.pipeline_debug import set_pipeline_debug
 set_pipeline_debug(True)
 PY`

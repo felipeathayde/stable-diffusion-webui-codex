@@ -15,7 +15,7 @@ from apps.backend.codex import main as codex_main
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.patchers.token_merging import SkipWritingToConfig
-from apps.backend.runtime.logging.pipeline_debug import pipeline_trace
+from apps.backend.runtime.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,

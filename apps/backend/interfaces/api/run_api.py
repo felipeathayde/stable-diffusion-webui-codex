@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from apps.backend.interfaces.api import codex_api
-from apps.backend.runtime.logging.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
+from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.models import api as model_api
 
 try:

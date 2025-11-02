@@ -252,7 +252,20 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                     dt = getattr(p, 'dtype', None)
                 except Exception:
                     dev = getattr(unet, 'device', None)
-            print(f"[engine.load] components built (unet_device={dev}, unet_dtype={dt})", flush=True)
+            clip = getattr(components, 'clip', None)
+            vae = getattr(components, 'vae', None)
+            def _probe(model):
+                try:
+                    q = next(model.parameters())
+                    return getattr(q, 'device', None), getattr(q, 'dtype', None)
+                except Exception:
+                    return getattr(model, 'device', None), getattr(model, 'dtype', None)
+            cdev, cdt = _probe(getattr(clip, 'model', clip)) if clip is not None else (None, None)
+            vdev, vdt = _probe(getattr(vae, 'model', vae)) if vae is not None else (None, None)
+            print(
+                f"[engine.load] components built (unet_device={dev}, unet_dtype={dt}, clip_device={cdev}, clip_dtype={cdt}, vae_device={vdev}, vae_dtype={vdt})",
+                flush=True,
+            )
         except Exception:
             print("[engine.load] components built (device=unknown)", flush=True)
         self.bind_components(components, label=self.engine_id)

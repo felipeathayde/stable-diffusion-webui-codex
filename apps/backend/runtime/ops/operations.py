@@ -684,6 +684,10 @@ def using_codex_operations(operations=None, device=None, dtype=None, manual_cast
     backups = {name: getattr(torch.nn, name) for name in op_names}
 
     try:
+        print(
+            f"[ops] using_codex_operations enter device='{device}' dtype='{dtype}' manual_cast={manual_cast_enabled} bnb_dtype={bnb_dtype}",
+            flush=True,
+        )
         for name in op_names:
             setattr(torch.nn, name, getattr(operations_class, name))
         logger.debug("Installed Codex operations (%s) with context %s", operations_class.__name__, _operation_context.describe())
@@ -693,6 +697,7 @@ def using_codex_operations(operations=None, device=None, dtype=None, manual_cast
             setattr(torch.nn, name, original)
         logger.debug("Restored torch.nn operations to originals")
         _operation_context = previous_context
+        print("[ops] using_codex_operations exit", flush=True)
 
 
 def shift_manual_cast(model, enabled):

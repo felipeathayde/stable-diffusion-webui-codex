@@ -77,7 +77,6 @@ class UnetPatcher(ModelPatcher):
         return clone
 
     @property
-    @property
     def control_nodes(self) -> List[ControlNode]:
         return list(self._control_nodes)
 

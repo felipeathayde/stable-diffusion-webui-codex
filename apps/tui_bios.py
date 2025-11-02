@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """BIOS-style curses TUI (pure stdlib) for managing services and options.
 
 Settings persist under ``.sangoi/launcher/`` segmented in meta/areas/models.

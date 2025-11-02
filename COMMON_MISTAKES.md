@@ -203,6 +203,10 @@ PY`
 **Cause + fix:** Command traversed into submodules and ignored files; `git add` failed on pathspecs. Limit to tracked repo and rely on `git add` without piping ignored files.
 **Correct command:** `git add -A`
 
-**Wrong command:** 
-**Cause + fix:** Updated  after making changes, so no files appeared "newer" than the stamp. Re-run by explicitly adding the touched paths.
-**Correct command:** 
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** Updated `.git/codex-stamp` after making changes, so no files appeared "newer" than the stamp. Re-run by explicitly adding the touched paths.
+**Correct command:** `git add .sangoi/CHANGELOG.md apps/backend/runtime/sampling/context.py apps/backend/runtime/sampling/AGENTS.md .sangoi/task-logs/2025-11-02-sdxl-scheduler-normalization.md`
+
+**Wrong command:** `printf "... \`find . -newer .git/codex-stamp\` ..." >> COMMON_MISTAKES.md`
+**Cause + fix:** Using double quotes with backticks executed the subshell, attempting to run `.git/codex-stamp` and failing with `Permission denied`. Use a single-quoted heredoc or escape backticks when appending literal commands.
+**Correct command:** `cat <<'EOF' >> COMMON_MISTAKES.md` (paste content, then `EOF`)

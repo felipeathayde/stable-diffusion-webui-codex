@@ -52,7 +52,7 @@ class ParserPlanBundle:
 @dataclass(slots=True)
 class ComponentState:
     name: str
-    tensors: Dict[str, Any]
+    tensors: MutableMapping[str, Any]
 
 
 @dataclass(slots=True)

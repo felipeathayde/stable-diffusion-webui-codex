@@ -22,8 +22,12 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
                 raise MissingComponentError(split.name, detail=f"prefixes {tuple(split.prefixes)} not found")
             continue
         trace_event("parser_split", component=split.name, count=length)
-        tensors: Dict[str, Any] = dict(view.items())
-        context.components[split.name] = ComponentState(name=split.name, tensors=tensors)
+        try:
+            print(f"[parser] split component='{split.name}' count={length}", flush=True)
+        except Exception:
+            pass
+        # Do NOT materialize the whole component here; keep the filtered mapping lazy.
+        context.components[split.name] = ComponentState(name=split.name, tensors=view)
 
     # Apply converters sequentially.
     for converter in plan.converters:
@@ -32,11 +36,19 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             # Optional components may omit converters.
             continue
         trace_event("parser_convert_start", component=converter.component, function=converter.function.__name__)
-        updated = converter.function(component.tensors, context)
+        try:
+            print(f"[parser] convert start component='{converter.component}' func='{converter.function.__name__}'", flush=True)
+        except Exception:
+            pass
+        updated = converter.function(dict(component.tensors.items()), context)
         if not isinstance(updated, dict):
             raise TypeError(f"Converter {converter.function.__name__} must return dict, got {type(updated)!r}")
         component.tensors = updated
         trace_event("parser_convert_done", component=converter.component, keys=len(component.tensors))
+        try:
+            print(f"[parser] convert done component='{converter.component}' keys={len(component.tensors)}", flush=True)
+        except Exception:
+            pass
 
     # Run validations
     for validation in plan.validations:

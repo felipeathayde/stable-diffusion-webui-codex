@@ -60,6 +60,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
   const selectedScheduler = ref<string>('')
 
   const status = ref<Status>('idle')
+  const running = ref(false)
   const errorMessage = ref('')
   const taskId = ref<string>('')
   const progress = ref<ProgressState>({ ...DEFAULT_PROGRESS })
@@ -125,6 +126,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
       unsubscribe()
       unsubscribe = null
     }
+    running.value = false
   }
 
   function buildPayload(): Record<string, unknown> {
@@ -167,6 +169,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
   async function generate(): Promise<void> {
     stopStream()
     status.value = 'running'
+    running.value = true
     errorMessage.value = ''
     gallery.value = []
     info.value = null
@@ -232,7 +235,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     }
   }
 
-  const isRunning = computed(() => status.value === 'running')
+  const isRunning = computed(() => running.value)
 
   function randomizeSeed(): void {
     if (seed.value !== -1) {
@@ -275,6 +278,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     progress,
     gallery,
     info,
+    running,
     init,
     loadModels,
     loadSamplers,

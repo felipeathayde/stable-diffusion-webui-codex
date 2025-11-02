@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { GeneratedImage, ModelInfo, SamplerInfo, SchedulerInfo, TaskEvent } from '../api/types'
+import { useQuicksettingsStore } from './quicksettings'
 import {
   fetchModels,
   fetchSamplers,
@@ -118,6 +119,7 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
   const framesResult = ref<GeneratedImage[]>([])
   const info = ref<unknown>(null)
   let unsubscribe: (() => void) | null = null
+  const quick = useQuicksettingsStore()
 
   async function init(): Promise<void> {
     await Promise.all([loadModels(), loadSamplers(), loadSchedulers()])
@@ -175,6 +177,7 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
 
     const payload: Record<string, unknown> = {
       __strict_version: 1,
+      codex_device: quick.currentDevice,
       txt2vid_prompt: prompt.value,
       txt2vid_neg_prompt: negativePrompt.value,
       txt2vid_width: width.value,
@@ -423,6 +426,7 @@ export const useImg2VidStore = defineStore('img2vid', () => {
   const framesResult = ref<GeneratedImage[]>([])
   const info = ref<unknown>(null)
   let unsubscribe: (() => void) | null = null
+  const quick = useQuicksettingsStore()
 
   async function init(): Promise<void> {
     await Promise.all([loadModels(), loadSamplers(), loadSchedulers()])
@@ -497,6 +501,7 @@ export const useImg2VidStore = defineStore('img2vid', () => {
 
     const payload: Record<string, unknown> = {
       __strict_version: 1,
+      codex_device: quick.currentDevice,
       img2vid_prompt: prompt.value,
       img2vid_neg_prompt: negativePrompt.value,
       img2vid_width: width.value,

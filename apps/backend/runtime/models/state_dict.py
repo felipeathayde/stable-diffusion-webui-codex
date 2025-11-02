@@ -136,12 +136,17 @@ def safe_load_state_dict(model, sd, *, log_name=None):
             missing.append(k)
             continue
         try:
-            if t.device.type != 'cpu':
-                t_cpu = t.detach().to('cpu')
+            target_device = p.device
+            # Avoid unnecessary CPU staging: copy directly to target when possible
+            if isinstance(t, torch.Tensor):
+                if t.device == target_device:
+                    t_cast = t.detach().to(dtype=p.dtype)
+                    p.copy_(t_cast)
+                else:
+                    t_cast = t.detach().to(device=target_device, dtype=p.dtype)
+                    p.copy_(t_cast)
             else:
-                t_cpu = t
-            t_cast = t_cpu.to(dtype=p.dtype)
-            p.copy_(t_cast.to(device=p.device))
+                raise TypeError("state_dict value is not a tensor")
         except Exception:
             _log.exception("safe_load_state_dict: failed key=%s", k)
             missing.append(k)

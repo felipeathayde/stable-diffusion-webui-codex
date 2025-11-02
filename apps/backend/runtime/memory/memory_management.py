@@ -293,6 +293,7 @@ __all__ = [
     "xformers_enabled_vae",
     "args",
     "memory_config",
+    "switch_primary_device",
 ]
 
 
@@ -320,3 +321,34 @@ def __setattr__(name: str, value):
 
 def __dir__():
     return sorted(set(globals().keys()) | {"signal_empty_cache", "VAE_ALWAYS_TILED", "memory_config"})
+
+
+def switch_primary_device(backend: str) -> bool:
+    """Switch the primary device backend explicitly.
+
+    Accepts one of: 'cpu' | 'cuda' | 'mps' | 'xpu' | 'directml'.
+    Returns True if the configuration changed and a reinitialization occurred.
+    """
+    from copy import deepcopy
+    from .config import DeviceBackend
+
+    normalized = (backend or "").strip().lower()
+    mapping = {
+        "cpu": DeviceBackend.CPU,
+        "cuda": DeviceBackend.CUDA,
+        "mps": DeviceBackend.MPS,
+        "xpu": DeviceBackend.XPU,
+        "directml": DeviceBackend.DIRECTML,
+    }
+    if normalized not in mapping:
+        raise ValueError(f"Invalid device backend '{backend}'. Allowed: cpu, cuda, mps, xpu, directml")
+
+    current = _CONFIG.device_backend if _CONFIG is not None else None
+    target = mapping[normalized]
+    if current == target:
+        return False
+    new_cfg = deepcopy(_CONFIG)
+    new_cfg.device_backend = target
+    reinitialize(new_cfg)
+    logger.info("[memory] primary device switched to %s", normalized)
+    return True

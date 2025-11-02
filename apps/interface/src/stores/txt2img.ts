@@ -15,6 +15,7 @@ import {
   startTxt2Img,
   subscribeTask,
 } from '../api/client'
+import { useQuicksettingsStore } from './quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
 
@@ -119,8 +120,10 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
   }
 
   function buildPayload(): Record<string, unknown> {
+    const qs = useQuicksettingsStore()
     return {
       __strict_version: 1,
+      codex_device: qs.currentDevice,
       txt2img_prompt: prompt.value,
       txt2img_neg_prompt: negativePrompt.value,
       txt2img_styles: styles.value,

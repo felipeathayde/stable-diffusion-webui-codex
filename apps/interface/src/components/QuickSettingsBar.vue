@@ -71,6 +71,15 @@
       </div>
     </div>
 
+    <div class="quicksettings-group">
+      <label class="label-muted">Device</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.currentDevice" @change="(e:any)=>store.setDevice((e.target as HTMLSelectElement).value)">
+          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+      </div>
+    </div>
+
     <!-- Right-most refresh button spanning to the end -->
     <div class="quicksettings-group quicksettings-right">
       <label class="label-muted">Models</label>

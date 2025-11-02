@@ -199,3 +199,6 @@ print('torch version:', torch.__version__)
 PY`
 **Cause + fix:** `Global sandbox lacks torch; querying availability without the package raises ModuleNotFoundError. Use project tooling that stubs torch or run inside the configured environment with torch installed.`
 **Correct command:** `python - <<'PY'\nprint('torch not installed in sandbox; run inside ~/.venv with torch available')\nPY`
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** Command traversed into submodules and ignored files; `git add` failed on pathspecs. Limit to tracked repo and rely on `git add` without piping ignored files.
+**Correct command:** `git add -A`

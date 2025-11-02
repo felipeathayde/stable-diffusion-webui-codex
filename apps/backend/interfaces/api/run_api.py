@@ -1392,6 +1392,17 @@ def build_app() -> FastAPI:
             })
         return encoded
 
+    def _require_explicit_device(payload: Dict[str, Any]) -> str:
+        dev = str(payload.get('codex_device') or "").strip().lower()
+        allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
+        if dev not in allowed:
+            raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
+        try:
+            mem_management.switch_primary_device(dev)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return dev
+
     def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
         loop = entry.loop
 
@@ -1407,6 +1418,8 @@ def build_app() -> FastAPI:
 
         push({"type": "status", "stage": "queued"})
         try:
+            # Enforce explicit device selection without fallback
+            _require_explicit_device(payload)
             req, engine_key, model_ref = prepare_txt2img(payload)
         except Exception as err:
             entry.error = str(err)
@@ -1567,6 +1580,7 @@ def build_app() -> FastAPI:
 
         push({"type": "status", "stage": "queued"})
         try:
+            _require_explicit_device(payload)
             req, engine_key, model_ref = prepare_img2img(payload)
         except Exception as err:
             entry.error = str(err)
@@ -1827,6 +1841,7 @@ def build_app() -> FastAPI:
 
         push({"type": "status", "stage": "queued"})
         try:
+            _require_explicit_device(payload)
             if task_type == TaskType.TXT2VID:
                 req, engine_key, model_ref = prepare_txt2vid(payload)
             else:

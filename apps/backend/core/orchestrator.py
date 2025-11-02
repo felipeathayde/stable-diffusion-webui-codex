@@ -8,6 +8,7 @@ import time
 from typing import Dict, Iterable, Iterator, Mapping, MutableMapping, Optional
 
 from .engine_interface import BaseInferenceEngine, TaskType
+from apps.backend.runtime.memory import memory_management as _mem
 from .exceptions import EngineExecutionError, EngineNotFoundError, EngineLoadError, UnsupportedTaskError
 from .registry import EngineRegistry, registry as global_registry
 from .requests import InferenceEvent, ProgressEvent
@@ -62,6 +63,7 @@ class InferenceOrchestrator:
 
         if model_ref is not None:
             needs_load = False
+            device_mismatch = False
             if not engine._is_loaded:  # noqa: SLF001 (intentional internal check)
                 needs_load = True
             else:
@@ -70,10 +72,31 @@ class InferenceOrchestrator:
                     needs_load = cur_model != model_ref
                 except Exception:
                     needs_load = True
+                # Reload if the primary device changed since last load
+                try:
+                    desired = _mem.get_torch_device()
+                    unet = getattr(engine, 'codex_objects', None)
+                    dcur = None
+                    if unet is not None:
+                        u = getattr(unet, 'unet', None)
+                        if hasattr(u, 'parameters'):
+                            try:
+                                p = next(u.parameters())
+                                dcur = p.device
+                            except Exception:
+                                dcur = getattr(u, 'device', None)
+                    device_mismatch = (dcur is not None and getattr(dcur, 'type', None) != getattr(desired, 'type', None))
+                except Exception:
+                    device_mismatch = False
 
-            if needs_load:
+            if needs_load or device_mismatch:
                 print(f"[orchestrator] loading model_ref='{model_ref}' on engine='{engine_key}'", flush=True)
                 try:
+                    if device_mismatch and engine._is_loaded:
+                        try:
+                            engine.unload()
+                        except Exception:
+                            pass
                     engine.load(model_ref, **(engine_options or {}))
                     engine.mark_loaded()
                     print(f"[orchestrator] load ok model_ref='{model_ref}' engine='{engine_key}'", flush=True)

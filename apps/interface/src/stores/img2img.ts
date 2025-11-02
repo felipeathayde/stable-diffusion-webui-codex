@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
 import { fetchModels, fetchSamplers, fetchSchedulers, updateOptions, startImg2Img, subscribeTask } from '../api/client'
+import { useQuicksettingsStore } from './quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
 
@@ -129,8 +130,10 @@ export const useImg2ImgStore = defineStore('img2img', () => {
       throw new Error('Please select an initial image.')
     }
 
+    const qs = useQuicksettingsStore()
     return {
       __strict_version: 1,
+      codex_device: qs.currentDevice,
       img2img_init_image: initImageData.value,
       img2img_prompt: prompt.value,
       img2img_neg_prompt: negativePrompt.value,

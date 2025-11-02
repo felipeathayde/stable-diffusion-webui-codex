@@ -23,6 +23,14 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     { value: 'sage', label: 'SAGE' },
   ])
   const currentAttention = ref<string>('torch-sdpa')
+  const deviceChoices = ref<{ value: string; label: string }[]>([
+    { value: 'cuda', label: 'CUDA' },
+    { value: 'cpu', label: 'CPU' },
+    { value: 'mps', label: 'MPS' },
+    { value: 'xpu', label: 'XPU' },
+    { value: 'directml', label: 'DirectML' },
+  ])
+  const currentDevice = ref<string>('cpu')
   const unetDtypeChoices = ref<string[]>([
     'Automatic',
     'Automatic (fp16 LoRA)',
@@ -117,6 +125,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_attention_backend === 'string') {
       currentAttention.value = (opts as any).codex_attention_backend
     }
+    if (typeof (opts as any).codex_diffusion_device === 'string') {
+      currentDevice.value = (opts as any).codex_diffusion_device
+    }
     if (typeof opts.forge_inference_memory === 'number') {
       gpuWeightsMb.value = opts.forge_inference_memory
     }
@@ -209,6 +220,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     await updateOptions({ codex_attention_backend: value })
   }
 
+  async function setDevice(value: string): Promise<void> {
+    currentDevice.value = value
+    await updateOptions({ codex_diffusion_device: value })
+  }
+
   async function setGpuWeightsMb(value: number): Promise<void> {
     gpuWeightsMb.value = value
     await updateOptions({ forge_inference_memory: value })
@@ -232,6 +248,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     modeChoices,
     attentionChoices,
     currentAttention,
+    deviceChoices,
+    currentDevice,
     init,
     setModel,
     setSampler,
@@ -245,6 +263,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     currentUnetDtype,
     setUnetDtype,
     setAttentionBackend,
+    setDevice,
     gpuTotalMb,
     gpuWeightsMb,
     setGpuWeightsMb,

@@ -35,6 +35,7 @@ from apps.backend.runtime.utils import (
     load_torch_file,
     read_arbitrary_config,
 )
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.runtime.models import api as model_api
@@ -116,12 +117,17 @@ def _prediction_type_value(prediction: PredictionKind) -> str:
 def _load_state_dict(path: str) -> Mapping[str, Any]:
     print(f"[loader] load_torch_file_start path='{path}'", flush=True)
     _trace.event("load_torch_file_start", path=str(path))
-    sd = load_torch_file(path)
+    # Resolve the initial load device explicitly (no 'auto' fallback)
+    initial_device = memory_management.core_initial_load_device(parameters=0, dtype=None)
+    sd = load_torch_file(path, device=initial_device)
     try:
         tensor_count = len(sd.keys())  # type: ignore[attr-defined]
     except Exception:
         tensor_count = -1
-    print(f"[loader] load_torch_file_done path='{path}' type='{type(sd).__name__}' tensors={tensor_count} map_device='cpu'", flush=True)
+    print(
+        f"[loader] load_torch_file_done path='{path}' type='{type(sd).__name__}' tensors={tensor_count} map_device='{getattr(initial_device, 'type', 'unknown')}'",
+        flush=True,
+    )
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
 

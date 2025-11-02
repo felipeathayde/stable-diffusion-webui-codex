@@ -160,15 +160,29 @@ def read_arbitrary_config(directory):
 
 
 def load_torch_file(ckpt, safe_load=True, device=None):
+    """Load a checkpoint (safetensors/gguf/pickle) honoring an explicit device.
+
+    - When ``device`` is None, use the current core initial load device from the
+      memory manager to avoid accidental CPU pinning.
+    - For safetensors, the returned mapping lazily loads tensors using
+      ``safe_open(..., device=<device>)`` so values are produced directly on the
+      requested device when possible.
+    """
+    from apps.backend.runtime.memory import memory_management as _mm  # local import avoids cycles
+
     if isinstance(device, str):
         device = torch.device(device)
     if device is None:
-        device = torch.device("cpu")
+        try:
+            device = _mm.core_initial_load_device(parameters=0, dtype=None)
+        except Exception:
+            device = torch.device("cpu")
 
     checkpoint_path = str(ckpt)
     suffix = os.path.splitext(checkpoint_path)[1].lower()
 
     if suffix == ".safetensors":
+        # use device.type (e.g. 'cuda' / 'cpu') for safe_open
         return LazySafetensorsDict(checkpoint_path, device=device.type)
     if suffix == ".gguf":
         return _load_gguf_state_dict(checkpoint_path)
@@ -208,7 +222,7 @@ class LazySafetensorsDict(MutableMapping):
 
     def _base_keys(self):
         if self._keys_cache is None:
-            with safe_open(self.filepath, framework="pt", device="cpu") as f:
+            with safe_open(self.filepath, framework="pt", device=self.device) as f:
                 self._keys_cache = set(f.keys())
         return self._keys_cache
 
@@ -220,7 +234,7 @@ class LazySafetensorsDict(MutableMapping):
             raise KeyError(key)
         if key not in self._base_keys():
             raise KeyError(key)
-        with safe_open(self.filepath, framework="pt", device="cpu") as f:
+        with safe_open(self.filepath, framework="pt", device=self.device) as f:
             t = f.get_tensor(key)
         return t
 

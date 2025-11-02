@@ -1390,9 +1390,11 @@ def build_app() -> FastAPI:
         return encoded
 
     def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+        print(f"[run_api] starting txt2img task {task_id}")
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:
+            print(f"[run_api][txt2img][{task_id}] push event: {event.get('type')}")
             loop.call_soon_threadsafe(entry.queue.put_nowait, event)
 
         def mark_done(success: bool) -> None:
@@ -1414,6 +1416,7 @@ def build_app() -> FastAPI:
 
         def worker() -> None:
             try:
+                print(f"[run_api] running txt2img task {task_id} with engine '{engine_key}' and model '{model_ref}'")
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     orch = InferenceOrchestrator()

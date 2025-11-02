@@ -30,6 +30,7 @@ ROOT_PREFIXES = (
     "apps.backend.engines",
     "apps.backend.use_cases",
     "apps.backend.codex",
+    "apps.backend.core",
 )
 SKIP_PREFIXES = (
     "apps.backend.runtime.logging.calltrace",
@@ -103,8 +104,10 @@ def _prepare_logger(logger: logging.Logger) -> None:
     setattr(logger, LOGGER_PREPARED_ATTR, True)
 
 
-def _enabled() -> bool:
-    return str(os.getenv("CODEX_CALLTRACE", "0")).strip().lower() in ("1", "true", "yes", "on")
+def _enabled() -> tuple[bool, str]:
+    raw = str(os.getenv("CODEX_CALLTRACE", "0"))
+    normalized = raw.strip().lower()
+    return normalized in ("1", "true", "yes", "on"), raw
 
 
 def _summarize(value: Any) -> str:
@@ -225,18 +228,29 @@ def _instrument_recursive(mod: ModuleType, visited: set[str]) -> int:
 
 
 def setup_from_env() -> None:
-    if not _enabled():
+    enabled, raw_value = _enabled()
+    logger = logging.getLogger("backend.calltrace")
+    if not enabled:
+        logger.info("calltrace disabled (CODEX_CALLTRACE=%s)", raw_value.strip() or "0")
         return
     visited: set[str] = set()
     total = 0
+    per_prefix: list[tuple[str, int]] = []
     for prefix in ROOT_PREFIXES:
         try:
             mod = importlib.import_module(prefix)
         except Exception as exc:
-            logging.getLogger("backend.calltrace").warning("calltrace: failed import %s (%s)", prefix, exc)
+            logger.warning("calltrace: failed import %s (%s)", prefix, exc)
             continue
-        total += _instrument_recursive(mod, visited)
-    logging.getLogger("backend.calltrace").info("calltrace enabled (wrapped=%d functions)", total)
+        count = _instrument_recursive(mod, visited)
+        if count:
+            per_prefix.append((prefix, count))
+        total += count
+    logger.info("calltrace enabled (wrapped=%d functions)", total)
+    if not total:
+        logger.warning("calltrace: no functions wrapped — check dependencies or prefix configuration")
+    for prefix, count in per_prefix:
+        logger.debug("calltrace: prefix=%s wrapped=%d", prefix, count)
 
 
 __all__ = ["setup_from_env"]

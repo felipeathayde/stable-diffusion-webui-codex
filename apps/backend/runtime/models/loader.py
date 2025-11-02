@@ -301,7 +301,35 @@ def _load_huggingface_component(
             return None
         # Choose configuration source per family/model class
         if cls_name == "UNet2DConditionModel" and family in (ModelFamily.SD15, ModelFamily.SD20, ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
-            config_json = dict(config.core_config or {})
+            # Start from parser-provided core_config (LDM-style) and drop unknown keys for legacy UNet
+            raw_cfg = dict(config.core_config or {})
+            allowed = {
+                "in_channels",
+                "model_channels",
+                "out_channels",
+                "num_res_blocks",
+                "dropout",
+                "channel_mult",
+                "conv_resample",
+                "dims",
+                "num_classes",
+                "use_checkpoint",
+                "num_heads",
+                "num_head_channels",
+                "use_scale_shift_norm",
+                "resblock_updown",
+                "use_spatial_transformer",
+                "transformer_depth",
+                "context_dim",
+                "disable_self_attentions",
+                "num_attention_blocks",
+                "disable_middle_self_attn",
+                "use_linear_in_transformer",
+                "adm_in_channels",
+                "transformer_depth_middle",
+                "transformer_depth_output",
+            }
+            config_json = {k: v for k, v in raw_cfg.items() if k in allowed}
         else:
             config_json = _load_component_config(component_path)
         core_arch = config.signature.core.architecture

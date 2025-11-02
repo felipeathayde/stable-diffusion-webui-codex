@@ -163,7 +163,6 @@ def assemble_engine_runtime(
     components: Mapping[str, object],
 ) -> SDEngineRuntime:
     logger.debug("Assembling SD engine '%s'", spec.name)
-    print(f"[sd.runtime] assemble start spec='{spec.name}'", flush=True)
 
     clip_model_dict: MutableMapping[str, object] = {}
     tokenizer_dict: MutableMapping[str, object] = {}
@@ -176,20 +175,10 @@ def assemble_engine_runtime(
 
     clip = CLIP(model_dict=clip_model_dict, tokenizer_dict=tokenizer_dict, model_config=estimated_config)
     logger.debug("CLIP patcher assembled for '%s'.", spec.name)
-    try:
-        p = next(clip.model.parameters())
-        print(f"[sd.runtime] clip ready device='{p.device}' dtype='{p.dtype}'", flush=True)
-    except Exception:
-        print("[sd.runtime] clip ready (device unknown)", flush=True)
 
     vae_model = _require_component(components, spec.vae_key, f"{spec.name}.vae")
     vae = VAE(model=vae_model)
     logger.debug("VAE wrapper instantiated for '%s'.", spec.name)
-    try:
-        pv = next(vae.model.parameters())
-        print(f"[sd.runtime] vae ready device='{pv.device}' dtype='{pv.dtype}'", flush=True)
-    except Exception:
-        print("[sd.runtime] vae ready (device unknown)", flush=True)
 
     unet_model = _require_component(components, spec.unet_key, f"{spec.name}.unet")
     scheduler = components.get(spec.scheduler_key)
@@ -197,11 +186,6 @@ def assemble_engine_runtime(
         logger.debug("No scheduler provided for '%s' (using None)", spec.name)
     unet = UnetPatcher.from_model(model=unet_model, diffusers_scheduler=scheduler, config=estimated_config)
     logger.debug("UNet patcher created for '%s'.", spec.name)
-    try:
-        pu = next(unet.model.parameters())
-        print(f"[sd.runtime] unet ready device='{pu.device}' dtype='{pu.dtype}'", flush=True)
-    except Exception:
-        print("[sd.runtime] unet ready (device unknown)", flush=True)
 
     embedding_dir = _require_dynamic_arg(spec.embedding_dir_arg)
     emphasis_name = _require_dynamic_arg(spec.emphasis_arg)
@@ -281,7 +265,6 @@ def assemble_engine_runtime(
         t5_text=t5_text,
         t5_specs=t5_specs,
     )
-    print(f"[sd.runtime] assemble done spec='{spec.name}'", flush=True)
     return rt
 
 

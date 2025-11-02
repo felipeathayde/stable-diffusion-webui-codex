@@ -125,15 +125,7 @@ def safe_load_state_dict(model, sd, *, log_name=None):
 
     missing = []
     loaded = 0
-    try:
-        # Try to peek a representative parameter for device/dtype
-        any_param = next(iter(model_state.values()))
-        print(
-            f"[state_dict] begin load name='{log_name}' params={len(model_keys)} sd_tensors={len(sd_keys)} target_device='{getattr(any_param, 'device', None)}' target_dtype='{getattr(any_param, 'dtype', None)}'",
-            flush=True,
-        )
-    except Exception:
-        print(f"[state_dict] begin load name='{log_name}' params={len(model_keys)} sd_tensors={len(sd_keys)}", flush=True)
+    # Begin: diagnostics handled by trace/logger upstream (no console prints)
     for k in model_keys:
         try:
             t = sd[k]
@@ -163,7 +155,6 @@ def safe_load_state_dict(model, sd, *, log_name=None):
         loaded += 1
         if loaded % 200 == 0:
             _trace.event("load_state_dict_progress", name=log_name, loaded=loaded)
-            print(f"[state_dict] progress name='{log_name}' loaded={loaded}", flush=True)
 
     unexpected = [k for k in sd_keys if k not in model_keys]
     if missing:
@@ -173,8 +164,4 @@ def safe_load_state_dict(model, sd, *, log_name=None):
         print(f'{log_name} Unexpected: {len(unexpected)} keys')
         _log.debug("%s unexpected_count=%d sample=%s", log_name, len(unexpected), unexpected[:10])
     _trace.event("load_state_dict_done", name=log_name, missing=len(missing), unexpected=len(unexpected))
-    print(
-        f"[state_dict] done name='{log_name}' loaded={loaded} missing={len(missing)} unexpected={len(unexpected)}",
-        flush=True,
-    )
     return missing, unexpected

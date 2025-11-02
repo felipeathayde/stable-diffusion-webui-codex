@@ -238,42 +238,28 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("Failed to determine inpaint capability.") from exc
 
-        print(f"[engine.load] building components engine='{self.engine_id}'", flush=True)
         components = self._build_components(bundle, options=self._load_options)
-        # Try to summarize devices
-        try:
-            unet = getattr(components, 'unet', None)
-            dev = None
-            dt = None
-            if hasattr(unet, 'parameters'):
-                try:
-                    p = next(unet.parameters())
-                    dev = p.device
-                    dt = getattr(p, 'dtype', None)
-                except Exception:
-                    dev = getattr(unet, 'device', None)
-            clip = getattr(components, 'clip', None)
-            vae = getattr(components, 'vae', None)
-            def _probe(model):
-                try:
-                    q = next(model.parameters())
-                    return getattr(q, 'device', None), getattr(q, 'dtype', None)
-                except Exception:
-                    return getattr(model, 'device', None), getattr(model, 'dtype', None)
-            cdev, cdt = _probe(getattr(clip, 'model', clip)) if clip is not None else (None, None)
-            vdev, vdt = _probe(getattr(vae, 'model', vae)) if vae is not None else (None, None)
-            print(
-                f"[engine.load] components built (unet_device={dev}, unet_dtype={dt}, clip_device={cdev}, clip_dtype={cdt}, vae_device={vdev}, vae_dtype={vdt})",
-                flush=True,
-            )
-        except Exception:
-            print("[engine.load] components built (device=unknown)", flush=True)
+        # Optional: best-effort probe for internal diagnostics (no console output)
+        def _probe_device_dtype(obj):
+            try:
+                # Prefer nested .model/.diffusion_model when available
+                candidate = getattr(obj, 'model', obj)
+                candidate = getattr(candidate, 'diffusion_model', candidate)
+                params = getattr(candidate, 'parameters', None)
+                if callable(params):
+                    it = params()
+                    t = next(it)
+                    return getattr(t, 'device', None), getattr(t, 'dtype', None)
+            except Exception:
+                return None, None
+            return getattr(candidate, 'device', None), getattr(candidate, 'dtype', None)
+        _ = _probe_device_dtype(getattr(components, 'unet', None))
+        _ = _probe_device_dtype(getattr(components, 'clip', None))
+        _ = _probe_device_dtype(getattr(components, 'vae', None))
         self.bind_components(components, label=self.engine_id)
-        print(f"[engine.load] components bound", flush=True)
         self.snapshot_after_lora()
 
         self.mark_loaded()
-        print(f"[engine.load] exit loaded engine='{self.engine_id}'", flush=True)
         self._logger.info(
             "[engine] Loaded %s (families=%s)",
             self.engine_id,

@@ -470,10 +470,6 @@ def codex_loader(sd_path: str, additional_state_dicts=None):
     local_repo_path = os.path.join(str(_BACKEND_ROOT), "huggingface", repo_name)
     offline = bool(args.disable_online_tokenizer)
     include = ("config", "tokenizer", "scheduler")  # strictly minimal; no weights
-    print(
-        f"[loader] ensure_repo_minimal_files repo='{repo_name}' offline={offline} include={include}",
-        flush=True,
-    )
     ensure_repo_minimal_files(repo_name, local_repo_path, offline=offline, include=include)
 
     print(f"[loader] DiffusionPipeline.load_config path='{local_repo_path}'", flush=True)

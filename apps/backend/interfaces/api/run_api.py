@@ -214,7 +214,7 @@ def build_app() -> FastAPI:
     _shared = None
     _sd_models = None
     from apps.backend.core.engine_interface import TaskType
-    from apps.backend.core.orchestrator import InferenceOrchestrator
+from apps.backend.core.orchestrator import InferenceOrchestrator
     from apps.backend.core.requests import (
         ProgressEvent,
         ResultEvent,
@@ -1410,7 +1410,10 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         return dev
 
-    def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+_ORCH = InferenceOrchestrator()
+
+
+def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:
@@ -1439,8 +1442,7 @@ def build_app() -> FastAPI:
             try:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
-                    orch = InferenceOrchestrator()
-                    for ev in orch.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                    for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
                         if isinstance(ev, ProgressEvent):
                             push({
                                 "type": "progress",

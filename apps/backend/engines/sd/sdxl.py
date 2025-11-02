@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
+import threading
+import time
 from typing import Any, Iterable, List, Mapping, Optional, Tuple
 
 import torch
@@ -10,6 +12,7 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime, assemble_engine_runtime
 from apps.backend.runtime.memory import memory_management
+from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
@@ -141,16 +144,47 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
 
-        # Run pipeline (returns latent BCHW tensor)
-        latents = _generate_txt2img(
-            processing=proc,
-            conditioning=cond,
-            unconditional_conditioning=uncond,
-            seeds=seeds,
-            subseeds=subseeds,
-            subseed_strength=subseed_strength,
-            prompts=prompts,
-        )
+        # Run pipeline on a worker thread while streaming progress from backend_state
+        result: dict[str, Any] = {"latents": None, "error": None}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                result["latents"] = _generate_txt2img(
+                    processing=proc,
+                    conditioning=cond,
+                    unconditional_conditioning=uncond,
+                    seeds=seeds,
+                    subseeds=subseeds,
+                    subseed_strength=subseed_strength,
+                    prompts=prompts,
+                )
+            except Exception as _exc:  # noqa: BLE001
+                result["error"] = _exc
+            finally:
+                done.set()
+
+        threading.Thread(target=_worker, name="sdxl-txt2img-worker", daemon=True).start()
+
+        t0 = time.perf_counter()
+        last_step = -1
+        while not done.is_set():
+            try:
+                step = int(getattr(backend_state, "sampling_step", 0) or 0)
+                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
+            except Exception:
+                step, total = 0, 0
+            if total > 0 and step != last_step:
+                elapsed = time.perf_counter() - t0
+                eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
+                pct = max(5.0, min(99.0, (step / total) * 100.0))
+                yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+                last_step = step
+            time.sleep(0.12)
+
+        if result["error"] is not None:
+            raise result["error"]
+        latents = result["latents"]
 
         if not isinstance(latents, torch.Tensor):
             raise RuntimeError(

@@ -1268,6 +1268,7 @@ def build_app() -> FastAPI:
         return {"accepted": accepted, "rejected": rejected}
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
+        print("[api] preparing txt2img request from payload")
         prompt = _p.require(payload, 'txt2img_prompt') or ''
         negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''
         prompt_styles = _p.as_list(payload, 'txt2img_styles')
@@ -1376,6 +1377,7 @@ def build_app() -> FastAPI:
         snap = _opts_snapshot()
         engine_key = engine_override or snap.codex_engine
         model_ref = model_override or snap.sd_model_checkpoint
+        print(f"[api] txt2img prepared: engine={engine_key}, model={model_ref}, prompt_len={len(prompt)}")
         return req, str(engine_key), model_ref
 
     def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
@@ -1390,11 +1392,9 @@ def build_app() -> FastAPI:
         return encoded
 
     def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-        print(f"[run_api] starting txt2img task {task_id}")
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:
-            print(f"[run_api][txt2img][{task_id}] push event: {event.get('type')}")
             loop.call_soon_threadsafe(entry.queue.put_nowait, event)
 
         def mark_done(success: bool) -> None:
@@ -1416,7 +1416,6 @@ def build_app() -> FastAPI:
 
         def worker() -> None:
             try:
-                print(f"[run_api] running txt2img task {task_id} with engine '{engine_key}' and model '{model_ref}'")
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     orch = InferenceOrchestrator()

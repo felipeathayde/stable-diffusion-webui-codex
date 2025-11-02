@@ -207,14 +207,22 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     # ------------------------------------------------------------------ Lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
+        print(f"[engine.load] enter engine='{self.engine_id}' model_ref='{model_ref}'", flush=True)
         raw_options: dict[str, Any] = dict(options)
         bundle_obj = raw_options.pop("_bundle", None)
         if bundle_obj is None:
+            print(f"[engine.load] resolving bundle model_ref='{model_ref}'", flush=True)
             bundle = resolve_diffusion_bundle(model_ref)
         elif isinstance(bundle_obj, DiffusionModelBundle):
             bundle = bundle_obj
         else:
             raise TypeError("_bundle must be a DiffusionModelBundle when provided.")
+
+        try:
+            comp_keys = sorted(getattr(bundle, "components", {}).keys())  # type: ignore[arg-type]
+        except Exception:
+            comp_keys = []
+        print(f"[engine.load] bundle resolved source='{bundle.source}' components={comp_keys}", flush=True)
 
         self._logger.info("[engine] Loading %s (ref=%s, source=%s)", self.engine_id, model_ref, bundle.source)
         self._reset_state()
@@ -230,11 +238,27 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("Failed to determine inpaint capability.") from exc
 
+        print(f"[engine.load] building components engine='{self.engine_id}'", flush=True)
         components = self._build_components(bundle, options=self._load_options)
+        # Try to summarize devices
+        try:
+            unet = getattr(components, 'unet', None)
+            dev = None
+            if hasattr(unet, 'parameters'):
+                try:
+                    p = next(unet.parameters())
+                    dev = p.device
+                except Exception:
+                    dev = getattr(unet, 'device', None)
+            print(f"[engine.load] components built (unet_device={dev})", flush=True)
+        except Exception:
+            print("[engine.load] components built (device=unknown)", flush=True)
         self.bind_components(components, label=self.engine_id)
+        print(f"[engine.load] components bound", flush=True)
         self.snapshot_after_lora()
 
         self.mark_loaded()
+        print(f"[engine.load] exit loaded engine='{self.engine_id}'", flush=True)
         self._logger.info(
             "[engine] Loaded %s (families=%s)",
             self.engine_id,

@@ -44,9 +44,11 @@ class InferenceOrchestrator:
         model_ref: Optional[str] = None,
         engine_options: Optional[Mapping[str, object]] = None,
     ) -> Iterator[InferenceEvent]:
+        print(f"[orchestrator] resolve engine='{engine_key}' task='{task.value}' model_ref='{model_ref}'", flush=True)
         logger.info("[orchestrator] DEBUG: enter run task=%s engine=%s model=%s", task.value, engine_key, model_ref)
         start = time.perf_counter()
         engine = self._resolve_engine(engine_key, engine_options or {})
+        print(f"[orchestrator] resolved engine instance={engine} (loaded={getattr(engine, '_is_loaded', None)})", flush=True)
 
         logger.info(
             "Orchestrator dispatch: task=%s engine=%s model=%s", task.value, engine_key, model_ref or "default"
@@ -70,10 +72,13 @@ class InferenceOrchestrator:
                     needs_load = True
 
             if needs_load:
+                print(f"[orchestrator] loading model_ref='{model_ref}' on engine='{engine_key}'", flush=True)
                 try:
                     engine.load(model_ref, **(engine_options or {}))
                     engine.mark_loaded()
+                    print(f"[orchestrator] load ok model_ref='{model_ref}' engine='{engine_key}'", flush=True)
                 except Exception as exc:  # noqa: BLE001
+                    print(f"[orchestrator] load failed model_ref='{model_ref}' engine='{engine_key}' error={exc}", flush=True)
                     raise EngineLoadError(
                         f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}"
                     ) from exc
@@ -83,8 +88,10 @@ class InferenceOrchestrator:
             raise UnsupportedTaskError(f"Engine '{engine_key}' is missing handler for task '{task.value}'")
 
         try:
+            print(f"[orchestrator] starting handler task='{task.value}' engine='{engine_key}'", flush=True)
             yield ProgressEvent(stage="start", percent=0.0, message="Starting inference")
             for event in handler(request):
+                print(f"[orchestrator] handler yielded event={event}", flush=True)
                 yield event
         except UnsupportedTaskError:
             raise

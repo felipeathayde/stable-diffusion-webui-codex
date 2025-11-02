@@ -1417,7 +1417,9 @@ def build_app() -> FastAPI:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     orch = InferenceOrchestrator()
+                    print(f"[tasks][{task_id}] starting txt2img task on engine '{engine_key}' with model '{model_ref}'", flush=True)
                     for ev in orch.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                        print(f"[tasks][{task_id}] event: {ev}", flush=True)
                         if isinstance(ev, ProgressEvent):
                             push({
                                 "type": "progress",

@@ -1,37 +1,37 @@
-"""Runtime-level helpers for backend execution (memory, streams, shared state).
+"""Runtime-level helpers for backend execution (lazy export).
 
-Import order matters to avoid circular imports:
-- `memory.memory_management` depends on `runtime.utils`.
-- Several runtime submodules (e.g., attention, ops, models) depend on
-  `memory_management`.
-
-To keep imports acyclic during package initialization we:
-1) import `utils` first,
-2) then import memory submodules,
-3) finally import heavier modules that depend on memory.
+Avoid importing heavy modules (e.g., torch via `utils`) at package import time.
+Modules are exposed lazily via ``__getattr__`` to break cycles and reduce early
+memory pressure during tools like the TUI BIOS.
 """
 
-# 1) Core utilities first so `utils` is attached to the package
-from . import utils, trace, shared  # lightweight, no facade recursion
+_EXPORTS = {
+    # Core utilities / small helpers
+    "utils": "apps.backend.runtime.utils",
+    "trace": "apps.backend.runtime.trace",
+    "shared": "apps.backend.runtime.shared",
+    # Memory stack
+    "memory_management": "apps.backend.runtime.memory.memory_management",
+    "stream": "apps.backend.runtime.memory.stream",
+    # Heavier modules that may rely on memory
+    "attention": "apps.backend.runtime.attention",
+    "errors": "apps.backend.runtime.errors",
+    "logging": "apps.backend.runtime.logging",
+    "models": "apps.backend.runtime.models",
+    "nn": "apps.backend.runtime.nn",
+    "ops": "apps.backend.runtime.ops",
+    "processing": "apps.backend.runtime.processing",
+    "text_processing": "apps.backend.runtime.text_processing",
+}
 
-# 2) Memory stack after utils
-from .memory import memory_management, stream
 
-# 3) Remainder modules that may rely on memory
-from . import attention, errors, logging, models, nn, ops, processing, text_processing
+def __getattr__(name: str):  # pragma: no cover - import-time laziness
+    modpath = _EXPORTS.get(name)
+    if not modpath:
+        raise AttributeError(name)
+    import importlib
+    module = importlib.import_module(modpath)
+    return module
 
-__all__ = [
-    "attention",
-    "errors",
-    "logging",
-    "memory_management",
-    "models",
-    "nn",
-    "ops",
-    "processing",
-    "shared",
-    "stream",
-    "text_processing",
-    "trace",
-    "utils",
-]
+
+__all__ = list(_EXPORTS.keys())

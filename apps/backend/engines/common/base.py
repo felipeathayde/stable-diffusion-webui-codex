@@ -244,13 +244,15 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         try:
             unet = getattr(components, 'unet', None)
             dev = None
+            dt = None
             if hasattr(unet, 'parameters'):
                 try:
                     p = next(unet.parameters())
                     dev = p.device
+                    dt = getattr(p, 'dtype', None)
                 except Exception:
                     dev = getattr(unet, 'device', None)
-            print(f"[engine.load] components built (unet_device={dev})", flush=True)
+            print(f"[engine.load] components built (unet_device={dev}, unet_dtype={dt})", flush=True)
         except Exception:
             print("[engine.load] components built (device=unknown)", flush=True)
         self.bind_components(components, label=self.engine_id)

@@ -121,7 +121,7 @@ def _load_state_dict(path: str) -> Mapping[str, Any]:
         tensor_count = len(sd.keys())  # type: ignore[attr-defined]
     except Exception:
         tensor_count = -1
-    print(f"[loader] load_torch_file_done path='{path}' type='{type(sd).__name__}' tensors={tensor_count}", flush=True)
+    print(f"[loader] load_torch_file_done path='{path}' type='{type(sd).__name__}' tensors={tensor_count} map_device='cpu'", flush=True)
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
 

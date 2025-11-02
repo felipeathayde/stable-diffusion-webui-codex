@@ -23,7 +23,21 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             continue
         trace_event("parser_split", component=split.name, count=length)
         try:
-            print(f"[parser] split component='{split.name}' count={length}", flush=True)
+            # Probe a sample tensor to report dtype/device for this component lazily
+            sample_key = None
+            for k in view:
+                sample_key = k
+                break
+            dtype = None
+            device = None
+            if sample_key is not None:
+                try:
+                    t = view[sample_key]
+                    dtype = getattr(getattr(t, 'dtype', None), 'name', None)
+                    device = getattr(getattr(t, 'device', None), 'type', None)
+                except Exception:
+                    pass
+            print(f"[parser] split component='{split.name}' count={length} sample_key='{sample_key}' dtype={dtype} device={device}", flush=True)
         except Exception:
             pass
         # Do NOT materialize the whole component here; keep the filtered mapping lazy.

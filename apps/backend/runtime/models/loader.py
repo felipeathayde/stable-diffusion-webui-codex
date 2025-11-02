@@ -14,7 +14,7 @@ from apps.backend.infra.config.args import args
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
-from apps.backend.runtime.common.nn.unet import UNet2DConditionModel
+from apps.backend.runtime.common.nn.unet import UNet2DConditionModel  # legacy UNet (SD15/20)
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import SwapPolicy
 from apps.backend.runtime.model_parser import parse_state_dict
@@ -306,7 +306,9 @@ def _load_huggingface_component(
         module_name = component_name or ("unet" if core_arch is CodexCoreArchitecture.UNET else "transformer")
 
         if cls_name == "UNet2DConditionModel":
-            model_ctor = lambda cfg: UNet2DConditionModel.from_config(cfg)
+            # Use diffusers UNet for SDXL/modern configs; our legacy UNet class expects LDM-style args
+            from diffusers import UNet2DConditionModel as _DiffusersUNet
+            model_ctor = lambda cfg: _DiffusersUNet.from_config(cfg)
         elif cls_name == "FluxTransformer2DModel":
             from apps.backend.runtime.flux.flux import FluxTransformer2DModel
             model_ctor = lambda cfg: FluxTransformer2DModel(**cfg)

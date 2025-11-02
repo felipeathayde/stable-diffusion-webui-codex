@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
+from apps.backend.codex import options as codex_options
+
 LOGGER = logging.getLogger("codex.launcher.profiles")
 
 ENV_PREFIX_AREAS: Dict[str, str] = {
@@ -53,6 +55,24 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "WAN_LOG_ERROR": os.getenv("WAN_LOG_ERROR", "1"),
         "WAN_LOG_DEBUG": os.getenv("WAN_LOG_DEBUG", "0"),
     }
+    try:
+        snap = codex_options.get_snapshot()
+
+        def _set_core(key: str, value: str | None) -> None:
+            if value is None:
+                return
+            text = str(value).strip().lower()
+            if text:
+                core[key] = text
+
+        _set_core("CODEX_DIFFUSION_DEVICE", snap.codex_diffusion_device)
+        _set_core("CODEX_DIFFUSION_DTYPE", snap.codex_diffusion_dtype)
+        _set_core("CODEX_TE_DEVICE", snap.codex_te_device)
+        _set_core("CODEX_TE_DTYPE", snap.codex_te_dtype)
+        _set_core("CODEX_VAE_DEVICE", snap.codex_vae_device)
+        _set_core("CODEX_VAE_DTYPE", snap.codex_vae_dtype)
+    except Exception:  # pragma: no cover - snapshot load should be resilient
+        LOGGER.debug("Failed to hydrate device defaults from settings_values.json.", exc_info=True)
     return {"core": core, "wan": wan}
 
 
@@ -182,6 +202,7 @@ class LauncherProfileStore:
         _write_meta(self.root, self.meta)
         _write_env_maps(self.root / "areas", self.areas)
         _write_env_maps(self.root / "models", self.models)
+        self._persist_device_settings()
 
     # ------------------------------------------------------------------ internal
 
@@ -201,6 +222,30 @@ class LauncherProfileStore:
                 self.meta.sdpa_policy = policy
         self.areas.setdefault("wan", {}).setdefault("WAN_SDPA_POLICY", self.meta.sdpa_policy)
         self._migrate_device_dtype_flags()
+
+    def _persist_device_settings(self) -> None:
+        core = self.areas.get("core", {})
+        if not core:
+            return
+        mapping = (
+            ("CODEX_DIFFUSION_DEVICE", "codex_diffusion_device"),
+            ("CODEX_DIFFUSION_DTYPE", "codex_diffusion_dtype"),
+            ("CODEX_TE_DEVICE", "codex_te_device"),
+            ("CODEX_TE_DTYPE", "codex_te_dtype"),
+            ("CODEX_VAE_DEVICE", "codex_vae_device"),
+            ("CODEX_VAE_DTYPE", "codex_vae_dtype"),
+        )
+        updates: Dict[str, str] = {}
+        for env_key, settings_key in mapping:
+            value = core.get(env_key)
+            if value is None:
+                continue
+            text = str(value).strip().lower()
+            if not text:
+                continue
+            updates[settings_key] = text
+        if updates:
+            codex_options.set_values(updates)
 
     def _migrate_device_dtype_flags(self) -> None:
         def _canonical_device(value: str | None) -> str:

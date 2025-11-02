@@ -17,3 +17,4 @@ Status: Transitional
 ## Notes
 - New features should target the native services/options stack; keep this package stable until all legacy paths are retired. Loader helpers now surface `DiffusionModelBundle` objects and delegate to the engine registry.
 - Once the last compatibility consumers migrate, archive this package under `.sangoi/deprecated/` and update the documentation.
+- 2025-11-02: `options.py` now persists core/TE/VAE device + dtype selections (`codex_diffusion_device`, `codex_te_device`, `codex_vae_device`, etc.) so launcher/bootstrap code can reconstruct CLI overrides without env vars.

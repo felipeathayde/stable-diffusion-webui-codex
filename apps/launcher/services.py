@@ -55,11 +55,36 @@ class CodexServiceHandle:
             self.pid = self.process.pid
             return
 
+        overrides_map = dict(overrides)
+        cli_args: list[str] = []
+        if self.spec.name.upper() == "API":
+            device_flags = {
+                "CODEX_DIFFUSION_DEVICE": "--core-device",
+                "CODEX_TE_DEVICE": "--te-device",
+                "CODEX_VAE_DEVICE": "--vae-device",
+            }
+            dtype_flags = {
+                "CODEX_DIFFUSION_DTYPE": "--core-dtype",
+                "CODEX_TE_DTYPE": "--te-dtype",
+                "CODEX_VAE_DTYPE": "--vae-dtype",
+            }
+            for mapping in (device_flags, dtype_flags):
+                for env_key, flag in mapping.items():
+                    raw = overrides_map.pop(env_key, None)
+                    if raw is None:
+                        continue
+                    text = str(raw).strip().lower()
+                    if not text or text == "auto":
+                        continue
+                    cli_args.extend([flag, text])
+
         env = os.environ.copy()
         env.update(self.spec.base_env)
-        env.update(overrides)
+        env.update(overrides_map)
 
         command = list(self.spec.command)
+        if cli_args:
+            command.extend(cli_args)
         flags = 0
         startupinfo = None
         use_external = external_terminal and self.spec.allow_external_terminal

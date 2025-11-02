@@ -171,4 +171,31 @@ PY`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `Sweep hits archived submodule refs under .legacy, causing git add to abort; stage the known modified files explicitly instead of scanning the entire tree.`
-**Correct command:** `git add .sangoi/CHANGELOG.md COMMON_MISTAKES.md apps/AGENTS.md apps/backend/AGENTS.md apps/backend/infra/config/args.py apps/backend/runtime/memory/config.py apps/backend/runtime/memory/manager.py apps/backend/runtime/wan22/wan22.py apps/launcher/profiles.py apps/tui_bios.py .sangoi/handoffs/2025-11-02-device-dtype-flags-refresh.md .sangoi/task-logs/2025-11-02-device-dtype-flags-refresh.md`
+**Correct command:** `git add .sangoi/CHANGELOG.md COMMON_MISTAKES.md apps/AGENTS.md apps/backend/AGENTS.md apps/backend/codex/AGENTS.md apps/backend/codex/options.py apps/backend/infra/config/args.py apps/backend/interfaces/api/run_api.py apps/backend/runtime/memory/memory_management.py apps/launcher/AGENTS.md apps/launcher/profiles.py apps/launcher/services.py .sangoi/handoffs/2025-11-02-backend-device-bootstrap-hardening.md .sangoi/handoffs/2025-11-02-sdxl-device-env-trace.md .sangoi/task-logs/2025-11-02-backend-device-bootstrap-hardening.md .sangoi/task-logs/2025-11-02-sdxl-device-env-trace.md`
+**Wrong command:** `python - <<'PY'
+from apps.backend.infra.config import args
+from apps.backend.runtime.memory.config import DeviceRole
+print('diffusion_device', args.memory_config.component_policy(DeviceRole.CORE).preferred_backend)
+print('te_device', args.memory_config.component_policy(DeviceRole.TEXT_ENCODER).preferred_backend)
+print('vae_device', args.memory_config.component_policy(DeviceRole.VAE).preferred_backend)
+print('primary_backend', args.memory_config.device_backend)
+print('gpu_prefer_construct', args.memory_config.gpu_prefer_construct)
+PY`
+**Cause + fix:** `Importing apps.backend triggered optional deps like safetensors that are absent in this sandbox; inspect config by parsing env/args module without pulling heavy runtime packages.`
+**Correct command:** `python - <<'PY'
+import importlib
+args = importlib.import_module('apps.backend.infra.config.args')
+from apps.backend.runtime.memory.config import DeviceRole
+print('diffusion_device', args.memory_config.component_policy(DeviceRole.CORE).preferred_backend)
+print('te_device', args.memory_config.component_policy(DeviceRole.TEXT_ENCODER).preferred_backend)
+print('vae_device', args.memory_config.component_policy(DeviceRole.VAE).preferred_backend)
+print('primary_backend', args.memory_config.device_backend)
+print('gpu_prefer_construct', args.memory_config.gpu_prefer_construct)
+PY`
+**Wrong command:** `python - <<'PY'
+import torch
+print('torch cuda available:', torch.cuda.is_available())
+print('torch version:', torch.__version__)
+PY`
+**Cause + fix:** `Global sandbox lacks torch; querying availability without the package raises ModuleNotFoundError. Use project tooling that stubs torch or run inside the configured environment with torch installed.`
+**Correct command:** `python - <<'PY'\nprint('torch not installed in sandbox; run inside ~/.venv with torch available')\nPY`

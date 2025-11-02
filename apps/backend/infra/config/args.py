@@ -1,7 +1,8 @@
 import argparse
 import logging
 import os
-from typing import Mapping
+import sys
+from typing import Mapping, MutableMapping, Sequence
 
 _LOG = logging.getLogger("backend.infra.config.args")
 
@@ -96,13 +97,125 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Prefer constructing models directly on GPU (no implicit fallback).",
     )
 
+    device_choices = ["auto", "cuda", "cpu", "mps", "xpu", "directml"]
+    parser.add_argument(
+        "--core-device",
+        choices=device_choices,
+        default=None,
+        help="Explicit device for diffusion core (overrides env/settings).",
+    )
+    parser.add_argument(
+        "--te-device",
+        choices=device_choices,
+        default=None,
+        help="Explicit device for text encoder (overrides env/settings).",
+    )
+    parser.add_argument(
+        "--vae-device",
+        choices=device_choices,
+        default=None,
+        help="Explicit device for VAE (overrides env/settings).",
+    )
+
+    dtype_choices = ["auto", "fp16", "bf16", "fp32", "fp8_e4m3fn", "fp8_e5m2"]
+    parser.add_argument(
+        "--core-dtype",
+        choices=dtype_choices,
+        default=None,
+        help="Preferred dtype for diffusion core (overrides env/settings).",
+    )
+    parser.add_argument(
+        "--te-dtype",
+        choices=dtype_choices,
+        default=None,
+        help="Preferred dtype for text encoder (overrides env/settings).",
+    )
+    parser.add_argument(
+        "--vae-dtype",
+        choices=["auto", "fp16", "bf16", "fp32"],
+        default=None,
+        help="Preferred dtype for VAE (overrides env/settings).",
+    )
+
     return parser
+
+
+_DEVICE_DIRECTIVES = (
+    ("core_device", "CODEX_DIFFUSION_DEVICE", "codex_diffusion_device"),
+    ("te_device", "CODEX_TE_DEVICE", "codex_te_device"),
+    ("vae_device", "CODEX_VAE_DEVICE", "codex_vae_device"),
+)
+
+_DTYPE_DIRECTIVES = (
+    ("core_dtype", "CODEX_DIFFUSION_DTYPE", "codex_diffusion_dtype"),
+    ("te_dtype", "CODEX_TE_DTYPE", "codex_te_dtype"),
+    ("vae_dtype", "CODEX_VAE_DTYPE", "codex_vae_dtype"),
+)
 
 
 def _truthy(value: str | None) -> bool:
     if not value:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_value(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _apply_source_overrides(
+    ns: argparse.Namespace,
+    env_map: MutableMapping[str, str],
+    settings: Mapping[str, object] | None,
+) -> None:
+    settings = settings or {}
+
+    def _setting_value(key: str) -> str | None:
+        if key not in settings:
+            return None
+        value = settings[key]
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    for flag_attr, env_key, settings_key in _DEVICE_DIRECTIVES + _DTYPE_DIRECTIVES:
+        raw = getattr(ns, flag_attr, None)
+        if raw is not None:
+            text = str(raw).strip().lower()
+            if not text or text == "auto":
+                env_map.pop(env_key, None)
+                setattr(ns, flag_attr, None)
+            else:
+                env_map[env_key] = text
+                setattr(ns, flag_attr, text)
+            continue
+
+        if not _has_value(env_map.get(env_key)):
+            setting_val = _setting_value(settings_key)
+            if setting_val:
+                env_map[env_key] = setting_val
+
+
+def _validate_required_devices(ns: argparse.Namespace) -> None:
+    missing: list[str] = []
+    for attr, label in (
+        ("codex_diffusion_device", "CODEX_DIFFUSION_DEVICE"),
+        ("codex_te_device", "CODEX_TE_DEVICE"),
+        ("codex_vae_device", "CODEX_VAE_DEVICE"),
+    ):
+        value = getattr(ns, attr, None)
+        if value is None:
+            missing.append(label)
+    if missing:
+        raise RuntimeError(
+            "Device configuration is required before starting the backend. "
+            f"Missing definitions for: {', '.join(missing)}."
+        )
 
 
 def _normalize_device_choice(value: str | None) -> str | None:
@@ -380,22 +493,59 @@ def build_runtime_memory_config(ns: argparse.Namespace) -> RuntimeMemoryConfig:
 
 
 _PARSER = _build_parser()
-_ARGS, _UNKNOWN = _PARSER.parse_known_args()
+_args: argparse.Namespace | None = None
+_memory_config: RuntimeMemoryConfig | None = None
+_UNKNOWN: list[str] = []
 
-_DEPRECATED = [arg for arg in _UNKNOWN if arg.startswith("--unet-in-")]
-if _DEPRECATED:
-    raise RuntimeError(
-        "Deprecated precision flag(s) detected: "
-        + ", ".join(_DEPRECATED)
-        + ". Use '--core-in-*' variants instead."
-    )
 
-_apply_env_overrides(_ARGS, os.environ)
+def initialize(
+    argv: Sequence[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    settings: Mapping[str, object] | None = None,
+    *,
+    strict: bool = True,
+) -> tuple[argparse.Namespace, RuntimeMemoryConfig]:
+    """Parse runtime arguments applying CLI/env/settings precedence.
 
-args = _ARGS
-memory_config = build_runtime_memory_config(args)
+    Returns the parsed namespace and freshly built RuntimeMemoryConfig.
+    When ``strict`` is True, raises RuntimeError if required device flags
+    are missing after applying overrides.
+    """
+    global _args, _memory_config, _UNKNOWN
 
-# (Removed ad-hoc env-to-device override block; device/dtype resolution remains in MemoryManager)
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    namespace, unknown = _PARSER.parse_known_args(argv_list)
+    _UNKNOWN = list(unknown)
+
+    deprecated = [arg for arg in unknown if arg.startswith("--unet-in-")]
+    if deprecated:
+        raise RuntimeError(
+            "Deprecated precision flag(s) detected: "
+            + ", ".join(deprecated)
+            + ". Use '--core-in-*' variants instead."
+        )
+
+    source_env = env if env is not None else os.environ
+    env_map: MutableMapping[str, str] = {}
+    for key, value in source_env.items():
+        if value is None:
+            continue
+        env_map[key] = str(value)
+
+    _apply_source_overrides(namespace, env_map, settings)
+    _apply_env_overrides(namespace, env_map)
+
+    config = build_runtime_memory_config(namespace)
+    if strict:
+        _validate_required_devices(namespace)
+
+    _args = namespace
+    _memory_config = config
+    return namespace, config
+
+
+# Initialise module defaults with non-strict semantics so legacy imports succeed.
+args, memory_config = initialize(strict=False)
 
 dynamic_args = {
     "embedding_dir": "./embeddings",
@@ -408,4 +558,5 @@ __all__ = [
     "memory_config",
     "dynamic_args",
     "build_runtime_memory_config",
+    "initialize",
 ]

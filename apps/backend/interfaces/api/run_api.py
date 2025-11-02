@@ -26,9 +26,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from apps.backend.codex import options as codex_options
+from apps.backend.infra.config import args as config_args
 from apps.backend.interfaces.api import codex_api
 from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.models import api as model_api
+from apps.backend.runtime.memory import memory_management as mem_management
 
 try:
     from colorama import Fore, Style  # type: ignore
@@ -2001,6 +2004,19 @@ def main() -> None:
 
     if used_fallback:
         banner(port)
+
+    try:
+        snapshot = codex_options.get_snapshot()
+        _, runtime_config = config_args.initialize(
+            argv=sys.argv[1:],
+            env=os.environ,
+            settings=snapshot.as_dict(),
+            strict=True,
+        )
+        mem_management.reinitialize(runtime_config)
+    except Exception as exc:
+        print(color_red(f"[INIT] {exc}"))
+        raise SystemExit(1) from exc
 
     ensure_initialized()
     uvicorn.run(build_app(), host=host, port=port, log_level='info')

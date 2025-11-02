@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from types import SimpleNamespace
 from typing import Iterable, Sequence
@@ -9,7 +10,7 @@ from typing import Iterable, Sequence
 import torch
 
 from apps.backend.infra.config import args as legacy_args
-from .config import DeviceRole
+from .config import DeviceRole, RuntimeMemoryConfig
 from .exceptions import MemoryLoadError
 from .manager import CodexMemoryManager
 
@@ -26,12 +27,34 @@ class VRAMState(SimpleNamespace):
     SHARED = "shared"
 
 
-_CONFIG = legacy_args.memory_config
-_MANAGER = CodexMemoryManager.create(_CONFIG)
+_CONFIG: RuntimeMemoryConfig | None = None
+_MANAGER: CodexMemoryManager | None = None
 
-memory_config = _CONFIG
-OOM_EXCEPTION = _MANAGER.oom_exception
-cpu = _MANAGER.cpu_device
+
+def _bind_config(config: RuntimeMemoryConfig) -> None:
+    global _CONFIG, _MANAGER, memory_config, OOM_EXCEPTION, cpu
+    old_manager = _MANAGER
+    if old_manager is not None:
+        with contextlib.suppress(Exception):
+            old_manager.unload_all_models()
+    _CONFIG = config
+    _MANAGER = CodexMemoryManager.create(config)
+    memory_config = config
+    OOM_EXCEPTION = _MANAGER.oom_exception
+    cpu = _MANAGER.cpu_device
+
+
+def reinitialize(config: RuntimeMemoryConfig) -> None:
+    """Replace the active memory manager with a new configuration."""
+    logger.info(
+        "Reinitializing memory manager (device_backend=%s, gpu_prefer_construct=%s)",
+        getattr(config.device_backend, "value", config.device_backend),
+        getattr(config, "gpu_prefer_construct", False),
+    )
+    _bind_config(config)
+
+
+_bind_config(legacy_args.memory_config)
 
 
 def _wrap_model_sequence(models: Sequence[object] | Iterable[object]) -> Sequence[object]:

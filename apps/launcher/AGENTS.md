@@ -19,3 +19,4 @@ Status: Active
 - Persistence writes to `.sangoi/launcher/{meta,areas,models}`; migrations should extend `profiles` rather than duplicating logic.
 - Service command definitions should remain minimal and composition-friendly—prefer adding options via profile/env rather than bespoke subprocess code.
 - 2025-11-02: Windows “Services in new terminal” now wraps commands with `cmd.exe /K` and leaves stdin attached so the console stays open after exit for manual inspection.
+- 2025-11-02: Launcher profiles persist diffusion/TE/VAE device + dtype choices via the Codex options snapshot, and `services.py` now forwards them as CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) when spawning the API instead of relying on env vars.

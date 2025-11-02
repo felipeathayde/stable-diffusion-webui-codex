@@ -88,6 +88,12 @@ class OptionsSnapshot:
     sd_model_checkpoint: Optional[str] = None
     codex_export_video: bool = False
     selected_vae: str = 'Automatic'
+    codex_diffusion_device: Optional[str] = None
+    codex_diffusion_dtype: Optional[str] = None
+    codex_te_device: Optional[str] = None
+    codex_te_dtype: Optional[str] = None
+    codex_vae_device: Optional[str] = None
+    codex_vae_dtype: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -96,6 +102,12 @@ class OptionsSnapshot:
             'sd_model_checkpoint': self.sd_model_checkpoint,
             'codex_export_video': self.codex_export_video,
             'selected_vae': self.selected_vae,
+            'codex_diffusion_device': self.codex_diffusion_device,
+            'codex_diffusion_dtype': self.codex_diffusion_dtype,
+            'codex_te_device': self.codex_te_device,
+            'codex_te_dtype': self.codex_te_dtype,
+            'codex_vae_device': self.codex_vae_device,
+            'codex_vae_dtype': self.codex_vae_dtype,
         }
 
 
@@ -107,5 +119,11 @@ def get_snapshot() -> OptionsSnapshot:
         sd_model_checkpoint=v.get('sd_model_checkpoint'),
         codex_export_video=bool(v.get('codex_export_video', False)),
         selected_vae=str(v.get('selected_vae', 'Automatic')),
+        codex_diffusion_device=v.get('codex_diffusion_device'),
+        codex_diffusion_dtype=v.get('codex_diffusion_dtype'),
+        codex_te_device=v.get('codex_te_device'),
+        codex_te_dtype=v.get('codex_te_dtype'),
+        codex_vae_device=v.get('codex_vae_device'),
+        codex_vae_dtype=v.get('codex_vae_dtype'),
     )
     return snap

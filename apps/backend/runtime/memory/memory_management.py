@@ -39,7 +39,7 @@ def _wrap_model_sequence(models: Sequence[object] | Iterable[object]) -> Sequenc
 
 
 def get_torch_device() -> torch.device:
-    return _MANAGER.primary_device()
+    return _MANAGER.get_device(DeviceRole.CORE)
 
 
 def get_free_memory(dev: torch.device | None = None, torch_free_too: bool = False):
@@ -101,7 +101,7 @@ def core_offload_device():
 
 
 def core_initial_load_device(parameters, dtype):
-    return _MANAGER.primary_device()
+    return _MANAGER.get_device(DeviceRole.CORE)
 
 
 def text_encoder_device():

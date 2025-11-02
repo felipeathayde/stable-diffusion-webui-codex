@@ -233,11 +233,6 @@ def _load_huggingface_component(
             return None
         clip_config = importlib.import_module("transformers").CLIPTextConfig.from_pretrained(component_path)
         te_device = memory_management.text_encoder_device()
-        try:
-            if memory_management.is_device_cpu(te_device) and torch.cuda.is_available():
-                te_device = memory_management.get_torch_device()
-        except Exception:
-            pass
         te_dtype = memory_management.text_encoder_dtype(device=te_device)
         to_args = dict(device=te_device, dtype=te_dtype)
         print(f"[loader] clip_construct device='{te_device}' dtype='{te_dtype}'", flush=True)
@@ -261,11 +256,6 @@ def _load_huggingface_component(
             return None
         t5_config = read_arbitrary_config(component_path)
         te_device = memory_management.text_encoder_device()
-        try:
-            if memory_management.is_device_cpu(te_device) and torch.cuda.is_available():
-                te_device = memory_management.get_torch_device()
-        except Exception:
-            pass
         storage_dtype = memory_management.text_encoder_dtype(device=te_device)
         state_dict_dtype = memory_management.state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:

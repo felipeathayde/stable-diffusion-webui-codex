@@ -13,7 +13,10 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
-from apps.backend.core.requests import InferenceEvent, ProgressEvent
+import json
+from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent
+from apps.backend.runtime.processing.conditioners import decode_latent_batch
+from apps.backend.runtime.workflows.common import latents_to_pil
 
 
 # note: no extra device assertions here; diagnostics should be captured upstream
@@ -138,7 +141,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
 
-        for ev in _generate_txt2img(
+        # Run pipeline (returns latent BCHW tensor)
+        latents = _generate_txt2img(
             processing=proc,
             conditioning=cond,
             unconditional_conditioning=uncond,
@@ -146,8 +150,27 @@ class StableDiffusionXL(CodexDiffusionEngine):
             subseeds=subseeds,
             subseed_strength=subseed_strength,
             prompts=prompts,
-        ):
-            yield ev
+        )
+
+        if not isinstance(latents, torch.Tensor):
+            raise RuntimeError(
+                f"txt2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
+            )
+
+        # Decode to RGB and package result
+        decoded = decode_latent_batch(self, latents)
+        images = latents_to_pil(decoded)
+        info = {
+            "engine": self.engine_id,
+            "task": "txt2img",
+            "width": int(proc.width),
+            "height": int(proc.height),
+            "steps": int(proc.steps),
+            "guidance_scale": float(proc.guidance_scale),
+            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
+            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+        }
+        yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

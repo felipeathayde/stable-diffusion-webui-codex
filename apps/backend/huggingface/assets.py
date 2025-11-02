@@ -103,6 +103,7 @@ def ensure_repo_minimal_files(
             "transformer/config.json",
         })
     if "tokenizer" in need:
+        # Tokenizers are small and required for text processing; restrict to JSON/TXT/MODEL files only.
         patterns.update(
             {
                 "tokenizer/tokenizer.json",
@@ -119,11 +120,6 @@ def ensure_repo_minimal_files(
                 "tokenizer_2/*.json",
                 "tokenizer_2/*.txt",
                 "tokenizer_2/*.model",
-                # text encoder weights (allow both safetensors and pytorch bin)
-                "text_encoder/*.safetensors",
-                "text_encoder/*model*.bin",
-                "text_encoder_2/*.safetensors",
-                "text_encoder_2/*model*.bin",
             }
         )
     # Optional: include VAE weights when explicitly requested by caller (e.g., GGUF runtime)
@@ -132,6 +128,16 @@ def ensure_repo_minimal_files(
             "vae/*.safetensors",
             "vae/*model*.bin",
         })
+    # Allow optional inclusion of text encoder weights only when explicitly requested
+    if any(k in (include or ()) for k in ("te_weights", "weights_all")):
+        patterns.update(
+            {
+                "text_encoder/*.safetensors",
+                "text_encoder/*model*.bin",
+                "text_encoder_2/*.safetensors",
+                "text_encoder_2/*model*.bin",
+            }
+        )
     if "scheduler" in need:
         patterns.update(
             {

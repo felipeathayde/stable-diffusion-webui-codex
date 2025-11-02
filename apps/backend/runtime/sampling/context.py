@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 import torch
@@ -12,6 +13,43 @@ from apps.backend.engines.util.schedulers import SamplerKind
 
 
 _LOGGER = logging.getLogger(__name__ + ".context")
+
+
+class SchedulerName(str, Enum):
+    """Canonical scheduler names for sigma schedule construction.
+
+    Notes
+    - This controls ONLY the sigma schedule construction, not the integrator
+      (which is selected via `SamplerKind`).
+    - We accept a limited set of aliases coming from UI/API or diffusers names,
+      but do not silently fallback: unknown values raise with a clear message.
+    """
+
+    AUTOMATIC = "automatic"
+    SIMPLE = "simple"
+    KARRAS = "karras"
+    EULER_DISCRETE = "euler_discrete"
+
+    @staticmethod
+    def from_string(name: str | None) -> "SchedulerName":
+        key = (name or "automatic").strip().lower()
+        # First, direct matches to canonical values
+        for member in SchedulerName:
+            if key == member.value:
+                return member
+        # Aliases expected from UI/API and diffusers
+        aliases = {
+            "euler": SchedulerName.EULER_DISCRETE,
+            "euler a": SchedulerName.EULER_DISCRETE,  # schedule identical; integrator differs
+            "eulerdiscretescheduler": SchedulerName.EULER_DISCRETE,
+            "eulerancestraldiscretescheduler": SchedulerName.EULER_DISCRETE,
+        }
+        if key in aliases:
+            return aliases[key]
+        raise ValueError(
+            f"Unsupported scheduler '{name}'. Supported: "
+            f"{[m.value for m in SchedulerName]} and common aliases (euler, euler a, EulerDiscreteScheduler)."
+        )
 
 
 def _karras_schedule(
@@ -42,12 +80,16 @@ def build_sigma_schedule(
     if steps <= 0:
         raise ValueError("steps must be >= 1")
 
-    name = (scheduler_name or "Automatic").strip().lower()
-    if name in {"automatic", "simple"}:
+    kind = SchedulerName.from_string(scheduler_name)
+    if kind in (SchedulerName.AUTOMATIC, SchedulerName.SIMPLE):
+        # Linear schedule from sigma_max -> sigma_min + terminal 0
         return torch.linspace(sigma_max, sigma_min, steps + 1, device=device, dtype=dtype)
-    if name == "karras":
+    if kind in (SchedulerName.KARRAS, SchedulerName.EULER_DISCRETE):
+        # Euler in diffusers commonly uses Karras sigmas; we purposefully
+        # build the Karras schedule here. Integrator is selected elsewhere.
         return _karras_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
-    raise ValueError(f"Unsupported scheduler '{scheduler_name}'")
+    # Exhaustive by construction, but keep explicit guard for clarity
+    raise ValueError(f"Unsupported scheduler '{scheduler_name}' after normalization")
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -136,4 +178,5 @@ __all__ = [
     "SamplingContext",
     "build_sampling_context",
     "build_sigma_schedule",
+    "SchedulerName",
 ]

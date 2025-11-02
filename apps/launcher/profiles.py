@@ -303,6 +303,18 @@ class LauncherProfileStore:
                 mapping.pop(dtype_key, None)
 
         core_env = self.areas.setdefault("core", {})
+        legacy_core_dev = core_env.pop("CODEX_CORE_DEVICE", None)
+        if legacy_core_dev:
+            canon = _canonical_device(legacy_core_dev)
+            if canon:
+                core_env["CODEX_DIFFUSION_DEVICE"] = canon
+
+        legacy_core_dtype = core_env.pop("CODEX_CORE_DTYPE", None)
+        if legacy_core_dtype:
+            canon_dt = _canonical_dtype(legacy_core_dtype)
+            if canon_dt:
+                core_env["CODEX_DIFFUSION_DTYPE"] = canon_dt
+
         wan_env = self.areas.get("wan", {})
         if wan_env and "WAN_TE_DEVICE" in wan_env:
             legacy_te = _canonical_device(wan_env.pop("WAN_TE_DEVICE"))
@@ -311,6 +323,18 @@ class LauncherProfileStore:
 
         containers: list[Dict[str, str]] = list(self.areas.values()) + list(self.models.values())
         for mapping in containers:
+            legacy_core_dev = mapping.pop("CODEX_CORE_DEVICE", None)
+            if legacy_core_dev and not mapping.get("CODEX_DIFFUSION_DEVICE"):
+                canon = _canonical_device(legacy_core_dev)
+                if canon:
+                    mapping["CODEX_DIFFUSION_DEVICE"] = canon
+
+            legacy_core_dtype = mapping.pop("CODEX_CORE_DTYPE", None)
+            if legacy_core_dtype and not mapping.get("CODEX_DIFFUSION_DTYPE"):
+                canon_dt = _canonical_dtype(legacy_core_dtype)
+                if canon_dt:
+                    mapping["CODEX_DIFFUSION_DTYPE"] = canon_dt
+
             legacy_cpu = mapping.pop("CODEX_VAE_IN_CPU", None)
             if legacy_cpu and str(legacy_cpu).strip().lower() in {"1", "true", "yes", "on"}:
                 mapping["CODEX_VAE_DEVICE"] = "cpu"

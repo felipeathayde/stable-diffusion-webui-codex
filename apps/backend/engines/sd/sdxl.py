@@ -97,16 +97,45 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     # ------------------------------------------------------------------ Tasks
     def txt2img(self, request, **kwargs: Any):  # type: ignore[override]
-        self.ensure_loaded()
-        runtime = self._require_runtime()
-        try:
-            from apps.backend.runtime.processing.builder import build_processing_for_txt2img
-            from apps.backend.runtime.processing.conditioning import build_conditioning_for_txt2img
-        except Exception as exc:  # pragma: no cover - defensive
-            raise RuntimeError(f"SDXL: missing processing builders: {exc}") from exc
+        """Run txt2img using the staged pipeline runner.
 
-        proc = build_processing_for_txt2img(runtime, request)
-        cond, uncond, seeds, subseeds, subseed_strength, prompts = build_conditioning_for_txt2img(runtime, request)
+        Avoids external builder imports; constructs a minimal CodexProcessingTxt2Img
+        from the request and prepares conditioning via SDXL runtime.
+        """
+        from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
+
+        self.ensure_loaded()
+        _ = self._require_runtime()
+
+        # Build processing descriptor from request
+        proc = CodexProcessingTxt2Img(
+            prompt=str(getattr(request, "prompt", "")),
+            negative_prompt=str(getattr(request, "negative_prompt", "")),
+            width=int(getattr(request, "width", 1024) or 1024),
+            height=int(getattr(request, "height", 1024) or 1024),
+            steps=int(getattr(request, "steps", 30) or 30),
+            guidance_scale=float(getattr(request, "guidance_scale", 7.0) or 7.0),
+            distilled_guidance_scale=float(getattr(getattr(request, "metadata", {}), "get", lambda _k, _d=None: None)(
+                "distilled_cfg_scale", 3.5
+            ) or 3.5),
+            batch_size=int(getattr(request, "batch_size", 1) or 1),
+            iterations=1,
+            seed=int(getattr(request, "seed", -1) or -1),
+            sampler_name=getattr(request, "sampler", None),
+            scheduler=getattr(request, "scheduler", None),
+            metadata=getattr(request, "metadata", {}),
+        )
+        # Bind current model
+        proc.sd_model = self
+
+        # Prepare conditioning (SDXL: CLIP-L/CLIP-G)
+        prompts = [proc.prompt]
+        seeds = [proc.seed]
+        subseeds = [-1]
+        subseed_strength = 0.0
+        cond = self.get_learned_conditioning(prompts)
+        uncond = self.get_learned_conditioning([""])
+
         yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
 
         for ev in _generate_txt2img(

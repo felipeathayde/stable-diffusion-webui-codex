@@ -88,7 +88,12 @@ class CodexSampler:
             x = model.predictor.noise_scaling(sigmas[:1], noise, torch.zeros_like(noise))
 
         if self._log_enabled:
-            self._logger.info("sampler algorithm=%s steps=%d sigma_max=%.6g sigma_min=%.6g", self.algorithm, steps, float(smax), float(smin))
+            try:
+                smax = float(sigmas[0].item()) if hasattr(sigmas[0], 'item') else float(sigmas[0])
+                smin = float(sigmas[-1].item()) if hasattr(sigmas[-1], 'item') else float(sigmas[-1])
+            except Exception:
+                smax = float('nan'); smin = float('nan')
+            self._logger.info("sampler algorithm=%s steps=%d sigma_max=%.6g sigma_min=%.6g", self.algorithm, steps, smax, smin)
 
         # Compile conditions
         compiled_cond = compile_conditions(cond)

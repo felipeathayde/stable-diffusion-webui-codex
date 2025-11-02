@@ -32,4 +32,4 @@ Status: Active
 - Prefer adding new functionality under the structured subpackages above; avoid creating new ad-hoc directories.
 - Keep Hugging Face helpers up to date—Codex builds on these mirrors rather than relying on upstream defaults.
 - When retiring subpackages, relocate historical context to `.sangoi/deprecated/` and update this overview.
-- 2025-11-02: Inline pipeline debugging agora usa `apps.backend.runtime.pipeline_debug`; ligue com `set_pipeline_debug(True)` ou defina `CODEX_PIPELINE_DEBUG=1` (também disponível na BIOS) para logar `entrou/saiu` na pipeline txt2img/SDXL.
+- 2025-11-02: Inline pipeline debugging agora usa `apps.backend.runtime.pipeline_debug`; ligue com `set_pipeline_debug(True)` ou defina `CODEX_PIPELINE_DEBUG=1` (também disponível na BIOS) para logar `entrou/saiu` na pipeline txt2img/SDXL. A pipeline de SDXL valida `torch.cuda.is_available()` e recusa execução quando o modelo está em CPU, evitando o crash em `torch_cpu.dll`.

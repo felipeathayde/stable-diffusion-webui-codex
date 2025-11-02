@@ -87,6 +87,21 @@ class Txt2ImgPipelineRunner:
         subseed_strength: float,
         prompts: Sequence[str],
     ) -> torch.Tensor:
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "StableDiffusionXL exige CUDA ativo (torch.cuda.is_available() retornou False). "
+                "Instale os drivers/CUDA corretos ou execute o modo somente CPU conscientemente."
+            )
+
+        model_device, model_dtype = self._sd_model_device_info(processing)
+        if model_device is not None:
+            self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
+            if model_device.type != "cuda":
+                raise RuntimeError(
+                    "StableDiffusionXL carregou o modelo em %s; configure uma GPU CUDA antes de continuar."
+                    % model_device
+                )
+
         state = self._prepare_state(
             processing,
             conditioning_data,
@@ -403,3 +418,30 @@ class Txt2ImgPipelineRunner:
             checkpoint_name=getattr(processing, "hr_checkpoint_name", None),
             additional_modules=getattr(processing, "hr_additional_modules", None),
         )
+
+    # ------------------------------------------------------------------ diagnostics
+    def _sd_model_device_info(
+        self, processing: CodexProcessingTxt2Img
+    ) -> tuple[torch.device | None, torch.dtype | None]:
+        model = getattr(processing, "sd_model", None)
+        if model is None:
+            return None, None
+        tensor = None
+        try:
+            params = model.parameters()
+            if params is not None:
+                tensor = next(params)
+        except StopIteration:
+            tensor = None
+        except Exception:
+            tensor = None
+        if tensor is None:
+            candidate = getattr(model, "weight", None)
+            if isinstance(candidate, torch.Tensor):
+                tensor = candidate
+        if tensor is not None and isinstance(tensor, torch.Tensor):
+            return tensor.device, tensor.dtype
+        device_attr = getattr(model, "device", None)
+        if isinstance(device_attr, torch.device):
+            return device_attr, None
+        return None, None

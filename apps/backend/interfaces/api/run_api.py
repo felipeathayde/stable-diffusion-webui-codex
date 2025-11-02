@@ -1572,7 +1572,7 @@ def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optio
         model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
-    def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:
@@ -1600,8 +1600,7 @@ def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optio
             try:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
-                    orch = InferenceOrchestrator()
-                    for ev in orch.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
+                    for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
                         if isinstance(ev, ProgressEvent):
                             push({
                                 "type": "progress",
@@ -1638,7 +1637,7 @@ def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optio
         thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
         thread.start()
 
-    def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
+def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
         prompt = payload.get('txt2vid_prompt', '')
         negative_prompt = payload.get('txt2vid_neg_prompt', '')
         width_val = int(payload.get('txt2vid_width', 768))
@@ -1733,7 +1732,7 @@ def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optio
             pass
         return req, str(engine_key), model_ref
 
-    def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
+def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
         prompt = payload.get('img2vid_prompt', '')
         negative_prompt = payload.get('img2vid_neg_prompt', '')

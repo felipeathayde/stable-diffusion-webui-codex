@@ -7,6 +7,7 @@ import torch
 
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
+from apps.backend.runtime import memory_management
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -124,7 +125,7 @@ def _run_hires_pass(
     processing.denoising_strength = denoise
     processing.prepare_prompt_data()
 
-    decoded = decode_latent_batch(processing.sd_model, base_samples, target_device=devices.cpu())
+    decoded = decode_latent_batch(processing.sd_model, base_samples, target_device=memory_management.cpu)
     pil_images = latents_to_pil(decoded)
     upscaled = [img.resize((target_width, target_height), _RESAMPLE_LANCZOS) for img in pil_images]
     tensor = pil_to_tensor(upscaled)

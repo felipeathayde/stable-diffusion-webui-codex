@@ -15,6 +15,7 @@ from apps.backend.codex import main as codex_main
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.patchers.token_merging import SkipWritingToConfig
+from apps.backend.runtime import memory_management
 from apps.backend.runtime.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
@@ -302,7 +303,7 @@ class Txt2ImgPipelineRunner:
                 mode=mode,
                 antialias=antialias,
             )
-            tensor = decode_latent_batch(processing.sd_model, latents, target_device=devices.cpu())
+            tensor = decode_latent_batch(processing.sd_model, latents, target_device=memory_management.cpu)
             image_conditioning = img2img_conditioning(
                 processing.sd_model,
                 tensor,
@@ -314,7 +315,7 @@ class Txt2ImgPipelineRunner:
             decoded_samples = base_result.decoded
             if decoded_samples is None:
                 decoded_samples = decode_latent_batch(
-                    processing.sd_model, base_result.samples, target_device=devices.cpu()
+                    processing.sd_model, base_result.samples, target_device=memory_management.cpu
                 )
             pil_images = latents_to_pil(decoded_samples)
             upscaled = [img.resize((target_width, target_height), _RESAMPLE_LANCZOS) for img in pil_images]

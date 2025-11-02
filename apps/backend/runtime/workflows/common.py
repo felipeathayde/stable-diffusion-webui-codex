@@ -303,7 +303,7 @@ def maybe_decode_for_hr(processing: Any, samples: torch.Tensor) -> torch.Tensor 
         return decode_latent_batch(
             processing.sd_model,
             samples,
-            target_device=devices.cpu(),
+            target_device=memory_management.cpu,
         ).to(dtype=torch.float32)
     return None
 
@@ -369,7 +369,7 @@ def execute_sampling(
         processing.modified_noise = None
 
     def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
-        img = decode_latent_batch(processing.sd_model, denoised_latent, target_device=devices.cpu())
+        img = decode_latent_batch(processing.sd_model, denoised_latent, target_device=memory_management.cpu)
         arr = img[0].detach().float().cpu().clamp(-1, 1)
         arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
         backend_state.set_current_image(Image.fromarray(arr, mode="RGB"))

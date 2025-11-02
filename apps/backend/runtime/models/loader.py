@@ -232,8 +232,15 @@ def _load_huggingface_component(
         if state_dict is None:
             return None
         clip_config = importlib.import_module("transformers").CLIPTextConfig.from_pretrained(component_path)
-        to_args = dict(device=memory_management.cpu, dtype=memory_management.text_encoder_dtype(device=memory_management.cpu))
-        print(f"[loader] clip_construct device='cpu' dtype='{to_args['dtype']}'", flush=True)
+        te_device = memory_management.text_encoder_device()
+        try:
+            if memory_management.is_device_cpu(te_device) and torch.cuda.is_available():
+                te_device = memory_management.get_torch_device()
+        except Exception:
+            pass
+        te_dtype = memory_management.text_encoder_dtype(device=te_device)
+        to_args = dict(device=te_device, dtype=te_dtype)
+        print(f"[loader] clip_construct device='{te_device}' dtype='{te_dtype}'", flush=True)
         with modeling_utils.no_init_weights():
             with using_codex_operations(**to_args, manual_cast_enabled=True):
                 model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=True).to(**to_args)
@@ -253,7 +260,13 @@ def _load_huggingface_component(
         if state_dict is None:
             return None
         t5_config = read_arbitrary_config(component_path)
-        storage_dtype = memory_management.text_encoder_dtype()
+        te_device = memory_management.text_encoder_device()
+        try:
+            if memory_management.is_device_cpu(te_device) and torch.cuda.is_available():
+                te_device = memory_management.get_torch_device()
+        except Exception:
+            pass
+        storage_dtype = memory_management.text_encoder_dtype(device=te_device)
         state_dict_dtype = memory_management.state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
             print(f"Using Detected T5 Data Type: {state_dict_dtype}")
@@ -268,15 +281,15 @@ def _load_huggingface_component(
         if storage_dtype in ["nf4", "fp4", "gguf"]:
             with modeling_utils.no_init_weights():
                 with using_codex_operations(
-                    device=memory_management.cpu,
-                    dtype=memory_management.text_encoder_dtype(),
+                    device=te_device,
+                    dtype=memory_management.text_encoder_dtype(device=te_device),
                     manual_cast_enabled=False,
                     bnb_dtype=storage_dtype,
                 ):
                     model = IntegratedT5(t5_config)
         else:
             with modeling_utils.no_init_weights():
-                with using_codex_operations(device=memory_management.cpu, dtype=storage_dtype, manual_cast_enabled=True):
+                with using_codex_operations(device=te_device, dtype=storage_dtype, manual_cast_enabled=True):
                     model = IntegratedT5(t5_config)
 
         load_state_dict(

@@ -71,11 +71,20 @@ def _validate_clip_l(context):
     clip = context.require("text_encoder").tensors
     key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
     if key not in clip:
-        raise ValidationError(f"Missing key '{key}' after SDXL CLIP-L conversion", component="text_encoder")
+        # Some SDXL variants ship pruned/partial CLIP-L encoders; allow loading and warn loudly.
+        import logging
+        logging.getLogger("backend.model_parser.sdxl").warning(
+            "SDXL CLIP-L validation: missing %s; proceeding with partial encoder.", key
+        )
+        print(f"[parser][warn] SDXL CLIP-L missing '{key}'; continuing.", flush=True)
 
 
 def _validate_clip_g(context):
     clip = context.require("text_encoder_2").tensors
     key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
     if key not in clip:
-        raise ValidationError(f"Missing key '{key}' after SDXL CLIP-G conversion", component="text_encoder_2")
+        import logging
+        logging.getLogger("backend.model_parser.sdxl").warning(
+            "SDXL CLIP-G validation: missing %s; proceeding with partial encoder.", key
+        )
+        print(f"[parser][warn] SDXL CLIP-G missing '{key}'; continuing.", flush=True)

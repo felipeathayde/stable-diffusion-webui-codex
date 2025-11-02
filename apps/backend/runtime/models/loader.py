@@ -114,12 +114,14 @@ def _prediction_type_value(prediction: PredictionKind) -> str:
 
 
 def _load_state_dict(path: str) -> Mapping[str, Any]:
+    print(f"[loader] load_torch_file_start path='{path}'", flush=True)
     _trace.event("load_torch_file_start", path=str(path))
     sd = load_torch_file(path)
     try:
         tensor_count = len(sd.keys())  # type: ignore[attr-defined]
     except Exception:
         tensor_count = -1
+    print(f"[loader] load_torch_file_done path='{path}' type='{type(sd).__name__}' tensors={tensor_count}", flush=True)
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
 
@@ -399,6 +401,7 @@ def _apply_prediction_type(codex_components: Dict[str, Any], parsed: ParsedCheck
 
 @torch.inference_mode()
 def codex_loader(sd_path: str, additional_state_dicts=None):
+    print(f"[loader] codex_loader enter sd_path='{sd_path}'", flush=True)
     try:
         parsed = _parse_checkpoint(sd_path, additional_state_dicts or [])
     except ModelRegistryError as exc:
@@ -551,14 +554,16 @@ def resolve_diffusion_bundle(
     additional_state_dicts: Optional[list[str]] = None,
 ) -> DiffusionModelBundle:
     """Resolve a diffusion model reference into a fully loaded bundle."""
-
+    print(f"[loader] resolve_diffusion_bundle model_ref='{model_ref}'", flush=True)
     if os.path.isdir(model_ref):
         index = os.path.join(model_ref, "model_index.json")
         if os.path.isfile(index):
+            print(f"[loader] detected diffusers repo at '{model_ref}'", flush=True)
             return load_engine_from_diffusers(model_ref)
         raise ValueError(f"Not a diffusers repository (missing model_index.json): {model_ref}")
 
     if os.path.isfile(model_ref):
+        print(f"[loader] detected state_dict file at '{model_ref}'", flush=True)
         return codex_loader(model_ref, additional_state_dicts=additional_state_dicts)
 
     record = model_api.find_checkpoint(model_ref)
@@ -568,10 +573,12 @@ def resolve_diffusion_bundle(
     # Determine format via metadata or filesystem inspection
     metadata = getattr(record, "metadata", {}) or {}
     if isinstance(metadata, dict) and metadata.get("format") == "diffusers":
+        print(f"[loader] registry metadata indicates diffusers for '{record.path}'", flush=True)
         return load_engine_from_diffusers(record.path)
 
     repo_index = os.path.join(record.path, "model_index.json")
     if os.path.isfile(repo_index):
+        print(f"[loader] found model_index.json under '{record.path}'", flush=True)
         return load_engine_from_diffusers(record.path)
-
+    print(f"[loader] falling back to state_dict filename='{record.filename}'", flush=True)
     return codex_loader(record.filename, additional_state_dicts=additional_state_dicts)

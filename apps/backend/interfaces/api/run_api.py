@@ -1270,7 +1270,7 @@ def build_app() -> FastAPI:
                 rejected[k] = 'invalid value'
         return {"accepted": accepted, "rejected": rejected}
 
-def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
+    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
         prompt = _p.require(payload, 'txt2img_prompt') or ''
         negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''
         prompt_styles = _p.as_list(payload, 'txt2img_styles')
@@ -1413,7 +1413,7 @@ def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optio
 _ORCH = InferenceOrchestrator()
 
 
-def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+    def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
     loop = entry.loop
 
     def push(event: Dict[str, Any]) -> None:
@@ -1485,7 +1485,7 @@ def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) ->
     thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
     thread.start()
 
-def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
+    def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
         init_image_data = _p.require(payload, 'img2img_init_image')
         init_image = media.decode_image(init_image_data)
         mask_data = payload.get('img2img_mask')
@@ -1572,7 +1572,7 @@ def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optio
         model_ref = snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
-def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+    def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:
@@ -1637,7 +1637,7 @@ def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) ->
         thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
         thread.start()
 
-def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
+    def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
         prompt = payload.get('txt2vid_prompt', '')
         negative_prompt = payload.get('txt2vid_neg_prompt', '')
         width_val = int(payload.get('txt2vid_width', 768))
@@ -1732,7 +1732,7 @@ def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optio
             pass
         return req, str(engine_key), model_ref
 
-def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
+    def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
         prompt = payload.get('img2vid_prompt', '')
         negative_prompt = payload.get('img2vid_neg_prompt', '')
@@ -1832,7 +1832,7 @@ def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optio
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, str(engine_key), model_ref
 
-def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
+    def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:

@@ -140,9 +140,27 @@ class StableDiffusionXL(CodexDiffusionEngine):
         subseeds = [-1]
         subseed_strength = 0.0
         cond = self.get_learned_conditioning(prompts)
-        uncond = self.get_learned_conditioning([""])
+        # Use provided negative prompt when available; fall back to empty
+        neg_text = getattr(proc, "negative_prompt", "") or ""
+        uncond = self.get_learned_conditioning([neg_text])
 
         yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
+
+        # Optional conditioning diagnostics
+        try:
+            if bool(int(str(os.getenv("CODEX_DEBUG_COND", "0")).strip() or "0")):
+                ca = cond.get("crossattn") if isinstance(cond, dict) else None
+                va = cond.get("vector") if isinstance(cond, dict) else None
+                ua = uncond.get("crossattn") if isinstance(uncond, dict) else None
+                uv = uncond.get("vector") if isinstance(uncond, dict) else None
+                def _n(t):
+                    return float(t.detach().abs().mean().item()) if isinstance(t, torch.Tensor) else -1.0
+                logger.info(
+                    "[sdxl] cond norms: cross=%.4f vec=%.4f | uncond: cross=%.4f vec=%.4f",
+                    _n(ca), _n(va), _n(ua), _n(uv),
+                )
+        except Exception:
+            pass
 
         # Run pipeline on a worker thread while streaming progress from backend_state
         result: dict[str, Any] = {"latents": None, "error": None}

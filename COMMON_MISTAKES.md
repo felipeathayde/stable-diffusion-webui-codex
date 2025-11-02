@@ -157,19 +157,10 @@ PY`
 **Cause + fix:** `The environment lacks torch; importing runtime helpers pulls torch and fails. Use the static dry-run that avoids PyTorch imports.`
 **Correct command:** `python3 tools/diagnostics/dry_run_pipeline_static.py`
 **Wrong command:** `python - <<'PY'
-import logging, os
-os.environ['CODEX_CALLTRACE'] = '1'
 from apps.backend.runtime.logging import calltrace
-from apps.backend.core.engine_interface import BaseInferenceEngine, EngineCapabilities, TaskType
-from apps.backend.core.registry import EngineRegistry
-from apps.backend.core.requests import ProgressEvent, Txt2ImgRequest
-from apps.backend.core.orchestrator import InferenceOrchestrator
-...
 PY`
-**Cause + fix:** `Importing apps.backend.runtime.logging pulls optional dependencies (e.g., safetensors) that are not installed in this environment; restrict the demo to lightweight modules so the script stays import-safe.`
+**Cause + fix:** `The calltrace module was removed; pipeline debugging now lives in apps/backend/runtime/logging/pipeline_debug.py.`
 **Correct command:** `python - <<'PY'
-import importlib.util, pathlib
-spec = importlib.util.spec_from_file_location('codex_calltrace', pathlib.Path('apps/backend/runtime/logging/calltrace.py'))
-calltrace = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(calltrace)
+from apps.backend.runtime.logging.pipeline_debug import set_pipeline_debug
+set_pipeline_debug(True)
 PY`

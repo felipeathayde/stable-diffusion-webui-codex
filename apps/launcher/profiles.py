@@ -31,8 +31,6 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_SWAP_POLICY": os.getenv("CODEX_SWAP_POLICY", "cpu"),
         "CODEX_SWAP_METHOD": os.getenv("CODEX_SWAP_METHOD", "blocked"),
         "CODEX_GPU_PREFER_CONSTRUCT": os.getenv("CODEX_GPU_PREFER_CONSTRUCT", "0"),
-        # Calltrace toggle (entry/exit debug logs)
-        "CODEX_CALLTRACE": os.getenv("CODEX_CALLTRACE", "0"),
     }
     wan = {
         "WAN_SDPA_DEBUG": os.getenv("WAN_SDPA_DEBUG", "0"),

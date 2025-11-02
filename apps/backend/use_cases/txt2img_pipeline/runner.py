@@ -15,6 +15,7 @@ from apps.backend.codex import main as codex_main
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.patchers.token_merging import SkipWritingToConfig
+from apps.backend.runtime.logging.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -75,6 +76,7 @@ class Txt2ImgPipelineRunner:
         self._logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
 
     # ------------------------------------------------------------------ public API
+    @pipeline_trace
     def run(
         self,
         processing: CodexProcessingTxt2Img,
@@ -104,6 +106,7 @@ class Txt2ImgPipelineRunner:
         return hires_samples
 
     # ------------------------------------------------------------------ stages
+    @pipeline_trace
     def _prepare_state(
         self,
         processing: CodexProcessingTxt2Img,
@@ -146,6 +149,7 @@ class Txt2ImgPipelineRunner:
             init_decoded=init_decoded,
         )
 
+    @pipeline_trace
     def _execute_base_sampling(self, processing: CodexProcessingTxt2Img, state: PrepareState) -> SamplingOutput:
         base_samples = state.init_latents
         decoded_samples = state.init_decoded
@@ -174,6 +178,7 @@ class Txt2ImgPipelineRunner:
 
         return SamplingOutput(samples=base_samples, decoded=decoded_samples)
 
+    @pipeline_trace
     def _reload_for_hires(self, processing: CodexProcessingTxt2Img, state: PrepareState) -> None:
         assert state.hires_plan is not None
         with SkipWritingToConfig():
@@ -225,6 +230,7 @@ class Txt2ImgPipelineRunner:
             if processing.sd_model.use_distilled_cfg_scale:
                 processing.extra_generation_params["Hires Distilled CFG Scale"] = processing.hr_distilled_cfg
 
+    @pipeline_trace
     def _run_hires_pass(
         self,
         processing: CodexProcessingTxt2Img,
@@ -352,6 +358,7 @@ class Txt2ImgPipelineRunner:
         return samples
 
     # ------------------------------------------------------------------ helpers
+    @pipeline_trace
     def _prepare_first_pass_from_image(
         self, processing: CodexProcessingTxt2Img
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
@@ -375,6 +382,7 @@ class Txt2ImgPipelineRunner:
         devices.torch_gc()
         return samples, None
 
+    @pipeline_trace
     def _build_hires_plan(self, processing: CodexProcessingTxt2Img) -> HiResPlan | None:
         if not getattr(processing, "enable_hr", False):
             return None

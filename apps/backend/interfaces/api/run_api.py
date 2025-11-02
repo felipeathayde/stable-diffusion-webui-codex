@@ -908,13 +908,6 @@ def build_app() -> FastAPI:
     except Exception as e:  # pragma: no cover
         print(color_red(f"[settings] failed to validate saved settings: {e}"))
 
-    # Optional calltrace instrumentation (entry/exit logs) controlled by env
-    try:
-        from apps.backend.runtime.logging.calltrace import setup_from_env as _setup_calltrace
-        _setup_calltrace()
-    except Exception as e:
-        logging.getLogger("backend.calltrace").debug("calltrace setup failed: %s", e)
-
     @app.get('/api/models')
     def list_models() -> Dict[str, Any]:
         """List checkpoints discovered by the native registry.

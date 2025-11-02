@@ -32,4 +32,4 @@ Status: Active
 - Prefer adding new functionality under the structured subpackages above; avoid creating new ad-hoc directories.
 - Keep Hugging Face helpers up to date—Codex builds on these mirrors rather than relying on upstream defaults.
 - When retiring subpackages, relocate historical context to `.sangoi/deprecated/` and update this overview.
-- 2025-11-02: `CODEX_CALLTRACE` attaches a dedicated handler so entry/exit traces emit even with INFO-level global logging; duplicates on root handlers are suppressed, instrumentation now spans `apps.backend.core`, and startup logs report enable/disable status.
+- 2025-11-02: Inline pipeline debugging now lives in `apps.backend.runtime.logging.pipeline_debug`; enable via `set_pipeline_debug(True)` to log `entrou/saiu` em cada função da pipeline txt2img/SDXL.

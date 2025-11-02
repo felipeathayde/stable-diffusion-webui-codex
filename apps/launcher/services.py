@@ -59,26 +59,31 @@ class CodexServiceHandle:
         env.update(self.spec.base_env)
         env.update(overrides)
 
+        command = list(self.spec.command)
         flags = 0
         startupinfo = None
-        if external_terminal and self.spec.allow_external_terminal and os.name == "nt":
+        use_external = external_terminal and self.spec.allow_external_terminal
+        if use_external and os.name == "nt":
             flags |= getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
             startupinfo = _windows_no_activate()
+            command = ["cmd.exe", "/K", subprocess.list2cmdline(command)]
 
         stdout = subprocess.PIPE
         stderr = subprocess.STDOUT
-        if external_terminal and self.spec.allow_external_terminal:
+        stdin = subprocess.DEVNULL
+        if use_external:
             stdout = None
             stderr = None
+            stdin = None
 
         self.status = ServiceStatus.STARTING
         self.started_at = time.time()
         try:
             self.process = subprocess.Popen(
-                self.spec.command,
+                command,
                 cwd=str(self.spec.cwd),
                 env=env,
-                stdin=subprocess.DEVNULL,
+                stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,
                 text=True if stdout is not None else False,

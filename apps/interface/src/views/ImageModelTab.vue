@@ -113,6 +113,7 @@ import { onMounted, computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
 import { fetchSamplers, fetchSchedulers, startTxt2Img, startImg2Img, subscribeTask } from '../api/client'
+import { useQuicksettingsStore } from '../stores/quicksettings'
 
 const props = defineProps<{ tabId: string; type: 'sd15' | 'sdxl' | 'flux' }>()
 const store = useModelTabsStore()
@@ -178,9 +179,11 @@ async function generate(): Promise<void> {
     scheduler: p.scheduler,
   } as Record<string, unknown>
   try {
+    const quick = useQuicksettingsStore()
     if (p.useInitImage && p.initImageData) {
       const payload = {
         __strict_version: 1,
+        codex_device: quick.currentDevice,
         img2img_prompt: p.prompt,
         img2img_neg_prompt: p.negativePrompt,
         img2img_init_image: p.initImageData,
@@ -191,6 +194,7 @@ async function generate(): Promise<void> {
     } else {
       const payload = {
         __strict_version: 1,
+        codex_device: quick.currentDevice,
         txt2img_prompt: p.prompt,
         txt2img_neg_prompt: p.negativePrompt,
         ...Object.fromEntries(Object.entries(base).map(([k,v]) => [`txt2img_${k}`, v])),
@@ -236,4 +240,3 @@ function readFileAsDataURL(file: File): Promise<string> {
 
 defineExpose({ generate })
 </script>
-

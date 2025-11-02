@@ -15,6 +15,7 @@ import {
   startTxt2Img,
   subscribeTask,
 } from '../api/client'
+import { useQuicksettingsStore } from './quicksettings'
 
 const ENGINE_ID = 'sdxl'
 const DEFAULT_WIDTH = 1024
@@ -130,8 +131,10 @@ export const useSdxlStore = defineStore('sdxl', () => {
   }
 
   function buildPayload(): Record<string, unknown> {
+    const qs = useQuicksettingsStore()
     return {
       __strict_version: 1,
+      codex_device: qs.currentDevice,
       codex_engine: ENGINE_ID,
       engine: ENGINE_ID,
       model: selectedModel.value,

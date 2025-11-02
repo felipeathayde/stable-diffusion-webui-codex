@@ -513,7 +513,8 @@ async function generate(): Promise<void> {
         ...extras,
         video_interpolation: { enabled: v.rifeEnabled, model: v.rifeModel, times: v.rifeTimes },
       }
-      const { task_id } = await startImg2Vid(payload)
+      const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
+      const { task_id } = await startImg2Vid({ codex_device: quick.currentDevice, ...payload })
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
       const payload = {
@@ -527,7 +528,8 @@ async function generate(): Promise<void> {
         ...extras,
         video_interpolation: { enabled: v.rifeEnabled, model: v.rifeModel, times: v.rifeTimes },
       }
-      const { task_id } = await startTxt2Vid(payload)
+      const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
+      const { task_id } = await startTxt2Vid({ codex_device: quick.currentDevice, ...payload })
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     }
   } catch (err) {

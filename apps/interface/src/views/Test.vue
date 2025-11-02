@@ -359,7 +359,8 @@ async function generate(): Promise<void> {
         img2vid_init_image: state.initImageData,
         ...extras,
       }
-      const { task_id } = await startImg2Vid(payload)
+      const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
+      const { task_id } = await startImg2Vid({ codex_device: quick.currentDevice, ...payload })
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
       const payload = {
@@ -373,7 +374,8 @@ async function generate(): Promise<void> {
         txt2vid_seed: state.seed,
         ...extras,
       }
-      const { task_id } = await startTxt2Vid(payload)
+      const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
+      const { task_id } = await startTxt2Vid({ codex_device: quick.currentDevice, ...payload })
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     }
   } catch (e) {

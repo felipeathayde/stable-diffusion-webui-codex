@@ -43,7 +43,7 @@ from apps.backend.runtime.workflows import (
     pil_to_tensor,
     run_process_scripts,
 )
-from loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.codex.loader import EngineLoadOptions, load_engine as _load_engine
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 

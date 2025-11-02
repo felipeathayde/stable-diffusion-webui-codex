@@ -6,6 +6,9 @@ When `CODEX_CALLTRACE=1`, we instrument the main pipeline modules
 (`apps.backend.runtime`, `apps.backend.engines`, `apps.backend.use_cases`,
 `apps.backend.codex`) and log entry/exit at DEBUG level.
 
+Instrumentation installs a dedicated calltrace handler so DEBUG messages surface
+even if the global logging level remains INFO.
+
 No additional configuration knobs; goal is a one-flag on/off switch.
 """
 
@@ -14,6 +17,7 @@ import inspect
 import logging
 import os
 import pkgutil
+import threading
 import time
 from functools import wraps
 from types import ModuleType
@@ -36,6 +40,67 @@ MAX_DEPTH = 64
 INDENT_STEP = 2
 
 _indent = 0
+CALLTRACE_RECORD_ATTR = "_codex_calltrace_record"
+LOGGER_PREPARED_ATTR = "__codex_calltrace_logger__"
+_CALLTRACE_HANDLER: logging.Handler | None = None
+_ROOT_FILTER: logging.Filter | None = None
+_HANDLER_LOCK = threading.RLock()
+
+
+class _CalltraceFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return bool(getattr(record, CALLTRACE_RECORD_ATTR, False))
+
+
+class _SuppressCalltraceFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not getattr(record, CALLTRACE_RECORD_ATTR, False)
+
+
+def _calltrace_extra() -> dict[str, bool]:
+    return {CALLTRACE_RECORD_ATTR: True}
+
+
+def _build_handler() -> logging.Handler:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    handler.addFilter(_CalltraceFilter())
+    handler.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s [calltrace] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    return handler
+
+
+def _ensure_root_filter() -> None:
+    global _ROOT_FILTER
+    root = logging.getLogger()
+    if _ROOT_FILTER is None:
+        _ROOT_FILTER = _SuppressCalltraceFilter()
+    for handler in root.handlers:
+        if _ROOT_FILTER not in getattr(handler, "filters", []):
+            handler.addFilter(_ROOT_FILTER)
+
+
+def _ensure_handler() -> logging.Handler:
+    global _CALLTRACE_HANDLER
+    with _HANDLER_LOCK:
+        if _CALLTRACE_HANDLER is None:
+            _CALLTRACE_HANDLER = _build_handler()
+        _ensure_root_filter()
+        return _CALLTRACE_HANDLER
+
+
+def _prepare_logger(logger: logging.Logger) -> None:
+    if getattr(logger, LOGGER_PREPARED_ATTR, False):
+        return
+    handler = _ensure_handler()
+    if handler not in logger.handlers:
+        logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    setattr(logger, LOGGER_PREPARED_ATTR, True)
 
 
 def _enabled() -> bool:
@@ -92,18 +157,20 @@ def _wrap(logger: logging.Logger, fqname: str, fn: Callable[..., Any]) -> Callab
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         global _indent
         indent = " " * min(_indent, MAX_DEPTH)
-        logger.debug("%s[enter] %s(%s)", indent, fqname, _format_args(args, kwargs))
+        logger.debug("%s[enter] %s(%s)", indent, fqname, _format_args(args, kwargs), extra=_calltrace_extra())
         _indent += INDENT_STEP
         start = time.perf_counter()
         try:
             result = fn(*args, **kwargs)
             duration = (time.perf_counter() - start) * 1000.0
             _indent -= INDENT_STEP
-            logger.debug("%s[exit ] %s -> %s (dt=%.2fms)", indent, fqname, _summarize(result), duration)
+            logger.debug(
+                "%s[exit ] %s -> %s (dt=%.2fms)", indent, fqname, _summarize(result), duration, extra=_calltrace_extra()
+            )
             return result
         except Exception:
             _indent -= INDENT_STEP
-            logger.debug("%s[exit!] %s raised", indent, fqname)
+            logger.debug("%s[exit!] %s raised", indent, fqname, extra=_calltrace_extra())
             raise
 
     setattr(wrapper, WRAPPED_FLAG, True)
@@ -117,6 +184,7 @@ def _should_wrap(obj: Any) -> bool:
 def _instrument_module(mod: ModuleType) -> int:
     wrapped = 0
     logger = logging.getLogger(mod.__name__)
+    _prepare_logger(logger)
     for name, obj in inspect.getmembers(mod):
         if name.startswith("_"):
             continue
@@ -165,11 +233,10 @@ def setup_from_env() -> None:
         try:
             mod = importlib.import_module(prefix)
         except Exception as exc:
-            logging.getLogger("backend.calltrace").debug("calltrace: failed import %s (%s)", prefix, exc)
+            logging.getLogger("backend.calltrace").warning("calltrace: failed import %s (%s)", prefix, exc)
             continue
         total += _instrument_recursive(mod, visited)
     logging.getLogger("backend.calltrace").info("calltrace enabled (wrapped=%d functions)", total)
 
 
 __all__ = ["setup_from_env"]
-

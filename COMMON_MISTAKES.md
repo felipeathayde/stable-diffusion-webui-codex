@@ -98,7 +98,7 @@ PY`
 **Correct command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --types Q2_K Q3_K Q4_K Q5_K Q6_K`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-**Cause + fix:** `The blanket find walks into legacy submodules under .legacy/, so git add aborts on nested .git refs; prune the legacy tree (or stage files explicitly).`
+**Cause + fix:** `The blanket find walks into legacy submodules under .legacy/root-archive, so git add aborts on nested .git refs; prune the legacy tree (or stage files explicitly).`
 **Correct command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
@@ -156,3 +156,20 @@ PY`
 **Wrong command:** `python3 tools/diagnostics/dry_run_pipeline.py`
 **Cause + fix:** `The environment lacks torch; importing runtime helpers pulls torch and fails. Use the static dry-run that avoids PyTorch imports.`
 **Correct command:** `python3 tools/diagnostics/dry_run_pipeline_static.py`
+**Wrong command:** `python - <<'PY'
+import logging, os
+os.environ['CODEX_CALLTRACE'] = '1'
+from apps.backend.runtime.logging import calltrace
+from apps.backend.core.engine_interface import BaseInferenceEngine, EngineCapabilities, TaskType
+from apps.backend.core.registry import EngineRegistry
+from apps.backend.core.requests import ProgressEvent, Txt2ImgRequest
+from apps.backend.core.orchestrator import InferenceOrchestrator
+...
+PY`
+**Cause + fix:** `Importing apps.backend.runtime.logging pulls optional dependencies (e.g., safetensors) that are not installed in this environment; restrict the demo to lightweight modules so the script stays import-safe.`
+**Correct command:** `python - <<'PY'
+import importlib.util, pathlib
+spec = importlib.util.spec_from_file_location('codex_calltrace', pathlib.Path('apps/backend/runtime/logging/calltrace.py'))
+calltrace = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(calltrace)
+PY`

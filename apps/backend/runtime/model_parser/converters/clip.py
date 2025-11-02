@@ -10,12 +10,7 @@ from apps.backend.runtime.models.state_dict import transformers_convert
 def _ensure_position_ids_long(sd: Dict[str, Any], key: str) -> None:
     value = sd.get(key)
     if isinstance(value, torch.Tensor) and value.dtype != torch.long:
-        try:
-            # Avoid CPU half/bfloat ops; cast to fp32 on CPU before rounding
-            v32 = value.to(device='cpu', dtype=torch.float32, copy=False)
-            sd[key] = v32.round().to(torch.long)
-        except Exception:
-            sd[key] = value.round().to(torch.long)
+        sd[key] = value.round().to(torch.long)
 
 
 def _with_prefix(sd: Dict[str, Any], prefix: str) -> Dict[str, Any]:
@@ -38,12 +33,7 @@ def _normalize_text_projection(sd: Dict[str, Any], alias: str, *, transpose: boo
     if key_plain in sd:
         tensor = sd.pop(key_plain)
         if isinstance(tensor, torch.Tensor) and transpose:
-            try:
-                # Cast to fp32 on CPU to avoid fragile CPU-half kernels
-                t = tensor.to(device='cpu', dtype=torch.float32, copy=False)
-                tensor = t.transpose(0, 1).contiguous()
-            except Exception:
-                tensor = tensor.transpose(0, 1).contiguous()
+            tensor = tensor.transpose(0, 1).contiguous()
         sd[f"{alias}.transformer.text_projection.weight"] = tensor
 
     key_plain_weight = f"{alias}.text_projection.weight"

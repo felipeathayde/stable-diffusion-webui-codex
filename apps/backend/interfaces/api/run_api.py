@@ -214,7 +214,7 @@ def build_app() -> FastAPI:
     _shared = None
     _sd_models = None
     from apps.backend.core.engine_interface import TaskType
-from apps.backend.core.orchestrator import InferenceOrchestrator
+    from apps.backend.core.orchestrator import InferenceOrchestrator
     from apps.backend.core.requests import (
         ProgressEvent,
         ResultEvent,

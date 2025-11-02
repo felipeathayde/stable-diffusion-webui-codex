@@ -12,6 +12,8 @@ from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineR
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
+from apps.backend.core.requests import InferenceEvent, ProgressEvent
 
 
 # note: no extra device assertions here; diagnostics should be captured upstream
@@ -92,6 +94,31 @@ class StableDiffusionXL(CodexDiffusionEngine):
         runtime = self._require_runtime()
         runtime.set_clip_skip(clip_skip)
         logger.debug("Clip skip set to %d for SDXL.", clip_skip)
+
+    # ------------------------------------------------------------------ Tasks
+    def txt2img(self, request, **kwargs: Any):  # type: ignore[override]
+        self.ensure_loaded()
+        runtime = self._require_runtime()
+        try:
+            from apps.backend.runtime.processing.builder import build_processing_for_txt2img
+            from apps.backend.runtime.processing.conditioning import build_conditioning_for_txt2img
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError(f"SDXL: missing processing builders: {exc}") from exc
+
+        proc = build_processing_for_txt2img(runtime, request)
+        cond, uncond, seeds, subseeds, subseed_strength, prompts = build_conditioning_for_txt2img(runtime, request)
+        yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
+
+        for ev in _generate_txt2img(
+            processing=proc,
+            conditioning=cond,
+            unconditional_conditioning=uncond,
+            seeds=seeds,
+            subseeds=subseeds,
+            subseed_strength=subseed_strength,
+            prompts=prompts,
+        ):
+            yield ev
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

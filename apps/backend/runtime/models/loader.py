@@ -231,19 +231,36 @@ def _load_huggingface_component(
         te_device = memory_management.text_encoder_device()
         te_dtype = memory_management.text_encoder_dtype(device=te_device)
         to_args = dict(device=te_device, dtype=te_dtype)
+        # Determine whether to add text_projection from component role
+        add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         with modeling_utils.no_init_weights():
             with using_codex_operations(**to_args, manual_cast_enabled=True):
-                model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=True).to(**to_args)
-        load_state_dict(
-            model,
-            state_dict,
-            ignore_errors=[
-                "transformer.text_projection.weight",
-                "transformer.text_model.embeddings.position_ids",
-                "logit_scale",
-            ],
-            log_name=cls_name,
-        )
+                model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=add_proj).to(**to_args)
+
+        # Conservative loader + coverage check
+        sentinels = [
+            "transformer.text_model.encoder.layers.0.layer_norm1.weight",
+            "transformer.text_model.embeddings.token_embedding.weight",
+        ]
+        missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)  # type: ignore[name-defined]
+        total = len(model.state_dict().keys())
+        loaded = max(0, total - len(missing))
+        coverage = loaded / max(1, total)
+        # Fail fast on clearly insufficient coverage
+        min_coverage = 0.95
+        if coverage < min_coverage:
+            samples_m = ", ".join(missing[:5])
+            samples_u = ", ".join(unexpected[:5])
+            raise RuntimeError(
+                (
+                    f"{cls_name} load coverage {coverage:.3f} < {min_coverage:.2f}. "
+                    f"Sample missing: [{samples_m}] | unexpected: [{samples_u}]"
+                )
+            )
+        # Sentinel presence
+        for key in sentinels:
+            if key not in model.state_dict():
+                raise RuntimeError(f"{cls_name} missing sentinel key after load: {key}")
         return model
 
     if cls_name == "T5EncoderModel":

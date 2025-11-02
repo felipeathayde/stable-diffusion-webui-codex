@@ -257,6 +257,8 @@ class BIOSApp:
             file_label = f"Enabled ({Path(log_file).name})"
         else:
             file_label = "Disabled"
+        trace = env.get("CODEX_CALLTRACE", "0").strip().lower()
+        trace_label = "ON" if trace in ("1", "true", "yes", "on") else "OFF"
         info = env.get("WAN_LOG_INFO", "1")
         warn = env.get("WAN_LOG_WARN", "1")
         err = env.get("WAN_LOG_ERROR", "1")
@@ -264,6 +266,7 @@ class BIOSApp:
         return [
             ("Codex Log Level", f"[{level}]", "cycle_log_level"),
             ("Write Codex Log File", f"[{file_label}]", "toggle_log_file"),
+            ("CODEX_CALLTRACE", f"[{trace_label}]", "toggle_calltrace"),
             ("WAN_LOG_INFO", f"[{info}]", "toggle_log_info"),
             ("WAN_LOG_WARN", f"[{warn}]", "toggle_log_warn"),
             ("WAN_LOG_ERROR", f"[{err}]", "toggle_log_error"),
@@ -383,6 +386,10 @@ class BIOSApp:
             "Write Codex Log File": [
                 "Toggle writing backend logs to logs/codex-<timestamp>.log.",
                 "Enabled state sets CODEX_LOG_FILE automatically; disable to stop logging to file.",
+            ],
+            "CODEX_CALLTRACE": [
+                "Toggle DEBUG entry/exit logging for Codex pipelines.",
+                "When ON, CODEX_CALLTRACE=1 instrumenta runtime/engines/use_cases/codex (alto volume).",
             ],
             "WAN_LOG_INFO": [
                 "Enable/disable info-level logs from WAN runtime.",
@@ -603,6 +610,9 @@ class BIOSApp:
                 log_path = self._ensure_log_file()
                 env["CODEX_LOG_FILE"] = log_path
                 self.message = f"Logging to {Path(log_path).name}"
+        elif action == "toggle_calltrace":
+            cur = env.get("CODEX_CALLTRACE", "0").strip().lower()
+            env["CODEX_CALLTRACE"] = "0" if cur in ("1", "true", "yes", "on") else "1"
         elif action == "toggle_log_info":
             cur = env.get("WAN_LOG_INFO", "1").strip().lower()
             env["WAN_LOG_INFO"] = "0" if cur in ("1", "true", "yes", "on") else "1"

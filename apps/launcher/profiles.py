@@ -31,6 +31,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_SWAP_POLICY": os.getenv("CODEX_SWAP_POLICY", "cpu"),
         "CODEX_SWAP_METHOD": os.getenv("CODEX_SWAP_METHOD", "blocked"),
         "CODEX_GPU_PREFER_CONSTRUCT": os.getenv("CODEX_GPU_PREFER_CONSTRUCT", "0"),
+        "CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0"),
     }
     wan = {
         "WAN_SDPA_DEBUG": os.getenv("WAN_SDPA_DEBUG", "0"),

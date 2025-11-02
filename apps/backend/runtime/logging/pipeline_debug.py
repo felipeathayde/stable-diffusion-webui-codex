@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import wraps
 from typing import Any, Callable, TypeVar, cast
 
@@ -23,6 +24,12 @@ def log(message: str) -> None:
         logger.info(message)
 
 
+def apply_env_flag(raw_value: str | None = None) -> None:
+    raw = raw_value if raw_value is not None else os.getenv("CODEX_PIPELINE_DEBUG", "0")
+    normalized = str(raw).strip().lower()
+    set_pipeline_debug(normalized in {"1", "true", "yes", "on"})
+
+
 def pipeline_trace(func: F) -> F:
     qualname = f"{func.__module__}.{func.__qualname__}"
 
@@ -38,4 +45,10 @@ def pipeline_trace(func: F) -> F:
     return cast(F, wrapper)
 
 
-__all__ = ["PIPELINE_DEBUG_ENABLED", "set_pipeline_debug", "log", "pipeline_trace"]
+__all__ = [
+    "PIPELINE_DEBUG_ENABLED",
+    "set_pipeline_debug",
+    "log",
+    "pipeline_trace",
+    "apply_env_flag",
+]

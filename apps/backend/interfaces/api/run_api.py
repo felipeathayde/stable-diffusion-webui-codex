@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from apps.backend.interfaces.api import codex_api
+from apps.backend.runtime.logging.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.models import api as model_api
 
 try:
@@ -907,6 +908,9 @@ def build_app() -> FastAPI:
         _apply_saved_settings()
     except Exception as e:  # pragma: no cover
         print(color_red(f"[settings] failed to validate saved settings: {e}"))
+
+    # Honour pipeline debug env flag
+    _apply_pipeline_debug_flag()
 
     @app.get('/api/models')
     def list_models() -> Dict[str, Any]:

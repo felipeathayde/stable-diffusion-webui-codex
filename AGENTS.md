@@ -22,6 +22,7 @@
 - Keep each subfolder’s `AGENTS.md` up to date. Whenever you modify, update, or add implementations in a subfolder, update that subfolder’s `AGENTS.md` in the same commit/PR.
 - Treat every directive, backlog note, and follow-up as authored within this pairing (no assumptions about other teams or owners); if context is missing after a session reset, confirm with the user instead of inferring new stakeholders.
 - Read `COMMON_MISTAKES.md` to avoid repeating past mistakes.
+- **Do not add shebangs (`#!`) to any source file.** Python files must rely on the interpreter invoked by tooling/launchers.
 
 ---
 

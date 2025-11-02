@@ -1416,6 +1416,7 @@ def build_app() -> FastAPI:
 
         def worker() -> None:
             try:
+                print(f"[api] starting txt2img task worker {task_id}")
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     orch = InferenceOrchestrator()

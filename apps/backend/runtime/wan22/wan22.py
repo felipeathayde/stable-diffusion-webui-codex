@@ -705,7 +705,11 @@ def _get_text_context(
         te_impl_eff = (te_impl or 'hf') if te_impl else 'hf'
     # No fallbacks allowed: if impl=cuda_fp8, kernel is REQUIRED
     te_req_eff = (te_impl_eff == 'cuda_fp8')
-    te_dev_eff = (te_device or os.getenv('WAN_TE_DEVICE') or device or 'cpu').strip().lower()
+    te_dev_eff = (te_device or os.getenv('CODEX_TE_DEVICE') or device or 'cpu').strip().lower()
+    if te_dev_eff == 'gpu':
+        te_dev_eff = 'cuda'
+    if te_dev_eff == 'cpu' and dtype != 'fp32':
+        dtype = 'fp32'
 
     # One-time log of effective selection
     try:

@@ -25,8 +25,9 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_GGUF_CACHE_LIMIT_MB": os.getenv("CODEX_GGUF_CACHE_LIMIT_MB", "0"),
         "CODEX_DIFFUSION_DTYPE": os.getenv("CODEX_DIFFUSION_DTYPE", "fp16"),
         "CODEX_DIFFUSION_DEVICE": os.getenv("CODEX_DIFFUSION_DEVICE", ""),
+        "CODEX_TE_DTYPE": os.getenv("CODEX_TE_DTYPE", "fp16"),
+        "CODEX_TE_DEVICE": os.getenv("CODEX_TE_DEVICE", ""),
         "CODEX_VAE_DTYPE": os.getenv("CODEX_VAE_DTYPE", "fp16"),
-        "CODEX_VAE_IN_CPU": os.getenv("CODEX_VAE_IN_CPU", "0"),
         "CODEX_VAE_DEVICE": os.getenv("CODEX_VAE_DEVICE", ""),
         "CODEX_SWAP_POLICY": os.getenv("CODEX_SWAP_POLICY", "cpu"),
         "CODEX_SWAP_METHOD": os.getenv("CODEX_SWAP_METHOD", "blocked"),
@@ -45,7 +46,6 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "WAN_I2V_DEBUG_CLAMP": os.getenv("WAN_I2V_DEBUG_CLAMP", ""),
         "WAN_I2V_DEBUG_SANITIZE_TOKENS": os.getenv("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0"),
         "WAN_TE_IMPL": os.getenv("WAN_TE_IMPL", "hf"),
-        "WAN_TE_DEVICE": os.getenv("WAN_TE_DEVICE", os.getenv("CODEX_TE_DEVICE", "")),
         "WAN_TE_KERNEL_REQUIRED": os.getenv("WAN_TE_KERNEL_REQUIRED", "0"),
         "WAN_GGUF_OFFLOAD_LEVEL": os.getenv("WAN_GGUF_OFFLOAD_LEVEL", "3"),
         "WAN_LOG_INFO": os.getenv("WAN_LOG_INFO", "1"),
@@ -200,6 +200,79 @@ class LauncherProfileStore:
             if policy:
                 self.meta.sdpa_policy = policy
         self.areas.setdefault("wan", {}).setdefault("WAN_SDPA_POLICY", self.meta.sdpa_policy)
+        self._migrate_device_dtype_flags()
+
+    def _migrate_device_dtype_flags(self) -> None:
+        def _canonical_device(value: str | None) -> str:
+            if value is None:
+                return ""
+            v = value.strip().lower()
+            if not v or v == "auto":
+                return ""
+            if v in {"gpu", "cuda"}:
+                return "cuda"
+            if v == "cpu":
+                return "cpu"
+            if v == "mps":
+                return "mps"
+            if v == "xpu":
+                return "xpu"
+            if v in {"directml", "dml"}:
+                return "directml"
+            LOGGER.warning("Dropping unsupported device option '%s' from launcher profile.", value)
+            return ""
+
+        def _canonical_dtype(value: str | None) -> str:
+            if value is None:
+                return ""
+            v = value.strip().lower()
+            mapping = {
+                "float32": "fp32",
+                "single": "fp32",
+                "float": "fp32",
+                "fp32": "fp32",
+                "float16": "fp16",
+                "half": "fp16",
+                "fp16": "fp16",
+                "bf16": "bf16",
+                "bfloat16": "bf16",
+                "fp8-e4m3fn": "fp8_e4m3fn",
+                "fp8_e4": "fp8_e4m3fn",
+                "fp8-e5m2": "fp8_e5m2",
+                "fp8_e5": "fp8_e5m2",
+            }
+            return mapping.get(v, v)
+
+        def _guard_cpu_dtype(mapping: Dict[str, str], device_key: str, dtype_key: str) -> None:
+            if device_key not in mapping and dtype_key not in mapping:
+                return
+            device_val = _canonical_device(mapping.get(device_key))
+            if device_key in mapping or device_val:
+                mapping[device_key] = device_val
+            dtype_val = _canonical_dtype(mapping.get(dtype_key))
+            if device_val == "cpu":
+                mapping[dtype_key] = "fp32"
+            elif dtype_key in mapping and dtype_val:
+                mapping[dtype_key] = dtype_val
+            elif dtype_key in mapping and not dtype_val:
+                mapping.pop(dtype_key, None)
+
+        core_env = self.areas.setdefault("core", {})
+        wan_env = self.areas.get("wan", {})
+        if wan_env and "WAN_TE_DEVICE" in wan_env:
+            legacy_te = _canonical_device(wan_env.pop("WAN_TE_DEVICE"))
+            if legacy_te and not core_env.get("CODEX_TE_DEVICE"):
+                core_env["CODEX_TE_DEVICE"] = legacy_te
+
+        containers: list[Dict[str, str]] = list(self.areas.values()) + list(self.models.values())
+        for mapping in containers:
+            legacy_cpu = mapping.pop("CODEX_VAE_IN_CPU", None)
+            if legacy_cpu and str(legacy_cpu).strip().lower() in {"1", "true", "yes", "on"}:
+                mapping["CODEX_VAE_DEVICE"] = "cpu"
+                mapping["CODEX_VAE_DTYPE"] = "fp32"
+            _guard_cpu_dtype(mapping, "CODEX_DIFFUSION_DEVICE", "CODEX_DIFFUSION_DTYPE")
+            _guard_cpu_dtype(mapping, "CODEX_VAE_DEVICE", "CODEX_VAE_DTYPE")
+            _guard_cpu_dtype(mapping, "CODEX_TE_DEVICE", "CODEX_TE_DTYPE")
 
 
 def _default_root() -> Path:

@@ -56,7 +56,6 @@ class AttentionBackend(str, Enum):
 class PrecisionFlags:
     """Fine-grained overrides for dtype preferences."""
 
-    all_fp32: bool = False
     all_fp16: bool = False
     core_fp16: bool = False
     core_bf16: bool = False
@@ -68,6 +67,7 @@ class PrecisionFlags:
     vae_in_cpu: bool = False
     clip_fp16: bool = False
     clip_fp32: bool = False
+    clip_bf16: bool = False
     clip_fp8_e4m3fn: bool = False
     clip_fp8_e5m2: bool = False
 

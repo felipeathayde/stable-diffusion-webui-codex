@@ -19,3 +19,4 @@ Status: Active
 ## Notes
 - New code must target `apps/backend` and `apps/interface`. The launcher lives under `apps/launcher/` with the TUI at `apps/tui_bios.py`.
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.
+- 2025-11-02: Launcher/TUI now surfaces global device/dtype envs (`CODEX_DIFFUSION_*`, `CODEX_TE_*`, `CODEX_VAE_*`). CPU selections force fp32 automatically; per-model WAN device flags were retired.

@@ -164,3 +164,11 @@ PY`
 from apps.backend.runtime.pipeline_debug import set_pipeline_debug
 set_pipeline_debug(True)
 PY`
+
+**Wrong command:** `rg -n "all in fp32" -g"*"`
+**Cause + fix:** `The literal phrase does not exist in the tracked sources; search broadly for fp32 flags or inspect relevant modules directly.`
+**Correct command:** `rg -ni "fp32" apps`
+
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** `Sweep hits archived submodule refs under .legacy, causing git add to abort; stage the known modified files explicitly instead of scanning the entire tree.`
+**Correct command:** `git add .sangoi/CHANGELOG.md COMMON_MISTAKES.md apps/AGENTS.md apps/backend/AGENTS.md apps/backend/infra/config/args.py apps/backend/runtime/memory/config.py apps/backend/runtime/memory/manager.py apps/backend/runtime/wan22/wan22.py apps/launcher/profiles.py apps/tui_bios.py .sangoi/handoffs/2025-11-02-device-dtype-flags-refresh.md .sangoi/task-logs/2025-11-02-device-dtype-flags-refresh.md`

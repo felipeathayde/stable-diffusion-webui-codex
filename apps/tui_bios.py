@@ -195,16 +195,43 @@ class BIOSApp:
         gguf_lim = env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0")
         unet_dtype = env.get("CODEX_DIFFUSION_DTYPE", "fp16")
         diff_device_raw = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
-        diff_dev_label = "GPU" if diff_device_raw in ("cuda", "gpu") else ("CPU" if diff_device_raw == "cpu" else "Auto")
+        if diff_device_raw == "gpu":
+            diff_device_raw = "cuda"
+            env["CODEX_DIFFUSION_DEVICE"] = "cuda"
+        if diff_device_raw == "cpu" and unet_dtype != "fp32":
+            unet_dtype = "fp32"
+            env["CODEX_DIFFUSION_DTYPE"] = "fp32"
+        te_dtype = env.get("CODEX_TE_DTYPE", "fp16")
+        te_device_raw = env.get("CODEX_TE_DEVICE", "").strip().lower()
+        if te_device_raw == "gpu":
+            te_device_raw = "cuda"
+            env["CODEX_TE_DEVICE"] = "cuda"
+        if te_device_raw == "cpu" and te_dtype != "fp32":
+            te_dtype = "fp32"
+            env["CODEX_TE_DTYPE"] = "fp32"
         vae_dtype = env.get("CODEX_VAE_DTYPE", "fp16")
         vae_device_raw = env.get("CODEX_VAE_DEVICE", "").strip().lower()
-        if vae_device_raw == "cpu":
-            vae_dev_label = "CPU"
-        elif vae_device_raw in ("cuda", "gpu"):
-            vae_dev_label = "GPU"
-        else:
-            vae_cpu_flag = env.get("CODEX_VAE_IN_CPU", "0").lower() in ("1", "true", "yes", "on")
-            vae_dev_label = "CPU" if vae_cpu_flag else "Auto"
+        if vae_device_raw == "gpu":
+            vae_device_raw = "cuda"
+            env["CODEX_VAE_DEVICE"] = "cuda"
+        if vae_device_raw == "cpu" and vae_dtype != "fp32":
+            vae_dtype = "fp32"
+            env["CODEX_VAE_DTYPE"] = "fp32"
+
+        def _device_label(raw: str) -> str:
+            mapping = {
+                "cpu": "CPU",
+                "cuda": "GPU",
+                "mps": "MPS",
+                "xpu": "XPU",
+                "directml": "DirectML",
+                "dml": "DirectML",
+            }
+            return mapping.get(raw, "Auto")
+
+        diff_dev_label = _device_label(diff_device_raw)
+        te_dev_label = _device_label(te_device_raw)
+        vae_dev_label = _device_label(vae_device_raw)
         swap_pol = env.get("CODEX_SWAP_POLICY", "cpu")
         swap_mth = env.get("CODEX_SWAP_METHOD", "blocked")
         return [
@@ -216,8 +243,10 @@ class BIOSApp:
             ("GGUF Cache Limit (MB)", f"[{gguf_lim}]", "edit_gguf_lim"),
             ("Diffusion Device", f"[{diff_dev_label}]", "select_diff_device"),
             ("DiT/UNet DType", f"[{unet_dtype}]", "cycle_unet_dtype"),
+            ("Text Encoder Device", f"[{te_dev_label}]", "select_te_device"),
+            ("Text Encoder DType", f"[{te_dtype}]", "cycle_te_dtype"),
             ("VAE DType", f"[{vae_dtype}]", "cycle_vae_dtype"),
-            ("VAE device", f"[{vae_dev_label}]", "select_vae_dev"),
+            ("VAE Device", f"[{vae_dev_label}]", "select_vae_dev"),
             ("Swap Policy", f"[{swap_pol}]", "cycle_swap_pol"),
             ("Swap Method", f"[{swap_mth}]", "cycle_swap_mth"),
         ]
@@ -228,8 +257,6 @@ class BIOSApp:
         offload_lvl = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
         te_impl = env.get("WAN_TE_IMPL", "hf")
         te_fp8_label = "Enabled" if te_impl == "cuda_fp8" else "Disabled"
-        te_dev_env = env.get("WAN_TE_DEVICE", "").strip().lower()
-        te_dev_label = "CPU" if te_dev_env == "cpu" else ("GPU" if te_dev_env in ("cuda", "gpu") else "Auto")
         sdpa_dbg = env.get("WAN_SDPA_DEBUG", "0").lower() in ("1", "true", "yes", "on")
         dbg_hi = env.get("WAN_I2V_DEBUG_HI_DECODE", "0").lower() in ("1", "true", "yes", "on")
         lat_stats = env.get("WAN_I2V_LAT_STATS", "0").lower() in ("1", "true", "yes", "on")
@@ -241,7 +268,6 @@ class BIOSApp:
             ("I2V Concat Order", f"[{order}]", "cycle_i2v_order"),
             ("GGUF Offload Level", f"[{offload_lvl}]", "cycle_offload_lvl"),
             ("Use cuda fp8 (TE)", f"[{te_fp8_label}]", "toggle_te_fp8"),
-            ("TE Device", f"[{te_dev_label}]", "select_te_dev"),
             ("WAN_SDPA_DEBUG", f"[{'Enabled' if sdpa_dbg else 'Disabled'}]", "toggle_sdpa_debug"),
             ("WAN_I2V_DEBUG_HI_DECODE", f"[{'Enabled' if dbg_hi else 'Disabled'}]", "toggle_hi_decode_debug"),
             ("WAN_I2V_LAT_STATS", f"[{'Enabled' if lat_stats else 'Disabled'}]", "toggle_lat_stats"),
@@ -294,12 +320,6 @@ class BIOSApp:
                 "Requires PyTorch >= 2.1 and compatible GPU; may reduce VRAM with slight precision loss.",
                 "Applied via WAN_TE_IMPL=(cuda_fp8|hf).",
             ],
-            "TE Device": [
-                "Run Text Encoder on GPU or CPU.",
-                "GPU: faster, higher VRAM usage; CPU: slower, frees VRAM.",
-                "If 'Use cuda fp8 (TE)' is ON, device must be GPU.",
-                "Applied via WAN_TE_DEVICE=(cuda|cpu).",
-            ],
             "Attn Chunk Size": [
                 "Split attention into chunks to cap peak VRAM during SDPA.",
                 "0 disables chunking. Use when hitting OOM: try 2048, then 1024.",
@@ -322,21 +342,32 @@ class BIOSApp:
             ],
             "Diffusion Device": [
                 "Where to run the Diffusion core (UNet/DiT): Auto | GPU | CPU.",
-                "Applied via CODEX_DIFFUSION_DEVICE=(cuda|cpu).",
+                "CPU forces fp32 precision automatically.",
+                "Applied via CODEX_DIFFUSION_DEVICE=(cuda|cpu|auto).",
             ],
             "DiT/UNet DType": [
                 "Numerical dtype for the main denoiser (DiT/UNet).",
-                "fp16/bf16 recommended. fp32 only for diagnostics (slow/high VRAM).",
+                "fp16/bf16 recommended. fp32 enforced when device=CPU.",
                 "Applied via CODEX_DIFFUSION_DTYPE.",
+            ],
+            "Text Encoder Device": [
+                "Run Text Encoder on GPU | CPU | Auto.",
+                "CPU forces fp32 precision; GPU unlocks fp16/bf16/fp8.",
+                "Applied via CODEX_TE_DEVICE.",
+            ],
+            "Text Encoder DType": [
+                "Precision for Text Encoder (fp16/bf16/fp8/fp32).",
+                "Forced to fp32 when device=CPU.",
+                "Applied via CODEX_TE_DTYPE.",
             ],
             "VAE DType": [
                 "VAE precision (fp16/bf16/fp32).",
                 "Applied via CODEX_VAE_DTYPE.",
             ],
-            "VAE device": [
+            "VAE Device": [
                 "Where to run the VAE: Auto | GPU | CPU.",
-                "Auto: runtime decides; GPU: faster, uses VRAM; CPU: frees VRAM (slower).",
-                "Applied via CODEX_VAE_DEVICE=(cuda|cpu) and mirrors CODEX_VAE_IN_CPU.",
+                "CPU forces fp32 precision automatically.",
+                "Applied via CODEX_VAE_DEVICE.",
             ],
             "Swap Policy": [
                 "Swap/offload policy: never | cpu | shared (pinned).",
@@ -484,14 +515,34 @@ class BIOSApp:
         elif action == "cycle_unet_dtype":
             order = ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
             cur = env.get("CODEX_DIFFUSION_DTYPE", "fp16")
+            if env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower() == "cpu":
+                env["CODEX_DIFFUSION_DTYPE"] = "fp32"
+                self.message = "Diffusion dtype locked to fp32 on CPU."
+                return
             try:
                 i = (order.index(cur) + 1) % len(order)
             except ValueError:
                 i = 0
             env["CODEX_DIFFUSION_DTYPE"] = order[i]
+        elif action == "cycle_te_dtype":
+            order = ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
+            cur = env.get("CODEX_TE_DTYPE", "fp16")
+            if env.get("CODEX_TE_DEVICE", "").strip().lower() == "cpu":
+                env["CODEX_TE_DTYPE"] = "fp32"
+                self.message = "Text Encoder dtype locked to fp32 on CPU."
+                return
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            env["CODEX_TE_DTYPE"] = order[i]
         elif action == "cycle_vae_dtype":
             order = ["fp16", "bf16", "fp32"]
             cur = env.get("CODEX_VAE_DTYPE", "fp16")
+            if env.get("CODEX_VAE_DEVICE", "").strip().lower() == "cpu":
+                env["CODEX_VAE_DTYPE"] = "fp32"
+                self.message = "VAE dtype locked to fp32 on CPU."
+                return
             try:
                 i = (order.index(cur) + 1) % len(order)
             except ValueError:
@@ -506,7 +557,8 @@ class BIOSApp:
                 i = 0
             nxt = order[i]
             env["CODEX_VAE_DEVICE"] = nxt
-            env["CODEX_VAE_IN_CPU"] = "1" if nxt == "cpu" else "0"
+            if nxt == "cpu":
+                env["CODEX_VAE_DTYPE"] = "fp32"
         elif action == "select_diff_device":
             order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
             cur = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
@@ -514,7 +566,21 @@ class BIOSApp:
                 i = (order.index(cur) + 1) % len(order)
             except ValueError:
                 i = 0
-            env["CODEX_DIFFUSION_DEVICE"] = order[i]
+            nxt = order[i]
+            env["CODEX_DIFFUSION_DEVICE"] = nxt
+            if nxt == "cpu":
+                env["CODEX_DIFFUSION_DTYPE"] = "fp32"
+        elif action == "select_te_device":
+            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
+            cur = env.get("CODEX_TE_DEVICE", "").strip().lower()
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            nxt = order[i]
+            env["CODEX_TE_DEVICE"] = nxt
+            if nxt == "cpu":
+                env["CODEX_TE_DTYPE"] = "fp32"
         elif action == "cycle_swap_pol":
             order = ["never", "cpu", "shared"]
             cur = env.get("CODEX_SWAP_POLICY", "cpu")
@@ -906,27 +972,41 @@ class BIOSApp:
             'cycle_attn_backend': ["torch-sdpa", "xformers", "sage"],
             'cycle_gguf_pol': ["none", "cpu_lru"],
             'cycle_unet_dtype': ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
+            'cycle_te_dtype': ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
             'cycle_vae_dtype': ["fp16", "bf16", "fp32"],
             'cycle_swap_pol': ["never", "cpu", "shared"],
             'cycle_swap_mth': ["blocked", "async"],
+            'select_diff_device': ["Auto", "GPU", "CPU"],
+            'select_te_device': ["Auto", "GPU", "CPU"],
             'select_vae_dev': ["Auto", "GPU", "CPU"],
         }
         if action not in choices_map:
             return self._act_runtime(idx)
         options = choices_map[action]
+
+        def _device_option_label(key_name: str) -> str:
+            raw = env.get(key_name, "").strip().lower()
+            if raw == "gpu":
+                env[key_name] = "cuda"
+                raw = "cuda"
+            if raw == "cuda":
+                return "GPU"
+            if raw == "cpu":
+                return "CPU"
+            return "Auto"
+
         cur_val = {
             'cycle_sdpa': self.meta.sdpa_policy,
             'cycle_attn_backend': env.get('CODEX_ATTENTION_BACKEND', 'torch-sdpa'),
             'cycle_gguf_pol': env.get('CODEX_GGUF_CACHE_POLICY', 'none'),
-            'cycle_unet_dtype': env.get('CODEX_CORE_DTYPE', 'fp16'),
+            'cycle_unet_dtype': env.get('CODEX_DIFFUSION_DTYPE', 'fp16'),
+            'cycle_te_dtype': env.get('CODEX_TE_DTYPE', 'fp16'),
             'cycle_vae_dtype': env.get('CODEX_VAE_DTYPE', 'fp16'),
             'cycle_swap_pol': env.get('CODEX_SWAP_POLICY', 'cpu'),
             'cycle_swap_mth': env.get('CODEX_SWAP_METHOD', 'blocked'),
-            'select_vae_dev': (
-                'GPU' if env.get('CODEX_VAE_DEVICE', '').strip().lower() in ('cuda', 'gpu') else
-                'CPU' if env.get('CODEX_VAE_DEVICE', '').strip().lower() == 'cpu' or env.get('CODEX_VAE_IN_CPU', '0').strip().lower() in ('1', 'true', 'yes', 'on') else
-                'Auto'
-            ),
+            'select_diff_device': _device_option_label('CODEX_DIFFUSION_DEVICE'),
+            'select_te_device': _device_option_label('CODEX_TE_DEVICE'),
+            'select_vae_dev': _device_option_label('CODEX_VAE_DEVICE'),
         }[action]
         try:
             sel = options.index(cur_val)
@@ -943,7 +1023,6 @@ class BIOSApp:
         choices_map = {
             'cycle_i2v_order': ["lat_first", "lat_last"],
             'cycle_offload_lvl': ["0", "1", "2", "3"],
-            'select_te_dev': ["Auto", "GPU", "CPU"],
         }
         if action not in choices_map:
             return self._act_wan(idx)
@@ -951,11 +1030,6 @@ class BIOSApp:
         cur_val = {
             'cycle_i2v_order': env.get('WAN_I2V_ORDER', 'lat_first'),
             'cycle_offload_lvl': env.get('WAN_GGUF_OFFLOAD_LEVEL', '3'),
-            'select_te_dev': (
-                'GPU' if env.get('WAN_TE_DEVICE', '').strip().lower() in ('cuda', 'gpu') else
-                'CPU' if env.get('WAN_TE_DEVICE', '').strip().lower() == 'cpu' else
-                'Auto'
-            ),
         }[action]
         try:
             sel = options.index(cur_val)
@@ -1001,8 +1075,6 @@ class BIOSApp:
         if action == 'cycle_sdpa':
             self.meta.sdpa_policy = value
             env['WAN_SDPA_POLICY'] = value
-        elif action == 'cycle_te_impl':
-            env['WAN_TE_IMPL'] = value
         elif action == 'cycle_offload_lvl':
             env['WAN_GGUF_OFFLOAD_LEVEL'] = value
         elif action == 'cycle_attn_backend':
@@ -1010,35 +1082,56 @@ class BIOSApp:
         elif action == 'cycle_gguf_pol':
             env['CODEX_GGUF_CACHE_POLICY'] = value
         elif action == 'cycle_unet_dtype':
-            env['CODEX_CORE_DTYPE'] = value
+            if env.get('CODEX_DIFFUSION_DEVICE', '').strip().lower() == 'cpu' and value != 'fp32':
+                env['CODEX_DIFFUSION_DTYPE'] = 'fp32'
+                self.message = "Diffusion dtype locked to fp32 on CPU."
+            else:
+                env['CODEX_DIFFUSION_DTYPE'] = value
+        elif action == 'cycle_te_dtype':
+            if env.get('CODEX_TE_DEVICE', '').strip().lower() == 'cpu' and value != 'fp32':
+                env['CODEX_TE_DTYPE'] = 'fp32'
+                self.message = "Text Encoder dtype locked to fp32 on CPU."
+            else:
+                env['CODEX_TE_DTYPE'] = value
         elif action == 'cycle_vae_dtype':
-            env['CODEX_VAE_DTYPE'] = value
+            if env.get('CODEX_VAE_DEVICE', '').strip().lower() == 'cpu' and value != 'fp32':
+                env['CODEX_VAE_DTYPE'] = 'fp32'
+                self.message = "VAE dtype locked to fp32 on CPU."
+            else:
+                env['CODEX_VAE_DTYPE'] = value
         elif action == 'cycle_swap_pol':
             env['CODEX_SWAP_POLICY'] = value
         elif action == 'cycle_swap_mth':
             env['CODEX_SWAP_METHOD'] = value
         elif action == 'cycle_i2v_order':
             env['WAN_I2V_ORDER'] = value
-        elif action == 'select_te_dev':
-            # Map display value to env
+        elif action == 'select_diff_device':
             v = value.strip().lower()
             if v == 'gpu':
-                env['WAN_TE_DEVICE'] = 'cuda'
+                env['CODEX_DIFFUSION_DEVICE'] = 'cuda'
             elif v == 'cpu':
-                env['WAN_TE_DEVICE'] = 'cpu'
+                env['CODEX_DIFFUSION_DEVICE'] = 'cpu'
+                env['CODEX_DIFFUSION_DTYPE'] = 'fp32'
             else:
-                env['WAN_TE_DEVICE'] = ''  # Auto
+                env['CODEX_DIFFUSION_DEVICE'] = ''
+        elif action == 'select_te_device':
+            v = value.strip().lower()
+            if v == 'gpu':
+                env['CODEX_TE_DEVICE'] = 'cuda'
+            elif v == 'cpu':
+                env['CODEX_TE_DEVICE'] = 'cpu'
+                env['CODEX_TE_DTYPE'] = 'fp32'
+            else:
+                env['CODEX_TE_DEVICE'] = ''
         elif action == 'select_vae_dev':
             v = value.strip().lower()
             if v == 'gpu':
                 env['CODEX_VAE_DEVICE'] = 'cuda'
-                env['CODEX_VAE_IN_CPU'] = '0'
             elif v == 'cpu':
                 env['CODEX_VAE_DEVICE'] = 'cpu'
-                env['CODEX_VAE_IN_CPU'] = '1'
+                env['CODEX_VAE_DTYPE'] = 'fp32'
             else:
                 env['CODEX_VAE_DEVICE'] = ''
-                env['CODEX_VAE_IN_CPU'] = '0'
 
 
 

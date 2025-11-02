@@ -278,15 +278,24 @@ class CodexMemoryManager:
 
         flags = self._config.precision
         policy = self._config.component_policy(role)
+        device = self.get_device(role)
         if policy.forced_dtype:
             try:
-                return getattr(torch, policy.forced_dtype)
+                forced_dtype = getattr(torch, policy.forced_dtype)
             except AttributeError as exc:
                 raise MemoryConfigurationError(f"Unsupported dtype '{policy.forced_dtype}' for {role.value}.") from exc
+            if device.type == "cpu" and torch.float32 in supported and forced_dtype != torch.float32:
+                return torch.float32
+            if forced_dtype in supported:
+                return forced_dtype
+            return clamp_dtype((forced_dtype,))
+
+        if device.type == "cpu":
+            if torch.float32 in supported:
+                return torch.float32
+            return supported[-1]
 
         preferred: List[torch.dtype] = []
-        if flags.all_fp32:
-            preferred.append(torch.float32)
         if flags.all_fp16:
             preferred.append(torch.float16)
 
@@ -300,10 +309,16 @@ class CodexMemoryManager:
             if flags.core_fp8_e5m2 and self._probe.fp8_support:
                 preferred.append(torch.float16)
         elif role == DeviceRole.TEXT_ENCODER:
-            if flags.clip_fp16:
+            if getattr(flags, "clip_fp16", False):
                 preferred.append(torch.float16)
-            if flags.clip_fp32:
+            if getattr(flags, "clip_bf16", False):
+                preferred.append(torch.bfloat16)
+            if getattr(flags, "clip_fp32", False):
                 preferred.append(torch.float32)
+            if getattr(flags, "clip_fp8_e4m3fn", False) and self._probe.fp8_support:
+                preferred.append(torch.float16)
+            if getattr(flags, "clip_fp8_e5m2", False) and self._probe.fp8_support:
+                preferred.append(torch.float16)
         elif role == DeviceRole.VAE:
             if flags.vae_bf16:
                 preferred.append(torch.bfloat16)
@@ -400,7 +415,8 @@ class CodexMemoryManager:
             return False
         if manual_cast:
             return True
-        if self._config.precision.all_fp32:
+        policy = self._config.component_policy(DeviceRole.CORE)
+        if policy.forced_dtype and policy.forced_dtype != "float16":
             return False
         if not prioritize_performance:
             return False

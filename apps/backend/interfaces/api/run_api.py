@@ -1270,7 +1270,7 @@ def build_app() -> FastAPI:
                 rejected[k] = 'invalid value'
         return {"accepted": accepted, "rejected": rejected}
 
-    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
+def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
         prompt = _p.require(payload, 'txt2img_prompt') or ''
         negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''
         prompt_styles = _p.as_list(payload, 'txt2img_styles')
@@ -1832,7 +1832,7 @@ def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optio
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, str(engine_key), model_ref
 
-    def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
+def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
         loop = entry.loop
 
         def push(event: Dict[str, Any]) -> None:

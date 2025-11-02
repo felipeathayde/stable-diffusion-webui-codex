@@ -13,6 +13,9 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
+
+# note: no extra device assertions here; diagnostics should be captured upstream
+
 logger = logging.getLogger("backend.engines.sd.sdxl")
 
 
@@ -51,6 +54,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
         )
+
+    # load() behavior inherited from CodexDiffusionEngine
 
     def _build_components(
         self,
@@ -164,6 +169,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
         )
+
+    # load() behavior inherited from CodexDiffusionEngine
 
     def _build_components(
         self,

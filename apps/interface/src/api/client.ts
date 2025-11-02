@@ -106,7 +106,7 @@ export function fetchTaskResult(taskId: string): Promise<TaskResult> {
   return requestJson<TaskResult>(`/tasks/${taskId}`)
 }
 
-export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void): () => void {
+export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void, onError?: (err: unknown) => void): () => void {
   const es = new EventSource(`${API_BASE}/tasks/${taskId}/events`)
   let ended = false
   es.onmessage = (msg: MessageEvent<string>) => {
@@ -129,6 +129,7 @@ export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => voi
     // EventSource fires onerror on normal close; suppress noisy logs when ended or closed
     if (ended || (es as any).readyState === 2 /* CLOSED */) return
     console.error('[task-events] stream error', err)
+    try { onError?.(err) } catch (_) { /* ignore */ }
   }
   return () => es.close()
 }

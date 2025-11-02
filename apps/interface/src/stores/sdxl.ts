@@ -188,12 +188,17 @@ export const useSdxlStore = defineStore('sdxl', () => {
       taskId.value = task_id
       resetProgress()
       progress.value.stage = 'submitted'
-      unsubscribe = subscribeTask(task_id, handleTaskEvent)
+      unsubscribe = subscribeTask(task_id, handleTaskEvent, (err) => {
+        // Backend died mid-stream; mark error and re-enable generate
+        status.value = 'error'
+        errorMessage.value = (err instanceof Error ? err.message : 'Stream error') || 'Stream error'
+        stopStream()
+      })
     } catch (error) {
       status.value = 'error'
       errorMessage.value = error instanceof Error ? error.message : String(error)
       stopStream()
-      throw error
+      return
     }
   }
 

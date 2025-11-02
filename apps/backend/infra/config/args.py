@@ -144,22 +144,12 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     if _truthy(env.get("CODEX_VAE_IN_CPU")):
         ns.vae_in_cpu = True
 
-    legacy_core_env = None
-    for key in ("CODEX_CORE_DTYPE", "WEBUI_UNET_DTYPE"):
-        value = env.get(key)
-        if value:
-            legacy_core_env = value
-            _LOG.warning("Legacy environment variable %s detected; please rename to CODEX_CORE_DTYPE.", key)
-            break
-
-    if legacy_core_env:
-        _set_core_dtype(legacy_core_env)
-    else:
-        _set_core_dtype(env.get("CODEX_CORE_DTYPE") or env.get("WEBUI_CORE_DTYPE"))
+    # Diffusion/UNet dtype (new global)
+    _set_core_dtype(env.get("CODEX_DIFFUSION_DTYPE") or env.get("WEBUI_CORE_DTYPE"))
+    # VAE dtype (global)
     _set_vae_dtype(env.get("CODEX_VAE_DTYPE") or env.get("WEBUI_VAE_DTYPE"))
 
-    if _truthy(env.get("CODEX_ALL_IN_FP32")):
-        ns.all_in_fp32 = True
+    # CODEX_ALL_IN_FP32 removed; rely on explicit dtype flags
 
     swap_policy = (env.get("CODEX_SWAP_POLICY") or env.get("WEBUI_SWAP_POLICY") or "").lower()
     if swap_policy in {"never", "cpu", "shared"}:
@@ -264,6 +254,42 @@ _apply_env_overrides(_ARGS, os.environ)
 
 args = _ARGS
 memory_config = build_runtime_memory_config(args)
+
+# Apply component device overrides coming from BIOS env toggles
+try:
+    from apps.backend.runtime.memory.config import DeviceBackend, DeviceRole
+
+    def _apply_component_device_overrides_from_env(cfg, env: Mapping[str, str]) -> None:
+        # Global diffusion/UNet device controls the primary backend
+        diff_raw = (env.get("CODEX_DIFFUSION_DEVICE") or "").strip().lower()
+        if diff_raw in ("cuda", "gpu"):
+            cfg.device_backend = DeviceBackend.CUDA
+        elif diff_raw == "cpu":
+            cfg.device_backend = DeviceBackend.CPU
+
+        # Global VAE device override
+        vae_raw = (env.get("CODEX_VAE_DEVICE") or "").strip().lower()
+        if vae_raw in ("cuda", "gpu"):
+            cfg.component_policy(DeviceRole.VAE).preferred_backend = DeviceBackend.CUDA
+        elif vae_raw == "cpu":
+            cfg.component_policy(DeviceRole.VAE).preferred_backend = DeviceBackend.CPU
+
+        # Guards: if user forces CPU for a component, clamp dtype to fp32 for safety
+        if diff_raw == "cpu":
+            # Clear core flags then force fp32
+            cfg.precision.core_fp16 = False
+            cfg.precision.core_bf16 = False
+            cfg.precision.core_fp8_e4m3fn = False
+            cfg.precision.core_fp8_e5m2 = False
+            # fp32 implied
+        if vae_raw == "cpu":
+            cfg.precision.vae_fp16 = False
+            cfg.precision.vae_bf16 = False
+            cfg.precision.vae_fp32 = True
+
+    _apply_component_device_overrides_from_env(memory_config, os.environ)
+except Exception:  # pragma: no cover - defensive
+    _LOG.debug("Failed to apply component device overrides from env", exc_info=True)
 
 dynamic_args = {
     "embedding_dir": "./embeddings",

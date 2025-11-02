@@ -193,7 +193,9 @@ class BIOSApp:
         attn_chunk = env.get("CODEX_ATTN_CHUNK_SIZE", "0")
         gguf_pol = env.get("CODEX_GGUF_CACHE_POLICY", "none")
         gguf_lim = env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0")
-        unet_dtype = env.get("CODEX_CORE_DTYPE", "fp16")
+        unet_dtype = env.get("CODEX_DIFFUSION_DTYPE", "fp16")
+        diff_device_raw = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
+        diff_dev_label = "GPU" if diff_device_raw in ("cuda", "gpu") else ("CPU" if diff_device_raw == "cpu" else "Auto")
         vae_dtype = env.get("CODEX_VAE_DTYPE", "fp16")
         vae_device_raw = env.get("CODEX_VAE_DEVICE", "").strip().lower()
         if vae_device_raw == "cpu":
@@ -203,7 +205,6 @@ class BIOSApp:
         else:
             vae_cpu_flag = env.get("CODEX_VAE_IN_CPU", "0").lower() in ("1", "true", "yes", "on")
             vae_dev_label = "CPU" if vae_cpu_flag else "Auto"
-        all_fp32 = "Enabled" if env.get("CODEX_ALL_IN_FP32", "0").lower() in ("1", "true", "yes", "on") else "Disabled"
         swap_pol = env.get("CODEX_SWAP_POLICY", "cpu")
         swap_mth = env.get("CODEX_SWAP_METHOD", "blocked")
         return [
@@ -213,10 +214,10 @@ class BIOSApp:
             ("Attn Chunk Size", f"[{attn_chunk}]", "edit_attn_chunk"),
             ("GGUF Cache Policy", f"[{gguf_pol}]", "cycle_gguf_pol"),
             ("GGUF Cache Limit (MB)", f"[{gguf_lim}]", "edit_gguf_lim"),
+            ("Diffusion Device", f"[{diff_dev_label}]", "select_diff_device"),
             ("DiT/UNet DType", f"[{unet_dtype}]", "cycle_unet_dtype"),
             ("VAE DType", f"[{vae_dtype}]", "cycle_vae_dtype"),
             ("VAE device", f"[{vae_dev_label}]", "select_vae_dev"),
-            ("All in FP32", f"[{all_fp32}]", "toggle_all_fp32"),
             ("Swap Policy", f"[{swap_pol}]", "cycle_swap_pol"),
             ("Swap Method", f"[{swap_mth}]", "cycle_swap_mth"),
         ]
@@ -319,10 +320,14 @@ class BIOSApp:
                 "Only applies when GGUF Cache Policy = cpu_lru.",
                 "Applied via CODEX_GGUF_CACHE_LIMIT_MB.",
             ],
+            "Diffusion Device": [
+                "Where to run the Diffusion core (UNet/DiT): Auto | GPU | CPU.",
+                "Applied via CODEX_DIFFUSION_DEVICE=(cuda|cpu).",
+            ],
             "DiT/UNet DType": [
                 "Numerical dtype for the main denoiser (DiT/UNet).",
                 "fp16/bf16 recommended. fp32 only for diagnostics (slow/high VRAM).",
-                "Applied via CODEX_CORE_DTYPE.",
+                "Applied via CODEX_DIFFUSION_DTYPE.",
             ],
             "VAE DType": [
                 "VAE precision (fp16/bf16/fp32).",
@@ -332,9 +337,6 @@ class BIOSApp:
                 "Where to run the VAE: Auto | GPU | CPU.",
                 "Auto: runtime decides; GPU: faster, uses VRAM; CPU: frees VRAM (slower).",
                 "Applied via CODEX_VAE_DEVICE=(cuda|cpu) and mirrors CODEX_VAE_IN_CPU.",
-            ],
-            "All in FP32": [
-                "Force fp32 globally (CODEX_ALL_IN_FP32=1).",
             ],
             "Swap Policy": [
                 "Swap/offload policy: never | cpu | shared (pinned).",
@@ -481,12 +483,12 @@ class BIOSApp:
                 env["CODEX_GGUF_CACHE_LIMIT_MB"] = val
         elif action == "cycle_unet_dtype":
             order = ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
-            cur = env.get("CODEX_CORE_DTYPE", "fp16")
+            cur = env.get("CODEX_DIFFUSION_DTYPE", "fp16")
             try:
                 i = (order.index(cur) + 1) % len(order)
             except ValueError:
                 i = 0
-            env["CODEX_CORE_DTYPE"] = order[i]
+            env["CODEX_DIFFUSION_DTYPE"] = order[i]
         elif action == "cycle_vae_dtype":
             order = ["fp16", "bf16", "fp32"]
             cur = env.get("CODEX_VAE_DTYPE", "fp16")
@@ -505,9 +507,14 @@ class BIOSApp:
             nxt = order[i]
             env["CODEX_VAE_DEVICE"] = nxt
             env["CODEX_VAE_IN_CPU"] = "1" if nxt == "cpu" else "0"
-        elif action == "toggle_all_fp32":
-            cur = env.get("CODEX_ALL_IN_FP32", "0").strip().lower()
-            env["CODEX_ALL_IN_FP32"] = "0" if cur in ("1", "true", "yes", "on") else "1"
+        elif action == "select_diff_device":
+            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
+            cur = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
+            try:
+                i = (order.index(cur) + 1) % len(order)
+            except ValueError:
+                i = 0
+            env["CODEX_DIFFUSION_DEVICE"] = order[i]
         elif action == "cycle_swap_pol":
             order = ["never", "cpu", "shared"]
             cur = env.get("CODEX_SWAP_POLICY", "cpu")
@@ -550,14 +557,6 @@ class BIOSApp:
         elif action == "toggle_te_fp8":
             cur = env.get("WAN_TE_IMPL", "hf").strip().lower()
             env["WAN_TE_IMPL"] = "cuda_fp8" if cur != "cuda_fp8" else "hf"
-        elif action == "select_te_dev":
-            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
-            cur = env.get("WAN_TE_DEVICE", "").strip().lower()
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["WAN_TE_DEVICE"] = order[i]
         elif action == "toggle_sdpa_debug":
             cur = env.get("WAN_SDPA_DEBUG", "0").strip().lower()
             env["WAN_SDPA_DEBUG"] = "1" if cur in ("0", "", "false", "no") else "0"

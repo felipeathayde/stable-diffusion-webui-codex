@@ -14,3 +14,4 @@ Status: Active
 ## Notes
 - Keep schemas in sync with the frontend API client (`apps/interface/src/api`).
 - Avoid embedding business logic here—delegate to services/use cases and focus on validation and serialization.
+- API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/run_api.py` (`_ORCH` singleton).

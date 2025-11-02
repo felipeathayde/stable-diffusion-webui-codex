@@ -1410,80 +1410,80 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         return dev
 
-_ORCH = InferenceOrchestrator()
+    _ORCH = InferenceOrchestrator()
 
 
     def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-    loop = entry.loop
+        loop = entry.loop
 
-    def push(event: Dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+        def push(event: Dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
 
-    def mark_done(success: bool) -> None:
-        def _set() -> None:
-            if not entry.done.done():
-                entry.done.set_result(success)
+        def mark_done(success: bool) -> None:
+            def _set() -> None:
+                if not entry.done.done():
+                    entry.done.set_result(success)
 
-        loop.call_soon_threadsafe(_set)
+            loop.call_soon_threadsafe(_set)
 
-    push({"type": "status", "stage": "queued"})
-    try:
-        # Enforce explicit device selection without fallback
-        _require_explicit_device(payload)
-        req, engine_key, model_ref = prepare_txt2img(payload)
-    except Exception as err:
-        entry.error = str(err)
-        push({"type": "error", "message": entry.error})
-        push({"type": "end"})
-        mark_done(False)
-        return
-
-    def worker() -> None:
+        push({"type": "status", "stage": "queued"})
         try:
-            push({"type": "status", "stage": "running"})
-            with tasks_lock:
-                for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
-                    if isinstance(ev, ProgressEvent):
-                        push({
-                            "type": "progress",
-                            "stage": ev.stage,
-                            "percent": ev.percent,
-                            "step": ev.step,
-                            "total_steps": ev.total_steps,
-                            "eta_seconds": ev.eta_seconds,
-                        })
-                    elif isinstance(ev, ResultEvent):
-                        payload_obj = ev.payload or {}
-                        info_raw = payload_obj.get("info", "{}")
-                        try:
-                            info_obj = json.loads(info_raw)
-                        except Exception:
-                            info_obj = info_raw
-                        encoded = encode_images(payload_obj.get("images", []))
-                        result = {
-                            "images": encoded,
-                            "info": info_obj,
-                        }
-                        entry.result = {
-                            "status": "completed",
-                            "result": result,
-                        }
-                        push({"type": "result", **result})
-            push({"type": "end"})
-            mark_done(True)
-        except Exception as err:  # pragma: no cover - surfaces runtime errors
-            try:
-                from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
-            except Exception:
-                pass
+            # Enforce explicit device selection without fallback
+            _require_explicit_device(payload)
+            req, engine_key, model_ref = prepare_txt2img(payload)
+        except Exception as err:
             entry.error = str(err)
             push({"type": "error", "message": entry.error})
             push({"type": "end"})
             mark_done(False)
+            return
 
-    thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
-    thread.start()
+        def worker() -> None:
+            try:
+                push({"type": "status", "stage": "running"})
+                with tasks_lock:
+                    for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                        if isinstance(ev, ProgressEvent):
+                            push({
+                                "type": "progress",
+                                "stage": ev.stage,
+                                "percent": ev.percent,
+                                "step": ev.step,
+                                "total_steps": ev.total_steps,
+                                "eta_seconds": ev.eta_seconds,
+                            })
+                        elif isinstance(ev, ResultEvent):
+                            payload_obj = ev.payload or {}
+                            info_raw = payload_obj.get("info", "{}")
+                            try:
+                                info_obj = json.loads(info_raw)
+                            except Exception:
+                                info_obj = info_raw
+                            encoded = encode_images(payload_obj.get("images", []))
+                            result = {
+                                "images": encoded,
+                                "info": info_obj,
+                            }
+                            entry.result = {
+                                "status": "completed",
+                                "result": result,
+                            }
+                            push({"type": "result", **result})
+                push({"type": "end"})
+                mark_done(True)
+            except Exception as err:  # pragma: no cover - surfaces runtime errors
+                try:
+                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
+                except Exception:
+                    pass
+                entry.error = str(err)
+                push({"type": "error", "message": entry.error})
+                push({"type": "end"})
+                mark_done(False)
+
+        thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
+        thread.start()
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
         init_image_data = _p.require(payload, 'img2img_init_image')

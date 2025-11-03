@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import torch
 from diffusers import DiffusionPipeline
@@ -236,12 +236,6 @@ def _load_huggingface_component(
         to_args = dict(device=te_device, dtype=te_dtype)
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
-        from apps.backend.runtime.model_parser.converters.clip import (
-            convert_sd15_clip,
-            convert_sd20_clip,
-            convert_sdxl_clip_l,
-            convert_sdxl_clip_g,
-        )
         from apps.backend.runtime.common.nn.clip_text_cx import CodexCLIPTextConfig, CodexCLIPTextModel
         _CLIP_PREFIXES = (
             "conditioner.embedders.0.transformer.",
@@ -276,6 +270,40 @@ def _load_huggingface_component(
                 stripped[key] = value
             return stripped
 
+        def _ensure_position_ids_long(work: Dict[str, Any]) -> None:
+            key = "transformer.text_model.embeddings.position_ids"
+            value = work.get(key)
+            if isinstance(value, torch.Tensor) and value.dtype != torch.long:
+                work[key] = value.round().to(torch.long)
+
+        def _normalize_text_projection(work: Dict[str, Any], *, keep_projection: bool, transpose: bool) -> None:
+            def _assign(tensor: Any) -> None:
+                if not keep_projection:
+                    return
+                if isinstance(tensor, torch.Tensor) and transpose:
+                    tensor = tensor.transpose(0, 1).contiguous()
+                work["transformer.text_projection.weight"] = tensor
+
+            for key in (
+                "transformer.text_projection.weight",
+                "transformer.text_projection",
+                "text_projection.weight",
+                "text_projection",
+            ):
+                if key in work:
+                    value = work.pop(key)
+                    _assign(value)
+            if not keep_projection:
+                work.pop("transformer.text_projection.weight", None)
+
+        def _drop_logit_scale(work: Dict[str, Any]) -> None:
+            for key in (
+                "logit_scale",
+                "transformer.logit_scale",
+                "transformer.text_model.logit_scale",
+            ):
+                work.pop(key, None)
+
         _ESSENTIAL_KEYS = (
             "transformer.text_model.embeddings.token_embedding.weight",
             "transformer.text_model.embeddings.position_embedding.weight",
@@ -283,82 +311,47 @@ def _load_huggingface_component(
             "transformer.text_model.final_layer_norm.weight",
         )
 
-        def _lift_namespace(sd: Mapping[str, Any]) -> Dict[str, Any]:
-            lifted: Dict[str, Any] = {}
-            for raw_key, value in sd.items():
-                key = str(raw_key)
-                if key.startswith("transformer."):
-                    lifted[key] = value
-                    continue
-                if key.startswith("text_model."):
-                    lifted[f"transformer.{key}"] = value
-                    continue
-                if key == "text_projection":
-                    if isinstance(value, torch.Tensor) and value.ndim == 2:
-                        lifted["transformer.text_projection.weight"] = value.transpose(0, 1).contiguous()
-                    else:
-                        lifted["transformer.text_projection.weight"] = value
-                    continue
-                if key == "text_projection.weight":
-                    lifted["transformer.text_projection.weight"] = value
-                    continue
-                if key == "transformer.text_projection":
-                    lifted["transformer.text_projection.weight"] = value
-                    continue
-                if key.startswith("final_layer_norm."):
-                    lifted[f"transformer.text_model.{key}"] = value
-                    continue
-                lifted[key] = value
-            return lifted
+        def _has_essentials(work: Mapping[str, Any]) -> bool:
+            return all(key in work for key in _ESSENTIAL_KEYS)
 
-        def _has_essentials(sd: Mapping[str, Any]) -> bool:
-            return all(key in sd for key in _ESSENTIAL_KEYS)
-
-        def _apply_converters(component: str, data: Mapping[str, Any]) -> Dict[str, Any]:
-            attempts: list[tuple[str, Callable[[Dict[str, Any]], Dict[str, Any]]]] = []
-            if component == "text_encoder_2":
-                attempts.append(("sdxl_g", convert_sdxl_clip_g))
-            else:
-                attempts.append(("sdxl_l", convert_sdxl_clip_l))
-            attempts.extend([
-                ("sd20", convert_sd20_clip),
-                ("sd15", convert_sd15_clip),
-            ])
-            for label, fn in attempts:
-                try:
-                    candidate = fn(dict(data))
-                except Exception as exc:  # noqa: BLE001
-                    CLIP_LOG.debug("CLIP convert %s failed (%s): %s", label, component, exc)
-                    continue
-                lifted = _lift_namespace(candidate)
-                if _has_essentials(lifted):
-                    return lifted
-            return _lift_namespace(data)
-
-        def _normalize_clip_state(component: str, sd: Mapping[str, Any]) -> Dict[str, Any]:
-            stripped = _strip_known_prefixes(sd)
-            lifted = _lift_namespace(stripped)
-            if _has_essentials(lifted):
-                return lifted
-            converted = _apply_converters(component, stripped)
-            if _has_essentials(converted):
-                return converted
-            # Final fallback: try converters on already lifted namespace (handles partially converted inputs)
-            converted_again = _apply_converters(component, lifted)
-            return converted_again
-
-        state_dict = _normalize_clip_state(component_name, state_dict)
-
-        if not _has_essentials(state_dict):
-            sample_keys = list(sorted(state_dict.keys()))[:10]
-            raise RuntimeError(
-                "CLIP state dict normalisation failed for %s; missing essential tensors. Sample keys: %s"
-                % (component_name, sample_keys)
-            )
-
-        # Load CLIP config json from repo and translate to native config
+        # Load CLIP config before normalisation (layer count needed)
         config_json = read_arbitrary_config(component_path)
         cfg = CodexCLIPTextConfig.from_dict(config_json)
+
+        def _normalize_clip_state(
+            component: str,
+            sd: Mapping[str, Any],
+            *,
+            num_layers: int,
+            keep_projection: bool,
+            transpose_projection: bool,
+        ) -> Dict[str, Any]:
+            work = _strip_known_prefixes(sd)
+            work = dict(work)
+
+            transformers_convert(work, "transformer.", "transformer.text_model.", num_layers)
+            transformers_convert(work, "", "transformer.text_model.", num_layers)
+
+            _ensure_position_ids_long(work)
+            _normalize_text_projection(work, keep_projection=keep_projection, transpose=transpose_projection)
+            _drop_logit_scale(work)
+
+            if not _has_essentials(work):
+                sample_keys = list(sorted(work.keys()))[:10]
+                raise RuntimeError(
+                    "CLIP state dict normalisation failed for %s; missing essential tensors. Sample keys: %s"
+                    % (component, sample_keys)
+                )
+
+            return work
+
+        state_dict = _normalize_clip_state(
+            component_name,
+            state_dict,
+            num_layers=cfg.num_hidden_layers,
+            keep_projection=add_proj,
+            transpose_projection=component_name in {"text_encoder_2", "text_encoder_3"},
+        )
 
         with using_codex_operations(**to_args, manual_cast_enabled=True):
             model = IntegratedCLIP(CodexCLIPTextModel, cfg, add_text_projection=add_proj).to(**to_args)

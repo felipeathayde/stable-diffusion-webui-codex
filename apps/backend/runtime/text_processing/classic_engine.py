@@ -165,7 +165,8 @@ class ClassicTextProcessingEngine:
             attention_mask = (tokens_device != self.id_pad).to(dtype=torch.long, device=target_device)
             position_ids = torch.arange(seqlen, device=target_device).unsqueeze(0).expand(batch, -1)
 
-            fwd = self.text_encoder.transformer.forward
+            # Prefer the high-level wrapper to reduce coupling on internal structure
+            fwd = self.text_encoder.forward
             try:
                 sig = inspect.signature(fwd)
                 allowed = set(sig.parameters.keys())
@@ -178,12 +179,14 @@ class ClassicTextProcessingEngine:
             if "position_ids" in allowed:
                 kwargs["position_ids"] = position_ids
 
-            outputs = self.text_encoder.transformer(tokens_device, **kwargs)
+            # Route via wrapper to let it normalise return types across variants
+            outputs = self.text_encoder(tokens_device, **kwargs)
 
             layer_id = - max(self.clip_skip, self.minimal_clip_skip)
             z = outputs.hidden_states[layer_id]
 
             if self.final_layer_norm:
+                # final_layer_norm lives on the inner text model
                 z = self.text_encoder.transformer.text_model.final_layer_norm(z)
 
             pooled_output = outputs.pooler_output if self.return_pooled else None

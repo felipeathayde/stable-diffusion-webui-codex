@@ -268,8 +268,23 @@ def _load_huggingface_component(
                 return sd
             if not keys:
                 return sd
+            # Already in the expected IntegratedCLIP namespace
             if any(k.startswith("transformer.text_model") for k in keys):
                 return sd
+            # Handle state dicts rooted at text_model.* (no leading 'transformer.')
+            if all(k.startswith("text_model.") or k.startswith("text_projection") or k.startswith("final_layer_norm") for k in keys):
+                remapped: Dict[str, Any] = {}
+                for k in keys:
+                    v = sd[k]
+                    if k.startswith("text_model."):
+                        remapped[f"transformer.{k}"] = v
+                    elif k.startswith("text_projection"):
+                        remapped[f"transformer.{k}"] = v
+                    elif k.startswith("final_layer_norm"):
+                        remapped[f"transformer.text_model.{k}"] = v
+                    else:
+                        remapped[k] = v
+                return remapped
             prefix_candidates = [
                 "conditioner.embedders.0.model.",
                 "conditioner.embedders.0.transformer.text_model.",
@@ -280,10 +295,22 @@ def _load_huggingface_component(
                 "text_encoders.clip_g.",
                 "clip_l.",
                 "clip_g.",
+                "model.text_model.",
+                "model.",
             ]
             for prefix in prefix_candidates:
                 if all(k.startswith(prefix) for k in keys):
                     trimmed = {k[len(prefix):]: sd[k] for k in keys}
+                    # If trimming produced text_model.* keys, lift into transformer.*
+                    if any(k.startswith("text_model.") for k in trimmed.keys()):
+                        trimmed = {(
+                            f"transformer.{k}" if k.startswith("text_model.") else (
+                                f"transformer.{k}" if k.startswith("text_projection") else (
+                                    f"transformer.text_model.{k}" if k.startswith("final_layer_norm") else k
+                                )
+                            )
+                        ): v for k, v in trimmed.items()}
+                        return trimmed
                     return _convert_without_prefix(component, trimmed)
             return _convert_without_prefix(component, sd)
 

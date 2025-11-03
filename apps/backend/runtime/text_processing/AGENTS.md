@@ -28,5 +28,8 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 - CLIP forward signatures vary across `transformers` versions; introspection guards the call but monitor logs for unusual masks being ignored.
 - If future models drop `pooler_output`, the engine must gate pooled features accordingly.
 
+## 2025-11-03 State-Dict Normalization (CLIP)
+- The loader now normalizes CLIP state dicts that come rooted at `text_model.*` by lifting them under `transformer.*` so they match `IntegratedCLIP` keys. This avoids spurious `Missing/Unexpected` when checkpoints already use the modern `text_model.*` layout but omit the outer `transformer` prefix.
+
 ## Not Implemented
 - Non‑classic emphasis variants outside the configured registry will raise `NotImplementedError` when wired.

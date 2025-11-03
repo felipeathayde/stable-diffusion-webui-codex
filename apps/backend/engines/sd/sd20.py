@@ -73,6 +73,8 @@ class StableDiffusion2(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
+        if self.smart_offload_enabled:
+            memory_management.soft_empty_cache(force=True)
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
         unload_clip = self.smart_offload_enabled
         try:
@@ -93,6 +95,8 @@ class StableDiffusion2(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
+        if self.smart_offload_enabled:
+            memory_management.soft_empty_cache(force=True)
         memory_management.load_model_gpu(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
@@ -105,6 +109,8 @@ class StableDiffusion2(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
+        if self.smart_offload_enabled:
+            memory_management.soft_empty_cache(force=True)
         memory_management.load_model_gpu(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:

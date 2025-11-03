@@ -134,25 +134,51 @@ class ClassicTextProcessingEngine:
         self._current_dtype = dtype
 
     def encode_with_transformers(self, tokens):
+        """Encode token ids with a CLIP text transformer.
+
+        Robust to HF CLIP variants that do not register `position_ids` on
+        the embeddings module. Generates `attention_mask` and `position_ids`
+        on-the-fly and only passes them if the transformer's forward
+        signature supports the respective parameters.
+        """
+        import inspect
+
         target_device = memory_management.text_encoder_device()
 
         while True:
             desired_dtype = memory_management.text_encoder_dtype(device=target_device)
             self._apply_precision(target_device, desired_dtype)
 
-            self.text_encoder.transformer.text_model.embeddings.position_ids = (
-                self.text_encoder.transformer.text_model.embeddings.position_ids.to(device=target_device)
-            )
-            self.text_encoder.transformer.text_model.embeddings.position_embedding = (
-                self.text_encoder.transformer.text_model.embeddings.position_embedding.to(dtype=torch.float32)
-            )
-            self.text_encoder.transformer.text_model.embeddings.token_embedding = (
-                self.text_encoder.transformer.text_model.embeddings.token_embedding.to(dtype=torch.float32)
-            )
+            # Ensure embedding weights use a stable compute dtype to avoid overflow
+            # regardless of TE compute dtype. We do NOT rely on a `position_ids`
+            # attribute existing on embeddings (many CLIP variants do not expose it).
+            embeddings = self.text_encoder.transformer.text_model.embeddings
+            if hasattr(embeddings, "position_embedding"):
+                embeddings.position_embedding = embeddings.position_embedding.to(dtype=torch.float32)
+            if hasattr(embeddings, "token_embedding"):
+                embeddings.token_embedding = embeddings.token_embedding.to(dtype=torch.float32)
 
             tokens_device = tokens.to(target_device)
 
-            outputs = self.text_encoder.transformer(tokens_device, output_hidden_states=True)
+            # Build masks/ids once, on device. Only forward what the model supports.
+            batch, seqlen = tokens_device.shape[0], tokens_device.shape[1]
+            attention_mask = (tokens_device != self.id_pad).to(dtype=torch.long, device=target_device)
+            position_ids = torch.arange(seqlen, device=target_device).unsqueeze(0).expand(batch, -1)
+
+            fwd = self.text_encoder.transformer.forward
+            try:
+                sig = inspect.signature(fwd)
+                allowed = set(sig.parameters.keys())
+            except (ValueError, TypeError):  # builtins/torchscript edge cases
+                allowed = {"input_ids", "attention_mask", "position_ids", "output_hidden_states"}
+
+            kwargs = {"output_hidden_states": True}
+            if "attention_mask" in allowed:
+                kwargs["attention_mask"] = attention_mask
+            if "position_ids" in allowed:
+                kwargs["position_ids"] = position_ids
+
+            outputs = self.text_encoder.transformer(tokens_device, **kwargs)
 
             layer_id = - max(self.clip_skip, self.minimal_clip_skip)
             z = outputs.hidden_states[layer_id]

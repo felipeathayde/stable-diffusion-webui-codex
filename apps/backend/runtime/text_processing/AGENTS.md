@@ -1,12 +1,29 @@
-# apps/backend/runtime/text_processing Overview
-Date: 2025-10-28
-Owner: Runtime Text Maintainers
-Last Review: 2025-10-28
+# Text Processing Runtime — AGENTS Notes
+Date: 2025-11-03
+Owner: Runtime Maintainers
 Status: Active
 
-## Purpose
-- Text processing utilities: prompt parsing, emphasis, textual inversion, CLIP/T5 helpers used across engines and adapters.
+## Scope
+Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py`.
 
-## Notes
-- Keep token/embedding handling centralized here to avoid drift between engines.
-- CLIP classic engines now consult the AUTO precision ladder; encoding retries will fall back bf16→fp16 with loud logging, while manual precision flags bypass the ladder.
+## Design Guidelines
+- No legacy imports. Keep APIs Codex‑native, clear, and typed.
+- Preserve A1111/Comfy behaviour (chunking, emphasis, TI) while modernising structure.
+- Avoid hard dependencies on upstream internals that drift between HF releases.
+
+## 2025-11-03 Update — CLIP TE Forward
+- Removed reliance on `embeddings.position_ids` which is not guaranteed across HF CLIP variants.
+- Generate `attention_mask` and `position_ids` per batch and pass only if the transformer’s forward supports them (signature introspection).
+- Keep embedding weights (`token_embedding`, `position_embedding`) in `float32` for numerical stability independent of the text‑encoder compute dtype.
+- Emit actionable logs on precision fallback; never silence errors.
+
+## Invariants
+- Token chunking is stable: BOS + chunk + EOS, padding with configured PAD id.
+- Emphasis/Textual Inversion application remains before the final layer norm and after hidden state selection (`clip_skip`).
+
+## Risks
+- CLIP forward signatures vary across `transformers` versions; introspection guards the call but monitor logs for unusual masks being ignored.
+- If future models drop `pooler_output`, the engine must gate pooled features accordingly.
+
+## Not Implemented
+- Non‑classic emphasis variants outside the configured registry will raise `NotImplementedError` when wired.

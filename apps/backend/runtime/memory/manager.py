@@ -859,13 +859,19 @@ class CodexMemoryManager:
             patcher_target = getattr(model, "model", model)
             target_name = patcher_target.__class__.__name__
             compute_dtype = None
-            if hasattr(patcher_target, "computation_dtype"):
-                dtype_attr = patcher_target.computation_dtype
-                compute_dtype = dtype_attr() if callable(dtype_attr) else dtype_attr
-            elif hasattr(patcher_target, "dtype"):
-                compute_dtype = patcher_target.dtype
+            try:
+                dtype_attr = getattr(patcher_target, "computation_dtype", None)
+                if callable(dtype_attr):
+                    compute_dtype = dtype_attr()
+                elif dtype_attr is not None:
+                    compute_dtype = dtype_attr
+                elif hasattr(patcher_target, "dtype"):
+                    compute_dtype = getattr(patcher_target, "dtype")
+            except Exception:  # pragma: no cover
+                compute_dtype = None
+
             logger.info(
-                "Loaded %s via ModelPatcher → device=%s storage_dtype=%s compute_dtype=%s (mem=%d)",
+                "[memory] loaded %s to device=%s storage=%s compute=%s mem=%d",
                 target_name,
                 record.load_device,
                 record.storage_dtype,

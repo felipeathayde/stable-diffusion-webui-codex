@@ -18,6 +18,16 @@ Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict 
   - Lift `text_model.*` into `transformer.text_model.*`, normalize `text_projection` into `transformer.text_projection.weight`, and forward `final_layer_norm.*` similarly.
   - Abort with a `RuntimeError` when essential tensors (`token_embedding`, `position_embedding`, first-layer q_proj, `final_layer_norm`) remain missing after normalization — no silent degradation.
 
+## UNet State‑Dict Normalization
+- Accepted inputs:
+  - LDM layout: keys already under `input_blocks./middle_block./output_blocks.` — forwarded untouched.
+  - Diffusers layout: `conv_in`, `down_blocks.*`, `mid_block.*`, `up_blocks.*`, `time_embedding.*` — converted per config (`num_res_blocks`, `channel_mult`, transformer depths) using the same mapping rules as Comfy (`unet_to_diffusers`).
+- Policy:
+  - Strip wrappers like `model.diffusion_model.` before inspection.
+  - Build diffusers→LDM key map programmatically from the UNet config and remap tensors in place.
+  - Preserve optional leftovers (logged at DEBUG) and drop `logit_scale`-style noise.
+  - Guard against missing essentials (`input_blocks.0.0.weight`, `time_embed.0.weight`, `out.2.weight`) by raising a `RuntimeError` with representative diffusers keys.
+
 ## Error Handling
 - Missing/Unexpected above thresholds will be escalated by the loader; we do not degrade silently.
 - Prefer clear messages naming a few representative keys and the active normalization path.

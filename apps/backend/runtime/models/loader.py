@@ -28,7 +28,7 @@ from apps.backend.runtime.model_registry.specs import (
     PredictionKind,
     QuantizationKind,
 )
-from apps.backend.runtime.models.state_dict import load_state_dict
+from apps.backend.runtime.models.state_dict import load_state_dict, transformers_convert
 from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.utils import (
     beautiful_print_gguf_state_dict_statics,
@@ -41,6 +41,253 @@ from apps.backend.huggingface.assets import ensure_repo_minimal_files
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")
+UNET_LOG = logging.getLogger(__name__ + ".unet")
+
+_UNET_PREFIXES: tuple[str, ...] = (
+    "model.diffusion_model.",
+    "model.model.",
+    "diffusion_model.",
+    "model.",
+)
+
+_UNET_MAP_ATTENTIONS: tuple[str, ...] = (
+    "proj_in.weight",
+    "proj_in.bias",
+    "proj_out.weight",
+    "proj_out.bias",
+    "norm.weight",
+    "norm.bias",
+)
+
+_TRANSFORMER_BLOCK_FIELDS: tuple[str, ...] = (
+    "norm1.weight",
+    "norm1.bias",
+    "norm2.weight",
+    "norm2.bias",
+    "norm3.weight",
+    "norm3.bias",
+    "attn1.to_q.weight",
+    "attn1.to_k.weight",
+    "attn1.to_v.weight",
+    "attn1.to_out.0.weight",
+    "attn1.to_out.0.bias",
+    "attn2.to_q.weight",
+    "attn2.to_k.weight",
+    "attn2.to_v.weight",
+    "attn2.to_out.0.weight",
+    "attn2.to_out.0.bias",
+    "ff.net.0.proj.weight",
+    "ff.net.0.proj.bias",
+    "ff.net.2.weight",
+    "ff.net.2.bias",
+)
+
+_UNET_MAP_RESNET: dict[str, str] = {
+    "in_layers.2.weight": "conv1.weight",
+    "in_layers.2.bias": "conv1.bias",
+    "emb_layers.1.weight": "time_emb_proj.weight",
+    "emb_layers.1.bias": "time_emb_proj.bias",
+    "out_layers.3.weight": "conv2.weight",
+    "out_layers.3.bias": "conv2.bias",
+    "skip_connection.weight": "conv_shortcut.weight",
+    "skip_connection.bias": "conv_shortcut.bias",
+    "in_layers.0.weight": "norm1.weight",
+    "in_layers.0.bias": "norm1.bias",
+    "out_layers.0.weight": "norm2.weight",
+    "out_layers.0.bias": "norm2.bias",
+}
+
+_UNET_MAP_BASIC: tuple[tuple[str, str], ...] = (
+    ("label_emb.0.0.weight", "class_embedding.linear_1.weight"),
+    ("label_emb.0.0.bias", "class_embedding.linear_1.bias"),
+    ("label_emb.0.2.weight", "class_embedding.linear_2.weight"),
+    ("label_emb.0.2.bias", "class_embedding.linear_2.bias"),
+    ("label_emb.0.0.weight", "add_embedding.linear_1.weight"),
+    ("label_emb.0.0.bias", "add_embedding.linear_1.bias"),
+    ("label_emb.0.2.weight", "add_embedding.linear_2.weight"),
+    ("label_emb.0.2.bias", "add_embedding.linear_2.bias"),
+    ("input_blocks.0.0.weight", "conv_in.weight"),
+    ("input_blocks.0.0.bias", "conv_in.bias"),
+    ("out.0.weight", "conv_norm_out.weight"),
+    ("out.0.bias", "conv_norm_out.bias"),
+    ("out.2.weight", "conv_out.weight"),
+    ("out.2.bias", "conv_out.bias"),
+    ("time_embed.0.weight", "time_embedding.linear_1.weight"),
+    ("time_embed.0.bias", "time_embedding.linear_1.bias"),
+    ("time_embed.2.weight", "time_embedding.linear_2.weight"),
+    ("time_embed.2.bias", "time_embedding.linear_2.bias"),
+)
+
+_ESSENTIAL_UNET_KEYS: tuple[str, ...] = (
+    "input_blocks.0.0.weight",
+    "time_embed.0.weight",
+    "out.2.weight",
+)
+
+
+def _strip_unet_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
+    stripped: Dict[str, Any] = {}
+    for key, value in sd.items():
+        name = str(key)
+        changed = True
+        while changed:
+            changed = False
+            for prefix in _UNET_PREFIXES:
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                    changed = True
+                    break
+        stripped[name] = value
+    return stripped
+
+
+def _normalize_depth_list(values: Any, total: int, default: int = 0) -> list[int]:
+    if values is None:
+        return [default] * total
+    if isinstance(values, int):
+        base = [values] * total
+    else:
+        base = list(values)
+    if len(base) < total:
+        pad = base[-1] if base else default
+        base.extend([pad] * (total - len(base)))
+    return base[:total]
+
+
+def _build_diffusers_to_ldm_map(unet_config: Mapping[str, Any]) -> Dict[str, str]:
+    channel_mult = list(unet_config.get("channel_mult", []))
+    if not channel_mult:
+        return {}
+
+    num_blocks = len(channel_mult)
+    num_res_blocks_cfg = unet_config.get("num_res_blocks", [])
+    if isinstance(num_res_blocks_cfg, int):
+        num_res_blocks = [num_res_blocks_cfg] * num_blocks
+    else:
+        num_res_blocks = list(num_res_blocks_cfg)
+        if len(num_res_blocks) < num_blocks:
+            pad = num_res_blocks[-1] if num_res_blocks else 0
+            num_res_blocks.extend([pad] * (num_blocks - len(num_res_blocks)))
+        num_res_blocks = num_res_blocks[:num_blocks]
+
+    total_down_transformers = sum(num_res_blocks)
+    transformer_depth = _normalize_depth_list(unet_config.get("transformer_depth"), total_down_transformers, default=0)
+    transformer_depth_output = _normalize_depth_list(
+        unet_config.get("transformer_depth_output"),
+        sum(res + 1 for res in num_res_blocks),
+        default=0,
+    )
+    raw_mid = unet_config.get("transformer_depth_middle")
+    if isinstance(raw_mid, int):
+        transformers_mid = raw_mid
+    elif isinstance(raw_mid, (list, tuple)) and raw_mid:
+        transformers_mid = int(raw_mid[-1])
+    elif transformer_depth:
+        transformers_mid = transformer_depth[-1]
+    else:
+        transformers_mid = 0
+
+    mapping: Dict[str, str] = {}
+    for dest, src in _UNET_MAP_BASIC:
+        mapping[src] = dest
+
+    depth_iter = iter(transformer_depth)
+    for block_idx in range(num_blocks):
+        base_index = 1 + (num_res_blocks[block_idx] + 1) * block_idx
+        for res_idx in range(num_res_blocks[block_idx]):
+            for dest, src in _UNET_MAP_RESNET.items():
+                mapping[f"down_blocks.{block_idx}.resnets.{res_idx}.{src}"] = f"input_blocks.{base_index}.0.{dest}"
+            num_transformers = next(depth_iter, 0)
+            if num_transformers > 0:
+                for field in _UNET_MAP_ATTENTIONS:
+                    mapping[f"down_blocks.{block_idx}.attentions.{res_idx}.{field}"] = f"input_blocks.{base_index}.1.{field}"
+                for t in range(num_transformers):
+                    for field in _TRANSFORMER_BLOCK_FIELDS:
+                        mapping[
+                            f"down_blocks.{block_idx}.attentions.{res_idx}.transformer_blocks.{t}.{field}"
+                        ] = f"input_blocks.{base_index}.1.transformer_blocks.{t}.{field}"
+            base_index += 1
+        for suffix in ("weight", "bias"):
+            mapping[f"down_blocks.{block_idx}.downsamplers.0.conv.{suffix}"] = f"input_blocks.{base_index}.0.op.{suffix}"
+
+    # Mid block
+    for idx, target in enumerate((0, 2)):
+        for dest, src in _UNET_MAP_RESNET.items():
+            mapping[f"mid_block.resnets.{idx}.{src}"] = f"middle_block.{target}.{dest}"
+    for field in _UNET_MAP_ATTENTIONS:
+        mapping[f"mid_block.attentions.0.{field}"] = f"middle_block.1.{field}"
+    for t in range(max(int(transformers_mid), 0)):
+        for field in _TRANSFORMER_BLOCK_FIELDS:
+            mapping[f"mid_block.attentions.0.transformer_blocks.{t}.{field}"] = f"middle_block.1.transformer_blocks.{t}.{field}"
+
+    # Up blocks (reverse order)
+    up_res_counts = list(reversed(num_res_blocks))
+    depth_output = list(transformer_depth_output)
+    for block_idx in range(num_blocks):
+        base_index = (up_res_counts[block_idx] + 1) * block_idx
+        block_len = up_res_counts[block_idx] + 1
+        for res_idx in range(block_len):
+            stage_conv_index = 0
+            for dest, src in _UNET_MAP_RESNET.items():
+                mapping[f"up_blocks.{block_idx}.resnets.{res_idx}.{src}"] = f"output_blocks.{base_index}.0.{dest}"
+            stage_conv_index += 1
+            num_transformers = depth_output.pop() if depth_output else 0
+            if num_transformers > 0:
+                stage_conv_index += 1
+                for field in _UNET_MAP_ATTENTIONS:
+                    mapping[f"up_blocks.{block_idx}.attentions.{res_idx}.{field}"] = f"output_blocks.{base_index}.1.{field}"
+                for t in range(num_transformers):
+                    for field in _TRANSFORMER_BLOCK_FIELDS:
+                        mapping[
+                            f"up_blocks.{block_idx}.attentions.{res_idx}.transformer_blocks.{t}.{field}"
+                        ] = f"output_blocks.{base_index}.1.transformer_blocks.{t}.{field}"
+            if res_idx == block_len - 1:
+                for suffix in ("weight", "bias"):
+                    mapping[f"up_blocks.{block_idx}.upsamplers.0.conv.{suffix}"] = f"output_blocks.{base_index}.{stage_conv_index}.conv.{suffix}"
+            base_index += 1
+
+    return mapping
+
+
+def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any]:
+    stripped = _strip_unet_prefixes(state_dict)
+    if any(key.startswith("input_blocks.") for key in stripped):
+        return dict(stripped)
+
+    mapping = _build_diffusers_to_ldm_map(config)
+    canonical: Dict[str, Any] = {}
+    leftovers: Dict[str, Any] = {}
+
+    for key, value in stripped.items():
+        if key.startswith((
+            "input_blocks.",
+            "output_blocks.",
+            "middle_block.",
+            "out.",
+            "time_embed.",
+            "label_emb.",
+            "add_embedding.",
+        )):
+            canonical[key] = value
+            continue
+        target = mapping.get(key)
+        if target is not None:
+            canonical[target] = value
+        else:
+            leftovers[key] = value
+
+    missing = [k for k in _ESSENTIAL_UNET_KEYS if k not in canonical]
+    if missing:
+        sample = list(sorted(leftovers.keys()))[:10]
+        raise RuntimeError(
+            "UNet state dict normalisation failed; missing essentials %s. Sample diffusers keys: %s"
+            % (missing, sample)
+        )
+
+    if leftovers:
+        UNET_LOG.debug("UNet leftover keys (diffusers layout) count=%d sample=%s", len(leftovers), list(leftovers.keys())[:5])
+
+    return canonical
 from apps.backend.runtime.models import api as model_api
 
 _LOG = logging.getLogger(__name__)
@@ -526,6 +773,9 @@ def _load_huggingface_component(
                     policy=str(policy_value),
                     prefer=str(bool(getattr(mem_config, "gpu_prefer_construct", False))),
                 )) from exc
+
+        if cls_name == "UNet2DConditionModel":
+            state_dict = _normalize_unet_state_dict(state_dict, config_json)
 
         _trace.event("load_state_dict", module=module_name, architecture=architecture_value, tensors=len(state_dict))
         try:

@@ -9,6 +9,7 @@ import safetensors.torch as sf
 import torch
 
 from apps.backend.core.engine_interface import BaseInferenceEngine
+from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 from apps.backend.runtime.utils import get_state_dict_after_quant
 
@@ -170,6 +171,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._current_bundle: DiffusionModelBundle | None = None
         self._current_model_ref: str | None = None
         self._load_options: dict[str, Any] = {}
+        self._smart_offload_enabled = smart_offload_enabled()
 
     # ------------------------------------------------------------------ Components
     def bind_components(self, components: CodexObjects, *, label: str | None = None) -> None:
@@ -200,6 +202,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     @codex_objects_after_applying_lora.setter
     def codex_objects_after_applying_lora(self, value: CodexObjects) -> None:
         self._component_tracker.set_after_lora(value, context="codex_objects_after_applying_lora")
+
+    @property
+    def smart_offload_enabled(self) -> bool:
+        return self._smart_offload_enabled
 
     def snapshot_after_lora(self) -> None:
         """Capture the current components as the LoRA-applied snapshot."""

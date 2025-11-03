@@ -56,6 +56,11 @@ def _build_parser() -> argparse.ArgumentParser:
     upcast.add_argument("--disable-attention-upcast", action="store_true")
 
     parser.add_argument("--disable-xformers", action="store_true")
+    parser.add_argument(
+        "--smart-offload",
+        action="store_true",
+        help="Load TE/UNet/VAE to GPU only for the active stage, offloading between steps.",
+    )
 
     parser.add_argument("--directml", type=int, nargs="?", metavar="DIRECTML_DEVICE", const=-1)
     parser.add_argument("--disable-ipex-hijack", action="store_true")
@@ -199,6 +204,9 @@ def _apply_source_overrides(
             setting_val = _setting_value(settings_key)
             if setting_val:
                 env_map[env_key] = setting_val
+
+    if getattr(ns, "smart_offload", False):
+        env_map["CODEX_SMART_OFFLOAD"] = "1"
 
 
 def _validate_required_devices(ns: argparse.Namespace) -> None:
@@ -412,6 +420,9 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     if _truthy(env.get("CODEX_GPU_PREFER_CONSTRUCT")):
         ns.gpu_prefer_construct = True
+
+    if _truthy(env.get("CODEX_SMART_OFFLOAD")):
+        ns.smart_offload = True
 
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:

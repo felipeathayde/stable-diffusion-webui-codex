@@ -35,6 +35,7 @@ Status: Active
 - 2025-11-02: Inline pipeline debugging agora usa `apps.backend.runtime.pipeline_debug`; ligue com `set_pipeline_debug(True)` ou defina `CODEX_PIPELINE_DEBUG=1` (também disponível na BIOS) para logar `entrou/saiu` na pipeline txt2img/SDXL. A pipeline de SDXL valida `torch.cuda.is_available()` e recusa execução quando o modelo está em CPU, evitando o crash em `torch_cpu.dll`.
 - 2025-11-02: Memory config reads unified env flags (`CODEX_DIFFUSION_*`, `CODEX_TE_*`, `CODEX_VAE_*`); `DeviceRole` policies clamp dtype to fp32 when device=CPU, `get_torch_device()` honours the core policy, and loader fallbacks that forced TE onto CUDA were removed.
 - 2025-11-02: `apps/backend/interfaces/api/run_api.py` agora invoca `apps.backend.infra.config.args.initialize(...)` com CLI/env/settings antes do bootstrap e chama `memory_management.reinitialize(...)`; se os devices não estiverem definidos, o backend aborta com erro claro.
+- 2025-11-03: `--smart-offload` flag (also via `CODEX_SMART_OFFLOAD=1`) loads CLIP/UNet/VAE only for their active stage, freeing VRAM between stages. txt2img/img2img pipelines honor the flag by unloading components after TE encode, UNet sampling, and VAE decode.
 
 ## Operator Communication Guidelines
 - Assuma expertise do operador. Não ofereça instruções "de iniciante" (ex.: "valide o par de TEs" ou "verifique se o modelo é SDXL") a menos que um verificador determinístico do backend tenha acusado incompatibilidade.

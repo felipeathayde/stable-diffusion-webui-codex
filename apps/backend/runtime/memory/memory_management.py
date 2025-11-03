@@ -267,6 +267,10 @@ def unload_model_clones(model):
     _MANAGER.unload_model_clones(model)
 
 
+def unload_model(model):
+    _MANAGER.unload_model(model)
+
+
 __all__ = [
     "OOM_EXCEPTION",
     "VRAMState",
@@ -304,6 +308,7 @@ __all__ = [
     "text_encoder_dtype",
     "text_encoder_offload_device",
     "unload_all_models",
+    "unload_model",
     "unload_model_clones",
     "vae_device",
     "vae_dtype",

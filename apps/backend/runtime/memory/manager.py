@@ -750,6 +750,18 @@ class CodexMemoryManager:
                 self._unload_record(record, avoid_model_moving=True)
                 self._loaded_models.pop(index)
 
+    def unload_model(self, model: object) -> None:
+        record = self._find_loaded_model(model)
+        if record is None:
+            return
+        self._unload_record(record, avoid_model_moving=True)
+        try:
+            self._loaded_models.remove(record)
+        except ValueError:  # pragma: no cover
+            pass
+        if self._primary_device.type == "cuda":
+            torch.cuda.empty_cache()
+
     # --------------------------------------------------------------------- load/unload
     def load_models(
         self,

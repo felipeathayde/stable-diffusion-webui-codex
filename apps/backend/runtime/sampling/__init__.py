@@ -9,6 +9,7 @@ import collections
 import logging
 
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime import utils
 from apps.backend.runtime.ops import cleanup_cache
 
@@ -400,11 +401,17 @@ def sampling_prepare(unet, x):
         lora_memory = utils.nested_compute_size(unet.lora_patches, element_size=utils.dtype_to_element_size(unet.model.computation_dtype))
         additional_inference_memory += lora_memory
 
+    models_to_load = [unet] + additional_model_patchers
     memory_management.load_models_gpu(
-        models=[unet] + additional_model_patchers,
+        models=models_to_load,
         memory_required=unet_inference_memory,
         hard_memory_preservation=additional_inference_memory
     )
+
+    if smart_offload_enabled():
+        setattr(unet, "_codex_smart_offload_models", models_to_load)
+    else:
+        setattr(unet, "_codex_smart_offload_models", [])
 
     if unet.has_online_lora():
         utils.nested_move_to_device(unet.lora_patches, device=unet.current_device, dtype=unet.model.computation_dtype)
@@ -428,5 +435,10 @@ def sampling_cleanup(unet):
         control_runtime.cleanup()
         logger.debug("Control runtime cleaned up after sampling")
     unet.clear_control()
+    if smart_offload_enabled():
+        models_to_unload = getattr(unet, "_codex_smart_offload_models", [])
+        for model in models_to_unload:
+            memory_management.unload_model(model)
+        setattr(unet, "_codex_smart_offload_models", [])
     cleanup_cache()
     return

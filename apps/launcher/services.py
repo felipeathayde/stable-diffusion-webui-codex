@@ -77,6 +77,10 @@ class CodexServiceHandle:
                     if not text or text == "auto":
                         continue
                     cli_args.extend([flag, text])
+            smart_env = overrides_map.get("CODEX_SMART_OFFLOAD")
+            if smart_env is not None:
+                if str(smart_env).strip().lower() in {"1", "true", "yes", "on"}:
+                    cli_args.append("--smart-offload")
 
         env = os.environ.copy()
         env.update(self.spec.base_env)

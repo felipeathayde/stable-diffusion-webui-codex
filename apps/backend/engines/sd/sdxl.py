@@ -228,49 +228,57 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
-        out_l = runtime.classic_engine("clip_l")(prompt)
-        if isinstance(out_l, tuple) and len(out_l) == 2:
-            cond_l, _ = out_l
-        else:
-            cond_l = out_l
+        unload_clip = self.smart_offload_enabled
+        try:
+            out_l = runtime.classic_engine("clip_l")(prompt)
+            pooled_l = None
+            if isinstance(out_l, tuple) and len(out_l) == 2:
+                cond_l, pooled_l = out_l
+            else:
+                cond_l = out_l
+                pooled_l = getattr(cond_l, "pooled", None)
 
-        out_g = runtime.classic_engine("clip_g")(prompt)
-        if isinstance(out_g, tuple) and len(out_g) == 2:
-            cond_g, pooled_g = out_g
-        else:
-            # Fallback: older engines attach pooled on the tensor
-            pooled_g = getattr(out_g, "pooled", None)
-            cond_g = out_g
-            if pooled_g is None:
-                raise RuntimeError("SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector.")
+            out_g = runtime.classic_engine("clip_g")(prompt)
+            if isinstance(out_g, tuple) and len(out_g) == 2:
+                cond_g, pooled_g = out_g
+            else:
+                # Fallback: older engines attach pooled on the tensor
+                pooled_g = getattr(out_g, "pooled", None)
+                cond_g = out_g
+                if pooled_g is None:
+                    raise RuntimeError("SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector.")
 
-        width, height, is_negative = _prompt_meta(prompt)
-        opts = _opts()
+            width, height, is_negative = _prompt_meta(prompt)
+            opts = _opts()
 
-        embed_values = [
-            self.embedder(torch.tensor([height])),
-            self.embedder(torch.tensor([width])),
-            self.embedder(torch.tensor([opts.sdxl_crop_top])),
-            self.embedder(torch.tensor([opts.sdxl_crop_left])),
-            self.embedder(torch.tensor([height])),
-            self.embedder(torch.tensor([width])),
-        ]
+            embed_values = [
+                self.embedder(torch.tensor([height])),
+                self.embedder(torch.tensor([width])),
+                self.embedder(torch.tensor([opts.sdxl_crop_top])),
+                self.embedder(torch.tensor([opts.sdxl_crop_left])),
+                self.embedder(torch.tensor([height])),
+                self.embedder(torch.tensor([width])),
+            ]
 
-        flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled_g.shape[0], 1).to(pooled_g)
+            flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled_g.shape[0], 1).to(pooled_g)
 
-        if is_negative and all(x == "" for x in prompt):
-            pooled_l = torch.zeros_like(pooled_l)
-            pooled_g = torch.zeros_like(pooled_g)
-            cond_l = torch.zeros_like(cond_l)
-            cond_g = torch.zeros_like(cond_g)
+            if is_negative and all(x == "" for x in prompt):
+                if pooled_l is not None:
+                    pooled_l = torch.zeros_like(pooled_l)
+                pooled_g = torch.zeros_like(pooled_g)
+                cond_l = torch.zeros_like(cond_l)
+                cond_g = torch.zeros_like(cond_g)
 
-        cond = {
-            "crossattn": torch.cat([cond_l, cond_g], dim=2),
-            "vector": torch.cat([pooled_g, flat], dim=1),
-        }
+            cond = {
+                "crossattn": torch.cat([cond_l, cond_g], dim=2),
+                "vector": torch.cat([pooled_g, flat], dim=1),
+            }
 
-        logger.debug("Generated SDXL conditioning for %d prompts.", len(prompt))
-        return cond
+            logger.debug("Generated SDXL conditioning for %d prompts.", len(prompt))
+            return cond
+        finally:
+            if unload_clip:
+                memory_management.unload_model(self.codex_objects.clip.patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -282,15 +290,27 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-        return sample.to(x)
+        memory_management.load_model_gpu(self.codex_objects.vae)
+        unload_vae = self.smart_offload_enabled
+        try:
+            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
+            return sample.to(x)
+        finally:
+            if unload_vae:
+                memory_management.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        sample = self.codex_objects.vae.first_stage_model.process_out(x)
-        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
-        return sample.to(x)
+        memory_management.load_model_gpu(self.codex_objects.vae)
+        unload_vae = self.smart_offload_enabled
+        try:
+            sample = self.codex_objects.vae.first_stage_model.process_out(x)
+            sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+            return sample.to(x)
+        finally:
+            if unload_vae:
+                memory_management.unload_model(self.codex_objects.vae)
 
 
 
@@ -354,33 +374,37 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
+        unload_clip = self.smart_offload_enabled
+        try:
+            cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
 
-        cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
+            width, height, is_negative = _prompt_meta(prompt)
+            opts = _opts()
 
-        width, height, is_negative = _prompt_meta(prompt)
-        opts = _opts()
+            embed_values = [
+                self.embedder(torch.tensor([height])),
+                self.embedder(torch.tensor([width])),
+                self.embedder(torch.tensor([opts.sdxl_crop_top])),
+                self.embedder(torch.tensor([opts.sdxl_crop_left])),
+                self.embedder(torch.tensor([height])),
+                self.embedder(torch.tensor([width])),
+            ]
+            flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled.shape[0], 1).to(pooled)
 
-        embed_values = [
-            self.embedder(torch.tensor([height])),
-            self.embedder(torch.tensor([width])),
-            self.embedder(torch.tensor([opts.sdxl_crop_top])),
-            self.embedder(torch.tensor([opts.sdxl_crop_left])),
-            self.embedder(torch.tensor([height])),
-            self.embedder(torch.tensor([width])),
-        ]
-        flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled.shape[0], 1).to(pooled)
+            if is_negative and all(x == "" for x in prompt):
+                pooled = torch.zeros_like(pooled)
+                cond_g = torch.zeros_like(cond_g)
 
-        if is_negative and all(x == "" for x in prompt):
-            pooled = torch.zeros_like(pooled)
-            cond_g = torch.zeros_like(cond_g)
+            cond = {
+                "crossattn": cond_g,
+                "vector": torch.cat([pooled, flat], dim=1),
+            }
 
-        cond = {
-            "crossattn": cond_g,
-            "vector": torch.cat([pooled, flat], dim=1),
-        }
-
-        logger.debug("Generated SDXL refiner conditioning for %d prompts.", len(prompt))
-        return cond
+            logger.debug("Generated SDXL refiner conditioning for %d prompts.", len(prompt))
+            return cond
+        finally:
+            if unload_clip:
+                memory_management.unload_model(self.codex_objects.clip.patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -392,12 +416,24 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-        sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-        return sample.to(x)
+        memory_management.load_model_gpu(self.codex_objects.vae)
+        unload_vae = self.smart_offload_enabled
+        try:
+            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
+            return sample.to(x)
+        finally:
+            if unload_vae:
+                memory_management.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        sample = self.codex_objects.vae.first_stage_model.process_out(x)
-        sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
-        return sample.to(x)
+        memory_management.load_model_gpu(self.codex_objects.vae)
+        unload_vae = self.smart_offload_enabled
+        try:
+            sample = self.codex_objects.vae.first_stage_model.process_out(x)
+            sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+            return sample.to(x)
+        finally:
+            if unload_vae:
+                memory_management.unload_model(self.codex_objects.vae)

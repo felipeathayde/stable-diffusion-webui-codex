@@ -247,6 +247,7 @@ class BIOSApp:
         vae_dev_label = _device_label(vae_device_raw)
         swap_pol = env.get("CODEX_SWAP_POLICY", "cpu")
         swap_mth = env.get("CODEX_SWAP_METHOD", "blocked")
+        smart_offload = env.get("CODEX_SMART_OFFLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
         return [
             ("Services in new terminal", f"[{ext}]", "toggle_extterm"),
             ("SDPA Policy", f"[{pol}]", "cycle_sdpa"),
@@ -262,6 +263,7 @@ class BIOSApp:
             ("VAE Device", f"[{vae_dev_label}]", "select_vae_dev"),
             ("Swap Policy", f"[{swap_pol}]", "cycle_swap_pol"),
             ("Swap Method", f"[{swap_mth}]", "cycle_swap_mth"),
+            ("Smart Offload", f"[{'Enabled' if smart_offload else 'Disabled'}]", "toggle_smart_offload"),
         ]
 
     def _items_wan(self) -> List[Tuple[str, str, str]]:
@@ -389,6 +391,12 @@ class BIOSApp:
             "Swap Method": [
                 "Transfer method: blocked | async (CUDA streams).",
                 "Applied via CODEX_SWAP_METHOD.",
+            ],
+            "Smart Offload": [
+                "Stage-wise VRAM management: load only the components needed for the current stage.",
+                "Enabled: TE → UNet → VAE are moved between CPU/GPU automatically.",
+                "Helps GPUs with limited VRAM avoid OOM at the cost of extra transfers.",
+                "Applied via CODEX_SMART_OFFLOAD or --smart-offload.",
             ],
             
             "I2V Concat Order": [
@@ -616,6 +624,14 @@ class BIOSApp:
             except ValueError:
                 i = 0
             env["CODEX_SWAP_METHOD"] = order[i]
+        elif action == "toggle_smart_offload":
+            enabled = env.get("CODEX_SMART_OFFLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
+            if enabled:
+                env.pop("CODEX_SMART_OFFLOAD", None)
+                self.message = "Smart Offload disabled."
+            else:
+                env["CODEX_SMART_OFFLOAD"] = "1"
+                self.message = "Smart Offload enabled (stage-wise VRAM loads)."
 
     def _act_wan(self, idx: int) -> None:
         items = self._items_wan()

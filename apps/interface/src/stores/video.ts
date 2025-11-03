@@ -231,7 +231,12 @@ export const useTxt2VidStore = defineStore('txt2vid', () => {
       const { task_id } = await startTxt2Vid(payload)
       taskId.value = task_id
       progress.value.stage = 'submitted'
-      unsubscribe = subscribeTask(task_id, handleTaskEvent)
+      unsubscribe = subscribeTask(task_id, handleTaskEvent, (err) => {
+        status.value = 'error'
+        const message = err instanceof Error ? err.message : ''
+        errorMessage.value = message || 'Connection lost during generation.'
+        stopStream()
+      })
     } catch (error) {
       status.value = 'error'
       errorMessage.value = error instanceof Error ? error.message : String(error)
@@ -555,7 +560,12 @@ export const useImg2VidStore = defineStore('img2vid', () => {
       const { task_id } = await startImg2Vid(payload)
       taskId.value = task_id
       progress.value.stage = 'submitted'
-      unsubscribe = subscribeTask(task_id, handleTaskEvent)
+      unsubscribe = subscribeTask(task_id, handleTaskEvent, (err) => {
+        status.value = 'error'
+        const message = err instanceof Error ? err.message : ''
+        errorMessage.value = message || 'Connection lost during generation.'
+        stopStream()
+      })
     } catch (error) {
       status.value = 'error'
       errorMessage.value = error instanceof Error ? error.message : String(error)

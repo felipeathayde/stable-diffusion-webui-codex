@@ -439,6 +439,13 @@ const lastSeedLow = ref<number | null>(null)
 function stopStream(): void { if (unsubscribe) { unsubscribe(); unsubscribe = null } }
 const isRunning = computed(() => status.value === 'running')
 
+function onStreamError(err: unknown): void {
+  const message = err instanceof Error ? err.message : ''
+  errorMessage.value = message || 'Connection lost during generation.'
+  status.value = 'error'
+  stopStream()
+}
+
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
 function randomizeSeedHigh(): void {
@@ -515,7 +522,7 @@ async function generate(): Promise<void> {
       }
       const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
       const { task_id } = await startImg2Vid({ codex_device: quick.currentDevice, ...payload })
-      unsubscribe = subscribeTask(task_id, onTaskEvent)
+      unsubscribe = subscribeTask(task_id, onTaskEvent, onStreamError)
     } else {
       const payload = {
         __strict_version: 1,
@@ -530,7 +537,7 @@ async function generate(): Promise<void> {
       }
       const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
       const { task_id } = await startTxt2Vid({ codex_device: quick.currentDevice, ...payload })
-      unsubscribe = subscribeTask(task_id, onTaskEvent)
+      unsubscribe = subscribeTask(task_id, onTaskEvent, onStreamError)
     }
   } catch (err) {
     status.value = 'error'

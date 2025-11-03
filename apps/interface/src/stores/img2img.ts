@@ -177,7 +177,12 @@ export const useImg2ImgStore = defineStore('img2img', () => {
       const { task_id } = await startImg2Img(payload)
       taskId.value = task_id
       progress.value.stage = 'submitted'
-      unsubscribe = subscribeTask(task_id, handleTaskEvent)
+      unsubscribe = subscribeTask(task_id, handleTaskEvent, (err) => {
+        status.value = 'error'
+        const message = err instanceof Error ? err.message : ''
+        errorMessage.value = message || 'Connection lost during generation.'
+        stopStream()
+      })
     } catch (error) {
       status.value = 'error'
       errorMessage.value = error instanceof Error ? error.message : String(error)

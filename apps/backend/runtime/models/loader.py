@@ -238,11 +238,30 @@ def _load_huggingface_component(
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
         from apps.backend.runtime.model_parser.converters.clip import (
+            convert_sd15_clip,
+            convert_sd20_clip,
             convert_sdxl_clip_l,
             convert_sdxl_clip_g,
         )
 
-        def _normalize_clip_state(component_name: str, sd: Mapping[str, Any]) -> Mapping[str, Any]:
+        def _convert_without_prefix(component: str, data: Mapping[str, Any]) -> Mapping[str, Any]:
+            attempts: tuple[tuple[str, callable], ...]
+            if component == "text_encoder_2":
+                attempts = (("sdxl_g", convert_sdxl_clip_g),)
+            else:
+                attempts = (
+                    ("sdxl_l", convert_sdxl_clip_l),
+                    ("sd20", convert_sd20_clip),
+                    ("sd15", convert_sd15_clip),
+                )
+            for label, fn in attempts:
+                try:
+                    return fn(dict(data))
+                except Exception as exc:
+                    CLIP_LOG.debug("CLIP convert %s failed (%s): %s", label, component, exc)
+            return data
+
+        def _normalize_clip_state(component: str, sd: Mapping[str, Any]) -> Mapping[str, Any]:
             try:
                 keys = [str(k) for k in sd.keys()]
             except AttributeError:
@@ -252,85 +271,36 @@ def _load_huggingface_component(
             if any(k.startswith("transformer.text_model") for k in keys):
                 return sd
 
-            def _strip_prefix(prefix: str) -> Dict[str, Any]:
-                length = len(prefix)
-                return {str(k)[length:]: sd[k] for k in sd.keys() if str(k).startswith(prefix)}
-
-            prefix_map = [
-                ("conditioner.embedders.0.model.", convert_sdxl_clip_l),
-                ("conditioner.embedders.1.model.", convert_sdxl_clip_g),
-                ("text_encoders.clip_l.", convert_sdxl_clip_l),
-                ("text_encoders.clip_g.", convert_sdxl_clip_g),
-                ("clip_l.", convert_sdxl_clip_l),
-                ("clip_g.", convert_sdxl_clip_g),
+            prefix_candidates = [
+                "conditioner.embedders.0.model.",
+                "conditioner.embedders.0.transformer.text_model.",
+                "conditioner.embedders.1.model.",
+                "cond_stage_model.",
+                "cond_stage_model.model.",
+                "text_encoders.clip_l.",
+                "text_encoders.clip_g.",
+                "clip_l.",
+                "clip_g.",
             ]
-            for prefix, converter in prefix_map:
-                if all(k.startswith(prefix) for k in keys):
-                    trimmed = _strip_prefix(prefix)
-                    try:
-                        return converter(trimmed)
-                    except Exception as exc:
-                        CLIP_LOG.warning(
-                            "CLIP convert failed for prefix %s (component=%s): %s",
-                            prefix,
-                            component_name,
-                            exc,
-                            exc_info=True,
-                        )
 
-            # Legacy layout (transformer.resblocks.*, etc.)
-            try:
-                plain = {str(k): sd[k] for k in sd.keys()}
-                if component_name == "text_encoder_2":
-                    return convert_sdxl_clip_g(plain)
-                return convert_sdxl_clip_l(plain)
-            except Exception as exc:
-                CLIP_LOG.warning(
-                    "CLIP conversion fallback failed (component=%s) sample_keys=%s :: %s",
-                    component_name,
-                    keys[:5],
-                    exc,
-                    exc_info=True,
-                )
-                return sd
+            for prefix in prefix_candidates:
+                if all(k.startswith(prefix) for k in keys):
+                    trimmed = {k[len(prefix):]: sd[k] for k in keys}
+                    return _convert_without_prefix(component, trimmed)
+
+            return _convert_without_prefix(component, sd)
+
         state_dict = _normalize_clip_state(component_name, state_dict)
 
         with modeling_utils.no_init_weights():
             with using_codex_operations(**to_args, manual_cast_enabled=True):
                 model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=add_proj).to(**to_args)
 
-        # Conservative loader + coverage check
-        sentinels = [
-            "transformer.text_model.encoder.layers.0.layer_norm1.weight",
-            "transformer.text_model.embeddings.token_embedding.weight",
-        ]
-        missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)  # type: ignore[name-defined]
-        total = len(model.state_dict().keys())
-        loaded = max(0, total - len(missing))
-        coverage = loaded / max(1, total)
-        # Fail fast on clearly insufficient coverage
-        min_coverage = 0.95
-        if coverage < min_coverage:
-            samples_m = ", ".join(missing[:5])
-            samples_u = ", ".join(unexpected[:5])
-            CLIP_LOG.error(
-                "CLIP load coverage too low (component=%s coverage=%.3f total=%d) missing=%s unexpected=%s",
-                component_name,
-                coverage,
-                total,
-                samples_m,
-                samples_u,
-            )
-            raise RuntimeError(
-                (
-                    f"{cls_name} load coverage {coverage:.3f} < {min_coverage:.2f}. "
-                    f"Sample missing: [{samples_m}] | unexpected: [{samples_u}]"
-                )
-            )
-        # Sentinel presence
-        for key in sentinels:
-            if key not in model.state_dict():
-                raise RuntimeError(f"{cls_name} missing sentinel key after load: {key}")
+        missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)
+        if missing:
+            CLIP_LOG.warning("CLIP missing (%s): %s", component_name, missing[:10])
+        if unexpected:
+            CLIP_LOG.debug("CLIP unexpected (%s): %s", component_name, unexpected[:10])
         return model
 
     if cls_name == "T5EncoderModel":

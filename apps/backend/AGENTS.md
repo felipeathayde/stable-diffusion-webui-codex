@@ -37,6 +37,7 @@ Status: Active
 - 2025-11-02: `apps/backend/interfaces/api/run_api.py` agora invoca `apps.backend.infra.config.args.initialize(...)` com CLI/env/settings antes do bootstrap e chama `memory_management.reinitialize(...)`; se os devices não estiverem definidos, o backend aborta com erro claro.
 - 2025-11-03: `--smart-offload` flag (also via `CODEX_SMART_OFFLOAD=1`) loads CLIP/UNet/VAE only for their active stage, freeing VRAM between stages. txt2img/img2img pipelines honor the flag by unloading components after TE encode, UNet sampling, and VAE decode.
 - 2025-11-03: Added `--debug-conditioning` (`CODEX_DEBUG_COND`) to surface SDXL conditioning diagnostics through config/launcher/TUI without raw env reads.
+- 2025-11-03: `RuntimeMemoryConfig.swap.pin_shared_memory` now maps to `--pin-shared-memory`/`CODEX_PIN_SHARED_MEMORY` and gates host pinning during smart offload.
 
 ## Operator Communication Guidelines
 - Assuma expertise do operador. Não ofereça instruções "de iniciante" (ex.: "valide o par de TEs" ou "verifique se o modelo é SDXL") a menos que um verificador determinístico do backend tenha acusado incompatibilidade.

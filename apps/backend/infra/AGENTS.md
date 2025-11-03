@@ -16,3 +16,4 @@ Status: Active
 - Keep infrastructure logic here to avoid scattering environment/CLI handling across business logic modules.
 - When adding new accelerator backends or configuration sources, update these helpers instead of embedding logic in engines.
 - 2025-11-03: CLI parser exposes `--debug-conditioning`, mapping to `CODEX_DEBUG_COND` for SDXL conditioning diagnostics.
+- 2025-11-03: `--pin-shared-memory` (`CODEX_PIN_SHARED_MEMORY`) controls host pinning for offloaded models; disabled by default on Windows-heavy deployments.

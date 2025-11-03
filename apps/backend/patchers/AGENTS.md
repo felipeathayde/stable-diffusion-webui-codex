@@ -1,7 +1,7 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2025-10-31
+Last Review: 2025-11-03
 Status: Active
 
 ## Purpose
@@ -25,6 +25,7 @@ Status: Active
 - Clip vision patcher reuses the runtime encoder; avoid reintroducing preprocessing or state-dict manipulation in the patcher—extend the runtime if new variants arise.
 - Extension-facing compatibility is preserved via the new graph-backed patcher—no linked lists remain, and `UnetPatcher.add_patched_controlnet` builds `ControlNode` instances directly.
 - VAE patcher now respects the AUTO precision ladder: decode/encode paths inspect for NaNs and escalate fp16↔bf16↔fp32 via `memory_management.report_precision_failure`; user-forced dtypes skip the ladder and surface explicit errors.
+- 2025-11-03: Host pinning for offloaded models honours `RuntimeMemoryConfig.swap.pin_shared_memory`; disable the flag to avoid Windows pagefile pressure.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

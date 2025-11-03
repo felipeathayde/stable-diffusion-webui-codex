@@ -213,8 +213,12 @@ def _apply_source_overrides(
 
     if getattr(ns, "smart_offload", False):
         env_map["CODEX_SMART_OFFLOAD"] = "1"
+
     if getattr(ns, "debug_conditioning", False):
         env_map["CODEX_DEBUG_COND"] = "1"
+
+    if getattr(ns, "pin_shared_memory", False):
+        env_map["CODEX_PIN_SHARED_MEMORY"] = "1"
 
 
 def _validate_required_devices(ns: argparse.Namespace) -> None:
@@ -434,6 +438,9 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     if _truthy(env.get("CODEX_DEBUG_COND")):
         ns.debug_conditioning = True
+
+    if _truthy(env.get("CODEX_PIN_SHARED_MEMORY")):
+        ns.pin_shared_memory = True
 
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:

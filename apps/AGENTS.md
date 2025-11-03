@@ -23,3 +23,4 @@ Status: Active
 - 2025-11-02: launcher services emit explicit CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) and persist the selections in `apps/settings_values.json`; backend startup fails if the devices are missing.
 - 2025-11-03: TUI dtype selectors include an `auto` option that maps to unset envs, aligning with the backend AUTO precision ladder while still enforcing fp32 on CPU devices.
 - 2025-11-03: BIOS TUI exposes "Conditioning Debug" toggle, wiring to `CODEX_DEBUG_COND` and the backend `--debug-conditioning` flag.
+- 2025-11-03: Runtime tab adds "Pin Shared Memory" toggle, mapping to `CODEX_PIN_SHARED_MEMORY` / `--pin-shared-memory` alongside Smart Offload.

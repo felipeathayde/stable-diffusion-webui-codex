@@ -248,6 +248,7 @@ class BIOSApp:
         swap_pol = env.get("CODEX_SWAP_POLICY", "cpu")
         swap_mth = env.get("CODEX_SWAP_METHOD", "blocked")
         smart_offload = env.get("CODEX_SMART_OFFLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
+        pin_shared = env.get("CODEX_PIN_SHARED_MEMORY", "0").strip().lower() in {"1", "true", "yes", "on"}
         return [
             ("Services in new terminal", f"[{ext}]", "toggle_extterm"),
             ("SDPA Policy", f"[{pol}]", "cycle_sdpa"),
@@ -264,6 +265,7 @@ class BIOSApp:
             ("Swap Policy", f"[{swap_pol}]", "cycle_swap_pol"),
             ("Swap Method", f"[{swap_mth}]", "cycle_swap_mth"),
             ("Smart Offload", f"[{'Enabled' if smart_offload else 'Disabled'}]", "toggle_smart_offload"),
+            ("Pin Shared Memory", f"[{'Enabled' if pin_shared else 'Disabled'}]", "toggle_pin_shared"),
         ]
 
     def _items_wan(self) -> List[Tuple[str, str, str]]:
@@ -399,6 +401,11 @@ class BIOSApp:
                 "Enabled: TE → UNet → VAE are moved between CPU/GPU automatically.",
                 "Helps GPUs with limited VRAM avoid OOM at the cost of extra transfers.",
                 "Applied via CODEX_SMART_OFFLOAD or --smart-offload.",
+            ],
+            "Pin Shared Memory": [
+                "Keep CPU tensors in pinned host memory after offloading (faster GPU reloads).",
+                "Enable only when Smart Offload is on and you need faster transfers; uses extra RAM.",
+                "Applied via CODEX_PIN_SHARED_MEMORY or --pin-shared-memory.",
             ],
             
             "I2V Concat Order": [
@@ -639,6 +646,14 @@ class BIOSApp:
             else:
                 env["CODEX_SMART_OFFLOAD"] = "1"
                 self.message = "Smart Offload enabled (stage-wise VRAM loads)."
+        elif action == "toggle_pin_shared":
+            enabled = env.get("CODEX_PIN_SHARED_MEMORY", "0").strip().lower() in {"1", "true", "yes", "on"}
+            if enabled:
+                env.pop("CODEX_PIN_SHARED_MEMORY", None)
+                self.message = "Pinned shared memory disabled."
+            else:
+                env["CODEX_PIN_SHARED_MEMORY"] = "1"
+                self.message = "Pinned shared memory enabled for offloaded models."
 
     def _act_wan(self, idx: int) -> None:
         items = self._items_wan()

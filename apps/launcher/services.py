@@ -85,6 +85,10 @@ class CodexServiceHandle:
             if debug_cond_env is not None:
                 if str(debug_cond_env).strip().lower() in {"1", "true", "yes", "on"}:
                     cli_args.append("--debug-conditioning")
+            pin_shared_env = overrides_map.get("CODEX_PIN_SHARED_MEMORY")
+            if pin_shared_env is not None:
+                if str(pin_shared_env).strip().lower() in {"1", "true", "yes", "on"}:
+                    cli_args.append("--pin-shared-memory")
 
         env = os.environ.copy()
         env.update(self.spec.base_env)

@@ -487,7 +487,15 @@ class ModelPatcher:
             logger.debug("Moved model to device %s during unpatch", target_device)
 
         # If we're offloading to CPU under smart-offload, pin host memory buffers
+        should_pin = False
         if target_device is not None and getattr(target_device, "type", "") == "cpu" and smart_offload_enabled():
+            try:
+                cfg = memory_management.memory_config
+                should_pin = bool(getattr(getattr(cfg, "swap", None), "pin_shared_memory", False))
+            except Exception:
+                should_pin = False
+
+        if should_pin:
             pinned_params = 0
             for p in self.model.parameters(recurse=True):
                 try:

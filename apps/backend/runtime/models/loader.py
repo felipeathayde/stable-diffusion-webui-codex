@@ -233,7 +233,30 @@ def _load_huggingface_component(
         to_args = dict(device=te_device, dtype=te_dtype)
         # Determine whether to add text_projection from component role
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
-        from .state_dict import safe_load_state_dict  # noqa: F401
+from .state_dict import safe_load_state_dict
+from apps.backend.runtime.model_parser.converters.clip import (
+    convert_sdxl_clip_l,
+    convert_sdxl_clip_g,
+)
+
+        def _normalize_clip_state(component_name: str, sd: Mapping[str, Any]) -> Mapping[str, Any]:
+            try:
+                keys = sd.keys()
+            except AttributeError:
+                return sd
+            has_transformer = any(str(k).startswith("transformer.text_model") for k in keys)
+            if has_transformer:
+                return sd
+            # legacy layout (transformer.resblocks.*, etc.)
+            try:
+                plain = dict(sd)
+                if component_name == "text_encoder_2":
+                    return convert_sdxl_clip_g(plain)
+                return convert_sdxl_clip_l(plain)
+            except Exception:
+                return sd
+        state_dict = _normalize_clip_state(component_name, state_dict)
+
         with modeling_utils.no_init_weights():
             with using_codex_operations(**to_args, manual_cast_enabled=True):
                 model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=add_proj).to(**to_args)

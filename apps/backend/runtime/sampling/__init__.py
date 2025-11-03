@@ -402,8 +402,6 @@ def sampling_prepare(unet, x):
         additional_inference_memory += lora_memory
 
     models_to_load = [unet] + additional_model_patchers
-    if smart_offload_enabled():
-        memory_management.soft_empty_cache(force=True)
     memory_management.load_models_gpu(
         models=models_to_load,
         memory_required=unet_inference_memory,

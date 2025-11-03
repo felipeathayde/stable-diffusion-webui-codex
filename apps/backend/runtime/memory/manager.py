@@ -26,6 +26,7 @@ from .config import (
     SwapPolicy,
 )
 from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoadError
+from .smart_offload import smart_offload_enabled
 
 
 logger = logging.getLogger("backend.memory.manager")
@@ -845,6 +846,8 @@ class CodexMemoryManager:
     def _load_record(self, record: _LoadedModelRecord) -> None:
         model = record.model
         try:
+            if smart_offload_enabled() and getattr(record.load_device, "type", "") == "cuda":
+                torch.cuda.empty_cache()
             model.model_patches_to(record.load_device)
             model.model_patches_to(record.storage_dtype)
             model.codex_patch_model(record.load_device)
@@ -853,7 +856,22 @@ class CodexMemoryManager:
             record.inclusive_memory = self.module_size(model.model)
             record.exclusive_memory = record.inclusive_memory
             record.model_accelerated = True
-            logger.debug("Loaded model %s to %s (memory=%d).", model, record.load_device, record.inclusive_memory)
+            patcher_target = getattr(model, "model", model)
+            target_name = patcher_target.__class__.__name__
+            compute_dtype = None
+            if hasattr(patcher_target, "computation_dtype"):
+                dtype_attr = patcher_target.computation_dtype
+                compute_dtype = dtype_attr() if callable(dtype_attr) else dtype_attr
+            elif hasattr(patcher_target, "dtype"):
+                compute_dtype = patcher_target.dtype
+            logger.info(
+                "Loaded %s via ModelPatcher → device=%s storage_dtype=%s compute_dtype=%s (mem=%d)",
+                target_name,
+                record.load_device,
+                record.storage_dtype,
+                compute_dtype,
+                record.inclusive_memory,
+            )
         except self._oom_exception as exc:
             raise MemoryLoadError(f"OOM while loading {model}: {exc}") from exc
         except Exception as exc:

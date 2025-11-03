@@ -46,6 +46,10 @@ def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - run
             _local.depth = depth
 
             mod = frame.f_globals.get("__name__", "<unknown>")
+
+            # Limit noise: only log modules inside the Codex apps package
+            if not isinstance(mod, str) or not mod.startswith("apps."):
+                return _profiler
             func = frame.f_code.co_name or "<unknown>"
 
             # Best-effort class name enrichment
@@ -124,4 +128,3 @@ def enable_from_env() -> None:
 
 
 __all__ = ["enable", "disable", "enable_from_env"]
-

@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Tuple
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from .lora import CodexLoraLoader
 
 logger = logging.getLogger("backend.patchers.base")
@@ -469,7 +470,11 @@ class ModelPatcher:
         self._object_registry.apply_to_model(self.model)
 
         if target_device is not None:
-            self.model.to(target_device)
+            try:
+                # Prefer non_blocking=True to leverage pinned host buffers
+                self.model.to(target_device, non_blocking=True)
+            except TypeError:
+                self.model.to(target_device)
             self.current_device = target_device
             logger.debug("Moved model to device %s during patch", target_device)
 
@@ -480,6 +485,31 @@ class ModelPatcher:
             self.model.to(target_device)
             self.current_device = target_device
             logger.debug("Moved model to device %s during unpatch", target_device)
+
+        # If we're offloading to CPU under smart-offload, pin host memory buffers
+        if target_device is not None and getattr(target_device, "type", "") == "cpu" and smart_offload_enabled():
+            pinned_params = 0
+            for p in self.model.parameters(recurse=True):
+                try:
+                    if not p.is_cuda and not p.data.is_pinned():
+                        p.data = p.data.pin_memory()
+                        pinned_params += 1
+                except Exception:
+                    continue
+            pinned_bufs = 0
+            for b in self.model.buffers(recurse=True):
+                try:
+                    if not b.is_cuda and not b.data.is_pinned():
+                        b.data = b.data.pin_memory()
+                        pinned_bufs += 1
+                except Exception:
+                    continue
+            if pinned_params or pinned_bufs:
+                logger.info(
+                    "Pinned host memory for offloaded model params=%d buffers=%d (dtype preserved)",
+                    pinned_params,
+                    pinned_bufs,
+                )
 
         self._object_registry.restore(self.model)
         return

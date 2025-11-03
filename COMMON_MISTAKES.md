@@ -248,3 +248,40 @@ base = {
 }
 print(dict(FilterPrefixView(base, 'conditioner.embedders.0.', '')))**
 PY`
+**Wrong command:** `python - <<'PY'
+from pathlib import Path
+path = Path('COMMON_MISTAKES.md')
+text = path.read_text()
+old = "**Wrong command:** `~/.venv/bin/python - <<'PY'\nfrom apps.backend.runtime.utils import FilterPrefixView\nfrom collections import OrderedDict\nbase = OrderedDict()\nbase['conditioner.embedders.0.weight'] = 1\nbase['conditioner.embedders.0.bias'] = 2\nbase['other'] = 3\nview = FilterPrefixView(base, 'conditioner.embedders.0.', '')\nprint(dict(view.items()))\nPY`\n**Cause + fix:** `Importing apps.backend modules bootstraps the CUDA memory manager; without GPU availability it aborts. Use an isolated snippet that reimplements the tiny view for experiments instead of importing the package.`\n**Correct command:** ..."
+if old not in text:
+    raise SystemExit('block not found')
+text = text.replace(old, new)
+path.write_text(text)
+PY`
+**Cause + fix:** `The exact markdown block had already been altered, so the literal string lookup failed and aborted. Inspect the live snippet first or use regex replacement.`
+**Correct command:** `python - <<'PY'
+from pathlib import Path
+path = Path('COMMON_MISTAKES.md')
+text = path.read_text()
+start = text.index("**Wrong command:** `~/.venv/bin/python - <<'PY'")
+end = text.index("PY`", start) + 3
+segment = text[start:end]
+print(segment)
+PY`
+**Wrong command:** `python - <<'PY'
+from pathlib import Path
+path = Path('COMMON_MISTAKES.md')
+text = path.read_text()
+old = ...
+new = ...
+if old not in text:
+    raise SystemExit('block not found')
+path.write_text(text.replace(old, new))
+PY`
+**Cause + fix:** `Attempted to inline a multi-line replacement with ellipses; Python treated the placeholder as literal code and raised a SyntaxError. Write the full string or build it programmatically.`
+**Correct command:** `python - <<'PY'
+from pathlib import Path
+path = Path('COMMON_MISTAKES.md')
+text = path.read_text()
+print(text.count("FilterPrefixView"))
+PY`

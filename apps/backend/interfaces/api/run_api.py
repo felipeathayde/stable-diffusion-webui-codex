@@ -10,7 +10,7 @@ import sys
 import threading
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 from uuid import uuid4
 import logging
 
@@ -19,6 +19,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
+    for idx, token in enumerate(argv):
+        if token.startswith(flag + "="):
+            return token.split("=", 1)[1]
+        if token == flag and idx + 1 < len(argv):
+            return argv[idx + 1]
+    return None
+
+
+def _parse_trace_max(argv: Sequence[str]) -> Optional[int]:
+    value = _cli_arg_value(argv, "--trace-debug-max-per-func")
+    if value is None:
+        return None
+    try:
+        numeric = int(value)
+    except Exception:
+        return None
+    return max(0, numeric)
+
 # Early tracing hook: if --trace-debug is present (or env truthy), configure
 # logging at DEBUG and enable global call tracing before importing FastAPI/uvicorn.
 try:
@@ -26,7 +46,8 @@ try:
         from apps.backend.runtime import logging as runtime_logging  # type: ignore
         runtime_logging.setup_logging(level="DEBUG")
         from apps.backend.runtime import call_trace as _call_trace  # type: ignore
-        _call_trace.enable()
+        max_per_func = _parse_trace_max(sys.argv[1:])
+        _call_trace.enable(max_calls_per_func=max_per_func)
 except Exception:
     # Never block startup because of tracing/logging issues
     pass
@@ -2058,7 +2079,7 @@ def main() -> None:
             from apps.backend.runtime import logging as runtime_logging  # type: ignore
             runtime_logging.setup_logging(level="DEBUG")
             from apps.backend.runtime import call_trace as _call_trace  # type: ignore
-            _call_trace.enable()
+            _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
     except Exception:
         pass
 

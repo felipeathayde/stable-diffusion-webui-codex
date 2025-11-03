@@ -95,6 +95,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable global function-call trace (logger.debug for every Python call).",
     )
+    parser.add_argument(
+        "--trace-debug-max-per-func",
+        type=int,
+        default=50,
+        metavar="N",
+        help="Maximum call logs per function when trace debug is enabled (<=0 disables limit).",
+    )
 
     parser.add_argument(
         "--swap-policy",
@@ -556,6 +563,11 @@ def initialize(
     argv_list = list(argv) if argv is not None else sys.argv[1:]
     namespace, unknown = _PARSER.parse_known_args(argv_list)
     _UNKNOWN = list(unknown)
+
+    if getattr(namespace, "trace_debug_max_per_func", None) is None:
+        namespace.trace_debug_max_per_func = 50
+    elif namespace.trace_debug_max_per_func < 0:
+        namespace.trace_debug_max_per_func = 0
 
     deprecated = [arg for arg in unknown if arg.startswith("--unet-in-")]
     if deprecated:

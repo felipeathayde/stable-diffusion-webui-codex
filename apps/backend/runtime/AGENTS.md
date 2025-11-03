@@ -28,4 +28,4 @@ Status: Active
 ## Notes
 - Keep runtime logic model-agnostic when possible; place model-specific code under the dedicated `{model}/` folders.
 - Avoid duplicating helpers across engines—centralize them here to maintain parity.
- - 2025-11-03: New `runtime.call_trace` module exposes global function-call tracing via `enable()/disable()` and `enable_from_env()`. The API entrypoint wires this behind `--trace-debug`/`CODEX_TRACE_DEBUG` and logs each Python function call at `DEBUG` using the `backend.calltrace` logger. As of 2025-11-03 (pm), only modules under `apps.*` are recorded to avoid 3rd-party flood.
+- 2025-11-03: New `runtime.call_trace` module exposes global function-call tracing via `enable()/disable()` and `enable_from_env()`. The API entrypoint wires this behind `--trace-debug`/`CODEX_TRACE_DEBUG` and logs each Python function call at `DEBUG` using the `backend.calltrace` logger. As of 2025-11-03 (pm), only modules under `apps.*` are recorded to avoid 3rd-party flood, and each function logs at most 50 calls by default (override via `--trace-debug-max-per-func N`, `N<=0` disables the cap).

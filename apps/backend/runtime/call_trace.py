@@ -19,13 +19,18 @@ import os
 import sys
 import threading
 from types import FrameType
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 _logger = logging.getLogger("backend.calltrace")
 
 _enabled: bool = False
 _local = threading.local()
 _prev_profile: Optional[Callable[..., Any]] = None
+
+_DEFAULT_MAX_PER_FUNC = 50
+_max_per_func: int = _DEFAULT_MAX_PER_FUNC
+_call_counts: dict[Tuple[str, str], int] = {}
+_muted_notified: set[Tuple[str, str]] = set()
 
 
 def _truthy(value: str | None) -> bool:
@@ -41,15 +46,14 @@ def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - run
 
     if event == "call":
         try:
-            _local.busy = True
-            depth = getattr(_local, "depth", 0) + 1
-            _local.depth = depth
-
             mod = frame.f_globals.get("__name__", "<unknown>")
 
             # Limit noise: only log modules inside the Codex apps package
             if not isinstance(mod, str) or not mod.startswith("apps."):
                 return _profiler
+            _local.busy = True
+            depth = getattr(_local, "depth", 0) + 1
+            _local.depth = depth
             func = frame.f_code.co_name or "<unknown>"
 
             # Best-effort class name enrichment
@@ -62,8 +66,19 @@ def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - run
             except Exception:
                 pass
 
-            # Indent for readability but keep message short
+            key = (mod, qn)
             indent = " " * (depth - 1)
+
+            if _max_per_func > 0:
+                count = _call_counts.get(key, 0) + 1
+                _call_counts[key] = count
+                if count > _max_per_func:
+                    if key not in _muted_notified:
+                        _logger.debug("%sCALL %s.%s (muted after %d calls)", indent, mod, qn, _max_per_func)
+                        _muted_notified.add(key)
+                    return _profiler
+
+            # Indent for readability but keep message short
             _logger.debug("%sCALL %s.%s", indent, mod, qn)
         except Exception:
             # Never raise from the profiler; keep tracing alive
@@ -83,13 +98,37 @@ def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - run
     return _profiler
 
 
-def enable() -> None:
+def _set_max_per_func(value: Optional[int]) -> None:
+    global _max_per_func
+    if value is None:
+        return
+    try:
+        numeric = int(value)
+    except Exception:
+        numeric = _DEFAULT_MAX_PER_FUNC
+    _max_per_func = max(0, numeric)
+
+
+def _reset_counters() -> None:
+    _call_counts.clear()
+    _muted_notified.clear()
+
+
+def enable(*, max_calls_per_func: Optional[int] = None) -> None:
     """Enable global function-call tracing.
 
     Logging level must allow DEBUG for messages to be visible.
     """
     global _enabled, _prev_profile
+
+    if max_calls_per_func is not None:
+        _set_max_per_func(max_calls_per_func)
     if _enabled:
+        _reset_counters()
+        _logger.debug(
+            "call-trace limit set to %s per function",
+            "unlimited" if _max_per_func == 0 else _max_per_func,
+        )
         return
 
     # Avoid tracing our own tracing/logging internals by bumping this logger level
@@ -102,11 +141,16 @@ def enable() -> None:
     except Exception:
         pass
 
+    _reset_counters()
+
     _prev_profile = sys.getprofile()
     sys.setprofile(_profiler)
     threading.setprofile(_profiler)
     _enabled = True
-    _logger.debug("call-trace enabled (sys.setprofile)")
+    _logger.debug(
+        "call-trace enabled (sys.setprofile, limit=%s per function)",
+        "unlimited" if _max_per_func == 0 else _max_per_func,
+    )
 
 
 def disable() -> None:  # pragma: no cover - runtime hook
@@ -118,6 +162,7 @@ def disable() -> None:  # pragma: no cover - runtime hook
     threading.setprofile(_prev_profile)
     _prev_profile = None
     _enabled = False
+    _reset_counters()
     _logger.debug("call-trace disabled")
 
 

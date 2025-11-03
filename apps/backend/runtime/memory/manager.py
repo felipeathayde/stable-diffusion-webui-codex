@@ -80,7 +80,19 @@ class _PrecisionState:
             if dtype not in supported:
                 return supported[-1]
             return dtype
-        for idx, dtype in enumerate(self.ladder):
+        # Prefer staying on current index if valid, otherwise advance within ladder order
+        cur = self.current()
+        if cur in supported:
+            return cur
+        # search forward from current index
+        for idx in range(self.index + 1, len(self.ladder)):
+            dtype = self.ladder[idx]
+            if dtype in supported:
+                self.index = idx
+                return dtype
+        # search from start if nothing ahead is supported
+        for idx in range(0, self.index):
+            dtype = self.ladder[idx]
             if dtype in supported:
                 self.index = idx
                 return dtype

@@ -230,11 +230,10 @@ def _load_huggingface_component(
     if cls_name in {"CLIPTextModel", "CLIPTextModelWithProjection"}:
         if state_dict is None:
             return None
-        clip_config = importlib.import_module("transformers").CLIPTextConfig.from_pretrained(component_path)
+        # Build native Codex CLIP instead of HF; normalise state dict beforehand
         te_device = memory_management.text_encoder_device()
         te_dtype = memory_management.text_encoder_dtype(device=te_device)
         to_args = dict(device=te_device, dtype=te_dtype)
-        # Determine whether to add text_projection from component role
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
         from apps.backend.runtime.model_parser.converters.clip import (
@@ -243,6 +242,7 @@ def _load_huggingface_component(
             convert_sdxl_clip_l,
             convert_sdxl_clip_g,
         )
+        from apps.backend.runtime.common.nn.clip_text_cx import CodexCLIPTextConfig, CodexCLIPTextModel
 
         def _convert_without_prefix(component: str, data: Mapping[str, Any]) -> Mapping[str, Any]:
             attempts: tuple[tuple[str, callable], ...]
@@ -270,7 +270,6 @@ def _load_huggingface_component(
                 return sd
             if any(k.startswith("transformer.text_model") for k in keys):
                 return sd
-
             prefix_candidates = [
                 "conditioner.embedders.0.model.",
                 "conditioner.embedders.0.transformer.text_model.",
@@ -282,19 +281,20 @@ def _load_huggingface_component(
                 "clip_l.",
                 "clip_g.",
             ]
-
             for prefix in prefix_candidates:
                 if all(k.startswith(prefix) for k in keys):
                     trimmed = {k[len(prefix):]: sd[k] for k in keys}
                     return _convert_without_prefix(component, trimmed)
-
             return _convert_without_prefix(component, sd)
 
         state_dict = _normalize_clip_state(component_name, state_dict)
 
-        with modeling_utils.no_init_weights():
-            with using_codex_operations(**to_args, manual_cast_enabled=True):
-                model = IntegratedCLIP(importlib.import_module("transformers").CLIPTextModel, clip_config, add_text_projection=add_proj).to(**to_args)
+        # Load CLIP config json from repo and translate to native config
+        config_json = read_arbitrary_config(component_path)
+        cfg = CodexCLIPTextConfig.from_dict(config_json)
+
+        with using_codex_operations(**to_args, manual_cast_enabled=True):
+            model = IntegratedCLIP(CodexCLIPTextModel, cfg, add_text_projection=add_proj).to(**to_args)
 
         missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)
         if missing:

@@ -233,11 +233,11 @@ def _load_huggingface_component(
         to_args = dict(device=te_device, dtype=te_dtype)
         # Determine whether to add text_projection from component role
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
-from .state_dict import safe_load_state_dict
-from apps.backend.runtime.model_parser.converters.clip import (
-    convert_sdxl_clip_l,
-    convert_sdxl_clip_g,
-)
+        from .state_dict import safe_load_state_dict
+        from apps.backend.runtime.model_parser.converters.clip import (
+            convert_sdxl_clip_l,
+            convert_sdxl_clip_g,
+        )
 
         def _normalize_clip_state(component_name: str, sd: Mapping[str, Any]) -> Mapping[str, Any]:
             try:

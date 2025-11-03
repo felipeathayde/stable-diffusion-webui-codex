@@ -20,5 +20,4 @@ Status: Active
 ## Notes
 - Run `npm run dev` from this directory for local development; backend expects the build artifacts emitted by Vite.
 - Keep source structure consistent with the guidelines in `.sangoi/frontend/guidelines/`.
-- 2025-11-03: Task stream errors now clear the running state (buttons re-enable) via SSE error handlers in stores/components.
 - 2025-11-03: SDXL view now exposes "Save Profile" backed by store persistence to mirror the Test harness.

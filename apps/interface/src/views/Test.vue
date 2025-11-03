@@ -274,13 +274,6 @@ function toDataUrl(image: GeneratedImage): string { return `data:image/${image.f
 
 function stopStream(): void { if (unsubscribe) { unsubscribe(); unsubscribe = null } }
 
-function onStreamError(err: unknown): void {
-  const message = err instanceof Error ? err.message : ''
-  errorMessage.value = message || 'Connection lost during generation.'
-  isRunning.value = false
-  stopStream()
-}
-
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -368,7 +361,7 @@ async function generate(): Promise<void> {
       }
       const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
       const { task_id } = await startImg2Vid({ codex_device: quick.currentDevice, ...payload })
-      unsubscribe = subscribeTask(task_id, onTaskEvent, onStreamError)
+      unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
       const payload = {
         __strict_version: 1,
@@ -383,7 +376,7 @@ async function generate(): Promise<void> {
       }
       const quick = (await import('../stores/quicksettings')).useQuicksettingsStore()
       const { task_id } = await startTxt2Vid({ codex_device: quick.currentDevice, ...payload })
-      unsubscribe = subscribeTask(task_id, onTaskEvent, onStreamError)
+      unsubscribe = subscribeTask(task_id, onTaskEvent)
     }
   } catch (e) {
     isRunning.value = false

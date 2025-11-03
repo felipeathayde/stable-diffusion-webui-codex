@@ -174,12 +174,7 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
       taskId.value = task_id
       resetProgress()
       progress.value.stage = 'submitted'
-      unsubscribe = subscribeTask(task_id, handleTaskEvent, (err) => {
-        status.value = 'error'
-        const message = err instanceof Error ? err.message : ''
-        errorMessage.value = message || 'Connection lost during generation.'
-        stopStream()
-      })
+      unsubscribe = subscribeTask(task_id, handleTaskEvent)
     } catch (error) {
       status.value = 'error'
       errorMessage.value = error instanceof Error ? error.message : String(error)

@@ -109,19 +109,6 @@ export function fetchTaskResult(taskId: string): Promise<TaskResult> {
 export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void, onError?: (err: unknown) => void): () => void {
   const es = new EventSource(`${API_BASE}/tasks/${taskId}/events`)
   let ended = false
-  const finalize = (error?: unknown) => {
-    if (ended) return
-    ended = true
-    try {
-      if (error && onError) {
-        onError(error)
-      }
-    } catch (callbackError) {
-      console.error('[task-events] error handler failed', callbackError)
-    } finally {
-      es.close()
-    }
-  }
   es.onmessage = (msg: MessageEvent<string>) => {
     try {
       const payload = JSON.parse(msg.data) as TaskEvent
@@ -142,13 +129,9 @@ export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => voi
     // EventSource fires onerror on normal close; suppress noisy logs when ended or closed
     if (ended || (es as any).readyState === 2 /* CLOSED */) return
     console.error('[task-events] stream error', err)
-    const reason = err instanceof Error ? err : new Error('Task stream disconnected')
-    finalize(reason)
+    try { onError?.(err) } catch (_) { /* ignore */ }
   }
-  return () => {
-    ended = true
-    es.close()
-  }
+  return () => es.close()
 }
 
 export function fetchMemory(): Promise<MemoryResponse> {

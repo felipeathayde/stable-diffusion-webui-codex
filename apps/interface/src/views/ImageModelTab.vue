@@ -165,13 +165,6 @@ function stopStream(): void { if (unsubscribe) { unsubscribe(); unsubscribe = nu
 const isRunning = computed(() => status.value === 'running')
 function toDataUrl(img: GeneratedImage): string { return `data:image/${img.format};base64,${img.data}` }
 
-function onStreamError(err: unknown): void {
-  status.value = 'error'
-  const message = err instanceof Error ? err.message : ''
-  errorMessage.value = message || 'Connection lost during generation.'
-  stopStream()
-}
-
 async function generate(): Promise<void> {
   if (!tab.value) return
   stopStream(); status.value = 'running'; errorMessage.value = ''; images.value = []
@@ -197,7 +190,7 @@ async function generate(): Promise<void> {
         ...Object.fromEntries(Object.entries(base).map(([k,v]) => [`img2img_${k}`, v])),
       }
       const { task_id } = await startImg2Img(payload)
-      unsubscribe = subscribeTask(task_id, onTaskEvent, onStreamError)
+      unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
       const payload = {
         __strict_version: 1,
@@ -207,7 +200,7 @@ async function generate(): Promise<void> {
         ...Object.fromEntries(Object.entries(base).map(([k,v]) => [`txt2img_${k}`, v])),
       }
       const { task_id } = await startTxt2Img(payload)
-      unsubscribe = subscribeTask(task_id, onTaskEvent, onStreamError)
+      unsubscribe = subscribeTask(task_id, onTaskEvent)
     }
   } catch (err) {
     status.value = 'error'

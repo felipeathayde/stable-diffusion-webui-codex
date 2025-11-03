@@ -74,6 +74,7 @@ def minimum_inference_memory() -> int:
 
 
 def load_models_gpu(models, memory_required: int = 0, hard_memory_preservation: int = 0):
+    logger.info("[memory] request load %s", models)
     _MANAGER.load_models(
         _wrap_model_sequence(models),
         memory_required=memory_required,

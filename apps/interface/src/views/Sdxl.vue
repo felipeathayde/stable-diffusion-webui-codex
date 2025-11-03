@@ -75,6 +75,10 @@
             </div>
             <span class="caption">Aspect ratio: {{ aspectLabel }}</span>
           </div>
+          <div class="toolbar">
+            <button class="btn btn-sm btn-secondary" type="button" :disabled="store.isRunning" @click="store.saveProfile()">Save Profile</button>
+            <span class="caption" v-if="store.profileMessage">{{ store.profileMessage }}</span>
+          </div>
         </div>
       </div>
     </div>

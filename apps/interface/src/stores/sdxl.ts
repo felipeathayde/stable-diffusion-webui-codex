@@ -20,6 +20,7 @@ import { useQuicksettingsStore } from './quicksettings'
 const ENGINE_ID = 'sdxl'
 const DEFAULT_WIDTH = 1024
 const DEFAULT_HEIGHT = 1024
+const STORAGE_KEY = 'codex.sdxl.profile.v1'
 
 interface ProgressState {
   stage: string
@@ -67,6 +68,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
   const progress = ref<ProgressState>({ ...DEFAULT_PROGRESS })
   const gallery = ref<GeneratedImage[]>([])
   const info = ref<unknown>(null)
+  const profileMessage = ref('')
   let unsubscribe: (() => void) | null = null
 
   function resetProgress(): void {
@@ -77,9 +79,45 @@ export const useSdxlStore = defineStore('sdxl', () => {
     await updateOptions({ codex_engine: ENGINE_ID })
   }
 
+  function loadProfile(): void {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+      const snap = JSON.parse(raw) as Record<string, unknown>
+
+      const numberOr = (value: unknown, fallback: number): number => {
+        const n = Number(value)
+        return Number.isFinite(n) ? n : fallback
+      }
+
+      if (typeof snap.prompt === 'string') prompt.value = snap.prompt
+      if (typeof snap.negativePrompt === 'string') negativePrompt.value = snap.negativePrompt
+      steps.value = numberOr(snap.steps, steps.value)
+      cfgScale.value = numberOr(snap.cfgScale, cfgScale.value)
+      width.value = numberOr(snap.width, width.value)
+      height.value = numberOr(snap.height, height.value)
+      seed.value = numberOr(snap.seed, seed.value)
+      batchSize.value = numberOr(snap.batchSize, batchSize.value)
+      batchCount.value = numberOr(snap.batchCount, batchCount.value)
+
+      if (Array.isArray(snap.styles)) {
+        styles.value = snap.styles.map((entry) => String(entry))
+      }
+
+      if (typeof snap.selectedModel === 'string') selectedModel.value = snap.selectedModel
+      if (typeof snap.selectedSampler === 'string') selectedSampler.value = snap.selectedSampler
+      if (typeof snap.selectedScheduler === 'string') selectedScheduler.value = snap.selectedScheduler
+
+      profileMessage.value = 'Loaded saved profile.'
+    } catch (error) {
+      console.warn('[sdxl] failed to load profile', error)
+    }
+  }
+
   async function init(): Promise<void> {
     await ensureEngine()
     await Promise.all([loadModels(), loadSamplers(), loadSchedulers()])
+    loadProfile()
   }
 
   async function loadModels(): Promise<void> {
@@ -177,6 +215,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     gallery.value = []
     info.value = null
     resetProgress()
+    profileMessage.value = ''
     lastSeed.value = seed.value
 
     await ensureEngine()
@@ -243,6 +282,30 @@ export const useSdxlStore = defineStore('sdxl', () => {
     }
   }
 
+  function saveProfile(): void {
+    try {
+      const snapshot = {
+        prompt: prompt.value,
+        negativePrompt: negativePrompt.value,
+        steps: steps.value,
+        cfgScale: cfgScale.value,
+        width: width.value,
+        height: height.value,
+        seed: seed.value,
+        batchSize: batchSize.value,
+        batchCount: batchCount.value,
+        styles: styles.value,
+        selectedModel: selectedModel.value,
+        selectedSampler: selectedSampler.value,
+        selectedScheduler: selectedScheduler.value,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
+      profileMessage.value = 'Profile saved.'
+    } catch (error) {
+      profileMessage.value = error instanceof Error ? error.message : String(error)
+    }
+  }
+
   const isRunning = computed(() => running.value)
 
   function randomizeSeed(): void {
@@ -286,8 +349,10 @@ export const useSdxlStore = defineStore('sdxl', () => {
     progress,
     gallery,
     info,
+    profileMessage,
     running,
     init,
+    loadProfile,
     loadModels,
     loadSamplers,
     loadSchedulers,
@@ -296,6 +361,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     setScheduler,
     stopStream,
     generate,
+    saveProfile,
     randomizeSeed,
     reuseSeed,
     isRunning,

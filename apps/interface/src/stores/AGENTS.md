@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-10-31
+Last Review: 2025-11-03
 Status: Active
 
 ## Purpose
@@ -11,3 +11,4 @@ Status: Active
 - Keep store interfaces aligned with backend schemas and avoid duplicating validation already enforced server-side.
 - Derive computed state for components instead of mutating raw backend payloads.
 - `sdxl.ts` mirrors `txt2img.ts` with Codex SDXL defaults; prefer reusing shared helpers when adjusting both stores.
+- 2025-11-03: SDXL store persists profiles locally (`loadProfile`/`saveProfile`) so the `/sdxl` view can reuse saved parameters.

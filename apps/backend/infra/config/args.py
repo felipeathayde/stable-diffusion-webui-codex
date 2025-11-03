@@ -91,6 +91,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--trace-debug",
+        action="store_true",
+        help="Enable global function-call trace (logger.debug for every Python call).",
+    )
+
+    parser.add_argument(
         "--swap-policy",
         choices=[p.value for p in SwapPolicy],
         default=SwapPolicy.CPU.value,
@@ -441,6 +447,11 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     if _truthy(env.get("CODEX_PIN_SHARED_MEMORY")):
         ns.pin_shared_memory = True
+
+    # Global call tracing (function-level). This toggles a runtime hook in
+    # the API entrypoint; we keep the flag for visibility in the parsed args.
+    if _truthy(env.get("CODEX_TRACE_DEBUG")):
+        ns.trace_debug = True
 
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:

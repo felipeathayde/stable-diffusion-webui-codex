@@ -12,6 +12,24 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
+import logging
+
+# Make sure our project is on sys.path before any heavy third-party imports
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Early tracing hook: if --trace-debug is present (or env truthy), configure
+# logging at DEBUG and enable global call tracing before importing FastAPI/uvicorn.
+try:
+    if ("--trace-debug" in sys.argv) or (os.getenv("CODEX_TRACE_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}):
+        from apps.backend.runtime import logging as runtime_logging  # type: ignore
+        runtime_logging.setup_logging(level="DEBUG")
+        from apps.backend.runtime import call_trace as _call_trace  # type: ignore
+        _call_trace.enable()
+except Exception:
+    # Never block startup because of tracing/logging issues
+    pass
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -20,11 +38,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import logging
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from apps.backend.codex import options as codex_options
 from apps.backend.infra.config import args as config_args
@@ -2028,7 +2041,7 @@ def main() -> None:
 
     try:
         snapshot = codex_options.get_snapshot()
-        _, runtime_config = config_args.initialize(
+        ns, runtime_config = config_args.initialize(
             argv=sys.argv[1:],
             env=os.environ,
             settings=snapshot.as_dict(),
@@ -2038,6 +2051,16 @@ def main() -> None:
     except Exception as exc:
         print(color_red(f"[INIT] {exc}"))
         raise SystemExit(1) from exc
+
+    # Ensure tracing is active even if early hook was skipped
+    try:
+        if getattr(ns, "trace_debug", False):
+            from apps.backend.runtime import logging as runtime_logging  # type: ignore
+            runtime_logging.setup_logging(level="DEBUG")
+            from apps.backend.runtime import call_trace as _call_trace  # type: ignore
+            _call_trace.enable()
+    except Exception:
+        pass
 
     ensure_initialized()
     uvicorn.run(build_app(), host=host, port=port, log_level='info')

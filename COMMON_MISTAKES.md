@@ -226,3 +226,25 @@ PY`
 **Wrong command:** `printf "... \`find . -newer .git/codex-stamp\` ..." >> COMMON_MISTAKES.md`
 **Cause + fix:** Using double quotes with backticks executed the subshell, attempting to run `.git/codex-stamp` and failing with `Permission denied`. Use a single-quoted heredoc or escape backticks when appending literal commands.
 **Correct command:** `cat <<'EOF' >> COMMON_MISTAKES.md` (paste content, then `EOF`)
+**Wrong command:** `~/.venv/bin/python - <<'PY'
+from apps.backend.runtime.utils import FilterPrefixView
+from collections import OrderedDict
+base = OrderedDict()
+base['conditioner.embedders.0.weight'] = 1
+base['conditioner.embedders.0.bias'] = 2
+base['other'] = 3
+view = FilterPrefixView(base, 'conditioner.embedders.0.', '')
+print(dict(view.items()))
+PY`
+**Cause + fix:** `Importing apps.backend modules bootstraps the CUDA memory manager; without GPU availability it aborts. Use an isolated snippet that reimplements the tiny view for experiments instead of importing the package.`
+**Correct command:** `python - <<'PY'
+class FilterPrefixView(dict):
+    def __init__(self, base, prefix, new_prefix=''):
+        super().__init__({(new_prefix + k[len(prefix):]): v for k, v in base.items() if k.startswith(prefix)})
+base = {
+    'conditioner.embedders.0.weight': 1,
+    'conditioner.embedders.0.bias': 2,
+    'other': 3,
+}
+print(dict(FilterPrefixView(base, 'conditioner.embedders.0.', '')))**
+PY`

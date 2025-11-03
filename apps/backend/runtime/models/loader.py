@@ -38,6 +38,9 @@ from apps.backend.runtime.utils import (
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
+
+LOGGER = logging.getLogger(__name__)
+CLIP_LOG = logging.getLogger(__name__ + ".clip")
 from apps.backend.runtime.models import api as model_api
 
 _LOG = logging.getLogger(__name__)
@@ -241,19 +244,54 @@ def _load_huggingface_component(
 
         def _normalize_clip_state(component_name: str, sd: Mapping[str, Any]) -> Mapping[str, Any]:
             try:
-                keys = sd.keys()
+                keys = [str(k) for k in sd.keys()]
             except AttributeError:
                 return sd
-            has_transformer = any(str(k).startswith("transformer.text_model") for k in keys)
-            if has_transformer:
+            if not keys:
                 return sd
-            # legacy layout (transformer.resblocks.*, etc.)
+            if any(k.startswith("transformer.text_model") for k in keys):
+                return sd
+
+            def _strip_prefix(prefix: str) -> Dict[str, Any]:
+                length = len(prefix)
+                return {str(k)[length:]: sd[k] for k in sd.keys() if str(k).startswith(prefix)}
+
+            prefix_map = [
+                ("conditioner.embedders.0.model.", convert_sdxl_clip_l),
+                ("conditioner.embedders.1.model.", convert_sdxl_clip_g),
+                ("text_encoders.clip_l.", convert_sdxl_clip_l),
+                ("text_encoders.clip_g.", convert_sdxl_clip_g),
+                ("clip_l.", convert_sdxl_clip_l),
+                ("clip_g.", convert_sdxl_clip_g),
+            ]
+            for prefix, converter in prefix_map:
+                if all(k.startswith(prefix) for k in keys):
+                    trimmed = _strip_prefix(prefix)
+                    try:
+                        return converter(trimmed)
+                    except Exception as exc:
+                        CLIP_LOG.warning(
+                            "CLIP convert failed for prefix %s (component=%s): %s",
+                            prefix,
+                            component_name,
+                            exc,
+                            exc_info=True,
+                        )
+
+            # Legacy layout (transformer.resblocks.*, etc.)
             try:
-                plain = dict(sd)
+                plain = {str(k): sd[k] for k in sd.keys()}
                 if component_name == "text_encoder_2":
                     return convert_sdxl_clip_g(plain)
                 return convert_sdxl_clip_l(plain)
-            except Exception:
+            except Exception as exc:
+                CLIP_LOG.warning(
+                    "CLIP conversion fallback failed (component=%s) sample_keys=%s :: %s",
+                    component_name,
+                    keys[:5],
+                    exc,
+                    exc_info=True,
+                )
                 return sd
         state_dict = _normalize_clip_state(component_name, state_dict)
 
@@ -275,6 +313,14 @@ def _load_huggingface_component(
         if coverage < min_coverage:
             samples_m = ", ".join(missing[:5])
             samples_u = ", ".join(unexpected[:5])
+            CLIP_LOG.error(
+                "CLIP load coverage too low (component=%s coverage=%.3f total=%d) missing=%s unexpected=%s",
+                component_name,
+                coverage,
+                total,
+                samples_m,
+                samples_u,
+            )
             raise RuntimeError(
                 (
                     f"{cls_name} load coverage {coverage:.3f} < {min_coverage:.2f}. "

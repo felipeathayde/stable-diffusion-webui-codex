@@ -85,6 +85,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-online-tokenizer", action="store_true")
 
     parser.add_argument(
+        "--debug-conditioning",
+        action="store_true",
+        help="Emit verbose conditioning diagnostics during diffusion runs.",
+    )
+
+    parser.add_argument(
         "--swap-policy",
         choices=[p.value for p in SwapPolicy],
         default=SwapPolicy.CPU.value,
@@ -207,6 +213,8 @@ def _apply_source_overrides(
 
     if getattr(ns, "smart_offload", False):
         env_map["CODEX_SMART_OFFLOAD"] = "1"
+    if getattr(ns, "debug_conditioning", False):
+        env_map["CODEX_DEBUG_COND"] = "1"
 
 
 def _validate_required_devices(ns: argparse.Namespace) -> None:
@@ -423,6 +431,9 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     if _truthy(env.get("CODEX_SMART_OFFLOAD")):
         ns.smart_offload = True
+
+    if _truthy(env.get("CODEX_DEBUG_COND")):
+        ns.debug_conditioning = True
 
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:

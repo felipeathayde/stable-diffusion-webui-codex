@@ -39,6 +39,18 @@
 **Cause + fix:** `Typo in the search term; the code exposes "_BNB_AVAILABLE" (double 'l').`
 **Correct command:** `rg -n "_BNB_AVAILABLE" apps/backend/runtime/ops`
 
+**Wrong command:** `~/.venv/bin/python -c "from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`
+**Cause + fix:** `Backend config auto-initializes with AUTO devices and aborts when CUDA is unavailable; set explicit CPU devices before importing.`
+**Correct command:** `CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python -c "from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`
+
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** `Command tries to add ignored __pycache__ paths; filter them out or use a narrower add list.`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** `Even with --ignore-errors, git exits non-zero for ignored __pycache__; add an explicit path filter before piping to git add.`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+
 **Wrong command:** `python - <<'PY'
 import importlib
 mod = importlib.import_module('apps.backend.use_cases.txt2img')

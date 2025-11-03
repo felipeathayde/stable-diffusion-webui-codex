@@ -81,6 +81,10 @@ class CodexServiceHandle:
             if smart_env is not None:
                 if str(smart_env).strip().lower() in {"1", "true", "yes", "on"}:
                     cli_args.append("--smart-offload")
+            debug_cond_env = overrides_map.get("CODEX_DEBUG_COND")
+            if debug_cond_env is not None:
+                if str(debug_cond_env).strip().lower() in {"1", "true", "yes", "on"}:
+                    cli_args.append("--debug-conditioning")
 
         env = os.environ.copy()
         env.update(self.spec.base_env)

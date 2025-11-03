@@ -1,7 +1,7 @@
 # apps/backend/engines Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-11-01
+Last Review: 2025-11-03
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - New engines should live under their own subdirectory (mirroring existing patterns) and register via `registration.py`.
 - Shared diffusion logic belongs in `diffusion/`; avoid duplicating orchestration that already exists in `use_cases/`.
 - Diffusion engines now share a `BaseInferenceEngine` lifecycle; instantiate via the registry and let `load()` pull `DiffusionModelBundle` instances instead of invoking loaders manually.
+- 2025-11-03: SDXL engine reads `debug_conditioning` from backend config (no direct env lookup) to log conditioning norms when requested.

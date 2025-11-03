@@ -301,6 +301,7 @@ class BIOSApp:
             file_label = "Disabled"
         pipeline_debug = env.get("CODEX_PIPELINE_DEBUG", "0").strip().lower()
         pipeline_label = "ON" if pipeline_debug in ("1", "true", "yes", "on") else "OFF"
+        cond_debug = env.get("CODEX_DEBUG_COND", "0").strip().lower() in ("1", "true", "yes", "on")
         info = env.get("WAN_LOG_INFO", "1")
         warn = env.get("WAN_LOG_WARN", "1")
         err = env.get("WAN_LOG_ERROR", "1")
@@ -309,6 +310,7 @@ class BIOSApp:
             ("Codex Log Level", f"[{level}]", "cycle_log_level"),
             ("Write Codex Log File", f"[{file_label}]", "toggle_log_file"),
             ("Pipeline Debug", f"[{pipeline_label}]", "toggle_pipeline_debug"),
+            ("Conditioning Debug", f"[{'Enabled' if cond_debug else 'Disabled'}]", "toggle_cond_debug"),
             ("WAN_LOG_INFO", f"[{info}]", "toggle_log_info"),
             ("WAN_LOG_WARN", f"[{warn}]", "toggle_log_warn"),
             ("WAN_LOG_ERROR", f"[{err}]", "toggle_log_error"),
@@ -444,6 +446,11 @@ class BIOSApp:
             "Pipeline Debug": [
                 "Toggle SDXL/txt2img pipeline trace logs (entrou/saiu).",
                 "Applies via CODEX_PIPELINE_DEBUG=1 before starting the API.",
+            ],
+            "Conditioning Debug": [
+                "Dump CLIP conditioning tensor norms during SDXL runs.",
+                "Intended for diagnostics; adds extra logging noise.",
+                "Applies via CODEX_DEBUG_COND or --debug-conditioning.",
             ],
             "WAN_LOG_INFO": [
                 "Enable/disable info-level logs from WAN runtime.",
@@ -713,6 +720,12 @@ class BIOSApp:
         elif action == "toggle_pipeline_debug":
             cur = env.get("CODEX_PIPELINE_DEBUG", "0").strip().lower()
             env["CODEX_PIPELINE_DEBUG"] = "0" if cur in ("1", "true", "yes", "on") else "1"
+        elif action == "toggle_cond_debug":
+            cur = env.get("CODEX_DEBUG_COND", "0").strip().lower()
+            if cur in ("1", "true", "yes", "on"):
+                env.pop("CODEX_DEBUG_COND", None)
+            else:
+                env["CODEX_DEBUG_COND"] = "1"
         elif action == "toggle_log_info":
             cur = env.get("WAN_LOG_INFO", "1").strip().lower()
             env["WAN_LOG_INFO"] = "0" if cur in ("1", "true", "yes", "on") else "1"

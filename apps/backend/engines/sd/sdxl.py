@@ -11,6 +11,7 @@ import torch
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime, assemble_engine_runtime
+from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet import Timestep
@@ -148,13 +149,15 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         # Optional conditioning diagnostics
         try:
-            if bool(int(str(os.getenv("CODEX_DEBUG_COND", "0")).strip() or "0")):
+            if getattr(backend_args.args, "debug_conditioning", False):
                 ca = cond.get("crossattn") if isinstance(cond, dict) else None
                 va = cond.get("vector") if isinstance(cond, dict) else None
                 ua = uncond.get("crossattn") if isinstance(uncond, dict) else None
                 uv = uncond.get("vector") if isinstance(uncond, dict) else None
+
                 def _n(t):
                     return float(t.detach().abs().mean().item()) if isinstance(t, torch.Tensor) else -1.0
+
                 logger.info(
                     "[sdxl] cond norms: cross=%.4f vec=%.4f | uncond: cross=%.4f vec=%.4f",
                     _n(ca), _n(va), _n(ua), _n(uv),

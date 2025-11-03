@@ -1,7 +1,7 @@
 # apps Overview
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-11-03
 Status: Active
 
 ## Purpose
@@ -22,3 +22,4 @@ Status: Active
 - 2025-11-02: Launcher/TUI now surfaces global device/dtype envs (`CODEX_DIFFUSION_*`, `CODEX_TE_*`, `CODEX_VAE_*`). CPU selections force fp32 automatically; per-model WAN device flags were retired.
 - 2025-11-02: launcher services emit explicit CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) and persist the selections in `apps/settings_values.json`; backend startup fails if the devices are missing.
 - 2025-11-03: TUI dtype selectors include an `auto` option that maps to unset envs, aligning with the backend AUTO precision ladder while still enforcing fp32 on CPU devices.
+- 2025-11-03: BIOS TUI exposes "Conditioning Debug" toggle, wiring to `CODEX_DEBUG_COND` and the backend `--debug-conditioning` flag.

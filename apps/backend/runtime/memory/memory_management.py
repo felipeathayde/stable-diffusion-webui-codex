@@ -82,6 +82,12 @@ def load_models_gpu(models, memory_required: int = 0, hard_memory_preservation: 
 
 
 def load_model_gpu(model):
+    try:
+        target = getattr(model, "model", model)
+        name = target.__class__.__name__
+    except Exception:
+        name = type(model).__name__
+    logger.info("[memory] request load %s", name)
     _MANAGER.load_model(model)
 
 

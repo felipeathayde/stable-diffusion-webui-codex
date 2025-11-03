@@ -155,12 +155,16 @@ class HardwareProbe:
 
     cuda_available: bool = False
     cuda_device_count: int = 0
+    cuda_device_name: Optional[str] = None
+    cuda_cc_major: Optional[int] = None
+    cuda_cc_minor: Optional[int] = None
     mps_available: bool = False
     xpu_available: bool = False
     directml_available: bool = False
     total_vram_mb: Optional[int] = None
     total_ram_mb: Optional[int] = None
     bf16_support: bool = False
+    native_bf16: bool = False
     fp8_support: bool = False
     xformers_available: bool = False
     xformers_version: Optional[str] = None
@@ -170,12 +174,16 @@ class HardwareProbe:
         return {
             "cuda_available": self.cuda_available,
             "cuda_device_count": self.cuda_device_count,
+            "cuda_device_name": self.cuda_device_name,
+            "cuda_cc_major": self.cuda_cc_major,
+            "cuda_cc_minor": self.cuda_cc_minor,
             "mps_available": self.mps_available,
             "xpu_available": self.xpu_available,
             "directml_available": self.directml_available,
             "total_vram_mb": self.total_vram_mb,
             "total_ram_mb": self.total_ram_mb,
             "bf16_support": self.bf16_support,
+            "native_bf16": self.native_bf16,
             "fp8_support": self.fp8_support,
             "xformers_available": self.xformers_available,
             "xformers_version": self.xformers_version,

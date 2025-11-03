@@ -1,3 +1,4 @@
+import logging
 import math
 import torch
 
@@ -5,11 +6,13 @@ from collections import namedtuple
 from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.infra.config.args import dynamic_args
 
 
 PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
 last_extra_generation_params = {}
+logger = logging.getLogger("backend.text_processing.classic")
 
 
 class PromptChunk:
@@ -68,6 +71,9 @@ class ClassicTextProcessingEngine:
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
 
+        self._current_device: torch.device | None = None
+        self._current_dtype: torch.dtype | None = None
+
         self.emphasis = emphasis.get_current_option(dynamic_args.get('emphasis_name', 'original'))()
         self.text_projection = text_projection
         self.minimal_clip_skip = minimal_clip_skip
@@ -120,31 +126,69 @@ class ClassicTextProcessingEngine:
 
         return tokenized
 
+    def _apply_precision(self, device: torch.device, dtype: torch.dtype) -> None:
+        if self._current_device == device and self._current_dtype == dtype:
+            return
+        self.text_encoder.to(device=device, dtype=dtype)
+        self._current_device = device
+        self._current_dtype = dtype
+
     def encode_with_transformers(self, tokens):
         target_device = memory_management.text_encoder_device()
 
-        self.text_encoder.transformer.text_model.embeddings.position_ids = self.text_encoder.transformer.text_model.embeddings.position_ids.to(device=target_device)
-        self.text_encoder.transformer.text_model.embeddings.position_embedding = self.text_encoder.transformer.text_model.embeddings.position_embedding.to(dtype=torch.float32)
-        self.text_encoder.transformer.text_model.embeddings.token_embedding = self.text_encoder.transformer.text_model.embeddings.token_embedding.to(dtype=torch.float32)
+        while True:
+            desired_dtype = memory_management.text_encoder_dtype(device=target_device)
+            self._apply_precision(target_device, desired_dtype)
 
-        tokens = tokens.to(target_device)
+            self.text_encoder.transformer.text_model.embeddings.position_ids = (
+                self.text_encoder.transformer.text_model.embeddings.position_ids.to(device=target_device)
+            )
+            self.text_encoder.transformer.text_model.embeddings.position_embedding = (
+                self.text_encoder.transformer.text_model.embeddings.position_embedding.to(dtype=torch.float32)
+            )
+            self.text_encoder.transformer.text_model.embeddings.token_embedding = (
+                self.text_encoder.transformer.text_model.embeddings.token_embedding.to(dtype=torch.float32)
+            )
 
-        outputs = self.text_encoder.transformer(tokens, output_hidden_states=True)
+            tokens_device = tokens.to(target_device)
 
-        layer_id = - max(self.clip_skip, self.minimal_clip_skip)
-        z = outputs.hidden_states[layer_id]
+            outputs = self.text_encoder.transformer(tokens_device, output_hidden_states=True)
 
-        if self.final_layer_norm:
-            z = self.text_encoder.transformer.text_model.final_layer_norm(z)
+            layer_id = - max(self.clip_skip, self.minimal_clip_skip)
+            z = outputs.hidden_states[layer_id]
 
-        if self.return_pooled:
-            pooled_output = outputs.pooler_output
+            if self.final_layer_norm:
+                z = self.text_encoder.transformer.text_model.final_layer_norm(z)
 
-            if self.text_projection and self.embedding_key != 'clip_l':
+            pooled_output = outputs.pooler_output if self.return_pooled else None
+            if pooled_output is not None and self.text_projection and self.embedding_key != 'clip_l':
                 pooled_output = self.text_encoder.transformer.text_projection(pooled_output)
 
-            z.pooled = pooled_output
-        return z
+            if pooled_output is not None:
+                z.pooled = pooled_output
+
+            has_nan = torch.isnan(z).any() or (pooled_output is not None and torch.isnan(pooled_output).any())
+            if has_nan:
+                logger.warning(
+                    "CLIP encoding produced NaNs on %s using dtype %s; requesting precision fallback.",
+                    target_device,
+                    str(desired_dtype),
+                )
+                next_dtype = memory_management.report_precision_failure(
+                    DeviceRole.TEXT_ENCODER,
+                    location="clip.encode",
+                    reason="NaN detected in CLIP output",
+                )
+                if next_dtype is None:
+                    hint = memory_management.precision_hint(DeviceRole.TEXT_ENCODER)
+                    raise RuntimeError(
+                        f"Text encoder produced NaNs on {target_device} with dtype {desired_dtype}. {hint}"
+                    )
+                self._apply_precision(target_device, next_dtype)
+                memory_management.soft_empty_cache(force=True)
+                continue
+
+            return z
 
     def tokenize_line(self, line):
         parsed = parsing.parse_prompt_attention(line, self.emphasis.name)

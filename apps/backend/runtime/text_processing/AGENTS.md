@@ -9,3 +9,4 @@ Status: Active
 
 ## Notes
 - Keep token/embedding handling centralized here to avoid drift between engines.
+- CLIP classic engines now consult the AUTO precision ladder; encoding retries will fall back bf16→fp16 with loud logging, while manual precision flags bypass the ladder.

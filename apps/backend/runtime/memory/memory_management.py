@@ -153,6 +153,22 @@ def vae_dtype(device=None, allowed_dtypes=()):
     return _MANAGER.dtype_for_role(DeviceRole.VAE, supported=supported)
 
 
+def current_precision(role: DeviceRole) -> torch.dtype | None:
+    return _MANAGER.current_precision(role)
+
+
+def allow_precision_fallback(role: DeviceRole) -> bool:
+    return _MANAGER.allow_precision_fallback(role)
+
+
+def report_precision_failure(role: DeviceRole, *, location: str, reason: str) -> torch.dtype | None:
+    return _MANAGER.report_precision_failure(role, location=location, reason=reason)
+
+
+def precision_hint(role: DeviceRole) -> str:
+    return _MANAGER.precision_hint(role)
+
+
 def intermediate_device():
     return _MANAGER.get_device(DeviceRole.INTERMEDIATE)
 
@@ -256,6 +272,10 @@ __all__ = [
     "VRAMState",
     "bake_gguf_model",
     "cast_to_device",
+    "current_precision",
+    "allow_precision_fallback",
+    "report_precision_failure",
+    "precision_hint",
     "core_dtype",
     "core_initial_load_device",
     "core_offload_device",

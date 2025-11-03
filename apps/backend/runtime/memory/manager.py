@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, List, MutableSequence, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, MutableSequence, Optional, Sequence, Tuple
 
 import torch
 
@@ -31,11 +31,97 @@ from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoad
 logger = logging.getLogger("backend.memory.manager")
 
 
+_NATIVE_BF16_NAME_FRAGMENTS: Tuple[str, ...] = (
+    "geforce rtx 30",
+    "geforce rtx 40",
+    "geforce rtx 50",
+    "nvidia a100",
+    "nvidia a10",
+    "nvidia a30",
+    "nvidia a40",
+    "nvidia l4",
+    "nvidia l40",
+    "nvidia l40s",
+    "nvidia h100",
+    "nvidia h200",
+    "amd instinct mi100",
+    "amd instinct mi200",
+    "amd instinct mi250",
+    "amd instinct mi250x",
+    "amd instinct mi300",
+    "amd instinct mi300a",
+    "amd instinct mi300x",
+    "intel arc a",
+    "intel data center gpu max",
+)
+
+_PRECISION_HINTS: Dict[DeviceRole, str] = {
+    DeviceRole.CORE: "--core-dtype fp32",
+    DeviceRole.TEXT_ENCODER: "--te-dtype fp32",
+    DeviceRole.VAE: "--vae-dtype fp32",
+}
+
+
+@dataclass(slots=True)
+class _PrecisionState:
+    role: DeviceRole
+    ladder: Tuple[torch.dtype, ...]
+    manual_override: bool = False
+    index: int = 0
+
+    def current(self) -> torch.dtype:
+        return self.ladder[min(self.index, len(self.ladder) - 1)]
+
+    def select(self, supported: Sequence[torch.dtype]) -> torch.dtype:
+        if not supported:
+            raise MemoryConfigurationError(f"No supported dtypes provided for {self.role.value}.")
+        if self.manual_override:
+            dtype = self.current()
+            if dtype not in supported:
+                return supported[-1]
+            return dtype
+        for idx, dtype in enumerate(self.ladder):
+            if dtype in supported:
+                self.index = idx
+                return dtype
+        return supported[-1]
+
+    def advance(self) -> Optional[torch.dtype]:
+        if self.manual_override:
+            return None
+        next_index = self.index + 1
+        if next_index >= len(self.ladder):
+            return None
+        self.index = next_index
+        return self.current()
+
+    def allow_fallback(self) -> bool:
+        return not self.manual_override and self.index < len(self.ladder) - 1
+
+
 def _detect_oom_exception() -> type[BaseException]:
     try:
         return torch.cuda.OutOfMemoryError  # type: ignore[attr-defined]
     except Exception:  # pragma: no cover
         return RuntimeError
+
+
+def _normalize_device_name(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return value.strip().lower()
+
+
+def _device_has_native_bf16(name: Optional[str], cc_major: Optional[int]) -> bool:
+    normalized = _normalize_device_name(name)
+    if normalized:
+        for fragment in _NATIVE_BF16_NAME_FRAGMENTS:
+            if fragment in normalized:
+                return True
+    if cc_major is not None and cc_major >= 9:
+        # Hopper/Blackwell class or newer.
+        return True
+    return False
 
 
 def _probe_hardware() -> HardwareProbe:
@@ -46,6 +132,21 @@ def _probe_hardware() -> HardwareProbe:
     except Exception:  # pragma: no cover
         probe.cuda_available = False
         probe.cuda_device_count = 0
+
+    props = None
+
+    if probe.cuda_available:
+        try:
+            current_index = torch.cuda.current_device()
+        except Exception:  # pragma: no cover
+            current_index = 0
+        try:
+            props = torch.cuda.get_device_properties(current_index)
+            probe.cuda_device_name = getattr(props, "name", None)
+            probe.cuda_cc_major = getattr(props, "major", None)
+            probe.cuda_cc_minor = getattr(props, "minor", None)
+        except Exception:  # pragma: no cover
+            props = None
 
     try:
         probe.mps_available = bool(torch.backends.mps.is_available())
@@ -60,7 +161,10 @@ def _probe_hardware() -> HardwareProbe:
     probe.directml_available = bool(os.getenv("DIRECTML_PATH"))  # best effort
 
     try:
-        mem_total = torch.cuda.get_device_properties(0).total_memory if probe.cuda_available else None
+        mem_total = getattr(props, "total_memory", None)
+        if mem_total is None and probe.cuda_available:
+            fallback_props = torch.cuda.get_device_properties(0)
+            mem_total = getattr(fallback_props, "total_memory", None)
         if mem_total is not None:
             probe.total_vram_mb = int(mem_total // (1024 * 1024))
     except Exception:  # pragma: no cover
@@ -77,6 +181,11 @@ def _probe_hardware() -> HardwareProbe:
         probe.bf16_support = bool(torch.cuda.is_bf16_supported()) if probe.cuda_available else False
     except Exception:  # pragma: no cover
         probe.bf16_support = False
+
+    if probe.cuda_available:
+        probe.native_bf16 = bool(
+            probe.bf16_support and _device_has_native_bf16(probe.cuda_device_name, probe.cuda_cc_major)
+        )
 
     probe.fp8_support = False
     if probe.cuda_available:
@@ -137,10 +246,12 @@ class CodexMemoryManager:
         self._attention = config.attention
         self._swap = config.swap
         self._budgets = config.budgets
+        self._precision_states: Dict[DeviceRole, _PrecisionState] = {}
 
         self._log_probe()
         self._apply_deterministic_mode()
         self._configure_attention()
+        self._initialize_precision_states()
 
     # --------------------------------------------------------------------- setup helpers
     def _log_probe(self) -> None:
@@ -162,6 +273,115 @@ class CodexMemoryManager:
             except Exception:  # pragma: no cover
                 logger.debug("Failed to enable PyTorch SDP backends.", exc_info=True)
 
+    def _initialize_precision_states(self) -> None:
+        self._precision_states.clear()
+        for role in DeviceRole:
+            ladder, manual = self._precision_policy_for(role)
+            if not ladder:
+                continue
+            state = _PrecisionState(role=role, ladder=tuple(ladder), manual_override=manual)
+            self._precision_states[role] = state
+            ladder_display = " -> ".join(self._dtype_label(dt) for dt in state.ladder)
+            logger.debug(
+                "precision ladder[%s]=%s manual=%s",
+                role.value,
+                ladder_display,
+                manual,
+            )
+
+    def _precision_policy_for(self, role: DeviceRole) -> Tuple[List[torch.dtype], bool]:
+        flags = self._config.precision
+        manual = False
+        ladder: List[torch.dtype] = []
+
+        global_forced = torch.float16 if flags.all_fp16 else None
+
+        if role == DeviceRole.VAE:
+            if flags.vae_fp32:
+                ladder = [torch.float32]
+                manual = True
+            elif flags.vae_fp16:
+                ladder = [torch.float16]
+                manual = True
+            elif flags.vae_bf16:
+                ladder = [torch.bfloat16]
+                manual = True
+            elif global_forced is not None:
+                ladder = [global_forced]
+                manual = True
+            else:
+                ladder = self._auto_ladder_vae()
+        elif role == DeviceRole.CORE:
+            if flags.core_fp16:
+                ladder = [torch.float16]
+                manual = True
+            elif flags.core_bf16:
+                ladder = [torch.bfloat16]
+                manual = True
+            elif flags.core_fp8_e4m3fn or flags.core_fp8_e5m2:
+                ladder = [torch.float16]
+                manual = True
+            elif global_forced is not None:
+                ladder = [global_forced]
+                manual = True
+            else:
+                ladder = self._auto_ladder_core()
+        elif role == DeviceRole.TEXT_ENCODER:
+            if flags.clip_fp32:
+                ladder = [torch.float32]
+                manual = True
+            elif flags.clip_fp16:
+                ladder = [torch.float16]
+                manual = True
+            elif flags.clip_bf16:
+                ladder = [torch.bfloat16]
+                manual = True
+            elif flags.clip_fp8_e4m3fn or flags.clip_fp8_e5m2:
+                ladder = [torch.float16]
+                manual = True
+            elif global_forced is not None:
+                ladder = [global_forced]
+                manual = True
+            else:
+                ladder = self._auto_ladder_text_encoder()
+        else:
+            ladder = [torch.float32]
+            manual = True
+
+        policy = self._config.component_policy(role)
+        if policy.forced_dtype:
+            try:
+                forced = getattr(torch, policy.forced_dtype)
+            except AttributeError as exc:
+                raise MemoryConfigurationError(
+                    f"Unsupported dtype '{policy.forced_dtype}' for {role.value}."
+                ) from exc
+            ladder = [forced]
+            manual = True
+
+        return ladder, manual
+
+    def _auto_ladder_vae(self) -> List[torch.dtype]:
+        ladder = [torch.float16, torch.float32]
+        if self._probe.native_bf16:
+            ladder.insert(0, torch.bfloat16)
+        return ladder
+
+    def _auto_ladder_core(self) -> List[torch.dtype]:
+        if self._probe.native_bf16:
+            return [torch.bfloat16, torch.float16]
+        return [torch.float16]
+
+    def _auto_ladder_text_encoder(self) -> List[torch.dtype]:
+        if self._probe.native_bf16:
+            return [torch.bfloat16, torch.float16]
+        return [torch.float16]
+
+    @staticmethod
+    def _dtype_label(dtype: torch.dtype) -> str:
+        text = str(dtype)
+        return text.split(".")[-1]
+
     # --------------------------------------------------------------------- device/dtype
     def _resolve_primary_device(self) -> torch.device:
         cfg = self._config
@@ -176,14 +396,17 @@ class CodexMemoryManager:
 
         if backend == DeviceBackend.AUTO:
             if probe.cuda_available:
-                return choose_cuda()
-            if probe.mps_available:
-                return torch.device("mps")
-            if probe.xpu_available:
-                return torch.device("xpu")
-            if cfg.allow_directml and probe.directml_available:
-                return torch.device("dml")
-            return torch.device("cpu")
+                device = choose_cuda()
+                logger.info(
+                    "Device AUTO selected CUDA device %s (%s)",
+                    device,
+                    probe.cuda_device_name or "unknown",
+                )
+                return device
+            raise MemoryConfigurationError(
+                "Device backend AUTO requires an available CUDA GPU. "
+                "Select an explicit device (e.g., --core-device cpu) to run without CUDA."
+            )
         if backend == DeviceBackend.CUDA:
             return choose_cuda()
         if backend == DeviceBackend.MPS:
@@ -269,14 +492,9 @@ class CodexMemoryManager:
         *,
         supported: Sequence[torch.dtype] = (torch.float16, torch.bfloat16, torch.float32),
     ) -> torch.dtype:
+        if not supported:
+            raise MemoryConfigurationError(f"No supported dtypes passed for {role.value}.")
 
-        def clamp_dtype(preferred: Sequence[torch.dtype]) -> torch.dtype:
-            for dtype in preferred:
-                if dtype in supported:
-                    return dtype
-            return supported[-1]
-
-        flags = self._config.precision
         policy = self._config.component_policy(role)
         device = self.get_device(role)
         if policy.forced_dtype:
@@ -288,50 +506,83 @@ class CodexMemoryManager:
                 return torch.float32
             if forced_dtype in supported:
                 return forced_dtype
-            return clamp_dtype((forced_dtype,))
+            return supported[-1]
 
         if device.type == "cpu":
             if torch.float32 in supported:
                 return torch.float32
             return supported[-1]
+        state = self._precision_states.get(role)
+        if state is None:
+            return supported[0]
+        return state.select(supported)
 
-        preferred: List[torch.dtype] = []
-        if flags.all_fp16:
-            preferred.append(torch.float16)
+    def current_precision(self, role: DeviceRole) -> Optional[torch.dtype]:
+        state = self._precision_states.get(role)
+        if not state:
+            return None
+        return state.current()
 
-        if role == DeviceRole.CORE:
-            if flags.core_fp16:
-                preferred.append(torch.float16)
-            if flags.core_bf16:
-                preferred.append(torch.bfloat16)
-            if flags.core_fp8_e4m3fn and self._probe.fp8_support:
-                preferred.append(torch.float16)  # map fp8 to fp16 runtime
-            if flags.core_fp8_e5m2 and self._probe.fp8_support:
-                preferred.append(torch.float16)
-        elif role == DeviceRole.TEXT_ENCODER:
-            if getattr(flags, "clip_fp16", False):
-                preferred.append(torch.float16)
-            if getattr(flags, "clip_bf16", False):
-                preferred.append(torch.bfloat16)
-            if getattr(flags, "clip_fp32", False):
-                preferred.append(torch.float32)
-            if getattr(flags, "clip_fp8_e4m3fn", False) and self._probe.fp8_support:
-                preferred.append(torch.float16)
-            if getattr(flags, "clip_fp8_e5m2", False) and self._probe.fp8_support:
-                preferred.append(torch.float16)
-        elif role == DeviceRole.VAE:
-            if flags.vae_bf16:
-                preferred.append(torch.bfloat16)
-            if flags.vae_fp16:
-                preferred.append(torch.float16)
-            if flags.vae_fp32:
-                preferred.append(torch.float32)
+    def allow_precision_fallback(self, role: DeviceRole) -> bool:
+        state = self._precision_states.get(role)
+        return bool(state and state.allow_fallback())
 
-        preferred.append(torch.float16)
-        if torch.bfloat16 in supported and self._probe.bf16_support:
-            preferred.append(torch.bfloat16)
-        preferred.append(torch.float32)
-        return clamp_dtype(preferred)
+    def precision_hint(self, role: DeviceRole) -> str:
+        return _PRECISION_HINTS.get(role, "set manual precision for the component")
+
+    def report_precision_failure(self, role: DeviceRole, *, location: str, reason: str) -> Optional[torch.dtype]:
+        state = self._precision_states.get(role)
+        device = None
+        try:
+            device = self.get_device(role)
+        except Exception:
+            device = None
+
+        if state is None:
+            logger.error(
+                "Precision failure for %s at %s (reason=%s) but no ladder is configured.",
+                role.value,
+                location,
+                reason,
+            )
+            return None
+
+        current = state.current()
+        if not state.allow_fallback():
+            hint = self.precision_hint(role)
+            logger.error(
+                "Precision fallback exhausted for %s on %s (dtype=%s). Reason: %s. Manual action required: %s",
+                role.value,
+                device,
+                self._dtype_label(current),
+                reason,
+                hint,
+            )
+            return None
+
+        next_dtype = state.advance()
+        if next_dtype is None:
+            hint = self.precision_hint(role)
+            logger.error(
+                "Precision fallback unavailable for %s on %s (dtype=%s). Reason: %s. Manual action required: %s",
+                role.value,
+                device,
+                self._dtype_label(current),
+                reason,
+                hint,
+            )
+            return None
+
+        logger.warning(
+            "Precision fallback triggered for %s at %s on %s: %s -> %s (%s)",
+            role.value,
+            location,
+            device,
+            self._dtype_label(current),
+            self._dtype_label(next_dtype),
+            reason,
+        )
+        return next_dtype
 
     # --------------------------------------------------------------------- tensor helpers
     def module_size(

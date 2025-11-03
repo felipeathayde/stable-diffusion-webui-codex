@@ -5,6 +5,7 @@ import logging
 
 from tqdm import trange
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from .base import ModelPatcher
 
 logger = logging.getLogger("backend.patchers.vae")
@@ -148,10 +149,10 @@ class VAE:
         offload_device = memory_management.vae_offload_device()
 
         if dtype is None:
-            dtype = memory_management.vae_dtype()
+            dtype = memory_management.vae_dtype(device=device)
 
-        self.vae_dtype = dtype
-        self.first_stage_model.to(self.vae_dtype)
+        self.vae_dtype: torch.dtype | None = None
+        self._apply_precision(dtype)
         self.output_device = memory_management.intermediate_device()
 
         self.patcher = ModelPatcher(
@@ -172,6 +173,20 @@ class VAE:
         n.vae_dtype = self.vae_dtype
         n.output_device = self.output_device
         return n
+
+    def _apply_precision(self, dtype: torch.dtype) -> None:
+        if dtype == self.vae_dtype:
+            return
+        previous = self.vae_dtype
+        base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+        base.to(device=self.device, dtype=dtype)
+        self.vae_dtype = dtype
+        logger.info(
+            "VAE precision updated: %s -> %s on %s",
+            "none" if previous is None else str(previous),
+            str(dtype),
+            self.device,
+        )
 
     def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
         steps = samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x, tile_y, overlap)
@@ -201,23 +216,57 @@ class VAE:
         if memory_management.VAE_ALWAYS_TILED:
             return self.decode_tiled(samples_in).to(self.output_device)
 
-        try:
-            memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)
-            memory_management.load_models_gpu([self.patcher], memory_required=memory_used)
-            free_memory = memory_management.get_free_memory(self.device)
-            batch_number = int(free_memory / memory_used)
-            batch_number = max(1, batch_number)
+        while True:
+            desired_dtype = memory_management.vae_dtype(device=self.device)
+            self._apply_precision(desired_dtype)
 
-            pixel_samples = torch.empty((samples_in.shape[0], 3, round(samples_in.shape[2] * self.downscale_ratio), round(samples_in.shape[3] * self.downscale_ratio)), device=self.output_device)
-            for x in range(0, samples_in.shape[0], batch_number):
-                samples = samples_in[x:x + batch_number].to(self.vae_dtype).to(self.device)
-                pixel_samples[x:x + batch_number] = torch.clamp((self.first_stage_model.decode(samples).to(self.output_device).float() + 1.0) / 2.0, min=0.0, max=1.0)
-        except memory_management.OOM_EXCEPTION as e:
-            print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
-            pixel_samples = self.decode_tiled_(samples_in)
+            try:
+                memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)
+                memory_management.load_models_gpu([self.patcher], memory_required=memory_used)
+                free_memory = memory_management.get_free_memory(self.device)
+                batch_number = max(1, int(free_memory / memory_used))
 
-        pixel_samples = pixel_samples.to(self.output_device).movedim(1, -1)
-        return pixel_samples
+                pixel_samples = torch.empty(
+                    (
+                        samples_in.shape[0],
+                        3,
+                        round(samples_in.shape[2] * self.downscale_ratio),
+                        round(samples_in.shape[3] * self.downscale_ratio),
+                    ),
+                    device=self.output_device,
+                )
+                for x in range(0, samples_in.shape[0], batch_number):
+                    samples = samples_in[x:x + batch_number].to(self.vae_dtype).to(self.device)
+                    decoded = self.first_stage_model.decode(samples).to(self.output_device).float()
+                    pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
+            except memory_management.OOM_EXCEPTION:
+                print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
+                pixel_samples = self.decode_tiled_(samples_in)
+
+            result = pixel_samples.to(self.output_device).movedim(1, -1)
+            if torch.isnan(result).any():
+                logger.warning(
+                    "VAE decode produced NaNs on %s using dtype %s; requesting precision fallback.",
+                    self.device,
+                    str(self.vae_dtype),
+                )
+                next_dtype = memory_management.report_precision_failure(
+                    DeviceRole.VAE,
+                    location="vae.decode",
+                    reason="NaN detected in decoded output",
+                )
+                if next_dtype is None:
+                    hint = memory_management.precision_hint(DeviceRole.VAE)
+                    raise RuntimeError(
+                        f"VAE decode produced NaNs on {self.device} with dtype {self.vae_dtype}. {hint}"
+                    )
+                del pixel_samples
+                del result
+                self._apply_precision(next_dtype)
+                memory_management.soft_empty_cache(force=True)
+                continue
+
+            return result
 
     def decode(self, samples_in):
         wrapper = self.patcher.model_options.get('model_vae_decode_wrapper', None)
@@ -238,22 +287,55 @@ class VAE:
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
 
         pixel_samples = pixel_samples.movedim(-1, 1)
-        try:
-            memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)
-            memory_management.load_models_gpu([self.patcher], memory_required=memory_used)
-            free_memory = memory_management.get_free_memory(self.device)
-            batch_number = int(free_memory / memory_used)
-            batch_number = max(1, batch_number)
-            samples = torch.empty((pixel_samples.shape[0], self.latent_channels, round(pixel_samples.shape[2] // self.downscale_ratio), round(pixel_samples.shape[3] // self.downscale_ratio)), device=self.output_device)
-            for x in range(0, pixel_samples.shape[0], batch_number):
-                pixels_in = (2. * pixel_samples[x:x + batch_number] - 1.).to(self.vae_dtype).to(self.device)
-                samples[x:x + batch_number] = self.first_stage_model.encode(pixels_in, regulation).to(self.output_device).float()
 
-        except memory_management.OOM_EXCEPTION as e:
-            print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")
-            samples = self.encode_tiled_(pixel_samples)
+        while True:
+            desired_dtype = memory_management.vae_dtype(device=self.device)
+            self._apply_precision(desired_dtype)
 
-        return samples
+            try:
+                memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)
+                memory_management.load_models_gpu([self.patcher], memory_required=memory_used)
+                free_memory = memory_management.get_free_memory(self.device)
+                batch_number = max(1, int(free_memory / memory_used))
+                samples = torch.empty(
+                    (
+                        pixel_samples.shape[0],
+                        self.latent_channels,
+                        round(pixel_samples.shape[2] // self.downscale_ratio),
+                        round(pixel_samples.shape[3] // self.downscale_ratio),
+                    ),
+                    device=self.output_device,
+                )
+                for x in range(0, pixel_samples.shape[0], batch_number):
+                    pixels_in = (2.0 * pixel_samples[x:x + batch_number] - 1.0).to(self.vae_dtype).to(self.device)
+                    encoded = self.first_stage_model.encode(pixels_in, regulation).to(self.output_device).float()
+                    samples[x:x + batch_number] = encoded
+            except memory_management.OOM_EXCEPTION:
+                print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")
+                samples = self.encode_tiled_(pixel_samples)
+
+            if torch.isnan(samples).any():
+                logger.warning(
+                    "VAE encode produced NaNs on %s using dtype %s; requesting precision fallback.",
+                    self.device,
+                    str(self.vae_dtype),
+                )
+                next_dtype = memory_management.report_precision_failure(
+                    DeviceRole.VAE,
+                    location="vae.encode",
+                    reason="NaN detected in encoded output",
+                )
+                if next_dtype is None:
+                    hint = memory_management.precision_hint(DeviceRole.VAE)
+                    raise RuntimeError(
+                        f"VAE encode produced NaNs on {self.device} with dtype {self.vae_dtype}. {hint}"
+                    )
+                del samples
+                self._apply_precision(next_dtype)
+                memory_management.soft_empty_cache(force=True)
+                continue
+
+            return samples
 
     def encode(self, pixel_samples):
         wrapper = self.patcher.model_options.get('model_vae_encode_wrapper', None)

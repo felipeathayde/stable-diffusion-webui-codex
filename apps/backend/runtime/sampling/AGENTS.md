@@ -15,6 +15,7 @@
   - `EulerDiscreteScheduler`, `euler`, `euler a`, `EulerAncestralDiscreteScheduler` → `EULER_DISCRETE` schedule (Karras sigmas).
   - No silent fallbacks. Unknown names raise `ValueError` with the supported list.
 - Karras Sigmas: Euler in diffusers typically uses Karras sigmas when enabled. We intentionally reuse the Karras schedule for `EULER_DISCRETE`. The integrator determines ODE vs ancestral behavior.
+- Precision guardrails: `driver.py` observes UNet outputs for NaNs and escalates precision via `memory_management.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.
@@ -24,4 +25,3 @@
 ## Future Work (not yet ported)
 - Additional schedule families (e.g., EDM/FlowMatch variants) can be added as new `SchedulerName` values with explicit behavior.
 - Respect settings toggles like `use_old_karras_scheduler_sigmas` once UI flow is finalized.
-

@@ -327,9 +327,9 @@ class CodexMemoryManager:
             if flags.vae_fp32:
                 preferred.append(torch.float32)
 
+        preferred.append(torch.float16)
         if torch.bfloat16 in supported and self._probe.bf16_support:
             preferred.append(torch.bfloat16)
-        preferred.append(torch.float16)
         preferred.append(torch.float32)
         return clamp_dtype(preferred)
 

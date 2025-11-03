@@ -9,14 +9,14 @@ Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict 
 ## CLIP (TE) State‑Dict Normalization
 - Goal: accept Comfy-style and Diffusers-style layouts without guessing external context.
 - Accepted inputs:
-  - OpenCLIP legacy: `transformer.resblocks.*` (converted by converters to `text_model.encoder.layers.*`).
-  - Plain modern: `text_model.*` at root (no `transformer.` prefix).
-  - Aliased: `clip_[lgh].transformer.text_model.*` (trim + normalize).
+  - OpenCLIP legacy: `transformer.resblocks.*` (converted to `transformer.text_model.encoder.layers.*`).
+  - Plain modern: `text_model.*` at root (lifted to `transformer.text_model.*`).
+  - Aliased: `clip_[lgh].transformer.text_model.*`, `conditioner.embedders.*`, `cond_stage_model.*`, `model.*` — prefixes stripped per-key.
 - Policy:
-  - If any `text_model.*` keys exist, lift them to `transformer.text_model.*` (partial lift, not gated by all-keys).
-  - Normalize `text_projection` to `transformer.text_projection.weight` (transpose when required).
-  - Preserve `logit_scale` at root (it is initialized by our wrapper; missing is expected).
-  - Do not rewrite when keys already live under `transformer.text_model.*`.
+  - Strip known wrappers iteratively per key before conversion.
+  - Always attempt Codex converters (`convert_sdxl_clip_*`, fallback to `convert_sd20_clip`, `convert_sd15_clip`); treat success as “essential tensors present”.
+  - Lift `text_model.*` into `transformer.text_model.*`, normalize `text_projection` into `transformer.text_projection.weight`, and forward `final_layer_norm.*` similarly.
+  - Abort with a `RuntimeError` when essential tensors (`token_embedding`, `position_embedding`, first-layer q_proj, `final_layer_norm`) remain missing after normalization — no silent degradation.
 
 ## Error Handling
 - Missing/Unexpected above thresholds will be escalated by the loader; we do not degrade silently.

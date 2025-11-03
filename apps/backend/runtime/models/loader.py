@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 import torch
 from diffusers import DiffusionPipeline
@@ -243,90 +243,118 @@ def _load_huggingface_component(
             convert_sdxl_clip_g,
         )
         from apps.backend.runtime.common.nn.clip_text_cx import CodexCLIPTextConfig, CodexCLIPTextModel
+        _CLIP_PREFIXES = (
+            "conditioner.embedders.0.transformer.",
+            "conditioner.embedders.0.model.",
+            "conditioner.embedders.0.",
+            "conditioner.embedders.1.transformer.",
+            "conditioner.embedders.1.model.",
+            "conditioner.embedders.1.",
+            "cond_stage_model.model.",
+            "cond_stage_model.",
+            "text_encoders.clip_l.",
+            "text_encoders.clip_g.",
+            "clip_l.",
+            "clip_g.",
+            "clip_h.",
+            "model.text_model.",
+            "model.",
+        )
 
-        def _convert_without_prefix(component: str, data: Mapping[str, Any]) -> Mapping[str, Any]:
-            attempts: tuple[tuple[str, callable], ...]
+        def _strip_known_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
+            stripped: Dict[str, Any] = {}
+            for raw_key, value in sd.items():
+                key = str(raw_key)
+                changed = True
+                while changed:
+                    changed = False
+                    for prefix in _CLIP_PREFIXES:
+                        if key.startswith(prefix):
+                            key = key[len(prefix):]
+                            changed = True
+                            break
+                stripped[key] = value
+            return stripped
+
+        _ESSENTIAL_KEYS = (
+            "transformer.text_model.embeddings.token_embedding.weight",
+            "transformer.text_model.embeddings.position_embedding.weight",
+            "transformer.text_model.encoder.layers.0.self_attn.q_proj.weight",
+            "transformer.text_model.final_layer_norm.weight",
+        )
+
+        def _lift_namespace(sd: Mapping[str, Any]) -> Dict[str, Any]:
+            lifted: Dict[str, Any] = {}
+            for raw_key, value in sd.items():
+                key = str(raw_key)
+                if key.startswith("transformer."):
+                    lifted[key] = value
+                    continue
+                if key.startswith("text_model."):
+                    lifted[f"transformer.{key}"] = value
+                    continue
+                if key == "text_projection":
+                    if isinstance(value, torch.Tensor) and value.ndim == 2:
+                        lifted["transformer.text_projection.weight"] = value.transpose(0, 1).contiguous()
+                    else:
+                        lifted["transformer.text_projection.weight"] = value
+                    continue
+                if key == "text_projection.weight":
+                    lifted["transformer.text_projection.weight"] = value
+                    continue
+                if key == "transformer.text_projection":
+                    lifted["transformer.text_projection.weight"] = value
+                    continue
+                if key.startswith("final_layer_norm."):
+                    lifted[f"transformer.text_model.{key}"] = value
+                    continue
+                lifted[key] = value
+            return lifted
+
+        def _has_essentials(sd: Mapping[str, Any]) -> bool:
+            return all(key in sd for key in _ESSENTIAL_KEYS)
+
+        def _apply_converters(component: str, data: Mapping[str, Any]) -> Dict[str, Any]:
+            attempts: list[tuple[str, Callable[[Dict[str, Any]], Dict[str, Any]]]] = []
             if component == "text_encoder_2":
-                attempts = (("sdxl_g", convert_sdxl_clip_g),)
+                attempts.append(("sdxl_g", convert_sdxl_clip_g))
             else:
-                attempts = (
-                    ("sdxl_l", convert_sdxl_clip_l),
-                    ("sd20", convert_sd20_clip),
-                    ("sd15", convert_sd15_clip),
-                )
+                attempts.append(("sdxl_l", convert_sdxl_clip_l))
+            attempts.extend([
+                ("sd20", convert_sd20_clip),
+                ("sd15", convert_sd15_clip),
+            ])
             for label, fn in attempts:
                 try:
-                    return fn(dict(data))
-                except Exception as exc:
+                    candidate = fn(dict(data))
+                except Exception as exc:  # noqa: BLE001
                     CLIP_LOG.debug("CLIP convert %s failed (%s): %s", label, component, exc)
-            return data
+                    continue
+                lifted = _lift_namespace(candidate)
+                if _has_essentials(lifted):
+                    return lifted
+            return _lift_namespace(data)
 
-        def _normalize_clip_state(component: str, sd: Mapping[str, Any]) -> Mapping[str, Any]:
-            try:
-                keys = [str(k) for k in sd.keys()]
-            except AttributeError:
-                return sd
-            if not keys:
-                return sd
-            # Already in the expected IntegratedCLIP namespace
-            if any(k.startswith("transformer.text_model") for k in keys):
-                return sd
-            # Partially lift any text_model.* keys into transformer.* regardless of other root keys
-            if any(k.startswith("text_model.") for k in keys) or any(k in ("text_projection", "text_projection.weight", "final_layer_norm.weight", "final_layer_norm.bias") for k in keys):
-                remapped: Dict[str, Any] = dict(sd)
-                for k in list(sd.keys()):
-                    v = sd[k]
-                    if isinstance(k, str) and k.startswith("text_model."):
-                        remapped.pop(k, None)
-                        remapped[f"transformer.{k}"] = v
-                # Normalise projection and final_layer_norm at root if present
-                if "text_projection" in remapped and isinstance(remapped["text_projection"], torch.Tensor):
-                    tp = remapped.pop("text_projection")
-                    remapped["transformer.text_projection.weight"] = tp.transpose(0, 1).contiguous()
-                if "text_projection.weight" in remapped and isinstance(remapped["text_projection.weight"], torch.Tensor):
-                    remapped["transformer.text_projection.weight"] = remapped.pop("text_projection.weight")
-                if "final_layer_norm.weight" in remapped:
-                    remapped["transformer.text_model.final_layer_norm.weight"] = remapped.pop("final_layer_norm.weight")
-                if "final_layer_norm.bias" in remapped:
-                    remapped["transformer.text_model.final_layer_norm.bias"] = remapped.pop("final_layer_norm.bias")
-                return remapped
-            prefix_candidates = [
-                "conditioner.embedders.0.model.",
-                "conditioner.embedders.0.transformer.text_model.",
-                "conditioner.embedders.1.model.",
-                "cond_stage_model.",
-                "cond_stage_model.model.",
-                "text_encoders.clip_l.",
-                "text_encoders.clip_g.",
-                "clip_l.",
-                "clip_g.",
-                "model.text_model.",
-                "model.",
-            ]
-            for prefix in prefix_candidates:
-                if all(k.startswith(prefix) for k in keys):
-                    trimmed = {k[len(prefix):]: sd[k] for k in keys}
-                    # If trimming produced text_model.* keys among others, lift those keys only.
-                    if any(k.startswith("text_model.") for k in trimmed.keys()) or any(k in ("text_projection", "text_projection.weight", "final_layer_norm.weight", "final_layer_norm.bias") for k in trimmed.keys()):
-                        lifted: Dict[str, Any] = {}
-                        for tk, tv in trimmed.items():
-                            if tk.startswith("text_model."):
-                                lifted[f"transformer.{tk}"] = tv
-                            elif tk == "text_projection":
-                                lifted["transformer.text_projection.weight"] = tv.transpose(0, 1).contiguous() if isinstance(tv, torch.Tensor) else tv
-                            elif tk == "text_projection.weight":
-                                lifted["transformer.text_projection.weight"] = tv
-                            elif tk == "final_layer_norm.weight":
-                                lifted["transformer.text_model.final_layer_norm.weight"] = tv
-                            elif tk == "final_layer_norm.bias":
-                                lifted["transformer.text_model.final_layer_norm.bias"] = tv
-                            else:
-                                lifted[tk] = tv
-                        return lifted
-                    return _convert_without_prefix(component, trimmed)
-            return _convert_without_prefix(component, sd)
+        def _normalize_clip_state(component: str, sd: Mapping[str, Any]) -> Dict[str, Any]:
+            stripped = _strip_known_prefixes(sd)
+            lifted = _lift_namespace(stripped)
+            if _has_essentials(lifted):
+                return lifted
+            converted = _apply_converters(component, stripped)
+            if _has_essentials(converted):
+                return converted
+            # Final fallback: try converters on already lifted namespace (handles partially converted inputs)
+            converted_again = _apply_converters(component, lifted)
+            return converted_again
 
         state_dict = _normalize_clip_state(component_name, state_dict)
+
+        if not _has_essentials(state_dict):
+            sample_keys = list(sorted(state_dict.keys()))[:10]
+            raise RuntimeError(
+                "CLIP state dict normalisation failed for %s; missing essential tensors. Sample keys: %s"
+                % (component_name, sample_keys)
+            )
 
         # Load CLIP config json from repo and translate to native config
         config_json = read_arbitrary_config(component_path)

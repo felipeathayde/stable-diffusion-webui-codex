@@ -301,6 +301,7 @@ class BIOSApp:
             file_label = f"Enabled ({Path(log_file).name})"
         else:
             file_label = "Disabled"
+        trace_debug = env.get("CODEX_TRACE_DEBUG", "0").strip().lower() in {"1", "true", "yes", "on"}
         pipeline_debug = env.get("CODEX_PIPELINE_DEBUG", "0").strip().lower()
         pipeline_label = "ON" if pipeline_debug in ("1", "true", "yes", "on") else "OFF"
         cond_debug = env.get("CODEX_DEBUG_COND", "0").strip().lower() in ("1", "true", "yes", "on")
@@ -311,6 +312,7 @@ class BIOSApp:
         return [
             ("Codex Log Level", f"[{level}]", "cycle_log_level"),
             ("Write Codex Log File", f"[{file_label}]", "toggle_log_file"),
+            ("Trace Debug", f"[{'ON' if trace_debug else 'OFF'}]", "toggle_trace_debug"),
             ("Pipeline Debug", f"[{pipeline_label}]", "toggle_pipeline_debug"),
             ("Conditioning Debug", f"[{'Enabled' if cond_debug else 'Disabled'}]", "toggle_cond_debug"),
             ("WAN_LOG_INFO", f"[{info}]", "toggle_log_info"),
@@ -453,6 +455,10 @@ class BIOSApp:
             "Pipeline Debug": [
                 "Toggle SDXL/txt2img pipeline trace logs (entrou/saiu).",
                 "Applies via CODEX_PIPELINE_DEBUG=1 before starting the API.",
+            ],
+            "Trace Debug": [
+                "Enable global function-call tracing (very verbose).",
+                "Applies via CODEX_TRACE_DEBUG=1 / --trace-debug; restart API after toggling.",
             ],
             "Conditioning Debug": [
                 "Dump CLIP conditioning tensor norms during SDXL runs.",
@@ -732,6 +738,14 @@ class BIOSApp:
                 log_path = self._ensure_log_file()
                 env["CODEX_LOG_FILE"] = log_path
                 self.message = f"Logging to {Path(log_path).name}"
+        elif action == "toggle_trace_debug":
+            cur = env.get("CODEX_TRACE_DEBUG", "0").strip().lower()
+            if cur in {"1", "true", "yes", "on"}:
+                env.pop("CODEX_TRACE_DEBUG", None)
+                self.message = "Trace Debug disabled. Restart API to stop call tracing."
+            else:
+                env["CODEX_TRACE_DEBUG"] = "1"
+                self.message = "Trace Debug enabled. Restart API to attach call tracing."
         elif action == "toggle_pipeline_debug":
             cur = env.get("CODEX_PIPELINE_DEBUG", "0").strip().lower()
             env["CODEX_PIPELINE_DEBUG"] = "0" if cur in ("1", "true", "yes", "on") else "1"

@@ -182,8 +182,10 @@ def load_torch_file(ckpt, safe_load=True, device=None):
     suffix = os.path.splitext(checkpoint_path)[1].lower()
 
     if suffix == ".safetensors":
-        # use device.type (e.g. 'cuda' / 'cpu') for safe_open
-        return LazySafetensorsDict(checkpoint_path, device=device.type)
+        # Always load tensors on CPU during state-dict preprocessing to avoid CUDA OOMs
+        # and fragmentation when inspecting keys and remapping. Model weights will be
+        # moved to the target device later by the memory manager.
+        return LazySafetensorsDict(checkpoint_path, device="cpu")
     if suffix == ".gguf":
         return _load_gguf_state_dict(checkpoint_path)
 

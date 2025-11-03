@@ -207,11 +207,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     # ------------------------------------------------------------------ Lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
-        print(f"[engine.load] enter engine='{self.engine_id}' model_ref='{model_ref}'", flush=True)
         raw_options: dict[str, Any] = dict(options)
         bundle_obj = raw_options.pop("_bundle", None)
         if bundle_obj is None:
-            print(f"[engine.load] resolving bundle model_ref='{model_ref}'", flush=True)
             bundle = resolve_diffusion_bundle(model_ref)
         elif isinstance(bundle_obj, DiffusionModelBundle):
             bundle = bundle_obj
@@ -222,7 +220,6 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             comp_keys = sorted(getattr(bundle, "components", {}).keys())  # type: ignore[arg-type]
         except Exception:
             comp_keys = []
-        print(f"[engine.load] bundle resolved source='{bundle.source}' components={comp_keys}", flush=True)
 
         self._logger.info("[engine] Loading %s (ref=%s, source=%s)", self.engine_id, model_ref, bundle.source)
         self._reset_state()

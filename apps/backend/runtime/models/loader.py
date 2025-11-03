@@ -271,19 +271,24 @@ def _load_huggingface_component(
             # Already in the expected IntegratedCLIP namespace
             if any(k.startswith("transformer.text_model") for k in keys):
                 return sd
-            # Handle state dicts rooted at text_model.* (no leading 'transformer.')
-            if all(k.startswith("text_model.") or k.startswith("text_projection") or k.startswith("final_layer_norm") for k in keys):
-                remapped: Dict[str, Any] = {}
-                for k in keys:
+            # Partially lift any text_model.* keys into transformer.* regardless of other root keys
+            if any(k.startswith("text_model.") for k in keys) or any(k in ("text_projection", "text_projection.weight", "final_layer_norm.weight", "final_layer_norm.bias") for k in keys):
+                remapped: Dict[str, Any] = dict(sd)
+                for k in list(sd.keys()):
                     v = sd[k]
-                    if k.startswith("text_model."):
+                    if isinstance(k, str) and k.startswith("text_model."):
+                        remapped.pop(k, None)
                         remapped[f"transformer.{k}"] = v
-                    elif k.startswith("text_projection"):
-                        remapped[f"transformer.{k}"] = v
-                    elif k.startswith("final_layer_norm"):
-                        remapped[f"transformer.text_model.{k}"] = v
-                    else:
-                        remapped[k] = v
+                # Normalise projection and final_layer_norm at root if present
+                if "text_projection" in remapped and isinstance(remapped["text_projection"], torch.Tensor):
+                    tp = remapped.pop("text_projection")
+                    remapped["transformer.text_projection.weight"] = tp.transpose(0, 1).contiguous()
+                if "text_projection.weight" in remapped and isinstance(remapped["text_projection.weight"], torch.Tensor):
+                    remapped["transformer.text_projection.weight"] = remapped.pop("text_projection.weight")
+                if "final_layer_norm.weight" in remapped:
+                    remapped["transformer.text_model.final_layer_norm.weight"] = remapped.pop("final_layer_norm.weight")
+                if "final_layer_norm.bias" in remapped:
+                    remapped["transformer.text_model.final_layer_norm.bias"] = remapped.pop("final_layer_norm.bias")
                 return remapped
             prefix_candidates = [
                 "conditioner.embedders.0.model.",
@@ -301,16 +306,23 @@ def _load_huggingface_component(
             for prefix in prefix_candidates:
                 if all(k.startswith(prefix) for k in keys):
                     trimmed = {k[len(prefix):]: sd[k] for k in keys}
-                    # If trimming produced text_model.* keys, lift into transformer.*
-                    if any(k.startswith("text_model.") for k in trimmed.keys()):
-                        trimmed = {(
-                            f"transformer.{k}" if k.startswith("text_model.") else (
-                                f"transformer.{k}" if k.startswith("text_projection") else (
-                                    f"transformer.text_model.{k}" if k.startswith("final_layer_norm") else k
-                                )
-                            )
-                        ): v for k, v in trimmed.items()}
-                        return trimmed
+                    # If trimming produced text_model.* keys among others, lift those keys only.
+                    if any(k.startswith("text_model.") for k in trimmed.keys()) or any(k in ("text_projection", "text_projection.weight", "final_layer_norm.weight", "final_layer_norm.bias") for k in trimmed.keys()):
+                        lifted: Dict[str, Any] = {}
+                        for tk, tv in trimmed.items():
+                            if tk.startswith("text_model."):
+                                lifted[f"transformer.{tk}"] = tv
+                            elif tk == "text_projection":
+                                lifted["transformer.text_projection.weight"] = tv.transpose(0, 1).contiguous() if isinstance(tv, torch.Tensor) else tv
+                            elif tk == "text_projection.weight":
+                                lifted["transformer.text_projection.weight"] = tv
+                            elif tk == "final_layer_norm.weight":
+                                lifted["transformer.text_model.final_layer_norm.weight"] = tv
+                            elif tk == "final_layer_norm.bias":
+                                lifted["transformer.text_model.final_layer_norm.bias"] = tv
+                            else:
+                                lifted[tk] = tv
+                        return lifted
                     return _convert_without_prefix(component, trimmed)
             return _convert_without_prefix(component, sd)
 

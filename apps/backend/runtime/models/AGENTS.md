@@ -1,14 +1,26 @@
-# apps/backend/runtime/models Overview
-Date: 2025-10-29
+# Runtime Models — AGENTS Notes
+Date: 2025-11-03
 Owner: Runtime Maintainers
-Last Review: 2025-11-01
 Status: Active
 
-## Purpose
-- Model registry, loader helpers, and metadata utilities (checkpoints, VAEs, text encoders) shared across engines.
+## Scope
+Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict helpers.
 
-## Notes
-- Keep loader logic centralized here (safe loading, dtype inference) and expose only typed interfaces to engines/use cases.
-- `loader.py` now emits `DiffusionModelBundle` artifacts; SD families resolve through `resolve_diffusion_bundle` so engines never touch legacy loaders directly.
-- SD3/SD3.5 signatures still drive Hugging Face repo choice and expose `codex_signature`/`codex_variant` on the estimated config.
-- Core architecture metadata (`CodexCoreSignature`) drives dtype/offload decisions and trace labels, replacing generic UNet terminology.
+## CLIP (TE) State‑Dict Normalization
+- Goal: accept Comfy-style and Diffusers-style layouts without guessing external context.
+- Accepted inputs:
+  - OpenCLIP legacy: `transformer.resblocks.*` (converted by converters to `text_model.encoder.layers.*`).
+  - Plain modern: `text_model.*` at root (no `transformer.` prefix).
+  - Aliased: `clip_[lgh].transformer.text_model.*` (trim + normalize).
+- Policy:
+  - If any `text_model.*` keys exist, lift them to `transformer.text_model.*` (partial lift, not gated by all-keys).
+  - Normalize `text_projection` to `transformer.text_projection.weight` (transpose when required).
+  - Preserve `logit_scale` at root (it is initialized by our wrapper; missing is expected).
+  - Do not rewrite when keys already live under `transformer.text_model.*`.
+
+## Error Handling
+- Missing/Unexpected above thresholds will be escalated by the loader; we do not degrade silently.
+- Prefer clear messages naming a few representative keys and the active normalization path.
+
+## Rationale
+- Mirrors Comfy’s `clip_text_transformers_convert` behaviour: convert legacy resblocks to `text_model.*` and accept plain `text_model.*` roots by lifting into the active wrapper namespace.

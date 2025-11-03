@@ -37,7 +37,7 @@
 ---
 
 # Goal
-- This workplace is a `rebuild from scratch` of the classic A1111 Stable Diffusion WebUI.
+- This workplace is a `rebuild from scratch` of the classic A1111 Stable Diffusion WebUI. In this context, “rebuild from scratch” **does not** mean discarding the proven pipelines or behaviours: we preserve the functional semantics established by A1111/ComfyUI (e.g., loader heuristics, conditioning flow, device handling) and reimplement them with clearer architecture (dataclasses/enums, modular boundaries, explicit errors/logging). Think “rewrite for maintainability and performance” while keeping the same observable behaviour.
 
 ## WebUI rebuild from scratch protocol
 - **DO NOT** plan or write **ANY** code on the premise of preserving any “compat.” The legacy code exists solely and exclusively as reference.

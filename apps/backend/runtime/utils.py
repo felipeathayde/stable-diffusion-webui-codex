@@ -106,6 +106,43 @@ class FilterPrefixView(MutableMapping):
         return c
 
 
+class RemapKeysView(MutableMapping):
+    """Present a remapped keyspace over an underlying mapping lazily.
+
+    - base: original mapping (e.g., LazySafetensorsDict)
+    - mapping: dict[new_key] -> old_key in the base mapping
+    - Does not materialize any tensor unless __getitem__ is called.
+    """
+
+    def __init__(self, base: MutableMapping, mapping: dict[str, str]):
+        self._base = base
+        self._map = dict(mapping)
+
+    def __getitem__(self, k: str):
+        return self._base[self._map[k]]
+
+    def __setitem__(self, k: str, v):
+        self._map[k] = k
+        self._base[k] = v
+
+    def __delitem__(self, k: str):
+        old = self._map.pop(k, None)
+        if old is not None and old in self._base:
+            del self._base[old]
+
+    def __iter__(self):
+        return iter(self._map.keys())
+
+    def __len__(self):
+        return len(self._map)
+
+    def keys(self):
+        return list(self._map.keys())
+
+    def items(self):
+        for k in self._map.keys():
+            yield k, self._base[self._map[k]]
+
 class CastOnGetView(MutableMapping):
     """Mapping view that casts tensor values on CPU to a target dtype on access.
 

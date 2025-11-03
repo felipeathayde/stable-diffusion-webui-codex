@@ -125,9 +125,9 @@ _ESSENTIAL_UNET_KEYS: tuple[str, ...] = (
 )
 
 
-def _strip_unet_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
-    stripped: Dict[str, Any] = {}
-    for key, value in sd.items():
+def _strip_unet_prefixes_mapping(sd: Mapping[str, Any]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for key in list(sd.keys()):
         name = str(key)
         changed = True
         while changed:
@@ -137,8 +137,8 @@ def _strip_unet_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
                     name = name[len(prefix):]
                     changed = True
                     break
-        stripped[name] = value
-    return stripped
+        mapping[name] = key
+    return mapping
 
 
 def _normalize_depth_list(values: Any, total: int, default: int = 0) -> list[int]:
@@ -249,16 +249,17 @@ def _build_diffusers_to_ldm_map(unet_config: Mapping[str, Any]) -> Dict[str, str
     return mapping
 
 
-def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any]:
-    stripped = _strip_unet_prefixes(state_dict)
-    if any(key.startswith("input_blocks.") for key in stripped):
-        return dict(stripped)
+def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[str, Any]) -> Mapping[str, Any]:
+    from apps.backend.runtime.utils import RemapKeysView
+    stripped_map = _strip_unet_prefixes_mapping(state_dict)
+    # Already LDM layout
+    if any(k.startswith("input_blocks.") for k in stripped_map.keys()):
+        return RemapKeysView(state_dict, stripped_map)
 
-    mapping = _build_diffusers_to_ldm_map(config)
-    canonical: Dict[str, Any] = {}
-    leftovers: Dict[str, Any] = {}
-
-    for key, value in stripped.items():
+    diff_to_ldm = _build_diffusers_to_ldm_map(config)
+    remap: Dict[str, str] = {}
+    leftovers: list[str] = []
+    for key in stripped_map.keys():
         if key.startswith((
             "input_blocks.",
             "output_blocks.",
@@ -268,26 +269,26 @@ def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[st
             "label_emb.",
             "add_embedding.",
         )):
-            canonical[key] = value
+            remap[key] = stripped_map[key]
             continue
-        target = mapping.get(key)
+        target = diff_to_ldm.get(key)
         if target is not None:
-            canonical[target] = value
+            remap[target] = stripped_map[key]
         else:
-            leftovers[key] = value
+            leftovers.append(key)
 
-    missing = [k for k in _ESSENTIAL_UNET_KEYS if k not in canonical]
+    missing = [k for k in _ESSENTIAL_UNET_KEYS if k not in remap]
     if missing:
-        sample = list(sorted(leftovers.keys()))[:10]
+        sample = list(sorted(leftovers))[:10]
         raise RuntimeError(
             "UNet state dict normalisation failed; missing essentials %s. Sample diffusers keys: %s"
             % (missing, sample)
         )
 
     if leftovers:
-        UNET_LOG.debug("UNet leftover keys (diffusers layout) count=%d sample=%s", len(leftovers), list(leftovers.keys())[:5])
+        UNET_LOG.debug("UNet leftover keys (diffusers layout) count=%d sample=%s", len(leftovers), leftovers[:5])
 
-    return canonical
+    return RemapKeysView(state_dict, remap)
 from apps.backend.runtime.models import api as model_api
 
 _LOG = logging.getLogger(__name__)

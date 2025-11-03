@@ -31,6 +31,10 @@
 **Cause + fix:** `Staged files contain trailing whitespace and missing EOF newlines; clean lint offenders before re-running.`
 **Correct command:** `git diff --staged --check`
 
+**Wrong command:** `apply_patch << 'PATCH'` with an `*** Add File:` section but file contents not prefixed with `+`
+**Cause + fix:** Patch grammar requires every line of a newly added file to start with `+`. The attempt omitted the `+` prefixes, so the tool reported an invalid hunk header. Re-ran with `+` on each content line.
+**Correct command:** `apply_patch << 'PATCH'` … `*** Add File: path` then lines prefixed by `+`.
+
 **Wrong command:** `rg -n "bnb_avaliable" apps/backend/runtime/ops`
 **Cause + fix:** `Typo in the search term; the code exposes "_BNB_AVAILABLE" (double 'l').`
 **Correct command:** `rg -n "_BNB_AVAILABLE" apps/backend/runtime/ops`

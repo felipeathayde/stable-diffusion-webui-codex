@@ -21,3 +21,4 @@ Status: Active
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.
 - 2025-11-02: Launcher/TUI now surfaces global device/dtype envs (`CODEX_DIFFUSION_*`, `CODEX_TE_*`, `CODEX_VAE_*`). CPU selections force fp32 automatically; per-model WAN device flags were retired.
 - 2025-11-02: launcher services emit explicit CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) and persist the selections in `apps/settings_values.json`; backend startup fails if the devices are missing.
+- 2025-11-03: TUI dtype selectors include an `auto` option that maps to unset envs, aligning with the backend AUTO precision ladder while still enforcing fp32 on CPU devices.

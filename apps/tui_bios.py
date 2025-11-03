@@ -193,7 +193,14 @@ class BIOSApp:
         attn_chunk = env.get("CODEX_ATTN_CHUNK_SIZE", "0")
         gguf_pol = env.get("CODEX_GGUF_CACHE_POLICY", "none")
         gguf_lim = env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0")
-        unet_dtype = env.get("CODEX_DIFFUSION_DTYPE", "fp16")
+        _unet_dtype_options = {"auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"}
+        _te_dtype_options = {"auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"}
+        _vae_dtype_options = {"auto", "fp16", "bf16", "fp32"}
+
+        unet_dtype = (env.get("CODEX_DIFFUSION_DTYPE", "auto") or "auto").strip().lower()
+        if unet_dtype not in _unet_dtype_options:
+            unet_dtype = "auto"
+        env["CODEX_DIFFUSION_DTYPE"] = unet_dtype
         diff_device_raw = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
         if diff_device_raw == "gpu":
             diff_device_raw = "cuda"
@@ -201,7 +208,10 @@ class BIOSApp:
         if diff_device_raw == "cpu" and unet_dtype != "fp32":
             unet_dtype = "fp32"
             env["CODEX_DIFFUSION_DTYPE"] = "fp32"
-        te_dtype = env.get("CODEX_TE_DTYPE", "fp16")
+        te_dtype = (env.get("CODEX_TE_DTYPE", "auto") or "auto").strip().lower()
+        if te_dtype not in _te_dtype_options:
+            te_dtype = "auto"
+        env["CODEX_TE_DTYPE"] = te_dtype
         te_device_raw = env.get("CODEX_TE_DEVICE", "").strip().lower()
         if te_device_raw == "gpu":
             te_device_raw = "cuda"
@@ -209,7 +219,10 @@ class BIOSApp:
         if te_device_raw == "cpu" and te_dtype != "fp32":
             te_dtype = "fp32"
             env["CODEX_TE_DTYPE"] = "fp32"
-        vae_dtype = env.get("CODEX_VAE_DTYPE", "fp16")
+        vae_dtype = (env.get("CODEX_VAE_DTYPE", "auto") or "auto").strip().lower()
+        if vae_dtype not in _vae_dtype_options:
+            vae_dtype = "auto"
+        env["CODEX_VAE_DTYPE"] = vae_dtype
         vae_device_raw = env.get("CODEX_VAE_DEVICE", "").strip().lower()
         if vae_device_raw == "gpu":
             vae_device_raw = "cuda"
@@ -513,8 +526,10 @@ class BIOSApp:
             if val is not None and val.isdigit():
                 env["CODEX_GGUF_CACHE_LIMIT_MB"] = val
         elif action == "cycle_unet_dtype":
-            order = ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
-            cur = env.get("CODEX_DIFFUSION_DTYPE", "fp16")
+            order = ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
+            cur = (env.get("CODEX_DIFFUSION_DTYPE", "auto") or "auto").strip().lower()
+            if cur not in order:
+                cur = "auto"
             if env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower() == "cpu":
                 env["CODEX_DIFFUSION_DTYPE"] = "fp32"
                 self.message = "Diffusion dtype locked to fp32 on CPU."
@@ -525,8 +540,10 @@ class BIOSApp:
                 i = 0
             env["CODEX_DIFFUSION_DTYPE"] = order[i]
         elif action == "cycle_te_dtype":
-            order = ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
-            cur = env.get("CODEX_TE_DTYPE", "fp16")
+            order = ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
+            cur = (env.get("CODEX_TE_DTYPE", "auto") or "auto").strip().lower()
+            if cur not in order:
+                cur = "auto"
             if env.get("CODEX_TE_DEVICE", "").strip().lower() == "cpu":
                 env["CODEX_TE_DTYPE"] = "fp32"
                 self.message = "Text Encoder dtype locked to fp32 on CPU."
@@ -537,8 +554,10 @@ class BIOSApp:
                 i = 0
             env["CODEX_TE_DTYPE"] = order[i]
         elif action == "cycle_vae_dtype":
-            order = ["fp16", "bf16", "fp32"]
-            cur = env.get("CODEX_VAE_DTYPE", "fp16")
+            order = ["auto", "fp16", "bf16", "fp32"]
+            cur = (env.get("CODEX_VAE_DTYPE", "auto") or "auto").strip().lower()
+            if cur not in order:
+                cur = "auto"
             if env.get("CODEX_VAE_DEVICE", "").strip().lower() == "cpu":
                 env["CODEX_VAE_DTYPE"] = "fp32"
                 self.message = "VAE dtype locked to fp32 on CPU."
@@ -971,9 +990,9 @@ class BIOSApp:
             'cycle_sdpa': ["flash", "mem_efficient", "math"],
             'cycle_attn_backend': ["torch-sdpa", "xformers", "sage"],
             'cycle_gguf_pol': ["none", "cpu_lru"],
-            'cycle_unet_dtype': ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
-            'cycle_te_dtype': ["fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
-            'cycle_vae_dtype': ["fp16", "bf16", "fp32"],
+            'cycle_unet_dtype': ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
+            'cycle_te_dtype': ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
+            'cycle_vae_dtype': ["auto", "fp16", "bf16", "fp32"],
             'cycle_swap_pol': ["never", "cpu", "shared"],
             'cycle_swap_mth': ["blocked", "async"],
             'select_diff_device': ["Auto", "GPU", "CPU"],
@@ -999,9 +1018,9 @@ class BIOSApp:
             'cycle_sdpa': self.meta.sdpa_policy,
             'cycle_attn_backend': env.get('CODEX_ATTENTION_BACKEND', 'torch-sdpa'),
             'cycle_gguf_pol': env.get('CODEX_GGUF_CACHE_POLICY', 'none'),
-            'cycle_unet_dtype': env.get('CODEX_DIFFUSION_DTYPE', 'fp16'),
-            'cycle_te_dtype': env.get('CODEX_TE_DTYPE', 'fp16'),
-            'cycle_vae_dtype': env.get('CODEX_VAE_DTYPE', 'fp16'),
+            'cycle_unet_dtype': (env.get('CODEX_DIFFUSION_DTYPE', 'auto') or 'auto').strip().lower(),
+            'cycle_te_dtype': (env.get('CODEX_TE_DTYPE', 'auto') or 'auto').strip().lower(),
+            'cycle_vae_dtype': (env.get('CODEX_VAE_DTYPE', 'auto') or 'auto').strip().lower(),
             'cycle_swap_pol': env.get('CODEX_SWAP_POLICY', 'cpu'),
             'cycle_swap_mth': env.get('CODEX_SWAP_METHOD', 'blocked'),
             'select_diff_device': _device_option_label('CODEX_DIFFUSION_DEVICE'),

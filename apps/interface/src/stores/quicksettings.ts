@@ -30,7 +30,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     { value: 'xpu', label: 'XPU' },
     { value: 'directml', label: 'DirectML' },
   ])
-  const currentDevice = ref<string>('cpu')
+  const currentDevice = ref<string>('cuda')
   const unetDtypeChoices = ref<string[]>([
     'Automatic',
     'Automatic (fp16 LoRA)',

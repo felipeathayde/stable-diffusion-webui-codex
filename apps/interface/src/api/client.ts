@@ -47,12 +47,16 @@ export function fetchModelInventory(): Promise<InventoryResponse> {
   return requestJson<InventoryResponse>('/models/inventory')
 }
 
-export function fetchSamplers(): Promise<SamplersResponse> {
-  return requestJson<SamplersResponse>('/samplers')
+export async function fetchSamplers(): Promise<SamplersResponse> {
+  const res = await requestJson<SamplersResponse>('/samplers')
+  const supported = res.samplers.filter((sampler) => sampler.supported !== false)
+  return { samplers: supported }
 }
 
-export function fetchSchedulers(): Promise<SchedulersResponse> {
-  return requestJson<SchedulersResponse>('/schedulers')
+export async function fetchSchedulers(): Promise<SchedulersResponse> {
+  const res = await requestJson<SchedulersResponse>('/schedulers')
+  const supported = res.schedulers.filter((scheduler) => scheduler.supported !== false)
+  return { schedulers: supported }
 }
 
 export function fetchVaes(): Promise<VaesResponse> {

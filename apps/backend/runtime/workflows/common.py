@@ -24,6 +24,7 @@ from apps.backend.runtime.sampling.catalog import (
     AUTO_TOKENS,
     SAMPLER_DEFAULT_SCHEDULER,
     SCHEDULER_ALIAS_TO_CANONICAL,
+    SUPPORTED_SCHEDULERS,
 )
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
@@ -38,6 +39,8 @@ def _normalize_scheduler_name(sampler: str | None, scheduler: str | None) -> str
     if raw in AUTO_TOKENS:
         raw = SAMPLER_DEFAULT_SCHEDULER.get(sampler_key, "automatic")
     canonical = SCHEDULER_ALIAS_TO_CANONICAL.get(raw, raw)
+    if canonical not in SUPPORTED_SCHEDULERS:
+        raise ValueError(f"Scheduler '{canonical}' is not supported")
     try:
         canonical_enum = SchedulerName.from_string(canonical)
     except ValueError as exc:

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Union
 
+from apps.backend.runtime.sampling.catalog import SAMPLER_ALIAS_TO_CANONICAL
+
 
 @dataclass
 class ApplyOutcome:
@@ -28,15 +30,10 @@ class SamplerKind(str, Enum):
     @staticmethod
     def from_string(name: str) -> "SamplerKind":
         key = (name or "automatic").strip().lower()
+        canonical = SAMPLER_ALIAS_TO_CANONICAL.get(key, key)
         for member in SamplerKind:
-            if key == member.value:
+            if canonical == member.value:
                 return member
-        aliases = {
-            "uni_pc": SamplerKind.UNI_PC,
-            "unipc": SamplerKind.UNI_PC,
-        }
-        if key in aliases:
-            return aliases[key]
         raise ValueError(f"Unsupported sampler '{name}'. Valid: {[m.value for m in SamplerKind]}")
 
 

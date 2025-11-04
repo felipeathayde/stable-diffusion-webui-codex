@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 from uuid import uuid4
 import logging
 
-from apps.backend.runtime.sampling.catalog import SCHEDULER_OPTIONS
+from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 
 # Make sure our project is on sys.path before any heavy third-party imports
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -1035,18 +1035,17 @@ def build_app() -> FastAPI:
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:
-        from apps.backend.engines.util.schedulers import SamplerKind
-        kinds = [
-            (SamplerKind.EULER.value, ["k_euler"]),
-            (SamplerKind.EULER_A.value, ["k_euler_a", "euler_a"]),
-            (SamplerKind.DDIM.value, ["ddim"]),
-            (SamplerKind.DPM2M.value, ["dpmpp_2m", "dpm++ 2m"]),
-            (SamplerKind.DPM2M_SDE.value, ["dpmpp_2m_sde", "dpm++ 2m sde"]),
-            (SamplerKind.PLMS.value, ["lms"]),
-            (SamplerKind.PNDM.value, ["pndm"]),
-            (SamplerKind.UNI_PC.value, ["unipc", "uni_pc"]),
-        ]
-        samplers = [{"name": n, "aliases": a, "options": {}} for n, a in kinds]
+        samplers = []
+        for entry in SAMPLER_OPTIONS:
+            samplers.append(
+                {
+                    "name": entry["name"],
+                    "label": entry.get("label", str(entry["name"]).title()),
+                    "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
+                    "supported": bool(entry.get("supported", True)),
+                    "options": {},
+                }
+            )
         return {"samplers": samplers}
 
     @app.get('/api/schedulers')
@@ -1057,6 +1056,7 @@ def build_app() -> FastAPI:
                     "name": entry["name"],
                     "label": entry.get("label", entry["name"].title()),
                     "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
+                    "supported": bool(entry.get("supported", True)),
                 }
                 for entry in SCHEDULER_OPTIONS
             ]

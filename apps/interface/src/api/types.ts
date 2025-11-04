@@ -9,7 +9,9 @@ export interface ModelInfo {
 
 export interface SamplerInfo {
   name: string
+  label?: string
   aliases: string[]
+  supported?: boolean
   options: Record<string, unknown>
 }
 
@@ -17,6 +19,7 @@ export interface SchedulerInfo {
   name: string
   label: string
   aliases: string[]
+  supported?: boolean
 }
 
 export interface ModelsResponse {

@@ -19,7 +19,7 @@ from apps.backend.services.options_service import OptionsService
 from apps.backend.services.progress_service import ProgressService
 from apps.backend.services.sampler_service import SamplerService
 from apps.backend.engines.util.schedulers import SamplerKind
-from apps.backend.runtime.sampling.catalog import SCHEDULER_OPTIONS
+from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 
 
 router = APIRouter(prefix="/codex/api/v1", tags=["codex-api"])
@@ -289,7 +289,16 @@ def list_samplers() -> Dict[str, Any]:
             normalized = _sampler_service.ensure_valid_sampler(name)
         except HTTPException:
             normalized = name
-        payload.append({"name": normalized, "aliases": aliases, "options": {}})
+        meta = next((entry for entry in SAMPLER_OPTIONS if entry["name"] == normalized), None)
+        label = meta.get("label") if meta else None
+        supported = meta.get("supported", True) if meta else True
+        payload.append({
+            "name": normalized,
+            "label": label or normalized.title(),
+            "aliases": aliases,
+            "supported": bool(supported),
+            "options": {},
+        })
     return {"samplers": payload}
 
 
@@ -301,6 +310,7 @@ def list_schedulers() -> Dict[str, Any]:
                 "name": entry["name"],
                 "label": entry.get("label", entry["name"].title()),
                 "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
+                "supported": bool(entry.get("supported", True)),
             }
             for entry in SCHEDULER_OPTIONS
         ]

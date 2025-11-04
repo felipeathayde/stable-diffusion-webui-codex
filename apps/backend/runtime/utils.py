@@ -2,7 +2,7 @@ import json
 import os
 
 from collections.abc import MutableMapping
-from typing import Dict
+from typing import Dict, Tuple
 
 import safetensors.torch
 import torch
@@ -116,7 +116,7 @@ class FilterPrefixView(MutableMapping):
             c += 1
         return c
 
-    def materialize(self) -> Dict[str, object]:
+    def materialize(self, *, return_mapping: bool = False):
         """Realise all tensors matching the prefix into a concrete dict.
 
         Prefers calling the underlying mapping's `materialize` helper when
@@ -124,13 +124,24 @@ class FilterPrefixView(MutableMapping):
         """
         materializer = getattr(self._base, "materialize", None)
         if callable(materializer):
-            return materializer(prefix=self._prefix, new_prefix=self._new_prefix)
+            try:
+                return materializer(prefix=self._prefix, new_prefix=self._new_prefix, return_mapping=return_mapping)
+            except TypeError:
+                result = materializer(prefix=self._prefix, new_prefix=self._new_prefix)
+                if return_mapping:
+                    raise
+                return result
 
         out: Dict[str, object] = {}
+        mapping: Dict[str, str] = {}
         for key in self._base.keys():
             if not key.startswith(self._prefix):
                 continue
-            out[self._present_key(key)] = self._base[key]
+            presented = self._present_key(key)
+            out[presented] = self._base[key]
+            mapping[presented] = key
+        if return_mapping:
+            return out, mapping
         return out
 
 
@@ -340,7 +351,13 @@ class LazySafetensorsDict(MutableMapping):
         for k in self:
             yield k, self[k]
 
-    def materialize(self, *, prefix: str = "", new_prefix: str = "") -> Dict[str, object]:
+    def materialize(
+        self,
+        *,
+        prefix: str = "",
+        new_prefix: str = "",
+        return_mapping: bool = False,
+    ):
         """Eagerly load tensors matching `prefix`, optionally re-prefixing keys."""
 
         def _translate(key: str) -> str:
@@ -352,6 +369,7 @@ class LazySafetensorsDict(MutableMapping):
             return key
 
         result: Dict[str, object] = {}
+        mapping: Dict[str, str] = {}
         with safe_open(self.filepath, framework="pt", device=self.device) as handle:
             for key in handle.keys():
                 if prefix and not key.startswith(prefix):
@@ -360,15 +378,21 @@ class LazySafetensorsDict(MutableMapping):
                     continue
                 if key in self._overlay:
                     continue
-                result[_translate(key)] = handle.get_tensor(key)
+                presented = _translate(key)
+                result[presented] = handle.get_tensor(key)
+                mapping[presented] = key
 
         for key, value in self._overlay.items():
             if prefix and not key.startswith(prefix):
                 continue
             if key in self._deleted:
                 continue
-            result[_translate(key)] = value
+            presented = _translate(key)
+            result[presented] = value
+            mapping[presented] = key
 
+        if return_mapping:
+            return result, mapping
         return result
 
 

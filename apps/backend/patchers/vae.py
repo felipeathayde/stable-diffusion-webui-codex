@@ -11,6 +11,26 @@ from .base import ModelPatcher
 logger = logging.getLogger("backend.patchers.vae")
 
 
+def _tensor_stats(label: str, tensor: torch.Tensor) -> None:
+    if tensor is None:
+        logger.info("[vae] %s: <none>", label)
+        return
+    with torch.no_grad():
+        data = tensor.detach()
+        stats_tensor = data.float()
+        logger.info(
+            "[vae] %s: shape=%s dtype=%s device=%s min=%.6f max=%.6f mean=%.6f std=%.6f",
+            label,
+            tuple(data.shape),
+            data.dtype,
+            data.device,
+            float(stats_tensor.min().item()),
+            float(stats_tensor.max().item()),
+            float(stats_tensor.mean().item()),
+            float(stats_tensor.std(unbiased=False).item()),
+        )
+
+
 class _NormalizingFirstStage:
     """Adapter that guarantees process_in/out around a diffusers VAE.
 
@@ -213,6 +233,7 @@ class VAE:
         return samples
 
     def decode_inner(self, samples_in):
+        _tensor_stats("decode_inner.latents", samples_in)
         if memory_management.VAE_ALWAYS_TILED:
             return self.decode_tiled(samples_in).to(self.output_device)
 
@@ -239,11 +260,13 @@ class VAE:
                     samples = samples_in[x:x + batch_number].to(self.vae_dtype).to(self.device)
                     decoded = self.first_stage_model.decode(samples).to(self.output_device).float()
                     pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
+                    _tensor_stats("decode_inner.batch_decoded", decoded)
             except memory_management.OOM_EXCEPTION:
                 print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
                 pixel_samples = self.decode_tiled_(samples_in)
 
             result = pixel_samples.to(self.output_device).movedim(1, -1)
+            _tensor_stats("decode_inner.result", result)
             if torch.isnan(result).any():
                 logger.warning(
                     "VAE decode produced NaNs on %s using dtype %s; requesting precision fallback.",

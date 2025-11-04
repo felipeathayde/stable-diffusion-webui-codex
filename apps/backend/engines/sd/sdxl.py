@@ -28,6 +28,23 @@ from apps.backend.runtime.workflows.common import latents_to_pil
 logger = logging.getLogger("backend.engines.sd.sdxl")
 
 
+def _tensor_stats(tensor: torch.Tensor) -> dict[str, object]:
+    if tensor is None:
+        return {"shape": None, "dtype": None, "device": None}
+    with torch.no_grad():
+        data = tensor.detach()
+        stats_tensor = data.float()
+        return {
+            "shape": tuple(data.shape),
+            "dtype": str(data.dtype),
+            "device": str(data.device),
+            "min": float(stats_tensor.min().item()),
+            "max": float(stats_tensor.max().item()),
+            "mean": float(stats_tensor.mean().item()),
+            "std": float(stats_tensor.std(unbiased=False).item()),
+        }
+
+
 def _opts() -> SimpleNamespace:
     return SimpleNamespace(
         sdxl_crop_left=0,
@@ -308,8 +325,11 @@ class StableDiffusionXL(CodexDiffusionEngine):
         memory_management.load_model_gpu(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
+            logger.info("[decode] latents stats=%s", _tensor_stats(x))
             sample = self.codex_objects.vae.first_stage_model.process_out(x)
+            logger.info("[decode] after_process_out=%s", _tensor_stats(sample))
             sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+            logger.info("[decode] decoded_tensor=%s", _tensor_stats(sample))
             return sample.to(x)
         finally:
             if unload_vae:

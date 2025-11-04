@@ -21,9 +21,11 @@ def load_state_dict(model, sd, ignore_errors=[], log_name=None, ignore_start=Non
         print(f'{log_name} Missing: {len(missing)} keys')
         # Sample a few keys at DEBUG for diagnostics
         _log.debug("%s missing_count=%d sample=%s", log_name, len(missing), missing[:10])
+        _log.info("%s missing_keys=%s", log_name, missing)
     if len(unexpected) > 0:
         print(f'{log_name} Unexpected: {len(unexpected)} keys')
         _log.debug("%s unexpected_count=%d sample=%s", log_name, len(unexpected), unexpected[:10])
+        _log.info("%s unexpected_keys=%s", log_name, unexpected)
     _trace.event("load_state_dict_done", name=log_name, missing=len(missing), unexpected=len(unexpected))
     return
 

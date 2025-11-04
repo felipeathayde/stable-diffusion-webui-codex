@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import MutableMapping
 from typing import Any, Dict
 
+import logging
+
 from apps.backend.runtime.models.state_dict import try_filter_state_dict
 from apps.backend.runtime.trace import event as trace_event
 
@@ -10,12 +12,19 @@ from .errors import MissingComponentError
 from .specs import ComponentState, ParserContext, ParserPlan
 
 
-def _materialize_component(component: ComponentState) -> Dict[str, Any]:
+_log = logging.getLogger("backend.model_parser")
+
+
+def _materialize_component(component: ComponentState, context: ParserContext) -> Dict[str, Any]:
     tensors = component.tensors
     materializer = getattr(tensors, "materialize", None)
     try:
         if callable(materializer):
-            result = materializer()
+            mapping: Dict[str, Any] = {}
+            try:
+                result, mapping = materializer(return_mapping=True)
+            except TypeError:
+                result = materializer()
             if not isinstance(result, dict):
                 result = dict(result)
             trace_event(
@@ -24,13 +33,28 @@ def _materialize_component(component: ComponentState) -> Dict[str, Any]:
                 keys=len(result),
                 strategy="lazy_materialize",
             )
-            return result
-        result = dict(tensors.items())
-        trace_event(
-            "parser_materialize",
-            component=component.name,
-            keys=len(result),
-            strategy="dict_copy",
+        else:
+            result = dict(tensors.items())
+            mapping = {}
+            trace_event(
+                "parser_materialize",
+                component=component.name,
+                keys=len(result),
+                strategy="dict_copy",
+            )
+        if not isinstance(mapping, dict) or not mapping:
+            mapping = {key: key for key in result.keys()}
+        value_sources = {id(value): mapping.get(key, key) for key, value in result.items()}
+        comp_meta = context.metadata.setdefault("component_keymap", {}).setdefault(
+            component.name,
+            {"pre": {}, "post": {}, "value_sources": {}},
+        )
+        comp_meta["pre"] = mapping
+        comp_meta["value_sources"] = value_sources
+        _log.info(
+            "[parser] component=%s pre_conversion_mapping=%s",
+            component.name,
+            mapping,
         )
         return result
     except Exception as exc:
@@ -76,11 +100,29 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             # Optional components may omit converters.
             continue
         trace_event("parser_convert_start", component=converter.component, function=converter.function.__name__)
-        materialized = _materialize_component(component)
+        materialized = _materialize_component(component, context)
         updated = converter.function(materialized, context)
         if not isinstance(updated, dict):
             raise TypeError(f"Converter {converter.function.__name__} must return dict, got {type(updated)!r}")
         component.tensors = updated
+        comp_meta = context.metadata.setdefault("component_keymap", {}).setdefault(
+            converter.component,
+            {"pre": {}, "post": {}, "value_sources": {}},
+        )
+        value_sources = comp_meta.get("value_sources", {})
+        post_mapping: Dict[str, Any] = {}
+        for key, value in updated.items():
+            source = value_sources.get(id(value))
+            if source is None:
+                source = comp_meta.get("pre", {}).get(key)
+            post_mapping[key] = source
+        comp_meta["post"] = post_mapping
+        trace_event("parser_keymap", component=converter.component, mapped=len(post_mapping))
+        _log.info(
+            "[parser] component=%s post_conversion_mapping=%s",
+            converter.component,
+            post_mapping,
+        )
         trace_event("parser_convert_done", component=converter.component, keys=len(component.tensors))
 
     # Run validations

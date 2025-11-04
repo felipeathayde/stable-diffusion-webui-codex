@@ -75,6 +75,34 @@ class Txt2ImgPipelineRunner:
     def __init__(self) -> None:
         self._logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
 
+    @staticmethod
+    def _log_tensor_stats(label: str, tensor: torch.Tensor | None) -> None:
+        logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
+        if tensor is None:
+            logger.info("[sampling] %s: <none>", label)
+            return
+        with torch.no_grad():
+            data = tensor.detach()
+            try:
+                stats_tensor = data.float()
+            except Exception:
+                stats_tensor = data
+            mean = float(stats_tensor.mean().item())
+            std = float(stats_tensor.std(unbiased=False).item())
+            min_value = float(stats_tensor.min().item())
+            max_value = float(stats_tensor.max().item())
+        logger.info(
+            "[sampling] %s: shape=%s dtype=%s device=%s min=%.6f max=%.6f mean=%.6f std=%.6f",
+            label,
+            tuple(data.shape),
+            data.dtype,
+            data.device,
+            min_value,
+            max_value,
+            mean,
+            std,
+        )
+
     # ------------------------------------------------------------------ public API
     @pipeline_trace
     def run(
@@ -190,6 +218,9 @@ class Txt2ImgPipelineRunner:
 
         if base_samples is None:
             raise RuntimeError("txt2img failed to produce initial samples")
+
+        self._log_tensor_stats("base_samples", base_samples)
+        self._log_tensor_stats("base_decoded", decoded_samples)
 
         return SamplingOutput(samples=base_samples, decoded=decoded_samples)
 

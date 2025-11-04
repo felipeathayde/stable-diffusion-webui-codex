@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 from uuid import uuid4
 import logging
 
+from apps.backend.runtime.sampling.catalog import SCHEDULER_OPTIONS
+
 # Make sure our project is on sys.path before any heavy third-party imports
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
@@ -1049,15 +1051,16 @@ def build_app() -> FastAPI:
 
     @app.get('/api/schedulers')
     def list_schedulers() -> Dict[str, Any]:
-        schedulers = [
-            {"name": "EulerDiscreteScheduler", "label": "Euler", "aliases": ["euler"]},
-            {"name": "EulerAncestralDiscreteScheduler", "label": "Euler a", "aliases": ["euler a"]},
-            {"name": "DDIMScheduler", "label": "DDIM", "aliases": ["ddim"]},
-            {"name": "DPMSolverMultistepScheduler", "label": "DPM++ 2M", "aliases": ["dpm++ 2m", "dpmpp_2m"]},
-            {"name": "LMSDiscreteScheduler", "label": "PLMS", "aliases": ["plms"]},
-            {"name": "PNDMScheduler", "label": "PNDM", "aliases": ["pndm"]},
-        ]
-        return {"schedulers": schedulers}
+        return {
+            "schedulers": [
+                {
+                    "name": entry["name"],
+                    "label": entry.get("label", entry["name"].title()),
+                    "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
+                }
+                for entry in SCHEDULER_OPTIONS
+            ]
+        }
 
     @app.get('/api/vaes')
     def list_vaes() -> Dict[str, Any]:

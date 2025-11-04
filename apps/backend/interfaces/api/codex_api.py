@@ -19,6 +19,7 @@ from apps.backend.services.options_service import OptionsService
 from apps.backend.services.progress_service import ProgressService
 from apps.backend.services.sampler_service import SamplerService
 from apps.backend.engines.util.schedulers import SamplerKind
+from apps.backend.runtime.sampling.catalog import SCHEDULER_OPTIONS
 
 
 router = APIRouter(prefix="/codex/api/v1", tags=["codex-api"])
@@ -296,12 +297,12 @@ def list_samplers() -> Dict[str, Any]:
 def list_schedulers() -> Dict[str, Any]:
     return {
         "schedulers": [
-            {"name": "EulerDiscreteScheduler", "label": "Euler", "aliases": ["euler"]},
-            {"name": "EulerAncestralDiscreteScheduler", "label": "Euler a", "aliases": ["euler a"]},
-            {"name": "DDIMScheduler", "label": "DDIM", "aliases": ["ddim"]},
-            {"name": "DPMSolverMultistepScheduler", "label": "DPM++ 2M", "aliases": ["dpm++ 2m", "dpmpp_2m"]},
-            {"name": "LMSDiscreteScheduler", "label": "PLMS", "aliases": ["plms"]},
-            {"name": "PNDMScheduler", "label": "PNDM", "aliases": ["pndm"]},
+            {
+                "name": entry["name"],
+                "label": entry.get("label", entry["name"].title()),
+                "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
+            }
+            for entry in SCHEDULER_OPTIONS
         ]
     }
 

@@ -20,6 +20,11 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.processing.conditioners import decode_latent_batch, txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
 from apps.backend.runtime.sampling.context import SchedulerName, build_sampling_context
+from apps.backend.runtime.sampling.catalog import (
+    AUTO_TOKENS,
+    SAMPLER_DEFAULT_SCHEDULER,
+    SCHEDULER_ALIAS_TO_CANONICAL,
+)
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 
@@ -27,45 +32,12 @@ logger = logging.getLogger(__name__)
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
-_SCHEDULER_AUTO_TOKENS = {
-    "",
-    "automatic",
-    "auto",
-    "use same scheduler",
-    "use same",
-    "same",
-    "default",
-}
-
-_SCHEDULER_ALIASES = {
-    "karras": "karras",
-    "exponential": "exponential",
-    "exp": "exponential",
-    "simple": "simple",
-    "linear": "simple",
-    "euler": "euler_discrete",
-    "euler a": "euler_discrete",
-}
-
-_SAMPLER_DEFAULT_SCHEDULER = {
-    "dpm++ 2m": "karras",
-    "dpm++ sde": "karras",
-    "dpm++ 2m sde": "exponential",
-    "dpm++ 2m sde heun": "exponential",
-    "dpm++ 2s a": "karras",
-    "dpm++ 3m sde": "exponential",
-    "dpm2": "karras",
-    "dpm2 a": "karras",
-    "restart": "karras",
-}
-
-
 def _normalize_scheduler_name(sampler: str | None, scheduler: str | None) -> str:
     sampler_key = (sampler or "").strip().lower()
     raw = (scheduler or "").strip().lower()
-    if raw in _SCHEDULER_AUTO_TOKENS:
-        raw = _SAMPLER_DEFAULT_SCHEDULER.get(sampler_key, "automatic")
-    canonical = _SCHEDULER_ALIASES.get(raw, raw)
+    if raw in AUTO_TOKENS:
+        raw = SAMPLER_DEFAULT_SCHEDULER.get(sampler_key, "automatic")
+    canonical = SCHEDULER_ALIAS_TO_CANONICAL.get(raw, raw)
     try:
         canonical_enum = SchedulerName.from_string(canonical)
     except ValueError as exc:

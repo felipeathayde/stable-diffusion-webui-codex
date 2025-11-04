@@ -10,6 +10,7 @@ import torch
 
 from apps.backend.core.rng import NoiseSettings, NoiseSourceKind
 from apps.backend.engines.util.schedulers import SamplerKind
+from apps.backend.runtime.sampling.catalog import SCHEDULER_ALIAS_TO_CANONICAL
 
 
 _LOGGER = logging.getLogger(__name__ + ".context")
@@ -34,25 +35,13 @@ class SchedulerName(str, Enum):
     @staticmethod
     def from_string(name: str | None) -> "SchedulerName":
         key = (name or "automatic").strip().lower()
-        # First, direct matches to canonical values
-        for member in SchedulerName:
-            if key == member.value:
-                return member
-        # Aliases expected from UI/API and diffusers
-        aliases = {
-            "euler": SchedulerName.EULER_DISCRETE,
-            "euler a": SchedulerName.EULER_DISCRETE,  # schedule identical; integrator differs
-            "eulerdiscretescheduler": SchedulerName.EULER_DISCRETE,
-            "eulerancestraldiscretescheduler": SchedulerName.EULER_DISCRETE,
-            "use same scheduler": SchedulerName.AUTOMATIC,
-            "auto": SchedulerName.AUTOMATIC,
-        }
-        if key in aliases:
-            return aliases[key]
-        raise ValueError(
-            f"Unsupported scheduler '{name}'. Supported: "
-            f"{[m.value for m in SchedulerName]} and common aliases (euler, euler a, EulerDiscreteScheduler)."
-        )
+        canonical = SCHEDULER_ALIAS_TO_CANONICAL.get(key, key)
+        try:
+            return SchedulerName(canonical)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported scheduler '{name}'. Supported: {[m.value for m in SchedulerName]}"
+            ) from exc
 
 
 def _karras_schedule(
@@ -198,4 +187,3 @@ def _exponential_schedule(
     ramp = torch.linspace(0, 1, steps, device=device, dtype=dtype)
     sigmas = sigma_max * (sigma_min / sigma_max) ** ramp
     return torch.cat([sigmas, torch.zeros(1, device=device, dtype=dtype)])
-

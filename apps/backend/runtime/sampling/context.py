@@ -29,6 +29,7 @@ class SchedulerName(str, Enum):
     SIMPLE = "simple"
     KARRAS = "karras"
     EULER_DISCRETE = "euler_discrete"
+    EXPONENTIAL = "exponential"
 
     @staticmethod
     def from_string(name: str | None) -> "SchedulerName":
@@ -43,6 +44,8 @@ class SchedulerName(str, Enum):
             "euler a": SchedulerName.EULER_DISCRETE,  # schedule identical; integrator differs
             "eulerdiscretescheduler": SchedulerName.EULER_DISCRETE,
             "eulerancestraldiscretescheduler": SchedulerName.EULER_DISCRETE,
+            "use same scheduler": SchedulerName.AUTOMATIC,
+            "auto": SchedulerName.AUTOMATIC,
         }
         if key in aliases:
             return aliases[key]
@@ -88,6 +91,8 @@ def build_sigma_schedule(
         # Euler in diffusers commonly uses Karras sigmas; we purposefully
         # build the Karras schedule here. Integrator is selected elsewhere.
         return _karras_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
+    if kind is SchedulerName.EXPONENTIAL:
+        return _exponential_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
     # Exhaustive by construction, but keep explicit guard for clarity
     raise ValueError(f"Unsupported scheduler '{scheduler_name}' after normalization")
 
@@ -180,3 +185,17 @@ __all__ = [
     "build_sigma_schedule",
     "SchedulerName",
 ]
+def _exponential_schedule(
+    steps: int,
+    sigma_min: float,
+    sigma_max: float,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if steps <= 0:
+        raise ValueError("steps must be >= 1")
+    ramp = torch.linspace(0, 1, steps, device=device, dtype=dtype)
+    sigmas = sigma_max * (sigma_min / sigma_max) ** ramp
+    return torch.cat([sigmas, torch.zeros(1, device=device, dtype=dtype)])
+

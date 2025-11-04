@@ -19,13 +19,58 @@ from apps.backend.patchers.token_merging import apply_token_merging
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.processing.conditioners import decode_latent_batch, txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
-from apps.backend.runtime.sampling.context import build_sampling_context
+from apps.backend.runtime.sampling.context import SchedulerName, build_sampling_context
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 
 logger = logging.getLogger(__name__)
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+_SCHEDULER_AUTO_TOKENS = {
+    "",
+    "automatic",
+    "auto",
+    "use same scheduler",
+    "use same",
+    "same",
+    "default",
+}
+
+_SCHEDULER_ALIASES = {
+    "karras": "karras",
+    "exponential": "exponential",
+    "exp": "exponential",
+    "simple": "simple",
+    "linear": "simple",
+    "euler": "euler_discrete",
+    "euler a": "euler_discrete",
+}
+
+_SAMPLER_DEFAULT_SCHEDULER = {
+    "dpm++ 2m": "karras",
+    "dpm++ sde": "karras",
+    "dpm++ 2m sde": "exponential",
+    "dpm++ 2m sde heun": "exponential",
+    "dpm++ 2s a": "karras",
+    "dpm++ 3m sde": "exponential",
+    "dpm2": "karras",
+    "dpm2 a": "karras",
+    "restart": "karras",
+}
+
+
+def _normalize_scheduler_name(sampler: str | None, scheduler: str | None) -> str:
+    sampler_key = (sampler or "").strip().lower()
+    raw = (scheduler or "").strip().lower()
+    if raw in _SCHEDULER_AUTO_TOKENS:
+        raw = _SAMPLER_DEFAULT_SCHEDULER.get(sampler_key, "automatic")
+    canonical = _SCHEDULER_ALIASES.get(raw, raw)
+    try:
+        canonical_enum = SchedulerName.from_string(canonical)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported scheduler '{scheduler}' for sampler '{sampler}'") from exc
+    return canonical_enum.value
 
 
 def build_prompt_context(processing: Any, prompts: Sequence[str]) -> PromptContext:
@@ -105,9 +150,15 @@ def build_sampling_plan(
     steps = int(getattr(processing, "steps", 20) or 20)
     sampler_name = getattr(processing, "sampler_name", None)
     scheduler_name = getattr(processing, "scheduler", None)
+    try:
+        normalized_scheduler = _normalize_scheduler_name(sampler_name, scheduler_name)
+    except ValueError as exc:
+        logger.warning("Invalid scheduler '%s' for sampler '%s'; falling back to automatic.", scheduler_name, sampler_name)
+        normalized_scheduler = SchedulerName.AUTOMATIC.value
+    processing.scheduler = normalized_scheduler
     return SamplingPlan(
         sampler_name=sampler_name,
-        scheduler_name=scheduler_name,
+        scheduler_name=normalized_scheduler,
         steps=steps,
         guidance_scale=guidance,
         seeds=list(seeds),

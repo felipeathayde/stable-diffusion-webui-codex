@@ -78,11 +78,7 @@ def _materialize_component(component: ComponentState, context: ParserContext) ->
                 "mapping": mapping,
             }
         )
-        _log.info(
-            "[parser] component=%s pre_conversion_mapping=%s",
-            component.name,
-            mapping,
-        )
+        _log.info("[parser] component=%s pre_conversion_keys=%d", component.name, len(mapping))
         return result
     except Exception as exc:
         raise RuntimeError(f"Failed to materialize component '{component.name}'") from exc
@@ -158,11 +154,7 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
                 "mapping": post_mapping,
             }
         )
-        _log.info(
-            "[parser] component=%s post_conversion_mapping=%s",
-            converter.component,
-            post_mapping,
-        )
+        _log.info("[parser] component=%s post_conversion_keys=%d", converter.component, len(post_mapping))
         trace_event("parser_convert_done", component=converter.component, keys=len(component.tensors))
 
     # Run validations

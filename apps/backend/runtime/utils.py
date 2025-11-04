@@ -2,6 +2,7 @@ import json
 import os
 
 from collections.abc import MutableMapping
+from typing import Dict
 
 import safetensors.torch
 import torch
@@ -84,6 +85,16 @@ class FilterPrefixView(MutableMapping):
                 return k
             return self._prefix + k
 
+    def _present_key(self, base_key: str) -> str:
+        if not self._prefix:
+            if self._new_prefix:
+                return f"{self._new_prefix}{base_key}"
+            return base_key
+        suffix = base_key[len(self._prefix):]
+        if self._new_prefix:
+            return f"{self._new_prefix}{suffix}"
+        return suffix
+
     def __getitem__(self, k: str):
         return self._base[self._to_base_key(k)]
 
@@ -104,6 +115,23 @@ class FilterPrefixView(MutableMapping):
         for _ in self.__iter__():
             c += 1
         return c
+
+    def materialize(self) -> Dict[str, object]:
+        """Realise all tensors matching the prefix into a concrete dict.
+
+        Prefers calling the underlying mapping's `materialize` helper when
+        available so SafeTensors files are streamed with a single handle open.
+        """
+        materializer = getattr(self._base, "materialize", None)
+        if callable(materializer):
+            return materializer(prefix=self._prefix, new_prefix=self._new_prefix)
+
+        out: Dict[str, object] = {}
+        for key in self._base.keys():
+            if not key.startswith(self._prefix):
+                continue
+            out[self._present_key(key)] = self._base[key]
+        return out
 
 
 class RemapKeysView(MutableMapping):
@@ -311,6 +339,37 @@ class LazySafetensorsDict(MutableMapping):
     def items(self):
         for k in self:
             yield k, self[k]
+
+    def materialize(self, *, prefix: str = "", new_prefix: str = "") -> Dict[str, object]:
+        """Eagerly load tensors matching `prefix`, optionally re-prefixing keys."""
+
+        def _translate(key: str) -> str:
+            suffix = key[len(prefix):] if prefix and key.startswith(prefix) else key
+            if new_prefix:
+                return f"{new_prefix}{suffix}"
+            if prefix:
+                return suffix
+            return key
+
+        result: Dict[str, object] = {}
+        with safe_open(self.filepath, framework="pt", device=self.device) as handle:
+            for key in handle.keys():
+                if prefix and not key.startswith(prefix):
+                    continue
+                if key in self._deleted:
+                    continue
+                if key in self._overlay:
+                    continue
+                result[_translate(key)] = handle.get_tensor(key)
+
+        for key, value in self._overlay.items():
+            if prefix and not key.startswith(prefix):
+                continue
+            if key in self._deleted:
+                continue
+            result[_translate(key)] = value
+
+        return result
 
 
 

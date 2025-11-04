@@ -246,7 +246,7 @@ base = {
     'conditioner.embedders.0.bias': 2,
     'other': 3,
 }
-print(dict(FilterPrefixView(base, 'conditioner.embedders.0.', '')))**
+print(dict(FilterPrefixView(base, 'conditioner.embedders.0.', '')))
 PY`
 **Wrong command:** `python - <<'PY'
 from pathlib import Path
@@ -285,3 +285,9 @@ path = Path('COMMON_MISTAKES.md')
 text = path.read_text()
 print(text.count("FilterPrefixView"))
 PY`
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** `Traversal picks up ignored __pycache__ entries, so git add bails. Add --ignore-errors or stage explicit files instead of sweeping.`
+**Correct command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** `Even with --ignore-errors, git stops when xargs feeds ignored paths; prune __pycache__/refs before piping to git add.`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -not -path './.refs/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`

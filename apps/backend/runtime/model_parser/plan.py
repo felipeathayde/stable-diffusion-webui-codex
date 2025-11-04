@@ -10,6 +10,33 @@ from .errors import MissingComponentError
 from .specs import ComponentState, ParserContext, ParserPlan
 
 
+def _materialize_component(component: ComponentState) -> Dict[str, Any]:
+    tensors = component.tensors
+    materializer = getattr(tensors, "materialize", None)
+    try:
+        if callable(materializer):
+            result = materializer()
+            if not isinstance(result, dict):
+                result = dict(result)
+            trace_event(
+                "parser_materialize",
+                component=component.name,
+                keys=len(result),
+                strategy="lazy_materialize",
+            )
+            return result
+        result = dict(tensors.items())
+        trace_event(
+            "parser_materialize",
+            component=component.name,
+            keys=len(result),
+            strategy="dict_copy",
+        )
+        return result
+    except Exception as exc:
+        raise RuntimeError(f"Failed to materialize component '{component.name}'") from exc
+
+
 def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, signature) -> ParserContext:
     context = ParserContext(root_state=state_dict, signature=signature, plan=plan)
 
@@ -49,7 +76,8 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             # Optional components may omit converters.
             continue
         trace_event("parser_convert_start", component=converter.component, function=converter.function.__name__)
-        updated = converter.function(dict(component.tensors.items()), context)
+        materialized = _materialize_component(component)
+        updated = converter.function(materialized, context)
         if not isinstance(updated, dict):
             raise TypeError(f"Converter {converter.function.__name__} must return dict, got {type(updated)!r}")
         component.tensors = updated

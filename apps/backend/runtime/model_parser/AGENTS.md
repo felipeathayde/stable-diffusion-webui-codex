@@ -21,3 +21,6 @@ Status: Draft
 ## TODO
 - Extend planners to remaining diffusion/video families (e.g., Stable Cascade, Wan camera/HuMo).
 - Provide synthetic/unit test coverage for parser plans.
+
+## Notes
+- 2025-11-04: Parser execution now materializes lazy safetensor components via dedicated helpers before running converters, preventing repeated file handle churn on Windows.

@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, MutableSequence, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, MutableSequence, Optional, Sequence, Set, Tuple
 
 import torch
 
@@ -225,6 +225,8 @@ class _LoadedModelRecord:
     """Internal bookkeeping for loaded models."""
 
     model: object
+    loader: object | None
+    base_module: torch.nn.Module | None
     load_device: torch.device
     offload_device: torch.device
     storage_dtype: torch.dtype
@@ -831,42 +833,131 @@ class CodexMemoryManager:
                 return record
         return None
 
+    # ------------------------------------------------------------------ load target helpers
+    def _extract_module(self, obj: object, *, visited: Optional[Set[int]] = None) -> torch.nn.Module | None:
+        visited = visited or set()
+        stack: List[object] = [obj]
+        while stack:
+            current = stack.pop()
+            if current is None:
+                continue
+            ident = id(current)
+            if ident in visited:
+                continue
+            visited.add(ident)
+            if isinstance(current, torch.nn.Module):
+                return current
+            for attr in (
+                "model",
+                "module",
+                "_module",
+                "target",
+                "wrapped",
+                "_wrapped",
+                "inner",
+                "inner_model",
+                "base",
+                "_base",
+                "first_stage_model",
+            ):
+                if not hasattr(current, attr):
+                    continue
+                try:
+                    value = getattr(current, attr)
+                except Exception:
+                    continue
+                if value is not None and value is not current:
+                    stack.append(value)
+        return None
+
+    def _resolve_loader(self, model: object) -> tuple[object, torch.nn.Module]:
+        candidate_attrs = (
+            None,
+            "patcher",
+            "loader",
+            "wrapped",
+            "target",
+            "model",
+            "module",
+        )
+
+        for attr in candidate_attrs:
+            candidate = model if attr is None else getattr(model, attr, None)
+            if candidate is None:
+                continue
+            loader, module = self._classify_loader(candidate)
+            if loader is not None and module is not None:
+                return loader, module
+
+        module = self._extract_module(model)
+        if module is not None:
+            return model, module
+        raise MemoryLoadError(
+            f"Unable to resolve a loadable module from {type(model).__name__}; "
+            "expected a ModelPatcher, torch.nn.Module, or wrapper exposing one."
+        )
+
+    def _classify_loader(self, candidate: object) -> tuple[object | None, torch.nn.Module | None]:
+        module = self._extract_module(candidate)
+        if module is None:
+            return None, None
+        if hasattr(candidate, "codex_patch_model") or hasattr(candidate, "model_patches_to"):
+            return candidate, module
+        if isinstance(candidate, torch.nn.Module):
+            return candidate, module
+        return None, module
+
     def _create_record(self, model: object) -> _LoadedModelRecord:
         load_device = getattr(model, "load_device", self._primary_device)
         offload_device = getattr(model, "offload_device", self.get_offload_device(DeviceRole.CORE))
         storage_dtype_getter = getattr(model, "model_dtype", None)
         storage_dtype = storage_dtype_getter() if callable(storage_dtype_getter) else torch.float32
+        loader, base_module = self._resolve_loader(model)
         return _LoadedModelRecord(
             model=model,
+            loader=loader,
+            base_module=base_module,
             load_device=load_device,
             offload_device=offload_device,
             storage_dtype=storage_dtype,
         )
 
     def _load_record(self, record: _LoadedModelRecord) -> None:
-        model = record.model
+        loader = record.loader or record.model
+        module = record.base_module or self._extract_module(loader)
+        if module is None:
+            raise MemoryLoadError(
+                f"Failed to resolve base module for {type(record.model).__name__}; cannot compute memory usage."
+            )
+        # Ensure cache of module for downstream accounting
+        record.base_module = module
         try:
             if smart_offload_enabled() and getattr(record.load_device, "type", "") == "cuda":
                 torch.cuda.empty_cache()
-            model.model_patches_to(record.load_device)
-            model.model_patches_to(record.storage_dtype)
-            model.codex_patch_model(record.load_device)
-            if hasattr(model, "current_device"):
-                setattr(model, "current_device", record.load_device)
-            record.inclusive_memory = self.module_size(model.model)
+            if hasattr(loader, "model_patches_to"):
+                loader.model_patches_to(record.load_device)
+                loader.model_patches_to(record.storage_dtype)
+            elif hasattr(loader, "to"):
+                loader.to(device=record.load_device)
+                if record.storage_dtype is not None:
+                    loader.to(dtype=record.storage_dtype)
+            if hasattr(loader, "codex_patch_model"):
+                loader.codex_patch_model(record.load_device)
+            if hasattr(loader, "current_device"):
+                setattr(loader, "current_device", record.load_device)
+            record.inclusive_memory = self.module_size(module)
             record.exclusive_memory = record.inclusive_memory
             record.model_accelerated = True
-            patcher_target = getattr(model, "model", model)
-            target_name = patcher_target.__class__.__name__
+            target_name = module.__class__.__name__
             compute_dtype = None
             try:
-                dtype_attr = getattr(patcher_target, "computation_dtype", None)
+                dtype_attr = getattr(module, "computation_dtype", None)
                 if callable(dtype_attr):
                     compute_dtype = dtype_attr()
                 elif dtype_attr is not None:
                     compute_dtype = dtype_attr
-                elif hasattr(patcher_target, "dtype"):
-                    compute_dtype = getattr(patcher_target, "dtype")
+                elif hasattr(module, "dtype"):
+                    compute_dtype = getattr(module, "dtype")
             except Exception:  # pragma: no cover
                 compute_dtype = None
 
@@ -879,15 +970,18 @@ class CodexMemoryManager:
                 record.inclusive_memory,
             )
         except self._oom_exception as exc:
-            raise MemoryLoadError(f"OOM while loading {model}: {exc}") from exc
+            raise MemoryLoadError(f"OOM while loading {record.model}: {exc}") from exc
         except Exception as exc:
-            raise MemoryLoadError(f"Failed to load model {model}: {exc}") from exc
+            raise MemoryLoadError(f"Failed to load model {record.model}: {exc}") from exc
 
     def _unload_record(self, record: _LoadedModelRecord, *, avoid_model_moving: bool = False) -> None:
         try:
-            if hasattr(record.model, "codex_unpatch_model"):
+            loader = record.loader or record.model
+            if hasattr(loader, "codex_unpatch_model"):
                 offload_device = record.offload_device if not avoid_model_moving else self._cpu_device
-                record.model.codex_unpatch_model(offload_device)
+                loader.codex_unpatch_model(offload_device)
+            elif hasattr(loader, "to") and not avoid_model_moving:
+                loader.to(self._cpu_device)
             record.model_accelerated = False
             logger.debug("Unloaded model %s (avoid_move=%s).", record.model, avoid_model_moving)
         except Exception as exc:  # pragma: no cover
@@ -906,7 +1000,13 @@ class CodexMemoryManager:
     ) -> None:
         total_required: dict[torch.device, int] = {}
         for record in records:
-            record.inclusive_memory = self.module_size(record.model.model)
+            module = record.base_module or self._extract_module(record.loader or record.model)
+            if module is None:
+                raise MemoryLoadError(
+                    f"Unable to resolve module for {type(record.model).__name__} while allocating memory."
+                )
+            record.base_module = module
+            record.inclusive_memory = self.module_size(module)
             record.exclusive_memory = record.inclusive_memory
             total_required[record.load_device] = total_required.get(record.load_device, 0) + record.inclusive_memory
 

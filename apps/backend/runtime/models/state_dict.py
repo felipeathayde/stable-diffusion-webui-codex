@@ -1,10 +1,24 @@
 import torch
 import logging
+import json
+from pathlib import Path
 
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.utils import FilterPrefixView
 
 _log = logging.getLogger("backend.state_dict")
+_KEYMAP_DIR = Path("logs")
+_KEYMAP_PATH = _KEYMAP_DIR / "parser_keymap.log"
+
+
+def _append_key_record(record: dict[str, object]) -> None:
+    try:
+        _KEYMAP_DIR.mkdir(parents=True, exist_ok=True)
+        with _KEYMAP_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, indent=2))
+            handle.write("\n")
+    except Exception:
+        _log.debug("Failed to append key record", exc_info=True)
 
 
 def load_state_dict(model, sd, ignore_errors=[], log_name=None, ignore_start=None):
@@ -22,10 +36,22 @@ def load_state_dict(model, sd, ignore_errors=[], log_name=None, ignore_start=Non
         # Sample a few keys at DEBUG for diagnostics
         _log.debug("%s missing_count=%d sample=%s", log_name, len(missing), missing[:10])
         _log.info("%s missing_keys=%s", log_name, missing)
+        _append_key_record({
+            "component": log_name,
+            "stage": "load_missing",
+            "count": len(missing),
+            "keys": missing,
+        })
     if len(unexpected) > 0:
         print(f'{log_name} Unexpected: {len(unexpected)} keys')
         _log.debug("%s unexpected_count=%d sample=%s", log_name, len(unexpected), unexpected[:10])
         _log.info("%s unexpected_keys=%s", log_name, unexpected)
+        _append_key_record({
+            "component": log_name,
+            "stage": "load_unexpected",
+            "count": len(unexpected),
+            "keys": unexpected,
+        })
     _trace.event("load_state_dict_done", name=log_name, missing=len(missing), unexpected=len(unexpected))
     return
 
@@ -162,8 +188,20 @@ def safe_load_state_dict(model, sd, *, log_name=None):
     if missing:
         print(f'{log_name} Missing: {len(missing)} keys')
         _log.debug("%s missing_count=%d sample=%s", log_name, len(missing), missing[:10])
+        _append_key_record({
+            "component": log_name,
+            "stage": "safe_load_missing",
+            "count": len(missing),
+            "keys": missing,
+        })
     if unexpected:
         print(f'{log_name} Unexpected: {len(unexpected)} keys')
         _log.debug("%s unexpected_count=%d sample=%s", log_name, len(unexpected), unexpected[:10])
+        _append_key_record({
+            "component": log_name,
+            "stage": "safe_load_unexpected",
+            "count": len(unexpected),
+            "keys": unexpected,
+        })
     _trace.event("load_state_dict_done", name=log_name, missing=len(missing), unexpected=len(unexpected))
     return missing, unexpected

@@ -4,6 +4,8 @@ from collections.abc import MutableMapping
 from typing import Any, Dict
 
 import logging
+import json
+from pathlib import Path
 
 from apps.backend.runtime.models.state_dict import try_filter_state_dict
 from apps.backend.runtime.trace import event as trace_event
@@ -13,6 +15,18 @@ from .specs import ComponentState, ParserContext, ParserPlan
 
 
 _log = logging.getLogger("backend.model_parser")
+_KEYMAP_DIR = Path("logs")
+_KEYMAP_PATH = _KEYMAP_DIR / "parser_keymap.log"
+
+
+def _append_keymap_record(record: dict[str, Any]) -> None:
+    try:
+        _KEYMAP_DIR.mkdir(parents=True, exist_ok=True)
+        with _KEYMAP_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, indent=2))
+            handle.write("\n")
+    except Exception:
+        _log.debug("Failed to append keymap record", exc_info=True)
 
 
 def _materialize_component(component: ComponentState, context: ParserContext) -> Dict[str, Any]:
@@ -51,6 +65,19 @@ def _materialize_component(component: ComponentState, context: ParserContext) ->
         )
         comp_meta["pre"] = mapping
         comp_meta["value_sources"] = value_sources
+        try:
+            signature_family = getattr(context.signature, "family", None)
+        except Exception:
+            signature_family = None
+        _append_keymap_record(
+            {
+                "component": component.name,
+                "stage": "pre",
+                "count": len(mapping),
+                "signature_family": getattr(signature_family, "value", signature_family),
+                "mapping": mapping,
+            }
+        )
         _log.info(
             "[parser] component=%s pre_conversion_mapping=%s",
             component.name,
@@ -118,6 +145,19 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             post_mapping[key] = source
         comp_meta["post"] = post_mapping
         trace_event("parser_keymap", component=converter.component, mapped=len(post_mapping))
+        try:
+            signature_family = getattr(context.signature, "family", None)
+        except Exception:
+            signature_family = None
+        _append_keymap_record(
+            {
+                "component": converter.component,
+                "stage": "post",
+                "count": len(post_mapping),
+                "signature_family": getattr(signature_family, "value", signature_family),
+                "mapping": post_mapping,
+            }
+        )
         _log.info(
             "[parser] component=%s post_conversion_mapping=%s",
             converter.component,

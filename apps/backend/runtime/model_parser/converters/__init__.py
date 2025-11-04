@@ -8,6 +8,7 @@ from .clip import (
     convert_sdxl_clip_l,
 )
 from .t5 import convert_t5_encoder, convert_umt5_encoder, convert_t5xxl_encoder
+from .unet import normalize_label_embeddings
 
 __all__ = [
     "convert_clip",
@@ -18,4 +19,5 @@ __all__ = [
     "convert_t5_encoder",
     "convert_umt5_encoder",
     "convert_t5xxl_encoder",
+    "normalize_label_embeddings",
 ]

@@ -8,6 +8,7 @@ from apps.backend.runtime.model_registry.specs import ModelSignature
 
 from ..builders import build_estimated_config, register_text_encoder
 from ..converters.clip import convert_sdxl_clip_g, convert_sdxl_clip_l
+from ..converters.unet import normalize_label_embeddings
 from ..errors import ValidationError
 from ..specs import (
     ParserPlan,
@@ -28,6 +29,7 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
             SplitSpec(name="text_encoder_2", prefixes=("conditioner.embedders.1.model.",)),
         ],
         converters=(
+            ConverterSpec(component="unet", function=_normalize_unet_label_embeddings),
             ConverterSpec(component="text_encoder", function=_convert_clip_l),
             ConverterSpec(component="text_encoder_2", function=_convert_clip_g),
         ),
@@ -86,3 +88,5 @@ def _validate_clip_g(context):
         logging.getLogger("backend.model_parser.sdxl").warning(
             "SDXL CLIP-G validation: missing %s; proceeding with partial encoder.", key
         )
+def _normalize_unet_label_embeddings(tensors: Dict[str, torch.Tensor], context):
+    return normalize_label_embeddings(tensors)

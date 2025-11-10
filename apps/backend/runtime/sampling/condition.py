@@ -1,6 +1,13 @@
-"""Condition helpers for diffusion sampling."""
+"""Condition helpers for diffusion sampling.
+
+Invariants (enforced):
+- For dict-based conditioning (SDXL/SD3+), keys must include 'crossattn' (B,S,C) and 'vector' (B,V).
+- For tensor-based conditioning (SD15/SD20 legacy), input must be (B,S,C) and is treated as cross-attn only.
+- No silent coercions: violations raise ValueError with the root cause.
+"""
 
 import math
+import logging
 import torch
 
 
@@ -96,6 +103,9 @@ def compile_conditions(cond):
         return None
 
     if isinstance(cond, torch.Tensor):
+        # Legacy path: only cross-attn provided.
+        if cond.ndim != 3:
+            raise ValueError(f"cross-attn tensor must be 3D (B,S,C); got shape={tuple(cond.shape)}")
         result = dict(
             cross_attn=cond,
             model_conds=dict(
@@ -104,8 +114,21 @@ def compile_conditions(cond):
         )
         return [result]
 
+    # Dict-based path: require keys and shapes
+    if not isinstance(cond, dict):
+        raise TypeError(f"conditioning must be Tensor or dict; got {type(cond).__name__}")
+    if 'crossattn' not in cond:
+        raise ValueError("conditioning dict missing required key 'crossattn'")
+    if 'vector' not in cond:
+        raise ValueError("conditioning dict missing required key 'vector' (pooled/global embedding)")
+
     cross_attn = cond['crossattn']
     pooled_output = cond['vector']
+
+    if not isinstance(cross_attn, torch.Tensor) or cross_attn.ndim != 3:
+        raise ValueError(f"'crossattn' must be a 3D tensor (B,S,C); got {type(cross_attn).__name__} shape={getattr(cross_attn,'shape',None)}")
+    if not isinstance(pooled_output, torch.Tensor) or pooled_output.ndim != 2:
+        raise ValueError(f"'vector' must be a 2D tensor (B,V); got {type(pooled_output).__name__} shape={getattr(pooled_output,'shape',None)}")
 
     result = dict(
         cross_attn=cross_attn,
@@ -119,6 +142,11 @@ def compile_conditions(cond):
     if 'guidance' in cond:
         result['model_conds']['guidance'] = Condition(cond['guidance'])
 
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "compiled conditions: cross_attn=%s pooled=%s",
+            tuple(cross_attn.shape), tuple(pooled_output.shape)
+        )
     return [result]
 
 
@@ -143,3 +171,4 @@ def compile_weighted_conditions(cond, weights):
         results += h
 
     return results
+logger = logging.getLogger("backend.runtime.sampling.condition")

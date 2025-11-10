@@ -21,6 +21,14 @@
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.
 - The predictor provided by the model must expose `sigma_min`/`sigma_max` scalars; upstream code validates this.
 - This module does not import from `.legacy/` and does not depend on external schedulers.
+- `compile_conditions(cond)` invariants:
+  - `cond=None` → `None` (semântica preservada).
+  - `cond` tensor → tratado como cross-attn (B,S,C); erro se `ndim!=3`.
+  - `cond` dict → deve conter `crossattn` (B,S,C) e `vector` (B,V); sem fallback.
+  - Produz `model_conds` com chaves canônicas: `c_crossattn`, `y` e, quando aplicável, `c_concat`.
+
+### Logging
+- DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
 
 ## Future Work (not yet ported)
 - Additional schedule families (e.g., EDM/FlowMatch variants) can be added as new `SchedulerName` values with explicit behavior.

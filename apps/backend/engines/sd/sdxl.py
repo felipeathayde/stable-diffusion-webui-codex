@@ -164,23 +164,38 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
 
-        # Optional conditioning diagnostics
+        # Optional conditioning diagnostics (shapes/dtypes/devices + norms)
         try:
             if getattr(backend_args.args, "debug_conditioning", False):
+                def _shape(t):
+                    return tuple(t.shape) if isinstance(t, torch.Tensor) else None
+
+                def _dtype(t):
+                    return str(t.dtype) if isinstance(t, torch.Tensor) else None
+
+                def _device(t):
+                    return str(t.device) if isinstance(t, torch.Tensor) else None
+
+                def _norm(t):
+                    return float(t.detach().abs().mean().item()) if isinstance(t, torch.Tensor) else None
+
                 ca = cond.get("crossattn") if isinstance(cond, dict) else None
                 va = cond.get("vector") if isinstance(cond, dict) else None
                 ua = uncond.get("crossattn") if isinstance(uncond, dict) else None
                 uv = uncond.get("vector") if isinstance(uncond, dict) else None
 
-                def _n(t):
-                    return float(t.detach().abs().mean().item()) if isinstance(t, torch.Tensor) else -1.0
-
                 logger.info(
-                    "[sdxl] cond norms: cross=%.4f vec=%.4f | uncond: cross=%.4f vec=%.4f",
-                    _n(ca), _n(va), _n(ua), _n(uv),
+                    "[sdxl] cond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f",
+                    _shape(ca), _dtype(ca), _device(ca), (_norm(ca) or 0.0),
+                    _shape(va), _dtype(va), _device(va), (_norm(va) or 0.0),
                 )
-        except Exception:
-            pass
+                logger.info(
+                    "[sdxl] uncond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f",
+                    _shape(ua), _dtype(ua), _device(ua), (_norm(ua) or 0.0),
+                    _shape(uv), _dtype(uv), _device(uv), (_norm(uv) or 0.0),
+                )
+        except Exception as _cond_diag_exc:
+            logger.debug("[sdxl] conditioning diagnostics skipped: %s", _cond_diag_exc)
 
         # Run pipeline on a worker thread while streaming progress from backend_state
         result: dict[str, Any] = {"latents": None, "error": None}

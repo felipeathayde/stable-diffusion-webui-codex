@@ -339,7 +339,21 @@ class UNet2DConditionModel(nn.Module, ConfigMixin):
         transformer_options["transformer_index"] = 0
         transformer_patches = transformer_options.get("patches", {})
         block_modifiers = transformer_options.get("block_modifiers", [])
-        assert (y is not None) == (self.num_classes is not None)
+        # Explicit invariant: ADM/class conditioning must match `num_classes`.
+        if (y is not None) != (self.num_classes is not None):
+            raise ValueError(
+                f"UNet forward ADM mismatch: num_classes={self.num_classes} but y_present={y is not None}."
+            )
+        # Optional debug of context feature dim
+        try:
+            from logging import getLogger
+            _logger = getLogger("backend.runtime.unet")
+            if _logger.isEnabledFor(10):  # DEBUG
+                _cd = getattr(self, 'codex_config', None)
+                _ctx = getattr(_cd, 'context_dim', None) if _cd is not None else None
+                _logger.debug("UNet.forward: context_dim=%s x=%s t=%s y=%s", _ctx, tuple(x.shape), getattr(timesteps,'shape',None), getattr(y,'shape',None))
+        except Exception:
+            pass
         hs: List[torch.Tensor] = []
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False).to(x.dtype)
         emb = self.time_embed(t_emb)

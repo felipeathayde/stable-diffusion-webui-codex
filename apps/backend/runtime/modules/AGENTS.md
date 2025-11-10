@@ -16,6 +16,7 @@ Status: Active
   - Se int → `C` deve ser exatamente igual a este valor.
   - Se sequência → `C` deve pertencer ao conjunto informado.
 - Se `diffusion_model.num_classes` não é `None`, `y` deve estar presente (Tensor 2D) — sem fallback.
+- Se `adm_in_channels` (em `codex_config`) estiver definido (>0), `y.shape[1]` deve ser igual a este valor.
 
 ## Logging
 - Logger `backend.runtime.k_model` em nível DEBUG registra shapes de `x`, `t`, `context` e `y` antes do forward do UNet.

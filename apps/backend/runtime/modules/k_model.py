@@ -82,6 +82,19 @@ class KModel(torch.nn.Module):
                 f"but y_present={has_y}. Ensure SDXL pooled vector is wired as 'y'."
             )
 
+        # If present, enforce y feature size to match ADM channels declared in config
+        if needs_y and has_y:
+            y = kwargs["y"]
+            adm_channels = None
+            inner_cfg = getattr(self.diffusion_model, "codex_config", None)
+            if inner_cfg is not None:
+                adm_channels = getattr(inner_cfg, "adm_in_channels", None)
+            if isinstance(adm_channels, int) and adm_channels > 0 and int(y.shape[1]) != adm_channels:
+                raise ValueError(
+                    f"UNet ADM feature mismatch: got y.shape[1]={int(y.shape[1])}, expected adm_in_channels={adm_channels}. "
+                    f"Hint: SDXL vector should be [pooled_g, time_ids(6*256)], typically 1280+1536=2816."
+                )
+
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "apply_model: x=%s t=%s context=%s y=%s dtype=%s",

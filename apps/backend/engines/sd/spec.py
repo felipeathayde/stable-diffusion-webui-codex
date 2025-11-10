@@ -187,6 +187,35 @@ def assemble_engine_runtime(
     unet = UnetPatcher.from_model(model=unet_model, diffusers_scheduler=scheduler, config=estimated_config)
     logger.debug("UNet patcher created for '%s'.", spec.name)
 
+    # --- Assembly invariants (no silent fallbacks) ---------------------------------
+    diffusion_model = getattr(unet, "model", None)
+    if diffusion_model is None or getattr(diffusion_model, "diffusion_model", None) is None:
+        raise SDEngineConfigurationError(
+            f"UNet patcher for '{spec.name}' lacks an inner diffusion model; cannot assemble runtime."
+        )
+    inner = diffusion_model.diffusion_model
+    codex_cfg = getattr(inner, "codex_config", None)
+    if codex_cfg is None:
+        raise SDEngineConfigurationError(
+            f"UNet for '{spec.name}' is missing 'codex_config' (UNetConfig); ensure model was constructed via Codex UNet."
+        )
+    # context_dim must be declared; numeric checking occurs at runtime
+    if getattr(codex_cfg, "context_dim", None) is None:
+        raise SDEngineConfigurationError(
+            f"UNet for '{spec.name}' has no context_dim; cross-attention conditioning is not configured."
+        )
+    # Engines that require ADM/y must advertise it through num_classes
+    if spec.name in ("sdxl", "sdxl_refiner", "sd35"):
+        if getattr(inner, "num_classes", None) is None:
+            raise SDEngineConfigurationError(
+                f"Engine '{spec.name}' expects ADM/y conditioning but UNet 'num_classes' is None. "
+                f"Configure UNet with class/ADM support (e.g., num_classes='sequential' and adm_in_channels)."
+            )
+        if getattr(inner, "num_classes", None) == "sequential" and getattr(codex_cfg, "adm_in_channels", None) in (None, 0):
+            raise SDEngineConfigurationError(
+                f"Engine '{spec.name}' requires ADM channels but UNet 'adm_in_channels' is not set."
+            )
+
     embedding_dir = _require_dynamic_arg(spec.embedding_dir_arg)
     emphasis_name = _require_dynamic_arg(spec.emphasis_arg)
 

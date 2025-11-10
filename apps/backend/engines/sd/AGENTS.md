@@ -17,3 +17,10 @@ Status: Active
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.
 - SDXL `txt2img` decodes latents to RGB and emits a `ResultEvent` with `images` and a JSON `info` string.
 - Progress streaming can be added by polling `apps.backend.core.state.state` while sampling or by converting the sampler into an event-yielding generator; keep the approach explicit per engine.
+
+### Assembly Invariants (spec.py)
+- Ao montar o runtime (`assemble_engine_runtime`):
+  - UNet deve expor `diffusion_model` com `codex_config` (`UNetConfig`).
+  - `codex_config.context_dim` não pode ser `None`.
+  - Para `sdxl`, `sdxl_refiner`, `sd35`: `num_classes` do UNet não pode ser `None`; se for `'sequential'`, `adm_in_channels` deve ser definido (>0).
+- Qualquer violação levanta `SDEngineConfigurationError` com causa explícita (sem fallbacks).

@@ -129,11 +129,26 @@ class Wan225BEngine(BaseVideoEngine):
             apply_accel(pipe, logger=self._logger)
             comp.pipeline = pipe
             comp.vae = vae
-            self._logger.info("WAN22 5B diffusers pipeline loaded: %s", p)
+            try:
+                self._logger.info(
+                    "WAN22 5B diffusers pipeline loaded: %s (device=%s dtype=%s)", p, comp.device, dty
+                )
+                # Best-effort: log main components
+                te = getattr(pipe, 'text_encoder', None)
+                unet = getattr(pipe, 'transformer', None)
+                vae_obj = getattr(pipe, 'vae', None)
+                self._logger.info(
+                    "[wan22.diffusers] components: TE=%s UNet=%s VAE=%s",
+                    te.__class__.__name__ if te is not None else None,
+                    unet.__class__.__name__ if unet is not None else None,
+                    vae_obj.__class__.__name__ if vae_obj is not None else None,
+                )
+            except Exception:
+                pass
         else:
             # GGUF path: tokenizer/config under backend/huggingface; all weights supplied by user.
             comp.pipeline = None
-            self._logger.info("WAN22 5B GGUF runtime selected for %s", p)
+            self._logger.info("WAN22 5B GGUF runtime selected for %s (device=%s dtype=%s)", p, comp.device, dty)
 
         self._comp = comp
         self._logger.info('[wan22_5b] DEBUG: depois de função load')

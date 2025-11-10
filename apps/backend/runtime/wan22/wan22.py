@@ -697,6 +697,11 @@ def _get_text_context(
         tok = AutoTokenizer.from_pretrained(tk_dir, use_fast=True, local_files_only=True)
     except Exception as ex:
         raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
+    try:
+        _li(None, "[wan22.gguf] tokenizer loaded: dir=%s vocab=%d model_max_len=%s",
+            tk_dir, len(getattr(tok, 'vocab', {}) or {}), str(getattr(tok, 'model_max_length', None)))
+    except Exception:
+        pass
 
     # Effective TE preferences (extras > env > defaults)
     try:
@@ -740,6 +745,12 @@ def _get_text_context(
             except Exception as ex:
                 raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {ex}") from ex
             inputs = tok([prompt or "", negative or ""], padding='max_length', truncation=True, max_length=225, return_tensors='pt')
+            try:
+                ids = inputs.get('input_ids')
+                if ids is not None:
+                    _li(None, "[wan22.gguf] tokenized(fp8): batch=%d seqlen=%d", int(ids.shape[0]), int(ids.shape[1]))
+            except Exception:
+                pass
             input_ids = inputs['input_ids']  # [2,L]
             attn_mask = inputs.get('attention_mask', None)
             # 2) Encoder FP8 (CUDA): run per prompt/negative separately to keep memory minimal
@@ -768,6 +779,11 @@ def _get_text_context(
                     )
                 p = _run_one(input_ids[0:1])
                 n = _run_one(input_ids[1:2])
+                try:
+                    _li(None, "[wan22.gguf] TE(fp8) outputs: prompt=%s negative=%s dtype=%s device=%s",
+                        tuple(p.shape), tuple(n.shape), str(p.dtype), str(p.device))
+                except Exception:
+                    pass
                 # Offload aggressively after TE
                 if offload_after:
                     try:
@@ -823,6 +839,15 @@ def _get_text_context(
 
     p = _do(prompt or '')
     n = _do(negative or '') if negative is not None else _do('')
+    try:
+        # Sanity: hidden size vs config
+        cfg_hidden = int(getattr(getattr(enc, 'config', None), 'hidden_size', p.shape[-1]))
+        if int(p.shape[-1]) != cfg_hidden:
+            raise RuntimeError(f"WAN22 GGUF: TE hidden_size mismatch: output={int(p.shape[-1])} config={cfg_hidden}")
+        _li(None, "[wan22.gguf] TE outputs: prompt=%s negative=%s dtype=%s device=%s",
+            tuple(p.shape), tuple(n.shape), str(p.dtype), str(p.device))
+    except Exception as _te_log_exc:
+        _lw(None, "[wan22.gguf] TE log note: %s", _te_log_exc)
     # Aggressive offload: drop TE from VRAM immediately after use
     if offload_after:
         try:

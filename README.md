@@ -7,6 +7,10 @@ Fork notice
 
 The sections below are largely inherited from Forge and may reference upstream resources where appropriate.
 
+Additional Documentation
+- Troubleshooting SDXL/WAN pipelines: `docs/troubleshooting/pipelines-sdxl-wan.md`
+- Architecture (conditioning contracts): `.sangoi/architecture/model-pipelines-bible.md`
+
 Stable Diffusion WebUI Forge is a platform on top of [Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui) (based on [Gradio](https://www.gradio.app/) <a href='https://github.com/gradio-app/gradio'><img src='https://img.shields.io/github/stars/gradio-app/gradio'></a>) to make development easier, optimize resource management, speed up inference, and study experimental features.
 
 The name "Forge" is inspired from "Minecraft Forge". This project is aimed at becoming SD WebUI's Forge.

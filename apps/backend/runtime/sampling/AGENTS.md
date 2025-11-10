@@ -30,6 +30,12 @@
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
 
+### Pré-checagens antes do UNet
+- Após a montagem (`cond_cat(c)`), validação obrigatória:
+  - `'c_crossattn'` existe e é Tensor 3D.
+  - Se `model.diffusion_model.num_classes` não é `None`, exigir `'y'` (Tensor 2D).
+- Alinhamento de `dtype/device` para `c_crossattn`, `y` e `c_concat` com o `input_x` antes do `apply_model`.
+
 ## Future Work (not yet ported)
 - Additional schedule families (e.g., EDM/FlowMatch variants) can be added as new `SchedulerName` values with explicit behavior.
 - Respect settings toggles like `use_old_karras_scheduler_sigmas` once UI flow is finalized.

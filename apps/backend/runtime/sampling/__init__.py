@@ -238,6 +238,29 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         batch_chunks = len(cond_or_uncond)
         input_x = torch.cat(input_x)
         c = cond_cat(c)
+
+        # Validate assembled conditioning before UNet call (no fallbacks)
+        if 'c_crossattn' not in c or not isinstance(c['c_crossattn'], torch.Tensor) or c['c_crossattn'].ndim != 3:
+            raise ValueError(
+                f"Missing or invalid 'c_crossattn' for UNet: got type={type(c.get('c_crossattn'))} "
+                f"shape={getattr(c.get('c_crossattn'), 'shape', None)} (expected 3D tensor BxSxC)."
+            )
+        needs_y = getattr(model, 'diffusion_model', None) is not None and getattr(model.diffusion_model, 'num_classes', None) is not None
+        if needs_y:
+            if 'y' not in c or not isinstance(c['y'], torch.Tensor) or c['y'].ndim != 2:
+                raise ValueError(
+                    "UNet requires ADM 'y' vector (2D tensor BxV) but it is missing or invalid. "
+                    "Ensure SDXL pooled embedding is wired as 'vector' and compiled to 'y'."
+                )
+
+        # Align dtype/device for conditioning tensors
+        target_dtype = getattr(model, 'computation_dtype', None) or input_x.dtype
+        dev = input_x.device
+        c['c_crossattn'] = c['c_crossattn'].to(dtype=target_dtype, device=dev)
+        if 'y' in c and isinstance(c['y'], torch.Tensor):
+            c['y'] = c['y'].to(device=dev)
+        if 'c_concat' in c and isinstance(c['c_concat'], torch.Tensor):
+            c['c_concat'] = c['c_concat'].to(device=dev)
         timestep_ = torch.cat([timestep] * batch_chunks)
 
         transformer_options = {}

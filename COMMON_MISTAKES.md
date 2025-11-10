@@ -291,3 +291,7 @@ PY`
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** `Even with --ignore-errors, git stops when xargs feeds ignored paths; prune __pycache__/refs before piping to git add.`
 **Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -not -path './.refs/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+
+**Wrong command:** `apply_patch` updating `apps/backend/runtime/modules/AGENTS.md` with unmatched context
+**Cause + fix:** The patch assumed anchor text that didn’t exist; read the current file and update using an `Update File` hunk that matches real content, or replace the file body coherently.
+**Correct command:** `apply_patch` with a hunk aligned to the existing content (or rewrite the file section explicitly).

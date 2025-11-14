@@ -27,7 +27,7 @@ _enabled: bool = False
 _local = threading.local()
 _prev_profile: Optional[Callable[..., Any]] = None
 
-_DEFAULT_MAX_PER_FUNC = 50
+_DEFAULT_MAX_PER_FUNC = 10
 _max_per_func: int = _DEFAULT_MAX_PER_FUNC
 _call_counts: dict[Tuple[str, str], int] = {}
 _muted_notified: set[Tuple[str, str]] = set()

@@ -47,7 +47,7 @@ from apps.launcher import (
     run_launch_checks,
 )
 class BIOSApp:
-    TABS = ["Main", "Runtime", "WAN", "Logging", "Logs", "Exit"]
+    TABS = ["Main", "Runtime", "WAN", "DEBUG", "Logging", "Logs", "Exit"]
 
     def __init__(self, stdscr) -> None:
         self.stdscr = stdscr
@@ -293,6 +293,25 @@ class BIOSApp:
             ("WAN_I2V_DEBUG_CLAMP", f"[{clamp_label}]", "edit_debug_clamp"),
         ]
 
+    def _items_debug(self) -> List[Tuple[str, str, str]]:
+        env = self.env
+
+        def _enabled(key: str) -> bool:
+            return env.get(key, "0").strip().lower() in {"1", "true", "yes", "on"}
+
+        cond = _enabled("CODEX_DEBUG_COND")
+        sampler = _enabled("CODEX_LOG_SAMPLER")
+        trace = _enabled("CODEX_TRACE_DEBUG")
+        pipeline = _enabled("CODEX_PIPELINE_DEBUG")
+        trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "200")
+        return [
+            ("Conditioning Debug", f"[{'Enabled' if cond else 'Disabled'}]", "toggle_cond_debug"),
+            ("Sampler Verbose Logs", f"[{'Enabled' if sampler else 'Disabled'}]", "toggle_sampler_logs"),
+            ("Trace Debug", f"[{'ON' if trace else 'OFF'}]", "toggle_trace_debug"),
+            ("Trace Max Per Func", f"[{trace_max}]", "edit_trace_max"),
+            ("Pipeline Debug", f"[{'ON' if pipeline else 'OFF'}]", "toggle_pipeline_debug"),
+        ]
+
     def _items_logging(self) -> List[Tuple[str, str, str]]:
         env = self.env
         level = env.get("CODEX_LOG_LEVEL", "DEBUG").upper()
@@ -301,10 +320,6 @@ class BIOSApp:
             file_label = f"Enabled ({Path(log_file).name})"
         else:
             file_label = "Disabled"
-        trace_debug = env.get("CODEX_TRACE_DEBUG", "0").strip().lower() in {"1", "true", "yes", "on"}
-        pipeline_debug = env.get("CODEX_PIPELINE_DEBUG", "0").strip().lower()
-        pipeline_label = "ON" if pipeline_debug in ("1", "true", "yes", "on") else "OFF"
-        cond_debug = env.get("CODEX_DEBUG_COND", "0").strip().lower() in ("1", "true", "yes", "on")
         info = env.get("WAN_LOG_INFO", "1")
         warn = env.get("WAN_LOG_WARN", "1")
         err = env.get("WAN_LOG_ERROR", "1")
@@ -312,9 +327,6 @@ class BIOSApp:
         return [
             ("Codex Log Level", f"[{level}]", "cycle_log_level"),
             ("Write Codex Log File", f"[{file_label}]", "toggle_log_file"),
-            ("Trace Debug", f"[{'ON' if trace_debug else 'OFF'}]", "toggle_trace_debug"),
-            ("Pipeline Debug", f"[{pipeline_label}]", "toggle_pipeline_debug"),
-            ("Conditioning Debug", f"[{'Enabled' if cond_debug else 'Disabled'}]", "toggle_cond_debug"),
             ("WAN_LOG_INFO", f"[{info}]", "toggle_log_info"),
             ("WAN_LOG_WARN", f"[{warn}]", "toggle_log_warn"),
             ("WAN_LOG_ERROR", f"[{err}]", "toggle_log_error"),
@@ -460,10 +472,19 @@ class BIOSApp:
                 "Enable global function-call tracing (very verbose).",
                 "Applies via CODEX_TRACE_DEBUG=1 / --trace-debug; restart API after toggling.",
             ],
+            "Trace Max Per Func": [
+                "Limit how many entries per function the call tracer records.",
+                "Set to 0 for unlimited; default is 200.",
+                "Applies via CODEX_TRACE_DEBUG_MAX_PER_FUNC.",
+            ],
             "Conditioning Debug": [
                 "Dump CLIP conditioning tensor norms during SDXL runs.",
                 "Intended for diagnostics; adds extra logging noise.",
                 "Applies via CODEX_DEBUG_COND or --debug-conditioning.",
+            ],
+            "Sampler Verbose Logs": [
+                "Emit per-step sampler diagnostics (sigma schedule, timings).",
+                "Applies via CODEX_LOG_SAMPLER.",
             ],
             "WAN_LOG_INFO": [
                 "Enable/disable info-level logs from WAN runtime.",
@@ -768,6 +789,52 @@ class BIOSApp:
             cur = env.get("WAN_LOG_DEBUG", "0").strip().lower()
             env["WAN_LOG_DEBUG"] = "0" if cur in ("1", "true", "yes", "on") else "1"
 
+    def _act_debug(self, idx: int) -> None:
+        items = self._items_debug()
+        if not (0 <= idx < len(items)):
+            return
+        _key, _val, action = items[idx]
+        env = self.env
+
+        def _toggle_flag(key: str, *, message_on: str | None = None, message_off: str | None = None) -> None:
+            cur = env.get(key, "0").strip().lower()
+            if cur in {"1", "true", "yes", "on"}:
+                env.pop(key, None)
+                if message_off:
+                    self.message = message_off
+            else:
+                env[key] = "1"
+                if message_on:
+                    self.message = message_on
+
+        if action == "toggle_cond_debug":
+            _toggle_flag("CODEX_DEBUG_COND")
+        elif action == "toggle_sampler_logs":
+            _toggle_flag(
+                "CODEX_LOG_SAMPLER",
+                message_on="Sampler logs enabled (restart API to apply).",
+                message_off="Sampler logs disabled.",
+            )
+        elif action == "toggle_trace_debug":
+            _toggle_flag(
+                "CODEX_TRACE_DEBUG",
+                message_on="Trace Debug enabled. Restart API to attach call tracing.",
+                message_off="Trace Debug disabled. Restart API to stop call tracing.",
+            )
+        elif action == "toggle_pipeline_debug":
+            _toggle_flag("CODEX_PIPELINE_DEBUG")
+        elif action == "edit_trace_max":
+            val = self._prompt("Trace max per func (>=0): ")
+            if val is None:
+                return
+            try:
+                numeric = max(0, int(val))
+            except ValueError:
+                self.message = "Enter a valid integer."
+                return
+            env["CODEX_TRACE_DEBUG_MAX_PER_FUNC"] = str(numeric)
+            self.message = f"Trace limit set to {numeric}."
+
 
     def _log_lines(self) -> List[str]:
         return self.log_buffer.snapshot()
@@ -810,6 +877,8 @@ class BIOSApp:
                 items = self._items_runtime()
             elif tab_name == "WAN":
                 items = self._items_wan()
+            elif tab_name == "DEBUG":
+                items = self._items_debug()
             elif tab_name == "Logging":
                 items = self._items_logging()
             else:
@@ -937,6 +1006,8 @@ class BIOSApp:
                 self._act_runtime_popup_or_apply(self.sel_index)
             elif tab == "WAN":
                 self._act_wan_popup_or_apply(self.sel_index)
+            elif tab == "DEBUG":
+                self._act_debug(self.sel_index)
             elif tab == "Logging":
                 self._act_logging(self.sel_index)
             elif tab == "Exit":
@@ -949,6 +1020,8 @@ class BIOSApp:
                 self._act_runtime(self.sel_index)
             elif tab == "WAN":
                 self._act_wan(self.sel_index)
+            elif tab == "DEBUG":
+                self._act_debug(self.sel_index)
             elif tab == "Logging":
                 self._act_logging(self.sel_index)
             return

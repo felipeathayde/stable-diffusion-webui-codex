@@ -5,6 +5,7 @@ import sys
 from typing import Mapping, MutableMapping, Sequence
 
 _LOG = logging.getLogger("backend.infra.config.args")
+TRACE_DEBUG_DEFAULT = 10
 
 from apps.backend.runtime.memory.config import (
     AttentionBackend,
@@ -98,7 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--trace-debug-max-per-func",
         type=int,
-        default=50,
+        default=TRACE_DEBUG_DEFAULT,
         metavar="N",
         help="Maximum call logs per function when trace debug is enabled (<=0 disables limit).",
     )
@@ -565,7 +566,7 @@ def initialize(
     _UNKNOWN = list(unknown)
 
     if getattr(namespace, "trace_debug_max_per_func", None) is None:
-        namespace.trace_debug_max_per_func = 50
+        namespace.trace_debug_max_per_func = TRACE_DEBUG_DEFAULT
     elif namespace.trace_debug_max_per_func < 0:
         namespace.trace_debug_max_per_func = 0
 

@@ -303,6 +303,10 @@ class BIOSApp:
         sampler = _enabled("CODEX_LOG_SAMPLER")
         trace = _enabled("CODEX_TRACE_DEBUG")
         pipeline = _enabled("CODEX_PIPELINE_DEBUG")
+        dump_latents = _enabled("CODEX_DUMP_LATENTS")
+        dump_path = env.get("CODEX_DUMP_LATENTS_PATH", "").strip()
+        if not dump_path:
+            dump_path = "<logs/diagnostics>"
         trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "200")
         return [
             ("Conditioning Debug", f"[{'Enabled' if cond else 'Disabled'}]", "toggle_cond_debug"),
@@ -310,6 +314,8 @@ class BIOSApp:
             ("Trace Debug", f"[{'ON' if trace else 'OFF'}]", "toggle_trace_debug"),
             ("Trace Max Per Func", f"[{trace_max}]", "edit_trace_max"),
             ("Pipeline Debug", f"[{'ON' if pipeline else 'OFF'}]", "toggle_pipeline_debug"),
+            ("Dump Latents", f"[{'Enabled' if dump_latents else 'Disabled'}]", "toggle_dump_latents"),
+            ("Dump Latents Path", f"[{dump_path}]", "edit_dump_latents_path"),
         ]
 
     def _items_logging(self) -> List[Tuple[str, str, str]]:
@@ -485,6 +491,15 @@ class BIOSApp:
             "Sampler Verbose Logs": [
                 "Emit per-step sampler diagnostics (sigma schedule, timings).",
                 "Applies via CODEX_LOG_SAMPLER.",
+            ],
+            "Dump Latents": [
+                "Save final latent tensor after each sampling run.",
+                "Applies via CODEX_DUMP_LATENTS; files stored under logs/diagnostics by default.",
+            ],
+            "Dump Latents Path": [
+                "Optional file or directory to receive latent dumps.",
+                "Directory → auto filenames; file path → overwrite each run.",
+                "Applies via CODEX_DUMP_LATENTS_PATH.",
             ],
             "WAN_LOG_INFO": [
                 "Enable/disable info-level logs from WAN runtime.",
@@ -823,6 +838,23 @@ class BIOSApp:
             )
         elif action == "toggle_pipeline_debug":
             _toggle_flag("CODEX_PIPELINE_DEBUG")
+        elif action == "toggle_dump_latents":
+            _toggle_flag(
+                "CODEX_DUMP_LATENTS",
+                message_on="Latent dumps enabled. Results will be written after sampling.",
+                message_off="Latent dumps disabled.",
+            )
+        elif action == "edit_dump_latents_path":
+            val = self._prompt("Dump path (file or directory): ")
+            if val is None:
+                return
+            val = val.strip()
+            if val:
+                env["CODEX_DUMP_LATENTS_PATH"] = val
+                self.message = f"Latent dump path set to {val}"
+            else:
+                env.pop("CODEX_DUMP_LATENTS_PATH", None)
+                self.message = "Latent dump path reset to default."
         elif action == "edit_trace_max":
             val = self._prompt("Trace max per func (>=0): ")
             if val is None:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 import os
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -32,6 +34,53 @@ from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_e
 logger = logging.getLogger(__name__)
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+
+def _truthy(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _maybe_dump_latents(
+    latents: torch.Tensor,
+    processing: Any,
+    plan: SamplingPlan,
+    prompt_context: PromptContext,
+) -> None:
+    if not _truthy(os.getenv("CODEX_DUMP_LATENTS")):
+        return
+
+    path_hint = os.getenv("CODEX_DUMP_LATENTS_PATH")
+    if path_hint:
+        target = Path(path_hint).expanduser()
+    else:
+        target = Path("logs") / "diagnostics"
+    if not target.suffix:
+        timestamp = _dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
+        target = target / f"latents-{timestamp}.pt"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "latents": latents.detach().cpu(),
+            "metadata": {
+                "timestamp_utc": _dt.datetime.utcnow().isoformat(timespec="seconds"),
+                "width": int(getattr(processing, "width", 0) or 0),
+                "height": int(getattr(processing, "height", 0) or 0),
+                "steps": int(plan.steps),
+                "guidance_scale": float(plan.guidance_scale),
+                "sampler": getattr(processing, "sampler_name", None) or plan.sampler_name,
+                "scheduler": plan.scheduler_name,
+                "prompts": prompt_context.prompts,
+                "negative_prompts": prompt_context.negative_prompts,
+                "seeds": plan.seeds,
+                "subseeds": plan.subseeds,
+            },
+        }
+        torch.save(payload, target)
+        logger.info("[diagnostics] dumped latents to %s", target)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to dump latents to %s: %s", target, exc)
 
 def _normalize_scheduler_name(sampler: str | None, scheduler: str | None) -> str:
     sampler_key = (sampler or "").strip().lower()
@@ -431,6 +480,7 @@ def execute_sampling(
     )
 
     samples = run_post_sample_hooks(processing, samples)
+    _maybe_dump_latents(samples, processing, plan, prompt_context)
     devices.torch_gc()
     return samples
 

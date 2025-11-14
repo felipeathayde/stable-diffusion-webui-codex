@@ -1351,128 +1351,134 @@ _TXT2IMG_HIGHRES_KEYS = {
     "distilled_cfg",
 }
 
-    def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
-        unknown = sorted(set(obj.keys()) - allowed)
-        if unknown:
-            raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
+def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
+    unknown = sorted(set(obj.keys()) - allowed)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
 
-    def _require_str_field(payload: Dict[str, Any], key: str, *, allow_empty: bool = False, trim: bool = True) -> str:
-        if key not in payload:
-            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
-        value = payload[key]
-        if not isinstance(value, str):
-            raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
-        result = value.strip() if trim else value
-        if not allow_empty and result == "":
-            raise HTTPException(status_code=400, detail=f"'{key}' must not be empty")
-        return result if trim else value
 
-    def _require_int_field(payload: Dict[str, Any], key: str, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
-        if key not in payload:
-            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
-        value = payload[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+def _require_str_field(payload: Dict[str, Any], key: str, *, allow_empty: bool = False, trim: bool = True) -> str:
+    if key not in payload:
+        raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+    value = payload[key]
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
+    result = value.strip() if trim else value
+    if not allow_empty and result == "":
+        raise HTTPException(status_code=400, detail=f"'{key}' must not be empty")
+    return result if trim else value
+
+
+def _require_int_field(payload: Dict[str, Any], key: str, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
+    if key not in payload:
+        raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
+    if isinstance(value, float):
+        if not value.is_integer():
             raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
-        if isinstance(value, float):
-            if not value.is_integer():
-                raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
-            value = int(value)
-        else:
-            value = int(value)
-        if minimum is not None and value < minimum:
-            raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
-        if maximum is not None and value > maximum:
-            raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
-        return value
+        value = int(value)
+    else:
+        value = int(value)
+    if minimum is not None and value < minimum:
+        raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
+    if maximum is not None and value > maximum:
+        raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
+    return value
 
-    def _require_float_field(payload: Dict[str, Any], key: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
-        if key not in payload:
-            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
-        value = payload[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise HTTPException(status_code=400, detail=f"'{key}' must be a number")
-        result = float(value)
-        if minimum is not None and result < minimum:
-            raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
-        if maximum is not None and result > maximum:
-            raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
-        return result
 
-    def _parse_styles(payload: Dict[str, Any]) -> List[str]:
-        raw = payload.get('styles')
-        if raw is None:
-            return []
-        if not isinstance(raw, list):
+def _require_float_field(payload: Dict[str, Any], key: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
+    if key not in payload:
+        raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HTTPException(status_code=400, detail=f"'{key}' must be a number")
+    result = float(value)
+    if minimum is not None and result < minimum:
+        raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
+    if maximum is not None and result > maximum:
+        raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
+    return result
+
+
+def _parse_styles(payload: Dict[str, Any]) -> List[str]:
+    raw = payload.get('styles')
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
+    out: List[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
             raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
-        out: List[str] = []
-        for entry in raw:
-            if not isinstance(entry, str):
-                raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
-            text = entry.strip()
-            if text:
-                out.append(text)
-        return out
+        text = entry.strip()
+        if text:
+            out.append(text)
+    return out
 
-    def _parse_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
-        raw = payload.get('metadata')
-        if raw is None:
-            return {}
-        if not isinstance(raw, dict):
-            raise HTTPException(status_code=400, detail="'metadata' must be an object")
-        return dict(raw)
+def _parse_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw = payload.get('metadata')
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="'metadata' must be an object")
+    return dict(raw)
 
-    def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-        raw = payload.get('extras')
-        if raw is None:
-            return {}, None
-        if not isinstance(raw, dict):
-            raise HTTPException(status_code=400, detail="'extras' must be an object")
-        _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
-        extras: Dict[str, Any] = {}
-        if 'randn_source' in raw:
-            extras['randn_source'] = str(raw['randn_source'])
-        if 'eta_noise_seed_delta' in raw:
-            val = raw['eta_noise_seed_delta']
-            if isinstance(val, bool) or not isinstance(val, (int, float)):
-                raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
-            extras['eta_noise_seed_delta'] = int(val)
-        highres = raw.get('highres')
-        if highres is None:
-            return extras, None
-        if not isinstance(highres, dict):
-            raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
-        _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
-        if not bool(highres.get('enable')):
-            return extras, None
-        required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
-        for key in required:
-            if key not in highres:
-                raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
-        hr_modules = highres.get('modules')
-        if hr_modules is not None:
-            if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
-                raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
-            modules_list = list(hr_modules)
-        else:
-            modules_list = []
-        return extras, {
-            "denoise": float(highres['denoise']),
-            "scale": float(highres['scale']),
-            "resize_x": _require_int_field(highres, 'resize_x'),
-            "resize_y": _require_int_field(highres, 'resize_y'),
-            "steps": _require_int_field(highres, 'steps', minimum=0),
-            "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
-            "checkpoint": highres.get('checkpoint'),
-            "modules": modules_list,
-            "sampler": highres.get('sampler'),
-            "scheduler": highres.get('scheduler'),
-            "prompt": highres.get('prompt') or '',
-            "negative_prompt": highres.get('negative_prompt') or '',
-            "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
-            "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
-        }
 
-    def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
+def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    raw = payload.get('extras')
+    if raw is None:
+        return {}, None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="'extras' must be an object")
+    _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
+    extras: Dict[str, Any] = {}
+    if 'randn_source' in raw:
+        extras['randn_source'] = str(raw['randn_source'])
+    if 'eta_noise_seed_delta' in raw:
+        val = raw['eta_noise_seed_delta']
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
+        extras['eta_noise_seed_delta'] = int(val)
+    highres = raw.get('highres')
+    if highres is None:
+        return extras, None
+    if not isinstance(highres, dict):
+        raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
+    _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
+    if not bool(highres.get('enable')):
+        return extras, None
+    required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
+    for key in required:
+        if key not in highres:
+            raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
+    hr_modules = highres.get('modules')
+    if hr_modules is not None:
+        if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
+            raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
+        modules_list = list(hr_modules)
+    else:
+        modules_list = []
+    return extras, {
+        "denoise": float(highres['denoise']),
+        "scale": float(highres['scale']),
+        "resize_x": _require_int_field(highres, 'resize_x'),
+        "resize_y": _require_int_field(highres, 'resize_y'),
+        "steps": _require_int_field(highres, 'steps', minimum=0),
+        "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
+        "checkpoint": highres.get('checkpoint'),
+        "modules": modules_list,
+        "sampler": highres.get('sampler'),
+        "scheduler": highres.get('scheduler'),
+        "prompt": highres.get('prompt') or '',
+        "negative_prompt": highres.get('negative_prompt') or '',
+        "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
+        "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
+    }
+
+
+def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
         if cfg is None:
             return {
                 "enable": False,

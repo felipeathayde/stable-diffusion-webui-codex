@@ -1515,88 +1515,89 @@ def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, f
             "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
         }
 
-    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
-        _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
-        prompt = _require_str_field(payload, 'prompt', allow_empty=True)
-        negative_prompt = str(payload.get('negative_prompt') or '')
-        width = _require_int_field(payload, 'width', minimum=8)
-        height = _require_int_field(payload, 'height', minimum=8)
-        steps_val = _require_int_field(payload, 'steps', minimum=1)
-        cfg_scale = _require_float_field(payload, 'guidance_scale')
-        if 'distilled_guidance_scale' in payload:
-            distilled_cfg_scale = _require_float_field(payload, 'distilled_guidance_scale')
-        else:
-            distilled_cfg_scale = 3.5
-        sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
-        scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
-        seed_val = _require_int_field(payload, 'seed')
-        batch_size = _require_int_field(payload, 'batch_size', minimum=1)
-        batch_count = _require_int_field(payload, 'batch_count', minimum=1)
-        styles = _parse_styles(payload)
-        metadata = _parse_metadata(payload)
-        extras, highres_cfg = _parse_txt2img_extras(payload)
+def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
+    _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
+    prompt = _require_str_field(payload, 'prompt', allow_empty=True)
+    negative_prompt = str(payload.get('negative_prompt') or '')
+    width = _require_int_field(payload, 'width', minimum=8)
+    height = _require_int_field(payload, 'height', minimum=8)
+    steps_val = _require_int_field(payload, 'steps', minimum=1)
+    cfg_scale = _require_float_field(payload, 'guidance_scale')
+    if 'distilled_guidance_scale' in payload:
+        distilled_cfg_scale = _require_float_field(payload, 'distilled_guidance_scale')
+    else:
+        distilled_cfg_scale = 3.5
+    sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
+    scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
+    seed_val = _require_int_field(payload, 'seed')
+    batch_size = _require_int_field(payload, 'batch_size', minimum=1)
+    batch_count = _require_int_field(payload, 'batch_count', minimum=1)
+    styles = _parse_styles(payload)
+    metadata = _parse_metadata(payload)
+    extras, highres_cfg = _parse_txt2img_extras(payload)
 
-        metadata.setdefault("mode", _opts_snapshot().codex_mode)
-        metadata["styles"] = styles
-        metadata["n_iter"] = batch_count
-        metadata["batch_count"] = batch_count
-        metadata["batch_size"] = batch_size
-        metadata["hr"] = bool(highres_cfg)
-        metadata["distilled_cfg_scale"] = distilled_cfg_scale
+    metadata.setdefault("mode", _opts_snapshot().codex_mode)
+    metadata["styles"] = styles
+    metadata["n_iter"] = batch_count
+    metadata["batch_count"] = batch_count
+    metadata["batch_size"] = batch_size
+    metadata["hr"] = bool(highres_cfg)
+    metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
-        engine_override = payload.get('engine') or payload.get('codex_engine')
-        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+    engine_override = payload.get('engine') or payload.get('codex_engine')
+    model_override = payload.get('model') or payload.get('sd_model_checkpoint')
 
-        req = Txt2ImgRequest(
-            task=TaskType.TXT2IMG,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            steps=steps_val,
-            guidance_scale=cfg_scale,
-            sampler=str(sampler_name),
-            scheduler=str(scheduler_name),
-            seed=seed_val,
-            batch_size=batch_size,
-            metadata=metadata,
-            highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
-            extras=extras,
-        )
+    req = Txt2ImgRequest(
+        task=TaskType.TXT2IMG,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        steps=steps_val,
+        guidance_scale=cfg_scale,
+        sampler=str(sampler_name),
+        scheduler=str(scheduler_name),
+        seed=seed_val,
+        batch_size=batch_size,
+        metadata=metadata,
+        highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
+        extras=extras,
+    )
 
-        snap = _opts_snapshot()
-        engine_key = engine_override or snap.codex_engine
-        model_ref = model_override or snap.sd_model_checkpoint
-        return req, str(engine_key), model_ref
+    snap = _opts_snapshot()
+    engine_key = engine_override or snap.codex_engine
+    model_ref = model_override or snap.sd_model_checkpoint
+    return req, str(engine_key), model_ref
 
-    def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
-        encoded: list[Dict[str, str]] = []
-        for img in images or []:
-            buf = io.BytesIO()
-            img.save(buf, format='PNG')
-            encoded.append({
-                "format": "png",
-                "data": base64.b64encode(buf.getvalue()).decode('ascii'),
-            })
-        return encoded
+def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
+    encoded: list[Dict[str, str]] = []
+    for img in images or []:
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        encoded.append({
+            "format": "png",
+            "data": base64.b64encode(buf.getvalue()).decode('ascii'),
+        })
+    return encoded
 
-    def _require_explicit_device(payload: Dict[str, Any]) -> str:
-        # Accept explicit aliases from payload only (no options fallback)
-        raw = (
-            payload.get('codex_device')
-            or payload.get('device')
-            or payload.get('codex_diffusion_device')
-            or ""
-        )
-        dev = str(raw).strip().lower()
-        allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
-        if dev not in allowed:
-            raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
-        try:
-            mem_management.switch_primary_device(dev)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        return dev
+
+def _require_explicit_device(payload: Dict[str, Any]) -> str:
+    # Accept explicit aliases from payload only (no options fallback)
+    raw = (
+        payload.get('codex_device')
+        or payload.get('device')
+        or payload.get('codex_diffusion_device')
+        or ""
+    )
+    dev = str(raw).strip().lower()
+    allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
+    if dev not in allowed:
+        raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
+    try:
+        mem_management.switch_primary_device(dev)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return dev
 
     _ORCH = InferenceOrchestrator()
 

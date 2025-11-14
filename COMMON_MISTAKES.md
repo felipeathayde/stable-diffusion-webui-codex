@@ -51,6 +51,10 @@
 **Cause + fix:** `Even with --ignore-errors, git exits non-zero for ignored __pycache__; add an explicit path filter before piping to git add.`
 **Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** `Commit checklist requires this command, but it aborts whenever ignored dirs like __pycache__, apps/interface/dist, node_modules, tmp, or logNormal2.txt pop up. Re-run with explicit -not -path guards for each ignored tree before piping to git add.`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -not -path './apps/interface/dist/*' -not -path './apps/interface/node_modules/*' -not -path './tmp/*' -not -path './logNormal2.txt' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+
 **Wrong command:** `python - <<'PY'
 import importlib
 mod = importlib.import_module('apps.backend.use_cases.txt2img')
@@ -318,3 +322,44 @@ PY`
 **Wrong command:** `git push -u origin HEAD` (with 1s timeout)
 **Cause and fix:** `CLI invocation limited the push to ~1s and the remote handshake didn't finish in time, so the helper timed out even though git was fine.`
 **Correct command:** `git push -u origin HEAD` (let it run without the artificial timeout)
+**Wrong command:** `ls docs/plan`
+**Cause + fix:** `Only \`docs/notes\` and \`docs/troubleshooting\` exist; targeting the non-existent \`docs/plan\` path raises ENOENT. List the real \`docs\` tree first to discover valid subdirectories.`
+**Correct command:** `ls docs`
+**Wrong command:** `python - <<'PY'
+from apps.backend.interfaces.api.run_api import app
+print(type(app))
+PY`
+**Cause + fix:** `Importing the API module pulls PyTorch, which is absent from the base interpreter; rerun the inspection inside the managed virtualenv that already has torch installed.`
+**Correct command:** `~/.venv/bin/python - <<'PY'
+from apps.backend.interfaces.api.run_api import app
+print(type(app))
+PY`
+**Wrong command:** `python - <<'PY'
+import inspect, uvicorn.middleware.asgi2
+PY`
+**Cause + fix:** `Uvicorn is not installed in the stock interpreter; point \`PYTHONPATH\` at the downloaded wheel (or install uvicorn inside the venv) before importing.`
+**Correct command:** `PYTHONPATH=tmp/uvicorn python - <<'PY'
+import inspect, uvicorn.middleware.asgi2
+PY`
+**Wrong command:** `type run-webui.bat`
+**Cause + fix:** `Bash's \`type\` builtin reports command lookup instead of file contents; use \`cat\` to print the batch script.`
+**Correct command:** `cat run-webui.bat`
+**Wrong command:** `pip install uvicorn fastapi`
+**Cause + fix:** `Command tried to write into the read-only pyenv site-packages tree; install dependencies inside the writable project virtualenv instead.`
+**Correct command:** `~/.venv/bin/pip install uvicorn fastapi`
+**Wrong command:** `pip install --user uvicorn fastapi`
+**Cause + fix:** `The sandbox blocks writes to ~/.local, so the user-level install also fails; direct pip to a writable target under the workspace.`
+**Correct command:** `pip install --target tmp/pip uvicorn fastapi`
+**Wrong command:** `rg -n "--factory" -n`
+**Cause + fix:** `Without a \`--\` separator, ripgrep treated \`--factory\` as another CLI flag and bailed; add \`--\` before the literal you want to search.`
+**Correct command:** `rg -n -- '--factory'`
+**Wrong command:** `rg -n --literal "--factory"`
+**Cause + fix:** `Ripgrep has no \`--literal\` option; use \`-F\`/\`--fixed-strings\` with a \`--\` separator for literal flag text.`
+**Correct command:** `rg -n -F -- '--factory'`
+**Wrong command:** `rg -n --fixed-strings "--factory"`
+**Cause + fix:** `Supplying the pattern without \`--\` makes ripgrep misinterpret it as another option; insert the separator so \`--factory\` is treated as search text.`
+**Correct command:** `rg -n --fixed-strings -- '--factory'`
+
+**Wrong command:** `git pull --rebase --autostash`
+**Cause + fix:** `Untracked task log / handoff files block the pull with “would be overwritten”; stash them with --include-untracked (or add them) before running the mandated pull.`
+**Correct command:** `git stash push --include-untracked && git pull --rebase --autostash && git stash pop`

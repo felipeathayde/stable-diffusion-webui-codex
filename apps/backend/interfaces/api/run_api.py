@@ -88,6 +88,7 @@ except Exception:
 
 
 _initialized = False
+_RUNTIME_NAMESPACE: Optional[Any] = None
 
 
 def ensure_initialized() -> None:
@@ -2188,11 +2189,48 @@ def _require_explicit_device(payload: Dict[str, Any]) -> str:
     return app
 
 
+def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Mapping[str, Any]) -> Any:
+    global _RUNTIME_NAMESPACE
+    if _RUNTIME_NAMESPACE is not None:
+        return _RUNTIME_NAMESPACE
+    ns, runtime_config = config_args.initialize(
+        argv=argv,
+        env=env,
+        settings=settings,
+        strict=True,
+    )
+    mem_management.reinitialize(runtime_config)
+    _RUNTIME_NAMESPACE = ns
+    return ns
+
+
+def _enable_trace_debug(ns: Any) -> None:
+    try:
+        if getattr(ns, "trace_debug", False):
+            from apps.backend.runtime import logging as runtime_logging  # type: ignore
+
+            runtime_logging.setup_logging(level="DEBUG")
+            from apps.backend.runtime import call_trace as _call_trace  # type: ignore
+
+            _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
+    except Exception:
+        pass
+
+
+def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
+    snapshot = codex_options.get_snapshot()
+    ns = _bootstrap_runtime(list(argv or []), env or os.environ, snapshot.as_dict())
+    _enable_trace_debug(ns)
+    ensure_initialized()
+    return _APP
+
+
 # Expose module-level ASGI application for uvicorn/Hypercorn entrypoints
-app = build_app()
+_APP = build_app()
+app = _APP
 
 
-def main() -> None:
+def main(argv: Optional[Sequence[str]] = None) -> None:
     host = '0.0.0.0'
     override = os.environ.get('API_PORT_OVERRIDE')
     used_fallback = False
@@ -2223,30 +2261,13 @@ def main() -> None:
         banner(port)
 
     try:
-        snapshot = codex_options.get_snapshot()
-        ns, runtime_config = config_args.initialize(
-            argv=sys.argv[1:],
-            env=os.environ,
-            settings=snapshot.as_dict(),
-            strict=True,
-        )
-        mem_management.reinitialize(runtime_config)
+        argv_seq = list(argv) if argv is not None else sys.argv[1:]
+        api_app = create_api_app(argv=argv_seq, env=os.environ)
     except Exception as exc:
         print(color_red(f"[INIT] {exc}"))
         raise SystemExit(1) from exc
 
-    # Ensure tracing is active even if early hook was skipped
-    try:
-        if getattr(ns, "trace_debug", False):
-            from apps.backend.runtime import logging as runtime_logging  # type: ignore
-            runtime_logging.setup_logging(level="DEBUG")
-            from apps.backend.runtime import call_trace as _call_trace  # type: ignore
-            _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
-    except Exception:
-        pass
-
-    ensure_initialized()
-    uvicorn.run(app, host=host, port=port, log_level='info')
+    uvicorn.run(api_app, host=host, port=port, log_level='info')
 
 
 if __name__ == '__main__':

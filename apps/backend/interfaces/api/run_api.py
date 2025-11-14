@@ -1515,7 +1515,7 @@ def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, f
             "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
         }
 
-def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
+def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
     _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
     prompt = _require_str_field(payload, 'prompt', allow_empty=True)
     negative_prompt = str(payload.get('negative_prompt') or '')

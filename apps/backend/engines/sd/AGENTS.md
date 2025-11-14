@@ -12,6 +12,7 @@ Status: Active
 - Shared assembly helpers live in `spec.py` — define engine specs (dataclasses) there and assemble components via `assemble_engine_runtime` inside each engine’s `_build_components` implementation.
 - Each engine must expose `EngineCapabilities` (txt2img/img2img) and rely on `_require_runtime()` style guards when touching assembled runtime state.
 - Preference order: extend specs first, then consume them in `_build_components`; never reintroduce legacy component dictionaries or silent clip-skip fallbacks.
+- 2025-11-14: SDXL conditioning now wraps prompts in metadata-aware `_SDXLPrompt` objects so ADM/time embeddings honor the requested `width`/`height`/targets and blank negative prompts collapse to zeros (parity with `.legacy`/Comfy pipelines).
 
 ### Event Emission
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.

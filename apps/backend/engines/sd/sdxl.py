@@ -4,7 +4,7 @@ import logging
 from types import SimpleNamespace
 import threading
 import time
-from typing import Any, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
@@ -54,12 +54,54 @@ def _opts() -> SimpleNamespace:
     )
 
 
-def _prompt_meta(prompt: Iterable[str]) -> Tuple[int, int, bool]:
-    obj = prompt  # type: ignore
-    width = getattr(obj, "width", 1024) or 1024
-    height = getattr(obj, "height", 1024) or 1024
-    is_negative = getattr(obj, "is_negative_prompt", False)
-    return width, height, is_negative
+class _SDXLPrompt(str):
+    """String subclass that carries SDXL spatial metadata for conditioning."""
+
+    __slots__ = ("width", "height", "target_width", "target_height", "crop_left", "crop_top", "is_negative_prompt")
+
+    def __new__(
+        cls,
+        text: str,
+        *,
+        width: int,
+        height: int,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
+        crop_left: int = 0,
+        crop_top: int = 0,
+        is_negative_prompt: bool = False,
+    ) -> "_SDXLPrompt":
+        obj = super().__new__(cls, text or "")
+        obj.width = int(width or 1024)
+        obj.height = int(height or 1024)
+        obj.target_width = int(target_width or obj.width)
+        obj.target_height = int(target_height or obj.height)
+        obj.crop_left = int(crop_left or 0)
+        obj.crop_top = int(crop_top or 0)
+        obj.is_negative_prompt = bool(is_negative_prompt)
+        return obj
+
+
+def _prompt_meta(prompts: Sequence[str]) -> Tuple[int, int, int, int, int, int, bool]:
+    reference: Any = prompts
+    if isinstance(prompts, (list, tuple)) and prompts:
+        reference = prompts[0]
+
+    def _meta(attr: str, default: int) -> int:
+        value = getattr(reference, attr, None)
+        if value is None:
+            value = getattr(prompts, attr, None)
+        return int(value if value not in (None, "") else default)
+
+    fallback = _opts()
+    width = _meta("width", 1024)
+    height = _meta("height", 1024)
+    target_width = _meta("target_width", width)
+    target_height = _meta("target_height", height)
+    crop_left = _meta("crop_left", getattr(fallback, "sdxl_crop_left", 0))
+    crop_top = _meta("crop_top", getattr(fallback, "sdxl_crop_top", 0))
+    is_negative = bool(getattr(reference, "is_negative_prompt", getattr(prompts, "is_negative_prompt", False)))
+    return width, height, target_width, target_height, crop_left, crop_top, is_negative
 
 
 class StableDiffusionXL(CodexDiffusionEngine):
@@ -152,15 +194,17 @@ class StableDiffusionXL(CodexDiffusionEngine):
         # Bind current model
         proc.sd_model = self
 
-        # Prepare conditioning (SDXL: CLIP-L/CLIP-G)
-        prompts = [proc.prompt]
+        # Prepare conditioning (SDXL: CLIP-L/CLIP-G) with spatial metadata
+        prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
+        negative_texts = list(getattr(proc, "negative_prompts", []) or []) or [getattr(proc, "negative_prompt", "")]
+        prompt_wrappers = self._prepare_prompt_wrappers(prompt_texts, proc, is_negative=False)
+        negative_wrappers = self._prepare_prompt_wrappers(negative_texts, proc, is_negative=True)
+        prompts = prompt_wrappers
         seeds = [proc.seed]
         subseeds = [-1]
         subseed_strength = 0.0
-        cond = self.get_learned_conditioning(prompts)
-        # Use provided negative prompt when available; fall back to empty
-        neg_text = getattr(proc, "negative_prompt", "") or ""
-        uncond = self.get_learned_conditioning([neg_text])
+        cond = self.get_learned_conditioning(prompt_wrappers)
+        uncond = self.get_learned_conditioning(negative_wrappers)
 
         yield ProgressEvent(stage="prepare", percent=5.0, message="Preparing conditioning")
 
@@ -259,6 +303,44 @@ class StableDiffusionXL(CodexDiffusionEngine):
         }
         yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
 
+    def _prepare_prompt_wrappers(
+        self,
+        texts: Sequence[str],
+        proc: Any,
+        *,
+        is_negative: bool,
+    ) -> List[_SDXLPrompt]:
+        width = int(getattr(proc, "width", 1024) or 1024)
+        height = int(getattr(proc, "height", 1024) or 1024)
+        target_width = int(getattr(proc, "hr_upscale_to_x", 0) or width)
+        target_height = int(getattr(proc, "hr_upscale_to_y", 0) or height)
+        opts = _opts()
+        crop_left = int(getattr(proc, "sdxl_crop_left", getattr(opts, "sdxl_crop_left", 0)) or 0)
+        crop_top = int(getattr(proc, "sdxl_crop_top", getattr(opts, "sdxl_crop_top", 0)) or 0)
+
+        wrappers: List[_SDXLPrompt] = []
+        for entry in texts:
+            raw_text = str(entry or "")
+            entry_width = int(getattr(entry, "width", width) or width)
+            entry_height = int(getattr(entry, "height", height) or height)
+            entry_target_width = int(getattr(entry, "target_width", target_width) or target_width)
+            entry_target_height = int(getattr(entry, "target_height", target_height) or target_height)
+            entry_crop_left = int(getattr(entry, "crop_left", crop_left) or crop_left)
+            entry_crop_top = int(getattr(entry, "crop_top", crop_top) or crop_top)
+            wrappers.append(
+                _SDXLPrompt(
+                    raw_text,
+                    width=entry_width,
+                    height=entry_height,
+                    target_width=entry_target_width,
+                    target_height=entry_target_height,
+                    crop_left=entry_crop_left,
+                    crop_top=entry_crop_top,
+                    is_negative_prompt=is_negative,
+                )
+            )
+        return wrappers
+
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
@@ -283,16 +365,15 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 if pooled_g is None:
                     raise RuntimeError("SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector.")
 
-            width, height, is_negative = _prompt_meta(prompt)
-            opts = _opts()
+            width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
 
             embed_values = [
                 self.embedder(torch.tensor([height])),
                 self.embedder(torch.tensor([width])),
-                self.embedder(torch.tensor([opts.sdxl_crop_top])),
-                self.embedder(torch.tensor([opts.sdxl_crop_left])),
-                self.embedder(torch.tensor([height])),
-                self.embedder(torch.tensor([width])),
+                self.embedder(torch.tensor([crop_top])),
+                self.embedder(torch.tensor([crop_left])),
+                self.embedder(torch.tensor([target_height])),
+                self.embedder(torch.tensor([target_width])),
             ]
 
             flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled_g.shape[0], 1).to(pooled_g)

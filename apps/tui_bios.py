@@ -37,6 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from apps.backend.infra.config.args import TRACE_DEBUG_DEFAULT
 from apps.launcher import (
     CodexLaunchCheck,
     CodexLogBuffer,
@@ -307,7 +308,7 @@ class BIOSApp:
         dump_path = env.get("CODEX_DUMP_LATENTS_PATH", "").strip()
         if not dump_path:
             dump_path = "<logs/diagnostics>"
-        trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "200")
+        trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", str(TRACE_DEBUG_DEFAULT))
         return [
             ("Conditioning Debug", f"[{'Enabled' if cond else 'Disabled'}]", "toggle_cond_debug"),
             ("Sampler Verbose Logs", f"[{'Enabled' if sampler else 'Disabled'}]", "toggle_sampler_logs"),
@@ -480,7 +481,7 @@ class BIOSApp:
             ],
             "Trace Max Per Func": [
                 "Limit how many entries per function the call tracer records.",
-                "Set to 0 for unlimited; default is 200.",
+                f"Set to 0 for unlimited; default is {TRACE_DEBUG_DEFAULT}.",
                 "Applies via CODEX_TRACE_DEBUG_MAX_PER_FUNC.",
             ],
             "Conditioning Debug": [

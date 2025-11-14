@@ -25,3 +25,4 @@ Status: Active
 - 2025-11-03: BIOS TUI exposes "Conditioning Debug" toggle, wiring to `CODEX_DEBUG_COND` and the backend `--debug-conditioning` flag.
 - 2025-11-03: Runtime tab adds "Pin Shared Memory" toggle, mapping to `CODEX_PIN_SHARED_MEMORY` / `--pin-shared-memory` alongside Smart Offload.
 - 2025-11-03: Logging tab now includes a "Trace Debug" toggle that sets `CODEX_TRACE_DEBUG=1`, enabling the global call tracer behind `--trace-debug`.
+- 2025-11-14: BIOS DEBUG tab mirrors backend defaults for `CODEX_TRACE_DEBUG_MAX_PER_FUNC` (10 by default) so the displayed values stay in sync with `apps.backend.infra.config.args`.

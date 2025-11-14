@@ -23,11 +23,15 @@ const HighresOptionsSchema = z
   })
   .strict()
 
+const PromptSchema = z
+  .string()
+  .transform((value) => value.trim())
+
 export const Txt2ImgRequestSchema = z
   .object({
     __strict_version: z.literal(1),
     codex_device: DeviceEnum,
-    prompt: z.string().trim().min(1, 'Prompt must not be empty'),
+    prompt: PromptSchema,
     negative_prompt: z.string().optional().default(''),
     width: z.number().int().min(8).max(8192),
     height: z.number().int().min(8).max(8192),

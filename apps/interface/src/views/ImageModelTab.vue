@@ -122,6 +122,7 @@ const store = useModelTabsStore()
 
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
+const quicksettings = useQuicksettingsStore()
 
 onMounted(async () => {
   if (!store.tabs.length) store.load()
@@ -172,7 +173,8 @@ async function generate(): Promise<void> {
   stopStream(); status.value = 'running'; errorMessage.value = ''; images.value = []
   const p = params.value
   try {
-    const quick = useQuicksettingsStore()
+    const quick = quicksettings
+    const modelRef = typeof p.model === 'string' && p.model.length > 0 ? p.model : undefined
     if (p.useInitImage && p.initImageData) {
       const shared = {
         width: p.width,
@@ -183,20 +185,25 @@ async function generate(): Promise<void> {
         sampler: p.sampler,
         scheduler: p.scheduler,
       }
-      const payload = {
+      const payload: Record<string, unknown> = {
         __strict_version: 1,
         codex_device: quick.currentDevice,
         img2img_prompt: p.prompt,
         img2img_neg_prompt: p.negativePrompt,
         img2img_init_image: p.initImageData,
         ...Object.fromEntries(Object.entries(shared).map(([k, v]) => [`img2img_${k}`, v])),
+        engine: props.type,
+        codex_engine: props.type,
+      }
+      if (modelRef) {
+        payload.model = modelRef
+        payload.sd_model_checkpoint = modelRef
       }
       const { task_id } = await startImg2Img(payload)
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
       let payload: Txt2ImgRequest
       try {
-        const modelRef = typeof p.model === 'string' && p.model.length > 0 ? p.model : undefined
         payload = buildTxt2ImgPayload({
           prompt: p.prompt,
           negativePrompt: p.negativePrompt,

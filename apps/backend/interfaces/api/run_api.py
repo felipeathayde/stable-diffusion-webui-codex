@@ -1310,15 +1310,17 @@ def build_app() -> FastAPI:
 _TXT2IMG_ALLOWED_KEYS = {
     "__strict_version",
     "codex_device",
+    "device",
+    "codex_diffusion_device",
     "prompt",
     "negative_prompt",
-        "width",
-        "height",
-        "steps",
-        "guidance_scale",
-        "sampler",
-        "scheduler",
-        "seed",
+    "width",
+    "height",
+    "steps",
+    "guidance_scale",
+    "sampler",
+    "scheduler",
+    "seed",
     "batch_size",
     "batch_count",
     "styles",
@@ -1326,26 +1328,28 @@ _TXT2IMG_ALLOWED_KEYS = {
     "extras",
     "distilled_guidance_scale",
     "engine",
+    "codex_engine",
     "model",
+    "sd_model_checkpoint",
 }
-    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta"}
-    _TXT2IMG_HIGHRES_KEYS = {
-        "enable",
-        "denoise",
-        "scale",
-        "resize_x",
-        "resize_y",
-        "steps",
-        "upscaler",
-        "checkpoint",
-        "modules",
-        "sampler",
-        "scheduler",
-        "prompt",
-        "negative_prompt",
-        "cfg",
-        "distilled_cfg",
-    }
+_TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta"}
+_TXT2IMG_HIGHRES_KEYS = {
+    "enable",
+    "denoise",
+    "scale",
+    "resize_x",
+    "resize_y",
+    "steps",
+    "upscaler",
+    "checkpoint",
+    "modules",
+    "sampler",
+    "scheduler",
+    "prompt",
+    "negative_prompt",
+    "cfg",
+    "distilled_cfg",
+}
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
         unknown = sorted(set(obj.keys()) - allowed)
@@ -1507,7 +1511,7 @@ _TXT2IMG_ALLOWED_KEYS = {
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
-        prompt = _require_str_field(payload, 'prompt', allow_empty=False)
+        prompt = _require_str_field(payload, 'prompt', allow_empty=True)
         negative_prompt = str(payload.get('negative_prompt') or '')
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
@@ -1525,8 +1529,6 @@ _TXT2IMG_ALLOWED_KEYS = {
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, highres_cfg = _parse_txt2img_extras(payload)
-        if not prompt:
-            raise HTTPException(status_code=400, detail="prompt must not be empty")
 
         metadata.setdefault("mode", _opts_snapshot().codex_mode)
         metadata["styles"] = styles
@@ -1747,9 +1749,12 @@ _TXT2IMG_ALLOWED_KEYS = {
             highres_fix=hr_data if hr_data.get("enable") else None,
         )
 
+        engine_override = payload.get('engine') or payload.get('codex_engine')
+        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+
         snap = _opts_snapshot()
-        engine_key = snap.codex_engine
-        model_ref = snap.sd_model_checkpoint
+        engine_key = engine_override or snap.codex_engine
+        model_ref = model_override or snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:

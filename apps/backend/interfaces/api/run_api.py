@@ -2188,6 +2188,10 @@ def _require_explicit_device(payload: Dict[str, Any]) -> str:
     return app
 
 
+# Expose module-level ASGI application for uvicorn/Hypercorn entrypoints
+app = build_app()
+
+
 def main() -> None:
     host = '0.0.0.0'
     override = os.environ.get('API_PORT_OVERRIDE')
@@ -2242,7 +2246,7 @@ def main() -> None:
         pass
 
     ensure_initialized()
-    uvicorn.run(build_app(), host=host, port=port, log_level='info')
+    uvicorn.run(app, host=host, port=port, log_level='info')
 
 
 if __name__ == '__main__':

@@ -302,3 +302,19 @@ PY`
 **Wrong command:** `rg -n "SDXL" docs/plan`
 **Cause + fix:** Repository no longer has a `docs/plan/` tree, so ripgrep fails; target the current `.sangoi/plans/` directory that replaced it.
 **Correct command:** `rg -n "SDXL" .sangoi/plans`
+
+**Wrong command:** `ls docs/plan`
+**Cause and fix:** `Legacy docs/plan/ tree no longer exists—modern plans live under .sangoi/plans. Target the active directory instead of a removed path.`
+**Correct command:** `ls .sangoi/plans`
+
+**Wrong command:** `apply_patch <<'PATCH'\n*** Update File: COMMON_MISTAKES.md\n@@\n **Correct command:** `rg -n "SDXL" .sangoi/plans`\n+\n+**Wrong command:** ...\n*** End Patch\nPATCH`
+**Cause and fix:** `Patch failed because the required '*** Begin Patch' header was missing. Include the Begin Patch line (and End Patch) whenever using apply_patch.`
+**Correct command:** `apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: COMMON_MISTAKES.md\n@@\n **Correct command:** `rg -n "SDXL" .sangoi/plans`\n+\n+**Wrong command:** ...\n*** End Patch\nPATCH`
+
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause and fix:** `Command walks through ignored paths (node_modules/, __pycache__, logs) so git aborts. Filter ignored directories before piping into git add (or add --ignore-errors).`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path './.refs/*' -not -path '*/__pycache__/*' -not -path '*/node_modules/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+
+**Wrong command:** `git push -u origin HEAD` (with 1s timeout)
+**Cause and fix:** `CLI invocation limited the push to ~1s and the remote handshake didn't finish in time, so the helper timed out even though git was fine.`
+**Correct command:** `git push -u origin HEAD` (let it run without the artificial timeout)

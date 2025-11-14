@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
@@ -12,6 +14,41 @@ from apps.backend.runtime.memory import memory_management, stream
 from .operations_gguf import dequantize_tensor
 
 logger = logging.getLogger("backend.runtime.ops.operations")
+
+
+def _parse_positive_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        numeric = int(value)
+    except Exception:
+        return default
+    return max(0, numeric)
+
+
+_FETCH_LOG_LIMIT = _parse_positive_int(os.getenv("CODEX_WEIGHT_FETCH_LOG_LIMIT"), 10)
+_fetch_log_counts: Dict[str, int] = defaultdict(int)
+
+
+def _log_weight_fetch(layer_name: str, has_weight: bool, has_bias: bool, has_patches: bool) -> None:
+    if _FETCH_LOG_LIMIT == 0:
+        return
+    count = _fetch_log_counts[layer_name]
+    _fetch_log_counts[layer_name] = count + 1
+    if count < _FETCH_LOG_LIMIT:
+        logger.debug(
+            "Fetched weight/bias for %s (weight=%s, bias=%s, patches=%s)",
+            layer_name,
+            "yes" if has_weight else "no",
+            "yes" if has_bias else "no",
+            has_patches,
+        )
+    elif count == _FETCH_LOG_LIMIT:
+        logger.debug(
+            "Muted weight/bias fetch logs for %s after %d occurrences",
+            layer_name,
+            _FETCH_LOG_LIMIT,
+        )
 
 
 @dataclass
@@ -125,12 +162,11 @@ def get_weight_and_bias(
                 computation_dtype=bias.dtype,
             )
 
-    logger.debug(
-        "Fetched weight/bias for %s (weight=%s, bias=%s, patches=%s)",
+    _log_weight_fetch(
         layer.__class__.__name__,
-        "yes" if weight is not None else "no",
-        "yes" if bias is not None else "no",
-        patches is not None,
+        has_weight=weight is not None,
+        has_bias=bias is not None,
+        has_patches=patches is not None,
     )
     return weight, bias
 

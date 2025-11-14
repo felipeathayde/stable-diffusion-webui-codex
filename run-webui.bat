@@ -14,6 +14,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if defined PYTHONPATH (
+    set "PYTHONPATH=%ROOT%;%PYTHONPATH%"
+) else (
+    set "PYTHONPATH=%ROOT%"
+)
+
 set "SCRIPT=%ROOT%apps\tui_bios.py"
 
 "%PY_BIN%" "%SCRIPT%" %*

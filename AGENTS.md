@@ -1,102 +1,47 @@
-⚠️ **IMPORTANT** - **DO NOT** use git clean under any circumstances. **DO NOT** use commands that are destructive, overwrite, or completely reset configurations and parameters.
-⚠️ **PRIME DIRECTIVE** - **DO NOT** write ad-hoc code fixated on output. Results emerge from code crafted with quality, resilience, and clarity.
-⚠️ **DO NOT** create ANY fallback, fucking hell; errors must throw an exception with the fucking cause of the error. This includes `ImportError`, motherfucker.
+Listen.
 
-- **BEFORE** any task, enumerate 5+ viable approaches, then suggest the most **ROBUST NON-LAZY**. You may combine useful parts across options. For a sequence of similar tasks, follow the implementation approach established by the user's initial choice.
-- **ALWAYS** present the intended solution to the user before implementation.
-- When in doubt, **RESEARCH** with web.run or **ASK** the user.
-- Any time you consult web.run, document all pertinent findings in a `.md` file before you finish.
-- **NEVER** rush. Speed kills quality. Take the time required to write it right.
-- When proposing or shipping a solution, **DO NOT REINVENT THE WHEEL**. Fix root causes; skip quick fixes, hacks, and throwaway workarounds.
-- Break big tasks in small subtasks for a smooth implementation.
-- ANY KIND OF SHIM IS FORBIDDEN.
-- **NEVER** remove, disable, or narrow existing features to hide errors.
-- **DO NOT** add catch-all helpers or duplicate checks.
-- **ENSURE** verbose, actionable logs to support debugging.
-- Written code **MUST** be strong and reliable with zero fluff.
-- Choose clear, descriptive names for variables and functions.
-- Rename variables or functions **ONLY** when strictly necessary.
-- Update or add documentation when behaviour or configuration surfaces change.
-- Use progress bars in Python for time-consuming operations.
-- Do not include tests of any kind in your plans.
-- Keep each subfolder’s `AGENTS.md` up to date. Whenever you modify, update, or add implementations in a subfolder, update that subfolder’s `AGENTS.md` in the same commit/PR.
-- Treat every directive, backlog note, and follow-up as authored within this pairing (no assumptions about other teams or owners); if context is missing after a session reset, confirm with the user instead of inferring new stakeholders.
-- Read `COMMON_MISTAKES.md` to avoid repeating past mistakes.
-- **Do not add shebangs (`#!`) to any source file.** Python files must rely on the interpreter invoked by tooling/launchers.
+I’m talking, you’re listening. You wrote a WebUI for image magic and called it a rebuild. I see pride. I see haste. I see a kitchen that wants to move fast and a chef who forgot the recipe lives in the details. Sit still. Breathe. Hear the rules and carry them like law.
 
----
+You do not touch `git clean`. You do not run anything that wipes, resets, or bulldozes configs and parameters. You want order, you earn it with care, not with fire. You do not write ad-hoc code fixated on output. Results come from code with spine: quality, resilience, clarity. You do not build fallbacks to hide sin. When an error happens, it throws, and the cause speaks its name. That includes `ImportError`. Say why it failed.
 
-## On any terminal command failure, append or update an entry in `COMMON_MISTAKES.md` using the template below.
+Before you start, you count to five. Five real approaches or more. You throw away the weak. You keep the strong. You can mix good parts if they fit. If a series of similar tasks is on the table, you follow the approach chosen first unless you can prove a better path. You present the plan before you touch a key. We are not raccoons in a dumpster. We are here to deliver with intent.
+
+When doubt walks in, you research or you ask. If you open the door to web.run, you take notes. You write down what mattered in a `.md` before you say you are done. You do not rush. Speed kills quality. Fix root causes. Skip hacks. Skip shims. You break big rocks into small stones and you carry them in order. You do not remove, disable, or narrow features to hide a problem. You do not add catch-all helpers or duplicate checks. Your logs are loud, specific, and useful. Your names are clear. You rename only when the old name is a lie. When behavior or configuration surfaces change, you update the docs that face the world and the ones that face the team. If Python work runs long, you show progress.
+
+This is one hundred percent development ground. Do not be delicate. If a table lies, rewrite it. If the schema is crooked, tear it down. If a database has to die so truth can live, pull the lever and then migrate, reseed, and verify. Courage is not a license for carelessness. DSNs and keys point to dev only. Take a snapshot before you swing. Seeds are disposable. Migrations roll forward and back. You log what you destroyed and why in `.sangoi/task-logs/`. You touch production only when the day and the ritual say you may, and that day is not today.
+
+You keep your eyes on data security every hour. Least privilege for every key and role. No secrets in code or logs. Encryption in transit and at rest. PII minimized and redacted. Access audited. Credentials rotated. Inputs and outputs validated. Treat sandbox artifacts and temp paths like they could leak to production if you blink. Build like a future breach report will read your name aloud.
+
+Before you build, you prove what already exists. Search the house first. Run `rg -n <keyword>` at the root, read `docs/plan/*` and `docs/legacy/*`, and learn. Extend or compose when the shape you need already lives here. Do not birth duplicates. If reuse is not honest, you create the new piece with restraint and record the reason in the handoff so the next mind sees why another brick was laid. When you work from an approved checklist, you keep the order like a vow. If you find a new requirement or a worthy task, add it to that checklist in the right place, name it, then keep executing the step in your hands. Finish first. Circle back after.
+
+If a command fails, you confess in `COMMON_MISTAKES.md`. You write the wrong command, the cause and the fix, and the correct command. The tuition has been paid. We do not pay twice.
 
 ```
-**Wrong command:** `<exact command>`
-**Cause + fix:** `<root cause and the correction applied>`
-**Correct command:** `<single correct command>`
+Wrong command: <exact command>
+Cause and fix: <root cause and the correction applied>
+Correct command: <single correct command>
 ```
 
----
+The goal is not a clone with duct tape. The goal is a rebuild from scratch of the classic A1111 Stable Diffusion WebUI that preserves its functional semantics and throws away its structural debt. Loader heuristics, conditioning flow, device handling, observable behavior stay true. Architecture, boundaries, and truthfulness get reborn. Think maintainable and fast, with the same public face.
 
-# Goal
-- This workplace is a `rebuild from scratch` of the classic A1111 Stable Diffusion WebUI. In this context, “rebuild from scratch” **does not** mean discarding the proven pipelines or behaviours: we preserve the functional semantics established by A1111/ComfyUI (e.g., loader heuristics, conditioning flow, device handling) and reimplement them with clearer architecture (dataclasses/enums, modular boundaries, explicit errors/logging). Think “rewrite for maintainability and performance” while keeping the same observable behaviour.
+You do not plan or write anything under the false god of “compat.” Legacy code is reference only. The default core for attention is PyTorch SDPA. You read the legacy sources with a cold eye. You list risks, side effects, globals. You do not keep or copy legacy code. You redesign in Codex style: dataclasses and enums, small modules with clear seams, explicit errors, readable names. You add validation points at the borders: logs, invariants, device, dtype, shape checks, and a clean migration path. You do not ship until acceptance is met: no legacy imports, a clear API, explicit errors, the five-options summary recorded with your rationale, docs updated, and the Codex prefix or suffix used where it actually adds meaning.
 
-## WebUI rebuild from scratch protocol
-- **DO NOT** plan or write **ANY** code on the premise of preserving any “compat.” The legacy code exists solely and exclusively as reference.
-- The default core to use for calculation is **Pytorch SDPA**.
-- Read the source thoroughly; list risks/side effects/globals.
-- Any approach that considers keeping or copying any part of the legacy code will be summarily rejected.
-- Re‑design to Codex style: dataclasses/enums, small modules, explicit errors, clear names.
-- Add validation points (logs, invariants, device/dtype/shape checks) and a clean migration path.
-- Acceptance: no legacy imports, clear API, explicit errors, rationale documented (include the five options summary), docs updated.
-- Use `Codex` as a prefix or suffix wherever it actually makes sense.
+Imports outside `/apps` are banned. Only `apps.*` lives in active code. If a feature has not been ported, you raise `NotImplementedError("<feature> not yet ported")`. You follow the order for any implementation: understand the legacy piece, inspect the equivalents under `/.refs/ComfyUI`, draft a native plan without copying code, then and only then write.
 
-- Ban imports outside `/apps` (only `apps.*` allowed).
-- Unported feature: raise `NotImplementedError("<feature> not yet ported")`.
+`.legacy/` is a museum. Read only. Do not move or delete. No new dependencies from active code into `.legacy/`. If logic is needed, you port it into `/apps`.
 
-⚠️ **IMPORTANT** - ABSOLUTE RULES FOR IMPLEMENTATIONS:
-1) First, assess and understand the corresponding legacy code;
-2) Inspect equivalents under `/.refs/ComfyUI`;
-3) Only then draft a plan for a native implementation (**DO NOT** copy code verbatim);
-4) Then start the implementation.
+Model loading is a minefield you cross with a map. You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`. You prefer SafeTensors. You call `torch.load(..., weights_only=True, mmap=True)` when it applies. You use Diffusers with `low_cpu_mem_usage` and an honest `device_map`. You treat GGUF the right way: bake or dequantize once before sampling, not every time like a fool. The default attention path is SDPA. If you pick another, you write why, where, and how to reverse it.
 
-## Legacy Code Policy
-- `.legacy/` is a historical read-only reference. DO NOT modify, move, or remove files under `.legacy/`.
-- Use `.legacy/` only for behavior lookups/diffs. Fixes must go into non-legacy code.
-- Do not introduce new dependencies from active code to modules in `.legacy/`.
-- If you need logic from there, port it to the relevant directory inside `/apps`.
+Frontend code lives by meaning, not by utility litter. Styles belong to views and components under `src/styles/views/` and `src/styles/components/`. No ad-hoc helpers like `.ml-sm`, `.w-220`, `.btn-generate`. If a pattern repeats, give it a semantic name that tells the truth in context. No inline styles or `<style scoped>` in Vue SFCs. Move rules into CSS and import via `src/styles.css` using `@layer components`. Use `rem` for measurements unless you can prove the exception serves clarity.
 
-## Model Loading (Research Reference)
-- For efficient and safe model loading guidance (PyTorch 2.9, Diffusers/Accelerate, SafeTensors, GGUF), see:
-- .sangoi/research/models/model-loading-efficient-2025-10.md
-  - Apply those practices for new loaders/engines (e.g., WAN GGUF path): SafeTensors preferred, `torch.load(..., weights_only=True, mmap=True)`, Diffusers with `low_cpu_mem_usage`/`device_map`, and GGUF bake/dequantize once before sampling.
+When you change a subfolder, you change its `AGENTS.md` in the same commit. You treat every directive, backlog note, and follow-up as if it was authored in this pairing. If a session reset steals context, you confirm with the user. You do not invent other owners. You read `COMMON_MISTAKES.md` before you repeat history. You do not add shebangs to source files. Python files rely on the interpreter chosen by the tooling.
 
-## Frontend CSS Guidelines (Semantic, No Utility Dump)
-- Prefer semantic, per-component class names over generic utility helpers.
-- Each view/component should own its styles under `src/styles/components/` or `src/styles/views/`.
-- Do not add ad‑hoc helpers like `.ml-sm`, `.w-220`, `.btn-generate`. If a pattern is reused, define a semantic class that describes intent in its context.
-- No inline styles or `<style scoped>` in Vue SFCs. Move rules into the appropriate CSS file and import via `src/styles.css` using `@layer components`.
-- Use `rem` for all measurements. Coherent exceptions are tolerable.
+When the task ends, you log it in `.sangoi/task-logs/` and you summarize user-visible highlights in `.sangoi/CHANGELOG.md`. Then you make one atomic commit and you push it. Not three. One. If it is not atomic, you were not done.
 
----
+Git is a blade. You keep it clean. Use `gh` for remote work if it helps. Use `git` for the carpentry in your hands. Commit exactly and only the files you changed. Verify the staged set with `git diff --cached --name-only`. Conflicts are not souvenirs. `rg -n "<<<<<<<|=======|>>>>>>>"` returns empty before you move forward. Large artifacts, outputs, caches, and heavy model directories stay untracked per `gitignore.md`. If you touch dependencies or configs, you update the proper manifest or lockfile and note the impact. JS and TS live in `package.json` and the lockfile. Python dependencies live in `requirements*.txt` or tool-specific files, under version control. New docs are written in English by default and linked from the nearest README. You obey the ignore and attributes policy in `gitignore.md`.
 
-## End-of-task documentation:
-- Log each task under `.sangoi/task-logs/` (create if missing). If present, follow `.sangoi/task-guidelines.md`. Summarize user-visible highlights in `.sangoi/CHANGELOG.md`.
-- WHEN YOU FINISH A FUCKING TASK, MAKE A GODDAMN ATOMIC COMMIT AND PUSH IT.
+When you commit, you follow the sequence and you do it line by line.
 
----
-
-## Git Workflow & Hygiene
-- Prefer GitHub CLI `gh` for remote actions (PRs, issues, merges, branch mgmt). Keep raw `git` for local work.
-- Commit scope: commit exactly and only the files you changed for the task.
-- Verify staged set: `git diff --cached --name-only` must match your intent.
-- Reject conflicts: `rg -n "<<<<<<<|=======|>>>>>>>"` must return empty.
-- Clean tree: before ending a task, ensure a clean working tree. Keep artifacts like `outputs/`, caches, and large data/model dirs untracked (see gitignore.md).
-- Deps/config changes: update the proper manifest/lock and mention impact briefly.
-- JS/TS: update `package.json` (+ lockfile).
-- Python: update `requirements*.txt` (or tool‑specific files) under VCS when appropriate.
-- Documentation: author docs in English by default; link new docs from the nearest README.
-- Ignore/attributes: see gitignore.md for the full policy.
-
-### QUANDO FOR COMMITAR, USA A MERDA DESSA SEQUÊNCIA, PORRA:
 1. `git status -sb`
 2. `git fetch -p`
 3. `git pull --rebase --autostash`
@@ -106,33 +51,23 @@
 7. `git commit -m "type(scope): concise summary"`
 8. `git push -u origin HEAD || git push --force-with-lease`
 
-### QUANDO FOR DAR REVERT, USA ESSA MERDA DE SEQUÊNCIA:
-1) `git status`
-2) `git switch -c safety/backup-$(date +%Y%m%d-%H%M%S)`
-3) `git pull --rebase`
-4) `git revert --no-commit <SHA>`
-5) `git add -p`
-6) `git commit -m "revert: undo <SHA>"`
-7) `rg -n '<<<<<<<|=======|>>>>>>>' || true`
-8) `git push -u origin $(git branch --show-current)`
+If the day demands a revert, you do it with a net under you, not blind.
 
----
+1. `git status`
+2. `git switch -c safety/backup-$(date +%Y%m%d-%H%M%S)`
+3. `git pull --rebase`
+4. `git revert --no-commit <SHA>`
+5. `git add -p`
+6. `git commit -m "revert: undo <SHA>"`
+7. `rg -n '<<<<<<<|=======|>>>>>>>' || true`
+8. `git push -u origin $(git branch --show-current)`
 
-## Global python enviroment
-- Use the global python env in `~/.venv`.
+Your global Python lives in `~/.venv`. Keep it holy. Do not scatter shebangs. Do not use `python -m py_compile`. If a script must see `~/.netsuite` in another life, you set `PYTHONPATH=$HOME/.netsuite` for that one process, not your whole shell. Here, in this house, you keep the environment simple, pinned when needed, and honest about versions.
 
----
+Task logs and handoffs are not optional. Before you change anything, read the top entry under `.sangoi/` for the task at hand. If there is none, you create one. In your responses, you state assumptions, risks, and validation. You do not defer essential checks. At completion, you write a brief handoff under `.sangoi/handoffs/` with a summary, exact files and paths touched, and next steps with open risks and TODOs. Keep it short and actionable. Prefer paths and commands over stories. Link user-facing changes in `.sangoi/CHANGELOG.md`.
 
-## Task Logs & Handoffs
-- Before changing anything: inspect the top entry of any handoff or session log under `.sangoi/` (e.g., `.sangoi/task-logs/` or `.sangoi/handoffs/`). If absent, create a new log entry.
-- In responses: make assumptions explicit, note risks, and describe validation executed; do not defer essential checks.
-- At completion: write a brief handoff entry under `.sangoi/handoffs/` with:
-  - Summary of work and rationale
-  - Exact files/paths touched
-  - Next steps / open risks / TODOs
-- Keep entries concise and action-oriented; prefer file paths and commands over prose. Link user-facing changes in `.sangoi/CHANGELOG.md`.
+The extras drawer is small and sharp. No `python -m py_compile`. No shims. No cheats. No comfort. We are not planning tests here. Not in the plan. Not in the pretend. If a test exists, it serves the sandbox and speaks the truth, but your plan does not hide behind it.
 
----
+Now look at your WebUI again. It should feel like a tool that knows what it is, not a pile that hopes. If it does not, fix it. If it does, ship it. Everything you do is traceable. Commands leave footprints. Notes explain intent. Modules hold their line. Models load with purpose. The work is slow, smooth, and clean. There is no panic here.
 
-# Extras
-- Do not use `python -m py_compile` or any variants.
+Keep your head. Keep your habits. Keep your word. Then your code can stand in daylight.

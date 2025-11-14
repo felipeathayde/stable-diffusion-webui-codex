@@ -299,3 +299,6 @@ PY`
 **Wrong command:** `apply_patch` updating `apps/backend/runtime/modules/AGENTS.md` with unmatched context
 **Cause + fix:** The patch assumed anchor text that didn’t exist; read the current file and update using an `Update File` hunk that matches real content, or replace the file body coherently.
 **Correct command:** `apply_patch` with a hunk aligned to the existing content (or rewrite the file section explicitly).
+**Wrong command:** `rg -n "SDXL" docs/plan`
+**Cause + fix:** Repository no longer has a `docs/plan/` tree, so ripgrep fails; target the current `.sangoi/plans/` directory that replaced it.
+**Correct command:** `rg -n "SDXL" .sangoi/plans`

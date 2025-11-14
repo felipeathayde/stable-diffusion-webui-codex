@@ -101,6 +101,7 @@ def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - run
 def _set_max_per_func(value: Optional[int]) -> None:
     global _max_per_func
     if value is None:
+        _max_per_func = _DEFAULT_MAX_PER_FUNC
         return
     try:
         numeric = int(value)
@@ -123,6 +124,8 @@ def enable(*, max_calls_per_func: Optional[int] = None) -> None:
 
     if max_calls_per_func is not None:
         _set_max_per_func(max_calls_per_func)
+    else:
+        _set_max_per_func(None)
     if _enabled:
         _reset_counters()
         _logger.debug(
@@ -166,10 +169,20 @@ def disable() -> None:  # pragma: no cover - runtime hook
     _logger.debug("call-trace disabled")
 
 
+def _env_trace_limit() -> Optional[int]:
+    raw = os.getenv("CODEX_TRACE_DEBUG_MAX_PER_FUNC")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
 def enable_from_env() -> None:
     """Enable when CODEX_TRACE_DEBUG=1 (or truthy)."""
     if _truthy(os.getenv("CODEX_TRACE_DEBUG")):
-        enable()
+        enable(max_calls_per_func=_env_trace_limit())
 
 
 __all__ = ["enable", "disable", "enable_from_env"]

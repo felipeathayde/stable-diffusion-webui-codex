@@ -31,7 +31,7 @@ _fetch_log_counts: Dict[str, int] = defaultdict(int)
 
 
 def _log_weight_fetch(layer_name: str, has_weight: bool, has_bias: bool, has_patches: bool) -> None:
-    if _FETCH_LOG_LIMIT == 0:
+    if _FETCH_LOG_LIMIT <= 0:
         return
     count = _fetch_log_counts[layer_name]
     _fetch_log_counts[layer_name] = count + 1

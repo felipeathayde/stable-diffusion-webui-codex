@@ -10,7 +10,7 @@ import sys
 import threading
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from uuid import uuid4
 import logging
 
@@ -1307,75 +1307,234 @@ def build_app() -> FastAPI:
                 rejected[k] = 'invalid value'
         return {"accepted": accepted, "rejected": rejected}
 
-    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
-        prompt = _p.require(payload, 'txt2img_prompt') or ''
-        negative_prompt = _p.require(payload, 'txt2img_neg_prompt') or ''
-        prompt_styles = _p.as_list(payload, 'txt2img_styles')
-        n_iter = _p.as_int(payload, 'txt2img_batch_count')
-        batch_size = _p.as_int(payload, 'txt2img_batch_size')
-        cfg_scale = _p.as_float(payload, 'txt2img_cfg_scale')
-        distilled_cfg_scale = _p.as_float_optional(payload, 'txt2img_distilled_cfg_scale', 3.5)
-        height = _p.as_int(payload, 'txt2img_height')
-        width = _p.as_int(payload, 'txt2img_width')
-        enable_hr = _p.as_bool(payload, 'txt2img_hr_enable')
-        steps_val = _p.as_int(payload, 'txt2img_steps')
-        sampler_name = _p.require(payload, 'txt2img_sampling')
-        scheduler_name = _p.require(payload, 'txt2img_scheduler')
-        seed_val = _p.as_int(payload, 'txt2img_seed')
-        noise_source = payload.get('txt2img_randn_source') or payload.get('txt2img_noise_source')
-        ensd_raw = payload.get('txt2img_eta_noise_seed_delta')
+_TXT2IMG_ALLOWED_KEYS = {
+    "__strict_version",
+    "codex_device",
+    "prompt",
+    "negative_prompt",
+        "width",
+        "height",
+        "steps",
+        "guidance_scale",
+        "sampler",
+        "scheduler",
+        "seed",
+    "batch_size",
+    "batch_count",
+    "styles",
+    "metadata",
+    "extras",
+    "distilled_guidance_scale",
+    "engine",
+    "model",
+}
+    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta"}
+    _TXT2IMG_HIGHRES_KEYS = {
+        "enable",
+        "denoise",
+        "scale",
+        "resize_x",
+        "resize_y",
+        "steps",
+        "upscaler",
+        "checkpoint",
+        "modules",
+        "sampler",
+        "scheduler",
+        "prompt",
+        "negative_prompt",
+        "cfg",
+        "distilled_cfg",
+    }
 
-        if enable_hr:
-            denoising_strength = _p.as_float(payload, 'txt2img_denoising_strength')
-            hr_scale = _p.as_float(payload, 'txt2img_hr_scale')
-            hr_upscaler = _p.require(payload, 'txt2img_hr_upscaler')
-            hr_second_pass_steps = _p.as_int(payload, 'txt2img_hires_steps')
-            hr_resize_x = _p.as_int(payload, 'txt2img_hr_resize_x')
-            hr_resize_y = _p.as_int(payload, 'txt2img_hr_resize_y')
-            hr_checkpoint_name = payload.get('hr_checkpoint_name') or _p.require(payload, 'hr_checkpoint')
-            hr_additional_modules = payload.get('hr_additional_modules') or _p.as_list(payload, 'hr_vae_te')
-            hr_sampler_name = payload.get('hr_sampler_name') or _p.require(payload, 'hr_sampler')
-            hr_scheduler = payload.get('hr_scheduler') or _p.require(payload, 'hr_scheduler')
-            hr_prompt = payload.get('txt2img_hr_prompt') or ''
-            hr_negative_prompt = payload.get('txt2img_hr_neg_prompt') or ''
-            hr_cfg = _p.as_float(payload, 'txt2img_hr_cfg')
-            hr_distilled_cfg = _p.as_float(payload, 'txt2img_hr_distilled_cfg')
+    def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
+        unknown = sorted(set(obj.keys()) - allowed)
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
+
+    def _require_str_field(payload: Dict[str, Any], key: str, *, allow_empty: bool = False, trim: bool = True) -> str:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
+        result = value.strip() if trim else value
+        if not allow_empty and result == "":
+            raise HTTPException(status_code=400, detail=f"'{key}' must not be empty")
+        return result if trim else value
+
+    def _require_int_field(payload: Dict[str, Any], key: str, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
+            value = int(value)
         else:
-            denoising_strength = 0.0
-            hr_scale = 1.0
-            hr_upscaler = 'Use same upscaler'
-            hr_second_pass_steps = 0
-            hr_resize_x = width
-            hr_resize_y = height
-            hr_checkpoint_name = 'Use same checkpoint'
-            hr_additional_modules = ['Use same choices']
-            hr_sampler_name = 'Use same sampler'
-            hr_scheduler = 'Use same scheduler'
-            hr_prompt = ''
-            hr_negative_prompt = ''
-            hr_cfg = cfg_scale
-            hr_distilled_cfg = distilled_cfg_scale
+            value = int(value)
+        if minimum is not None and value < minimum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
+        if maximum is not None and value > maximum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
+        return value
 
+    def _require_float_field(payload: Dict[str, Any], key: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a number")
+        result = float(value)
+        if minimum is not None and result < minimum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
+        if maximum is not None and result > maximum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
+        return result
+
+    def _parse_styles(payload: Dict[str, Any]) -> List[str]:
+        raw = payload.get('styles')
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
+        out: List[str] = []
+        for entry in raw:
+            if not isinstance(entry, str):
+                raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
+            text = entry.strip()
+            if text:
+                out.append(text)
+        return out
+
+    def _parse_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw = payload.get('metadata')
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="'metadata' must be an object")
+        return dict(raw)
+
+    def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        raw = payload.get('extras')
+        if raw is None:
+            return {}, None
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="'extras' must be an object")
+        _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
         extras: Dict[str, Any] = {}
-        if noise_source:
-            extras['randn_source'] = str(noise_source)
-        if ensd_raw is not None:
-            try:
-                extras['eta_noise_seed_delta'] = int(float(ensd_raw))
-            except Exception:
-                raise HTTPException(status_code=400, detail="txt2img_eta_noise_seed_delta must be numeric")
-
-        metadata = {
-            "mode": _opts_snapshot().codex_mode,
-            "styles": prompt_styles,
-            "distilled_cfg_scale": distilled_cfg_scale,
-            "hr": bool(enable_hr),
-            "n_iter": n_iter,
+        if 'randn_source' in raw:
+            extras['randn_source'] = str(raw['randn_source'])
+        if 'eta_noise_seed_delta' in raw:
+            val = raw['eta_noise_seed_delta']
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
+            extras['eta_noise_seed_delta'] = int(val)
+        highres = raw.get('highres')
+        if highres is None:
+            return extras, None
+        if not isinstance(highres, dict):
+            raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
+        _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
+        if not bool(highres.get('enable')):
+            return extras, None
+        required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
+        for key in required:
+            if key not in highres:
+                raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
+        hr_modules = highres.get('modules')
+        if hr_modules is not None:
+            if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
+                raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
+            modules_list = list(hr_modules)
+        else:
+            modules_list = []
+        return extras, {
+            "denoise": float(highres['denoise']),
+            "scale": float(highres['scale']),
+            "resize_x": _require_int_field(highres, 'resize_x'),
+            "resize_y": _require_int_field(highres, 'resize_y'),
+            "steps": _require_int_field(highres, 'steps', minimum=0),
+            "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
+            "checkpoint": highres.get('checkpoint'),
+            "modules": modules_list,
+            "sampler": highres.get('sampler'),
+            "scheduler": highres.get('scheduler'),
+            "prompt": highres.get('prompt') or '',
+            "negative_prompt": highres.get('negative_prompt') or '',
+            "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
+            "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
         }
-        if noise_source:
-            metadata["randn_source"] = str(noise_source)
-        if 'eta_noise_seed_delta' in extras:
-            metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
+
+    def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
+        if cfg is None:
+            return {
+                "enable": False,
+                "denoise": 0.0,
+                "scale": 1.0,
+                "upscaler": "Use same upscaler",
+                "steps": 0,
+                "resize_x": width,
+                "resize_y": height,
+                "hr_checkpoint_name": "Use same checkpoint",
+                "hr_additional_modules": [],
+                "hr_sampler_name": "Use same sampler",
+                "hr_scheduler": "Use same scheduler",
+                "hr_prompt": "",
+                "hr_negative_prompt": "",
+                "hr_cfg": fallback_cfg,
+                "hr_distilled_cfg": fallback_distilled,
+            }
+        return {
+            "enable": True,
+            "denoise": cfg["denoise"],
+            "scale": cfg["scale"],
+            "upscaler": cfg["upscaler"],
+            "steps": cfg["steps"],
+            "resize_x": cfg["resize_x"],
+            "resize_y": cfg["resize_y"],
+            "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
+            "hr_additional_modules": cfg.get("modules") or [],
+            "hr_sampler_name": cfg.get("sampler") or "Use same sampler",
+            "hr_scheduler": cfg.get("scheduler") or "Use same scheduler",
+            "hr_prompt": cfg.get("prompt") or "",
+            "hr_negative_prompt": cfg.get("negative_prompt") or "",
+            "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
+            "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
+        }
+
+    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple[Txt2ImgRequest, str, Optional[str]]:
+        _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
+        prompt = _require_str_field(payload, 'prompt', allow_empty=False)
+        negative_prompt = str(payload.get('negative_prompt') or '')
+        width = _require_int_field(payload, 'width', minimum=8)
+        height = _require_int_field(payload, 'height', minimum=8)
+        steps_val = _require_int_field(payload, 'steps', minimum=1)
+        cfg_scale = _require_float_field(payload, 'guidance_scale')
+        if 'distilled_guidance_scale' in payload:
+            distilled_cfg_scale = _require_float_field(payload, 'distilled_guidance_scale')
+        else:
+            distilled_cfg_scale = 3.5
+        sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
+        scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
+        seed_val = _require_int_field(payload, 'seed')
+        batch_size = _require_int_field(payload, 'batch_size', minimum=1)
+        batch_count = _require_int_field(payload, 'batch_count', minimum=1)
+        styles = _parse_styles(payload)
+        metadata = _parse_metadata(payload)
+        extras, highres_cfg = _parse_txt2img_extras(payload)
+        if not prompt:
+            raise HTTPException(status_code=400, detail="prompt must not be empty")
+
+        metadata.setdefault("mode", _opts_snapshot().codex_mode)
+        metadata["styles"] = styles
+        metadata["n_iter"] = batch_count
+        metadata["batch_count"] = batch_count
+        metadata["batch_size"] = batch_size
+        metadata["hr"] = bool(highres_cfg)
+        metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
@@ -1393,23 +1552,7 @@ def build_app() -> FastAPI:
             seed=seed_val,
             batch_size=batch_size,
             metadata=metadata,
-            highres_fix={
-                "enable": bool(enable_hr),
-                "denoise": denoising_strength,
-                "scale": hr_scale,
-                "upscaler": hr_upscaler,
-                "steps": hr_second_pass_steps,
-                "resize_x": hr_resize_x,
-                "resize_y": hr_resize_y,
-                "hr_checkpoint_name": hr_checkpoint_name,
-                "hr_additional_modules": hr_additional_modules,
-                "hr_sampler_name": hr_sampler_name,
-                "hr_scheduler": hr_scheduler,
-                "hr_prompt": hr_prompt,
-                "hr_negative_prompt": hr_negative_prompt,
-                "hr_cfg": hr_cfg,
-                "hr_distilled_cfg": hr_distilled_cfg,
-            },
+            highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
             extras=extras,
         )
 

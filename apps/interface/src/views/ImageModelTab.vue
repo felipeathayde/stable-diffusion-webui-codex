@@ -113,6 +113,8 @@ import { onMounted, computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
 import { fetchSamplers, fetchSchedulers, startTxt2Img, startImg2Img, subscribeTask } from '../api/client'
+import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
+import type { Txt2ImgRequest } from '../api/payloads'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 
 const props = defineProps<{ tabId: string; type: 'sd15' | 'sdxl' | 'flux' }>()
@@ -169,35 +171,53 @@ async function generate(): Promise<void> {
   if (!tab.value) return
   stopStream(); status.value = 'running'; errorMessage.value = ''; images.value = []
   const p = params.value
-  const base = {
-    width: p.width,
-    height: p.height,
-    steps: p.steps,
-    cfg_scale: p.cfgScale,
-    seed: p.seed,
-    sampler: p.sampler,
-    scheduler: p.scheduler,
-  } as Record<string, unknown>
   try {
     const quick = useQuicksettingsStore()
     if (p.useInitImage && p.initImageData) {
+      const shared = {
+        width: p.width,
+        height: p.height,
+        steps: p.steps,
+        cfg_scale: p.cfgScale,
+        seed: p.seed,
+        sampler: p.sampler,
+        scheduler: p.scheduler,
+      }
       const payload = {
         __strict_version: 1,
         codex_device: quick.currentDevice,
         img2img_prompt: p.prompt,
         img2img_neg_prompt: p.negativePrompt,
         img2img_init_image: p.initImageData,
-        ...Object.fromEntries(Object.entries(base).map(([k,v]) => [`img2img_${k}`, v])),
+        ...Object.fromEntries(Object.entries(shared).map(([k, v]) => [`img2img_${k}`, v])),
       }
       const { task_id } = await startImg2Img(payload)
       unsubscribe = subscribeTask(task_id, onTaskEvent)
     } else {
-      const payload = {
-        __strict_version: 1,
-        codex_device: quick.currentDevice,
-        txt2img_prompt: p.prompt,
-        txt2img_neg_prompt: p.negativePrompt,
-        ...Object.fromEntries(Object.entries(base).map(([k,v]) => [`txt2img_${k}`, v])),
+      let payload: Txt2ImgRequest
+      try {
+        const modelRef = typeof p.model === 'string' && p.model.length > 0 ? p.model : undefined
+        payload = buildTxt2ImgPayload({
+          prompt: p.prompt,
+          negativePrompt: p.negativePrompt,
+          width: p.width,
+          height: p.height,
+          steps: p.steps,
+          guidanceScale: p.cfgScale,
+          sampler: p.sampler || 'automatic',
+          scheduler: p.scheduler || 'automatic',
+          seed: p.seed,
+          batchSize: 1,
+          batchCount: 1,
+          styles: [],
+          device: quick.currentDevice,
+          engine: props.type,
+          model: modelRef,
+        })
+      } catch (error) {
+        status.value = 'error'
+        errorMessage.value = formatZodError(error)
+        return
       }
       const { task_id } = await startTxt2Img(payload)
       unsubscribe = subscribeTask(task_id, onTaskEvent)

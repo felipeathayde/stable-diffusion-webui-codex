@@ -21,6 +21,7 @@ import type {
   UiPresetApplyResponse,
   InventoryResponse,
 } from './types'
+import type { Txt2ImgRequest } from './payloads'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
@@ -78,7 +79,7 @@ export function updateOptions(payload: Record<string, unknown>): Promise<Options
   })
 }
 
-export function startTxt2Img(payload: Record<string, unknown>): Promise<Txt2ImgStartResponse> {
+export function startTxt2Img(payload: Txt2ImgRequest): Promise<Txt2ImgStartResponse> {
   return requestJson<Txt2ImgStartResponse>('/txt2img', {
     method: 'POST',
     body: JSON.stringify(payload),

@@ -21,3 +21,4 @@ Status: Active
 - Run `npm run dev` from this directory for local development; backend expects the build artifacts emitted by Vite.
 - Keep source structure consistent with the guidelines in `.sangoi/frontend/guidelines/`.
 - 2025-11-03: SDXL view now exposes "Save Profile" backed by store persistence to mirror the Test harness.
+- 2025-11-14: API requests are now built via `src/api/payloads.ts` (Zod schemas) and only send contract-approved fields; legacy `txt2img_*` payloads are no longer accepted.

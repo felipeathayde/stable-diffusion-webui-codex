@@ -15,6 +15,8 @@ import {
   startTxt2Img,
   subscribeTask,
 } from '../api/client'
+import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
+import type { Txt2ImgRequest } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
@@ -63,6 +65,7 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
   const gallery = ref<GeneratedImage[]>([])
   const info = ref<unknown>(null)
   let unsubscribe: (() => void) | null = null
+  const quicksettings = useQuicksettingsStore()
 
   function resetProgress(): void {
     progress.value = { ...DEFAULT_PROGRESS }
@@ -119,42 +122,6 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
     }
   }
 
-  function buildPayload(): Record<string, unknown> {
-    const qs = useQuicksettingsStore()
-    return {
-      __strict_version: 1,
-      codex_device: qs.currentDevice,
-      txt2img_prompt: prompt.value,
-      txt2img_neg_prompt: negativePrompt.value,
-      txt2img_styles: styles.value,
-      txt2img_batch_count: batchCount.value,
-      txt2img_batch_size: batchSize.value,
-      txt2img_cfg_scale: cfgScale.value,
-      txt2img_distilled_cfg_scale: 3.5,
-      txt2img_height: height.value,
-      txt2img_width: width.value,
-      txt2img_hr_enable: false,
-      txt2img_steps: steps.value,
-      txt2img_sampling: selectedSampler.value,
-      txt2img_scheduler: selectedScheduler.value,
-      txt2img_seed: seed.value,
-      txt2img_denoising_strength: 0.0,
-      txt2img_hr_scale: 1.0,
-      txt2img_hr_upscaler: 'Latent',
-      txt2img_hires_steps: 0,
-      txt2img_hr_resize_x: width.value,
-      txt2img_hr_resize_y: height.value,
-      hr_checkpoint: 'Use same checkpoint',
-      hr_vae_te: ['Use same choices'],
-      hr_sampler: 'Use same sampler',
-      hr_scheduler: 'Use same scheduler',
-      txt2img_hr_prompt: '',
-      txt2img_hr_neg_prompt: '',
-      txt2img_hr_cfg: cfgScale.value,
-      txt2img_hr_distilled_cfg: 3.5,
-    }
-  }
-
   async function generate(): Promise<void> {
     stopStream()
     status.value = 'running'
@@ -168,7 +135,28 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
       await updateOptions({ sd_model_checkpoint: selectedModel.value })
     }
 
-    const payload = buildPayload()
+    let payload: Txt2ImgRequest
+    try {
+      payload = buildTxt2ImgPayload({
+        prompt: prompt.value,
+        negativePrompt: negativePrompt.value,
+        width: width.value,
+        height: height.value,
+        steps: steps.value,
+        guidanceScale: cfgScale.value,
+        sampler: selectedSampler.value || 'automatic',
+        scheduler: selectedScheduler.value || 'automatic',
+        seed: seed.value,
+        batchSize: batchSize.value,
+        batchCount: batchCount.value,
+        styles: styles.value,
+        device: quicksettings.currentDevice,
+      })
+    } catch (error) {
+      status.value = 'error'
+      errorMessage.value = formatZodError(error)
+      return
+    }
     try {
       const { task_id } = await startTxt2Img(payload)
       taskId.value = task_id

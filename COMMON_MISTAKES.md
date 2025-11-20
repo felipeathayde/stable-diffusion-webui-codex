@@ -363,3 +363,7 @@ PY`
 **Wrong command:** `git pull --rebase --autostash`
 **Cause + fix:** `Untracked task log / handoff files block the pull with “would be overwritten”; stash them with --include-untracked (or add them) before running the mandated pull.`
 **Correct command:** `git stash push --include-untracked && git pull --rebase --autostash && git stash pop`
+
+**Wrong command:** `ls -la docs/plan`
+**Cause + fix:** `The repo has no docs/plan directory; SDXL plans live under .sangoi/plans. List that path instead of the non-existent docs/plan.`
+**Correct command:** `ls -la .sangoi/plans`

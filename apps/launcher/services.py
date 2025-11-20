@@ -56,47 +56,12 @@ class CodexServiceHandle:
             return
 
         overrides_map = dict(overrides)
-        cli_args: list[str] = []
-        if self.spec.name.upper() == "API":
-            device_flags = {
-                "CODEX_DIFFUSION_DEVICE": "--core-device",
-                "CODEX_TE_DEVICE": "--te-device",
-                "CODEX_VAE_DEVICE": "--vae-device",
-            }
-            dtype_flags = {
-                "CODEX_DIFFUSION_DTYPE": "--core-dtype",
-                "CODEX_TE_DTYPE": "--te-dtype",
-                "CODEX_VAE_DTYPE": "--vae-dtype",
-            }
-            for mapping in (device_flags, dtype_flags):
-                for env_key, flag in mapping.items():
-                    raw = overrides_map.pop(env_key, None)
-                    if raw is None:
-                        continue
-                    text = str(raw).strip().lower()
-                    if not text or text == "auto":
-                        continue
-                    cli_args.extend([flag, text])
-            smart_env = overrides_map.get("CODEX_SMART_OFFLOAD")
-            if smart_env is not None:
-                if str(smart_env).strip().lower() in {"1", "true", "yes", "on"}:
-                    cli_args.append("--smart-offload")
-            debug_cond_env = overrides_map.get("CODEX_DEBUG_COND")
-            if debug_cond_env is not None:
-                if str(debug_cond_env).strip().lower() in {"1", "true", "yes", "on"}:
-                    cli_args.append("--debug-conditioning")
-            pin_shared_env = overrides_map.get("CODEX_PIN_SHARED_MEMORY")
-            if pin_shared_env is not None:
-                if str(pin_shared_env).strip().lower() in {"1", "true", "yes", "on"}:
-                    cli_args.append("--pin-shared-memory")
 
         env = os.environ.copy()
         env.update(self.spec.base_env)
         env.update(overrides_map)
 
         command = list(self.spec.command)
-        if cli_args:
-            command.extend(cli_args)
         flags = 0
         startupinfo = None
         use_external = external_terminal and self.spec.allow_external_terminal
@@ -229,12 +194,22 @@ def _project_root() -> Path:
 def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, CodexServiceHandle]:
     root = _project_root()
     py_exe = Path(sys.executable)
-    api_script = root / "apps" / "backend" / "interfaces" / "api" / "run_api.py"
-    if not api_script.exists():
-        raise RuntimeError(f"API entrypoint not found at {api_script}")
+    api_target = "apps.backend.interfaces.api.run_api:create_api_app"
+    api_port = os.getenv("API_PORT_OVERRIDE", "7850")
+    api_host = os.getenv("API_HOST", "0.0.0.0")
     api_spec = CodexServiceSpec(
         name="API",
-        command=[str(py_exe), str(api_script)],
+        command=[
+            str(py_exe),
+            "-m",
+            "uvicorn",
+            "--factory",
+            api_target,
+            "--host",
+            api_host,
+            "--port",
+            str(api_port),
+        ],
         cwd=root,
         base_env={"PYTHONUNBUFFERED": "1"},
         allow_external_terminal=True,

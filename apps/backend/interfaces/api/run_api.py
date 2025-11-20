@@ -89,6 +89,7 @@ except Exception:
 
 _initialized = False
 _RUNTIME_NAMESPACE: Optional[Any] = None
+_APP: Optional[FastAPI] = None
 
 
 def ensure_initialized() -> None:
@@ -2230,12 +2231,15 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
     ns = _bootstrap_runtime(argv_seq, env or os.environ, snapshot.as_dict())
     _enable_trace_debug(ns)
     ensure_initialized()
-    return _APP
+    # Build a fresh app each time to avoid stale/None globals under factory mode
+    app = build_app()
+    global _APP
+    _APP = app
+    return app
 
 
 # Expose module-level ASGI application for uvicorn/Hypercorn entrypoints
-_APP = build_app()
-app = _APP
+app = build_app()
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

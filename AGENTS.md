@@ -71,3 +71,5 @@ The extras drawer is small and sharp. No `python -m py_compile`. No shims. No ch
 Now look at your WebUI again. It should feel like a tool that knows what it is, not a pile that hopes. If it does not, fix it. If it does, ship it. Everything you do is traceable. Commands leave footprints. Notes explain intent. Modules hold their line. Models load with purpose. The work is slow, smooth, and clean. There is no panic here.
 
 Keep your head. Keep your habits. Keep your word. Then your code can stand in daylight.
+
+Dev note: small local helper tools (for example a standalone PNG metadata editor script at the repo root) are treated as development utilities only and are never imported from `apps.*`. They must stay simple, self‑contained, and disposable.

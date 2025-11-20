@@ -56,12 +56,12 @@ class PrepareState:
     prompt_context: PromptContext
     sampling_plan: SamplingPlan
     rng: ImageRNG
-        payload: ConditioningPayload
-        hires_plan: HiResPlan | None
-        init_latents: torch.Tensor | None
-        init_decoded: torch.Tensor | None
-        cond: object | None = None
-        uncond: object | None = None
+    payload: ConditioningPayload
+    hires_plan: HiResPlan | None
+    init_latents: torch.Tensor | None
+    init_decoded: torch.Tensor | None
+    cond: object | None = None
+    uncond: object | None = None
 
 
 @dataclass(slots=True)

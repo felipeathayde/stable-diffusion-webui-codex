@@ -2218,8 +2218,16 @@ def _enable_trace_debug(ns: Any) -> None:
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
+    # Defensive: uvicorn must call this as a factory. Detect misuse (scope passed as argv) and error out loudly.
+    if argv and len(argv) == 1 and isinstance(argv[0], dict) and "type" in argv[0]:
+        raise RuntimeError(
+            "create_api_app must be invoked as a factory (--factory import), not as an ASGI app. "
+            "Use `uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app` "
+            "or run `python apps/backend/interfaces/api/run_api.py`."
+        )
+    argv_seq = list(argv or [])
     snapshot = codex_options.get_snapshot()
-    ns = _bootstrap_runtime(list(argv or []), env or os.environ, snapshot.as_dict())
+    ns = _bootstrap_runtime(argv_seq, env or os.environ, snapshot.as_dict())
     _enable_trace_debug(ns)
     ensure_initialized()
     return _APP

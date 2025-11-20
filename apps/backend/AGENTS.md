@@ -38,6 +38,7 @@ Status: Active
 - 2025-11-03: `--smart-offload` flag (also via `CODEX_SMART_OFFLOAD=1`) loads CLIP/UNet/VAE only for their active stage, freeing VRAM between stages. txt2img/img2img pipelines honor the flag by unloading components after TE encode, UNet sampling, and VAE decode.
 - 2025-11-03: Added `--debug-conditioning` (`CODEX_DEBUG_COND`) to surface SDXL conditioning diagnostics through config/launcher/TUI without raw env reads.
 - 2025-11-03: `RuntimeMemoryConfig.swap.pin_shared_memory` now maps to `--pin-shared-memory`/`CODEX_PIN_SHARED_MEMORY` and gates host pinning during smart offload.
+ - 2025-11-20: SDXL txt2img now recomputa cond/uncond após o parse de prompt (inclui LoRA/pesos) e antes do hires, preservando metadados width/height/crop/target. Pipeline Runner loga shapes/normas quando `--debug-conditioning`/`CODEX_DEBUG_COND` está ativo.
  - 2025-11-03: Global call tracing added. Use `--trace-debug` (or `CODEX_TRACE_DEBUG=1`) to enable a process-wide function-call trace implemented via `sys.setprofile`. Every Python function call after activation is logged at `DEBUG` by `backend.calltrace` with indentation by depth. Logging is forced to `DEBUG` on activation; disable by removing the flag/env and restarting.
 
 ## Operator Communication Guidelines

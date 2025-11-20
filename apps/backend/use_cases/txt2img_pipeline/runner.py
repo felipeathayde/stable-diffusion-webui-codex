@@ -15,6 +15,7 @@ from apps.backend.codex import main as codex_main
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.patchers.token_merging import SkipWritingToConfig
+from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
@@ -55,10 +56,12 @@ class PrepareState:
     prompt_context: PromptContext
     sampling_plan: SamplingPlan
     rng: ImageRNG
-    payload: ConditioningPayload
-    hires_plan: HiResPlan | None
-    init_latents: torch.Tensor | None
-    init_decoded: torch.Tensor | None
+        payload: ConditioningPayload
+        hires_plan: HiResPlan | None
+        init_latents: torch.Tensor | None
+        init_decoded: torch.Tensor | None
+        cond: object | None = None
+        uncond: object | None = None
 
 
 @dataclass(slots=True)
@@ -102,6 +105,62 @@ class Txt2ImgPipelineRunner:
             mean,
             std,
         )
+
+    def _compute_conditioning(self, processing: CodexProcessingTxt2Img, context: PromptContext):
+        """Build cond/uncond using the engine's SDXL-aware helpers after prompt parsing and dimension overrides."""
+        sd_model = getattr(processing, "sd_model", None)
+        if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
+            return None, None
+
+        prompts = list(context.prompts or [getattr(processing, "prompt", "")])
+        negative_prompts = list(context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+
+        # Preserve spatial metadata via engine helper when available
+        if hasattr(sd_model, "_prepare_prompt_wrappers"):
+            prompts_wrapped = sd_model._prepare_prompt_wrappers(prompts, processing, is_negative=False)
+            negative_wrapped = sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
+            cond = sd_model.get_learned_conditioning(prompts_wrapped)
+            uncond = sd_model.get_learned_conditioning(negative_wrapped)
+        else:
+            cond = sd_model.get_learned_conditioning(prompts)
+            uncond = sd_model.get_learned_conditioning(negative_prompts)
+        return cond, uncond
+
+    def _log_conditioning(self, cond: object, uncond: object) -> None:
+        """Optional conditioning diagnostics controlled by --debug-conditioning / CODEX_DEBUG_COND."""
+        try:
+            if not getattr(backend_args.args, "debug_conditioning", False):
+                return
+
+            def _shape(t):
+                return tuple(t.shape) if isinstance(t, torch.Tensor) else None
+
+            def _dtype(t):
+                return str(t.dtype) if isinstance(t, torch.Tensor) else None
+
+            def _device(t):
+                return str(t.device) if isinstance(t, torch.Tensor) else None
+
+            def _norm(t):
+                return float(t.detach().abs().mean().item()) if isinstance(t, torch.Tensor) else None
+
+            ca = cond.get("crossattn") if isinstance(cond, dict) else None
+            va = cond.get("vector") if isinstance(cond, dict) else None
+            ua = uncond.get("crossattn") if isinstance(uncond, dict) else None
+            uv = uncond.get("vector") if isinstance(uncond, dict) else None
+
+            self._logger.info(
+                "[sdxl] cond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f",
+                _shape(ca), _dtype(ca), _device(ca), (_norm(ca) or 0.0),
+                _shape(va), _dtype(va), _device(va), (_norm(va) or 0.0),
+            )
+            self._logger.info(
+                "[sdxl] uncond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f",
+                _shape(ua), _dtype(ua), _device(ua), (_norm(ua) or 0.0),
+                _shape(uv), _dtype(uv), _device(uv), (_norm(uv) or 0.0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._logger.debug("[sdxl] conditioning diagnostics skipped: %s", exc)
 
     # ------------------------------------------------------------------ public API
     @pipeline_trace
@@ -182,6 +241,16 @@ class Txt2ImgPipelineRunner:
         init_latents, init_decoded = self._prepare_first_pass_from_image(processing)
         hires_plan = self._build_hires_plan(processing)
 
+        # Compute conditioning if not provided (SDXL path); preserve metadata (width/height/targets) after overrides.
+        cond = conditioning_data
+        uncond = unconditional_data
+        if cond is None or uncond is None:
+            cond, uncond = self._compute_conditioning(processing, prompt_context)
+            if cond is None or uncond is None:
+                raise RuntimeError("Failed to build conditioning for txt2img; get_learned_conditioning returned None.")
+            payload = ConditioningPayload(conditioning=cond, unconditional=uncond)
+            self._log_conditioning(cond, uncond)
+
         return PrepareState(
             prompt_context=prompt_context,
             sampling_plan=plan,
@@ -190,6 +259,8 @@ class Txt2ImgPipelineRunner:
             hires_plan=hires_plan,
             init_latents=init_latents,
             init_decoded=init_decoded,
+            cond=cond,
+            uncond=uncond,
         )
 
     @pipeline_trace
@@ -375,6 +446,12 @@ class Txt2ImgPipelineRunner:
             steps=int(processing.steps),
             guidance_scale=float(processing.guidance_scale),
         )
+
+        # Recompute conditioning for hires pass with updated width/height/targets (SDXL parity).
+        cond_hr, uncond_hr = self._compute_conditioning(processing, hires_prompt_context)
+        if cond_hr is not None and uncond_hr is not None:
+            state.payload = ConditioningPayload(conditioning=cond_hr, unconditional=uncond_hr)
+            self._log_conditioning(cond_hr, uncond_hr)
 
         samples = execute_sampling(
             processing,

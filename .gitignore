@@ -90,6 +90,8 @@ apps/interface/.eslintcache
 apps/interface/.pnpm-debug.log
 
 # Local reference docs / scratch dirs
+apps/backend/huggingface*
+apps/server/backend/huggingface*
 /.sangoi/GuiaDeDIVsEAlinhamentoNoCSS.md
 /.sangoi/GuiaDeMigracaoGradio440para5.md
 /.sangoi/SvelteUpdatesOct24Oct25andGradioStylingCheatSheet.md

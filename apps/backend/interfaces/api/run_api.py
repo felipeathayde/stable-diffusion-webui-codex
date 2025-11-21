@@ -21,6 +21,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Hard fail if uvicorn is invoking this module without --factory; prevents ASGI2 NoneType crashes.
+try:
+    _argv0 = Path(sys.argv[0]).name.lower()
+    if "uvicorn" in _argv0 and "--factory" not in sys.argv and ":create_api_app" not in " ".join(sys.argv):
+        raise RuntimeError(
+            "Codex API must be launched with uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app "
+            "(or python apps/backend/interfaces/api/run_api.py). "
+            "Invocation without --factory is unsupported and will crash."
+        )
+except Exception as _premature_exc:  # pragma: no cover - defensive startup guard
+    # Re-raise so the process exits immediately with a clear message.
+    raise
+
 
 def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
     for idx, token in enumerate(argv):

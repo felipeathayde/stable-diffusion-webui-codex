@@ -1314,881 +1314,881 @@ def build_app() -> FastAPI:
                 rejected[k] = 'invalid value'
         return {"accepted": accepted, "rejected": rejected}
 
-_TXT2IMG_ALLOWED_KEYS = {
-    "__strict_version",
-    "codex_device",
-    "device",
-    "codex_diffusion_device",
-    "prompt",
-    "negative_prompt",
-    "width",
-    "height",
-    "steps",
-    "guidance_scale",
-    "sampler",
-    "scheduler",
-    "seed",
-    "batch_size",
-    "batch_count",
-    "styles",
-    "metadata",
-    "extras",
-    "distilled_guidance_scale",
-    "engine",
-    "codex_engine",
-    "model",
-    "sd_model_checkpoint",
-}
-_TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta"}
-_TXT2IMG_HIGHRES_KEYS = {
-    "enable",
-    "denoise",
-    "scale",
-    "resize_x",
-    "resize_y",
-    "steps",
-    "upscaler",
-    "checkpoint",
-    "modules",
-    "sampler",
-    "scheduler",
-    "prompt",
-    "negative_prompt",
-    "cfg",
-    "distilled_cfg",
-}
-
-def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
-    unknown = sorted(set(obj.keys()) - allowed)
-    if unknown:
-        raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
-
-
-def _require_str_field(payload: Dict[str, Any], key: str, *, allow_empty: bool = False, trim: bool = True) -> str:
-    if key not in payload:
-        raise HTTPException(status_code=400, detail=f"Missing '{key}'")
-    value = payload[key]
-    if not isinstance(value, str):
-        raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
-    result = value.strip() if trim else value
-    if not allow_empty and result == "":
-        raise HTTPException(status_code=400, detail=f"'{key}' must not be empty")
-    return result if trim else value
-
-
-def _require_int_field(payload: Dict[str, Any], key: str, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
-    if key not in payload:
-        raise HTTPException(status_code=400, detail=f"Missing '{key}'")
-    value = payload[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
-        value = int(value)
-    else:
-        value = int(value)
-    if minimum is not None and value < minimum:
-        raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
-    if maximum is not None and value > maximum:
-        raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
-    return value
-
-
-def _require_float_field(payload: Dict[str, Any], key: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
-    if key not in payload:
-        raise HTTPException(status_code=400, detail=f"Missing '{key}'")
-    value = payload[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise HTTPException(status_code=400, detail=f"'{key}' must be a number")
-    result = float(value)
-    if minimum is not None and result < minimum:
-        raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
-    if maximum is not None and result > maximum:
-        raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
-    return result
-
-
-def _parse_styles(payload: Dict[str, Any]) -> List[str]:
-    raw = payload.get('styles')
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
-    out: List[str] = []
-    for entry in raw:
-        if not isinstance(entry, str):
-            raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
-        text = entry.strip()
-        if text:
-            out.append(text)
-    return out
-
-def _parse_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
-    raw = payload.get('metadata')
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=400, detail="'metadata' must be an object")
-    return dict(raw)
-
-
-def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-    raw = payload.get('extras')
-    if raw is None:
-        return {}, None
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=400, detail="'extras' must be an object")
-    _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
-    extras: Dict[str, Any] = {}
-    if 'randn_source' in raw:
-        extras['randn_source'] = str(raw['randn_source'])
-    if 'eta_noise_seed_delta' in raw:
-        val = raw['eta_noise_seed_delta']
-        if isinstance(val, bool) or not isinstance(val, (int, float)):
-            raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
-        extras['eta_noise_seed_delta'] = int(val)
-    highres = raw.get('highres')
-    if highres is None:
-        return extras, None
-    if not isinstance(highres, dict):
-        raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
-    _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
-    if not bool(highres.get('enable')):
-        return extras, None
-    required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
-    for key in required:
-        if key not in highres:
-            raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
-    hr_modules = highres.get('modules')
-    if hr_modules is not None:
-        if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
-            raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
-        modules_list = list(hr_modules)
-    else:
-        modules_list = []
-    return extras, {
-        "denoise": float(highres['denoise']),
-        "scale": float(highres['scale']),
-        "resize_x": _require_int_field(highres, 'resize_x'),
-        "resize_y": _require_int_field(highres, 'resize_y'),
-        "steps": _require_int_field(highres, 'steps', minimum=0),
-        "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
-        "checkpoint": highres.get('checkpoint'),
-        "modules": modules_list,
-        "sampler": highres.get('sampler'),
-        "scheduler": highres.get('scheduler'),
-        "prompt": highres.get('prompt') or '',
-        "negative_prompt": highres.get('negative_prompt') or '',
-        "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
-        "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
+    _TXT2IMG_ALLOWED_KEYS = {
+        "__strict_version",
+        "codex_device",
+        "device",
+        "codex_diffusion_device",
+        "prompt",
+        "negative_prompt",
+        "width",
+        "height",
+        "steps",
+        "guidance_scale",
+        "sampler",
+        "scheduler",
+        "seed",
+        "batch_size",
+        "batch_count",
+        "styles",
+        "metadata",
+        "extras",
+        "distilled_guidance_scale",
+        "engine",
+        "codex_engine",
+        "model",
+        "sd_model_checkpoint",
+    }
+    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta"}
+    _TXT2IMG_HIGHRES_KEYS = {
+        "enable",
+        "denoise",
+        "scale",
+        "resize_x",
+        "resize_y",
+        "steps",
+        "upscaler",
+        "checkpoint",
+        "modules",
+        "sampler",
+        "scheduler",
+        "prompt",
+        "negative_prompt",
+        "cfg",
+        "distilled_cfg",
     }
 
-
-def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
-        if cfg is None:
-            return {
-                "enable": False,
-                "denoise": 0.0,
-                "scale": 1.0,
-                "upscaler": "Use same upscaler",
-                "steps": 0,
-                "resize_x": width,
-                "resize_y": height,
-                "hr_checkpoint_name": "Use same checkpoint",
-                "hr_additional_modules": [],
-                "hr_sampler_name": "Use same sampler",
-                "hr_scheduler": "Use same scheduler",
-                "hr_prompt": "",
-                "hr_negative_prompt": "",
-                "hr_cfg": fallback_cfg,
-                "hr_distilled_cfg": fallback_distilled,
-            }
-        return {
-            "enable": True,
-            "denoise": cfg["denoise"],
-            "scale": cfg["scale"],
-            "upscaler": cfg["upscaler"],
-            "steps": cfg["steps"],
-            "resize_x": cfg["resize_x"],
-            "resize_y": cfg["resize_y"],
-            "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
-            "hr_additional_modules": cfg.get("modules") or [],
-            "hr_sampler_name": cfg.get("sampler") or "Use same sampler",
-            "hr_scheduler": cfg.get("scheduler") or "Use same scheduler",
-            "hr_prompt": cfg.get("prompt") or "",
-            "hr_negative_prompt": cfg.get("negative_prompt") or "",
-            "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
-            "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
-        }
-
-def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
-    _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
-    prompt = _require_str_field(payload, 'prompt', allow_empty=True)
-    negative_prompt = str(payload.get('negative_prompt') or '')
-    width = _require_int_field(payload, 'width', minimum=8)
-    height = _require_int_field(payload, 'height', minimum=8)
-    steps_val = _require_int_field(payload, 'steps', minimum=1)
-    cfg_scale = _require_float_field(payload, 'guidance_scale')
-    if 'distilled_guidance_scale' in payload:
-        distilled_cfg_scale = _require_float_field(payload, 'distilled_guidance_scale')
-    else:
-        distilled_cfg_scale = 3.5
-    sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
-    scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
-    seed_val = _require_int_field(payload, 'seed')
-    batch_size = _require_int_field(payload, 'batch_size', minimum=1)
-    batch_count = _require_int_field(payload, 'batch_count', minimum=1)
-    styles = _parse_styles(payload)
-    metadata = _parse_metadata(payload)
-    extras, highres_cfg = _parse_txt2img_extras(payload)
-
-    metadata.setdefault("mode", _opts_snapshot().codex_mode)
-    metadata["styles"] = styles
-    metadata["n_iter"] = batch_count
-    metadata["batch_count"] = batch_count
-    metadata["batch_size"] = batch_size
-    metadata["hr"] = bool(highres_cfg)
-    metadata["distilled_cfg_scale"] = distilled_cfg_scale
-
-    engine_override = payload.get('engine') or payload.get('codex_engine')
-    model_override = payload.get('model') or payload.get('sd_model_checkpoint')
-
-    req = Txt2ImgRequest(
-        task=TaskType.TXT2IMG,
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        width=width,
-        height=height,
-        steps=steps_val,
-        guidance_scale=cfg_scale,
-        sampler=str(sampler_name),
-        scheduler=str(scheduler_name),
-        seed=seed_val,
-        batch_size=batch_size,
-        metadata=metadata,
-        highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
-        extras=extras,
-    )
-
-    snap = _opts_snapshot()
-    engine_key = engine_override or snap.codex_engine
-    model_ref = model_override or snap.sd_model_checkpoint
-    return req, str(engine_key), model_ref
-
-def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
-    encoded: list[Dict[str, str]] = []
-    for img in images or []:
-        buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        encoded.append({
-            "format": "png",
-            "data": base64.b64encode(buf.getvalue()).decode('ascii'),
-        })
-    return encoded
+    def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
+        unknown = sorted(set(obj.keys()) - allowed)
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
 
 
-def _require_explicit_device(payload: Dict[str, Any]) -> str:
-    # Accept explicit aliases from payload only (no options fallback)
-    raw = (
-        payload.get('codex_device')
-        or payload.get('device')
-        or payload.get('codex_diffusion_device')
-        or ""
-    )
-    dev = str(raw).strip().lower()
-    allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
-    if dev not in allowed:
-        raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
-    try:
-        mem_management.switch_primary_device(dev)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return dev
-
-    _ORCH = InferenceOrchestrator()
+    def _require_str_field(payload: Dict[str, Any], key: str, *, allow_empty: bool = False, trim: bool = True) -> str:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a string")
+        result = value.strip() if trim else value
+        if not allow_empty and result == "":
+            raise HTTPException(status_code=400, detail=f"'{key}' must not be empty")
+        return result if trim else value
 
 
-    def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-        loop = entry.loop
-
-        def push(event: Dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-        def mark_done(success: bool) -> None:
-            def _set() -> None:
-                if not entry.done.done():
-                    entry.done.set_result(success)
-
-            loop.call_soon_threadsafe(_set)
-
-        push({"type": "status", "stage": "queued"})
-        try:
-            # Enforce explicit device selection without fallback
-            _require_explicit_device(payload)
-            req, engine_key, model_ref = prepare_txt2img(payload)
-        except Exception as err:
-            entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
-            return
-
-        def worker() -> None:
-            try:
-                push({"type": "status", "stage": "running"})
-                with tasks_lock:
-                    for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
-                        if isinstance(ev, ProgressEvent):
-                            push({
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            })
-                        elif isinstance(ev, ResultEvent):
-                            payload_obj = ev.payload or {}
-                            info_raw = payload_obj.get("info", "{}")
-                            try:
-                                info_obj = json.loads(info_raw)
-                            except Exception:
-                                info_obj = info_raw
-                            encoded = encode_images(payload_obj.get("images", []))
-                            result = {
-                                "images": encoded,
-                                "info": info_obj,
-                            }
-                            entry.result = {
-                                "status": "completed",
-                                "result": result,
-                            }
-                            push({"type": "result", **result})
-                push({"type": "end"})
-                mark_done(True)
-            except Exception as err:  # pragma: no cover - surfaces runtime errors
-                try:
-                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                    _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
-                except Exception:
-                    pass
-                entry.error = str(err)
-                push({"type": "error", "message": entry.error})
-                push({"type": "end"})
-                mark_done(False)
-
-        thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
-        thread.start()
-
-    def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
-        init_image_data = _p.require(payload, 'img2img_init_image')
-        init_image = media.decode_image(init_image_data)
-        mask_data = payload.get('img2img_mask')
-        mask_image = media.decode_image(mask_data) if mask_data else None
-
-        prompt = _p.require(payload, 'img2img_prompt') or ''
-        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
-        styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
-        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
-        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
-        steps_val = _p.as_int(payload, 'img2img_steps')
-        cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
-        distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
-        image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-        denoise = _p.as_float(payload, 'img2img_denoising_strength')
-        width_val = _p.as_int(payload, 'img2img_width')
-        height_val = _p.as_int(payload, 'img2img_height')
-        sampler_name = _p.require(payload, 'img2img_sampling')
-        scheduler_name = _p.require(payload, 'img2img_scheduler')
-        seed_val = _p.as_int(payload, 'img2img_seed')
-        noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
-        ensd_raw = payload.get('img2img_eta_noise_seed_delta')
-
-        enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
-        if enable_hr:
-            hr_data = {
-                "enable": True,
-                "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
-                "resize_x": _p.as_int(payload, 'img2img_hr_resize_x') if 'img2img_hr_resize_x' in payload else 0,
-                "resize_y": _p.as_int(payload, 'img2img_hr_resize_y') if 'img2img_hr_resize_y' in payload else 0,
-                "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
-                "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
-                "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
-                "hr_prompt": payload.get('img2img_hr_prompt', ''),
-                "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
-                "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,
-                "hr_distilled_cfg": _p.as_float(payload, 'img2img_hr_distilled_cfg') if 'img2img_hr_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
-            }
+    def _require_int_field(payload: Dict[str, Any], key: str, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise HTTPException(status_code=400, detail=f"'{key}' must be an integer")
+            value = int(value)
         else:
-            hr_data = {"enable": False}
+            value = int(value)
+        if minimum is not None and value < minimum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
+        if maximum is not None and value > maximum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
+        return value
 
+
+    def _require_float_field(payload: Dict[str, Any], key: str, *, minimum: Optional[float] = None, maximum: Optional[float] = None) -> float:
+        if key not in payload:
+            raise HTTPException(status_code=400, detail=f"Missing '{key}'")
+        value = payload[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{key}' must be a number")
+        result = float(value)
+        if minimum is not None and result < minimum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be >= {minimum}")
+        if maximum is not None and result > maximum:
+            raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
+        return result
+
+
+    def _parse_styles(payload: Dict[str, Any]) -> List[str]:
+        raw = payload.get('styles')
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
+        out: List[str] = []
+        for entry in raw:
+            if not isinstance(entry, str):
+                raise HTTPException(status_code=400, detail="'styles' must be an array of strings")
+            text = entry.strip()
+            if text:
+                out.append(text)
+        return out
+
+    def _parse_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw = payload.get('metadata')
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="'metadata' must be an object")
+        return dict(raw)
+
+
+    def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        raw = payload.get('extras')
+        if raw is None:
+            return {}, None
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="'extras' must be an object")
+        _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
         extras: Dict[str, Any] = {}
-        if noise_source:
-            extras['randn_source'] = str(noise_source)
-        if ensd_raw is not None:
-            try:
-                extras['eta_noise_seed_delta'] = int(float(ensd_raw))
-            except Exception:
-                raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
-
-        metadata = {
-            "styles": styles,
-            "distilled_cfg_scale": distilled_cfg_scale,
-            "image_cfg_scale": image_cfg_scale,
-            "batch_count": batch_count,
+        if 'randn_source' in raw:
+            extras['randn_source'] = str(raw['randn_source'])
+        if 'eta_noise_seed_delta' in raw:
+            val = raw['eta_noise_seed_delta']
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
+            extras['eta_noise_seed_delta'] = int(val)
+        highres = raw.get('highres')
+        if highres is None:
+            return extras, None
+        if not isinstance(highres, dict):
+            raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
+        _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
+        if not bool(highres.get('enable')):
+            return extras, None
+        required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
+        for key in required:
+            if key not in highres:
+                raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
+        hr_modules = highres.get('modules')
+        if hr_modules is not None:
+            if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
+                raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
+            modules_list = list(hr_modules)
+        else:
+            modules_list = []
+        return extras, {
+            "denoise": float(highres['denoise']),
+            "scale": float(highres['scale']),
+            "resize_x": _require_int_field(highres, 'resize_x'),
+            "resize_y": _require_int_field(highres, 'resize_y'),
+            "steps": _require_int_field(highres, 'steps', minimum=0),
+            "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
+            "checkpoint": highres.get('checkpoint'),
+            "modules": modules_list,
+            "sampler": highres.get('sampler'),
+            "scheduler": highres.get('scheduler'),
+            "prompt": highres.get('prompt') or '',
+            "negative_prompt": highres.get('negative_prompt') or '',
+            "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
+            "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
         }
-        if noise_source:
-            metadata["randn_source"] = str(noise_source)
-        if 'eta_noise_seed_delta' in extras:
-            metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
-        req = Img2ImgRequest(
-            task=TaskType.IMG2IMG,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            sampler=str(sampler_name),
-            scheduler=str(scheduler_name),
-            seed=seed_val,
-            guidance_scale=cfg_scale,
-            batch_size=batch_size,
-            metadata=metadata,
-            init_image=init_image,
-            mask=mask_image,
-            denoise_strength=denoise,
-            width=width_val,
-            height=height_val,
-            steps=steps_val,
-            extras=extras,
-            highres_fix=hr_data if hr_data.get("enable") else None,
-        )
+
+    def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
+            if cfg is None:
+                return {
+                    "enable": False,
+                    "denoise": 0.0,
+                    "scale": 1.0,
+                    "upscaler": "Use same upscaler",
+                    "steps": 0,
+                    "resize_x": width,
+                    "resize_y": height,
+                    "hr_checkpoint_name": "Use same checkpoint",
+                    "hr_additional_modules": [],
+                    "hr_sampler_name": "Use same sampler",
+                    "hr_scheduler": "Use same scheduler",
+                    "hr_prompt": "",
+                    "hr_negative_prompt": "",
+                    "hr_cfg": fallback_cfg,
+                    "hr_distilled_cfg": fallback_distilled,
+                }
+            return {
+                "enable": True,
+                "denoise": cfg["denoise"],
+                "scale": cfg["scale"],
+                "upscaler": cfg["upscaler"],
+                "steps": cfg["steps"],
+                "resize_x": cfg["resize_x"],
+                "resize_y": cfg["resize_y"],
+                "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
+                "hr_additional_modules": cfg.get("modules") or [],
+                "hr_sampler_name": cfg.get("sampler") or "Use same sampler",
+                "hr_scheduler": cfg.get("scheduler") or "Use same scheduler",
+                "hr_prompt": cfg.get("prompt") or "",
+                "hr_negative_prompt": cfg.get("negative_prompt") or "",
+                "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
+                "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
+            }
+
+    def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
+        _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
+        prompt = _require_str_field(payload, 'prompt', allow_empty=True)
+        negative_prompt = str(payload.get('negative_prompt') or '')
+        width = _require_int_field(payload, 'width', minimum=8)
+        height = _require_int_field(payload, 'height', minimum=8)
+        steps_val = _require_int_field(payload, 'steps', minimum=1)
+        cfg_scale = _require_float_field(payload, 'guidance_scale')
+        if 'distilled_guidance_scale' in payload:
+            distilled_cfg_scale = _require_float_field(payload, 'distilled_guidance_scale')
+        else:
+            distilled_cfg_scale = 3.5
+        sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
+        scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
+        seed_val = _require_int_field(payload, 'seed')
+        batch_size = _require_int_field(payload, 'batch_size', minimum=1)
+        batch_count = _require_int_field(payload, 'batch_count', minimum=1)
+        styles = _parse_styles(payload)
+        metadata = _parse_metadata(payload)
+        extras, highres_cfg = _parse_txt2img_extras(payload)
+
+        metadata.setdefault("mode", _opts_snapshot().codex_mode)
+        metadata["styles"] = styles
+        metadata["n_iter"] = batch_count
+        metadata["batch_count"] = batch_count
+        metadata["batch_size"] = batch_size
+        metadata["hr"] = bool(highres_cfg)
+        metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+
+        req = Txt2ImgRequest(
+            task=TaskType.TXT2IMG,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps_val,
+            guidance_scale=cfg_scale,
+            sampler=str(sampler_name),
+            scheduler=str(scheduler_name),
+            seed=seed_val,
+            batch_size=batch_size,
+            metadata=metadata,
+            highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
+            extras=extras,
+        )
 
         snap = _opts_snapshot()
         engine_key = engine_override or snap.codex_engine
         model_ref = model_override or snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
-    def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-        loop = entry.loop
+    def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
+        encoded: list[Dict[str, str]] = []
+        for img in images or []:
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            encoded.append({
+                "format": "png",
+                "data": base64.b64encode(buf.getvalue()).decode('ascii'),
+            })
+        return encoded
 
-        def push(event: Dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
 
-        def mark_done(success: bool) -> None:
-            def _set() -> None:
-                if not entry.done.done():
-                    entry.done.set_result(success)
-
-            loop.call_soon_threadsafe(_set)
-
-        push({"type": "status", "stage": "queued"})
+    def _require_explicit_device(payload: Dict[str, Any]) -> str:
+        # Accept explicit aliases from payload only (no options fallback)
+        raw = (
+            payload.get('codex_device')
+            or payload.get('device')
+            or payload.get('codex_diffusion_device')
+            or ""
+        )
+        dev = str(raw).strip().lower()
+        allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
+        if dev not in allowed:
+            raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
         try:
-            _require_explicit_device(payload)
-            req, engine_key, model_ref = prepare_img2img(payload)
-        except Exception as err:
-            entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
-            return
+            mem_management.switch_primary_device(dev)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return dev
 
-        def worker() -> None:
+        _ORCH = InferenceOrchestrator()
+
+
+        def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+            loop = entry.loop
+
+            def push(event: Dict[str, Any]) -> None:
+                loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+
+            def mark_done(success: bool) -> None:
+                def _set() -> None:
+                    if not entry.done.done():
+                        entry.done.set_result(success)
+
+                loop.call_soon_threadsafe(_set)
+
+            push({"type": "status", "stage": "queued"})
             try:
-                push({"type": "status", "stage": "running"})
-                with tasks_lock:
-                    for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
-                        if isinstance(ev, ProgressEvent):
-                            push({
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            })
-                        elif isinstance(ev, ResultEvent):
-                            payload_obj = ev.payload or {}
-                            info_raw = payload_obj.get("info", "{}")
-                            try:
-                                info_obj = json.loads(info_raw)
-                            except Exception:
-                                info_obj = info_raw
-                            encoded = encode_images(payload_obj.get("images", []))
-                            result = {"images": encoded, "info": info_obj}
-                            entry.result = {"status": "completed", "result": result}
-                            push({"type": "result", **result})
-                push({"type": "end"})
-                mark_done(True)
+                # Enforce explicit device selection without fallback
+                _require_explicit_device(payload)
+                req, engine_key, model_ref = prepare_txt2img(payload)
             except Exception as err:
-                try:
-                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                    _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
-                except Exception:
-                    pass
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
                 mark_done(False)
+                return
 
-        thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
-        thread.start()
-
-    def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
-        prompt = payload.get('txt2vid_prompt', '')
-        negative_prompt = payload.get('txt2vid_neg_prompt', '')
-        width_val = int(payload.get('txt2vid_width', 768))
-        height_val = int(payload.get('txt2vid_height', 432))
-        steps_val = int(payload.get('txt2vid_steps', 30))
-        fps_val = int(payload.get('txt2vid_fps', 24))
-        frames_val = int(payload.get('txt2vid_num_frames', 16))
-        sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'Euler')))
-        scheduler_name = str(payload.get('txt2vid_scheduler', 'Automatic'))
-        seed_val = int(payload.get('txt2vid_seed', -1))
-        cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
-
-        extras: Dict[str, Any] = {}
-        # Video export options (pass-through; engines may consume)
-        video_opts_keys = [
-            'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
-        ]
-        video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
-        if video_opts:
-            extras['video'] = video_opts
-        if isinstance(payload.get('video_interpolation'), dict):
-            extras['video_interpolation'] = payload.get('video_interpolation')
-        if isinstance(payload.get('wan_high'), dict):
-            extras['wan_high'] = payload.get('wan_high')
-        if isinstance(payload.get('wan_low'), dict):
-            extras['wan_low'] = payload.get('wan_low')
-        # Pass-through of explicit WAN GGUF complements (no guessing)
-        for key in (
-            'wan_format',
-            'wan_vae_path',
-            'wan_text_encoder_path',
-            'wan_text_encoder_dir',
-            'wan_metadata_dir',
-            'wan_tokenizer_dir',
-            # memory/attention/runtime controls
-            'gguf_offload',
-            'gguf_offload_level',
-            'gguf_sdpa_policy',
-            'gguf_attn_chunk',
-            'gguf_cache_policy',
-            'gguf_cache_limit_mb',
-            'gguf_log_mem_interval',
-            # TE kernel/device controls
-            'gguf_te_device',
-            'gguf_te_impl',
-            'gguf_te_kernel_required',
-        ):
-            if key in payload and payload.get(key) is not None:
-                extras[key] = payload.get(key)
-
-        req = Txt2VidRequest(
-            task=TaskType.TXT2VID,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width_val,
-            height=height_val,
-            fps=fps_val,
-            num_frames=frames_val,
-            sampler=sampler_name,
-            scheduler=scheduler_name,
-            seed=seed_val,
-            guidance_scale=cfg_val,
-            extras=extras,
-            metadata={
-                "styles": payload.get('txt2vid_styles', []),
-                "mode": _opts_snapshot().codex_mode,
-            },
-        )
-
-        # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
-        engine_key = None
-        if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = _pick_wan_engine(extras)
-        else:
-            sem = _detect_semantic_engine()
-            if sem == 'wan22':
-                engine_key = 'wan22_14b'
-            elif sem == 'hunyuan_video':
-                engine_key = 'hunyuan_video'
-            else:
-                engine_key = 'wan22_14b'
-        # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
-        model_ref = _opts_snapshot().sd_model_checkpoint
-        try:
-            wh = extras.get('wan_high') or {}
-            wl = extras.get('wan_low') or {}
-            if isinstance(wh, dict) and wh.get('model_dir'):
-                model_ref = str(wh.get('model_dir'))
-            elif isinstance(wl, dict) and wl.get('model_dir'):
-                model_ref = str(wl.get('model_dir'))
-        except Exception:
-            pass
-        return req, str(engine_key), model_ref
-
-    def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
-        logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
-        prompt = payload.get('img2vid_prompt', '')
-        negative_prompt = payload.get('img2vid_neg_prompt', '')
-        width_val = int(payload.get('img2vid_width', 768))
-        height_val = int(payload.get('img2vid_height', 432))
-        steps_val = int(payload.get('img2vid_steps', 30))
-        fps_val = int(payload.get('img2vid_fps', 24))
-        frames_val = int(payload.get('img2vid_num_frames', 16))
-        sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'Euler')))
-        scheduler_name = str(payload.get('img2vid_scheduler', 'Automatic'))
-        seed_val = int(payload.get('img2vid_seed', -1))
-        cfg_val = float(payload.get('img2vid_cfg_scale', 7.0))
-
-        init_image_data = payload.get('img2vid_init_image')
-        init_image = media.decode_image(init_image_data) if init_image_data else None
-
-        extras: Dict[str, Any] = {}
-        video_opts_keys = [
-            'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
-        ]
-        video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
-        if video_opts:
-            extras['video'] = video_opts
-        if isinstance(payload.get('video_interpolation'), dict):
-            extras['video_interpolation'] = payload.get('video_interpolation')
-        if isinstance(payload.get('wan_high'), dict):
-            extras['wan_high'] = payload.get('wan_high')
-        if isinstance(payload.get('wan_low'), dict):
-            extras['wan_low'] = payload.get('wan_low')
-        # Pass-through of explicit WAN GGUF complements (no guessing)
-        for key in (
-            'wan_format',
-            'wan_vae_path',
-            'wan_text_encoder_path',
-            'wan_text_encoder_dir',
-            'wan_metadata_dir',
-            'wan_tokenizer_dir',
-            # memory/attention/runtime controls
-            'gguf_offload',
-            'gguf_offload_level',
-            'gguf_sdpa_policy',
-            'gguf_attn_chunk',
-            'gguf_cache_policy',
-            'gguf_cache_limit_mb',
-            'gguf_log_mem_interval',
-            # TE kernel/device controls
-            'gguf_te_device',
-            'gguf_te_impl',
-            'gguf_te_kernel_required',
-        ):
-            if key in payload and payload.get(key) is not None:
-                extras[key] = payload.get(key)
-
-        req = Img2VidRequest(
-            task=TaskType.IMG2VID,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            init_image=init_image,
-            width=width_val,
-            height=height_val,
-            fps=fps_val,
-            num_frames=frames_val,
-            sampler=sampler_name,
-            scheduler=scheduler_name,
-            seed=seed_val,
-            guidance_scale=cfg_val,
-            extras=extras,
-            metadata={
-                "styles": payload.get('img2vid_styles', []),
-                "mode": _opts_snapshot().codex_mode,
-            },
-        )
-
-        # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
-        engine_key = None
-        if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = _pick_wan_engine(extras)
-        else:
-            sem = _detect_semantic_engine()
-            if sem == 'wan22':
-                engine_key = 'wan22_14b'
-            elif sem == 'hunyuan_video':
-                engine_key = 'hunyuan_video'
-            else:
-                engine_key = 'wan22_14b'
-        # Choose model_ref from WAN extras when provided
-        model_ref = _opts_snapshot().sd_model_checkpoint
-        try:
-            wh = extras.get('wan_high') or {}
-            wl = extras.get('wan_low') or {}
-            if isinstance(wh, dict) and wh.get('model_dir'):
-                model_ref = str(wh.get('model_dir'))
-            elif isinstance(wl, dict) and wl.get('model_dir'):
-                model_ref = str(wl.get('model_dir'))
-        except Exception:
-            pass
-        logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
-        return req, str(engine_key), model_ref
-
-    def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
-        loop = entry.loop
-
-        def push(event: Dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-        def mark_done(success: bool) -> None:
-            def _set() -> None:
-                if not entry.done.done():
-                    entry.done.set_result(success)
-
-            loop.call_soon_threadsafe(_set)
-
-        push({"type": "status", "stage": "queued"})
-        try:
-            _require_explicit_device(payload)
-            if task_type == TaskType.TXT2VID:
-                req, engine_key, model_ref = prepare_txt2vid(payload)
-            else:
-                req, engine_key, model_ref = prepare_img2vid(payload)
-        except Exception as err:
-            entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
-            return
-
-        def worker() -> None:
-            logging.getLogger('backend.api').info('[api] DEBUG: enter worker task_id=%s type=%s engine=%s model=%s', task_id, task_type.value, engine_key, model_ref)
-            try:
-                push({"type": "status", "stage": "running"})
-                with tasks_lock:
-                    orch = InferenceOrchestrator()
-                    engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
-                    for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
-                        if isinstance(ev, ProgressEvent):
-                            push({
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            })
-                        elif isinstance(ev, ResultEvent):
-                            payload_obj = ev.payload or {}
-                            info_raw = payload_obj.get("info", "{}")
-                            try:
-                                info_obj = json.loads(info_raw)
-                            except Exception:
-                                info_obj = info_raw
-                            encoded = encode_images(payload_obj.get("images", []))
-                            result = {"images": encoded, "info": info_obj}
-                            entry.result = {"status": "completed", "result": result}
-                            push({"type": "result", **result})
-                push({"type": "end"})
-                mark_done(True)
-                logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
-            except Exception as err:
+            def worker() -> None:
                 try:
-                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                    _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
+                    push({"type": "status", "stage": "running"})
+                    with tasks_lock:
+                        for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                            if isinstance(ev, ProgressEvent):
+                                push({
+                                    "type": "progress",
+                                    "stage": ev.stage,
+                                    "percent": ev.percent,
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "eta_seconds": ev.eta_seconds,
+                                })
+                            elif isinstance(ev, ResultEvent):
+                                payload_obj = ev.payload or {}
+                                info_raw = payload_obj.get("info", "{}")
+                                try:
+                                    info_obj = json.loads(info_raw)
+                                except Exception:
+                                    info_obj = info_raw
+                                encoded = encode_images(payload_obj.get("images", []))
+                                result = {
+                                    "images": encoded,
+                                    "info": info_obj,
+                                }
+                                entry.result = {
+                                    "status": "completed",
+                                    "result": result,
+                                }
+                                push({"type": "result", **result})
+                    push({"type": "end"})
+                    mark_done(True)
+                except Exception as err:  # pragma: no cover - surfaces runtime errors
+                    try:
+                        from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                        _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
+                    except Exception:
+                        pass
+                    entry.error = str(err)
+                    push({"type": "error", "message": entry.error})
+                    push({"type": "end"})
+                    mark_done(False)
+
+            thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
+            thread.start()
+
+        def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
+            init_image_data = _p.require(payload, 'img2img_init_image')
+            init_image = media.decode_image(init_image_data)
+            mask_data = payload.get('img2img_mask')
+            mask_image = media.decode_image(mask_data) if mask_data else None
+
+            prompt = _p.require(payload, 'img2img_prompt') or ''
+            negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+            styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
+            batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
+            batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
+            steps_val = _p.as_int(payload, 'img2img_steps')
+            cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+            distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+            image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
+            denoise = _p.as_float(payload, 'img2img_denoising_strength')
+            width_val = _p.as_int(payload, 'img2img_width')
+            height_val = _p.as_int(payload, 'img2img_height')
+            sampler_name = _p.require(payload, 'img2img_sampling')
+            scheduler_name = _p.require(payload, 'img2img_scheduler')
+            seed_val = _p.as_int(payload, 'img2img_seed')
+            noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
+            ensd_raw = payload.get('img2img_eta_noise_seed_delta')
+
+            enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
+            if enable_hr:
+                hr_data = {
+                    "enable": True,
+                    "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
+                    "resize_x": _p.as_int(payload, 'img2img_hr_resize_x') if 'img2img_hr_resize_x' in payload else 0,
+                    "resize_y": _p.as_int(payload, 'img2img_hr_resize_y') if 'img2img_hr_resize_y' in payload else 0,
+                    "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
+                    "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
+                    "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
+                    "hr_prompt": payload.get('img2img_hr_prompt', ''),
+                    "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
+                    "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,
+                    "hr_distilled_cfg": _p.as_float(payload, 'img2img_hr_distilled_cfg') if 'img2img_hr_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
+                }
+            else:
+                hr_data = {"enable": False}
+
+            extras: Dict[str, Any] = {}
+            if noise_source:
+                extras['randn_source'] = str(noise_source)
+            if ensd_raw is not None:
+                try:
+                    extras['eta_noise_seed_delta'] = int(float(ensd_raw))
                 except Exception:
-                    pass
+                    raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
+
+            metadata = {
+                "styles": styles,
+                "distilled_cfg_scale": distilled_cfg_scale,
+                "image_cfg_scale": image_cfg_scale,
+                "batch_count": batch_count,
+            }
+            if noise_source:
+                metadata["randn_source"] = str(noise_source)
+            if 'eta_noise_seed_delta' in extras:
+                metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
+
+            req = Img2ImgRequest(
+                task=TaskType.IMG2IMG,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                sampler=str(sampler_name),
+                scheduler=str(scheduler_name),
+                seed=seed_val,
+                guidance_scale=cfg_scale,
+                batch_size=batch_size,
+                metadata=metadata,
+                init_image=init_image,
+                mask=mask_image,
+                denoise_strength=denoise,
+                width=width_val,
+                height=height_val,
+                steps=steps_val,
+                extras=extras,
+                highres_fix=hr_data if hr_data.get("enable") else None,
+            )
+
+            engine_override = payload.get('engine') or payload.get('codex_engine')
+            model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+
+            snap = _opts_snapshot()
+            engine_key = engine_override or snap.codex_engine
+            model_ref = model_override or snap.sd_model_checkpoint
+            return req, str(engine_key), model_ref
+
+        def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+            loop = entry.loop
+
+            def push(event: Dict[str, Any]) -> None:
+                loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+
+            def mark_done(success: bool) -> None:
+                def _set() -> None:
+                    if not entry.done.done():
+                        entry.done.set_result(success)
+
+                loop.call_soon_threadsafe(_set)
+
+            push({"type": "status", "stage": "queued"})
+            try:
+                _require_explicit_device(payload)
+                req, engine_key, model_ref = prepare_img2img(payload)
+            except Exception as err:
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
                 mark_done(False)
+                return
 
-        label = 'txt2vid' if task_type == TaskType.TXT2VID else 'img2vid'
-        thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)
-        thread.start()
+            def worker() -> None:
+                try:
+                    push({"type": "status", "stage": "running"})
+                    with tasks_lock:
+                        for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
+                            if isinstance(ev, ProgressEvent):
+                                push({
+                                    "type": "progress",
+                                    "stage": ev.stage,
+                                    "percent": ev.percent,
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "eta_seconds": ev.eta_seconds,
+                                })
+                            elif isinstance(ev, ResultEvent):
+                                payload_obj = ev.payload or {}
+                                info_raw = payload_obj.get("info", "{}")
+                                try:
+                                    info_obj = json.loads(info_raw)
+                                except Exception:
+                                    info_obj = info_raw
+                                encoded = encode_images(payload_obj.get("images", []))
+                                result = {"images": encoded, "info": info_obj}
+                                entry.result = {"status": "completed", "result": result}
+                                push({"type": "result", **result})
+                    push({"type": "end"})
+                    mark_done(True)
+                except Exception as err:
+                    try:
+                        from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                        _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
+                    except Exception:
+                        pass
+                    entry.error = str(err)
+                    push({"type": "error", "message": entry.error})
+                    push({"type": "end"})
+                    mark_done(False)
 
-    @app.post('/api/txt2img')
-    async def txt2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+            thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
+            thread.start()
 
-        loop = asyncio.get_running_loop()
-        entry = TaskEntry(loop)
-        task_id = f"task(api-{uuid4().hex})"
-        register_task(task_id, entry)
-        run_txt2img_task(task_id, payload, entry)
-        return {"task_id": task_id}
+        def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
+            prompt = payload.get('txt2vid_prompt', '')
+            negative_prompt = payload.get('txt2vid_neg_prompt', '')
+            width_val = int(payload.get('txt2vid_width', 768))
+            height_val = int(payload.get('txt2vid_height', 432))
+            steps_val = int(payload.get('txt2vid_steps', 30))
+            fps_val = int(payload.get('txt2vid_fps', 24))
+            frames_val = int(payload.get('txt2vid_num_frames', 16))
+            sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'Euler')))
+            scheduler_name = str(payload.get('txt2vid_scheduler', 'Automatic'))
+            seed_val = int(payload.get('txt2vid_seed', -1))
+            cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
 
-    @app.post('/api/img2img')
-    async def img2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+            extras: Dict[str, Any] = {}
+            # Video export options (pass-through; engines may consume)
+            video_opts_keys = [
+                'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
+            ]
+            video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
+            if video_opts:
+                extras['video'] = video_opts
+            if isinstance(payload.get('video_interpolation'), dict):
+                extras['video_interpolation'] = payload.get('video_interpolation')
+            if isinstance(payload.get('wan_high'), dict):
+                extras['wan_high'] = payload.get('wan_high')
+            if isinstance(payload.get('wan_low'), dict):
+                extras['wan_low'] = payload.get('wan_low')
+            # Pass-through of explicit WAN GGUF complements (no guessing)
+            for key in (
+                'wan_format',
+                'wan_vae_path',
+                'wan_text_encoder_path',
+                'wan_text_encoder_dir',
+                'wan_metadata_dir',
+                'wan_tokenizer_dir',
+                # memory/attention/runtime controls
+                'gguf_offload',
+                'gguf_offload_level',
+                'gguf_sdpa_policy',
+                'gguf_attn_chunk',
+                'gguf_cache_policy',
+                'gguf_cache_limit_mb',
+                'gguf_log_mem_interval',
+                # TE kernel/device controls
+                'gguf_te_device',
+                'gguf_te_impl',
+                'gguf_te_kernel_required',
+            ):
+                if key in payload and payload.get(key) is not None:
+                    extras[key] = payload.get(key)
 
-        loop = asyncio.get_running_loop()
-        entry = TaskEntry(loop)
-        task_id = f"task(api-img2img-{uuid4().hex})"
-        register_task(task_id, entry)
-        run_img2img_task(task_id, payload, entry)
-        return {"task_id": task_id}
+            req = Txt2VidRequest(
+                task=TaskType.TXT2VID,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width_val,
+                height=height_val,
+                fps=fps_val,
+                num_frames=frames_val,
+                sampler=sampler_name,
+                scheduler=scheduler_name,
+                seed=seed_val,
+                guidance_scale=cfg_val,
+                extras=extras,
+                metadata={
+                    "styles": payload.get('txt2vid_styles', []),
+                    "mode": _opts_snapshot().codex_mode,
+                },
+            )
 
-    @app.post('/api/txt2vid')
-    async def txt2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+            # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
+            engine_key = None
+            if extras.get('wan_high') or extras.get('wan_low'):
+                engine_key = _pick_wan_engine(extras)
+            else:
+                sem = _detect_semantic_engine()
+                if sem == 'wan22':
+                    engine_key = 'wan22_14b'
+                elif sem == 'hunyuan_video':
+                    engine_key = 'hunyuan_video'
+                else:
+                    engine_key = 'wan22_14b'
+            # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
+            model_ref = _opts_snapshot().sd_model_checkpoint
+            try:
+                wh = extras.get('wan_high') or {}
+                wl = extras.get('wan_low') or {}
+                if isinstance(wh, dict) and wh.get('model_dir'):
+                    model_ref = str(wh.get('model_dir'))
+                elif isinstance(wl, dict) and wl.get('model_dir'):
+                    model_ref = str(wl.get('model_dir'))
+            except Exception:
+                pass
+            return req, str(engine_key), model_ref
 
-        loop = asyncio.get_running_loop()
-        entry = TaskEntry(loop)
-        task_id = f"task(api-txt2vid-{uuid4().hex})"
-        register_task(task_id, entry)
-        run_video_task(task_id, payload, entry, TaskType.TXT2VID)
-        return {"task_id": task_id}
+        def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
+            logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
+            prompt = payload.get('img2vid_prompt', '')
+            negative_prompt = payload.get('img2vid_neg_prompt', '')
+            width_val = int(payload.get('img2vid_width', 768))
+            height_val = int(payload.get('img2vid_height', 432))
+            steps_val = int(payload.get('img2vid_steps', 30))
+            fps_val = int(payload.get('img2vid_fps', 24))
+            frames_val = int(payload.get('img2vid_num_frames', 16))
+            sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'Euler')))
+            scheduler_name = str(payload.get('img2vid_scheduler', 'Automatic'))
+            seed_val = int(payload.get('img2vid_seed', -1))
+            cfg_val = float(payload.get('img2vid_cfg_scale', 7.0))
 
-    @app.post('/api/img2vid')
-    async def img2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+            init_image_data = payload.get('img2vid_init_image')
+            init_image = media.decode_image(init_image_data) if init_image_data else None
 
-        loop = asyncio.get_running_loop()
-        entry = TaskEntry(loop)
-        task_id = f"task(api-img2vid-{uuid4().hex})"
-        register_task(task_id, entry)
-        logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
-        run_video_task(task_id, payload, entry, TaskType.IMG2VID)
-        return {"task_id": task_id}
+            extras: Dict[str, Any] = {}
+            video_opts_keys = [
+                'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
+            ]
+            video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
+            if video_opts:
+                extras['video'] = video_opts
+            if isinstance(payload.get('video_interpolation'), dict):
+                extras['video_interpolation'] = payload.get('video_interpolation')
+            if isinstance(payload.get('wan_high'), dict):
+                extras['wan_high'] = payload.get('wan_high')
+            if isinstance(payload.get('wan_low'), dict):
+                extras['wan_low'] = payload.get('wan_low')
+            # Pass-through of explicit WAN GGUF complements (no guessing)
+            for key in (
+                'wan_format',
+                'wan_vae_path',
+                'wan_text_encoder_path',
+                'wan_text_encoder_dir',
+                'wan_metadata_dir',
+                'wan_tokenizer_dir',
+                # memory/attention/runtime controls
+                'gguf_offload',
+                'gguf_offload_level',
+                'gguf_sdpa_policy',
+                'gguf_attn_chunk',
+                'gguf_cache_policy',
+                'gguf_cache_limit_mb',
+                'gguf_log_mem_interval',
+                # TE kernel/device controls
+                'gguf_te_device',
+                'gguf_te_impl',
+                'gguf_te_kernel_required',
+            ):
+                if key in payload and payload.get(key) is not None:
+                    extras[key] = payload.get(key)
 
-    @app.get('/api/tasks/{task_id}')
-    async def task_status(task_id: str) -> Dict[str, Any]:
-        entry = get_task(task_id)
-        if entry is None:
-            raise HTTPException(status_code=404, detail="Task not found")
-        if entry.done.done():
-            if entry.error:
-                return {"status": "error", "error": entry.error}
-            entry.schedule_cleanup(task_id)
-            return entry.result or {"status": "completed", "result": {}}
-        return {"status": "running"}
+            req = Img2VidRequest(
+                task=TaskType.IMG2VID,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                init_image=init_image,
+                width=width_val,
+                height=height_val,
+                fps=fps_val,
+                num_frames=frames_val,
+                sampler=sampler_name,
+                scheduler=scheduler_name,
+                seed=seed_val,
+                guidance_scale=cfg_val,
+                extras=extras,
+                metadata={
+                    "styles": payload.get('img2vid_styles', []),
+                    "mode": _opts_snapshot().codex_mode,
+                },
+            )
 
-    @app.get('/api/tasks/{task_id}/events')
-    async def task_events(task_id: str) -> StreamingResponse:
-        entry = get_task(task_id)
-        if entry is None:
-            raise HTTPException(status_code=404, detail="Task not found")
+            # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
+            engine_key = None
+            if extras.get('wan_high') or extras.get('wan_low'):
+                engine_key = _pick_wan_engine(extras)
+            else:
+                sem = _detect_semantic_engine()
+                if sem == 'wan22':
+                    engine_key = 'wan22_14b'
+                elif sem == 'hunyuan_video':
+                    engine_key = 'hunyuan_video'
+                else:
+                    engine_key = 'wan22_14b'
+            # Choose model_ref from WAN extras when provided
+            model_ref = _opts_snapshot().sd_model_checkpoint
+            try:
+                wh = extras.get('wan_high') or {}
+                wl = extras.get('wan_low') or {}
+                if isinstance(wh, dict) and wh.get('model_dir'):
+                    model_ref = str(wh.get('model_dir'))
+                elif isinstance(wl, dict) and wl.get('model_dir'):
+                    model_ref = str(wl.get('model_dir'))
+            except Exception:
+                pass
+            logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
+            return req, str(engine_key), model_ref
 
-        async def event_stream():
-            while True:
-                payload = await entry.queue.get()
-                yield f"data: {json.dumps(payload)}\n\n"
-                if payload.get('type') == 'end':
-                    entry.schedule_cleanup(task_id)
-                    break
+        def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
+            loop = entry.loop
 
-        return StreamingResponse(event_stream(), media_type='text/event-stream')
+            def push(event: Dict[str, Any]) -> None:
+                loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+
+            def mark_done(success: bool) -> None:
+                def _set() -> None:
+                    if not entry.done.done():
+                        entry.done.set_result(success)
+
+                loop.call_soon_threadsafe(_set)
+
+            push({"type": "status", "stage": "queued"})
+            try:
+                _require_explicit_device(payload)
+                if task_type == TaskType.TXT2VID:
+                    req, engine_key, model_ref = prepare_txt2vid(payload)
+                else:
+                    req, engine_key, model_ref = prepare_img2vid(payload)
+            except Exception as err:
+                entry.error = str(err)
+                push({"type": "error", "message": entry.error})
+                push({"type": "end"})
+                mark_done(False)
+                return
+
+            def worker() -> None:
+                logging.getLogger('backend.api').info('[api] DEBUG: enter worker task_id=%s type=%s engine=%s model=%s', task_id, task_type.value, engine_key, model_ref)
+                try:
+                    push({"type": "status", "stage": "running"})
+                    with tasks_lock:
+                        orch = InferenceOrchestrator()
+                        engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
+                        for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
+                            if isinstance(ev, ProgressEvent):
+                                push({
+                                    "type": "progress",
+                                    "stage": ev.stage,
+                                    "percent": ev.percent,
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "eta_seconds": ev.eta_seconds,
+                                })
+                            elif isinstance(ev, ResultEvent):
+                                payload_obj = ev.payload or {}
+                                info_raw = payload_obj.get("info", "{}")
+                                try:
+                                    info_obj = json.loads(info_raw)
+                                except Exception:
+                                    info_obj = info_raw
+                                encoded = encode_images(payload_obj.get("images", []))
+                                result = {"images": encoded, "info": info_obj}
+                                entry.result = {"status": "completed", "result": result}
+                                push({"type": "result", **result})
+                    push({"type": "end"})
+                    mark_done(True)
+                    logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
+                except Exception as err:
+                    try:
+                        from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                        _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
+                    except Exception:
+                        pass
+                    entry.error = str(err)
+                    push({"type": "error", "message": entry.error})
+                    push({"type": "end"})
+                    mark_done(False)
+
+            label = 'txt2vid' if task_type == TaskType.TXT2VID else 'img2vid'
+            thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)
+            thread.start()
+
+        @app.post('/api/txt2img')
+        async def txt2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+            if not isinstance(payload, dict):
+                raise HTTPException(status_code=400, detail="Payload must be JSON object")
+            if payload.get('__strict_version') != 1:
+                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+
+            loop = asyncio.get_running_loop()
+            entry = TaskEntry(loop)
+            task_id = f"task(api-{uuid4().hex})"
+            register_task(task_id, entry)
+            run_txt2img_task(task_id, payload, entry)
+            return {"task_id": task_id}
+
+        @app.post('/api/img2img')
+        async def img2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+            if not isinstance(payload, dict):
+                raise HTTPException(status_code=400, detail="Payload must be JSON object")
+            if payload.get('__strict_version') != 1:
+                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+
+            loop = asyncio.get_running_loop()
+            entry = TaskEntry(loop)
+            task_id = f"task(api-img2img-{uuid4().hex})"
+            register_task(task_id, entry)
+            run_img2img_task(task_id, payload, entry)
+            return {"task_id": task_id}
+
+        @app.post('/api/txt2vid')
+        async def txt2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+            if not isinstance(payload, dict):
+                raise HTTPException(status_code=400, detail="Payload must be JSON object")
+            if payload.get('__strict_version') != 1:
+                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+
+            loop = asyncio.get_running_loop()
+            entry = TaskEntry(loop)
+            task_id = f"task(api-txt2vid-{uuid4().hex})"
+            register_task(task_id, entry)
+            run_video_task(task_id, payload, entry, TaskType.TXT2VID)
+            return {"task_id": task_id}
+
+        @app.post('/api/img2vid')
+        async def img2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+            logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
+            if not isinstance(payload, dict):
+                raise HTTPException(status_code=400, detail="Payload must be JSON object")
+            if payload.get('__strict_version') != 1:
+                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+
+            loop = asyncio.get_running_loop()
+            entry = TaskEntry(loop)
+            task_id = f"task(api-img2vid-{uuid4().hex})"
+            register_task(task_id, entry)
+            logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
+            run_video_task(task_id, payload, entry, TaskType.IMG2VID)
+            return {"task_id": task_id}
+
+        @app.get('/api/tasks/{task_id}')
+        async def task_status(task_id: str) -> Dict[str, Any]:
+            entry = get_task(task_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if entry.done.done():
+                if entry.error:
+                    return {"status": "error", "error": entry.error}
+                entry.schedule_cleanup(task_id)
+                return entry.result or {"status": "completed", "result": {}}
+            return {"status": "running"}
+
+        @app.get('/api/tasks/{task_id}/events')
+        async def task_events(task_id: str) -> StreamingResponse:
+            entry = get_task(task_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            async def event_stream():
+                while True:
+                    payload = await entry.queue.get()
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    if payload.get('type') == 'end':
+                        entry.schedule_cleanup(task_id)
+                        break
+
+            return StreamingResponse(event_stream(), media_type='text/event-stream')
 
     # Legacy callbacks are not used in the native backend entrypoint
     app.include_router(codex_api.router)

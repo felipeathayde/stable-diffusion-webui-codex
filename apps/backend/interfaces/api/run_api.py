@@ -90,6 +90,11 @@ except Exception:
 _initialized = False
 _RUNTIME_NAMESPACE: Optional[Any] = None
 _APP: Optional[FastAPI] = None
+_APP_DEPRECATION = (
+    "Importing apps.backend.interfaces.api.run_api:app is no longer supported. "
+    "Start the API via `uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app` "
+    "or run this module as a script."
+)
 
 
 def ensure_initialized() -> None:
@@ -2238,8 +2243,12 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
     return app
 
 
-# Expose module-level ASGI application for uvicorn/Hypercorn entrypoints
-app = build_app()
+def _deprecated_app(*args: Any, **kwargs: Any):
+    raise RuntimeError(_APP_DEPRECATION)
+
+
+# Legacy `:app` export intentionally disabled to force factory usage
+app = _deprecated_app
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

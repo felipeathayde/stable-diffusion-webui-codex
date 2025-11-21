@@ -367,3 +367,15 @@ PY`
 **Wrong command:** `ls -la docs/plan`
 **Cause + fix:** `The repo has no docs/plan directory; SDXL plans live under .sangoi/plans. List that path instead of the non-existent docs/plan.`
 **Correct command:** `ls -la .sangoi/plans`
+
+**Wrong command:** `ls docs/plan`
+**Cause + fix:** `docs/plan is not present in this repo; plans are cataloged under .sangoi/plans.`
+**Correct command:** `ls .sangoi/plans`
+
+**Wrong command:** `rg -n "uvicorn" run-webui.*`
+**Cause + fix:** `Ripgrep exits non-zero when no matches are found; add \`|| true\` or search known entrypoints directly.`
+**Correct command:** `rg -n "uvicorn" run-webui.* || true`
+
+**Wrong command:** `python - <<'PY'\nfrom apps.launcher.services import default_services\nservices = default_services()\nprint('API command:', services['API'].spec.command)\nPY`
+**Cause + fix:** `Importing launcher.services pulls backend runtime and requires torch; the sandbox lacks torch so the import fails. Inspect the command by reading the file instead of importing.`
+**Correct command:** `sed -n '80,150p' apps/launcher/services.py`

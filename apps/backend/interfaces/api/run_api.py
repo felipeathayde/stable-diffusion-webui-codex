@@ -21,19 +21,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Hard fail if uvicorn is invoking this module without --factory; prevents ASGI2 NoneType crashes.
-try:
-    _argv0 = Path(sys.argv[0]).name.lower()
-    if "uvicorn" in _argv0 and "--factory" not in sys.argv and ":create_api_app" not in " ".join(sys.argv):
-        raise RuntimeError(
-            "Codex API must be launched with uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app "
-            "(or python apps/backend/interfaces/api/run_api.py). "
-            "Invocation without --factory is unsupported and will crash."
-        )
-except Exception as _premature_exc:  # pragma: no cover - defensive startup guard
-    # Re-raise so the process exits immediately with a clear message.
-    raise
-
 
 def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
     for idx, token in enumerate(argv):
@@ -104,9 +91,9 @@ _initialized = False
 _RUNTIME_NAMESPACE: Optional[Any] = None
 _APP: Optional[FastAPI] = None
 _APP_DEPRECATION = (
-    "Importing apps.backend.interfaces.api.run_api:app is no longer supported. "
-    "Start the API via `uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app` "
-    "or run this module as a script."
+    "Importing apps.backend.interfaces.api.run_api:app without factory is deprecated. "
+    "Prefer `uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app`, "
+    "but a module-level app is provided for compatibility."
 )
 
 
@@ -2254,14 +2241,8 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
     global _APP
     _APP = app
     return app
-
-
-def _deprecated_app(*args: Any, **kwargs: Any):
-    raise RuntimeError(_APP_DEPRECATION)
-
-
-# Legacy `:app` export intentionally disabled to force factory usage
-app = _deprecated_app
+# Provide module-level ASGI app for ASGI servers that import run_api:app directly
+app = create_api_app(argv=sys.argv[1:], env=os.environ)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

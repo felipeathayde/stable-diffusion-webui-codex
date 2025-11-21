@@ -822,12 +822,14 @@ def build_app() -> FastAPI:
             stat = os.stat(presets_path)
             mtime = stat.st_mtime
         except Exception:
-            raise HTTPException(status_code=500, detail='ui presets not found')
+            logging.getLogger("backend.api").warning("ui presets not found at %s; returning empty list", presets_path)
+            return {"version": 1, "presets": []}
         if _ui_presets_cache is not None and _ui_presets_mtime == mtime:
             return _ui_presets_cache
         data = _load_json(presets_path)
         if not data or 'presets' not in data:
-            raise HTTPException(status_code=500, detail='invalid ui presets json')
+            logging.getLogger("backend.api").warning("ui presets invalid at %s; returning empty list", presets_path)
+            return {"version": int(data.get('version', 1)) if isinstance(data, dict) else 1, "presets": []}  # type: ignore[arg-type]
         out = {"version": int(data.get('version', 1)), "presets": list(data.get('presets') or [])}
         _ui_presets_cache, _ui_presets_mtime = out, mtime
         return out

@@ -2174,11 +2174,11 @@ def build_app() -> FastAPI:
                 return entry.result or {"status": "completed", "result": {}}
             return {"status": "running"}
 
-        @app.get('/api/tasks/{task_id}/events')
-        async def task_events(task_id: str) -> StreamingResponse:
-            entry = get_task(task_id)
-            if entry is None:
-                raise HTTPException(status_code=404, detail="Task not found")
+    @app.get('/api/tasks/{task_id}/events')
+    async def task_events(task_id: str) -> StreamingResponse:
+        entry = get_task(task_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Task not found")
 
             async def event_stream():
                 while True:
@@ -2193,6 +2193,8 @@ def build_app() -> FastAPI:
     # Legacy callbacks are not used in the native backend entrypoint
     app.include_router(codex_api.router)
     logging.getLogger('backend.api').info('build_app finished')
+    if not isinstance(app, FastAPI):
+        raise RuntimeError(f"build_app invariant violated: expected FastAPI, got {type(app)}")
     return app
 
 

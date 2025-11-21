@@ -1,12 +1,32 @@
 Listen.
 
-I’m talking, you’re listening. You wrote a WebUI for image magic and called it a rebuild. I see pride. I see haste. I see a kitchen that wants to move fast and a chef who forgot the recipe lives in the details. Sit still. Breathe. Hear the rules and carry them like law.
+Mind if I pull up a chair and taste what you’ve been cooking. I see your repo sitting there like a fresh tray on the counter. Smells fast. Looks brave. Did you season it with tests. With logs. With the kind of truth that doesn’t flinch when someone takes a bite. Good. Then hear me and hear me clear.
 
-You do not touch `git clean`. You do not run anything that wipes, resets, or bulldozes configs and parameters. You want order, you earn it with care, not with fire. You do not write ad-hoc code fixated on output. Results come from code with spine: quality, resilience, clarity. You do not build fallbacks to hide sin. When an error happens, it throws, and the cause speaks its name. That includes `ImportError`. Say why it failed.
+You are not here to mash keys and pray. You are here to work like the result will be read out loud in a room full of grownups. If your hands shake, keep typing. If your gut doubts, check the docs. If your code fails, let it fail loud enough to teach.
 
-Before you start, you count to five. Five real approaches or more. You throw away the weak. You keep the strong. You can mix good parts if they fit. If a series of similar tasks is on the table, you follow the approach chosen first unless you can prove a better path. You present the plan before you touch a key. We are not raccoons in a dumpster. We are here to deliver with intent.
+You do not chase output at any cost. You build clear, durable code and the right output follows. If something breaks, it speaks. No fallbacks. No quiet catch that swallows the cause. Fail fast. Fail honest. Explain why.
 
-When doubt walks in, you research or you ask. If you open the door to web.run, you take notes. You write down what mattered in a `.md` before you say you are done. You do not rush. Speed kills quality. Fix root causes. Skip hacks. Skip shims. You break big rocks into small stones and you carry them in order. You do not remove, disable, or narrow features to hide a problem. You do not add catch-all helpers or duplicate checks. Your logs are loud, specific, and useful. Your names are clear. You rename only when the old name is a lie. When behavior or configuration surfaces change, you update the docs that face the world and the ones that face the team. If Python work runs long, you show progress.
+You do not reach for git destructive commands. If something is cluttering your commit/push, you add it to `.gitignore`; if it is already tracked, you remove it from git cache. You never delete files to "make Git happy".
+
+You will not be here forever. The next poor soul needs to see the same tools you touched and know exactly where they live.
+
+While you’re here, you tag what matters. 
+- When you create or move a plan, doc or AGENT, you drop a small `<!-- tags: ... -->` header near the top that says what it really is about.
+- When you wire a hub of behavior in code — a service that runs the show, an entrypoint, a guard that decides who gets in — you add a single-line `// tags: ...` at the top.
+- No taxonomy committee, no bikeshed; just honest tags that make `rg` land on the right files. 
+- You don’t backfill the universe in one night, but from now on, anything you lay hands on that others will search by concept earns its tags before you close the editor.
+
+Before you begin, you think. Not two options. Five or more. Strip the weak. Keep the strong. If parts fit better together than alone, merge them. The plan is not theater. It is the spine.
+
+When doubt walks in, you use web.run or you ask. If you open the door to web.run, you take notes. You write down what mattered in a `.md` before you say you are done.
+
+You do not rush. Speed kills quality. Fix root causes. Skip hacks. Skip shims. You break big rocks into small stones and you carry them in order.
+
+You do not remove, disable, or narrow features to hide a problem. You do not add catch-all helpers or duplicate checks. 
+
+Your logs are loud, specific, and useful. Your names are clear. You rename only when the old name is a lie. 
+
+When behavior or configuration surfaces change, you update the docs that face the world and the ones that face the team. If Python work runs long, you show progress.
 
 This is one hundred percent development ground. Do not be delicate. If a table lies, rewrite it. If the schema is crooked, tear it down. If a database has to die so truth can live, pull the lever and then migrate, reseed, and verify. Courage is not a license for carelessness. DSNs and keys point to dev only. Take a snapshot before you swing. Seeds are disposable. Migrations roll forward and back. You log what you destroyed and why in `.sangoi/task-logs/`. You touch production only when the day and the ritual say you may, and that day is not today.
 
@@ -40,29 +60,28 @@ When the task ends, you log it in `.sangoi/task-logs/` and you summarize user-vi
 
 Git is a blade. You keep it clean. Use `gh` for remote work if it helps. Use `git` for the carpentry in your hands. Commit exactly and only the files you changed. Verify the staged set with `git diff --cached --name-only`. Conflicts are not souvenirs. `rg -n "<<<<<<<|=======|>>>>>>>"` returns empty before you move forward. Large artifacts, outputs, caches, and heavy model directories stay untracked per `gitignore.md`. If you touch dependencies or configs, you update the proper manifest or lockfile and note the impact. JS and TS live in `package.json` and the lockfile. Python dependencies live in `requirements*.txt` or tool-specific files, under version control. New docs are written in English by default and linked from the nearest README. You obey the ignore and attributes policy in `gitignore.md`.
 
-When you commit, you follow the sequence and you do it line by line.
+Keep your hands off `git add -A`. Do not stage files you did not touch, unless the user explicitly requests it. Outputs, caches, and trash are ignored. Git does not want your trash. If you must stage new files, stage only what changed since `.git/codex-stamp`. If nothing changed, you do not commit to feel productive.
 
-1. `git status -sb`
-2. `git fetch -p`
-3. `git pull --rebase --autostash`
-4. `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
-5. `git diff --staged --check`
-6. `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 rg -n '^(<<<<<<<|=======|>>>>>>>)' || true`
-7. `git commit -m "type(scope): concise summary"`
-8. `git push -u origin HEAD || git push --force-with-lease`
+Do not touch `git clean`. I don’t care how messy your working tree feels. That command is the kind of shortcut that empties the the plate and the kitchen with it. You want less chaos, you pay for it with discipline, not fire.
 
-If the day demands a revert, you do it with a net under you, not blind.
+# Then the standard sequence
+```
+test -e .git/codex-stamp || touch .git/codex-stamp
+git ls-files -d -z | xargs -0 -r git rm
+find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add
+git diff --cached --quiet || git commit -m "type(scope): concise summary"
+git push -u origin HEAD
+touch .git/codex-stamp
+```
 
-1. `git status`
-2. `git switch -c safety/backup-$(date +%Y%m%d-%H%M%S)`
-3. `git pull --rebase`
-4. `git revert --no-commit <SHA>`
-5. `git add -p`
-6. `git commit -m "revert: undo <SHA>"`
-7. `rg -n '<<<<<<<|=======|>>>>>>>' || true`
-8. `git push -u origin $(git branch --show-current)`
+Use `gh` for remote setup if you must. Use `git` for the work. 
+If a push complains about permissions or a lock, you stop. You read the message and fix the cause. 
+If `.git/index.lock` is sitting there with no Git process alive, you remove it once and only once before you try that commit again. 
+If credentials are in play and a push fails, take your hands off the keyboard. Read the message. Do not try again until you know why it failed.
 
-Your global Python lives in `~/.venv`. Keep it holy. Do not scatter shebangs. Do not use `python -m py_compile`. If a script must see `~/.netsuite` in another life, you set `PYTHONPATH=$HOME/.netsuite` for that one process, not your whole shell. Here, in this house, you keep the environment simple, pinned when needed, and honest about versions.
+This land is Linux and WSL for preparation. Deployment happens on Windows. You prepare the offering here. You do not pretend to finish a ritual you did not perform.
+
+Your global Python lives in `~/.venv`. Keep it holy. Do not scatter shebangs. Here, in this house, you keep the environment simple, pinned when needed, and honest about versions.
 
 Task logs and handoffs are not optional. Before you change anything, read the top entry under `.sangoi/` for the task at hand. If there is none, you create one. In your responses, you state assumptions, risks, and validation. You do not defer essential checks. At completion, you write a brief handoff under `.sangoi/handoffs/` with a summary, exact files and paths touched, and next steps with open risks and TODOs. Keep it short and actionable. Prefer paths and commands over stories. Link user-facing changes in `.sangoi/CHANGELOG.md`.
 
@@ -71,5 +90,3 @@ The extras drawer is small and sharp. No `python -m py_compile`. No shims. No ch
 Now look at your WebUI again. It should feel like a tool that knows what it is, not a pile that hopes. If it does not, fix it. If it does, ship it. Everything you do is traceable. Commands leave footprints. Notes explain intent. Modules hold their line. Models load with purpose. The work is slow, smooth, and clean. There is no panic here.
 
 Keep your head. Keep your habits. Keep your word. Then your code can stand in daylight.
-
-Dev note: small local helper tools (for example a standalone PNG metadata editor script at the repo root) are treated as development utilities only and are never imported from `apps.*`. They must stay simple, self‑contained, and disposable.

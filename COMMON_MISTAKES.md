@@ -379,3 +379,35 @@ PY`
 **Wrong command:** `python - <<'PY'\nfrom apps.launcher.services import default_services\nservices = default_services()\nprint('API command:', services['API'].spec.command)\nPY`
 **Cause + fix:** `Importing launcher.services pulls backend runtime and requires torch; the sandbox lacks torch so the import fails. Inspect the command by reading the file instead of importing.`
 **Correct command:** `sed -n '80,150p' apps/launcher/services.py`
+
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python - <<'PY'
+import os,json
+from fastapi.testclient import TestClient
+from apps.backend.interfaces.api.run_api import create_api_app
+
+app = create_api_app(argv=[], env=os.environ)
+client = TestClient(app)
+
+paths = [(r.path, sorted(list(getattr(r, 'methods', [])))) for r in app.router.routes if getattr(r, 'path', None) in {'/api/txt2img','/api/img2img','/api/tasks/{task_id}'}]
+print('routes', paths)
+
+resp = client.post('/api/txt2img', json={'__strict_version':1})
+print('status', resp.status_code)
+print('body', resp.json())
+PY`
+**Cause and fix:** `FastAPI startup + TestClient took longer than the harness default (~10s), so the command timed out at exit code 124. Run the same script with a longer timeout (≈60–120s) when bootstrapping the API in the CPU-only sandbox.`
+**Correct command:** `timeout 120s cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python - <<'PY'
+import os,json
+from fastapi.testclient import TestClient
+from apps.backend.interfaces.api.run_api import create_api_app
+
+app = create_api_app(argv=[], env=os.environ)
+client = TestClient(app)
+
+paths = [(r.path, sorted(list(getattr(r, 'methods', [])))) for r in app.router.routes if getattr(r, 'path', None) in {'/api/txt2img','/api/img2img','/api/tasks/{task_id}'}]
+print('routes', paths)
+
+resp = client.post('/api/txt2img', json={'__strict_version':1})
+print('status', resp.status_code)
+print('body', resp.json())
+PY`

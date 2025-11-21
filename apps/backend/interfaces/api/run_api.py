@@ -1,3 +1,4 @@
+# // tags: api-entrypoint, fastapi, task-router
 import asyncio
 import time
 from datetime import datetime
@@ -459,9 +460,6 @@ def build_app() -> FastAPI:
                     # Fallback to index.html for SPA routes
                     return await super().get_response('index.html', scope)
                 raise
-
-    if os.path.isdir(_ui_dist_dir):
-        app.mount('/', SPAStaticFiles(directory=_ui_dist_dir, html=True), name='ui')
 
     @app.get('/api/memory')
     def memory() -> Dict[str, Any]:
@@ -1488,41 +1486,41 @@ def build_app() -> FastAPI:
 
 
     def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
-            if cfg is None:
-                return {
-                    "enable": False,
-                    "denoise": 0.0,
-                    "scale": 1.0,
-                    "upscaler": "Use same upscaler",
-                    "steps": 0,
-                    "resize_x": width,
-                    "resize_y": height,
-                    "hr_checkpoint_name": "Use same checkpoint",
-                    "hr_additional_modules": [],
-                    "hr_sampler_name": "Use same sampler",
-                    "hr_scheduler": "Use same scheduler",
-                    "hr_prompt": "",
-                    "hr_negative_prompt": "",
-                    "hr_cfg": fallback_cfg,
-                    "hr_distilled_cfg": fallback_distilled,
-                }
+        if cfg is None:
             return {
-                "enable": True,
-                "denoise": cfg["denoise"],
-                "scale": cfg["scale"],
-                "upscaler": cfg["upscaler"],
-                "steps": cfg["steps"],
-                "resize_x": cfg["resize_x"],
-                "resize_y": cfg["resize_y"],
-                "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
-                "hr_additional_modules": cfg.get("modules") or [],
-                "hr_sampler_name": cfg.get("sampler") or "Use same sampler",
-                "hr_scheduler": cfg.get("scheduler") or "Use same scheduler",
-                "hr_prompt": cfg.get("prompt") or "",
-                "hr_negative_prompt": cfg.get("negative_prompt") or "",
-                "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
-                "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
+                "enable": False,
+                "denoise": 0.0,
+                "scale": 1.0,
+                "upscaler": "Use same upscaler",
+                "steps": 0,
+                "resize_x": width,
+                "resize_y": height,
+                "hr_checkpoint_name": "Use same checkpoint",
+                "hr_additional_modules": [],
+                "hr_sampler_name": "Use same sampler",
+                "hr_scheduler": "Use same scheduler",
+                "hr_prompt": "",
+                "hr_negative_prompt": "",
+                "hr_cfg": fallback_cfg,
+                "hr_distilled_cfg": fallback_distilled,
             }
+        return {
+            "enable": True,
+            "denoise": cfg["denoise"],
+            "scale": cfg["scale"],
+            "upscaler": cfg["upscaler"],
+            "steps": cfg["steps"],
+            "resize_x": cfg["resize_x"],
+            "resize_y": cfg["resize_y"],
+            "hr_checkpoint_name": cfg.get("checkpoint") or "Use same checkpoint",
+            "hr_additional_modules": cfg.get("modules") or [],
+            "hr_sampler_name": cfg.get("sampler") or "Use same sampler",
+            "hr_scheduler": cfg.get("scheduler") or "Use same scheduler",
+            "hr_prompt": cfg.get("prompt") or "",
+            "hr_negative_prompt": cfg.get("negative_prompt") or "",
+            "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
+            "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
+        }
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
@@ -1608,589 +1606,602 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         return dev
 
-        _ORCH = InferenceOrchestrator()
-
-
-        def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-            loop = entry.loop
-
-            def push(event: Dict[str, Any]) -> None:
-                loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-            def mark_done(success: bool) -> None:
-                def _set() -> None:
-                    if not entry.done.done():
-                        entry.done.set_result(success)
-
-                loop.call_soon_threadsafe(_set)
-
-            push({"type": "status", "stage": "queued"})
+    _ORCH = InferenceOrchestrator()
+    
+    
+    def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+        loop = entry.loop
+    
+        def push(event: Dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+    
+        def mark_done(success: bool) -> None:
+            def _set() -> None:
+                if not entry.done.done():
+                    entry.done.set_result(success)
+    
+            loop.call_soon_threadsafe(_set)
+    
+        push({"type": "status", "stage": "queued"})
+        try:
+            # Enforce explicit device selection without fallback
+            _require_explicit_device(payload)
+            req, engine_key, model_ref = prepare_txt2img(payload)
+        except Exception as err:
+            entry.error = str(err)
+            push({"type": "error", "message": entry.error})
+            push({"type": "end"})
+            mark_done(False)
+            entry.schedule_cleanup(task_id, delay=0.0)
+            with tasks_lock:
+                tasks.pop(task_id, None)
+            raise
+    
+        def worker() -> None:
             try:
-                # Enforce explicit device selection without fallback
-                _require_explicit_device(payload)
-                req, engine_key, model_ref = prepare_txt2img(payload)
-            except Exception as err:
-                entry.error = str(err)
-                push({"type": "error", "message": entry.error})
+                push({"type": "status", "stage": "running"})
+                with tasks_lock:
+                    for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                        if isinstance(ev, ProgressEvent):
+                            push({
+                                "type": "progress",
+                                "stage": ev.stage,
+                                "percent": ev.percent,
+                                "step": ev.step,
+                                "total_steps": ev.total_steps,
+                                "eta_seconds": ev.eta_seconds,
+                            })
+                        elif isinstance(ev, ResultEvent):
+                            payload_obj = ev.payload or {}
+                            info_raw = payload_obj.get("info", "{}")
+                            try:
+                                info_obj = json.loads(info_raw)
+                            except Exception:
+                                info_obj = info_raw
+                            encoded = encode_images(payload_obj.get("images", []))
+                            result = {
+                                "images": encoded,
+                                "info": info_obj,
+                            }
+                            entry.result = {
+                                "status": "completed",
+                                "result": result,
+                            }
+                            push({"type": "result", **result})
                 push({"type": "end"})
-                mark_done(False)
-                return
-
-            def worker() -> None:
+                mark_done(True)
+            except Exception as err:  # pragma: no cover - surfaces runtime errors
                 try:
-                    push({"type": "status", "stage": "running"})
-                    with tasks_lock:
-                        for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
-                            if isinstance(ev, ProgressEvent):
-                                push({
-                                    "type": "progress",
-                                    "stage": ev.stage,
-                                    "percent": ev.percent,
-                                    "step": ev.step,
-                                    "total_steps": ev.total_steps,
-                                    "eta_seconds": ev.eta_seconds,
-                                })
-                            elif isinstance(ev, ResultEvent):
-                                payload_obj = ev.payload or {}
-                                info_raw = payload_obj.get("info", "{}")
-                                try:
-                                    info_obj = json.loads(info_raw)
-                                except Exception:
-                                    info_obj = info_raw
-                                encoded = encode_images(payload_obj.get("images", []))
-                                result = {
-                                    "images": encoded,
-                                    "info": info_obj,
-                                }
-                                entry.result = {
-                                    "status": "completed",
-                                    "result": result,
-                                }
-                                push({"type": "result", **result})
-                    push({"type": "end"})
-                    mark_done(True)
-                except Exception as err:  # pragma: no cover - surfaces runtime errors
-                    try:
-                        from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                        _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
-                    except Exception:
-                        pass
-                    entry.error = str(err)
-                    push({"type": "error", "message": entry.error})
-                    push({"type": "end"})
-                    mark_done(False)
-
-            thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
-            thread.start()
-
-        def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
-            init_image_data = _p.require(payload, 'img2img_init_image')
-            init_image = media.decode_image(init_image_data)
-            mask_data = payload.get('img2img_mask')
-            mask_image = media.decode_image(mask_data) if mask_data else None
-
-            prompt = _p.require(payload, 'img2img_prompt') or ''
-            negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
-            styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
-            batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
-            batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
-            steps_val = _p.as_int(payload, 'img2img_steps')
-            cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
-            distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
-            image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-            denoise = _p.as_float(payload, 'img2img_denoising_strength')
-            width_val = _p.as_int(payload, 'img2img_width')
-            height_val = _p.as_int(payload, 'img2img_height')
-            sampler_name = _p.require(payload, 'img2img_sampling')
-            scheduler_name = _p.require(payload, 'img2img_scheduler')
-            seed_val = _p.as_int(payload, 'img2img_seed')
-            noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
-            ensd_raw = payload.get('img2img_eta_noise_seed_delta')
-
-            enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
-            if enable_hr:
-                hr_data = {
-                    "enable": True,
-                    "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
-                    "resize_x": _p.as_int(payload, 'img2img_hr_resize_x') if 'img2img_hr_resize_x' in payload else 0,
-                    "resize_y": _p.as_int(payload, 'img2img_hr_resize_y') if 'img2img_hr_resize_y' in payload else 0,
-                    "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
-                    "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
-                    "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
-                    "hr_prompt": payload.get('img2img_hr_prompt', ''),
-                    "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
-                    "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,
-                    "hr_distilled_cfg": _p.as_float(payload, 'img2img_hr_distilled_cfg') if 'img2img_hr_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
-                }
-            else:
-                hr_data = {"enable": False}
-
-            extras: Dict[str, Any] = {}
-            if noise_source:
-                extras['randn_source'] = str(noise_source)
-            if ensd_raw is not None:
-                try:
-                    extras['eta_noise_seed_delta'] = int(float(ensd_raw))
+                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
                 except Exception:
-                    raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
-
-            metadata = {
-                "styles": styles,
-                "distilled_cfg_scale": distilled_cfg_scale,
-                "image_cfg_scale": image_cfg_scale,
-                "batch_count": batch_count,
+                    pass
+                entry.error = str(err)
+                push({"type": "error", "message": entry.error})
+                push({"type": "end"})
+                mark_done(False)
+    
+        thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
+        thread.start()
+    
+    def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
+        init_image_data = _p.require(payload, 'img2img_init_image')
+        init_image = media.decode_image(init_image_data)
+        mask_data = payload.get('img2img_mask')
+        mask_image = media.decode_image(mask_data) if mask_data else None
+    
+        prompt = _p.require(payload, 'img2img_prompt') or ''
+        negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+        styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
+        batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
+        batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
+        steps_val = _p.as_int(payload, 'img2img_steps')
+        cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+        distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+        image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
+        denoise = _p.as_float(payload, 'img2img_denoising_strength')
+        width_val = _p.as_int(payload, 'img2img_width')
+        height_val = _p.as_int(payload, 'img2img_height')
+        sampler_name = _p.require(payload, 'img2img_sampling')
+        scheduler_name = _p.require(payload, 'img2img_scheduler')
+        seed_val = _p.as_int(payload, 'img2img_seed')
+        noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
+        ensd_raw = payload.get('img2img_eta_noise_seed_delta')
+    
+        enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
+        if enable_hr:
+            hr_data = {
+                "enable": True,
+                "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
+                "resize_x": _p.as_int(payload, 'img2img_hr_resize_x') if 'img2img_hr_resize_x' in payload else 0,
+                "resize_y": _p.as_int(payload, 'img2img_hr_resize_y') if 'img2img_hr_resize_y' in payload else 0,
+                "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
+                "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
+                "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
+                "hr_prompt": payload.get('img2img_hr_prompt', ''),
+                "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
+                "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,
+                "hr_distilled_cfg": _p.as_float(payload, 'img2img_hr_distilled_cfg') if 'img2img_hr_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
             }
-            if noise_source:
-                metadata["randn_source"] = str(noise_source)
-            if 'eta_noise_seed_delta' in extras:
-                metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
-
-            req = Img2ImgRequest(
-                task=TaskType.IMG2IMG,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                sampler=str(sampler_name),
-                scheduler=str(scheduler_name),
-                seed=seed_val,
-                guidance_scale=cfg_scale,
-                batch_size=batch_size,
-                metadata=metadata,
-                init_image=init_image,
-                mask=mask_image,
-                denoise_strength=denoise,
-                width=width_val,
-                height=height_val,
-                steps=steps_val,
-                extras=extras,
-                highres_fix=hr_data if hr_data.get("enable") else None,
-            )
-
-            engine_override = payload.get('engine') or payload.get('codex_engine')
-            model_override = payload.get('model') or payload.get('sd_model_checkpoint')
-
-            snap = _opts_snapshot()
-            engine_key = engine_override or snap.codex_engine
-            model_ref = model_override or snap.sd_model_checkpoint
-            return req, str(engine_key), model_ref
-
-        def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-            loop = entry.loop
-
-            def push(event: Dict[str, Any]) -> None:
-                loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-            def mark_done(success: bool) -> None:
-                def _set() -> None:
-                    if not entry.done.done():
-                        entry.done.set_result(success)
-
-                loop.call_soon_threadsafe(_set)
-
-            push({"type": "status", "stage": "queued"})
+        else:
+            hr_data = {"enable": False}
+    
+        extras: Dict[str, Any] = {}
+        if noise_source:
+            extras['randn_source'] = str(noise_source)
+        if ensd_raw is not None:
             try:
-                _require_explicit_device(payload)
-                req, engine_key, model_ref = prepare_img2img(payload)
+                extras['eta_noise_seed_delta'] = int(float(ensd_raw))
+            except Exception:
+                raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
+    
+        metadata = {
+            "styles": styles,
+            "distilled_cfg_scale": distilled_cfg_scale,
+            "image_cfg_scale": image_cfg_scale,
+            "batch_count": batch_count,
+        }
+        if noise_source:
+            metadata["randn_source"] = str(noise_source)
+        if 'eta_noise_seed_delta' in extras:
+            metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
+    
+        req = Img2ImgRequest(
+            task=TaskType.IMG2IMG,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            sampler=str(sampler_name),
+            scheduler=str(scheduler_name),
+            seed=seed_val,
+            guidance_scale=cfg_scale,
+            batch_size=batch_size,
+            metadata=metadata,
+            init_image=init_image,
+            mask=mask_image,
+            denoise_strength=denoise,
+            width=width_val,
+            height=height_val,
+            steps=steps_val,
+            extras=extras,
+            highres_fix=hr_data if hr_data.get("enable") else None,
+        )
+    
+        engine_override = payload.get('engine') or payload.get('codex_engine')
+        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+    
+        snap = _opts_snapshot()
+        engine_key = engine_override or snap.codex_engine
+        model_ref = model_override or snap.sd_model_checkpoint
+        return req, str(engine_key), model_ref
+    
+    def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+        loop = entry.loop
+    
+        def push(event: Dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+    
+        def mark_done(success: bool) -> None:
+            def _set() -> None:
+                if not entry.done.done():
+                    entry.done.set_result(success)
+    
+            loop.call_soon_threadsafe(_set)
+    
+        push({"type": "status", "stage": "queued"})
+        try:
+            _require_explicit_device(payload)
+            req, engine_key, model_ref = prepare_img2img(payload)
+        except Exception as err:
+            entry.error = str(err)
+            push({"type": "error", "message": entry.error})
+            push({"type": "end"})
+            mark_done(False)
+            entry.schedule_cleanup(task_id, delay=0.0)
+            with tasks_lock:
+                tasks.pop(task_id, None)
+            raise
+    
+        def worker() -> None:
+            try:
+                push({"type": "status", "stage": "running"})
+                with tasks_lock:
+                    for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
+                        if isinstance(ev, ProgressEvent):
+                            push({
+                                "type": "progress",
+                                "stage": ev.stage,
+                                "percent": ev.percent,
+                                "step": ev.step,
+                                "total_steps": ev.total_steps,
+                                "eta_seconds": ev.eta_seconds,
+                            })
+                        elif isinstance(ev, ResultEvent):
+                            payload_obj = ev.payload or {}
+                            info_raw = payload_obj.get("info", "{}")
+                            try:
+                                info_obj = json.loads(info_raw)
+                            except Exception:
+                                info_obj = info_raw
+                            encoded = encode_images(payload_obj.get("images", []))
+                            result = {"images": encoded, "info": info_obj}
+                            entry.result = {"status": "completed", "result": result}
+                            push({"type": "result", **result})
+                push({"type": "end"})
+                mark_done(True)
             except Exception as err:
+                try:
+                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
+                except Exception:
+                    pass
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
                 mark_done(False)
-                return
-
-            def worker() -> None:
-                try:
-                    push({"type": "status", "stage": "running"})
-                    with tasks_lock:
-                        for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
-                            if isinstance(ev, ProgressEvent):
-                                push({
-                                    "type": "progress",
-                                    "stage": ev.stage,
-                                    "percent": ev.percent,
-                                    "step": ev.step,
-                                    "total_steps": ev.total_steps,
-                                    "eta_seconds": ev.eta_seconds,
-                                })
-                            elif isinstance(ev, ResultEvent):
-                                payload_obj = ev.payload or {}
-                                info_raw = payload_obj.get("info", "{}")
-                                try:
-                                    info_obj = json.loads(info_raw)
-                                except Exception:
-                                    info_obj = info_raw
-                                encoded = encode_images(payload_obj.get("images", []))
-                                result = {"images": encoded, "info": info_obj}
-                                entry.result = {"status": "completed", "result": result}
-                                push({"type": "result", **result})
-                    push({"type": "end"})
-                    mark_done(True)
-                except Exception as err:
-                    try:
-                        from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                        _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
-                    except Exception:
-                        pass
-                    entry.error = str(err)
-                    push({"type": "error", "message": entry.error})
-                    push({"type": "end"})
-                    mark_done(False)
-
-            thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
-            thread.start()
-
-        def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
-            prompt = payload.get('txt2vid_prompt', '')
-            negative_prompt = payload.get('txt2vid_neg_prompt', '')
-            width_val = int(payload.get('txt2vid_width', 768))
-            height_val = int(payload.get('txt2vid_height', 432))
-            steps_val = int(payload.get('txt2vid_steps', 30))
-            fps_val = int(payload.get('txt2vid_fps', 24))
-            frames_val = int(payload.get('txt2vid_num_frames', 16))
-            sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'Euler')))
-            scheduler_name = str(payload.get('txt2vid_scheduler', 'Automatic'))
-            seed_val = int(payload.get('txt2vid_seed', -1))
-            cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
-
-            extras: Dict[str, Any] = {}
-            # Video export options (pass-through; engines may consume)
-            video_opts_keys = [
-                'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
-            ]
-            video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
-            if video_opts:
-                extras['video'] = video_opts
-            if isinstance(payload.get('video_interpolation'), dict):
-                extras['video_interpolation'] = payload.get('video_interpolation')
-            if isinstance(payload.get('wan_high'), dict):
-                extras['wan_high'] = payload.get('wan_high')
-            if isinstance(payload.get('wan_low'), dict):
-                extras['wan_low'] = payload.get('wan_low')
-            # Pass-through of explicit WAN GGUF complements (no guessing)
-            for key in (
-                'wan_format',
-                'wan_vae_path',
-                'wan_text_encoder_path',
-                'wan_text_encoder_dir',
-                'wan_metadata_dir',
-                'wan_tokenizer_dir',
-                # memory/attention/runtime controls
-                'gguf_offload',
-                'gguf_offload_level',
-                'gguf_sdpa_policy',
-                'gguf_attn_chunk',
-                'gguf_cache_policy',
-                'gguf_cache_limit_mb',
-                'gguf_log_mem_interval',
-                # TE kernel/device controls
-                'gguf_te_device',
-                'gguf_te_impl',
-                'gguf_te_kernel_required',
-            ):
-                if key in payload and payload.get(key) is not None:
-                    extras[key] = payload.get(key)
-
-            req = Txt2VidRequest(
-                task=TaskType.TXT2VID,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width_val,
-                height=height_val,
-                fps=fps_val,
-                num_frames=frames_val,
-                sampler=sampler_name,
-                scheduler=scheduler_name,
-                seed=seed_val,
-                guidance_scale=cfg_val,
-                extras=extras,
-                metadata={
-                    "styles": payload.get('txt2vid_styles', []),
-                    "mode": _opts_snapshot().codex_mode,
-                },
-            )
-
-            # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
-            engine_key = None
-            if extras.get('wan_high') or extras.get('wan_low'):
-                engine_key = _pick_wan_engine(extras)
+    
+        thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
+        thread.start()
+    
+    def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
+        prompt = payload.get('txt2vid_prompt', '')
+        negative_prompt = payload.get('txt2vid_neg_prompt', '')
+        width_val = int(payload.get('txt2vid_width', 768))
+        height_val = int(payload.get('txt2vid_height', 432))
+        steps_val = int(payload.get('txt2vid_steps', 30))
+        fps_val = int(payload.get('txt2vid_fps', 24))
+        frames_val = int(payload.get('txt2vid_num_frames', 16))
+        sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'Euler')))
+        scheduler_name = str(payload.get('txt2vid_scheduler', 'Automatic'))
+        seed_val = int(payload.get('txt2vid_seed', -1))
+        cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
+    
+        extras: Dict[str, Any] = {}
+        # Video export options (pass-through; engines may consume)
+        video_opts_keys = [
+            'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
+        ]
+        video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
+        if video_opts:
+            extras['video'] = video_opts
+        if isinstance(payload.get('video_interpolation'), dict):
+            extras['video_interpolation'] = payload.get('video_interpolation')
+        if isinstance(payload.get('wan_high'), dict):
+            extras['wan_high'] = payload.get('wan_high')
+        if isinstance(payload.get('wan_low'), dict):
+            extras['wan_low'] = payload.get('wan_low')
+        # Pass-through of explicit WAN GGUF complements (no guessing)
+        for key in (
+            'wan_format',
+            'wan_vae_path',
+            'wan_text_encoder_path',
+            'wan_text_encoder_dir',
+            'wan_metadata_dir',
+            'wan_tokenizer_dir',
+            # memory/attention/runtime controls
+            'gguf_offload',
+            'gguf_offload_level',
+            'gguf_sdpa_policy',
+            'gguf_attn_chunk',
+            'gguf_cache_policy',
+            'gguf_cache_limit_mb',
+            'gguf_log_mem_interval',
+            # TE kernel/device controls
+            'gguf_te_device',
+            'gguf_te_impl',
+            'gguf_te_kernel_required',
+        ):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
+    
+        req = Txt2VidRequest(
+            task=TaskType.TXT2VID,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width_val,
+            height=height_val,
+            fps=fps_val,
+            num_frames=frames_val,
+            sampler=sampler_name,
+            scheduler=scheduler_name,
+            seed=seed_val,
+            guidance_scale=cfg_val,
+            extras=extras,
+            metadata={
+                "styles": payload.get('txt2vid_styles', []),
+                "mode": _opts_snapshot().codex_mode,
+            },
+        )
+    
+        # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
+        engine_key = None
+        if extras.get('wan_high') or extras.get('wan_low'):
+            engine_key = _pick_wan_engine(extras)
+        else:
+            sem = _detect_semantic_engine()
+            if sem == 'wan22':
+                engine_key = 'wan22_14b'
+            elif sem == 'hunyuan_video':
+                engine_key = 'hunyuan_video'
             else:
-                sem = _detect_semantic_engine()
-                if sem == 'wan22':
-                    engine_key = 'wan22_14b'
-                elif sem == 'hunyuan_video':
-                    engine_key = 'hunyuan_video'
-                else:
-                    engine_key = 'wan22_14b'
-            # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
-            model_ref = _opts_snapshot().sd_model_checkpoint
-            try:
-                wh = extras.get('wan_high') or {}
-                wl = extras.get('wan_low') or {}
-                if isinstance(wh, dict) and wh.get('model_dir'):
-                    model_ref = str(wh.get('model_dir'))
-                elif isinstance(wl, dict) and wl.get('model_dir'):
-                    model_ref = str(wl.get('model_dir'))
-            except Exception:
-                pass
-            return req, str(engine_key), model_ref
-
-        def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
-            logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
-            prompt = payload.get('img2vid_prompt', '')
-            negative_prompt = payload.get('img2vid_neg_prompt', '')
-            width_val = int(payload.get('img2vid_width', 768))
-            height_val = int(payload.get('img2vid_height', 432))
-            steps_val = int(payload.get('img2vid_steps', 30))
-            fps_val = int(payload.get('img2vid_fps', 24))
-            frames_val = int(payload.get('img2vid_num_frames', 16))
-            sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'Euler')))
-            scheduler_name = str(payload.get('img2vid_scheduler', 'Automatic'))
-            seed_val = int(payload.get('img2vid_seed', -1))
-            cfg_val = float(payload.get('img2vid_cfg_scale', 7.0))
-
-            init_image_data = payload.get('img2vid_init_image')
-            init_image = media.decode_image(init_image_data) if init_image_data else None
-
-            extras: Dict[str, Any] = {}
-            video_opts_keys = [
-                'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
-            ]
-            video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
-            if video_opts:
-                extras['video'] = video_opts
-            if isinstance(payload.get('video_interpolation'), dict):
-                extras['video_interpolation'] = payload.get('video_interpolation')
-            if isinstance(payload.get('wan_high'), dict):
-                extras['wan_high'] = payload.get('wan_high')
-            if isinstance(payload.get('wan_low'), dict):
-                extras['wan_low'] = payload.get('wan_low')
-            # Pass-through of explicit WAN GGUF complements (no guessing)
-            for key in (
-                'wan_format',
-                'wan_vae_path',
-                'wan_text_encoder_path',
-                'wan_text_encoder_dir',
-                'wan_metadata_dir',
-                'wan_tokenizer_dir',
-                # memory/attention/runtime controls
-                'gguf_offload',
-                'gguf_offload_level',
-                'gguf_sdpa_policy',
-                'gguf_attn_chunk',
-                'gguf_cache_policy',
-                'gguf_cache_limit_mb',
-                'gguf_log_mem_interval',
-                # TE kernel/device controls
-                'gguf_te_device',
-                'gguf_te_impl',
-                'gguf_te_kernel_required',
-            ):
-                if key in payload and payload.get(key) is not None:
-                    extras[key] = payload.get(key)
-
-            req = Img2VidRequest(
-                task=TaskType.IMG2VID,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                init_image=init_image,
-                width=width_val,
-                height=height_val,
-                fps=fps_val,
-                num_frames=frames_val,
-                sampler=sampler_name,
-                scheduler=scheduler_name,
-                seed=seed_val,
-                guidance_scale=cfg_val,
-                extras=extras,
-                metadata={
-                    "styles": payload.get('img2vid_styles', []),
-                    "mode": _opts_snapshot().codex_mode,
-                },
-            )
-
-            # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
-            engine_key = None
-            if extras.get('wan_high') or extras.get('wan_low'):
-                engine_key = _pick_wan_engine(extras)
+                engine_key = 'wan22_14b'
+        # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
+        model_ref = _opts_snapshot().sd_model_checkpoint
+        try:
+            wh = extras.get('wan_high') or {}
+            wl = extras.get('wan_low') or {}
+            if isinstance(wh, dict) and wh.get('model_dir'):
+                model_ref = str(wh.get('model_dir'))
+            elif isinstance(wl, dict) and wl.get('model_dir'):
+                model_ref = str(wl.get('model_dir'))
+        except Exception:
+            pass
+        return req, str(engine_key), model_ref
+    
+    def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
+        logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
+        prompt = payload.get('img2vid_prompt', '')
+        negative_prompt = payload.get('img2vid_neg_prompt', '')
+        width_val = int(payload.get('img2vid_width', 768))
+        height_val = int(payload.get('img2vid_height', 432))
+        steps_val = int(payload.get('img2vid_steps', 30))
+        fps_val = int(payload.get('img2vid_fps', 24))
+        frames_val = int(payload.get('img2vid_num_frames', 16))
+        sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'Euler')))
+        scheduler_name = str(payload.get('img2vid_scheduler', 'Automatic'))
+        seed_val = int(payload.get('img2vid_seed', -1))
+        cfg_val = float(payload.get('img2vid_cfg_scale', 7.0))
+    
+        init_image_data = payload.get('img2vid_init_image')
+        init_image = media.decode_image(init_image_data) if init_image_data else None
+    
+        extras: Dict[str, Any] = {}
+        video_opts_keys = [
+            'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
+        ]
+        video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
+        if video_opts:
+            extras['video'] = video_opts
+        if isinstance(payload.get('video_interpolation'), dict):
+            extras['video_interpolation'] = payload.get('video_interpolation')
+        if isinstance(payload.get('wan_high'), dict):
+            extras['wan_high'] = payload.get('wan_high')
+        if isinstance(payload.get('wan_low'), dict):
+            extras['wan_low'] = payload.get('wan_low')
+        # Pass-through of explicit WAN GGUF complements (no guessing)
+        for key in (
+            'wan_format',
+            'wan_vae_path',
+            'wan_text_encoder_path',
+            'wan_text_encoder_dir',
+            'wan_metadata_dir',
+            'wan_tokenizer_dir',
+            # memory/attention/runtime controls
+            'gguf_offload',
+            'gguf_offload_level',
+            'gguf_sdpa_policy',
+            'gguf_attn_chunk',
+            'gguf_cache_policy',
+            'gguf_cache_limit_mb',
+            'gguf_log_mem_interval',
+            # TE kernel/device controls
+            'gguf_te_device',
+            'gguf_te_impl',
+            'gguf_te_kernel_required',
+        ):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
+    
+        req = Img2VidRequest(
+            task=TaskType.IMG2VID,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            init_image=init_image,
+            width=width_val,
+            height=height_val,
+            fps=fps_val,
+            num_frames=frames_val,
+            sampler=sampler_name,
+            scheduler=scheduler_name,
+            seed=seed_val,
+            guidance_scale=cfg_val,
+            extras=extras,
+            metadata={
+                "styles": payload.get('img2vid_styles', []),
+                "mode": _opts_snapshot().codex_mode,
+            },
+        )
+    
+        # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
+        engine_key = None
+        if extras.get('wan_high') or extras.get('wan_low'):
+            engine_key = _pick_wan_engine(extras)
+        else:
+            sem = _detect_semantic_engine()
+            if sem == 'wan22':
+                engine_key = 'wan22_14b'
+            elif sem == 'hunyuan_video':
+                engine_key = 'hunyuan_video'
             else:
-                sem = _detect_semantic_engine()
-                if sem == 'wan22':
-                    engine_key = 'wan22_14b'
-                elif sem == 'hunyuan_video':
-                    engine_key = 'hunyuan_video'
-                else:
-                    engine_key = 'wan22_14b'
-            # Choose model_ref from WAN extras when provided
-            model_ref = _opts_snapshot().sd_model_checkpoint
+                engine_key = 'wan22_14b'
+        # Choose model_ref from WAN extras when provided
+        model_ref = _opts_snapshot().sd_model_checkpoint
+        try:
+            wh = extras.get('wan_high') or {}
+            wl = extras.get('wan_low') or {}
+            if isinstance(wh, dict) and wh.get('model_dir'):
+                model_ref = str(wh.get('model_dir'))
+            elif isinstance(wl, dict) and wl.get('model_dir'):
+                model_ref = str(wl.get('model_dir'))
+        except Exception:
+            pass
+        logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
+        return req, str(engine_key), model_ref
+    
+    def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
+        loop = entry.loop
+    
+        def push(event: Dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
+    
+        def mark_done(success: bool) -> None:
+            def _set() -> None:
+                if not entry.done.done():
+                    entry.done.set_result(success)
+    
+            loop.call_soon_threadsafe(_set)
+    
+        push({"type": "status", "stage": "queued"})
+        try:
+            _require_explicit_device(payload)
+            if task_type == TaskType.TXT2VID:
+                req, engine_key, model_ref = prepare_txt2vid(payload)
+            else:
+                req, engine_key, model_ref = prepare_img2vid(payload)
+        except Exception as err:
+            entry.error = str(err)
+            push({"type": "error", "message": entry.error})
+            push({"type": "end"})
+            mark_done(False)
+            entry.schedule_cleanup(task_id, delay=0.0)
+            with tasks_lock:
+                tasks.pop(task_id, None)
+            raise
+    
+        def worker() -> None:
+            logging.getLogger('backend.api').info('[api] DEBUG: enter worker task_id=%s type=%s engine=%s model=%s', task_id, task_type.value, engine_key, model_ref)
             try:
-                wh = extras.get('wan_high') or {}
-                wl = extras.get('wan_low') or {}
-                if isinstance(wh, dict) and wh.get('model_dir'):
-                    model_ref = str(wh.get('model_dir'))
-                elif isinstance(wl, dict) and wl.get('model_dir'):
-                    model_ref = str(wl.get('model_dir'))
-            except Exception:
-                pass
-            logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
-            return req, str(engine_key), model_ref
-
-        def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
-            loop = entry.loop
-
-            def push(event: Dict[str, Any]) -> None:
-                loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-            def mark_done(success: bool) -> None:
-                def _set() -> None:
-                    if not entry.done.done():
-                        entry.done.set_result(success)
-
-                loop.call_soon_threadsafe(_set)
-
-            push({"type": "status", "stage": "queued"})
-            try:
-                _require_explicit_device(payload)
-                if task_type == TaskType.TXT2VID:
-                    req, engine_key, model_ref = prepare_txt2vid(payload)
-                else:
-                    req, engine_key, model_ref = prepare_img2vid(payload)
+                push({"type": "status", "stage": "running"})
+                with tasks_lock:
+                    orch = InferenceOrchestrator()
+                    engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
+                    for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
+                        if isinstance(ev, ProgressEvent):
+                            push({
+                                "type": "progress",
+                                "stage": ev.stage,
+                                "percent": ev.percent,
+                                "step": ev.step,
+                                "total_steps": ev.total_steps,
+                                "eta_seconds": ev.eta_seconds,
+                            })
+                        elif isinstance(ev, ResultEvent):
+                            payload_obj = ev.payload or {}
+                            info_raw = payload_obj.get("info", "{}")
+                            try:
+                                info_obj = json.loads(info_raw)
+                            except Exception:
+                                info_obj = info_raw
+                            encoded = encode_images(payload_obj.get("images", []))
+                            result = {"images": encoded, "info": info_obj}
+                            entry.result = {"status": "completed", "result": result}
+                            push({"type": "result", **result})
+                push({"type": "end"})
+                mark_done(True)
+                logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
             except Exception as err:
+                try:
+                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
+                except Exception:
+                    pass
                 entry.error = str(err)
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
                 mark_done(False)
-                return
-
-            def worker() -> None:
-                logging.getLogger('backend.api').info('[api] DEBUG: enter worker task_id=%s type=%s engine=%s model=%s', task_id, task_type.value, engine_key, model_ref)
-                try:
-                    push({"type": "status", "stage": "running"})
-                    with tasks_lock:
-                        orch = InferenceOrchestrator()
-                        engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
-                        for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
-                            if isinstance(ev, ProgressEvent):
-                                push({
-                                    "type": "progress",
-                                    "stage": ev.stage,
-                                    "percent": ev.percent,
-                                    "step": ev.step,
-                                    "total_steps": ev.total_steps,
-                                    "eta_seconds": ev.eta_seconds,
-                                })
-                            elif isinstance(ev, ResultEvent):
-                                payload_obj = ev.payload or {}
-                                info_raw = payload_obj.get("info", "{}")
-                                try:
-                                    info_obj = json.loads(info_raw)
-                                except Exception:
-                                    info_obj = info_raw
-                                encoded = encode_images(payload_obj.get("images", []))
-                                result = {"images": encoded, "info": info_obj}
-                                entry.result = {"status": "completed", "result": result}
-                                push({"type": "result", **result})
-                    push({"type": "end"})
-                    mark_done(True)
-                    logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
-                except Exception as err:
-                    try:
-                        from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
-                        _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
-                    except Exception:
-                        pass
-                    entry.error = str(err)
-                    push({"type": "error", "message": entry.error})
-                    push({"type": "end"})
-                    mark_done(False)
-
-            label = 'txt2vid' if task_type == TaskType.TXT2VID else 'img2vid'
-            thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)
-            thread.start()
-
-        @app.post('/api/txt2img')
-        async def txt2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-            if not isinstance(payload, dict):
-                raise HTTPException(status_code=400, detail="Payload must be JSON object")
-            if payload.get('__strict_version') != 1:
-                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
-
-            loop = asyncio.get_running_loop()
-            entry = TaskEntry(loop)
-            task_id = f"task(api-{uuid4().hex})"
-            register_task(task_id, entry)
-            run_txt2img_task(task_id, payload, entry)
-            return {"task_id": task_id}
-
-        @app.post('/api/img2img')
-        async def img2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-            if not isinstance(payload, dict):
-                raise HTTPException(status_code=400, detail="Payload must be JSON object")
-            if payload.get('__strict_version') != 1:
-                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
-
-            loop = asyncio.get_running_loop()
-            entry = TaskEntry(loop)
-            task_id = f"task(api-img2img-{uuid4().hex})"
-            register_task(task_id, entry)
-            run_img2img_task(task_id, payload, entry)
-            return {"task_id": task_id}
-
-        @app.post('/api/txt2vid')
-        async def txt2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-            if not isinstance(payload, dict):
-                raise HTTPException(status_code=400, detail="Payload must be JSON object")
-            if payload.get('__strict_version') != 1:
-                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
-
-            loop = asyncio.get_running_loop()
-            entry = TaskEntry(loop)
-            task_id = f"task(api-txt2vid-{uuid4().hex})"
-            register_task(task_id, entry)
-            run_video_task(task_id, payload, entry, TaskType.TXT2VID)
-            return {"task_id": task_id}
-
-        @app.post('/api/img2vid')
-        async def img2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-            logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
-            if not isinstance(payload, dict):
-                raise HTTPException(status_code=400, detail="Payload must be JSON object")
-            if payload.get('__strict_version') != 1:
-                raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
-
-            loop = asyncio.get_running_loop()
-            entry = TaskEntry(loop)
-            task_id = f"task(api-img2vid-{uuid4().hex})"
-            register_task(task_id, entry)
-            logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
-            run_video_task(task_id, payload, entry, TaskType.IMG2VID)
-            return {"task_id": task_id}
-
-        @app.get('/api/tasks/{task_id}')
-        async def task_status(task_id: str) -> Dict[str, Any]:
-            entry = get_task(task_id)
-            if entry is None:
-                raise HTTPException(status_code=404, detail="Task not found")
-            if entry.done.done():
-                if entry.error:
-                    return {"status": "error", "error": entry.error}
-                entry.schedule_cleanup(task_id)
-                return entry.result or {"status": "completed", "result": {}}
-            return {"status": "running"}
-
+    
+        label = 'txt2vid' if task_type == TaskType.TXT2VID else 'img2vid'
+        thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)
+        thread.start()
+    
+    @app.post('/api/txt2img')
+    async def txt2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        if payload.get('__strict_version') != 1:
+            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+    
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-{uuid4().hex})"
+        register_task(task_id, entry)
+        run_txt2img_task(task_id, payload, entry)
+        return {"task_id": task_id}
+    
+    @app.post('/api/img2img')
+    async def img2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        if payload.get('__strict_version') != 1:
+            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+    
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-img2img-{uuid4().hex})"
+        register_task(task_id, entry)
+        run_img2img_task(task_id, payload, entry)
+        return {"task_id": task_id}
+    
+    @app.post('/api/txt2vid')
+    async def txt2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        if payload.get('__strict_version') != 1:
+            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+    
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-txt2vid-{uuid4().hex})"
+        register_task(task_id, entry)
+        run_video_task(task_id, payload, entry, TaskType.TXT2VID)
+        return {"task_id": task_id}
+    
+    @app.post('/api/img2vid')
+    async def img2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+        if payload.get('__strict_version') != 1:
+            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
+    
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-img2vid-{uuid4().hex})"
+        register_task(task_id, entry)
+        logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
+        run_video_task(task_id, payload, entry, TaskType.IMG2VID)
+        return {"task_id": task_id}
+    
+    @app.get('/api/tasks/{task_id}')
+    async def task_status(task_id: str) -> Dict[str, Any]:
+        entry = get_task(task_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if entry.done.done():
+            if entry.error:
+                return {"status": "error", "error": entry.error}
+            entry.schedule_cleanup(task_id)
+            return entry.result or {"status": "completed", "result": {}}
+        return {"status": "running"}
+    
     @app.get('/api/tasks/{task_id}/events')
     async def task_events(task_id: str) -> StreamingResponse:
         entry = get_task(task_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
-            async def event_stream():
-                while True:
-                    payload = await entry.queue.get()
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    if payload.get('type') == 'end':
-                        entry.schedule_cleanup(task_id)
-                        break
+        async def event_stream():
+            while True:
+                payload = await entry.queue.get()
+                yield f"data: {json.dumps(payload)}\n\n"
+                if payload.get('type') == 'end':
+                    entry.schedule_cleanup(task_id)
+                    break
 
-            return StreamingResponse(event_stream(), media_type='text/event-stream')
+        return StreamingResponse(event_stream(), media_type='text/event-stream')
+
+    # Serve built UI after API routes so /api/* is matched before the SPA fallback
+    if os.path.isdir(_ui_dist_dir):
+        app.mount('/', SPAStaticFiles(directory=_ui_dist_dir, html=True), name='ui')
 
     # Legacy callbacks are not used in the native backend entrypoint
     app.include_router(codex_api.router)

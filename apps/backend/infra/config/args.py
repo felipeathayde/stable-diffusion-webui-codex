@@ -245,10 +245,12 @@ def _validate_required_devices(ns: argparse.Namespace) -> None:
         value = getattr(ns, attr, None)
         if value is None:
             missing.append(label)
+            setattr(ns, attr, "cpu")
+
     if missing:
-        raise RuntimeError(
-            "Device configuration is required before starting the backend. "
-            f"Missing definitions for: {', '.join(missing)}."
+        logging.getLogger("backend.config").warning(
+            "Device configuration not provided (%s); defaulting all components to CPU.",
+            ", ".join(missing),
         )
 
 

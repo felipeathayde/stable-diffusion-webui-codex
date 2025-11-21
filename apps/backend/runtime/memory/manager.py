@@ -418,10 +418,13 @@ class CodexMemoryManager:
                     probe.cuda_device_name or "unknown",
                 )
                 return device
-            raise MemoryConfigurationError(
-                "Device backend AUTO requires an available CUDA GPU. "
-                "Select an explicit device (e.g., --core-device cpu) to run without CUDA."
+            # No CUDA/XPU/MPS/DirectML: fall back to CPU instead of aborting.
+            logger.warning(
+                "Device AUTO fallback to CPU (no GPU/accelerator detected). "
+                "Set CODEX_DIFFUSION_DEVICE=cpu to silence this warning."
             )
+            self._config.device_backend = DeviceBackend.CPU
+            return torch.device("cpu")
         if backend == DeviceBackend.CUDA:
             return choose_cuda()
         if backend == DeviceBackend.MPS:

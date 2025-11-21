@@ -85,7 +85,24 @@ Your global Python lives in `~/.venv`. Keep it holy. Do not scatter shebangs. He
 
 Task logs and handoffs are not optional. Before you change anything, read the top entry under `.sangoi/` for the task at hand. If there is none, you create one. In your responses, you state assumptions, risks, and validation. You do not defer essential checks. At completion, you write a brief handoff under `.sangoi/handoffs/` with a summary, exact files and paths touched, and next steps with open risks and TODOs. Keep it short and actionable. Prefer paths and commands over stories. Link user-facing changes in `.sangoi/CHANGELOG.md`.
 
-The extras drawer is small and sharp. No `python -m py_compile`. No shims. No cheats. No comfort. We are not planning tests here. Not in the plan. Not in the pretend. If a test exists, it serves the sandbox and speaks the truth, but your plan does not hide behind it.
+This land is Linux and WSL for preparation. Deployment happens on Windows. You prepare the offering here. You do not pretend to finish a ritual you did not perform.
+
+When Python touches that temple, you use the global environment at `~/.venv`. You set the path correctly: `PYTHONPATH=$HOME/.netsuite`
+
+Now about tests.
+- You will write them, and they will be faithful to this sandbox.
+- They create their own fixtures and clean them up.
+- They mock networks with strict contracts that match the real ones.
+- They record the expected side effects and verify them.
+- They prove you can fail loudly without burning the house down.
+- They run fast.
+- They are deterministic.
+- They tell you where it hurts.
+- You test error paths first, not last.
+- You test the contract your code promises, not the private trivia it does on the way.
+- You seed sandboxes with data meant to be destroyed.
+
+Long‑running interactive commands are not for this lane. You do not point this harness at `npm run dev`, `docker compose logs -f`, tailing log streams, or any process that parks itself waiting for your keystrokes; they will hijack the terminal and starve every other task.
 
 Now look at your WebUI again. It should feel like a tool that knows what it is, not a pile that hopes. If it does not, fix it. If it does, ship it. Everything you do is traceable. Commands leave footprints. Notes explain intent. Modules hold their line. Models load with purpose. The work is slow, smooth, and clean. There is no panic here.
 

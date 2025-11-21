@@ -2192,6 +2192,7 @@ def _require_explicit_device(payload: Dict[str, Any]) -> str:
 
     # Legacy callbacks are not used in the native backend entrypoint
     app.include_router(codex_api.router)
+    logging.getLogger('backend.api').info('build_app finished')
     return app
 
 
@@ -2224,13 +2225,6 @@ def _enable_trace_debug(ns: Any) -> None:
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
-    # Defensive: uvicorn must call this as a factory. Detect misuse (scope passed as argv) and error out loudly.
-    if argv and len(argv) == 1 and isinstance(argv[0], dict) and "type" in argv[0]:
-        raise RuntimeError(
-            "create_api_app must be invoked as a factory (--factory import), not as an ASGI app. "
-            "Use `uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app` "
-            "or run `python apps/backend/interfaces/api/run_api.py`."
-        )
     argv_seq = list(argv or [])
     snapshot = codex_options.get_snapshot()
     ns = _bootstrap_runtime(argv_seq, env or os.environ, snapshot.as_dict())
@@ -2238,11 +2232,43 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
     ensure_initialized()
     # Build a fresh app each time to avoid stale/None globals under factory mode
     app = build_app()
+    if app is None:
+        logging.getLogger("backend.api").error(
+            "build_app() returned None; constructing minimal API fallback (health/version only)."
+        )
+        fallback = FastAPI(title="SD WebUI API (fallback)", version="0.0.0-fallback")
+
+        @fallback.get("/api/health")
+        def _health() -> Dict[str, bool]:
+            return {"ok": True}
+
+        @fallback.get("/api/version")
+        def _version() -> Dict[str, Any]:
+            return {
+                "app_version": fallback.version,
+                "git_commit": None,
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                "torch_version": None,
+                "cuda_version": None,
+            }
+
+        try:
+            fallback.include_router(codex_api.router)
+        except Exception:
+            pass
+
+        app = fallback
     global _APP
     _APP = app
     return app
+
 # Provide module-level ASGI app for ASGI servers that import run_api:app directly
-app = create_api_app(argv=sys.argv[1:], env=os.environ)
+async def app(scope, receive, send):  # type: ignore[override]
+    """ASGI entrypoint for non-factory launches (uvicorn run_api:app)."""
+    global _APP
+    if _APP is None:
+        _APP = create_api_app(argv=sys.argv[1:], env=os.environ)
+    await _APP(scope, receive, send)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

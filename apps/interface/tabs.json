@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "tabs": [
+    {
+      "id": "tab-sd15-0",
+      "type": "sd15",
+      "title": "SD 1.5",
+      "order": 0,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-10-25T00:10:27.811372",
+        "updatedAt": "2025-10-25T00:10:27.811372"
+      }
+    },
+    {
+      "id": "tab-sdxl-1",
+      "type": "sdxl",
+      "title": "SDXL",
+      "order": 1,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-10-25T00:10:27.811372",
+        "updatedAt": "2025-10-25T00:10:27.811372"
+      }
+    },
+    {
+      "id": "tab-flux-2",
+      "type": "flux",
+      "title": "FLUX",
+      "order": 2,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-10-25T00:10:27.811372",
+        "updatedAt": "2025-10-25T00:10:27.811372"
+      }
+    },
+    {
+      "id": "tab-wan-3",
+      "type": "wan",
+      "title": "WAN 2.2",
+      "order": 3,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-10-25T00:10:27.811372",
+        "updatedAt": "2025-10-25T00:10:27.811372"
+      }
+    }
+  ]
+}

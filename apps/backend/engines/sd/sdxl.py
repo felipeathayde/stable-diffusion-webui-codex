@@ -16,6 +16,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
 import json
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent
@@ -134,6 +135,13 @@ class StableDiffusionXL(CodexDiffusionEngine):
         runtime = assemble_engine_runtime(SDXL_SPEC, bundle.estimated_config, bundle.components)
         self._runtime = runtime
         self.register_model_family("sdxl")
+
+        base_vae = getattr(runtime.vae.first_stage_model, "_base", runtime.vae.first_stage_model)
+        if isinstance(base_vae, AutoencoderKLWan):
+            raise RuntimeError(
+                "SDXL engine loaded a WAN VAE; expected diffusers AutoencoderKL. "
+                "Ensure the checkpoint includes an SDXL VAE or provide one via model components."
+            )
 
         logger.debug(
             "StableDiffusionXL runtime prepared with branches=%s clip_skip=%d",

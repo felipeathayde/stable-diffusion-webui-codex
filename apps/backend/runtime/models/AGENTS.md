@@ -34,3 +34,6 @@ Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict 
 
 ## Rationale
 - Mirrors Comfy’s `clip_text_transformers_convert` behaviour: convert legacy resblocks to `text_model.*` and accept plain `text_model.*` roots by lifting into the active wrapper namespace.
+
+## Updates
+- 2025-11-22: VAE selection now prefers diffusers `AutoencoderKL` for SD/SDXL/Flux/etc., reserving `AutoencoderKLWan` only for WAN22 so SDXL latents are decoded with the proper architecture.

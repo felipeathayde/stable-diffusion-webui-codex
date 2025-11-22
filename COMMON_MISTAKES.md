@@ -411,3 +411,7 @@ resp = client.post('/api/txt2img', json={'__strict_version':1})
 print('status', resp.status_code)
 print('body', resp.json())
 PY`
+
+**Wrong command:** `python -m pytest tests/backend/model_registry/test_vae_selection.py`
+**Cause and fix:** `Pytest is not installed in the current environment, so the module import fails. Install pytest (or use the project’s test runner) before invoking the test.`
+**Correct command:** `python -m pip install pytest`

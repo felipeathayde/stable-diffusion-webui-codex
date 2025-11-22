@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 import torch
-from diffusers import DiffusionPipeline
+from diffusers import AutoencoderKL, DiffusionPipeline
 from transformers import modeling_utils
 
 from apps.backend.infra.config.args import args
@@ -430,6 +430,21 @@ def _load_component_config(component_path: str) -> Dict[str, Any]:
     return {}
 
 
+def _resolve_vae_class(signature: ModelSignature | None):
+    """Select the appropriate VAE class for the detected model family.
+
+    - WAN22 uses the bespoke AutoencoderKLWan implementation.
+    - All other families (SD1.x/2.x/XL, Flux, Chroma, etc.) should rely on the
+      standard diffusers AutoencoderKL to respect architecture-specific
+      configs (block types, sample_size, scaling factors).
+    """
+
+    family = getattr(signature, "family", None)
+    if family is ModelFamily.WAN22:
+        return AutoencoderKLWan
+    return AutoencoderKL
+
+
 def _load_huggingface_component(
     parsed: ParsedCheckpoint,
     component_name: str,
@@ -461,12 +476,16 @@ def _load_huggingface_component(
     if cls_name == "AutoencoderKL":
         if state_dict is None:
             return None
-        config_json = AutoencoderKLWan.load_config(component_path)
+
+        vae_cls = _resolve_vae_class(getattr(parsed, "signature", None))
+        config_json = vae_cls.load_config(component_path)
         vae_device = memory_management.vae_device()
         vae_dtype = memory_management.vae_dtype(device=vae_device)
-        _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype))
+        _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype), cls=vae_cls.__name__)
+
         with using_codex_operations(device=vae_device, dtype=vae_dtype, manual_cast_enabled=True):
-            model = AutoencoderKLWan.from_config(config_json)
+            model = vae_cls.from_config(config_json)
+
         _trace.event("load_state_dict", module="vae", tensors=len(state_dict))
         try:
             from .state_dict import safe_load_state_dict as _safe_load

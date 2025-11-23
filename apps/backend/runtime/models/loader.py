@@ -492,7 +492,7 @@ def _maybe_convert_sdxl_vae_state_dict(
         return tensor
 
     converted: Dict[str, Any] = {}
-
+    contador = 0
     for raw_key, value in state_dict.items():
         key = str(raw_key)
         new_key = key
@@ -550,18 +550,24 @@ def _maybe_convert_sdxl_vae_state_dict(
             base = "encoder.mid.attn_1." if is_encoder else "decoder.mid.attn_1."
             suffix = key[len(base) :]
             prefix = "encoder" if is_encoder else "decoder"
+            contador = contador + 1
+            print(f"codex mongol {contador}")
             if suffix.startswith("q."):
                 rest = suffix[len("q.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("k."):
                 rest = suffix[len("k.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_k.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("v."):
                 rest = suffix[len("v.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_v.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("proj_out."):
                 rest = suffix[len("proj_out.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_out.0.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("norm."):
                 rest = suffix[len("norm.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.group_norm.{rest}"

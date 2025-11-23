@@ -486,8 +486,21 @@ def _maybe_convert_sdxl_vae_state_dict(
     if not any(isinstance(k, str) and k.startswith("encoder.down.") for k in keys):
         return state_dict
 
+    def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
+        """Convert 1x1 conv weights to linear weights when needed.
+
+        Some SDXL checkpoints store mid attention projections (q/k/v/proj_out)
+        as Conv2d weights with shape [C_out, C_in, 1, 1], while diffusers
+        AutoencoderKL expects Linear weights [C_out, C_in].
+        """
+        if not isinstance(tensor, torch.Tensor):
+            return tensor
+        if tensor.ndim == 4 and tensor.shape[-2:] == (1, 1):
+            return tensor[:, :, 0, 0].contiguous()
+        return tensor
+
     converted: Dict[str, Any] = {}
-    contador = 0
+
     for raw_key, value in state_dict.items():
         key = str(raw_key)
         new_key = key
@@ -545,32 +558,27 @@ def _maybe_convert_sdxl_vae_state_dict(
             base = "encoder.mid.attn_1." if is_encoder else "decoder.mid.attn_1."
             suffix = key[len(base) :]
             prefix = "encoder" if is_encoder else "decoder"
-            contador = contador + 1
+            
+            print("codex mongol")
             if suffix.startswith("q."):
                 rest = suffix[len("q.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"
-                contador = contador + 1
-                print(f"codex mongol nº {contador}")
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("k."):
                 rest = suffix[len("k.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_k.{rest}"
-                contador = contador + 1
-                print(f"codex mongol nº {contador}")
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("v."):
                 rest = suffix[len("v.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_v.{rest}"
-                contador = contador + 1
-                print(f"codex mongol nº {contador}")
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("proj_out."):
                 rest = suffix[len("proj_out.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_out.0.{rest}"
-                contador = contador + 1
-                print(f"codex mongol nº {contador}")
+                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("norm."):
                 rest = suffix[len("norm.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.group_norm.{rest}"
-                contador = contador + 1
-                print(f"codex mongol nº {contador}")
 
         # Conv shortcuts: nin_shortcut (LDM) -> conv_shortcut (diffusers)
         if "nin_shortcut." in key:

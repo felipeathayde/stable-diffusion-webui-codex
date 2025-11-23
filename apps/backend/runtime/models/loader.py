@@ -477,8 +477,33 @@ def _load_huggingface_component(
         if state_dict is None:
             return None
 
+        def _strip_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
+            prefixes = (
+                "first_stage_model.",
+                "vae.",
+                "model.",
+            )
+            out: Dict[str, Any] = {}
+            for key, value in sd.items():
+                new_key = str(key)
+                changed = True
+                while changed:
+                    changed = False
+                    for prefix in prefixes:
+                        if new_key.startswith(prefix):
+                            new_key = new_key[len(prefix) :]
+                            changed = True
+                            break
+                out[new_key] = value
+            return out
+
+        state_dict = _strip_prefixes(state_dict)
+
         vae_cls = _resolve_vae_class(getattr(parsed, "signature", None))
-        config_json = vae_cls.load_config(component_path)
+        try:
+            config_json = vae_cls.load_config(component_path)
+        except Exception:
+            config_json = _load_component_config(component_path)
         vae_device = memory_management.vae_device()
         vae_dtype = memory_management.vae_dtype(device=vae_device)
         _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype), cls=vae_cls.__name__)

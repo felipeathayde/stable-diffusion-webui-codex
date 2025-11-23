@@ -477,6 +477,16 @@ def _load_huggingface_component(
         if state_dict is None:
             return None
 
+        # Unwrap common packing shapes (e.g., {'state_dict': {...}})
+        if isinstance(state_dict, Mapping) and len(state_dict) == 1 and "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
+
+        if not isinstance(state_dict, Mapping):
+            raise RuntimeError(
+                f"VAE state_dict must be a mapping; got {type(state_dict).__name__}. "
+                "Checkpoint may be malformed or require manual VAE extraction."
+            )
+
         def _strip_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
             prefixes = (
                 "first_stage_model.",

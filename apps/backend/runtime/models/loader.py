@@ -487,7 +487,7 @@ def _maybe_convert_sdxl_vae_state_dict(
         return state_dict
 
     def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
-        """Convert 1x1 conv weights to linear weights when needed.
+        """Convert 1x1 conv weights to linear weights when safe.
 
         Some SDXL checkpoints store mid attention projections (q/k/v/proj_out)
         as Conv2d weights with shape [C_out, C_in, 1, 1], while diffusers
@@ -552,33 +552,36 @@ def _maybe_convert_sdxl_vae_state_dict(
                 prefix = "encoder" if parts[0] == "encoder" else "decoder"
                 new_key = f"{prefix}.mid_block.resnets.{block_index}.{rest}"
 
-        # Mid attention: encoder/decoder.mid.attn_1.{q,k,v,proj_out,norm}.*
+        # Mid attention: encoder/decoder.mid.attn_1.{q,k,v,proj_out,norm,query,key,value,proj_attn}.*
         elif key.startswith("encoder.mid.attn_1.") or key.startswith("decoder.mid.attn_1."):
             is_encoder = key.startswith("encoder.")
             base = "encoder.mid.attn_1." if is_encoder else "decoder.mid.attn_1."
             suffix = key[len(base) :]
             prefix = "encoder" if is_encoder else "decoder"
-            
-            print("codex mongol")
-            if suffix.startswith("q."):
-                rest = suffix[len("q.") :]
-                new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"
-                tensor = _flatten_conv_to_linear(tensor)
-            elif suffix.startswith("k."):
-                rest = suffix[len("k.") :]
-                new_key = f"{prefix}.mid_block.attentions.0.to_k.{rest}"
-                tensor = _flatten_conv_to_linear(tensor)
-            elif suffix.startswith("v."):
-                rest = suffix[len("v.") :]
-                new_key = f"{prefix}.mid_block.attentions.0.to_v.{rest}"
-                tensor = _flatten_conv_to_linear(tensor)
-            elif suffix.startswith("proj_out."):
-                rest = suffix[len("proj_out.") :]
-                new_key = f"{prefix}.mid_block.attentions.0.to_out.0.{rest}"
-                tensor = _flatten_conv_to_linear(tensor)
-            elif suffix.startswith("norm."):
-                rest = suffix[len("norm.") :]
-                new_key = f"{prefix}.mid_block.attentions.0.group_norm.{rest}"
+
+            try:
+                head, rest = suffix.split(".", 1)
+            except ValueError:
+                head, rest = suffix, ""
+
+            table = {
+                "q": "to_q",
+                "k": "to_k",
+                "v": "to_v",
+                "proj_out": "to_out.0",
+                "norm": "group_norm",
+                # older / alternative naming
+                "query": "to_q",
+                "key": "to_k",
+                "value": "to_v",
+                "proj_attn": "to_out.0",
+            }
+
+            mapped = table.get(head)
+            if mapped is not None and rest:
+                new_key = f"{prefix}.mid_block.attentions.0.{mapped}.{rest}"
+                if mapped in ("to_q", "to_k", "to_v", "to_out.0") and rest.startswith("weight"):
+                    tensor = _flatten_conv_to_linear(tensor)
 
         # Conv shortcuts: nin_shortcut (LDM) -> conv_shortcut (diffusers)
         if "nin_shortcut." in key:

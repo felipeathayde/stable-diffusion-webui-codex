@@ -137,6 +137,8 @@ SUPPORTED_SCHEDULERS: Set[str] = {entry["name"] for entry in SCHEDULER_OPTIONS i
 
 # Default scheduler per sampler when user selects "Automatic" or "Use same".
 SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
+    "euler": "euler_discrete",
+    "euler a": "euler_discrete",
     "dpm++ 2m": "karras",
     "dpm++ sde": "karras",
     "dpm++ 2m sde": "exponential",

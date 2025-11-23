@@ -487,6 +487,13 @@ def _load_huggingface_component(
                 "Checkpoint may be malformed or require manual VAE extraction."
             )
 
+        LOGGER.debug(
+            "VAE state_dict type=%s len=%d sample_keys=%s",
+            type(state_dict).__name__,
+            len(state_dict.keys()) if hasattr(state_dict, "keys") else -1,
+            list(state_dict.keys())[:5] if hasattr(state_dict, "keys") else None,
+        )
+
         def _strip_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
             prefixes = (
                 "first_stage_model.",

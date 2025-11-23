@@ -71,21 +71,37 @@ def _validate_unet_channels(context):
 
 def _validate_clip_l(context):
     clip = context.require("text_encoder").tensors
-    key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
-    if key not in clip:
-        raise ValidationError(
-            f"SDXL CLIP-L validation failed: missing '{key}' (checkpoint ships a partial text encoder)",
-            component="text_encoder",
+    weight_key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
+    bias_key = "transformer.text_model.encoder.layers.0.layer_norm1.bias"
+    if weight_key not in clip:
+        if bias_key not in clip:
+            raise ValidationError(
+                "SDXL CLIP-L validation failed: missing layer_norm1 weight and bias (partial text encoder)",
+                component="text_encoder",
+            )
+        import logging
+
+        logging.getLogger("backend.model_parser.sdxl").warning(
+            "SDXL CLIP-L validation: missing %s; keeping model init weights (quality may degrade).",
+            weight_key,
         )
 
 
 def _validate_clip_g(context):
     clip = context.require("text_encoder_2").tensors
-    key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
-    if key not in clip:
-        raise ValidationError(
-            f"SDXL CLIP-G validation failed: missing '{key}' (checkpoint ships a partial text encoder)",
-            component="text_encoder_2",
+    weight_key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
+    bias_key = "transformer.text_model.encoder.layers.0.layer_norm1.bias"
+    if weight_key not in clip:
+        if bias_key not in clip:
+            raise ValidationError(
+                "SDXL CLIP-G validation failed: missing layer_norm1 weight and bias (partial text encoder)",
+                component="text_encoder_2",
+            )
+        import logging
+
+        logging.getLogger("backend.model_parser.sdxl").warning(
+            "SDXL CLIP-G validation: missing %s; keeping model init weights (quality may degrade).",
+            weight_key,
         )
 def _normalize_unet_label_embeddings(tensors: Dict[str, torch.Tensor], context):
     return normalize_label_embeddings(tensors)

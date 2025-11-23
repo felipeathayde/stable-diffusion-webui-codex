@@ -28,4 +28,4 @@ Status: Draft
 
 ## Notes
 - 2025-11-04: Parser execution now materializes lazy safetensor components via dedicated helpers before running converters, preventing repeated file handle churn on Windows.
-- 2025-11-23: SDXL CLIP validation now fails fast when `transformer.text_model.encoder.layers.0.layer_norm1.weight` is missing on either encoder, stopping pruned/partial checkpoints before they produce garbage conditioning.
+- 2025-11-23: SDXL CLIP validation now warns when `layer_norm1.weight` is missing but `bias` is present (keeps model-init weights), and fails only when both are absent. This surfaces partial checkpoints without hard-blocking common exports.

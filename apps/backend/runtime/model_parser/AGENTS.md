@@ -1,4 +1,5 @@
 # AGENT — Model Parser
+<!-- tags: runtime, model-parser -->
 Date: 2025-10-29
 Owner: Runtime Maintainers
 Status: Draft
@@ -27,3 +28,4 @@ Status: Draft
 
 ## Notes
 - 2025-11-04: Parser execution now materializes lazy safetensor components via dedicated helpers before running converters, preventing repeated file handle churn on Windows.
+- 2025-11-23: SDXL CLIP validation now fails fast when `transformer.text_model.encoder.layers.0.layer_norm1.weight` is missing on either encoder, stopping pruned/partial checkpoints before they produce garbage conditioning.

@@ -73,10 +73,9 @@ def _validate_clip_l(context):
     clip = context.require("text_encoder").tensors
     key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
     if key not in clip:
-        # Some SDXL variants ship pruned/partial CLIP-L encoders; allow loading and warn loudly.
-        import logging
-        logging.getLogger("backend.model_parser.sdxl").warning(
-            "SDXL CLIP-L validation: missing %s; proceeding with partial encoder.", key
+        raise ValidationError(
+            f"SDXL CLIP-L validation failed: missing '{key}' (checkpoint ships a partial text encoder)",
+            component="text_encoder",
         )
 
 
@@ -84,9 +83,9 @@ def _validate_clip_g(context):
     clip = context.require("text_encoder_2").tensors
     key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
     if key not in clip:
-        import logging
-        logging.getLogger("backend.model_parser.sdxl").warning(
-            "SDXL CLIP-G validation: missing %s; proceeding with partial encoder.", key
+        raise ValidationError(
+            f"SDXL CLIP-G validation failed: missing '{key}' (checkpoint ships a partial text encoder)",
+            component="text_encoder_2",
         )
 def _normalize_unet_label_embeddings(tensors: Dict[str, torch.Tensor], context):
     return normalize_label_embeddings(tensors)

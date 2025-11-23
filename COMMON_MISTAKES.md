@@ -160,6 +160,10 @@ PY`
 **Cause + fix:** `UNet runtime is organized as a package; the model definition lives under apps/backend/runtime/common/nn/unet/model.py.`
 **Correct command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet/model.py`
 
+**Wrong command:** `python -m pytest tests/backend/model_parser/test_sdxl_validation.py`
+**Cause + fix:** Neither the system Python (pyenv 3.12) nor the repo venv have `pytest` preinstalled; install it into `~/.venv` and run tests from that interpreter.
+**Correct command:** `~/.venv/bin/pip install -U pytest && ~/.venv/bin/python -m pytest tests/backend/model_parser/test_sdxl_validation.py`
+
 **Wrong command:** `rg -n "^apps/" /tmp/recent_files.txt | cut -d: -f1 | sort -u | xargs -I{} sed -n '1,99999p' {}`
 **Cause + fix:** `The -n flag prints line numbers; piping those into sed as file paths produced 'No such file or directory'. We only needed to filter lines that start with apps/.`
 **Correct command:** `rg "^apps/" /tmp/recent_files.txt | sort -u | head -n 100`

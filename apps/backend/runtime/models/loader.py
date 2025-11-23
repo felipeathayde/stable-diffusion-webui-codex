@@ -34,6 +34,7 @@ from apps.backend.runtime.utils import (
     beautiful_print_gguf_state_dict_statics,
     load_torch_file,
     read_arbitrary_config,
+    RemapKeysView,
 )
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
@@ -494,15 +495,23 @@ def _load_huggingface_component(
             list(state_dict.keys())[:5] if hasattr(state_dict, "keys") else None,
         )
 
-        def _strip_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
+        def _strip_prefixes(sd: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Return a lazy view with VAE prefixes stripped.
+
+            Uses RemapKeysView so tensors load on demand; avoids materialising
+            the entire VAE just to rename keys (important for large XL VAEs).
+            """
+
             prefixes = (
                 "first_stage_model.",
                 "vae.",
                 "model.",
             )
-            out: Dict[str, Any] = {}
-            for key, value in sd.items():
-                new_key = str(key)
+
+            mapping: Dict[str, str] = {}
+            for raw_key in sd.keys():  # only touch key names, not tensors
+                key = str(raw_key)
+                new_key = key
                 changed = True
                 while changed:
                     changed = False
@@ -511,8 +520,11 @@ def _load_huggingface_component(
                             new_key = new_key[len(prefix) :]
                             changed = True
                             break
-                out[new_key] = value
-            return out
+                mapping[new_key] = key
+
+            if not mapping:
+                return sd
+            return RemapKeysView(sd, mapping)
 
         state_dict = _strip_prefixes(state_dict)
 

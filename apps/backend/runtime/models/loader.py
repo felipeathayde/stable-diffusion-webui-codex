@@ -487,9 +487,8 @@ def _maybe_convert_sdxl_vae_state_dict(
         return state_dict
 
     def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
-        # Convert [C_out, C_in, 1, 1] conv weights into [C_out, C_in] linear weights.
-        if tensor.ndim == 4 and tensor.shape[2] == 1 and tensor.shape[3] == 1:
-            return tensor.reshape(tensor.shape[0], tensor.shape[1])
+        # SDXL VAE mid attention in diffusers also uses conv1x1 weights for q/k/v/proj_out,
+        # so we do not actually reshape here; name remapping is enough.
         return tensor
 
     converted: Dict[str, Any] = {}

@@ -551,7 +551,7 @@ def _maybe_convert_sdxl_vae_state_dict(
             suffix = key[len(base) :]
             prefix = "encoder" if is_encoder else "decoder"
             contador = contador + 1
-            print(f"codex mongol {contador}")
+            print(f"codex mongol nº {contador}")
             if suffix.startswith("q."):
                 rest = suffix[len("q.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"

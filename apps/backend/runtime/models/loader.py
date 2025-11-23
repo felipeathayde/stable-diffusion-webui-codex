@@ -434,13 +434,12 @@ def _load_component_config(component_path: str) -> Dict[str, Any]:
 def _resolve_vae_class(signature: ModelSignature | None, *, layout: str = "diffusers"):
     """Select the appropriate VAE class.
 
-    - layout="ldm" → use LDM-style VAE (AutoencoderKLWan).
     - WAN22 family always uses AutoencoderKLWan.
-    - Otherwise use diffusers AutoencoderKL.
+    - All other families use diffusers AutoencoderKL regardless of VAE layout.
     """
 
     family = getattr(signature, "family", None)
-    if layout == "ldm" or family is ModelFamily.WAN22:
+    if family is ModelFamily.WAN22:
         return AutoencoderKLWan
     return AutoencoderKL
 

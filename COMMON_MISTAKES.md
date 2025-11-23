@@ -338,6 +338,14 @@ PY`
 from apps.backend.interfaces.api.run_api import app
 print(type(app))
 PY`
+
+**Wrong command:** `python -m pytest tests/backend/model_registry/test_vae_selection.py`
+**Cause + fix:** `O Python global não tem pytest instalado; usar o interpretador gerido em ~/.venv (com pytest instalado) para rodar os testes, conforme diretriz anterior.`
+**Correct command:** `~/.venv/bin/python -m pytest tests/backend/model_registry/test_vae_selection.py`
+
+**Wrong command:** `sed -n '1,220p' .sangoi/research/wan22-text-encoder-compat.md`
+**Cause + fix:** `O caminho estava errado; o arquivo de pesquisa de compatibilidade do text encoder WAN22 fica sob .sangoi/research/runtime/, não diretamente em .sangoi/research/.`
+**Correct command:** `sed -n '1,220p' .sangoi/research/runtime/wan22-text-encoder-compat.md`
 **Wrong command:** `python - <<'PY'
 import inspect, uvicorn.middleware.asgi2
 PY`

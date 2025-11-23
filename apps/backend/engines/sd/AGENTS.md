@@ -13,7 +13,8 @@ Status: Active
 - Each engine must expose `EngineCapabilities` (txt2img/img2img) and rely on `_require_runtime()` style guards when touching assembled runtime state.
 - Preference order: extend specs first, then consume them in `_build_components`; never reintroduce legacy component dictionaries or silent clip-skip fallbacks.
 - 2025-11-14: SDXL conditioning now wraps prompts in metadata-aware `_SDXLPrompt` objects so ADM/time embeddings honor the requested `width`/`height`/targets and blank negative prompts collapse to zeros (parity with `.legacy`/Comfy pipelines).
-- 2025-11-22: SDXL engine now refuses to run when a WAN VAE is loaded (signals misuse of SDXL checkpoints); loader now supplies diffusers `AutoencoderKL` for SD/SDXL families.
+- 2025-11-22: SDXL engine must refuse to run when a WAN VAE is loaded (signals misuse of SDXL checkpoints); loader now supplies diffusers `AutoencoderKL` for SD/SDXL families.
+- 2025-11-23: SDXL `_build_components` now raises a `RuntimeError` when `AutoencoderKLWan` is wired into the runtime, instead of logging a warning and proceeding with corrupted decodes.
 
 ### Event Emission
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.

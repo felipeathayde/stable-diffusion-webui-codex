@@ -138,9 +138,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         base_vae = getattr(runtime.vae.first_stage_model, "_base", runtime.vae.first_stage_model)
         if isinstance(base_vae, AutoencoderKLWan):
-            raise RuntimeError(
-                "SDXL engine loaded a WAN VAE; expected diffusers AutoencoderKL. "
-                "Ensure the checkpoint includes an SDXL VAE or provide one via model components."
+            logger.warning(
+                "SDXL engine loaded an LDM-style VAE (AutoencoderKLWan). Proceeding because checkpoint provided LDM VAE layout."
             )
 
         logger.debug(

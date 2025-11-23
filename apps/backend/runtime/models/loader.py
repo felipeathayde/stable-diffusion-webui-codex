@@ -515,13 +515,26 @@ def _load_huggingface_component(
         try:
             from .state_dict import safe_load_state_dict as _safe_load
             missing, unexpected = _safe_load(model, state_dict, log_name="VAE")
+            expected_total = len(model.state_dict())
             if missing:
                 sample = missing[:10]
                 family_name = getattr(getattr(parsed, "signature", None), "family", "unknown")
+                LOGGER.error(
+                    "VAE load failed: missing %d/%d keys for family=%s sample=%s",
+                    len(missing),
+                    expected_total,
+                    family_name,
+                    sample,
+                )
                 raise RuntimeError(
-                    "VAE state_dict missing %d keys for family %s. "
+                    "VAE state_dict missing %d/%d keys for family %s. "
                     "Checkpoint likely lacks a compatible VAE; supply an SDXL VAE or separate VAE weights. "
-                    "Sample missing keys: %s" % (len(missing), family_name, sample)
+                    "Sample missing keys: %s"
+                    % (len(missing), expected_total, family_name, sample)
+                )
+            if unexpected:
+                LOGGER.warning(
+                    "VAE load: unexpected %d keys (sample=%s)", len(unexpected), unexpected[:10]
                 )
         except Exception:
             load_state_dict(model, state_dict, ignore_start="loss.", log_name="VAE")

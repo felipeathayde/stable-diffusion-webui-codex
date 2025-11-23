@@ -3,6 +3,16 @@ import math
 import itertools
 import logging
 
+try:  # Optional import; diffusers may not be present in minimal environments
+    from diffusers.models.autoencoder_kl import AutoencoderKL as DiffusersAutoencoderKL
+except Exception:  # noqa: BLE001
+    DiffusersAutoencoderKL = None
+
+try:  # Optional; only needed to detect WAN VAEs explicitly
+    from apps.backend.runtime.wan22.vae import AutoencoderKLWan
+except Exception:  # noqa: BLE001
+    AutoencoderKLWan = None
+
 from tqdm import trange
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
@@ -29,6 +39,31 @@ def _tensor_stats(label: str, tensor: torch.Tensor) -> None:
             float(stats_tensor.mean().item()),
             float(stats_tensor.std(unbiased=False).item()),
         )
+
+
+def _unwrap_decode_output(output):
+    """Extract tensor from diffusers DecoderOutput or passthrough."""
+    if hasattr(output, "sample"):
+        sample = getattr(output, "sample")
+        if torch.is_tensor(sample):
+            return sample
+    return output
+
+
+def _unwrap_encode_output(output):
+    """Extract latent tensor from diffusers AutoencoderKLOutput or passthrough."""
+    if hasattr(output, "latent_dist"):
+        dist = getattr(output, "latent_dist")
+        if hasattr(dist, "sample"):
+            try:
+                return dist.sample()
+            except Exception:  # noqa: BLE001
+                pass
+        if hasattr(dist, "mean") and torch.is_tensor(dist.mean):
+            return dist.mean
+    if hasattr(output, "sample") and torch.is_tensor(getattr(output, "sample")):
+        return output.sample
+    return output
 
 
 class _NormalizingFirstStage:
@@ -213,7 +248,7 @@ class VAE:
         steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x // 2, tile_y * 2, overlap)
         steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x * 2, tile_y // 2, overlap)
 
-        decode_fn = lambda a: (self.first_stage_model.decode(a.to(self.vae_dtype).to(self.device)) + 1.0).float()
+        decode_fn = lambda a: (_unwrap_decode_output(self.first_stage_model.decode(a.to(self.vae_dtype).to(self.device))) + 1.0).float()
         output = torch.clamp(((tiled_scale(samples, decode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
                                tiled_scale(samples, decode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
                                tiled_scale(samples, decode_fn, tile_x, tile_y, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device))
@@ -225,7 +260,7 @@ class VAE:
         steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x // 2, tile_y * 2, overlap)
         steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x * 2, tile_y // 2, overlap)
 
-        encode_fn = lambda a: self.first_stage_model.encode((2. * a - 1.).to(self.vae_dtype).to(self.device)).float()
+        encode_fn = lambda a: _unwrap_encode_output(self.first_stage_model.encode((2. * a - 1.).to(self.vae_dtype).to(self.device))).float()
         samples = tiled_scale(pixel_samples, encode_fn, tile_x, tile_y, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
         samples += tiled_scale(pixel_samples, encode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
         samples += tiled_scale(pixel_samples, encode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
@@ -258,7 +293,8 @@ class VAE:
                 )
                 for x in range(0, samples_in.shape[0], batch_number):
                     samples = samples_in[x:x + batch_number].to(self.vae_dtype).to(self.device)
-                    decoded = self.first_stage_model.decode(samples).to(self.output_device).float()
+                    decoded_raw = self.first_stage_model.decode(samples)
+                    decoded = _unwrap_decode_output(decoded_raw).to(self.output_device).float()
                     pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
                     _tensor_stats("decode_inner.batch_decoded", decoded)
             except memory_management.OOM_EXCEPTION:
@@ -331,7 +367,19 @@ class VAE:
                 )
                 for x in range(0, pixel_samples.shape[0], batch_number):
                     pixels_in = (2.0 * pixel_samples[x:x + batch_number] - 1.0).to(self.vae_dtype).to(self.device)
-                    encoded = self.first_stage_model.encode(pixels_in, regulation).to(self.output_device).float()
+                    base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+
+                    if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
+                        encoded_raw = base.encode(pixels_in, return_dict=True)
+                    elif AutoencoderKLWan is not None and isinstance(base, AutoencoderKLWan):
+                        encoded_raw = base.encode(pixels_in, regulation)
+                    else:
+                        try:
+                            encoded_raw = base.encode(pixels_in, regulation)
+                        except TypeError:
+                            encoded_raw = base.encode(pixels_in)
+
+                    encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
                     samples[x:x + batch_number] = encoded
             except memory_management.OOM_EXCEPTION:
                 print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")

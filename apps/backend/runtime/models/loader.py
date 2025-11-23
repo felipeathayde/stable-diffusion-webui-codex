@@ -444,6 +444,161 @@ def _resolve_vae_class(signature: ModelSignature | None, *, layout: str = "diffu
     return AutoencoderKL
 
 
+def _maybe_convert_sdxl_vae_state_dict(
+    state_dict: Mapping[str, Any],
+    signature: Optional[ModelSignature],
+) -> Mapping[str, Any]:
+    """Normalise SDXL VAE weights that use the original LDM naming.
+
+    Some SDXL checkpoints (including legacy Forge/A1111 exports) store VAE weights
+    under ``first_stage_model.*`` with keys like::
+
+        encoder.down.{i}.block.{j}.*
+        encoder.down.{i}.downsample.*
+        decoder.up.{k}.block.{j}.*
+        decoder.up.{k}.upsample.*
+        decoder.mid.block_{1,2}.*
+        decoder.mid.attn_1.{q,k,v,proj_out,norm}.*
+
+    Diffusers ``AutoencoderKL`` expects the canonical SDXL layout instead::
+
+        encoder.down_blocks.{i}.resnets.{j}.*
+        encoder.down_blocks.{i}.downsamplers.0.*
+        decoder.up_blocks.{i}.resnets.{j}.*
+        decoder.up_blocks.{i}.upsamplers.0.*
+        mid_block.resnets.{0,1}.*
+        mid_block.attentions.0.*
+
+    This helper rewrites keys for SDXL families only and leaves other layouts
+    untouched. It also flattens 1x1 conv attention weights into linear weights
+    where necessary (q/k/v/proj_out) so they match diffusers expectations.
+    """
+
+    family = getattr(signature, "family", None) if signature is not None else None
+    if family is not ModelFamily.SDXL:
+        return state_dict
+
+    keys = list(state_dict.keys())
+    # Already in diffusers-style layout; nothing to do.
+    if any(isinstance(k, str) and k.startswith("encoder.down_blocks.") for k in keys):
+        return state_dict
+    # Only touch classic SDXL/LDM style VAEs.
+    if not any(isinstance(k, str) and k.startswith("encoder.down.") for k in keys):
+        return state_dict
+
+    def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
+        # Convert [C_out, C_in, 1, 1] conv weights into [C_out, C_in] linear weights.
+        if tensor.ndim == 4 and tensor.shape[2] == 1 and tensor.shape[3] == 1:
+            return tensor.reshape(tensor.shape[0], tensor.shape[1])
+        return tensor
+
+    converted: Dict[str, Any] = {}
+
+    for raw_key, value in state_dict.items():
+        key = str(raw_key)
+        new_key = key
+        tensor = value
+
+        # Encoder down blocks: encoder.down.{i}.block.{j}.*
+        if key.startswith("encoder.down."):
+            parts = key.split(".")
+            # encoder.down.{i}.block.{j}.rest...
+            if len(parts) >= 6 and parts[2].isdigit() and parts[4].isdigit() and parts[3] == "block":
+                i = int(parts[2])
+                j = int(parts[4])
+                rest = ".".join(parts[5:])
+                new_key = f"encoder.down_blocks.{i}.resnets.{j}.{rest}"
+            # encoder.down.{i}.downsample.*
+            elif len(parts) >= 4 and parts[2].isdigit() and parts[3] == "downsample":
+                i = int(parts[2])
+                rest = ".".join(parts[4:])
+                new_key = f"encoder.down_blocks.{i}.downsamplers.0.{rest}"
+
+        # Decoder up blocks: decoder.up.{k}.block.{j}.*
+        elif key.startswith("decoder.up."):
+            parts = key.split(".")
+            # decoder.up.{k}.block.{j}.rest...
+            if len(parts) >= 6 and parts[2].isdigit() and parts[4].isdigit() and parts[3] == "block":
+                k = int(parts[2])
+                j = int(parts[4])
+                # SDXL VAE indexes up_blocks in reverse order vs. LDM-style up.{k}
+                i = 3 - k
+                rest = ".".join(parts[5:])
+                new_key = f"decoder.up_blocks.{i}.resnets.{j}.{rest}"
+            # decoder.up.{k}.upsample.*
+            elif len(parts) >= 4 and parts[2].isdigit() and parts[3] == "upsample":
+                k = int(parts[2])
+                i = 3 - k
+                rest = ".".join(parts[4:])
+                new_key = f"decoder.up_blocks.{i}.upsamplers.0.{rest}"
+
+        # Mid blocks (resnets): encoder.mid.block_1/2.*, decoder.mid.block_1/2.*
+        elif key.startswith("encoder.mid.block_") or key.startswith("decoder.mid.block_"):
+            parts = key.split(".")
+            # {encoder,decoder}.mid.block_{1,2}.rest...
+            if len(parts) >= 4 and parts[2].startswith("block_"):
+                try:
+                    block_index = int(parts[2].split("_", 1)[1]) - 1
+                except (IndexError, ValueError):
+                    block_index = 0
+                rest = ".".join(parts[3:])
+                prefix = "encoder" if parts[0] == "encoder" else "decoder"
+                new_key = f"{prefix}.mid_block.resnets.{block_index}.{rest}"
+
+        # Mid attention: encoder/decoder.mid.attn_1.{q,k,v,proj_out,norm}.*
+        elif key.startswith("encoder.mid.attn_1.") or key.startswith("decoder.mid.attn_1."):
+            is_encoder = key.startswith("encoder.")
+            base = "encoder.mid.attn_1." if is_encoder else "decoder.mid.attn_1."
+            suffix = key[len(base) :]
+            prefix = "encoder" if is_encoder else "decoder"
+            if suffix.startswith("q."):
+                rest = suffix[len("q.") :]
+                new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
+            elif suffix.startswith("k."):
+                rest = suffix[len("k.") :]
+                new_key = f"{prefix}.mid_block.attentions.0.to_k.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
+            elif suffix.startswith("v."):
+                rest = suffix[len("v.") :]
+                new_key = f"{prefix}.mid_block.attentions.0.to_v.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
+            elif suffix.startswith("proj_out."):
+                rest = suffix[len("proj_out.") :]
+                new_key = f"{prefix}.mid_block.attentions.0.to_out.0.{rest}"
+                tensor = _flatten_conv_to_linear(tensor)
+            elif suffix.startswith("norm."):
+                rest = suffix[len("norm.") :]
+                new_key = f"{prefix}.mid_block.attentions.0.group_norm.{rest}"
+
+        # Conv shortcuts: nin_shortcut (LDM) -> conv_shortcut (diffusers)
+        if "nin_shortcut." in key:
+            parts = key.split(".")
+            # Handle encoder.down.{i}.block.0.nin_shortcut.{weight,bias}
+            if key.startswith("encoder.down.") and len(parts) >= 7 and parts[2].isdigit() and parts[3] == "block" and parts[4] == "0":
+                i = int(parts[2])
+                rest = ".".join(parts[6:])
+                new_key = f"encoder.down_blocks.{i}.resnets.0.conv_shortcut.{rest}"
+            # Handle decoder.up.{k}.block.0.nin_shortcut.{weight,bias} (map k -> up_blocks.{3-k})
+            elif key.startswith("decoder.up.") and len(parts) >= 7 and parts[2].isdigit() and parts[3] == "block" and parts[4] == "0":
+                k = int(parts[2])
+                i = 3 - k
+                rest = ".".join(parts[6:])
+                new_key = f"decoder.up_blocks.{i}.resnets.0.conv_shortcut.{rest}"
+
+        # Output norm: norm_out (LDM) -> conv_norm_out (diffusers)
+        if key.startswith("encoder.norm_out."):
+            rest = key[len("encoder.norm_out.") :]
+            new_key = f"encoder.conv_norm_out.{rest}"
+        elif key.startswith("decoder.norm_out."):
+            rest = key[len("decoder.norm_out.") :]
+            new_key = f"decoder.conv_norm_out.{rest}"
+
+        converted[new_key] = tensor
+
+    return converted
+
+
 def _detect_vae_layout(sd: Mapping[str, Any]) -> str:
     """Return 'ldm' if keys look like LDM VAE (encoder.down.*), else 'diffusers'."""
 
@@ -504,6 +659,11 @@ def _load_huggingface_component(
             len(state_dict.keys()) if hasattr(state_dict, "keys") else -1,
             list(state_dict.keys())[:5] if hasattr(state_dict, "keys") else None,
         )
+
+        # Normalise SDXL VAE layouts that use the original LDM-style naming before
+        # we inspect layout or strip prefixes. This keeps UNet/CLIP detection
+        # independent from how the VAE block was stored in the checkpoint.
+        state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, getattr(parsed, "signature", None))
 
         vae_layout = _detect_vae_layout(state_dict)
         LOGGER.debug("VAE layout detected=%s", vae_layout)

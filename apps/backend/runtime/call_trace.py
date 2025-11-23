@@ -122,10 +122,10 @@ def enable(*, max_calls_per_func: Optional[int] = None) -> None:
     """
     global _enabled, _prev_profile
 
-    if max_calls_per_func is not None:
-        _set_max_per_func(max_calls_per_func)
-    else:
-        _set_max_per_func(None)
+    # Env fallback even when caller passes None (ensures UI/env overrides stick)
+    if max_calls_per_func is None:
+        max_calls_per_func = _env_trace_limit()
+    _set_max_per_func(max_calls_per_func)
     if _enabled:
         _reset_counters()
         _logger.debug(

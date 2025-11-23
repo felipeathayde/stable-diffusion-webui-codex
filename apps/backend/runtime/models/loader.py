@@ -486,11 +486,6 @@ def _maybe_convert_sdxl_vae_state_dict(
     if not any(isinstance(k, str) and k.startswith("encoder.down.") for k in keys):
         return state_dict
 
-    def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
-        # SDXL VAE mid attention in diffusers also uses conv1x1 weights for q/k/v/proj_out,
-        # so we do not actually reshape here; name remapping is enough.
-        return tensor
-
     converted: Dict[str, Any] = {}
     contador = 0
     for raw_key, value in state_dict.items():
@@ -556,25 +551,21 @@ def _maybe_convert_sdxl_vae_state_dict(
                 new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"
                 contador = contador + 1
                 print(f"codex mongol nº {contador}")
-                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("k."):
                 rest = suffix[len("k.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_k.{rest}"
                 contador = contador + 1
                 print(f"codex mongol nº {contador}")
-                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("v."):
                 rest = suffix[len("v.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_v.{rest}"
                 contador = contador + 1
                 print(f"codex mongol nº {contador}")
-                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("proj_out."):
                 rest = suffix[len("proj_out.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_out.0.{rest}"
                 contador = contador + 1
                 print(f"codex mongol nº {contador}")
-                tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("norm."):
                 rest = suffix[len("norm.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.group_norm.{rest}"

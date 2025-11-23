@@ -431,19 +431,30 @@ def _load_component_config(component_path: str) -> Dict[str, Any]:
     return {}
 
 
-def _resolve_vae_class(signature: ModelSignature | None):
-    """Select the appropriate VAE class for the detected model family.
+def _resolve_vae_class(signature: ModelSignature | None, *, layout: str = "diffusers"):
+    """Select the appropriate VAE class.
 
-    - WAN22 uses the bespoke AutoencoderKLWan implementation.
-    - All other families (SD1.x/2.x/XL, Flux, Chroma, etc.) should rely on the
-      standard diffusers AutoencoderKL to respect architecture-specific
-      configs (block types, sample_size, scaling factors).
+    - layout="ldm" → use LDM-style VAE (AutoencoderKLWan).
+    - WAN22 family always uses AutoencoderKLWan.
+    - Otherwise use diffusers AutoencoderKL.
     """
 
     family = getattr(signature, "family", None)
-    if family is ModelFamily.WAN22:
+    if layout == "ldm" or family is ModelFamily.WAN22:
         return AutoencoderKLWan
     return AutoencoderKL
+
+
+def _detect_vae_layout(sd: Mapping[str, Any]) -> str:
+    """Return 'ldm' if keys look like LDM VAE (encoder.down.*), else 'diffusers'."""
+
+    if not hasattr(sd, "keys"):
+        return "diffusers"
+    keys = list(sd.keys())
+    for k in keys:
+        if isinstance(k, str) and (k.startswith("encoder.down.") or k.startswith("decoder.conv_in")):
+            return "ldm"
+    return "diffusers"
 
 
 def _load_huggingface_component(
@@ -495,6 +506,9 @@ def _load_huggingface_component(
             list(state_dict.keys())[:5] if hasattr(state_dict, "keys") else None,
         )
 
+        vae_layout = _detect_vae_layout(state_dict)
+        LOGGER.debug("VAE layout detected=%s", vae_layout)
+
         def _strip_prefixes(sd: Mapping[str, Any]) -> Mapping[str, Any]:
             """Return a lazy view with VAE prefixes stripped.
 
@@ -528,7 +542,7 @@ def _load_huggingface_component(
 
         state_dict = _strip_prefixes(state_dict)
 
-        vae_cls = _resolve_vae_class(getattr(parsed, "signature", None))
+        vae_cls = _resolve_vae_class(getattr(parsed, "signature", None), layout=vae_layout)
         try:
             config_json = vae_cls.load_config(component_path)
         except Exception:

@@ -551,26 +551,35 @@ def _maybe_convert_sdxl_vae_state_dict(
             suffix = key[len(base) :]
             prefix = "encoder" if is_encoder else "decoder"
             contador = contador + 1
-            print(f"codex mongol nº {contador}")
             if suffix.startswith("q."):
                 rest = suffix[len("q.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_q.{rest}"
+                contador = contador + 1
+                print(f"codex mongol nº {contador}")
                 tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("k."):
                 rest = suffix[len("k.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_k.{rest}"
+                contador = contador + 1
+                print(f"codex mongol nº {contador}")
                 tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("v."):
                 rest = suffix[len("v.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_v.{rest}"
+                contador = contador + 1
+                print(f"codex mongol nº {contador}")
                 tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("proj_out."):
                 rest = suffix[len("proj_out.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.to_out.0.{rest}"
+                contador = contador + 1
+                print(f"codex mongol nº {contador}")
                 tensor = _flatten_conv_to_linear(tensor)
             elif suffix.startswith("norm."):
                 rest = suffix[len("norm.") :]
                 new_key = f"{prefix}.mid_block.attentions.0.group_norm.{rest}"
+                contador = contador + 1
+                print(f"codex mongol nº {contador}")
 
         # Conv shortcuts: nin_shortcut (LDM) -> conv_shortcut (diffusers)
         if "nin_shortcut." in key:

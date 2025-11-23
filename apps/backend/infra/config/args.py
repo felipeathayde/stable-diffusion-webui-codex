@@ -463,6 +463,14 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     if _truthy(env.get("CODEX_TRACE_DEBUG")):
         ns.trace_debug = True
 
+    # Honour max-calls-per-func trace limit from env (used by BIOS/TUI)
+    raw_trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC")
+    if raw_trace_max is not None:
+        try:
+            ns.trace_debug_max_per_func = max(0, int(raw_trace_max))
+        except Exception:
+            ns.trace_debug_max_per_func = TRACE_DEBUG_DEFAULT
+
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:
     if ns.attention_split:
@@ -567,11 +575,6 @@ def initialize(
     namespace, unknown = _PARSER.parse_known_args(argv_list)
     _UNKNOWN = list(unknown)
 
-    if getattr(namespace, "trace_debug_max_per_func", None) is None:
-        namespace.trace_debug_max_per_func = TRACE_DEBUG_DEFAULT
-    elif namespace.trace_debug_max_per_func < 0:
-        namespace.trace_debug_max_per_func = 0
-
     deprecated = [arg for arg in unknown if arg.startswith("--unet-in-")]
     if deprecated:
         raise RuntimeError(
@@ -588,6 +591,11 @@ def initialize(
         env_map[key] = str(value)
 
     _apply_source_overrides(namespace, env_map, settings)
+
+    if getattr(namespace, "trace_debug_max_per_func", None) is None:
+        namespace.trace_debug_max_per_func = TRACE_DEBUG_DEFAULT
+    elif namespace.trace_debug_max_per_func < 0:
+        namespace.trace_debug_max_per_func = 0
     _apply_env_overrides(namespace, env_map)
 
     config = build_runtime_memory_config(namespace)

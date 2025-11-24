@@ -40,3 +40,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict 
 - 2025-11-23: VAE loader now fails fast when weights are missing (e.g., pruned checkpoints without VAE); error names missing key count and asks for a compatible VAE.
 - 2025-11-23: VAE loader logs missing/expected/unexpected key counts before raising, making “frame cinza” cases debuggable when a single safetensors lacks VAE tensors.
 - 2025-11-23: `_resolve_vae_class` no longer routes non‑WAN22 families through `AutoencoderKLWan` even when the VAE layout looks like LDM; layout is used only for key mapping, not for selecting the WAN22 VAE outside the WAN22 family.
+- 2025-11-24: `_maybe_convert_sdxl_vae_state_dict` now materialises lazy SafeTensors views before reshaping mid-attn projections to avoid torch_cpu.dll crashes on Windows during SDXL VAE conversion.

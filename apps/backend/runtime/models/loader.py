@@ -486,6 +486,21 @@ def _maybe_convert_sdxl_vae_state_dict(
     if not any(isinstance(k, str) and k.startswith("encoder.down.") for k in keys):
         return state_dict
 
+    # Materialise the VAE tensors before mutating them. Lazy SafeTensors views
+    # (LazySafetensorsDict/FilterPrefixView) reopen the file for every
+    # __getitem__, and calling .contiguous() on those per-key views has been
+    # observed to crash torch_cpu.dll on Windows. A single streaming
+    # materialisation detaches the tensors from the underlying file before we
+    # reshape mid-attention weights.
+    materialize = getattr(state_dict, "materialize", None)
+    if callable(materialize):
+        try:
+            state_dict = materialize()
+        except TypeError:
+            state_dict = materialize(prefix="", new_prefix="")
+    elif not isinstance(state_dict, dict):
+        state_dict = dict(state_dict)
+
     def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
         """Convert 1x1 conv weights to linear weights when safe.
 

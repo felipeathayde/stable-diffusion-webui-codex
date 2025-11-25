@@ -876,18 +876,24 @@ def _load_huggingface_component(
 
             _ensure_position_ids_long(work)
             _normalize_text_projection(work, keep_projection=keep_projection, transpose=transpose_projection)
-            # Keep logit_scale for projection models; inject default if missing.
-            if keep_projection:
-                has_logit = any(
-                    k in work for k in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale")
-                )
-                if not has_logit:
-                    default_logit = torch.tensor(4.605170185988092)  # ln(100)
-                    for key in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale"):
-                        work[key] = default_logit
-            else:
+            # Keep logit_scale for all CLIPs; inject default if missing.
+            has_logit = any(
+                k in work for k in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale")
+            )
+            if not has_logit:
+                # Match IntegratedCLIP default (ln 100).
+                default_logit = torch.tensor(4.605170185988092)
                 for key in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale"):
-                    work.pop(key, None)
+                    work[key] = default_logit
+            # Ensure text_projection alias for models with projection; if projection absent (CLIP-L), drop both.
+            if keep_projection:
+                if "transformer.text_projection.weight" in work and "text_projection.weight" not in work:
+                    work["text_projection.weight"] = work["transformer.text_projection.weight"]
+                if "text_projection.weight" in work and "transformer.text_projection.weight" not in work:
+                    work["transformer.text_projection.weight"] = work["text_projection.weight"]
+            else:
+                work.pop("text_projection.weight", None)
+                work.pop("transformer.text_projection.weight", None)
 
             if not _has_essentials(work):
                 sample_keys = list(sorted(work.keys()))[:10]

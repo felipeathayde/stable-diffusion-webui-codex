@@ -109,6 +109,6 @@ def convert_sdxl_clip_g(sd: Dict[str, Any]) -> Dict[str, Any]:
         alias="clip_g",
         layers=32,
         ensure_position_ids=True,
-        drop_logit_scale=True,
+        drop_logit_scale=False,
         transpose_projection=True,
     )

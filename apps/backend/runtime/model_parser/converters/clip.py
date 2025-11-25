@@ -42,7 +42,11 @@ def _normalize_text_projection(sd: Dict[str, Any], alias: str, *, transpose: boo
 
     key_transform = f"{alias}.transformer.text_projection"
     if key_transform in sd:
-        sd[f"{alias}.text_projection.weight"] = sd.pop(key_transform)
+        tensor = sd.pop(key_transform)
+        if isinstance(tensor, torch.Tensor) and transpose:
+            tensor = tensor.transpose(0, 1).contiguous()
+        sd[f"{alias}.text_projection.weight"] = tensor
+        sd[f"{alias}.transformer.text_projection.weight"] = tensor
 
 
 def convert_clip(
@@ -110,5 +114,5 @@ def convert_sdxl_clip_g(sd: Dict[str, Any]) -> Dict[str, Any]:
         layers=32,
         ensure_position_ids=True,
         drop_logit_scale=False,
-        transpose_projection=False,
+        transpose_projection=True,
     )

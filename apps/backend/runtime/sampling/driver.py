@@ -132,15 +132,23 @@ class CodexSampler:
                     try:
                         smax = float(sigmas[0].item()) if hasattr(sigmas[0], "item") else float(sigmas[0])
                         smin = float(sigmas[-1].item()) if hasattr(sigmas[-1], "item") else float(sigmas[-1])
+                        head = [float(v) for v in sigmas[: min(4, len(sigmas))].detach().cpu().tolist()]
                     except Exception:
                         smax = float("nan")
                         smin = float("nan")
+                        head = []
+                    pred_type = getattr(model.predictor, "prediction_type", None)
+                    sigma_data = getattr(model.predictor, "sigma_data", None)
                     self._logger.info(
-                        "sampler algorithm=%s steps=%d sigma_max=%.6g sigma_min=%.6g",
+                        "sampler algorithm=%s scheduler=%s steps=%d prediction=%s sigma_max=%.6g sigma_min=%.6g sigma_data=%s head=%s",
                         self.algorithm,
+                        active_context.scheduler_name,
                         steps,
+                        pred_type or getattr(active_context, "prediction_type", None) or "<unknown>",
                         smax,
                         smin,
+                        f"{float(sigma_data):.4g}" if sigma_data is not None else "n/a",
+                        head,
                     )
 
                 compiled_cond = compile_conditions(cond)

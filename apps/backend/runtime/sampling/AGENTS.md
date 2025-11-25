@@ -1,4 +1,5 @@
 # apps/backend/runtime/sampling Overview
+<!-- tags: runtime, sampling, sigma, scheduler -->
 
 ## Purpose
 - Native sampling primitives for Codex engines: sigma schedule construction and sampling context used by the runtime samplers.
@@ -7,7 +8,7 @@
 - `context.py`
   - `SchedulerName` enum: canonical scheduler identifiers used to build sigma schedules.
   - `build_sigma_schedule(...)`: returns a tensor of sigmas (length = steps + 1) ending with terminal 0.
-  - `SamplingContext`: immutable inputs for the sampler loop (sampler kind, schedule, noise settings, etc.).
+  - `SamplingContext`: immutable inputs for the sampler loop (sampler kind, schedule, noise settings, prediction type/sigma bounds).
 
 ## Design Notes
 - Scheduler vs Sampler: the scheduler here determines only the sigma sequence; the sampler integrator (Euler, DPM++ 2M, UniPC, etc.) is selected separately by `SamplerKind` in `driver.py`.
@@ -29,6 +30,7 @@
 
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
+- `CODEX_LOG_SAMPLER=1` logs sampler setup with scheduler name, prediction_type (from predictor/scheduler), sigma bounds, and the first few sigmas; per-step logs continue to show sigma transitions and latent norms.
 
 ### Pré-checagens antes do UNet
 - Após a montagem (`cond_cat(c)`), validação obrigatória:

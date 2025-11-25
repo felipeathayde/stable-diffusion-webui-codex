@@ -102,6 +102,10 @@ class SamplingContext:
     noise_settings: NoiseSettings
     preview_interval: int = 0
     enable_progress: bool = False
+    prediction_type: str | None = None
+    sigma_min: float | None = None
+    sigma_max: float | None = None
+    sigma_data: float | None = None
 
     @property
     def device(self) -> torch.device:
@@ -125,10 +129,24 @@ def build_sampling_context(
         raise RuntimeError("sd_model does not expose a predictor for sigma bounds")
 
     pred = predictor.predictor
-    sigma_min = float(pred.sigma_min.item() if hasattr(pred.sigma_min, "item") else pred.sigma_min)
-    sigma_max = float(pred.sigma_max.item() if hasattr(pred.sigma_max, "item") else pred.sigma_max)
+    def _as_float(value: object | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value.item()) if hasattr(value, "item") else float(value)  # type: ignore[arg-type]
+        except Exception:
+            return None
+
+    sigma_min = _as_float(getattr(pred, "sigma_min", None))
+    sigma_max = _as_float(getattr(pred, "sigma_max", None))
+    if sigma_min is None or sigma_max is None:
+        raise RuntimeError("predictor is missing sigma_min/sigma_max required for sampling")
     if sigma_max < sigma_min:
         sigma_min, sigma_max = sigma_max, sigma_min
+    prediction_type = getattr(pred, "prediction_type", None)
+    if isinstance(prediction_type, str):
+        prediction_type = prediction_type.lower()
+    sigma_data = _as_float(getattr(pred, "sigma_data", None))
 
     noise_settings = NoiseSettings(
         source=NoiseSourceKind.from_string(noise_source) if noise_source else NoiseSourceKind.GPU,
@@ -155,15 +173,22 @@ def build_sampling_context(
         noise_settings=noise_settings,
         preview_interval=int(os.getenv("CODEX_PREVIEW_INTERVAL", "0") or 0),
         enable_progress=_env_flag("CODEX_PROGRESS_BAR", default=False),
+        prediction_type=prediction_type,
+        sigma_min=sigma_min,
+        sigma_max=sigma_max,
+        sigma_data=sigma_data,
     )
 
     _LOGGER.debug(
-        "sampling-context sampler=%s scheduler=%s steps=%d source=%s eta_delta=%d",
+        "sampling-context sampler=%s scheduler=%s steps=%d source=%s eta_delta=%d prediction=%s sigma_min=%.6g sigma_max=%.6g",
         context.sampler_kind.value,
         context.scheduler_name,
         context.steps,
         context.noise_settings.source.value,
         context.noise_settings.eta_noise_seed_delta,
+        context.prediction_type,
+        float(context.sigma_min) if context.sigma_min is not None else float("nan"),
+        float(context.sigma_max) if context.sigma_max is not None else float("nan"),
     )
     return context
 

@@ -1114,10 +1114,21 @@ def _apply_prediction_type(codex_components: Dict[str, Any], parsed: ParsedCheck
     scheduler = codex_components.get("scheduler")
     if not scheduler or not hasattr(scheduler, "config"):
         return
+    desired = _prediction_type_value(parsed.signature.prediction)
+    current = getattr(scheduler.config, "prediction_type", None)
     if yaml_prediction:
         scheduler.config.prediction_type = yaml_prediction
+        _LOG.info("prediction_type overridden by YAML: %s -> %s", current, yaml_prediction)
         return
-    scheduler.config.prediction_type = _prediction_type_value(parsed.signature.prediction)
+    if current and current != desired:
+        _LOG.warning(
+            "Scheduler prediction_type=%s differs from signature=%s; keeping scheduler value.",
+            current,
+            desired,
+        )
+        setattr(scheduler.config, "codex_signature_prediction_type", desired)
+        return
+    scheduler.config.prediction_type = desired or current or "epsilon"
 
 
 @torch.inference_mode()

@@ -55,7 +55,9 @@ def convert_clip(
     transpose_projection: bool = False,
 ) -> Dict[str, Any]:
     work = _with_prefix(dict(sd), f"{alias}.")
-    transformers_convert(work, f"{alias}.transformer.", f"{alias}.transformer.text_model.", layers)
+    # Accept OpenCLIP-style keys under "<alias>.transformer.resblocks.*" and normalize to
+    # diffusers-style "<alias>.transformer.text_model.encoder.layers.*".
+    transformers_convert(work, f"{alias}.", f"{alias}.transformer.text_model.", layers)
     if ensure_position_ids:
         _ensure_position_ids_long(work, f"{alias}.transformer.text_model.embeddings.position_ids")
     _normalize_text_projection(work, alias, transpose=transpose_projection)

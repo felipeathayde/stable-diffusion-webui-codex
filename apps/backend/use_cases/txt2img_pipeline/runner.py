@@ -144,20 +144,32 @@ class Txt2ImgPipelineRunner:
             def _norm(t):
                 return float(t.detach().abs().mean().item()) if isinstance(t, torch.Tensor) else None
 
+            def _split_vector(v):
+                if not isinstance(v, torch.Tensor):
+                    return None, None
+                pooled = v[:, :1280]
+                adm = v[:, 1280:]
+                return float(pooled.detach().abs().mean().item()), float(adm.detach().abs().mean().item())
+
             ca = cond.get("crossattn") if isinstance(cond, dict) else None
             va = cond.get("vector") if isinstance(cond, dict) else None
             ua = uncond.get("crossattn") if isinstance(uncond, dict) else None
             uv = uncond.get("vector") if isinstance(uncond, dict) else None
 
+            p_norm, adm_norm = _split_vector(va) if va is not None else (None, None)
+            up_norm, uadm_norm = _split_vector(uv) if uv is not None else (None, None)
+
             self._logger.info(
-                "[sdxl] cond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f",
+                "[sdxl] cond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f pooled=%.4f adm=%.4f",
                 _shape(ca), _dtype(ca), _device(ca), (_norm(ca) or 0.0),
                 _shape(va), _dtype(va), _device(va), (_norm(va) or 0.0),
+                (p_norm or 0.0), (adm_norm or 0.0),
             )
             self._logger.info(
-                "[sdxl] uncond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f",
+                "[sdxl] uncond: cross shape=%s dtype=%s dev=%s norm=%.4f | vector shape=%s dtype=%s dev=%s norm=%.4f pooled=%.4f adm=%.4f",
                 _shape(ua), _dtype(ua), _device(ua), (_norm(ua) or 0.0),
                 _shape(uv), _dtype(uv), _device(uv), (_norm(uv) or 0.0),
+                (up_norm or 0.0), (uadm_norm or 0.0),
             )
         except Exception as exc:  # noqa: BLE001
             self._logger.debug("[sdxl] conditioning diagnostics skipped: %s", exc)

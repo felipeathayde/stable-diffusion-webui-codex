@@ -427,3 +427,10 @@ PY`
 **Wrong command:** `python -m pytest tests/backend/model_registry/test_vae_selection.py`
 **Cause and fix:** `Pytest is not installed in the current environment, so the module import fails. Install pytest (or use the project’s test runner) before invoking the test.`
 **Correct command:** `python -m pip install pytest`
+**Wrong command:** `ls docs/plan`
+**Cause + fix:** The repository has `docs/notes` and `docs/troubleshooting` only; the `docs/plan` folder never existed, so the path errors. List `docs/` first to discover the available subdirectories.
+**Correct command:** `ls docs`
+
+**Wrong command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom apps.backend.runtime.models.state_dict import load_state_dict\nfrom pathlib import Path\npath = Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors')\nload_state_dict(path)\nPY`
+**Cause + fix:** `load_state_dict` expects a model plus a state-dict mapping; calling it with only a path raises a missing-argument error. To inspect checkpoint keys, load the safetensors mapping with `load_torch_file` instead.
+**Correct command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom pathlib import Path\nfrom apps.backend.runtime.utils import load_torch_file\nsd = load_torch_file(Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors'))\nprint(len(sd), list(sd.keys())[:5])\nPY`

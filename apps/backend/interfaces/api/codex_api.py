@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 import base64
+import logging
 import secrets
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel, Field, field_validator
 
 from apps.backend.codex import options as codex_options
 from apps.backend.core.engine_interface import TaskType
 from apps.backend.core.requests import Img2ImgRequest, Txt2ImgRequest
 from apps.backend.core.state import state as backend_state
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models import api as model_api
 from apps.backend.services.image_service import ImageService
 from apps.backend.services.media_service import MediaService
@@ -22,6 +24,7 @@ from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 
 
+logger = logging.getLogger("backend.api.codex")
 router = APIRouter(prefix="/codex/api/v1", tags=["codex-api"])
 
 _media_service = MediaService()
@@ -38,6 +41,17 @@ def _raise_not_implemented(feature: str, backlog: str) -> None:
         status_code=501,
         detail=f"'{feature}' is not yet available in the Codex API (tracked under {backlog}).",
     )
+
+
+class MemoryUnloadRequest(BaseModel):
+    """Request payload for memory unload operations.
+
+    - scope='all'  → unload all models tracked by the memory manager.
+    - scope='ids'  → unload only models whose Python id() is listed in `ids`.
+    """
+
+    scope: Literal["all", "ids"] = "all"
+    ids: Optional[List[int]] = None
 
 
 class HighresOptions(BaseModel):
@@ -385,6 +399,93 @@ def memory() -> Dict[str, Any]:
         stats["cuda"] = {"error": str(err)}
 
     return stats
+
+
+@router.get("/memory/models")
+def list_loaded_models() -> Dict[str, Any]:
+    """Inspect models currently tracked as loaded by the memory manager.
+
+    Returns a lightweight view (no tensors) with identifiers that can be used
+    for targeted unload operations.
+    """
+    try:
+        records = list(memory_management.current_loaded_models)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to inspect loaded models: {err}") from err
+
+    models: List[Dict[str, Any]] = []
+    for record in records:
+        model_obj = getattr(record, "model", record)
+        entry: Dict[str, Any] = {
+            "id": id(model_obj),
+            "type": type(model_obj).__name__,
+            "loader": type(getattr(record, "loader", None)).__name__
+            if getattr(record, "loader", None) is not None
+            else None,
+            "base_module": type(getattr(record, "base_module", None)).__name__
+            if getattr(record, "base_module", None) is not None
+            else None,
+            "load_device": str(getattr(record, "load_device", None)),
+            "offload_device": str(getattr(record, "offload_device", None)),
+            "storage_dtype": str(getattr(record, "storage_dtype", None)),
+            "inclusive_memory": int(getattr(record, "inclusive_memory", 0) or 0),
+            "exclusive_memory": int(getattr(record, "exclusive_memory", 0) or 0),
+            "accelerated": bool(getattr(record, "model_accelerated", False)),
+        }
+        models.append(entry)
+
+    return {"count": len(models), "models": models}
+
+
+@router.post("/memory/unload")
+def unload_models(payload: MemoryUnloadRequest = Body(default_factory=MemoryUnloadRequest)) -> Dict[str, Any]:
+    """Unload models from GPU/primary device.
+
+    - scope='all'  → unload all tracked models and clear the CUDA cache.
+    - scope='ids'  → unload only the models whose id() values are listed.
+    """
+    if payload.scope == "all":
+        try:
+            memory_management.unload_all_models()
+            memory_management.soft_empty_cache(force=True)
+        except Exception as err:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"Failed to unload all models: {err}") from err
+        logger.info("memory-unload scope=all")
+        return {"scope": "all", "unloaded": "all"}
+
+    ids = set(payload.ids or [])
+    if not ids:
+        raise HTTPException(
+            status_code=400,
+            detail="When scope=='ids', 'ids' must be a non-empty list of model ids.",
+        )
+
+    records = list(memory_management.current_loaded_models)
+    unloaded: List[int] = []
+    for record in records:
+        model_obj = getattr(record, "model", record)
+        mid = id(model_obj)
+        if mid in ids:
+            try:
+                memory_management.unload_model(model_obj)
+                unloaded.append(mid)
+            except Exception:  # noqa: BLE001
+                # Keep going; we'll report which ids we failed to unload.
+                continue
+
+    missing = sorted(mid for mid in ids if mid not in unloaded)
+    logger.info(
+        "memory-unload scope=ids requested=%d unloaded=%d missing=%d",
+        len(ids),
+        len(unloaded),
+        len(missing),
+    )
+    return {
+        "scope": "ids",
+        "requested": sorted(ids),
+        "unloaded": sorted(unloaded),
+        "missing": missing,
+    }
 
 
 # --- Deferred endpoints (return 501 with backlog reference) -----------------

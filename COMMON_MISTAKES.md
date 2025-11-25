@@ -434,3 +434,11 @@ PY`
 **Wrong command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom apps.backend.runtime.models.state_dict import load_state_dict\nfrom pathlib import Path\npath = Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors')\nload_state_dict(path)\nPY`
 **Cause + fix:** `load_state_dict` expects a model plus a state-dict mapping; calling it with only a path raises a missing-argument error. To inspect checkpoint keys, load the safetensors mapping with `load_torch_file` instead.
 **Correct command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom pathlib import Path\nfrom apps.backend.runtime.utils import load_torch_file\nsd = load_torch_file(Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors'))\nprint(len(sd), list(sd.keys())[:5])\nPY`
+
+Wrong command: python - <<'PY'
+Cause and fix: Executed with system Python that lacks project deps; reran with ~/.venv/python.
+Correct command: ~/.venv/bin/python - <<'PY'
+
+Wrong command: unzip *.whl -d wheel
+Cause and fix: unzip not available in the shell; inspected wheel metadata via Python zipfile instead.
+Correct command: python - <<'PY'

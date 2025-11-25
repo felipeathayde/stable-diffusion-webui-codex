@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# tags: sampling, diagnostics
+
 from typing import Any, Optional, Callable, List
 import os
 import logging
@@ -42,6 +44,18 @@ class CodexSampler:
         self.algorithm = (algorithm or "euler a").strip().lower()
         self._logger = logging.getLogger(__name__ + ".CodexSampler")
         self._log_enabled = str(os.getenv("CODEX_LOG_SAMPLER", "0")).lower() in ("1","true","yes","on")
+        self._log_sigmas = str(os.getenv("CODEX_LOG_SIGMAS", "0")).lower() in ("1","true","yes","on")
+
+    def _summarize_sigmas(self, sigmas: torch.Tensor, *, window: int = 6) -> str:
+        try:
+            values = [float(v) for v in sigmas.detach().cpu().tolist()]
+        except Exception:
+            return "<unavailable>"
+        if len(values) <= window * 2:
+            return ",".join(f"{v:.6g}" for v in values)
+        head = ",".join(f"{v:.6g}" for v in values[:window])
+        tail = ",".join(f"{v:.6g}" for v in values[-window:])
+        return f"{head},...,{tail}"
 
     def _rebind_unet_precision(self, dtype: torch.dtype) -> None:
         unet = self.sd_model.codex_objects.unet
@@ -120,6 +134,20 @@ class CodexSampler:
 
                 sigmas = active_context.sigmas.to(device=noise.device, dtype=noise.dtype)
                 steps = active_context.steps
+
+                if self._log_sigmas or self._log_enabled:
+                    schedule_first = float(sigmas[0]) if len(sigmas) > 0 else float("nan")
+                    schedule_last = float(sigmas[-1]) if len(sigmas) > 0 else float("nan")
+                    schedule_summary = self._summarize_sigmas(sigmas)
+                    self._logger.info(
+                        "sigma schedule len=%d predict_min=%.6g predict_max=%.6g first=%.6g last=%.6g ladder=%s",
+                        len(sigmas) - 1,
+                        float(active_context.sigma_min or float("nan")),
+                        float(active_context.sigma_max or float("nan")),
+                        schedule_first,
+                        schedule_last,
+                        schedule_summary,
+                    )
 
                 start_idx = int(start_at_step or 0)
                 start_idx = max(0, min(start_idx, steps - 1))
@@ -350,13 +378,17 @@ class CodexSampler:
                             pass
 
                     if self._log_enabled and (i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0):
+                        eps_norm = float(eps.norm().item()) if hasattr(eps, "norm") else float("nan")
+                        den_norm = float(denoised.norm().item()) if hasattr(denoised, "norm") else float("nan")
                         self._logger.info(
-                            "step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f dt=%.2fms",
+                            "step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f norm(eps)=%.4f norm(den)=%.4f dt=%.2fms",
                             i + 1,
                             steps,
                             float(sigma),
                             float(sigma_next),
                             float(x.norm().item()),
+                            eps_norm,
+                            den_norm,
                             (_time.perf_counter() - t0) * 1000.0,
                         )
                         t0 = _time.perf_counter()

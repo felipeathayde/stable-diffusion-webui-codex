@@ -302,6 +302,7 @@ class BIOSApp:
 
         cond = _enabled("CODEX_DEBUG_COND")
         sampler = _enabled("CODEX_LOG_SAMPLER")
+        sigmas = _enabled("CODEX_LOG_SIGMAS")
         trace = _enabled("CODEX_TRACE_DEBUG")
         pipeline = _enabled("CODEX_PIPELINE_DEBUG")
         dump_latents = _enabled("CODEX_DUMP_LATENTS")
@@ -312,6 +313,7 @@ class BIOSApp:
         return [
             ("Conditioning Debug", f"[{'Enabled' if cond else 'Disabled'}]", "toggle_cond_debug"),
             ("Sampler Verbose Logs", f"[{'Enabled' if sampler else 'Disabled'}]", "toggle_sampler_logs"),
+            ("Sigma Ladder Logs", f"[{'Enabled' if sigmas else 'Disabled'}]", "toggle_sigma_logs"),
             ("Trace Debug", f"[{'ON' if trace else 'OFF'}]", "toggle_trace_debug"),
             ("Trace Max Per Func", f"[{trace_max}]", "edit_trace_max"),
             ("Pipeline Debug", f"[{'ON' if pipeline else 'OFF'}]", "toggle_pipeline_debug"),
@@ -492,6 +494,10 @@ class BIOSApp:
             "Sampler Verbose Logs": [
                 "Emit per-step sampler diagnostics (sigma schedule, timings).",
                 "Applies via CODEX_LOG_SAMPLER.",
+            ],
+            "Sigma Ladder Logs": [
+                "Dump full sigma ladder (first/last and compact summary).",
+                "Applies via CODEX_LOG_SIGMAS.",
             ],
             "Dump Latents": [
                 "Save final latent tensor after each sampling run.",
@@ -830,6 +836,12 @@ class BIOSApp:
                 "CODEX_LOG_SAMPLER",
                 message_on="Sampler logs enabled (restart API to apply).",
                 message_off="Sampler logs disabled.",
+            )
+        elif action == "toggle_sigma_logs":
+            _toggle_flag(
+                "CODEX_LOG_SIGMAS",
+                message_on="Sigma ladder logs enabled (restart API to apply).",
+                message_off="Sigma ladder logs disabled.",
             )
         elif action == "toggle_trace_debug":
             _toggle_flag(

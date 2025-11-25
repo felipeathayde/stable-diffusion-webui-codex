@@ -829,7 +829,9 @@ def _load_huggingface_component(
                     return
                 if isinstance(tensor, torch.Tensor) and transpose:
                     tensor = tensor.transpose(0, 1).contiguous()
+                # Provide both aliases expected by IntegratedCLIP / HF conversions.
                 work["text_projection.weight"] = tensor
+                work["transformer.text_projection.weight"] = tensor
 
             for key in (
                 "transformer.text_projection.weight",
@@ -842,6 +844,7 @@ def _load_huggingface_component(
                     _assign(value)
             if not keep_projection:
                 work.pop("text_projection.weight", None)
+                work.pop("transformer.text_projection.weight", None)
 
         _ESSENTIAL_KEYS = (
             "transformer.text_model.embeddings.token_embedding.weight",
@@ -873,8 +876,14 @@ def _load_huggingface_component(
 
             _ensure_position_ids_long(work)
             _normalize_text_projection(work, keep_projection=keep_projection, transpose=transpose_projection)
-            # Keep logit_scale for projection models (CLIP-G); drop only when projection is absent.
-            if not keep_projection:
+            # Keep logit_scale for projection models (CLIP-G); if missing, inject default.
+            if keep_projection:
+                has_logit = any(
+                    k in work for k in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale")
+                )
+                if not has_logit:
+                    work["logit_scale"] = torch.tensor(4.6055)
+            else:
                 for key in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale"):
                     work.pop(key, None)
 

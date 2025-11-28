@@ -54,8 +54,10 @@ _CLIP_G_REQUIRED = (
     "transformer.text_model.embeddings.token_embedding.weight",
     "transformer.text_model.encoder.layers.0.layer_norm1.weight",
     "transformer.text_model.final_layer_norm.weight",
-    "transformer.text_projection.weight",
 )
+
+# text_projection.weight is optional: IntegratedCLIP always creates the layer,
+# and the loader tolerates missing projection weights (Forge-compatible).
 
 
 def _convert_clip_l(tensors: Dict[str, torch.Tensor], context):

@@ -46,7 +46,8 @@ def _save_images_to_disk(
             return
 
         base = os.getenv("CODEX_OUTPUT_ROOT")
-        root = Path(base) if base else Path.cwd() / "outputs"
+        # Fallback: workspace-root /output (single) to keep paths predictable
+        root = Path(base) if base else Path.cwd() / "output"
 
         if task is TaskType.IMG2IMG:
             mode_dir = "img2img-images"

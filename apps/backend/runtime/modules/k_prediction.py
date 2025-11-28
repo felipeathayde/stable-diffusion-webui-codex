@@ -323,10 +323,33 @@ class FlowMatchEulerPrediction(AbstractPrediction):
 
 
 def k_prediction_from_diffusers_scheduler(scheduler):
-    if hasattr(scheduler.config, 'prediction_type') and scheduler.config.prediction_type in ["epsilon", "v_prediction"]:
-        if scheduler.config.beta_schedule == "scaled_linear":
-            return Prediction(sigma_data=1.0, prediction_type=scheduler.config.prediction_type, beta_schedule='linear',
-                              linear_start=scheduler.config.beta_start, linear_end=scheduler.config.beta_end,
-                              timesteps=scheduler.config.num_train_timesteps)
+    cfg = getattr(scheduler, "config", None)
+    if cfg is None:
+        raise NotImplementedError(f"Failed to recognize {scheduler}")
 
-    raise NotImplementedError(f'Failed to recognize {scheduler}')
+    pred_type = getattr(cfg, "prediction_type", None)
+    if isinstance(pred_type, str):
+        pred_type = pred_type.lower()
+
+    beta_schedule = getattr(cfg, "beta_schedule", None)
+    if pred_type in ["epsilon", "v_prediction"] and beta_schedule in ("scaled_linear", "linear"):
+        sigma_data = getattr(cfg, "sigma_data", None)
+        try:
+            sigma_data_value = float(sigma_data) if sigma_data is not None else 1.0
+        except Exception:  # noqa: BLE001 - defensive parsing
+            sigma_data_value = 1.0
+
+        beta_start = getattr(cfg, "beta_start", 0.00085)
+        beta_end = getattr(cfg, "beta_end", 0.012)
+        timesteps = getattr(cfg, "num_train_timesteps", 1000)
+
+        return Prediction(
+            sigma_data=sigma_data_value,
+            prediction_type=pred_type,
+            beta_schedule="linear",
+            linear_start=beta_start,
+            linear_end=beta_end,
+            timesteps=timesteps,
+        )
+
+    raise NotImplementedError(f"Failed to recognize {scheduler}")

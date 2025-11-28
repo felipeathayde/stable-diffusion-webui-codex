@@ -43,6 +43,21 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
     return ParserPlanBundle(plan=plan, build_config=lambda ctx: build_estimated_config(ctx, signature))
 
 
+_CLIP_L_REQUIRED = (
+    "transformer.text_model.embeddings.token_embedding.weight",
+    "transformer.text_model.encoder.layers.0.layer_norm1.weight",
+    "transformer.text_model.final_layer_norm.weight",
+)
+
+
+_CLIP_G_REQUIRED = (
+    "transformer.text_model.embeddings.token_embedding.weight",
+    "transformer.text_model.encoder.layers.0.layer_norm1.weight",
+    "transformer.text_model.final_layer_norm.weight",
+    "transformer.text_projection.weight",
+)
+
+
 def _convert_clip_l(tensors: Dict[str, torch.Tensor], context):
     converted = convert_sdxl_clip_l(tensors)
     register_text_encoder(context, "clip_l", "text_encoder")
@@ -71,26 +86,23 @@ def _validate_unet_channels(context):
 
 def _validate_clip_l(context):
     clip = context.require("text_encoder").tensors
-    key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
-    if key not in clip:
-        # Some SDXL variants ship pruned/partial CLIP-L encoders; allow loading and warn loudly.
-        import logging
-
-        logging.getLogger("backend.model_parser.sdxl").warning(
-            "SDXL CLIP-L validation: missing %s; proceeding with partial encoder.",
-            key,
+    missing = [key for key in _CLIP_L_REQUIRED if key not in clip]
+    if missing:
+        sample = ", ".join(missing[:3])
+        raise ValidationError(
+            f"SDXL CLIP-L is missing required tensors ({sample}); re-download the checkpoint or supply intact CLIP weights.",
+            component="text_encoder",
         )
 
 
 def _validate_clip_g(context):
     clip = context.require("text_encoder_2").tensors
-    key = "transformer.text_model.encoder.layers.0.layer_norm1.weight"
-    if key not in clip:
-        import logging
-
-        logging.getLogger("backend.model_parser.sdxl").warning(
-            "SDXL CLIP-G validation: missing %s; proceeding with partial encoder.",
-            key,
+    missing = [key for key in _CLIP_G_REQUIRED if key not in clip]
+    if missing:
+        sample = ", ".join(missing[:3])
+        raise ValidationError(
+            f"SDXL CLIP-G is missing required tensors ({sample}); re-download the checkpoint or supply intact CLIP weights.",
+            component="text_encoder_2",
         )
 def _normalize_unet_label_embeddings(tensors: Dict[str, torch.Tensor], context):
     return normalize_label_embeddings(tensors)

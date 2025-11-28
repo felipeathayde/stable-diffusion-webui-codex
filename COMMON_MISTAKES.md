@@ -442,3 +442,7 @@ Correct command: ~/.venv/bin/python - <<'PY'
 Wrong command: unzip *.whl -d wheel
 Cause and fix: unzip not available in the shell; inspected wheel metadata via Python zipfile instead.
 Correct command: python - <<'PY'
+
+**Wrong command:** `python -m pytest tests/backend/model_parser/test_sdxl_validation.py tests/backend/test_k_prediction.py`
+**Cause and fix:** The default pyenv interpreter lacks pytest; run tests with the project venv (or install pytest) before invoking the suite.
+**Correct command:** `PYTHONPATH=$HOME/.netsuite ~/.venv/bin/python -m pytest tests/backend/model_parser/test_sdxl_validation.py tests/backend/test_k_prediction.py`

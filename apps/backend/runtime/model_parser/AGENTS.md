@@ -28,4 +28,4 @@ Status: Draft
 
 ## Notes
 - 2025-11-04: Parser execution now materializes lazy safetensor components via dedicated helpers before running converters, preventing repeated file handle churn on Windows.
-- 2025-11-23: SDXL CLIP validation logs warnings (no hard failure) when `layer_norm1.weight` is missing on CLIP-L/G, matching Forge/Comfy behavior while still surfacing partial checkpoints.
+- 2025-11-28: SDXL CLIP validation is fail-fast: missing essentials (token embeddings, layer_norm1, final LN, text_projection for CLIP-G) raises a `ValidationError` instead of proceeding with partial encoders.

@@ -55,6 +55,55 @@ def _opts() -> SimpleNamespace:
     )
 
 
+def _validate_conditioning_payload(runtime: SDEngineRuntime, payload: Mapping[str, Any], *, label: str) -> None:
+    """Fail fast when CLIP/conditioning outputs are malformed.
+
+    Ensures shapes match the UNet config and that no NaN/Inf values sneak into
+    the sampling loop, which would otherwise produce noisy “golesma” results.
+    """
+
+    def _require_tensor(key: str) -> torch.Tensor:
+        value = payload.get(key) if isinstance(payload, Mapping) else None
+        if not isinstance(value, torch.Tensor):
+            raise RuntimeError(f"SDXL conditioning '{label}' missing tensor '{key}' (got {type(value).__name__}).")
+        return value
+
+    cross = _require_tensor("crossattn")
+    vector = _require_tensor("vector")
+
+    if cross.ndim != 3:
+        raise RuntimeError(
+            f"SDXL conditioning '{label}' crossattn must be 3D (B, S, C); got shape={tuple(cross.shape)}."
+        )
+    if vector.ndim != 2:
+        raise RuntimeError(
+            f"SDXL conditioning '{label}' vector must be 2D (B, F); got shape={tuple(vector.shape)}."
+        )
+
+    for name, tensor in (("crossattn", cross), ("vector", vector)):
+        if not torch.isfinite(tensor).all():
+            raise RuntimeError(
+                f"SDXL conditioning '{label}' contains non-finite values in '{name}'. "
+                "Check CLIP weights/conversion before sampling."
+            )
+
+    cfg = getattr(runtime.unet.model, "diffusion_model", None)
+    if cfg is not None:
+        cfg = getattr(cfg, "codex_config", None)
+
+    expected_ctx = getattr(cfg, "context_dim", None) if cfg is not None else None
+    if isinstance(expected_ctx, int) and int(cross.shape[-1]) != expected_ctx:
+        raise RuntimeError(
+            f"SDXL conditioning '{label}' context dim {int(cross.shape[-1])} does not match UNet context_dim={expected_ctx}."
+        )
+
+    expected_adm = getattr(cfg, "adm_in_channels", None) if cfg is not None else None
+    if isinstance(expected_adm, int) and int(vector.shape[1]) != expected_adm:
+        raise RuntimeError(
+            f"SDXL conditioning '{label}' ADM vector dim {int(vector.shape[1])} does not match adm_in_channels={expected_adm}."
+        )
+
+
 class _SDXLPrompt(str):
     """String subclass that carries SDXL spatial metadata for conditioning."""
 
@@ -336,6 +385,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
                     raise RuntimeError("SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector.")
 
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
+            label = "uncond" if is_negative else "cond"
 
             embed_values = [
                 self.embedder(torch.tensor([height])),
@@ -359,6 +409,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 "crossattn": torch.cat([cond_l, cond_g], dim=2),
                 "vector": torch.cat([pooled_g, flat], dim=1),
             }
+
+            _validate_conditioning_payload(runtime, cond, label=label)
 
             logger.debug("Generated SDXL conditioning for %d prompts.", len(prompt))
             return cond

@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - transformers optional
     DPTForDepthEstimation = None
     DPTImageProcessor = None
 
-from apps.backend.huggingface.assets import ensure_repo_minimal_files
+from apps.backend.huggingface import ensure_repo_minimal_files
 from .registry import ControlPreprocessorRegistry, PreprocessorResult
 from .models.leres import LeReSConfig, load_leres_model
 

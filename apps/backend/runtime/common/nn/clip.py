@@ -20,11 +20,15 @@ class IntegratedCLIP(torch.nn.Module):
         output_hidden_states: bool = True,
         return_dict: bool = True,
     ):
-        # Our Codex CLIP ignores attention_mask/position_ids (it computes positions internally).
-        # Keep signature parity with HF so higher-level callers can route via the wrapper.
-        outputs = self.transformer(input_ids, output_hidden_states=output_hidden_states)
-        # outputs is an object with attributes: last_hidden_state, hidden_states, pooler_output
+        # Forward mask/position_ids when available; fall back gracefully otherwise.
+        kwargs = {"output_hidden_states": output_hidden_states}
+        if attention_mask is not None:
+            kwargs["attention_mask"] = attention_mask
+        if position_ids is not None:
+            kwargs["position_ids"] = position_ids
+
+        outputs = self.transformer(input_ids, **kwargs)
+
         if return_dict:
             return outputs
-        # For tuple compatibility, return (last_hidden_state, pooler_output, hidden_states)
         return (outputs.last_hidden_state, outputs.pooler_output, outputs.hidden_states)

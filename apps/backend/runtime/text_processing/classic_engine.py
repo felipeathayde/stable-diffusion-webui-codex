@@ -1,6 +1,7 @@
 import logging
 import math
 import torch
+import os
 
 from collections import namedtuple
 from . import parsing, emphasis
@@ -145,8 +146,10 @@ class ClassicTextProcessingEngine:
 
         target_device = memory_management.text_encoder_device()
 
+        force_fp32 = str(os.getenv("CODEX_TE_FORCE_FP32", "")).lower() in ("1", "true", "yes", "on")
+
         while True:
-            desired_dtype = memory_management.text_encoder_dtype(device=target_device)
+            desired_dtype = torch.float32 if force_fp32 else memory_management.text_encoder_dtype(device=target_device)
             self._apply_precision(target_device, desired_dtype)
 
             # Ensure embedding weights use a stable compute dtype to avoid overflow

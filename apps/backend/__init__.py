@@ -15,7 +15,6 @@ from .core.requests import (
 # Avoid importing heavy runtime modules at package import time to prevent
 # circular imports (e.g., runtime.utils -> backend.gguf -> backend.runtime).
 # These are exposed lazily via __getattr__ below.
-from .huggingface import ensure_repo_minimal_files
 # Patchers are exported lazily via __getattr__ to avoid circular imports
 from .runtime.text_processing import (
     ClassicTextProcessingEngine,
@@ -47,7 +46,6 @@ __all__ = [
     "InferenceEvent",
     "InferenceOrchestrator",
     "ImageService",
-    "ensure_repo_minimal_files",
     "attention",
     "logging",
     "memory_management",
@@ -118,6 +116,9 @@ def __getattr__(name: str):  # pragma: no cover - runtime dispatch
     }:
         from . import runtime as _runtime
         return getattr(_runtime, name)
+    if name == "ensure_repo_minimal_files":
+        from .huggingface import ensure_repo_minimal_files as _ermf
+        return _ermf
     # Patchers
     if name in {
         "CLIP",

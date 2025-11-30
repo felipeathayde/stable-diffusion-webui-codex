@@ -1,7 +1,8 @@
 # apps/backend/engines Overview
+<!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-11-03
+Last Review: 2025-11-30
 Status: Active
 
 ## Purpose
@@ -22,3 +23,4 @@ Status: Active
 - Shared diffusion logic belongs in `diffusion/`; avoid duplicating orchestration that already exists in `use_cases/`.
 - Diffusion engines now share a `BaseInferenceEngine` lifecycle; instantiate via the registry and let `load()` pull `DiffusionModelBundle` instances instead of invoking loaders manually.
 - 2025-11-03: SDXL engine reads `debug_conditioning` from backend config (no direct env lookup) to log conditioning norms when requested.
+- 2025-11-30: `apps.backend.engines.__init__` now lazily resolves WAN22 engine classes; importing the package no longer pulls Hugging Face assets or torch unless the engines are requested.

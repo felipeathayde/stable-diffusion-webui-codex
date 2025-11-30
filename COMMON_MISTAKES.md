@@ -1,3 +1,7 @@
+**Wrong command:** `python -m pytest tests/test_backend_import_lightweight.py`
+**Cause + fix:** `Pytest is not installed in the current environment; install pytest (preferably in the active venv) before running the test suite.`
+**Correct command:** `python -m pip install pytest && python -m pytest tests/test_backend_import_lightweight.py`
+
 **Wrong command:** `rg -n "huggingface_guess" legacy`
 **Cause + fix:** Repository archives legacy code under `.legacy/`, so the command targeted a non-existent `legacy/` directory; point ripgrep at `.legacy/` instead.
 **Correct command:** `rg -n "huggingface_guess" .legacy`

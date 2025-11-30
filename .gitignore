@@ -65,6 +65,8 @@ coverage.xml
 !.sangoi/docs/**
 .sangoi/docs/reports/pyright/
 *tests/*
+!tests/
+!tests/test_backend_import_lightweight.py
 snapshotLegacy.py
 .sangoi/docs/reports/pyright/
 

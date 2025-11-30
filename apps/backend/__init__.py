@@ -1,8 +1,10 @@
 """Apps backend façade exposing orchestrator interfaces and engines."""
+# tags: backend, exports, lazy-imports
 
 from .core.engine_interface import BaseInferenceEngine, EngineCapabilities, TaskType
+from .core.exceptions import EngineExecutionError, EngineLoadError
 from .core.orchestrator import InferenceOrchestrator
-from .core.registry import EngineRegistry, EngineDescriptor, registry
+from .core.registry import EngineDescriptor, EngineRegistry, registry
 from .core.requests import (
     Img2ImgRequest,
     Img2VidRequest,
@@ -11,27 +13,6 @@ from .core.requests import (
     ResultEvent,
     Txt2ImgRequest,
     Txt2VidRequest,
-)
-# Avoid importing heavy runtime modules at package import time to prevent
-# circular imports (e.g., runtime.utils -> backend.gguf -> backend.runtime).
-# These are exposed lazily via __getattr__ below.
-# Patchers are exported lazily via __getattr__ to avoid circular imports
-from .runtime.text_processing import (
-    ClassicTextProcessingEngine,
-    EmbeddingDatabase,
-    T5TextProcessingEngine,
-    embedding_from_b64,
-    embedding_to_b64,
-    emphasis as text_emphasis,
-    parsing as text_parsing,
-    textual_inversion,
-)
-from .engines import (
-    EngineExecutionError,
-    EngineLoadError,
-    WanI2V14BEngine,
-    WanT2V14BEngine,
-    register_default_engines,
 )
 
 __all__ = [
@@ -88,69 +69,128 @@ __all__ = [
     "ProgressEvent",
     "ProgressService",
     "ResultEvent",
-    "stream",
     "SamplerService",
     "TaskType",
     "Txt2ImgRequest",
     "Txt2VidRequest",
+    "Wan2214BEngine",
+    "Wan225BEngine",
     "WanI2V14BEngine",
     "WanT2V14BEngine",
     "register_default_engines",
     "registry",
 ]
 
+# Lazy exports to avoid pulling heavy dependencies (WAN engines, torch, HF) during
+# package import. Engines/text-processing objects are resolved on first access.
+_ENGINE_EXPORTS = {
+    "register_default_engines",
+    "Wan2214BEngine",
+    "Wan225BEngine",
+    "WanI2V14BEngine",
+    "WanT2V14BEngine",
+}
+
+_TEXT_EXPORTS = {
+    "ClassicTextProcessingEngine",
+    "EmbeddingDatabase",
+    "T5TextProcessingEngine",
+    "embedding_from_b64",
+    "embedding_to_b64",
+    "text_emphasis",
+    "text_parsing",
+    "textual_inversion",
+}
+
+_RUNTIME_EXPORTS = {
+    "attention",
+    "logging",
+    "memory_management",
+    "models",
+    "nn",
+    "ops",
+    "shared",
+    "stream",
+    "text_processing",
+    "utils",
+}
+
+_PATCHER_EXPORTS = {
+    "CLIP",
+    "ControlLora",
+    "ControlNet",
+    "LoraLoader",
+    "ModelPatcher",
+    "T2IAdapter",
+    "UnetPatcher",
+    "VAE",
+    "apply_controlnet_advanced",
+    "clip_preprocess",
+    "extra_weight_calculators",
+    "load_lora",
+    "load_t2i_adapter",
+    "merge_lora_to_weight",
+    "model_lora_keys_clip",
+    "model_lora_keys_unet",
+    "set_model_options_patch_replace",
+    "set_model_options_post_cfg_function",
+    "set_model_options_pre_cfg_function",
+}
+
+_SERVICE_EXPORTS = {
+    "ImageService",
+    "MediaService",
+    "OptionsService",
+    "ProgressService",
+    "SamplerService",
+}
+
 
 def __getattr__(name: str):  # pragma: no cover - runtime dispatch
+    # Engines and registration (WAN heavy deps) are loaded on demand.
+    if name in _ENGINE_EXPORTS:
+        from . import engines as _engines
+
+        value = getattr(_engines, name)
+        globals()[name] = value
+        return value
+
+    # Text processing exports are torch-bound; keep lazy to avoid import errors
+    # in environments without torch until explicitly needed.
+    if name in _TEXT_EXPORTS:
+        from .runtime import text_processing as _tp
+
+        value = getattr(_tp, name)
+        globals()[name] = value
+        return value
+
     # Lazy-export runtime helpers to avoid circular imports during package init.
-    if name in {
-        "attention",
-        "logging",
-        "memory_management",
-        "models",
-        "nn",
-        "ops",
-        "shared",
-        "stream",
-        "text_processing",
-        "utils",
-    }:
+    if name in _RUNTIME_EXPORTS:
         from . import runtime as _runtime
-        return getattr(_runtime, name)
+
+        value = getattr(_runtime, name)
+        globals()[name] = value
+        return value
+
+    # Patchers
+    if name in _PATCHER_EXPORTS:
+        from . import patchers as _patchers
+
+        value = getattr(_patchers, name)
+        globals()[name] = value
+        return value
+
+    # Services
+    if name in _SERVICE_EXPORTS:
+        from . import services as _services
+
+        value = getattr(_services, name)
+        globals()[name] = value
+        return value
+
     if name == "ensure_repo_minimal_files":
         from .huggingface import ensure_repo_minimal_files as _ermf
+
+        globals()[name] = _ermf
         return _ermf
-    # Patchers
-    if name in {
-        "CLIP",
-        "ControlLora",
-        "ControlNet",
-        "LoraLoader",
-        "ModelPatcher",
-        "T2IAdapter",
-        "UnetPatcher",
-        "VAE",
-        "apply_controlnet_advanced",
-        "clip_preprocess",
-        "extra_weight_calculators",
-        "load_lora",
-        "load_t2i_adapter",
-        "merge_lora_to_weight",
-        "model_lora_keys_clip",
-        "model_lora_keys_unet",
-        "set_model_options_patch_replace",
-        "set_model_options_post_cfg_function",
-        "set_model_options_pre_cfg_function",
-    }:
-        from . import patchers as _patchers
-        return getattr(_patchers, name)
-    # Services
-    if name in {
-        "ImageService",
-        "MediaService",
-        "OptionsService",
-        "ProgressService",
-        "SamplerService",
-    }:
-        from . import services as _services
-        return getattr(_services, name)
     raise AttributeError(name)

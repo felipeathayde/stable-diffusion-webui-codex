@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+# tags: backend, engines, lazy-imports
+
+import sys
 from importlib import import_module
 
 from apps.backend.core.exceptions import EngineExecutionError, EngineLoadError
 from apps.backend.core.registry import EngineRegistry
-
-from apps.backend.engines.wan22.wan22_14b import Wan2214BEngine
-from apps.backend.engines.wan22.wan22_5b import Wan225BEngine
 
 
 def register_default_engines(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
@@ -24,16 +24,41 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
 
 
 __all__ = [
-    'EngineLoadError',
-    'EngineExecutionError',
-    'register_default_engines',
-    'Wan2214BEngine',
-    'Wan225BEngine',
+    "EngineLoadError",
+    "EngineExecutionError",
+    "register_default_engines",
+    "Wan2214BEngine",
+    "Wan225BEngine",
     # Compatibility aliases
-    'WanI2V14BEngine',
-    'WanT2V14BEngine',
+    "WanI2V14BEngine",
+    "WanT2V14BEngine",
 ]
 
-# Backward compatibility aliases (v1 naming): old WAN video engines mapped to WAN 2.2 implementations
-WanI2V14BEngine = Wan2214BEngine  # image-to-video 14B
-WanT2V14BEngine = Wan2214BEngine  # text-to-video 14B (unified engine supports both)
+_ENGINE_EXPORTS = {
+    "Wan2214BEngine": ("apps.backend.engines.wan22.wan22_14b", "Wan2214BEngine"),
+    "Wan225BEngine": ("apps.backend.engines.wan22.wan22_5b", "Wan225BEngine"),
+}
+
+_ALIAS_EXPORTS = {
+    "WanI2V14BEngine": "Wan2214BEngine",
+    "WanT2V14BEngine": "Wan2214BEngine",
+}
+
+
+def __getattr__(name: str):  # pragma: no cover - runtime dispatch
+    if name in _ENGINE_EXPORTS:
+        module_name, attr = _ENGINE_EXPORTS[name]
+        mod = import_module(module_name)
+        value = getattr(mod, attr)
+        globals()[name] = value
+        return value
+
+    if name in _ALIAS_EXPORTS:
+        target = _ALIAS_EXPORTS[name]
+        value = getattr(sys.modules[__name__], target, None)  # may be set via globals above
+        if value is None:
+            value = __getattr__(target)
+        globals()[name] = value
+        return value
+
+    raise AttributeError(name)

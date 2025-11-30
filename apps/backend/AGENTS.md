@@ -1,7 +1,8 @@
 # apps/backend Overview
+<!-- tags: backend, package, exports, lazy-imports -->
 Date: 2025-10-28
 Owner: Backend Steward Team
-Last Review: 2025-11-03
+Last Review: 2025-11-30
 Status: Active
 
 ## Purpose
@@ -41,6 +42,7 @@ Status: Active
 - 2025-11-03: `RuntimeMemoryConfig.swap.pin_shared_memory` now maps to `--pin-shared-memory`/`CODEX_PIN_SHARED_MEMORY` and gates host pinning during smart offload.
  - 2025-11-20: SDXL txt2img now recomputa cond/uncond após o parse de prompt (inclui LoRA/pesos) e antes do hires, preservando metadados width/height/crop/target. Pipeline Runner loga shapes/normas quando `--debug-conditioning`/`CODEX_DEBUG_COND` está ativo.
  - 2025-11-03: Global call tracing added. Use `--trace-debug` (or `CODEX_TRACE_DEBUG=1`) to enable a process-wide function-call trace implemented via `sys.setprofile`. Every Python function call after activation is logged at `DEBUG` by `backend.calltrace` with indentation by depth. Logging is forced to `DEBUG` on activation; disable by removing the flag/env and restarting.
+ - 2025-11-30: Package exports for WAN engines and text-processing are now lazy-loaded via `__getattr__`, preventing BIOS/API imports from pulling torch/Hugging Face dependencies until explicitly requested.
 
 ## Operator Communication Guidelines
 - Assuma expertise do operador. Não ofereça instruções "de iniciante" (ex.: "valide o par de TEs" ou "verifique se o modelo é SDXL") a menos que um verificador determinístico do backend tenha acusado incompatibilidade.

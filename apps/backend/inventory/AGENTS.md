@@ -1,3 +1,5 @@
+<!-- tags: backend, inventory, models, huggingface, wan22 -->
+
 # apps/backend/inventory Overview
 Date: 2025-10-28
 Owner: Backend Maintainers
@@ -12,3 +14,4 @@ Status: Active
 
 ## Notes
 - When adding new inventory schemas, extend `cache.py` or add adjacent modules here so reporting logic stays centralized.
+- 2025-11-30: Inventory Hugging Face root now points at `apps/backend/huggingface` and uses a correct repo-root calculation, keeping metadata listings aligned with WAN22 engines and UI expectations.

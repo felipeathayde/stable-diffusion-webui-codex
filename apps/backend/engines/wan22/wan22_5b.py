@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest, ProgressEvent, ResultEvent
@@ -16,10 +15,15 @@ import os
 
 from apps.backend.huggingface import ensure_repo_minimal_files
 from apps.backend.core.progress_stream import stream_run
-from apps.backend.engines.wan22.wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates, resolve_user_supplied_assets
+from apps.backend.engines.wan22.wan22_common import (
+    EngineOpts,
+    WanComponents,
+    resolve_wan_repo_candidates,
+    resolve_user_supplied_assets,
+)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
-HF_ROOT = PROJECT_ROOT / "apps" / "server" / "backend" / "huggingface"
+REPO_ROOT = Path(__file__).resolve().parents[4]
+HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
 
 
 class Wan225BEngine(BaseVideoEngine):

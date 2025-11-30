@@ -1,3 +1,5 @@
+<!-- tags: backend, engines, wan22, gguf, diffusers, huggingface -->
+
 # apps/backend/engines/wan22 Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
@@ -9,6 +11,7 @@ Status: Active
 
 ## Notes
 - Keep WAN engines aligned with `runtime/wan22` and GGUF helpers to ensure strict asset handling.
+- 2025-11-30: WAN22 engines now resolve vendored Hugging Face metadata under `apps/backend/huggingface` using a repo-root anchor, replacing the old `apps/server/backend/huggingface` path.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

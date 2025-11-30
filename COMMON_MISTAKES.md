@@ -446,3 +446,11 @@ Correct command: python - <<'PY'
 **Wrong command:** `python -m pytest tests/backend/model_parser/test_sdxl_validation.py tests/backend/test_k_prediction.py`
 **Cause and fix:** The default pyenv interpreter lacks pytest; run tests with the project venv (or install pytest) before invoking the suite.
 **Correct command:** `PYTHONPATH=$HOME/.netsuite ~/.venv/bin/python -m pytest tests/backend/model_parser/test_sdxl_validation.py tests/backend/test_k_prediction.py`
+
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .legacy-functional && find .legacy-functional -maxdepth 3 -type f -iname '*sdxl*' | head -n 40`
+**Cause and fix:** The `.legacy-functional` directory was assumed to exist at the repo root, but it was not present, so `ls` failed with ENOENT. First locate the directory (or confirm its absence) with a guarded search instead of hard-coding the path.
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && find . -maxdepth 5 -type d -name '.legacy-functional'`
+
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/tasks && sed -n '1,200p' .sangoi/tasks/README.md`
+**Cause and fix:** The `.sangoi/tasks` directory exposes task specs as `F*.md` files and has no `README.md`; attempting to read a non-existent README raises ENOENT. Inspect the relevant `F*.md` task files directly instead of assuming a README.
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/tasks && sed -n '1,200p' .sangoi/tasks/F6-refinements.md`

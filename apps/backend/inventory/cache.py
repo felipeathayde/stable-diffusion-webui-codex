@@ -19,8 +19,8 @@ _CACHE: Inventory | None = None
 
 
 def _repo_root() -> Path:
-    # apps/backend/inventory/cache.py -> repo_root = parents[4]
-    return Path(__file__).resolve().parents[4]
+    # apps/backend/inventory/cache.py -> repo_root = parents[3]
+    return Path(__file__).resolve().parents[3]
 
 
 def _models_root() -> str:
@@ -28,7 +28,7 @@ def _models_root() -> str:
 
 
 def _hf_root() -> str:
-    return str(_repo_root() / "apps" / "server" / "backend" / "huggingface")
+    return str(_repo_root() / "apps" / "backend" / "huggingface")
 
 
 def _list_files(dir_path: str, exts: tuple[str, ...]) -> List[Dict[str, str]]:

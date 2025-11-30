@@ -38,7 +38,7 @@ from apps.backend.runtime.utils import (
 )
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
-from apps.backend.huggingface import ensure_repo_minimal_files
+from apps.backend.huggingface.assets import ensure_repo_minimal_files
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")

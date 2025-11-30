@@ -13,7 +13,7 @@ from apps.backend.core.exceptions import EngineLoadError
 
 import os
 
-from apps.backend.huggingface import ensure_repo_minimal_files
+from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.core.progress_stream import stream_run
 from apps.backend.engines.wan22.wan22_common import (
     EngineOpts,

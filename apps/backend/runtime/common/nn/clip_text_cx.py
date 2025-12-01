@@ -159,9 +159,25 @@ class CodexCLIPTextModel(nn.Module):
         self.text_model.final_layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         # Optional projection will be attached by the loader when needed
 
-    def forward(self, input_ids: torch.Tensor, *, output_hidden_states: bool = True) -> _CLIPOutput:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,  # accepted for API parity; unused
+        output_hidden_states: bool = True,
+    ) -> _CLIPOutput:
         x = self.text_model.embeddings(input_ids)
-        x, hidden = self.text_model.encoder(x, None, output_hidden_states=output_hidden_states)
+        attn_mask = None
+        if attention_mask is not None:
+            # Convert (B,S) attention mask to additive mask broadcastable to (B, heads, T, T)
+            # Expect 1 for tokens to keep, 0 for padding.
+            try:
+                attn_mask = attention_mask[:, None, None, :].to(dtype=x.dtype)
+                attn_mask = (1.0 - attn_mask) * -1e9
+            except Exception:
+                attn_mask = None
+        x, hidden = self.text_model.encoder(x, attn_mask, output_hidden_states=output_hidden_states)
         x = self.text_model.final_layer_norm(x)
 
         # Pooled: take eos token when present, else last position

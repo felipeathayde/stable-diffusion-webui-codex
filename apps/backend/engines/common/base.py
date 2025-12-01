@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional, Sequence
@@ -12,6 +13,8 @@ from apps.backend.core.engine_interface import BaseInferenceEngine
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 from apps.backend.runtime.utils import get_state_dict_after_quant
+from apps.backend.runtime.utils import load_torch_file
+from apps.backend.runtime.models.state_dict import safe_load_state_dict
 
 
 logger = logging.getLogger("backend.engines.common.base")
@@ -242,6 +245,29 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             raise RuntimeError("Failed to determine inpaint capability.") from exc
 
         components = self._build_components(bundle, options=self._load_options)
+
+        # Optional VAE override: explicit user path has priority over bundled VAE.
+        override_vae_path = self._load_options.get("vae_path")
+        if override_vae_path:
+            if not os.path.isfile(override_vae_path):
+                raise FileNotFoundError(f"vae_path '{override_vae_path}' does not exist.")
+            if getattr(components, "vae", None) is None:
+                raise RuntimeError(
+                    "vae_path was provided, but no VAE component was built from the checkpoint; "
+                    "cannot apply override."
+                )
+            vae_device = getattr(components.vae, "device", None) or getattr(components.vae, "load_device", None)
+            state_dict = load_torch_file(override_vae_path, device=vae_device)
+            missing, unexpected = safe_load_state_dict(components.vae, state_dict, log_name="VAE override")
+            if missing:
+                sample = missing[:10]
+                raise RuntimeError(
+                    f"VAE override is missing {len(missing)} keys; sample={sample}. "
+                    "Ensure the override matches the SDXL VAE architecture."
+                )
+            if unexpected:
+                logger.warning("VAE override: unexpected %d keys (sample=%s)", len(unexpected), unexpected[:10])
+
         # Optional: best-effort probe for internal diagnostics (no console output)
         def _probe_device_dtype(obj):
             try:

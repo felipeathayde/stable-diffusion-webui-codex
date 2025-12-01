@@ -668,6 +668,13 @@ def _load_huggingface_component(
 
     if cls_name == "AutoencoderKL":
         if state_dict is None:
+            # For SDXL (and refiner) a VAE is mandatory; fail fast instead of
+            # attempting to proceed without it.
+            if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+                raise RuntimeError(
+                    "No VAE detected in checkpoint for SDXL. Provide a VAE override (vae_path) "
+                    "or use a checkpoint with an embedded SDXL VAE."
+                )
             return None
 
         # Unwrap common packing shapes (e.g., {'state_dict': {...}})

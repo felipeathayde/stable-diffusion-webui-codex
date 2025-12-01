@@ -92,7 +92,10 @@ apps/interface/.eslintcache
 apps/interface/.pnpm-debug.log
 
 # Local reference docs / scratch dirs
-apps/backend/huggingface*
+apps/backend/huggingface/**
+!apps/backend/huggingface/AGENTS.md
+!apps/backend/huggingface/__init__.py
+!apps/backend/huggingface/assets.py
 apps/server/backend/huggingface*
 /.sangoi/GuiaDeDIVsEAlinhamentoNoCSS.md
 /.sangoi/GuiaDeMigracaoGradio440para5.md

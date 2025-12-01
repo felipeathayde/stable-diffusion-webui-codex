@@ -458,3 +458,14 @@ Correct command: python - <<'PY'
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/tasks && sed -n '1,200p' .sangoi/tasks/README.md`
 **Cause and fix:** The `.sangoi/tasks` directory exposes task specs as `F*.md` files and has no `README.md`; attempting to read a non-existent README raises ENOENT. Inspect the relevant `F*.md` task files directly instead of assuming a README.
 **Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/tasks && sed -n '1,200p' .sangoi/tasks/F6-refinements.md`
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs && ls docs/plan && ls docs/legacy`
+**Cause + fix:** `The repository only exposes \`docs/notes\` and \`docs/troubleshooting\`; historical \`docs/plan\` and \`docs/legacy\` paths were moved into \`.sangoi/plans\` and \`.sangoi/research\`. List the real locations instead of chaining non-existent subdirectories.`
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs && ls .sangoi/plans && ls .sangoi/research`
+
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/legacy`
+**Cause + fix:** `There is no \`docs/legacy\` directory; legacy documentation and research now live under \`.sangoi/research\` and related subtrees. Target those folders instead of the removed docs/legacy path.`
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/research`
+
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/notes && head -n 20 docs/notes/2025-10-22-roadmap.md`
+**Cause + fix:** `The \`docs/notes\` directory currently only contains \`legacy-vae-and-dtype.md\`; a \`2025-10-22-roadmap.md\` file was assumed but does not exist. Discover available notes with \`ls\` and open the actual filenames instead of guessing.`
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/notes && head -n 20 docs/notes/legacy-vae-and-dtype.md`

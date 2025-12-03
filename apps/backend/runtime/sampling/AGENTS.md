@@ -13,7 +13,7 @@
   - `SamplerSpec` dataclass: canonical sampler name/kind, aliases, default scheduler, and allowed schedulers per sampler (Forge + ComfyUI surface).
   - `get_sampler_spec(name)`: resolves aliases and validates scheduler compatibility before sampling context creation.
 - `driver.py`
-  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and dispatches either the native loop (CFG + precision fallback) or a k-diffusion sampler runner based on `SamplerKind`.
+  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default dispatches *all* samplers through k-diffusion when available; set `CODEX_SAMPLER_FORCE_NATIVE=1` to force the legacy native loop.
   - Restart sampler is served via `k_diffusion_extra.restart_sampler`; UniPC/UniPC-BH2 are wired through `k_diffusion_extra` (BH2 currently reuses the UniPC update until a dedicated integrator is ported).
 - `__init__.py`
   - Sampling inner loop no longer emits Forge-era low-VRAM print warnings; memory pressure handling remains via `memory_management.get_free_memory` without stdout noise.

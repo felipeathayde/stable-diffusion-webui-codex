@@ -19,15 +19,26 @@ from apps.backend.runtime.memory.config import DeviceRole
 
 
 _KD_MAPPING = {
+    SamplerKind.EULER: "sample_euler",
+    SamplerKind.EULER_A: "sample_euler_ancestral",
+    SamplerKind.EULER_CFG_PP: "sample_euler_cfg_pp",
+    SamplerKind.EULER_A_CFG_PP: "sample_euler_ancestral_cfg_pp",
     SamplerKind.HEUN: "sample_heun",
     SamplerKind.HEUNPP2: "sample_heunpp2",
+    SamplerKind.LMS: "sample_lms",
+    SamplerKind.DDIM: "sample_ddim",
+    SamplerKind.DDIM_CFG_PP: "sample_ddim_cfgpp" if hasattr(__import__("k_diffusion.sampling", fromlist=["sample_ddim_cfgpp"]), "sample_ddim_cfgpp") else "sample_ddim",
+    SamplerKind.PLMS: "sample_plms" if hasattr(__import__("k_diffusion.sampling", fromlist=["sample_plms"]), "sample_plms") else "sample_lms",
+    SamplerKind.PNDM: "sample_pndm" if hasattr(__import__("k_diffusion.sampling", fromlist=["sample_pndm"]), "sample_pndm") else "sample_lms",
     SamplerKind.DPM2: "sample_dpm_2",
     SamplerKind.DPM2_ANCESTRAL: "sample_dpm_2_ancestral",
     SamplerKind.DPM_FAST: "sample_dpm_fast",
     SamplerKind.DPM_ADAPTIVE: "sample_dpm_adaptive",
     SamplerKind.DPM2S_ANCESTRAL: "sample_dpmpp_2s_ancestral",
     SamplerKind.DPM2S_ANCESTRAL_CFG_PP: "sample_dpmpp_2s_ancestral_cfg_pp",
+    SamplerKind.DPM2M: "sample_dpmpp_2m",
     SamplerKind.DPM2M_CFG_PP: "sample_dpmpp_2m_cfg_pp",
+    SamplerKind.DPM2M_SDE: "sample_dpmpp_2m_sde",
     SamplerKind.DPM2M_SDE_HEUN: "sample_dpmpp_2m_sde_heun",
     SamplerKind.DPM2M_SDE_GPU: "sample_dpmpp_2m_sde_gpu",
     SamplerKind.DPM2M_SDE_HEUN_GPU: "sample_dpmpp_2m_sde_heun_gpu",
@@ -39,6 +50,7 @@ _KD_MAPPING = {
     SamplerKind.IPNDM: "sample_ipndm",
     SamplerKind.IPNDM_V: "sample_ipndm_v",
     SamplerKind.DEIS: "sample_deis",
+    SamplerKind.UNI_PC: "extra:sample_unipc",
     SamplerKind.UNI_PC_BH2: "extra:sample_unipc_bh2",
     SamplerKind.RES_MULTISTEP: "sample_res_multistep",
     SamplerKind.RES_MULTISTEP_CFG_PP: "sample_res_multistep_cfg_pp",
@@ -348,7 +360,8 @@ class CodexSampler:
                 if sampler_kind is SamplerKind.AUTOMATIC:
                     sampler_kind = SamplerKind.EULER_A
 
-                if sampler_kind in _KD_MAPPING:
+                use_kd = os.getenv("CODEX_SAMPLER_FORCE_NATIVE", "").strip().lower() not in {"1", "true", "yes", "on"}
+                if use_kd and sampler_kind in _KD_MAPPING:
                     kd_name = _KD_MAPPING[sampler_kind]
 
                     compiled_cond = compile_conditions(cond)

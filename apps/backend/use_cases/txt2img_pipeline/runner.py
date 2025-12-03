@@ -125,6 +125,16 @@ class Txt2ImgPipelineRunner:
             cond = sd_model.get_learned_conditioning(prompts)
             uncond = sd_model.get_learned_conditioning(negative_prompts)
 
+        # If uncond comes back zero for a non-empty negative prompt, fail fast instead of sampling with CFG degenerate
+        non_empty_negative = any(str(p or "").strip() for p in negative_prompts)
+        if non_empty_negative:
+            uncond_cross = uncond.get("crossattn") if isinstance(uncond, dict) else None
+            if isinstance(uncond_cross, torch.Tensor) and torch.allclose(uncond_cross.abs().sum(), torch.tensor(0.0), atol=1e-6):
+                raise RuntimeError(
+                    "Unconditional embedding returned all zeros for a non-empty negative prompt. "
+                    "Check CLIP encoders or prompt handling before sampling."
+                )
+
         return cond, uncond
 
     def _log_conditioning(self, cond: object, uncond: object) -> None:

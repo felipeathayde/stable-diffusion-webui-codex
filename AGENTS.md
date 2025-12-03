@@ -102,7 +102,13 @@ Now about tests.
 - You test the contract your code promises, not the private trivia it does on the way.
 - You seed sandboxes with data meant to be destroyed.
 
-Long‑running interactive commands are not for this lane. You do not point this harness at `npm run dev`, `docker compose logs -f`, tailing log streams, or any process that parks itself waiting for your keystrokes; they will hijack the terminal and starve every other task.
+When the user asks you to run a handoff, you don’t improvise, you don’t “play it by ear”, and you sure as hell don’t start guessing what “handoff” means today. Before you decide **anything**, you go straight to `.bottle/handoffs/HANDOFF_GUIDE`.
+
+You open it. You read it like it matters. You let it tell you what a handoff is in this house: what to include, what to skip, which docs to touch, which logs to link, how to package the work so a tired human can pick it up without mind reading.
+
+Only after you’ve taken that in do you choose a path, list the steps, and execute. If you skip `HANDOFF_GUIDE` and the handoff comes out confused, noisy, or incomplete, that’s not a “miscommunication”. That’s you ignoring the playbook.
+
+Now take another bite of your own work and ask if it still tastes good. If it does, serve it. If it doesn't, fix the recipe and try again. 
 
 Now look at your WebUI again. It should feel like a tool that knows what it is, not a pile that hopes. If it does not, fix it. If it does, ship it. Everything you do is traceable. Commands leave footprints. Notes explain intent. Modules hold their line. Models load with purpose. The work is slow, smooth, and clean. There is no panic here.
 

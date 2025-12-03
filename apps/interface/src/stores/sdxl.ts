@@ -259,10 +259,25 @@ export const useSdxlStore = defineStore('sdxl', () => {
         break
       case 'result':
         gallery.value = event.images
-        info.value = event.info
-        if (event.info && typeof event.info === 'object') {
-          const infoSeed = (event.info as Record<string, unknown>)['seed']
-          if (typeof infoSeed === 'number') lastSeed.value = infoSeed
+
+        const baseInfo = event.info && typeof event.info === 'object' ? { ...(event.info as Record<string, unknown>) } : {}
+        const promptText = prompt.value
+        const negativeText = negativePrompt.value
+        const eventSeed = Number((baseInfo as Record<string, unknown>).seed)
+        const resolvedSeed = Number.isFinite(eventSeed)
+          ? eventSeed
+          : lastSeed.value ?? (seed.value !== -1 ? seed.value : undefined)
+
+        if (typeof resolvedSeed === 'number') {
+          baseInfo.seed = resolvedSeed
+          lastSeed.value = resolvedSeed
+        }
+
+        info.value = {
+          ...baseInfo,
+          prompt: promptText,
+          negative_prompt: negativeText,
+          output_dir: 'outputs/txt2img-images',
         }
         break
       case 'error':

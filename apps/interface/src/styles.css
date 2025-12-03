@@ -261,6 +261,7 @@
   /* component CSS imported below */
   @import "./styles/components/generation-settings-card.css";
   @import "./styles/components/highres-settings-card.css";
+  @import "./styles/components/refiner-settings-card.css";
   @import "./styles/components/result-viewer.css";
   @import "./styles/components/prompt-fields.css";
   @import "./styles/components/quicksettings.css";

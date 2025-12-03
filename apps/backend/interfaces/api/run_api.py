@@ -1351,7 +1351,7 @@ def build_app() -> FastAPI:
         "model",
         "sd_model_checkpoint",
     }
-    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta"}
+    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta", "refiner"}
     _TXT2IMG_HIGHRES_KEYS = {
         "enable",
         "denoise",
@@ -1460,41 +1460,61 @@ def build_app() -> FastAPI:
             if isinstance(val, bool) or not isinstance(val, (int, float)):
                 raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
             extras['eta_noise_seed_delta'] = int(val)
+        # Highres options
         highres = raw.get('highres')
-        if highres is None:
-            return extras, None
-        if not isinstance(highres, dict):
-            raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
-        _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
-        if not bool(highres.get('enable')):
-            return extras, None
-        required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
-        for key in required:
-            if key not in highres:
-                raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
-        hr_modules = highres.get('modules')
-        if hr_modules is not None:
-            if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
-                raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
-            modules_list = list(hr_modules)
-        else:
-            modules_list = []
-        return extras, {
-            "denoise": float(highres['denoise']),
-            "scale": float(highres['scale']),
-            "resize_x": _require_int_field(highres, 'resize_x'),
-            "resize_y": _require_int_field(highres, 'resize_y'),
-            "steps": _require_int_field(highres, 'steps', minimum=0),
-            "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
-            "checkpoint": highres.get('checkpoint'),
-            "modules": modules_list,
-            "sampler": highres.get('sampler'),
-            "scheduler": highres.get('scheduler'),
-            "prompt": highres.get('prompt') or '',
-            "negative_prompt": highres.get('negative_prompt') or '',
-            "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
-            "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
-        }
+        highres_cfg: Optional[Dict[str, Any]] = None
+        if highres is not None:
+            if not isinstance(highres, dict):
+                raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
+            _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
+            if bool(highres.get('enable')):
+                required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
+                for key in required:
+                    if key not in highres:
+                        raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
+                hr_modules = highres.get('modules')
+                if hr_modules is not None:
+                    if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
+                        raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
+                    modules_list = list(hr_modules)
+                else:
+                    modules_list = []
+                highres_cfg = {
+                    "denoise": float(highres['denoise']),
+                    "scale": float(highres['scale']),
+                    "resize_x": _require_int_field(highres, 'resize_x'),
+                    "resize_y": _require_int_field(highres, 'resize_y'),
+                    "steps": _require_int_field(highres, 'steps', minimum=0),
+                    "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
+                    "checkpoint": highres.get('checkpoint'),
+                    "modules": modules_list,
+                    "sampler": highres.get('sampler'),
+                    "scheduler": highres.get('scheduler'),
+                    "prompt": highres.get('prompt') or '',
+                    "negative_prompt": highres.get('negative_prompt') or '',
+                    "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
+                    "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
+                }
+
+        # Refiner options (metadata only for now)
+        refiner = raw.get('refiner')
+        if refiner is not None:
+            if not isinstance(refiner, dict):
+                raise HTTPException(status_code=400, detail="'extras.refiner' must be an object")
+            _reject_unknown_keys(refiner, {"enable", "steps", "cfg", "seed", "model", "vae"}, "extras.refiner")
+            if bool(refiner.get('enable')):
+                ref_cfg: Dict[str, Any] = {
+                    "steps": _require_int_field(refiner, 'steps', minimum=0),
+                    "cfg": _require_float_field(refiner, 'cfg'),
+                    "seed": _require_int_field(refiner, 'seed'),
+                }
+                if 'model' in refiner:
+                    ref_cfg['model'] = str(refiner['model'])
+                if 'vae' in refiner:
+                    ref_cfg['vae'] = str(refiner['vae'])
+                extras['refiner'] = ref_cfg
+
+        return extras, highres_cfg
 
 
     def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:

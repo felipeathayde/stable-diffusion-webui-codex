@@ -23,6 +23,17 @@ const HighresOptionsSchema = z
   })
   .strict()
 
+const RefinerOptionsSchema = z
+  .object({
+    enable: z.literal(true),
+    steps: z.number().int().min(0),
+    cfg: z.number(),
+    seed: z.number().int(),
+    model: z.string().min(1).optional(),
+    vae: z.string().min(1).optional(),
+  })
+  .strict()
+
 const PromptSchema = z
   .string()
   .transform((value) => value.trim())
@@ -50,6 +61,7 @@ export const Txt2ImgRequestSchema = z
     extras: z
       .object({
         highres: HighresOptionsSchema.optional(),
+        refiner: RefinerOptionsSchema.optional(),
       })
       .optional(),
   })
@@ -75,6 +87,15 @@ export interface HighresFormState {
   distilledCfg?: number
 }
 
+export interface RefinerFormState {
+  enabled: boolean
+  steps: number
+  cfg: number
+  seed: number
+  model?: string
+  vae?: string
+}
+
 export interface Txt2ImgFormState {
   prompt: string
   negativePrompt: string
@@ -92,6 +113,7 @@ export interface Txt2ImgFormState {
   engine?: string
   model?: string
   highres?: HighresFormState
+   refiner?: RefinerFormState
 }
 
 function normalizeDevice(device: string): Txt2ImgRequest['codex_device'] {
@@ -149,6 +171,16 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
       negative_prompt: state.highres.negativePrompt,
       cfg: state.highres.cfg,
       distilled_cfg: state.highres.distilledCfg,
+    }
+  }
+  if (state.refiner?.enabled) {
+    extras.refiner = {
+      enable: true,
+      steps: state.refiner.steps,
+      cfg: state.refiner.cfg,
+      seed: state.refiner.seed,
+      model: state.refiner.model,
+      vae: state.refiner.vae,
     }
   }
   if (Object.keys(extras).length > 0) {

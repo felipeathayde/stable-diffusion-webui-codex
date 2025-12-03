@@ -1,4 +1,4 @@
-<!-- tags: frontend, components, prompt, highres -->
+<!-- tags: frontend, components, prompt, highres, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
@@ -12,4 +12,4 @@ Status: Active
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
- - Generation + highres controls live in `GenerationSettingsCard.vue` and `HighresSettingsCard.vue`, both using CSS grid layouts.
+- Generation + highres + refiner controls live in `GenerationSettingsCard.vue`, `HighresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.

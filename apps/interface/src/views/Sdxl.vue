@@ -78,6 +78,14 @@
             :base-width="store.width"
             :base-height="store.height"
           />
+          <RefinerSettingsCard
+            v-model:enabled="store.refiner.enabled"
+            v-model:steps="store.refiner.steps"
+            v-model:cfg="store.refiner.cfg"
+            v-model:seed="store.refiner.seed"
+            v-model:model="store.refiner.model"
+            v-model:vae="store.refiner.vae"
+          />
           <div class="toolbar">
             <div class="qs-actions">
               <button class="btn btn-sm btn-outline" type="button" v-for="p in resolutionPresets" :key="p[0] + 'x' + p[1]" @click="applyResolutionPreset(p[0], p[1])">{{ p[0] }}×{{ p[1] }}</button>
@@ -141,6 +149,7 @@ import TextualInversionModal from '../components/modals/TextualInversionModal.vu
 import PromptFields from '../components/prompt/PromptFields.vue'
 import GenerationSettingsCard from '../components/GenerationSettingsCard.vue'
 import HighresSettingsCard from '../components/HighresSettingsCard.vue'
+import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import StyleEditorModal from '../components/modals/StyleEditorModal.vue'
 import { usePresetsStore } from '../stores/presets'

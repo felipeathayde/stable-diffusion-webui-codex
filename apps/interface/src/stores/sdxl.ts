@@ -16,7 +16,7 @@ import {
   subscribeTask,
 } from '../api/client'
 import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
-import type { Txt2ImgRequest, HighresFormState } from '../api/payloads'
+import type { Txt2ImgRequest, HighresFormState, RefinerFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
 
 const ENGINE_ID = 'sdxl'
@@ -61,6 +61,12 @@ export const useSdxlStore = defineStore('sdxl', () => {
     resizeY: 0,
     steps: 0,
     upscaler: 'Use same upscaler',
+  })
+  const refiner = reactive<RefinerFormState>({
+    enabled: false,
+    steps: 20,
+    cfg: cfgScale.value,
+    seed: -1,
   })
   const lastSeed = ref<number | null>(null)
 
@@ -232,6 +238,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
         engine: ENGINE_ID,
         model: selectedModel.value,
         highres,
+        refiner,
       })
     } catch (error) {
       status.value = 'error'
@@ -367,6 +374,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     batchCount,
     styles,
     highres,
+    refiner,
     lastSeed,
     models,
     samplers,

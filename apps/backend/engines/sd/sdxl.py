@@ -20,6 +20,7 @@ from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
 import json
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent
+import secrets
 from apps.backend.runtime.processing.conditioners import decode_latent_batch
 from apps.backend.runtime.workflows.common import latents_to_pil
 
@@ -231,6 +232,10 @@ class StableDiffusionXL(CodexDiffusionEngine):
         _ = self._require_runtime()
 
         # Build processing descriptor from request
+        raw_seed = int(getattr(request, "seed", -1) or -1)
+        if raw_seed < 0:
+            raw_seed = secrets.randbits(32) & 0x7FFFFFFF
+
         proc = CodexProcessingTxt2Img(
             prompt=str(getattr(request, "prompt", "")),
             negative_prompt=str(getattr(request, "negative_prompt", "")),
@@ -243,7 +248,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             ) or 3.5),
             batch_size=int(getattr(request, "batch_size", 1) or 1),
             iterations=1,
-            seed=int(getattr(request, "seed", -1) or -1),
+            seed=raw_seed,
             sampler_name=getattr(request, "sampler", None),
             scheduler=getattr(request, "scheduler", None),
             metadata=getattr(request, "metadata", {}),
@@ -254,7 +259,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
         # Defer conditioning to the pipeline runner (after prompt parsing / hires overrides)
         prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
         prompts = prompt_texts
-        seeds = [proc.seed]
+        seeds = [raw_seed]
         subseeds = [-1]
         subseed_strength = 0.0
         cond = None

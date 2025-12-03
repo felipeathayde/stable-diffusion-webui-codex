@@ -26,6 +26,7 @@ const HighresOptionsSchema = z
 const PromptSchema = z
   .string()
   .transform((value) => value.trim())
+  .refine((value) => value.length > 0, { message: 'Prompt must not be empty' })
 
 export const Txt2ImgRequestSchema = z
   .object({

@@ -477,3 +477,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '1,2
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,620p' apps/backend/runtime/sampling/sampling_function_inner.py
 Cause and fix: The sampling inner loop lives in `apps/backend/runtime/sampling/__init__.py`; there is no separate `sampling_function_inner.py` module, so sed failed with ENOENT. Point sed at the package file that defines `sampling_function_inner`.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,620p' apps/backend/runtime/sampling/__init__.py
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
+Cause and fix: The trace script imports `apps.backend`, which in turn imports `torch` via the runtime memory module; running it against the system Python without the project venv caused `ModuleNotFoundError: No module named 'torch'`. Use the project virtualenv (and required `PYTHONPATH`) so `torch` and internal modules are available.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6

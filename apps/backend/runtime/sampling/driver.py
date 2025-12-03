@@ -123,6 +123,7 @@ def _run_kdiffusion_sampler(
     preview_callback: Optional[Callable[[torch.Tensor, int, int], None]],
     total_steps: int,
     tick: Optional[Callable[[int], None]] = None,
+    preview_interval: int = 0,
 ) -> torch.Tensor:
     sampler_fn = None
     if sampler_fn_name.startswith("extra:"):
@@ -148,9 +149,10 @@ def _run_kdiffusion_sampler(
         step_counter["i"] = idx
         if tick is not None:
             tick(idx + 1)
-        if preview_callback is not None:
+        if preview_callback is not None and preview_interval > 0:
             try:
-                preview_callback(payload.get("denoised"), idx + 1, total_steps)
+                if ((idx + 1) % preview_interval == 0) or (idx + 1) == total_steps:
+                    preview_callback(payload.get("denoised"), idx + 1, total_steps)
             except Exception:
                 pass
         if progress_bar is not None:
@@ -431,6 +433,7 @@ class CodexSampler:
                         preview_callback=preview_callback,
                         total_steps=len(sigmas_run) - 1,
                         tick=lambda step: backend_state.tick(sampling_step=step),
+                        preview_interval=active_context.preview_interval,
                     )
 
                     sampling_cleanup(unet)

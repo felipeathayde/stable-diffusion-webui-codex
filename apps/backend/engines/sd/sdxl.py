@@ -23,6 +23,7 @@ from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEven
 import secrets
 from apps.backend.runtime.processing.conditioners import decode_latent_batch
 from apps.backend.runtime.workflows.common import latents_to_pil
+from apps.backend.runtime.text_processing import last_extra_generation_params
 
 
 # note: no extra device assertions here; diagnostics should be captured upstream
@@ -342,6 +343,15 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 except Exception:  # pragma: no cover - defensive only
                     seed_value = None
 
+        # Merge core runtime metadata with extra-generation parameters collected
+        # during text processing (e.g., TI names, emphasis mode, LoRA hashes).
+        extra_params: dict[str, object] = {}
+        try:
+            extra_params.update(last_extra_generation_params)
+            extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
+        except Exception:  # pragma: no cover - defensive only
+            extra_params = getattr(proc, "extra_generation_params", {}) or {}
+
         info: dict[str, object] = {
             "engine": self.engine_id,
             "task": "txt2img",
@@ -360,6 +370,20 @@ class StableDiffusionXL(CodexDiffusionEngine):
             info["seed"] = int(seed_value)
         if all_seeds:
             info["all_seeds"] = [int(s) for s in all_seeds]
+        if getattr(proc, "enable_hr", False):
+            info["hires"] = {
+                "enabled": True,
+                "width": int(getattr(proc, "hr_upscale_to_x", 0) or proc.width),
+                "height": int(getattr(proc, "hr_upscale_to_y", 0) or proc.height),
+                "steps": int(getattr(proc, "hr_second_pass_steps", 0) or proc.steps),
+                "denoise": float(getattr(getattr(proc, "hires", None) or proc, "hr_distilled_cfg", 0.0) or 0.0),
+                "sampler": str(getattr(proc, "hr_sampler_name", "Use same sampler") or "Use same sampler"),
+                "scheduler": str(getattr(proc, "hr_scheduler", "Use same scheduler") or "Use same scheduler"),
+                "checkpoint": str(getattr(proc, "hr_checkpoint_name", "Use same checkpoint") or "Use same checkpoint"),
+                "modules": list(getattr(proc, "hr_additional_modules", []) or []),
+            }
+        if extra_params:
+            info["extra"] = extra_params
         yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
 
     def _prepare_prompt_wrappers(

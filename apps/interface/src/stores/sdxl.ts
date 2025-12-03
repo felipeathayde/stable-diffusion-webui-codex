@@ -263,10 +263,16 @@ export const useSdxlStore = defineStore('sdxl', () => {
         const baseInfo = event.info && typeof event.info === 'object' ? { ...(event.info as Record<string, unknown>) } : {}
         const promptText = prompt.value
         const negativeText = negativePrompt.value
-        const eventSeed = Number((baseInfo as Record<string, unknown>).seed)
-        const resolvedSeed = Number.isFinite(eventSeed)
-          ? eventSeed
-          : lastSeed.value ?? (seed.value !== -1 ? seed.value : undefined)
+
+        const seedCandidates: Array<unknown> = []
+        const asRecord = baseInfo as Record<string, unknown>
+        if ('seed' in asRecord) seedCandidates.push(asRecord.seed)
+        if (Array.isArray(asRecord.all_seeds) && asRecord.all_seeds.length > 0) seedCandidates.push(asRecord.all_seeds[0])
+        if (Array.isArray(asRecord.seeds) && asRecord.seeds.length > 0) seedCandidates.push(asRecord.seeds[0])
+        seedCandidates.push(lastSeed.value)
+        if (seed.value !== -1) seedCandidates.push(seed.value)
+
+        const resolvedSeed = seedCandidates.map((v) => Number(v)).find((n) => Number.isFinite(n) && n !== -1)
 
         if (typeof resolvedSeed === 'number') {
           baseInfo.seed = resolvedSeed

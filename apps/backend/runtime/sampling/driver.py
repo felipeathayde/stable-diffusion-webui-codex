@@ -96,6 +96,17 @@ def _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale):
     return _fn
 
 
+class _KDiffusionModel:
+    """Adapter exposing .inner_model for k-diffusion samplers."""
+
+    def __init__(self, inner_model, fn):
+        self.inner_model = inner_model
+        self._fn = fn
+
+    def __call__(self, x, sigma, **extra_args):
+        return self._fn(x, sigma, **extra_args)
+
+
 def _run_kdiffusion_sampler(
     sampler_kind: SamplerKind,
     sampler_fn_name: str,
@@ -128,7 +139,7 @@ def _run_kdiffusion_sampler(
 
     if sampler_fn is None:
         raise NotImplementedError(f"Sampler '{sampler_kind.value}' not yet ported (missing {sampler_fn_name})")
-    kd_model = _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale)
+    kd_model = _KDiffusionModel(model, _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale))
 
     step_counter = {"i": 0}
 

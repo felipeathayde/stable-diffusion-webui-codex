@@ -286,49 +286,45 @@ def get_cmd_flags() -> Dict[str, Any]:
 
 @router.get("/samplers")
 def list_samplers() -> Dict[str, Any]:
-    mapping = [
-        (SamplerKind.AUTOMATIC.value, ["auto"]),
-        (SamplerKind.EULER.value, ["k_euler"]),
-        (SamplerKind.EULER_A.value, ["k_euler_a", "euler_a"]),
-        (SamplerKind.DDIM.value, ["ddim"]),
-        (SamplerKind.DPM2M.value, ["dpmpp_2m", "dpm++ 2m"]),
-        (SamplerKind.DPM2M_SDE.value, ["dpmpp_2m_sde", "dpm++ 2m sde"]),
-        (SamplerKind.PLMS.value, ["lms"]),
-        (SamplerKind.PNDM.value, ["pndm"]),
-        (SamplerKind.UNI_PC.value, ["unipc", "uni_pc"]),
-    ]
+    from apps.backend.runtime.sampling.registry import get_sampler_spec
+
     payload = []
-    for name, aliases in mapping:
+    for entry in SAMPLER_OPTIONS:
+        if not entry.get("supported", True):
+            continue
+        spec = None
         try:
-            normalized = _sampler_service.ensure_valid_sampler(name)
-        except HTTPException:
-            normalized = name
-        meta = next((entry for entry in SAMPLER_OPTIONS if entry["name"] == normalized), None)
-        label = meta.get("label") if meta else None
-        supported = meta.get("supported", True) if meta else True
-        payload.append({
-            "name": normalized,
-            "label": label or normalized.title(),
-            "aliases": aliases,
-            "supported": bool(supported),
-            "options": {},
-        })
+            spec = get_sampler_spec(entry["name"])
+        except Exception:
+            pass
+        payload.append(
+            {
+                "name": entry["name"],
+                "label": entry.get("label", entry["name"].title()),
+                "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
+                "supported": bool(entry.get("supported", True)),
+                "default_scheduler": spec.default_scheduler if spec else None,
+                "allowed_schedulers": sorted(spec.allowed_schedulers) if spec else [],
+            }
+        )
     return {"samplers": payload}
 
 
 @router.get("/schedulers")
 def list_schedulers() -> Dict[str, Any]:
-    return {
-        "schedulers": [
+    schedulers = []
+    for entry in SCHEDULER_OPTIONS:
+        if not entry.get("supported", True):
+            continue
+        schedulers.append(
             {
                 "name": entry["name"],
                 "label": entry.get("label", entry["name"].title()),
                 "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
                 "supported": bool(entry.get("supported", True)),
             }
-            for entry in SCHEDULER_OPTIONS
-        ]
-    }
+        )
+    return {"schedulers": schedulers}
 
 
 @router.get("/sd-models")

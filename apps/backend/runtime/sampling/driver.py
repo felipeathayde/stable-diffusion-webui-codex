@@ -11,10 +11,56 @@ import torch
 from . import sampling_function_inner, sampling_prepare, sampling_cleanup
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
+from .registry import get_sampler_spec
 from ...core.state import state as backend_state
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
+
+
+_KD_MAPPING = {
+    SamplerKind.EULER: "sample_euler",
+    SamplerKind.EULER_A: "sample_euler_ancestral",
+    SamplerKind.EULER_CFG_PP: "sample_euler_cfg_pp",
+    SamplerKind.EULER_A_CFG_PP: "sample_euler_ancestral_cfg_pp",
+    SamplerKind.HEUN: "sample_heun",
+    SamplerKind.HEUNPP2: "sample_heunpp2",
+    SamplerKind.LMS: "sample_lms",
+    SamplerKind.DPM2: "sample_dpm_2",
+    SamplerKind.DPM2_ANCESTRAL: "sample_dpm_2_ancestral",
+    SamplerKind.DPM_FAST: "sample_dpm_fast",
+    SamplerKind.DPM_ADAPTIVE: "sample_dpm_adaptive",
+    SamplerKind.DPM2S_ANCESTRAL: "sample_dpmpp_2s_ancestral",
+    SamplerKind.DPM2S_ANCESTRAL_CFG_PP: "sample_dpmpp_2s_ancestral_cfg_pp",
+    SamplerKind.DPM2M: "sample_dpmpp_2m",
+    SamplerKind.DPM2M_CFG_PP: "sample_dpmpp_2m_cfg_pp",
+    SamplerKind.DPM2M_SDE: "sample_dpmpp_2m_sde",
+    SamplerKind.DPM2M_SDE_HEUN: "sample_dpmpp_2m_sde_heun",
+    SamplerKind.DPM2M_SDE_GPU: "sample_dpmpp_2m_sde_gpu",
+    SamplerKind.DPM2M_SDE_HEUN_GPU: "sample_dpmpp_2m_sde_heun_gpu",
+    SamplerKind.DPM_SDE: "sample_dpmpp_sde",
+    SamplerKind.DPM3M_SDE: "sample_dpmpp_3m_sde",
+    SamplerKind.DPM3M_SDE_GPU: "sample_dpmpp_3m_sde_gpu",
+    SamplerKind.DDPM: "extra:sample_ddpm",
+    SamplerKind.LCM: "sample_lcm",
+    SamplerKind.IPNDM: "sample_ipndm",
+    SamplerKind.IPNDM_V: "sample_ipndm_v",
+    SamplerKind.DEIS: "sample_deis",
+    SamplerKind.UNI_PC: "extra:sample_unipc",
+    SamplerKind.UNI_PC_BH2: "extra:sample_unipc_bh2",
+    SamplerKind.RES_MULTISTEP: "sample_res_multistep",
+    SamplerKind.RES_MULTISTEP_CFG_PP: "sample_res_multistep_cfg_pp",
+    SamplerKind.RES_MULTISTEP_ANCESTRAL: "sample_res_multistep_ancestral",
+    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP: "sample_res_multistep_ancestral_cfg_pp",
+    SamplerKind.GRADIENT_ESTIMATION: "sample_gradient_estimation",
+    SamplerKind.GRADIENT_ESTIMATION_CFG_PP: "sample_gradient_estimation_cfg_pp",
+    SamplerKind.ER_SDE: "sample_er_sde",
+    SamplerKind.SEEDS_2: "sample_seeds_2",
+    SamplerKind.SEEDS_3: "sample_seeds_3",
+    SamplerKind.SA_SOLVER: "sample_sa_solver",
+    SamplerKind.SA_SOLVER_PECE: "sample_sa_solver_pece",
+    SamplerKind.RESTART: "extra:restart_sampler",
+}
 
 
 _LMS_COEFFS = {
@@ -27,6 +73,89 @@ _LMS_COEFFS = {
 
 class _PrecisionFallbackRequest(Exception):
     """Internal control flow exception used to trigger a sampling retry."""
+
+
+def _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale):
+    def _fn(x: torch.Tensor, sigma_hat: torch.Tensor, **extra_args):
+        sigma_batch = sigma_hat if sigma_hat.ndim == 1 else sigma_hat.view(-1)
+        return sampling_function_inner(
+            model,
+            x,
+            sigma_batch,
+            compiled_uncond,
+            compiled_cond,
+            cfg_scale,
+            getattr(model, "model_options", {}),
+            seed=None,
+            return_full=False,
+        )
+    return _fn
+
+
+def _run_kdiffusion_sampler(
+    sampler_kind: SamplerKind,
+    sampler_fn_name: str,
+    *,
+    model,
+    x: torch.Tensor,
+    sigmas: torch.Tensor,
+    compiled_cond,
+    compiled_uncond,
+    cfg_scale: float,
+    progress_bar,
+    logger: logging.Logger,
+    log_enabled: bool,
+    preview_callback: Optional[Callable[[torch.Tensor, int, int], None]],
+    total_steps: int,
+    tick: Optional[Callable[[int], None]] = None,
+) -> torch.Tensor:
+    sampler_fn = None
+    if sampler_fn_name.startswith("extra:"):
+        from apps.backend.runtime.modules import k_diffusion_extra as kd_extra
+
+        extra_name = sampler_fn_name.split(":", 1)[1]
+        sampler_fn = getattr(kd_extra, extra_name, None)
+    else:
+        try:
+            import k_diffusion.sampling as kd_sampling
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("k-diffusion is required for sampler execution but is unavailable") from exc
+        sampler_fn = getattr(kd_sampling, sampler_fn_name, None)
+
+    if sampler_fn is None:
+        raise NotImplementedError(f"Sampler '{sampler_kind.value}' not yet ported (missing {sampler_fn_name})")
+    kd_model = _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale)
+
+    step_counter = {"i": 0}
+
+    def _callback(payload):
+        idx = int(payload.get("i", step_counter["i"]))
+        step_counter["i"] = idx
+        if tick is not None:
+            tick(idx + 1)
+        if preview_callback is not None:
+            try:
+                preview_callback(payload.get("denoised"), idx + 1, total_steps)
+            except Exception:
+                pass
+        if progress_bar is not None:
+            progress_bar.update(1)
+
+    out = sampler_fn(
+        kd_model,
+        x,
+        sigmas,
+        extra_args={"model_options": getattr(model, "model_options", {})},
+        callback=_callback,
+        disable=not log_enabled,
+    )
+
+    if progress_bar is not None:
+        progress_bar.close()
+
+    if log_enabled:
+        logger.info("k-diffusion sampler=%s finished steps=%d", sampler_kind.value, total_steps)
+    return out
 
 
 
@@ -91,6 +220,8 @@ class CodexSampler:
         base_noise = noise.detach().clone()
         base_context = context
 
+        spec = get_sampler_spec(self.algorithm)
+
         while True:
             unet = self.sd_model.codex_objects.unet
             model = unet.model
@@ -120,6 +251,14 @@ class CodexSampler:
                 prepared = True
 
                 scheduler_name = getattr(processing, "scheduler", None)
+                if scheduler_name in (None, "") and spec.default_scheduler:
+                    scheduler_name = spec.default_scheduler
+
+                if not spec.is_supported_scheduler(scheduler_name):
+                    raise ValueError(
+                        f"Scheduler '{scheduler_name}' is not supported by sampler '{spec.name}'. "
+                        f"Allowed: {sorted(spec.allowed_schedulers)}"
+                    )
                 if active_context is None:
                     active_context = build_sampling_context(
                         self.sd_model,
@@ -130,6 +269,8 @@ class CodexSampler:
                         eta_noise_seed_delta=int(getattr(processing, "eta_noise_seed_delta", 0) or 0),
                         device=noise.device,
                         dtype=noise.dtype,
+                        predictor=model,
+                        is_sdxl=bool(getattr(getattr(self.sd_model, "engine", None), "is_sdxl", False)),
                     )
 
                 sigmas = active_context.sigmas.to(device=noise.device, dtype=noise.dtype)
@@ -151,10 +292,11 @@ class CodexSampler:
 
                 start_idx = int(start_at_step or 0)
                 start_idx = max(0, min(start_idx, steps - 1))
+                sigmas_run = sigmas[start_idx:]
                 if init_latent is not None:
-                    x = init_latent + float(sigmas[start_idx]) * noise
+                    x = init_latent + float(sigmas_run[0]) * noise
                 else:
-                    x = model.predictor.noise_scaling(sigmas[:1], noise, torch.zeros_like(noise))
+                    x = model.predictor.noise_scaling(sigmas_run[:1], noise, torch.zeros_like(noise))
 
                 if self._log_enabled:
                     try:
@@ -213,6 +355,73 @@ class CodexSampler:
                 sampler_kind = active_context.sampler_kind
                 if sampler_kind is SamplerKind.AUTOMATIC:
                     sampler_kind = SamplerKind.EULER_A
+
+                if sampler_kind in _KD_MAPPING:
+                    kd_name = _KD_MAPPING[sampler_kind]
+
+                    compiled_cond = compile_conditions(cond)
+                    compiled_uncond = compile_conditions(uncond) if uncond is not None else None
+
+                    backend_state.start(job_count=1, sampling_steps=len(sigmas_run) - 1)
+                    state_started = True
+
+                    if self._log_sigmas or self._log_enabled:
+                        schedule_first = float(sigmas_run[0]) if len(sigmas_run) > 0 else float("nan")
+                        schedule_last = float(sigmas_run[-1]) if len(sigmas_run) > 0 else float("nan")
+                        schedule_summary = self._summarize_sigmas(sigmas_run)
+                        self._logger.info(
+                            "sigma schedule len=%d predict_min=%.6g predict_max=%.6g first=%.6g last=%.6g ladder=%s",
+                            len(sigmas_run) - 1,
+                            float(active_context.sigma_min or float("nan")),
+                            float(active_context.sigma_max or float("nan")),
+                            schedule_first,
+                            schedule_last,
+                            schedule_summary,
+                        )
+
+                    if self._log_enabled:
+                        head = []
+                        try:
+                            head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
+                        except Exception:
+                            head = []
+                        self._logger.info(
+                            "sampler algorithm=%s scheduler=%s steps=%d head=%s",
+                            sampler_kind.value,
+                            active_context.scheduler_name,
+                            len(sigmas_run) - 1,
+                            head,
+                        )
+
+                    progress_bar = None
+                    use_progress = active_context.enable_progress
+                    if use_progress:
+                        from tqdm.auto import tqdm
+
+                        progress_bar = tqdm(total=len(sigmas_run) - 1, desc="sampling", leave=False)
+
+                    x = _run_kdiffusion_sampler(
+                        sampler_kind,
+                        kd_name,
+                        model=model,
+                        x=x,
+                        sigmas=sigmas_run,
+                        compiled_cond=compiled_cond,
+                        compiled_uncond=compiled_uncond,
+                        cfg_scale=cfg_scale,
+                        progress_bar=progress_bar,
+                        logger=self._logger,
+                        log_enabled=self._log_enabled,
+                        preview_callback=preview_callback,
+                        total_steps=len(sigmas_run) - 1,
+                        tick=lambda step: backend_state.tick(sampling_step=step),
+                    )
+
+                    sampling_cleanup(unet)
+                    prepared = False
+                    backend_state.end()
+                    state_started = False
+                    return x
 
                 eps_prev: Optional[torch.Tensor] = None
                 sigma_prev: Optional[float] = None
@@ -348,6 +557,24 @@ class CodexSampler:
                         delta = float(sigma) - float(sigma_next)
                         x = x - delta * derivative
                     elif sampler_kind is SamplerKind.UNI_PC:
+                        delta = float(sigma) - float(sigma_next)
+                        x_pred = x - delta * eps
+                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
+                        denoised_next = sampling_function_inner(
+                            model,
+                            x_pred,
+                            sigma_next_batch,
+                            compiled_uncond,
+                            compiled_cond,
+                            cfg_scale,
+                            unet.model_options,
+                            seed=None,
+                            return_full=False,
+                        )
+                        eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
+                        x = x - delta * 0.5 * (eps + eps_next)
+                    elif sampler_kind is SamplerKind.UNI_PC_BH2:
+                        # Reuse the UniPC two-stage update as a BH2 variant placeholder.
                         delta = float(sigma) - float(sigma_next)
                         x_pred = x - delta * eps
                         sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)

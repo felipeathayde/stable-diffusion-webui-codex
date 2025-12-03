@@ -6,15 +6,19 @@
 
 ## Key Components
 - `context.py`
-  - `SchedulerName` enum: canonical scheduler identifiers used to build sigma schedules.
-  - `build_sigma_schedule(...)`: returns a tensor of sigmas (length = steps + 1) ending with terminal 0.
+  - `SchedulerName` enum: canonical scheduler identifiers used to build sigma schedules (automatic/simple, karras/euler_discrete, exponential/polyexponential, uniform/sgm_uniform, ddim/ddim_uniform, normal, beta, linear_quadratic, kl_optimal, turbo, align-your-steps variants).
+  - `build_sigma_schedule(...)`: returns a tensor of sigmas (length = steps + 1) ending with terminal 0; accepts a predictor to derive ladders for predictor-aware schedules (uniform/normal/ddim/sgm_uniform/turbo) and an `is_sdxl` hint for AYS tables.
   - `SamplingContext`: immutable inputs for the sampler loop (sampler kind, schedule, noise settings, prediction type/sigma bounds).
+- `registry.py`
+  - `SamplerSpec` dataclass: canonical sampler name/kind, aliases, default scheduler, and allowed schedulers per sampler (Forge + ComfyUI surface).
+  - `get_sampler_spec(name)`: resolves aliases and validates scheduler compatibility before sampling context creation.
+- `driver.py`
+  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and dispatches either the native loop (CFG + precision fallback) or a k-diffusion sampler runner based on `SamplerKind`.
+  - Restart sampler is served via `k_diffusion_extra.restart_sampler`; UniPC/UniPC-BH2 are wired through `k_diffusion_extra` (BH2 currently reuses the UniPC update until a dedicated integrator is ported).
 
 ## Design Notes
 - Scheduler vs Sampler: the scheduler here determines only the sigma sequence; the sampler integrator (Euler, DPM++ 2M, UniPC, etc.) is selected separately by `SamplerKind` in `driver.py`.
-- Aliases: the API/UI may send diffusers class names. We normalize a small, explicit set of aliases:
-  - `EulerDiscreteScheduler`, `euler`, `euler a`, `EulerAncestralDiscreteScheduler` → `EULER_DISCRETE` schedule (Karras sigmas).
-  - No silent fallbacks. Unknown names raise `ValueError` with the supported list.
+- Aliases: the API/UI may send diffusers class names. We normalize an explicit set (auto/simple, karras, exponential/polyexponential, euler_discrete, uniform/sgm_uniform, ddim/ddim_uniform, normal, beta, linear_quadratic, kl_optimal, turbo, align-your-steps variants). Unknown names raise `ValueError` with the supported list.
 - Karras Sigmas: Euler in diffusers typically uses Karras sigmas when enabled. We intentionally reuse the Karras schedule for `EULER_DISCRETE`. The integrator determines ODE vs ancestral behavior.
 - Precision guardrails: `driver.py` observes UNet outputs for NaNs and escalates precision via `memory_management.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 - Diagnostics: set `CODEX_LOG_SAMPLER=1` to log sampler setup and per-step norms; set `CODEX_LOG_SIGMAS=1` to dump the sigma ladder (first/last and a compact summary) for schedule comparisons.

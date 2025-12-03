@@ -1042,32 +1042,44 @@ def build_app() -> FastAPI:
 
     @app.get('/api/samplers')
     def list_samplers() -> Dict[str, Any]:
+        from apps.backend.runtime.sampling.registry import get_sampler_spec
+
         samplers = []
         for entry in SAMPLER_OPTIONS:
+            if not entry.get("supported", True):
+                continue
+            spec = None
+            try:
+                spec = get_sampler_spec(entry["name"])
+            except Exception:
+                pass
             samplers.append(
                 {
                     "name": entry["name"],
                     "label": entry.get("label", str(entry["name"]).title()),
                     "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
                     "supported": bool(entry.get("supported", True)),
-                    "options": {},
+                    "default_scheduler": spec.default_scheduler if spec else None,
+                    "allowed_schedulers": sorted(spec.allowed_schedulers) if spec else [],
                 }
             )
         return {"samplers": samplers}
 
     @app.get('/api/schedulers')
     def list_schedulers() -> Dict[str, Any]:
-        return {
-            "schedulers": [
+        schedulers = []
+        for entry in SCHEDULER_OPTIONS:
+            if not entry.get("supported", True):
+                continue
+            schedulers.append(
                 {
                     "name": entry["name"],
                     "label": entry.get("label", entry["name"].title()),
                     "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
                     "supported": bool(entry.get("supported", True)),
                 }
-                for entry in SCHEDULER_OPTIONS
-            ]
-        }
+            )
+        return {"schedulers": schedulers}
 
     @app.get('/api/vaes')
     def list_vaes() -> Dict[str, Any]:

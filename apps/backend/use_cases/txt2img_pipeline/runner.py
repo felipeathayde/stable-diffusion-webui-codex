@@ -124,6 +124,19 @@ class Txt2ImgPipelineRunner:
         else:
             cond = sd_model.get_learned_conditioning(prompts)
             uncond = sd_model.get_learned_conditioning(negative_prompts)
+
+        # Guard against zeroed uncond (observed with some CLIP combos); fallback to empty prompt embedding
+        try:
+            uncond_cross = None
+            if isinstance(uncond, dict):
+                uncond_cross = uncond.get("crossattn")
+            if isinstance(uncond_cross, torch.Tensor) and torch.allclose(uncond_cross.abs().sum(), torch.tensor(0.0), atol=1e-6):
+                logger.warning("Unconditional cross-attn is all zeros; falling back to empty prompt embedding for uncond.")
+                fallback_uncond = sd_model.get_learned_conditioning([""])
+                if isinstance(fallback_uncond, dict):
+                    uncond = fallback_uncond
+        except Exception:
+            logger.debug("Uncond fallback check failed", exc_info=True)
         return cond, uncond
 
     def _log_conditioning(self, cond: object, uncond: object) -> None:

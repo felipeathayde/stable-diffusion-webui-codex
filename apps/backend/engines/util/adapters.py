@@ -16,6 +16,62 @@ _log = logging.getLogger(__name__)
 def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, default_distilled: float, default_denoise: float) -> CodexHighResConfig:
     payload = data or {}
     enabled = bool(payload.get("enable", False))
+    if not enabled:
+        return CodexHighResConfig(
+            enabled=False,
+            scale=1.0,
+            denoise=0.0,
+            upscaler=None,
+            second_pass_steps=0,
+            resize_x=0,
+            resize_y=0,
+            prompt="",
+            negative_prompt="",
+            cfg=default_cfg,
+            distilled_cfg=default_distilled,
+            sampler_name=None,
+            scheduler=None,
+            additional_modules=tuple(),
+            checkpoint_name=None,
+        )
+
+    prompt_value = payload.get("hr_prompt")
+    if prompt_value is None:
+        prompt_value = payload.get("prompt", "")
+    negative_value = payload.get("hr_negative_prompt")
+    if negative_value is None:
+        negative_value = payload.get("negative_prompt", "")
+
+    cfg_value = payload.get("hr_cfg")
+    if cfg_value is None:
+        cfg_value = payload.get("cfg", default_cfg)
+
+    distilled_value = payload.get("hr_distilled_cfg")
+    if distilled_value is None:
+        distilled_value = payload.get("distilled_cfg", default_distilled)
+
+    sampler_name = payload.get("hr_sampler_name")
+    if sampler_name is None:
+        sampler_name = payload.get("sampler")
+
+    scheduler = payload.get("hr_scheduler")
+    if scheduler is None:
+        scheduler = payload.get("scheduler")
+
+    modules_raw = payload.get("hr_additional_modules")
+    if modules_raw is None:
+        modules_raw = payload.get("additional_modules")
+    if modules_raw is None:
+        modules_tuple: tuple[str, ...] = tuple()
+    elif isinstance(modules_raw, (list, tuple)):
+        modules_tuple = tuple(str(m) for m in modules_raw)
+    else:
+        modules_tuple = (str(modules_raw),)
+
+    checkpoint_name = payload.get("hr_checkpoint_name")
+    if checkpoint_name is None:
+        checkpoint_name = payload.get("checkpoint")
+
     return CodexHighResConfig(
         enabled=enabled,
         scale=float(payload.get("scale", 2.0)) if enabled else 1.0,
@@ -24,14 +80,14 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
         second_pass_steps=int(payload.get("steps", 0)) if enabled else 0,
         resize_x=int(payload.get("resize_x", 0)) if enabled else 0,
         resize_y=int(payload.get("resize_y", 0)) if enabled else 0,
-        prompt=str(payload.get("hr_prompt", "")) if enabled else "",
-        negative_prompt=str(payload.get("hr_negative_prompt", "")) if enabled else "",
-        cfg=float(payload.get("hr_cfg", default_cfg)) if enabled else default_cfg,
-        distilled_cfg=float(payload.get("hr_distilled_cfg", default_distilled)) if enabled else default_distilled,
-        sampler_name=payload.get("hr_sampler_name") if enabled else None,
-        scheduler=payload.get("hr_scheduler") if enabled else None,
-        additional_modules=tuple(payload.get("hr_additional_modules", ())) if enabled else tuple(),
-        checkpoint_name=payload.get("hr_checkpoint_name") if enabled else None,
+        prompt=str(prompt_value),
+        negative_prompt=str(negative_value),
+        cfg=float(cfg_value),
+        distilled_cfg=float(distilled_value),
+        sampler_name=sampler_name,
+        scheduler=scheduler,
+        additional_modules=modules_tuple,
+        checkpoint_name=checkpoint_name,
     )
 
 
@@ -47,10 +103,19 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         req.seed,
         bool(req.highres_fix),
     )
+    metadata = dict(req.metadata or {})
+    distilled_cfg = 3.5
+    try:
+        meta_distilled = metadata.get("distilled_cfg_scale")
+        if meta_distilled is not None:
+            distilled_cfg = float(meta_distilled)
+    except Exception:
+        distilled_cfg = 3.5
+
     hires_cfg = _build_hires_config(
         req.highres_fix if isinstance(req.highres_fix, dict) else {},
         default_cfg=req.guidance_scale or 7.0,
-        default_distilled=3.5,
+        default_distilled=distilled_cfg,
         default_denoise=0.5,
     )
     processing = CodexProcessingTxt2Img(
@@ -59,14 +124,14 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         batch_size=req.batch_size or 1,
         iterations=1,
         guidance_scale=req.guidance_scale or 7.0,
-        distilled_guidance_scale=3.5,
+        distilled_guidance_scale=distilled_cfg,
         width=req.width,
         height=req.height,
         steps=req.steps or 20,
         sampler_name=req.sampler,
         scheduler=req.scheduler,
         seed=-1 if req.seed is None else int(req.seed),
-        metadata=dict(req.metadata or {}),
+        metadata=metadata,
     )
     if hires_cfg.enabled:
         processing.enable_hires(cfg=hires_cfg)

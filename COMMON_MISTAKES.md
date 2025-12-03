@@ -164,6 +164,10 @@ PY`
 **Cause + fix:** `UNet runtime is organized as a package; the model definition lives under apps/backend/runtime/common/nn/unet/model.py.`
 **Correct command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet/model.py`
 
+**Wrong command:** `python -m ast apps/backend/use_cases/txt2img_pipeline/runner.py apps/backend/engines/sd/sdxl.py`
+**Cause + fix:** `The stdlib ast module CLI accepts at most one input file; passing multiple paths is treated as extra arguments and causes a usage error. Run the syntax check separately for each file instead of batching them in a single call.`
+**Correct command:** `python -m ast apps/backend/use_cases/txt2img_pipeline/runner.py`
+
 **Wrong command:** `python -m pytest tests/backend/model_parser/test_sdxl_validation.py`
 **Cause + fix:** Neither the system Python (pyenv 3.12) nor the repo venv have `pytest` preinstalled; install it into `~/.venv` and run tests from that interpreter.
 **Correct command:** `~/.venv/bin/pip install -U pytest && ~/.venv/bin/python -m pytest tests/backend/model_parser/test_sdxl_validation.py`
@@ -318,6 +322,10 @@ PY`
 **Wrong command:** `ls docs/plan`
 **Cause and fix:** `Legacy docs/plan/ tree no longer exists—modern plans live under .sangoi/plans. Target the active directory instead of a removed path.`
 **Correct command:** `ls .sangoi/plans`
+
+**Wrong command:** `sed -n '1,200p' .sangoi/backend/overview`
+**Cause + fix:** `The target path is a directory, not a file; list its contents first and then run sed/cat on a specific file inside (for example a README.md) instead of trying to read the directory directly.`
+**Correct command:** `ls .sangoi/backend/overview`
 
 **Wrong command:** `apply_patch <<'PATCH'\n*** Update File: COMMON_MISTAKES.md\n@@\n **Correct command:** `rg -n "SDXL" .sangoi/plans`\n+\n+**Wrong command:** ...\n*** End Patch\nPATCH`
 **Cause and fix:** `Patch failed because the required '*** Begin Patch' header was missing. Include the Begin Patch line (and End Patch) whenever using apply_patch.`

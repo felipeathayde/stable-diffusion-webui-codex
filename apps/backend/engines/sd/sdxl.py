@@ -11,6 +11,7 @@ import torch
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime, assemble_engine_runtime
+from apps.backend.engines.util.adapters import build_txt2img_processing
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.core.state import state as backend_state
@@ -224,38 +225,30 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def txt2img(self, request, **kwargs: Any):  # type: ignore[override]
         """Run txt2img using the staged pipeline runner.
 
-        Avoids external builder imports; constructs a minimal CodexProcessingTxt2Img
-        from the request and prepares conditioning via SDXL runtime.
+        Uses the staged txt2img pipeline runner backed by CodexProcessingTxt2Img,
+        deriving hires/refiner overrides from the request payload.
         """
-        from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
+        from apps.backend.core.requests import Txt2ImgRequest
 
         self.ensure_loaded()
         _ = self._require_runtime()
+
+        if not isinstance(request, Txt2ImgRequest):
+            raise TypeError("StableDiffusionXL.txt2img expects Txt2ImgRequest")
 
         # Build processing descriptor from request
         raw_seed = int(getattr(request, "seed", -1) or -1)
         if raw_seed < 0:
             raw_seed = secrets.randbits(32) & 0x7FFFFFFF
 
-        proc = CodexProcessingTxt2Img(
-            prompt=str(getattr(request, "prompt", "")),
-            negative_prompt=str(getattr(request, "negative_prompt", "")),
-            width=int(getattr(request, "width", 1024) or 1024),
-            height=int(getattr(request, "height", 1024) or 1024),
-            steps=int(getattr(request, "steps", 30) or 30),
-            guidance_scale=float(getattr(request, "guidance_scale", 7.0) or 7.0),
-            distilled_guidance_scale=float(getattr(getattr(request, "metadata", {}), "get", lambda _k, _d=None: None)(
-                "distilled_cfg_scale", 3.5
-            ) or 3.5),
-            batch_size=int(getattr(request, "batch_size", 1) or 1),
-            iterations=1,
-            seed=raw_seed,
-            sampler_name=getattr(request, "sampler", None),
-            scheduler=getattr(request, "scheduler", None),
-            metadata=getattr(request, "metadata", {}),
-        )
-        # Bind current model
+        proc = build_txt2img_processing(request)
         proc.sd_model = self
+        proc.seed = raw_seed
+        proc.seeds = [raw_seed]
+        proc.subseed = -1
+        proc.subseeds = [-1]
+
+        # Bind current model
 
         # Defer conditioning to the pipeline runner (after prompt parsing / hires overrides)
         prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]

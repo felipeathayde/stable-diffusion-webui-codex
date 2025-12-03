@@ -310,7 +310,34 @@ class StableDiffusionXL(CodexDiffusionEngine):
         # Decode to RGB and package result
         decoded = decode_latent_batch(self, latents)
         images = latents_to_pil(decoded)
-        info = {
+        # Surface prompt/seed metadata so the frontend can show the real
+        # generation inputs instead of guessing from request/store state.
+        try:
+            primary_prompt = getattr(proc, "primary_prompt", proc.prompt)
+        except Exception:  # pragma: no cover - defensive only
+            primary_prompt = str(getattr(proc, "prompt", ""))
+
+        try:
+            primary_negative = getattr(proc, "primary_negative_prompt", proc.negative_prompt)
+        except Exception:  # pragma: no cover - defensive only
+            primary_negative = str(getattr(proc, "negative_prompt", ""))
+
+        all_seeds = list(getattr(proc, "all_seeds", []) or [])
+        seed_value = None
+        if all_seeds:
+            try:
+                seed_value = int(all_seeds[0])
+            except Exception:  # pragma: no cover - defensive only
+                seed_value = None
+        else:
+            raw_seed = getattr(proc, "seed", None)
+            if raw_seed is not None:
+                try:
+                    seed_value = int(raw_seed)
+                except Exception:  # pragma: no cover - defensive only
+                    seed_value = None
+
+        info: dict[str, object] = {
             "engine": self.engine_id,
             "task": "txt2img",
             "width": int(proc.width),
@@ -320,6 +347,14 @@ class StableDiffusionXL(CodexDiffusionEngine):
             "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
             "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
         }
+        if primary_prompt:
+            info["prompt"] = str(primary_prompt)
+        if primary_negative:
+            info["negative_prompt"] = str(primary_negative)
+        if seed_value is not None:
+            info["seed"] = int(seed_value)
+        if all_seeds:
+            info["all_seeds"] = [int(s) for s in all_seeds]
         yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
 
     def _prepare_prompt_wrappers(

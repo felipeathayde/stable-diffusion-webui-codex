@@ -129,11 +129,13 @@ class Txt2ImgPipelineRunner:
         non_empty_negative = any(str(p or "").strip() for p in negative_prompts)
         if non_empty_negative:
             uncond_cross = uncond.get("crossattn") if isinstance(uncond, dict) else None
-            if isinstance(uncond_cross, torch.Tensor) and torch.allclose(uncond_cross.abs().sum(), torch.tensor(0.0), atol=1e-6):
-                raise RuntimeError(
-                    "Unconditional embedding returned all zeros for a non-empty negative prompt. "
-                    "Check CLIP encoders or prompt handling before sampling."
-                )
+            if isinstance(uncond_cross, torch.Tensor):
+                norm_uncond = float(uncond_cross.abs().sum().item())
+                if norm_uncond < 1e-6:
+                    raise RuntimeError(
+                        f"Unconditional embedding returned all zeros for negative prompt(s) {negative_prompts}. "
+                        "Check CLIP encoders or prompt handling before sampling."
+                    )
 
         return cond, uncond
 

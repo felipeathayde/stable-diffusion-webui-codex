@@ -1,7 +1,8 @@
+<!-- tags: frontend, interface, overview -->
 # apps/interface Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-11-03
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -23,3 +24,4 @@ Status: Active
 - 2025-11-03: SDXL view now exposes "Save Profile" backed by store persistence to mirror the Test harness.
 - 2025-11-14: API requests are built via `src/api/payloads.ts` (Zod schemas) — payload builders trim prompts and always attach the per-tab engine/model metadata (even for img2img).
 - 2025-12-03: Txt2Img prompt schema now rejects empty prompts at the frontend (`PromptSchema`), surfacing a validation error instead of silently sending `prompt=""` to the backend.
+- 2025-12-03: Vitest added for frontend unit tests (`npm test`) to cover prompt serialization and future UI logic.

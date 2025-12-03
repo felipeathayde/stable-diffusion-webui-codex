@@ -1,7 +1,8 @@
+<!-- tags: frontend, interface-src, overview -->
 # apps/interface/src Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -23,3 +24,4 @@ Status: Active
 ## Notes
 - Follow the frontend guidelines in `.sangoi/frontend/guidelines/` when adding new modules.
 - Keep API types and schemas synchronized with `.sangoi/backend/interfaces/`.
+- 2025-12-03: Vitest is available (`npm test`) for unit coverage; prompt serialization tests live under `components/prompt/`.

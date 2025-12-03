@@ -1,7 +1,8 @@
+<!-- tags: frontend, components, prompt -->
 # apps/interface/src/components Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -10,3 +11,4 @@ Status: Active
 ## Notes
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
+- Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.

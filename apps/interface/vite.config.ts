@@ -1,4 +1,6 @@
-import { defineConfig, loadEnv } from 'vite'
+// tags: vite-config, frontend-build
+import { defineConfig } from 'vitest/config'
+import { loadEnv } from 'vite'
 import path from 'node:path'
 import vue from '@vitejs/plugin-vue'
 import tailwind from '@tailwindcss/vite'
@@ -64,6 +66,10 @@ export default defineConfig(({ mode }) => {
         port: WEB_PORT,
         protocol: HMR_PROTOCOL as 'ws' | 'wss'
       }
+    },
+    test: {
+      environment: 'node',
+      include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}']
     }
   }
 })

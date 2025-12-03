@@ -1,3 +1,4 @@
+// tags: prompt, serialization, tiptap
 import { Node, mergeAttributes } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import PromptTokenChip from './PromptTokenChip.vue'
@@ -39,20 +40,40 @@ export const PromptToken = Node.create({
   },
 })
 
+function nodeTypeName(node: any): string | undefined {
+  if (!node || typeof node !== 'object') return undefined
+  if (typeof node.type === 'string') return node.type
+  if (typeof node.type?.name === 'string') return node.type.name
+  return undefined
+}
+
+function forEachChild(node: any, visit: (child: any) => void): void {
+  const content = (node as any)?.content
+  if (!content) return
+  if (Array.isArray(content)) {
+    content.forEach(visit)
+  } else if (typeof content.forEach === 'function') {
+    content.forEach(visit)
+  }
+}
+
 export function serializePrompt(doc: any): string {
   // Walk the ProseMirror document and build the legacy prompt string
   const parts: string[] = []
   function walk(node: any) {
-    if (node.type.name === 'text') {
-      parts.push(node.text || '')
-    } else if (node.type.name === 'promptToken') {
-      const { kind, name, weight, enabled } = node.attrs as PromptTokenAttrs
-      if (!enabled) return
-      if (kind === 'lora') parts.push(`<lora:${name}:${Number(weight).toFixed(2)}>`)
-      else if (kind === 'ti') parts.push(`(${name}:${Number(weight).toFixed(2)})`)
-      else parts.push(name)
+    const type = nodeTypeName(node)
+    if (type === 'text') {
+      const text = typeof node.text === 'string' ? node.text : typeof node.textContent === 'string' ? node.textContent : ''
+      if (text) parts.push(text)
+    } else if (type === 'promptToken') {
+      const { kind, name, weight, enabled } = (node as { attrs?: Partial<PromptTokenAttrs> }).attrs ?? {}
+      if (enabled === false) return
+      const safeWeight = Number.isFinite(Number(weight)) ? Number(weight) : 1
+      if (kind === 'lora') parts.push(`<lora:${name}:${safeWeight.toFixed(2)}>`)
+      else if (kind === 'ti') parts.push(`(${name}:${safeWeight.toFixed(2)})`)
+      else if (name) parts.push(String(name))
     }
-    if (node.content) node.content.forEach(walk)
+    forEachChild(node, walk)
   }
   walk(doc)
   return parts.join('')
@@ -93,4 +114,3 @@ export function parsePromptToTiptap(prompt: string) {
   }
   return { type: 'doc', content: [{ type: 'paragraph', content: nodes }] }
 }
-

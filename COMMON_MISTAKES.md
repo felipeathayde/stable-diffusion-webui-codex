@@ -481,3 +481,22 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
 Cause and fix: The trace script imports `apps.backend`, which in turn imports `torch` via the runtime memory module; running it against the system Python without the project venv caused `ModuleNotFoundError: No module named 'torch'`. Use the project virtualenv (and required `PYTHONPATH`) so `torch` and internal modules are available.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
+**Wrong command:** `ls docs/plan`
+**Cause + fix:** The repository has no `docs/plan/` directory; list the actual docs root before drilling into paths.
+**Correct command:** `ls docs`
+
+**Wrong command:** `ls docs/legacy`
+**Cause + fix:** There is no `docs/legacy/` tree; inspect the existing docs layout instead of assuming a legacy folder.
+**Correct command:** `ls docs`
+
+**Wrong command:** `ls .legacy`
+**Cause + fix:** The repo does not ship a `.legacy` directory; use find to confirm before targeting the path.
+**Correct command:** `find . -maxdepth 2 -type d -name '.legacy'`
+
+**Wrong command:** `npm install --save-dev vitest`
+**Cause + fix:** Default npm cache under `~/.npm` is owned by root, so installs fail with EACCES; point npm to a writable user cache.
+**Correct command:** `npm install --save-dev vitest --cache /home/lucas/.codextools/npm-cache`
+
+**Wrong command:** `npm install --save-dev vitest --cache $HOME/.npm-cache`
+**Cause + fix:** The fallback cache path `~/.npm-cache` was also root-owned; use a fresh cache directory under `.codextools` instead.
+**Correct command:** `npm install --save-dev vitest --cache /home/lucas/.codextools/npm-cache`

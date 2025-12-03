@@ -65,7 +65,6 @@ import uvicorn
 
 from apps.backend.codex import options as codex_options
 from apps.backend.infra.config import args as config_args
-from apps.backend.interfaces.api import codex_api
 from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.models import api as model_api
 from apps.backend.runtime.memory import memory_management as mem_management
@@ -2234,9 +2233,6 @@ def build_app() -> FastAPI:
     # Serve built UI after API routes so /api/* is matched before the SPA fallback
     if os.path.isdir(_ui_dist_dir):
         app.mount('/', SPAStaticFiles(directory=_ui_dist_dir, html=True), name='ui')
-
-    # Legacy callbacks are not used in the native backend entrypoint
-    app.include_router(codex_api.router)
     logging.getLogger('backend.api').info('build_app finished')
     if not isinstance(app, FastAPI):
         raise RuntimeError(f"build_app invariant violated: expected FastAPI, got {type(app)}")
@@ -2298,11 +2294,6 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
                 "torch_version": None,
                 "cuda_version": None,
             }
-
-        try:
-            fallback.include_router(codex_api.router)
-        except Exception:
-            pass
 
         app = fallback
     global _APP

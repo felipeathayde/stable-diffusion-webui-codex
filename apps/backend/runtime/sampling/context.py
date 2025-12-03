@@ -121,27 +121,23 @@ def _uniform_schedule_from_predictor(steps: int, predictor, *, device: torch.dev
 
 
 def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    """Forge-style 'simple' schedule: sample directly from the predictor's sigma ladder.
+    """Forge-style 'simple' schedule built via predictor sigma/timestep.
 
-    Mirrors sd_schedulers.simple_scheduler:
-    - Evenly stride over predictor.sigmas starting from the highest index.
-    - Always append terminal 0 as the last sigma.
+    Mirrors `ForgeScheduleLinker.get_sigmas(n)`:
+    - Construct a linear ladder of timesteps from high→low over the predictor domain.
+    - Map timesteps back to sigmas via `predictor.sigma(t)`.
+    - Append a terminal 0 as the last sigma.
     """
-    sigmas = getattr(predictor, "sigmas", None)
-    if sigmas is None:
+    base_sigmas = getattr(predictor, "sigmas", None)
+    if base_sigmas is None:
         raise RuntimeError("predictor does not expose 'sigmas' needed for simple scheduler")
-    sigmas = torch.as_tensor(sigmas, device=device, dtype=dtype)
-    total = int(sigmas.numel())
+    total = int(len(base_sigmas))
     if total == 0:
         raise RuntimeError("predictor.sigmas is empty; cannot build simple sigma schedule")
 
-    step_size = max(total / max(int(steps), 1), 1.0)
-    indices = []
-    for i in range(int(steps)):
-        idx = total - 1 - int(i * step_size)
-        idx = max(0, min(total - 1, idx))
-        indices.append(idx)
-    ladder = sigmas[indices]
+    t_max = total - 1
+    t = torch.linspace(float(t_max), 0.0, int(steps), device=device, dtype=dtype)
+    ladder = predictor.sigma(t)
     return _append_zero(ladder, device=device, dtype=dtype)
 
 

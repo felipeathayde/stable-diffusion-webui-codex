@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   ModelInfo,
   SamplerInfo,
@@ -171,6 +171,14 @@ export const useSdxlStore = defineStore('sdxl', () => {
     running.value = false
   }
 
+  // Clear validation errors when the user edits the prompt/negative
+  watch([prompt, negativePrompt], () => {
+    if (status.value === 'error') {
+      status.value = 'idle'
+      errorMessage.value = ''
+    }
+  })
+
   async function generate(): Promise<void> {
     stopStream()
     status.value = 'running'
@@ -182,6 +190,14 @@ export const useSdxlStore = defineStore('sdxl', () => {
     profileMessage.value = ''
     lastSeed.value = seed.value
 
+    const promptText = prompt.value.trim()
+    if (!promptText) {
+      status.value = 'error'
+      running.value = false
+      errorMessage.value = 'Prompt must not be empty'
+      return
+    }
+
     await ensureEngine()
 
     if (selectedModel.value) {
@@ -191,7 +207,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     let payload: Txt2ImgRequest
     try {
       payload = buildTxt2ImgPayload({
-        prompt: prompt.value,
+        prompt: promptText,
         negativePrompt: negativePrompt.value,
         width: width.value,
         height: height.value,

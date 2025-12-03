@@ -469,3 +469,7 @@ Correct command: python - <<'PY'
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/notes && head -n 20 docs/notes/2025-10-22-roadmap.md`
 **Cause + fix:** `The \`docs/notes\` directory currently only contains \`legacy-vae-and-dtype.md\`; a \`2025-10-22-roadmap.md\` file was assumed but does not exist. Discover available notes with \`ls\` and open the actual filenames instead of guessing.`
 **Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/notes && head -n 20 docs/notes/legacy-vae-and-dtype.md`
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,620p' apps/backend/runtime/sampling/sampling_function_inner.py
+Cause and fix: The sampling inner loop lives in `apps/backend/runtime/sampling/__init__.py`; there is no separate `sampling_function_inner.py` module, so sed failed with ENOENT. Point sed at the package file that defines `sampling_function_inner`.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,620p' apps/backend/runtime/sampling/__init__.py

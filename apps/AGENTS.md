@@ -1,7 +1,7 @@
 # apps Overview
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2025-11-03
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: Active
 - 2025-11-03: Logging tab now includes a "Trace Debug" toggle that sets `CODEX_TRACE_DEBUG=1`, enabling the global call tracer behind `--trace-debug`.
 - 2025-11-25: BIOS Logging/Debug tab gained sampler diagnostics toggles: `CODEX_LOG_SAMPLER` (per-step norms) and `CODEX_LOG_SIGMAS` (sigma ladder dump).
 - 2025-11-14: BIOS DEBUG tab mirrors backend defaults for `CODEX_TRACE_DEBUG_MAX_PER_FUNC` (10 by default) so the displayed values stay in sync with `apps.backend.infra.config.args`.
+- 2025-12-03: BIOS DEBUG tab now exposes a "Force Native Sampler" toggle bound to `CODEX_SAMPLER_FORCE_NATIVE`, allowing operators to disable k-diffusion routing for diagnostics.

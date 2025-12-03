@@ -59,6 +59,8 @@ trace.json
 /test/results.xml
 coverage.xml
 **/tests/**/expectations
+# Local SDXL debug renders at repo root
+/sdxl*.png
 # Keep .sangoi/docs/ docs under version control, but still ignore heavy reports.
 # (Replace previous blanket ignore.)
 !.sangoi/docs/

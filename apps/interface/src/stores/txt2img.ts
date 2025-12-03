@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import type {
   ModelInfo,
   SamplerInfo,
@@ -16,7 +16,7 @@ import {
   subscribeTask,
 } from '../api/client'
 import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
-import type { Txt2ImgRequest } from '../api/payloads'
+import type { Txt2ImgRequest, HighresFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
@@ -48,6 +48,15 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
   const batchSize = ref(1)
   const batchCount = ref(1)
   const styles = ref<string[]>([])
+  const highres = reactive<HighresFormState>({
+    enabled: false,
+    denoise: 0.4,
+    scale: 1.5,
+    resizeX: 0,
+    resizeY: 0,
+    steps: 0,
+    upscaler: 'Use same upscaler',
+  })
   const lastSeed = ref<number | null>(null)
 
   const models = ref<ModelInfo[]>([])
@@ -151,6 +160,7 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
         batchCount: batchCount.value,
         styles: styles.value,
         device: quicksettings.currentDevice,
+        highres,
       })
     } catch (error) {
       status.value = 'error'
@@ -252,6 +262,7 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
     batchSize,
     batchCount,
     styles,
+    highres,
     models,
     samplers,
     schedulers,

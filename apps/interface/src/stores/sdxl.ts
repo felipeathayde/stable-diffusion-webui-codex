@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, reactive } from 'vue'
 import type {
   ModelInfo,
   SamplerInfo,
@@ -16,7 +16,7 @@ import {
   subscribeTask,
 } from '../api/client'
 import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
-import type { Txt2ImgRequest } from '../api/payloads'
+import type { Txt2ImgRequest, HighresFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
 
 const ENGINE_ID = 'sdxl'
@@ -53,6 +53,15 @@ export const useSdxlStore = defineStore('sdxl', () => {
   const batchSize = ref(1)
   const batchCount = ref(1)
   const styles = ref<string[]>([])
+  const highres = reactive<HighresFormState>({
+    enabled: false,
+    denoise: 0.4,
+    scale: 1.5,
+    resizeX: 0,
+    resizeY: 0,
+    steps: 0,
+    upscaler: 'Use same upscaler',
+  })
   const lastSeed = ref<number | null>(null)
 
   const models = ref<ModelInfo[]>([])
@@ -222,6 +231,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
         device: quicksettings.currentDevice,
         engine: ENGINE_ID,
         model: selectedModel.value,
+        highres,
       })
     } catch (error) {
       status.value = 'error'
@@ -356,6 +366,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
     batchSize,
     batchCount,
     styles,
+    highres,
     lastSeed,
     models,
     samplers,

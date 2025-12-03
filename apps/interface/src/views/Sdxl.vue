@@ -69,6 +69,15 @@
             @random-seed="store.randomizeSeed"
             @reuse-seed="store.reuseSeed"
           />
+          <HighresSettingsCard
+            v-model:enabled="store.highres.enabled"
+            v-model:denoise="store.highres.denoise"
+            v-model:scale="store.highres.scale"
+            v-model:steps="store.highres.steps"
+            v-model:upscaler="store.highres.upscaler"
+            :base-width="store.width"
+            :base-height="store.height"
+          />
           <div class="toolbar">
             <div class="qs-actions">
               <button class="btn btn-sm btn-outline" type="button" v-for="p in resolutionPresets" :key="p[0] + 'x' + p[1]" @click="applyResolutionPreset(p[0], p[1])">{{ p[0] }}×{{ p[1] }}</button>
@@ -131,6 +140,7 @@ import LoraModal from '../components/modals/LoraModal.vue'
 import TextualInversionModal from '../components/modals/TextualInversionModal.vue'
 import PromptFields from '../components/prompt/PromptFields.vue'
 import GenerationSettingsCard from '../components/GenerationSettingsCard.vue'
+import HighresSettingsCard from '../components/HighresSettingsCard.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import StyleEditorModal from '../components/modals/StyleEditorModal.vue'
 import { usePresetsStore } from '../stores/presets'

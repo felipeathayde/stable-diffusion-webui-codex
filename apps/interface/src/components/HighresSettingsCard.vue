@@ -2,12 +2,13 @@
   <div class="highres-card">
     <div class="hr-header">
       <span class="label-muted">Highres (second pass)</span>
-      <label class="hr-toggle">
-        <input type="checkbox" :checked="enabled" @change="onToggle" />
-        <span>{{ enabled ? 'Enabled' : 'Disabled' }}</span>
-      </label>
+      <button class="hr-switch" type="button" @click="toggle">
+        <span class="hr-switch-track" :data-on="enabled ? '1' : '0'">
+          <span class="hr-switch-thumb" />
+        </span>
+      </button>
     </div>
-    <div class="hr-grid" :data-enabled="enabled ? '1' : '0'">
+    <div v-if="enabled" class="hr-grid">
       <div class="hr-cell">
         <label class="label-muted">Scale</label>
         <div class="row-inline">
@@ -115,8 +116,8 @@ const targetHeight = computed(() => {
   return Math.round(props.baseHeight * props.scale)
 })
 
-function onToggle(event: Event): void {
-  emit('update:enabled', (event.target as HTMLInputElement).checked)
+function toggle(): void {
+  emit('update:enabled', !props.enabled)
 }
 
 function clampScale(value: number): number {
@@ -156,4 +157,3 @@ function onUpscalerChange(event: Event): void {
 </script>
 
 <!-- styles in styles/components/highres-settings-card.css -->
-

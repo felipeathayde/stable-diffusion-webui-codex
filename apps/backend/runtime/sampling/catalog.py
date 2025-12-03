@@ -158,8 +158,9 @@ SUPPORTED_SCHEDULERS: Set[str] = {entry["name"] for entry in SCHEDULER_OPTIONS i
 
 # Default scheduler per sampler when user selects "Automatic" or "Use same".
 SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
-    "euler": "euler_discrete",
-    "euler a": "euler_discrete",
+    # Euler-family samplers default to the predictor ladder (Forge-style "simple" schedule).
+    "euler": "simple",
+    "euler a": "simple",
     "euler cfg++": "euler_discrete",
     "euler a cfg++": "euler_discrete",
     "heun": "karras",

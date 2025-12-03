@@ -120,6 +120,31 @@ def _uniform_schedule_from_predictor(steps: int, predictor, *, device: torch.dev
     return _append_zero(ladder, device=device, dtype=dtype)
 
 
+def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Forge-style 'simple' schedule: sample directly from the predictor's sigma ladder.
+
+    Mirrors sd_schedulers.simple_scheduler:
+    - Evenly stride over predictor.sigmas starting from the highest index.
+    - Always append terminal 0 as the last sigma.
+    """
+    sigmas = getattr(predictor, "sigmas", None)
+    if sigmas is None:
+        raise RuntimeError("predictor does not expose 'sigmas' needed for simple scheduler")
+    sigmas = torch.as_tensor(sigmas, device=device, dtype=dtype)
+    total = int(sigmas.numel())
+    if total == 0:
+        raise RuntimeError("predictor.sigmas is empty; cannot build simple sigma schedule")
+
+    step_size = max(total / max(int(steps), 1), 1.0)
+    indices = []
+    for i in range(int(steps)):
+        idx = total - 1 - int(i * step_size)
+        idx = max(0, min(total - 1, idx))
+        indices.append(idx)
+    ladder = sigmas[indices]
+    return _append_zero(ladder, device=device, dtype=dtype)
+
+
 def _sgm_uniform_schedule(steps: int, predictor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
     start = predictor.sigma_to_t(torch.as_tensor(float(predictor.sigma_max), device=device, dtype=dtype))
     end = predictor.sigma_to_t(torch.as_tensor(float(predictor.sigma_min), device=device, dtype=dtype))
@@ -242,8 +267,12 @@ def build_sigma_schedule(
 
     kind = SchedulerName.from_string(scheduler_name)
 
-    if kind in (SchedulerName.AUTOMATIC, SchedulerName.SIMPLE):
+    if kind is SchedulerName.AUTOMATIC:
         return torch.linspace(sigma_max, sigma_min, steps + 1, device=device, dtype=dtype)
+    if kind is SchedulerName.SIMPLE:
+        if predictor is None:
+            raise RuntimeError("predictor required for simple scheduler")
+        return _simple_schedule_from_predictor(steps, predictor, device=device, dtype=dtype)
     if kind in (SchedulerName.KARRAS, SchedulerName.EULER_DISCRETE):
         return _karras_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
     if kind is SchedulerName.EXPONENTIAL:

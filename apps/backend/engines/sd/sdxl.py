@@ -398,7 +398,11 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
             flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled_g.shape[0], 1).to(pooled_g)
 
-            if is_negative and all(x == "" for x in prompt):
+            # Only zero-out negative embeddings when all underlying texts are truly empty.
+            raw_texts = [str(x or "") for x in prompt]
+            force_zero_negative_prompt = is_negative and all(t.strip() == "" for t in raw_texts)
+
+            if force_zero_negative_prompt:
                 if pooled_l is not None:
                     pooled_l = torch.zeros_like(pooled_l)
                 pooled_g = torch.zeros_like(pooled_g)

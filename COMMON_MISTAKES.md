@@ -458,6 +458,10 @@ Correct command: python - <<'PY'
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/tasks && sed -n '1,200p' .sangoi/tasks/README.md`
 **Cause and fix:** The `.sangoi/tasks` directory exposes task specs as `F*.md` files and has no `README.md`; attempting to read a non-existent README raises ENOENT. Inspect the relevant `F*.md` task files directly instead of assuming a README.
 **Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/tasks && sed -n '1,200p' .sangoi/tasks/F6-refinements.md`
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '1,260p' apps/backend/runtime/text_processing/classic.py
+Cause and fix: The classic text processing engine lives in `apps/backend/runtime/text_processing/classic_engine.py`; there is no `classic.py` module in that package, so sed failed with ENOENT. Point sed at the actual engine file.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '1,260p' apps/backend/runtime/text_processing/classic_engine.py
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs && ls docs/plan && ls docs/legacy`
 **Cause + fix:** `The repository only exposes \`docs/notes\` and \`docs/troubleshooting\`; historical \`docs/plan\` and \`docs/legacy\` paths were moved into \`.sangoi/plans\` and \`.sangoi/research\`. List the real locations instead of chaining non-existent subdirectories.`
 **Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs && ls .sangoi/plans && ls .sangoi/research`

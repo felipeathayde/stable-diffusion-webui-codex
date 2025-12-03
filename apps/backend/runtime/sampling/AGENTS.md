@@ -7,7 +7,7 @@
 ## Key Components
 - `context.py`
   - `SchedulerName` enum: canonical scheduler identifiers used to build sigma schedules (automatic/simple, karras/euler_discrete, exponential/polyexponential, uniform/sgm_uniform, ddim/ddim_uniform, normal, beta, linear_quadratic, kl_optimal, turbo, align-your-steps variants).
-  - `build_sigma_schedule(...)`: returns a tensor of sigmas (length = steps + 1) ending with terminal 0; accepts a predictor to derive ladders for predictor-aware schedules (uniform/normal/ddim/sgm_uniform/turbo) and an `is_sdxl` hint for AYS tables.
+  - `build_sigma_schedule(...)`: returns a tensor of sigmas (length = steps + 1) ending with terminal 0; accepts a predictor to derive ladders for predictor-aware schedules (simple/uniform/normal/ddim/sgm_uniform/turbo) and an `is_sdxl` hint for AYS tables.
   - `SamplingContext`: immutable inputs for the sampler loop (sampler kind, schedule, noise settings, prediction type/sigma bounds).
 - `registry.py`
   - `SamplerSpec` dataclass: canonical sampler name/kind, aliases, default scheduler, and allowed schedulers per sampler (Forge + ComfyUI surface).
@@ -22,6 +22,7 @@
 - Scheduler vs Sampler: the scheduler here determines only the sigma sequence; the sampler integrator (Euler, DPM++ 2M, UniPC, etc.) is selected separately by `SamplerKind` in `driver.py`.
 - Aliases: the API/UI may send diffusers class names. We normalize an explicit set (auto/simple, karras, exponential/polyexponential, euler_discrete, uniform/sgm_uniform, ddim/ddim_uniform, normal, beta, linear_quadratic, kl_optimal, turbo, align-your-steps variants). Unknown names raise `ValueError` with the supported list.
 - Karras Sigmas: Euler in diffusers typically uses Karras sigmas when enabled. We intentionally reuse the Karras schedule for `EULER_DISCRETE`. The integrator determines ODE vs ancestral behavior.
+- Simple schedule: `SIMPLE` mirrors Forge's `simple_scheduler`, sampling directly from the predictor's `sigmas` ladder (highest-to-lowest) and appending a terminal 0. Euler/Euler a default to this schedule when the UI scheduler is "Automatic".
 - Precision guardrails: `driver.py` observes UNet outputs for NaNs and escalates precision via `memory_management.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 - Diagnostics: set `CODEX_LOG_SAMPLER=1` to log sampler setup and per-step norms; set `CODEX_LOG_SIGMAS=1` to dump the sigma ladder (first/last and a compact summary) for schedule comparisons.
 

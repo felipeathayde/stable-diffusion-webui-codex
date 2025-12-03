@@ -1,9 +1,9 @@
 // tags: vite-config, frontend-build
-import { defineConfig } from 'vitest/config'
-import { loadEnv } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import path from 'node:path'
 import vue from '@vitejs/plugin-vue'
 import tailwind from '@tailwindcss/vite'
+import type { UserConfig as VitestUserConfig } from 'vitest'
 
 // Restart vite dev server if root .env or Tailwind/PostCSS configs change
 const watchRootConfigs = () => ({
@@ -47,6 +47,11 @@ export default defineConfig(({ mode }) => {
     .filter(Boolean)
     .forEach((h) => allowedHosts.add(h))
 
+  const vitestTestConfig: VitestUserConfig['test'] = {
+    environment: 'node',
+    include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+  }
+
   return {
     envDir: repoRoot,
     plugins: [vue(), tailwind(), watchRootConfigs()],
@@ -67,9 +72,6 @@ export default defineConfig(({ mode }) => {
         protocol: HMR_PROTOCOL as 'ws' | 'wss'
       }
     },
-    test: {
-      environment: 'node',
-      include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}']
-    }
+    test: vitestTestConfig
   }
 })

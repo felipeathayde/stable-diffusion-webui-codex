@@ -15,6 +15,8 @@
 - `driver.py`
   - `CodexSampler` builds the sampling context, validates scheduler compatibility, and dispatches either the native loop (CFG + precision fallback) or a k-diffusion sampler runner based on `SamplerKind`.
   - Restart sampler is served via `k_diffusion_extra.restart_sampler`; UniPC/UniPC-BH2 are wired through `k_diffusion_extra` (BH2 currently reuses the UniPC update until a dedicated integrator is ported).
+- `__init__.py`
+  - Sampling inner loop no longer emits Forge-era low-VRAM print warnings; memory pressure handling remains via `memory_management.get_free_memory` without stdout noise.
 
 ## Design Notes
 - Scheduler vs Sampler: the scheduler here determines only the sigma sequence; the sampler integrator (Euler, DPM++ 2M, UniPC, etc.) is selected separately by `SamplerKind` in `driver.py`.

@@ -197,19 +197,6 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
 
         free_memory = memory_management.get_free_memory(x_in.device)
 
-        if (not args.disable_gpu_warning) and x_in.device.type == 'cuda':
-            free_memory_mb = free_memory / (1024.0 * 1024.0)
-            safe_memory_mb = 1536.0
-            if free_memory_mb < safe_memory_mb:
-                print(f"\n\n----------------------")
-                print(f"[Low GPU VRAM Warning] Your current GPU free memory is {free_memory_mb:.2f} MB for this diffusion iteration.")
-                print(f"[Low GPU VRAM Warning] This number is lower than the safe value of {safe_memory_mb:.2f} MB.")
-                print(f"[Low GPU VRAM Warning] If you continue, you may cause NVIDIA GPU performance degradation for this diffusion process, and the speed may be extremely slow (about 10x slower).")
-                print(f"[Low GPU VRAM Warning] To solve the problem, you can set the 'GPU Weights' (on the top of page) to a lower value.")
-                print(f"[Low GPU VRAM Warning] If you cannot find 'GPU Weights', you can click the 'all' option in the 'UI' area on the left-top corner of the webpage.")
-                print(f"[Low GPU VRAM Warning] If you want to take the risk of NVIDIA GPU fallback and test the 10x slower speed, you can (but are highly not recommended to) add '--disable-gpu-warning' to CMD flags to remove this warning.")
-                print(f"----------------------\n\n")
-
         for i in range(1, len(to_batch_temp) + 1):
             batch_amount = to_batch_temp[:len(to_batch_temp) // i]
             input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]

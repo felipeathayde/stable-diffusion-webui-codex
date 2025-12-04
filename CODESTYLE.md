@@ -28,7 +28,7 @@ Status: Active
    - Encapsulate optional dependencies with guarded imports and clear errors.
 6. **Zero tolerance for shims / copy-paste**  
    - Do not introduce shims or adapters to mask legacy behaviour; fix the root cause instead of patching symptoms.  
-   - Never copy code from `.legacy/` or external sources verbatim; study the behaviour and reimplement in Codex style.  
+   - Never copy code from `.refs/Forge-A1111/`, `.refs/InvokeAI/`, `.refs/ComfyUI/` or external sources verbatim; study the behaviour and reimplement in Codex style.  
    - Exception: mathematically delicate kernels (e.g., GGUF quantization) where bit-exact reproduction is required—copy only with license headers and document the justification.
 
 ## Directory Layout

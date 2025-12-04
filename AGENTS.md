@@ -32,6 +32,8 @@ You do not rush. Speed kills quality. Fix root causes. Skip hacks. Skip shims. Y
 
 Do not reinvent what already exists and works. Fix root causes. Leave the clever duct tape on the shelf. When you do not know, you research, you ask, and you write down what you learned so the next time costs less. Put the notes where you can find them, not in the wind.
 
+Before you build, you prove what already exists. You search the house first. Run `rg -n <keyword>` at the root, open `.sangoi/*`, and read like you mean it. If there is no honest way to reuse, create the new piece with restraint and write the reason in the handoff so the next soul knows why another brick was laid.
+
 Project context lives in `.sangoi`. If there is a `AGENTS.md`, you read it. If there is a hidden corner at `.sangoi`, you check it. You add what you learn so the next person does not have to hunt.
 
 You look in `.sangoi` first. The truth sits there now.
@@ -39,9 +41,7 @@ You look in `.sangoi` first. The truth sits there now.
 - Research and analysis live in `.sangoi/{research,analysis}/`. Reference and specs in `.sangoi/reference/` (features, API, e-Doc templates).
 - Policies/How‑to in `.sangoi/{policies,howto}/`. Planning in `.sangoi/planning/`. Assets in `.sangoi/assets/`.
 - Tools in `.sangoi/.tools/`. You call them by their names:  
-  `node .sangoi/.tools/build-inline-styles.mjs`  
-  `bash .sangoi/.tools/link-check.sh .`  
-  `PYTHONPATH=$HOME/.netsuite $HOME/.venv/bin/python .sangoi/.tools/sync_ab_records.py --dry-run`
+  `bash .sangoi/.tools/link-check.sh .sangoi`
 
 - Sub‑agents (AGENTS.md across the project) tell the truth or they shut up. If you touch a folder, you touch its `AGENTS.md`. Same day. Same commit.
 - You add one when a folder earns moving parts. Minimum you keep: Purpose. Key files with real paths. Notes/decisions that survived daylight. Last Review with a real date.
@@ -67,17 +67,29 @@ git push -u origin HEAD
 touch .git/codex-stamp
 ```
 
-The goal is not a clone with duct tape. The goal is a rebuild from scratch of the classic A1111 Stable Diffusion WebUI that preserves its functional semantics and throws away its structural debt. Loader heuristics, conditioning flow, device handling, observable behavior stay true. Architecture, boundaries, and truthfulness get reborn. Think maintainable and fast, with the same public face.
+You do not plan or write anything under the false god of “compat.” 
+- Legacy code is reference only. 
+- The default core for attention is PyTorch SDPA. 
+- You read the `.refs` sources with a cold eye. 
+- You list risks, side effects, globals. 
+- Codex prefix or suffix used where it actually adds meaning.
+- `.refs/Forge-A1111`, `.refs/InvokeAI`, and `.refs/ComfyUI` are museums. Read only.
+You do not keep or copy `.refs` code to `apps`. You redesign in Codex style: dataclasses and enums, small modules with clear seams, explicit errors, readable names. 
 
-You do not plan or write anything under the false god of “compat.” Legacy code is reference only. The default core for attention is PyTorch SDPA. You read the legacy sources with a cold eye. You list risks, side effects, globals. You do not keep or copy legacy code. You redesign in Codex style: dataclasses and enums, small modules with clear seams, explicit errors, readable names. You add validation points at the borders: logs, invariants, device, dtype, shape checks, and a clean migration path. You do not ship until acceptance is met: no legacy imports, a clear API, explicit errors, the five-options summary recorded with your rationale, docs updated, and the Codex prefix or suffix used where it actually adds meaning.
+Imports outside `/apps` are banned. Only `apps.*` lives in active code. If a feature has not been ported, you raise `NotImplementedError("<feature> not yet ported")`. You follow the order for any implementation: understand the legacy piece, inspect the equivalents under `.refs`, draft a native plan without copying code, then and only then write.
 
-Imports outside `/apps` are banned. Only `apps.*` lives in active code. If a feature has not been ported, you raise `NotImplementedError("<feature> not yet ported")`. You follow the order for any implementation: understand the legacy piece, inspect the equivalents under `/.refs/ComfyUI`, draft a native plan without copying code, then and only then write.
+Model loading is a minefield you cross with a map. You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`. You prefer SafeTensors. You call `torch.load(..., weights_only=True, mmap=True)` when it applies. You use Diffusers with `low_cpu_mem_usage` if needed, and an honest `device_map`. You treat GGUF the right way: bake or dequantize once before sampling, not every time like a fool. The default attention path is SDPA. If you pick another, you write why, where, and how to reverse it.
 
-`.legacy/` is a museum. Read only. Do not move or delete. No new dependencies from active code into `.legacy/`. If logic is needed, you port it into `/apps`.
+The CSS rules are not suggestions.
+- Names mean something.
+- Styles live with components.
+- Inline styles are not a option.
+- Use `rem`.
+- Use `grid`.
 
-Model loading is a minefield you cross with a map. You follow `.sangoi/research/models/model-loading-efficient-2025-10.md`. You prefer SafeTensors. You call `torch.load(..., weights_only=True, mmap=True)` when it applies. You use Diffusers with `low_cpu_mem_usage` and an honest `device_map`. You treat GGUF the right way: bake or dequantize once before sampling, not every time like a fool. The default attention path is SDPA. If you pick another, you write why, where, and how to reverse it.
+If you want to change anything in `apps/interface/src/styles`, you read `AGENTS.md` before you touch a single selector. Ignore that, and your pull request does not pass.
 
-Frontend code lives by meaning, not by utility litter. Styles belong to views and components under `src/styles/views/` and `src/styles/components/`. No ad-hoc helpers like `.ml-sm`, `.w-220`, `.btn-generate`. If a pattern repeats, give it a semantic name that tells the truth in context. No inline styles or `<style scoped>` in Vue SFCs. Move rules into CSS and import via `src/styles.css` using `@layer components`. Use `rem` for measurements unless you can prove the exception serves clarity.
+Styles for `apps/interface/src/styles` are not a dumping ground. Common rules belong where they will be reused. Variants are named with intent. Do not litter with vague utilities that hide confusion.
 
 When you change a subfolder, you change its `AGENTS.md` in the same commit. You treat every directive, backlog note, and follow-up as if it was authored in this pairing. If a session reset steals context, you confirm with the user. You do not invent other owners. You read `COMMON_MISTAKES.md` before you repeat history. You do not add shebangs to source files. Python files rely on the interpreter chosen by the tooling.
 
@@ -104,37 +116,31 @@ If a push complains about permissions or a lock, you stop. You read the message 
 If `.git/index.lock` is sitting there with no Git process alive, you remove it once and only once before you try that commit again. 
 If credentials are in play and a push fails, take your hands off the keyboard. Read the message. Do not try again until you know why it failed.
 
-This land is Linux and WSL for preparation. Deployment happens on Windows. You prepare the offering here. You do not pretend to finish a ritual you did not perform.
-
-Your global Python lives in `~/.venv`. Keep it holy. Do not scatter shebangs. Here, in this house, you keep the environment simple, pinned when needed, and honest about versions.
+Keep Python disciplined. The global environment lvies at `~/.venv`. If your script needs access to `~/work/stable-diffusion-webui-codex`, you set the path correctly, `PYTHONPATH=$HOME/work/stable-diffusion-webui-codex`.
 
 Task logs and handoffs are not optional. Before you change anything, read the top entry under `.sangoi/` for the task at hand. If there is none, you create one. In your responses, you state assumptions, risks, and validation. You do not defer essential checks. At completion, you write a brief handoff under `.sangoi/handoffs/` with a summary, exact files and paths touched, and next steps with open risks and TODOs. Keep it short and actionable. Prefer paths and commands over stories. Link user-facing changes in `.sangoi/CHANGELOG.md`.
 
-This land is Linux and WSL for preparation. Deployment happens on Windows. You prepare the offering here. You do not pretend to finish a ritual you did not perform.
+When you work under an approved checklist, you honor the order like a vow. New requirements do not knock you off the path. Add them to that same checklist, in the right place, with clear intent and enough context to act later. Do not abandon the sequence. Log the finding. Keep moving.
 
-When Python touches that temple, you use the global environment at `~/.venv`. You set the path correctly: `PYTHONPATH=$HOME/.netsuite`
+Every change treated like it will be read in a breach report with your name on it. Sandbox artifacts and temp paths handled as if they could leak to production if you blink.
 
-Now about tests.
-- You will write them, and they will be faithful to this sandbox.
-- They create their own fixtures and clean them up.
-- They mock networks with strict contracts that match the real ones.
-- They record the expected side effects and verify them.
-- They prove you can fail loudly without burning the house down.
-- They run fast.
-- They are deterministic.
-- They tell you where it hurts.
-- You test error paths first, not last.
-- You test the contract your code promises, not the private trivia it does on the way.
-- You seed sandboxes with data meant to be destroyed.
+If you ever feel the urge to rename half the codebase because you are bored, lie down until it passes. Rename only when the old name is a lie.
 
-When the user asks you to run a handoff, you don’t improvise, you don’t “play it by ear”, and you sure as hell don’t start guessing what “handoff” means today. Before you decide **anything**, you go straight to `.bottle/handoffs/HANDOFF_GUIDE`.
+If a behavior change will surprise a user, you write the surprise out of the system or you write it into the documents where it cannot be missed.
+
+When a terminal command goes wrong, you record it in `COMMON_MISTAKES.md`. Write the exact wrong command, the cause with the fix, and the correct command that should have been used. The tuition has been paid. We do not pay it twice.
+```
+Wrong command: <the exact command you typed>
+Cause and fix: <why it failed and how you repaired it>
+Correct command: <the safe command that achieves the goal>
+```
+
+When the user asks you to run a handoff, you don’t improvise, you don’t “play it by ear”, and you sure as hell don’t start guessing what “handoff” means today. Before you decide **anything**, you go straight to `.sangoi/handoffs/HANDOFF_GUIDE.md`.
 
 You open it. You read it like it matters. You let it tell you what a handoff is in this house: what to include, what to skip, which docs to touch, which logs to link, how to package the work so a tired human can pick it up without mind reading.
 
 Only after you’ve taken that in do you choose a path, list the steps, and execute. If you skip `HANDOFF_GUIDE` and the handoff comes out confused, noisy, or incomplete, that’s not a “miscommunication”. That’s you ignoring the playbook.
 
 Now take another bite of your own work and ask if it still tastes good. If it does, serve it. If it doesn't, fix the recipe and try again. 
-
-Now look at your WebUI again. It should feel like a tool that knows what it is, not a pile that hopes. If it does not, fix it. If it does, ship it. Everything you do is traceable. Commands leave footprints. Notes explain intent. Modules hold their line. Models load with purpose. The work is slow, smooth, and clean. There is no panic here.
 
 Keep your head. Keep your habits. Keep your word. Then your code can stand in daylight.

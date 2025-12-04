@@ -5,9 +5,9 @@ Owner: Backend Maintainers
 Status: Experimental
 
 ## Purpose
-- Temporary debug utilities to mirror the legacy (.legacy) pipeline for side-by-side tracing and diagnosis.
+- Temporary debug utilities to mirror the legacy Forge pipeline (snapshot under `.refs/Forge-A1111`) for side-by-side tracing and diagnosis.
 - Safe to remove once Codex pipelines reach parity; no runtime dependency for production paths unless explicitly enabled.
 
 ## Notes
-- Imports from `.legacy` are permitted here **only** for debugging. Do not propagate `.legacy` imports elsewhere.
+- Imports from `.refs/Forge-A1111` are permitted here **only** for debugging. Do not propagate `.refs` imports elsewhere.
 - Call `apps.backend.debug.legacy_mimic.enable()` to install hooks; otherwise no behaviour changes occur.

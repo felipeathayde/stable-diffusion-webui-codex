@@ -13,8 +13,9 @@
   - `SamplerSpec` dataclass: canonical sampler name/kind, aliases, default scheduler, and allowed schedulers per sampler (Forge + ComfyUI surface).
   - `get_sampler_spec(name)`: resolves aliases and validates scheduler compatibility before sampling context creation.
 - `driver.py`
-  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default dispatches *all* samplers through k-diffusion when available; set `CODEX_SAMPLER_FORCE_NATIVE=1` to force the legacy native loop.
-  - Restart sampler is served via `k_diffusion_extra.restart_sampler`; UniPC/UniPC-BH2 are wired through `k_diffusion_extra` (BH2 currently reuses the UniPC update until a dedicated integrator is ported).
+  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default runs the **native** sampler loop (no k-diffusion dependency).
+  - K-diffusion-backed samplers are optional and only used when `CODEX_SAMPLER_ENABLE_KDIFFUSION=1` (and the `k-diffusion` Python package is installed); otherwise all sampling goes through the native path.
+  - Restart sampler is provided via `k_diffusion_extra.restart_sampler`; UniPC/UniPC-BH2 are wired through `k_diffusion_extra` (BH2 currently reuses the UniPC update until a dedicated integrator is ported). These helpers require `k-diffusion` and are only reachable when k-diffusion is explicitly enabled.
 - `__init__.py`
   - Sampling inner loop no longer emits Forge-era low-VRAM print warnings; memory pressure handling remains via `memory_management.get_free_memory` without stdout noise.
 
@@ -29,7 +30,7 @@
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.
 - The predictor provided by the model must expose `sigma_min`/`sigma_max` scalars; upstream code validates this.
-- This module does not import from `.legacy/` and does not depend on external schedulers.
+- This module does not import from `.refs/Forge-A1111/`, `.refs/InvokeAI/`, or `.refs/ComfyUI/` and does not depend on external schedulers.
 - `compile_conditions(cond)` invariants:
   - `cond=None` → `None` (semântica preservada).
   - `cond` tensor → tratado como cross-attn (B,S,C); erro se `ndim!=3`.

@@ -1,10 +1,13 @@
-# Only include samplers that are not already in the legacy A1111 stack
+import math
 
 import torch
-
 from tqdm import trange
-import k_diffusion.sampling
-import math
+
+try:
+  # Optional: k-diffusion-backed helpers; when missing, these samplers stay unavailable.
+  import k_diffusion.sampling as _KD_SAMPLING  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - absence is expected on minimal installs
+  _KD_SAMPLING = None
 
 
 class NoiseScheduleVP:
@@ -134,10 +137,16 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
     s_in = x.new_ones([x.shape[0]])
     step_id = 0
 
+    def _require_kd():
+        if _KD_SAMPLING is None:
+            raise RuntimeError("k-diffusion is required for restart sampler but is not installed")
+        return _KD_SAMPLING
+
     def _heun_step(x_in: torch.Tensor, sigma_cur: torch.Tensor, sigma_next: torch.Tensor, *, second_order: bool = True):
         nonlocal step_id
         denoised = model(x_in, sigma_cur * s_in, **extra_args)
-        d = k_diffusion.sampling.to_d(x_in, sigma_cur, denoised)
+        kd_sampling = _require_kd()
+        d = kd_sampling.to_d(x_in, sigma_cur, denoised)
         if callback is not None:
             callback({"x": x_in, "i": step_id, "sigma": sigma_next, "sigma_hat": sigma_cur, "denoised": denoised})
         dt = sigma_next - sigma_cur
@@ -146,7 +155,7 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
         else:
             x_euler = x_in + d * dt
             denoised_2 = model(x_euler, sigma_next * s_in, **extra_args)
-            d_2 = k_diffusion.sampling.to_d(x_euler, sigma_next, denoised_2)
+            d_2 = kd_sampling.to_d(x_euler, sigma_next, denoised_2)
             x_out = x_in + 0.5 * (d + d_2) * dt
         step_id += 1
         return x_out
@@ -178,7 +187,8 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
             min_idx = i + 1
             max_idx = int(torch.argmin(abs(sigmas - restart_max), dim=0))
             if max_idx < min_idx:
-                sigma_restart = k_diffusion.sampling.get_sigmas_karras(
+                kd_sampling = _require_kd()
+                sigma_restart = kd_sampling.get_sigmas_karras(
                     restart_steps, sigmas[min_idx].item(), sigmas[max_idx].item(), device=sigmas.device
                 )[:-1]
                 while restart_times > 0:

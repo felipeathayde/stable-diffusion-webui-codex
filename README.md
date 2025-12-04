@@ -3,7 +3,7 @@
 Fork notice
 - This repository is a maintained fork created on top of Stable Diffusion WebUI Forge (which itself is a fork of AUTOMATIC1111’s WebUI) to preserve the A1111 legacy after upstreams slowed or stopped updates.
 - Maintenance approach: developed primarily with help from OpenAI “codex” as a coding assistant in the workflow. There is no LLM integrated into the runtime/UI.
-- Legacy baseline: the folder `.legacy/` contains a snapshot of Forge’s `main` branch used as a functional reference pipeline during refactors. When behaviour breaks, consult `.legacy/` to understand expected flow and restore parity.
+- Legacy baselines: `.refs/Forge-A1111/` contains a snapshot of Forge’s `main` branch used as a functional reference pipeline during refactors; `.refs/ComfyUI/` and `.refs/InvokeAI/` hold additional upstream pipelines for comparison. When behaviour breaks, consult these reference trees to understand expected flow and restore parity.
 
 The sections below are largely inherited from Forge and may reference upstream resources where appropriate.
 
@@ -50,7 +50,7 @@ News are moved to this link: [Click here to see the News section](https://github
 - This repository is licensed under the GNU Affero General Public License, version 3.0 or (at your option) any later version.
 - SPDX: `AGPL-3.0-or-later`.
 - Full text: see the `LICENSE` file and <https://www.gnu.org/licenses/agpl-3.0-standalone.html>.
-- Third‑party components under `.legacy/` and `extensions-builtin/` may include their own licenses (e.g., MIT); see the LICENSE files within those folders for details. Their original terms remain applicable.
+- Third‑party components under `.refs/Forge-A1111/` and `extensions-builtin/` may include their own licenses (e.g., MIT); see the LICENSE files within those folders for details. Their original terms remain applicable.
 
 AGPL §13 (Network Use)
 - The UI footer shows a “Source (AGPL)” link. Configure its target at build time using the env var `VITE_SOURCE_URL` (e.g., your Git remote or a tarball URL for this exact source).

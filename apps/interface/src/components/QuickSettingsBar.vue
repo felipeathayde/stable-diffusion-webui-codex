@@ -144,6 +144,7 @@ import { useRoute } from 'vue-router'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { useModelTabsStore } from '../stores/model_tabs'
 import { fetchModelInventory } from '../api/client'
+import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 
 const store = useQuicksettingsStore()
 const presets = useUiPresetsStore()
@@ -152,11 +153,13 @@ const selectedPreset = ref('')
 const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
 const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
+const engineCaps = useEngineCapabilitiesStore()
 
 onMounted(() => {
   void store.init()
   void presets.init(currentTab())
   void loadInventory()
+  void engineCaps.init()
 })
 
 watch(() => route.path, async () => {
@@ -175,6 +178,12 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
 
 const presetChoices = computed(() => presets.namesFor(currentTab()))
 const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => tabsStore.activeTab?.type ?? 'sd15')
+const semanticEngine = computed<string>(() => {
+  // Prefer semantic engine from UI blocks when available (video tabs etc.).
+  if (uiBlocks.semanticEngine) return uiBlocks.semanticEngine
+  // Fallback to global Codex engine selection.
+  return store.currentEngine || 'sd15'
+})
 
 async function loadInventory(): Promise<void> {
   try {

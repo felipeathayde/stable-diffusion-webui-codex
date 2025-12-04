@@ -7,11 +7,11 @@
 **Correct command:** `sed -n '1,200p' .sangoi/handoffs/HANDOFF_GUIDE.md`
 
 **Wrong command:** `rg -n "huggingface_guess" legacy`
-**Cause + fix:** Repository archives legacy code under `.legacy/`, so the command targeted a non-existent `legacy/` directory; point ripgrep at `.legacy/` instead.
-**Correct command:** `rg -n "huggingface_guess" .legacy`
+**Cause + fix:** Repository archives legacy code under `.refs/Forge-A1111/`, so the command targeted a non-existent `legacy/` directory; point ripgrep at the `.refs` tree instead.
+**Correct command:** `rg -n "huggingface_guess" .refs/Forge-A1111`
 **Wrong command:** `rg -n "iq1" legacy -g"*.py"`
-**Cause + fix:** Repository archives legacy sources under `.legacy/`; point ripgrep at `.legacy/` instead of the non-existent `legacy/` path.
-**Correct command:** `rg -n "iq1" .legacy -g"*.py"`
+**Cause + fix:** Repository archives legacy sources under `.refs/Forge-A1111/`; point ripgrep at that tree instead of the non-existent `legacy/` path.
+**Correct command:** `rg -n "iq1" .refs/Forge-A1111 -g"*.py"`
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, `.refs/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
 **Correct command:** `git add AGENTS.md THIRD_PARTY_NOTICES.md COMMON_MISTAKES.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-docs-legacy-paths.md .sangoi/handoffs/2025-10-30-docs-legacy-paths.md`
@@ -126,8 +126,8 @@ PY`
 **Correct command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --types Q2_K Q3_K Q4_K Q5_K Q6_K`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-**Cause + fix:** `The blanket find walks into legacy submodules under .legacy/root-archive, so git add aborts on nested .git refs; prune the legacy tree (or stage files explicitly).`
-**Correct command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** `The blanket find walks into legacy submodules under .refs/Forge-A1111, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
+**Correct command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** `Repository .gitignore filters *_m.py, so the new Forge IQ modules stay ignored and git add aborts; whitelist the directory before rerunning.`
@@ -138,9 +138,9 @@ PY`
 **Correct command:** `git config --global user.name "Lucas Sangoi" && git config --global user.email "lucas@sangoi.dev"`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
-**Cause + fix:** `The bulk add traverses .legacy submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
+**Cause + fix:** `The bulk add traverses .refs/Forge-A1111 submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
 **Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`
-**Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Wrong command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `The search still walks cached/ignored directories, so git add aborts on gitignored paths; enumerate the known changed sources explicitly instead of mass-adding.`
 **Correct command:** `git add apps/backend/runtime/models/loader.py apps/backend/codex/loader.py apps/backend/engines/common/base.py apps/backend/engines/{AGENTS.md,common/AGENTS.md,sd/AGENTS.md,flux/AGENTS.md,chroma/AGENTS.md} apps/backend/engines/sd/{sd15.py,sd20.py,sd35.py,sdxl.py} apps/backend/engines/flux/flux.py apps/backend/engines/chroma/chroma.py apps/backend/runtime/models/AGENTS.md apps/backend/codex/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-11-01-diffusion-engine-lifecycle.md .sangoi/handoffs/2025-11-01-diffusion-engine-lifecycle.md`
 **Wrong command:** `python - <<'PY'
@@ -514,8 +514,8 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=
 **Correct command:** `ls docs`
 
 **Wrong command:** `ls .legacy`
-**Cause + fix:** The repo does not ship a `.legacy` directory; use find to confirm before targeting the path.
-**Correct command:** `find . -maxdepth 2 -type d -name '.legacy'`
+**Cause + fix:** The repo does not ship a `.legacy` directory; reference snapshots now live under `.refs/` (e.g., `.refs/Forge-A1111/`). Use `find` to confirm before targeting paths.
+**Correct command:** `find . -maxdepth 2 -type d -name '.refs'`
 
 **Wrong command:** `npm install --save-dev vitest`
 **Cause + fix:** Default npm cache under `~/.npm` is owned by root, so installs fail with EACCES; point npm to a writable user cache.

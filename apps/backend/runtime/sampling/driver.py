@@ -18,6 +18,13 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 
 
+try:
+    # Optional dependency; when missing, k-diffusion-backed samplers stay disabled
+    import k_diffusion.sampling as _KD_SAMPLING  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - absence is expected on minimal installs
+    _KD_SAMPLING = None
+
+
 _KD_MAPPING = {
     SamplerKind.EULER: "sample_euler",
     SamplerKind.EULER_A: "sample_euler_ancestral",
@@ -27,9 +34,9 @@ _KD_MAPPING = {
     SamplerKind.HEUNPP2: "sample_heunpp2",
     SamplerKind.LMS: "sample_lms",
     SamplerKind.DDIM: "sample_ddim",
-    SamplerKind.DDIM_CFG_PP: "sample_ddim_cfgpp" if hasattr(__import__("k_diffusion.sampling", fromlist=["sample_ddim_cfgpp"]), "sample_ddim_cfgpp") else "sample_ddim",
-    SamplerKind.PLMS: "sample_plms" if hasattr(__import__("k_diffusion.sampling", fromlist=["sample_plms"]), "sample_plms") else "sample_lms",
-    SamplerKind.PNDM: "sample_pndm" if hasattr(__import__("k_diffusion.sampling", fromlist=["sample_pndm"]), "sample_pndm") else "sample_lms",
+    SamplerKind.DDIM_CFG_PP: "sample_ddim_cfgpp",
+    SamplerKind.PLMS: "sample_plms",
+    SamplerKind.PNDM: "sample_pndm",
     SamplerKind.DPM2: "sample_dpm_2",
     SamplerKind.DPM2_ANCESTRAL: "sample_dpm_2_ancestral",
     SamplerKind.DPM_FAST: "sample_dpm_fast",
@@ -142,11 +149,9 @@ def _run_kdiffusion_sampler(
         extra_name = sampler_fn_name.split(":", 1)[1]
         sampler_fn = getattr(kd_extra, extra_name, None)
     else:
-        try:
-            import k_diffusion.sampling as kd_sampling
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError("k-diffusion is required for sampler execution but is unavailable") from exc
-        sampler_fn = getattr(kd_sampling, sampler_fn_name, None)
+        if _KD_SAMPLING is None:
+            raise RuntimeError("k-diffusion is required for sampler execution but is unavailable")
+        sampler_fn = getattr(_KD_SAMPLING, sampler_fn_name, None)
 
     if sampler_fn is None:
         raise NotImplementedError(f"Sampler '{sampler_kind.value}' not yet ported (missing {sampler_fn_name})")
@@ -383,8 +388,9 @@ class CodexSampler:
                 if sampler_kind is SamplerKind.AUTOMATIC:
                     sampler_kind = SamplerKind.EULER_A
 
-                use_kd = os.getenv("CODEX_SAMPLER_FORCE_NATIVE", "").strip().lower() not in {"1", "true", "yes", "on"}
-                if use_kd and sampler_kind in _KD_MAPPING:
+                # Default to native sampler; enable k-diffusion only when explicitly requested.
+                use_kd = str(os.getenv("CODEX_SAMPLER_ENABLE_KDIFFUSION", "0")).strip().lower() in {"1", "true", "yes", "on"}
+                if use_kd and sampler_kind in _KD_MAPPING and _KD_SAMPLING is not None:
                     kd_name = _KD_MAPPING[sampler_kind]
 
                     compiled_cond = compile_conditions(cond)

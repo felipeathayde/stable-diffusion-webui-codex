@@ -10,11 +10,14 @@
         </div>
       </header>
       <nav class="tabs-nav">
-        <!-- Single canonical inference tab -->
+        <!-- Home workspace (agnostic) -->
+        <RouterLink class="tab-link" to="/">home</RouterLink>
+        <!-- Single canonical image workspace -->
         <RouterLink class="tab-link" to="/sdxl">sdxl</RouterLink>
-        <RouterLink class="tab-link" to="/xyz">xyz</RouterLink>
-        <!-- Utilities on the right -->
+        <!-- Model & workflow tools -->
+        <RouterLink class="tab-link" to="/models">models</RouterLink>
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>
+        <!-- Utilities on the right -->
         <RouterLink class="tab-link" to="/upscale">upscale</RouterLink>
         <RouterLink class="tab-link" to="/pnginfo">png info</RouterLink>
         <RouterLink class="tab-link" to="/extensions">extensions</RouterLink>

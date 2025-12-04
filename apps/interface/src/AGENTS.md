@@ -25,3 +25,4 @@ Status: Active
 - Follow the frontend guidelines in `.sangoi/frontend/guidelines/` when adding new modules.
 - Keep API types and schemas synchronized with `.sangoi/backend/interfaces/`.
 - 2025-12-03: Vitest is available (`npm test`) for unit coverage; prompt serialization tests live under `components/prompt/`.
+- 2025-12-04: Legacy `/txt2vid` and `/img2vid` SPA routes were removed; WAN22 video workflows now enter exclusively via model tabs (`/models/:tabId` with `type === 'wan'`) and backend video endpoints remain available for those tabs only.

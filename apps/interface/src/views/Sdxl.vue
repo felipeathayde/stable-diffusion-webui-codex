@@ -70,6 +70,7 @@
             @reuse-seed="store.reuseSeed"
           />
           <HighresSettingsCard
+            v-if="showHighres"
             v-model:enabled="store.highres.enabled"
             v-model:denoise="store.highres.denoise"
             v-model:scale="store.highres.scale"
@@ -85,6 +86,7 @@
             v-model:refinerVae="store.highres.refiner.vae"
           />
           <RefinerSettingsCard
+            v-if="showGlobalRefiner"
             v-model:enabled="store.refiner.enabled"
             v-model:steps="store.refiner.steps"
             v-model:cfg="store.refiner.cfg"
@@ -160,6 +162,8 @@ import ResultViewer from '../components/ResultViewer.vue'
 import StyleEditorModal from '../components/modals/StyleEditorModal.vue'
 import { usePresetsStore } from '../stores/presets'
 import { useStylesStore } from '../stores/styles'
+import { useQuicksettingsStore } from '../stores/quicksettings'
+import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import type { GeneratedImage } from '../api/types'
 
 const store = useSdxlStore()
@@ -168,6 +172,8 @@ const inpaint = useInpaintStore()
 const router = useRouter()
 const presetsStore = usePresetsStore()
 const stylesStore = useStylesStore()
+const quicksettings = useQuicksettingsStore()
+const engineCaps = useEngineCapabilitiesStore()
 
 const showCkpt = ref(false)
 const showLora = ref(false)
@@ -182,6 +188,7 @@ onMounted(() => {
   void store.init()
   syncPreviewHeight()
   window.addEventListener('resize', syncPreviewHeight)
+  void engineCaps.init()
 })
 
 onBeforeUnmount(() => {
@@ -254,6 +261,18 @@ function sendToInpaint(image: GeneratedImage): void {
 
 const presetNames = computed(() => presetsStore.names('sdxl'))
 const styleNames = computed(() => stylesStore.names())
+const semanticEngine = computed(() => quicksettings.currentEngine || 'sdxl')
+const engineSurface = computed(() => engineCaps.get(semanticEngine.value))
+const showHighres = computed(() => {
+  const surf = engineSurface.value
+  if (!surf) return true
+  return surf.supports_highres
+})
+const showGlobalRefiner = computed(() => {
+  const surf = engineSurface.value
+  if (!surf) return true
+  return surf.supports_refiner
+})
 function snapshotParams(): Record<string, unknown> {
   return {
     prompt: store.prompt,

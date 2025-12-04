@@ -9,18 +9,15 @@ const ModelTabView = () => import('./views/ModelTabView.vue')
 const WorkflowsList = () => import('./views/WorkflowsList.vue')
 const Sdxl = () => import('./views/Sdxl.vue')
 const XyzPlot = () => import('./views/XyzPlot.vue')
+const Home = () => import('./views/Home.vue')
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // Default landing: SDXL txt2img
-    { path: '/', redirect: '/sdxl' },
-    // Legacy routes redirect into the single SDXL entrypoint or related tools
-    { path: '/img2img', redirect: '/sdxl' },
-    { path: '/inpaint', redirect: '/sdxl' },
-    { path: '/txt2vid', redirect: '/workflows' },
-    { path: '/img2vid', redirect: '/workflows' },
-    // Model tabs remain accessible but are no longer surfaced as top-level inference tabs
+    // Default landing: engine-agnostic home workspace
+    { path: '/', component: Home },
+    // Model tabs remain accessible but are no longer surfaced as top-level inference tabs,
+    // and WAN22 video flows live exclusively under model tabs (no standalone /txt2vid/img2vid routes).
     { path: '/models', component: ModelsList },
     { path: '/models/:tabId', component: ModelTabView },
     // Single canonical inference surface

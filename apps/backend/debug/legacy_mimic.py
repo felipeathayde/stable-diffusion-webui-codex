@@ -2,9 +2,10 @@
 
 Goal
 ----
-Provide a throwaway hook layer that mirrors the `.legacy` pipeline so we can
-compare Codex vs legacy behaviour end-to-end. When enabled, it logs checkpoint
-loading, processing, decode, and image save events without altering outputs.
+Provide a throwaway hook layer that mirrors the Forge/A1111 pipeline snapshot
+under `.refs/Forge-A1111` so we can compare Codex vs legacy behaviour
+end-to-end. When enabled, it logs checkpoint loading, processing, decode, and
+image save events without altering outputs.
 
 Usage
 -----
@@ -77,7 +78,7 @@ def enable(log_fn: Callable[..., None] | None = None) -> None:
 
     log = log_fn or _log
 
-    legacy_root = Path(__file__).resolve().parents[4] / ".legacy"
+    legacy_root = Path(__file__).resolve().parents[4] / ".refs" / "Forge-A1111"
     if legacy_root.exists():
         sys.path.insert(0, str(legacy_root))
     else:

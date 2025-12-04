@@ -1184,17 +1184,67 @@ def build_app() -> FastAPI:
     # Simple paths config for frontend-managed search locations
     @app.get('/api/paths')
     def get_paths() -> Dict[str, Any]:
+        """Expose an aggregated view of paths.json for the UI.
+
+        Returned structure (for Settings → Paths):
+        { "paths": { "checkpoints": [...], "vae": [...], "lora": [...], "text_encoders": [...] } }
+
+        Internally, paths.json is keyed per-engine (sd15_*, sdxl_*, flux_*, wan22_*).
+        """
         cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
-        data = _load_json(cfg_path)
-        # Expected structure: { "checkpoints": [], "vae": [], "lora": [], "text_encoders": [] }
-        return {"paths": data}
+        raw = _load_json(cfg_path) or {}
+        # Aggregate per-engine keys into generic buckets for the UI.
+        def _list(key: str) -> list[str]:
+            v = raw.get(key) or []
+            return v if isinstance(v, list) else []
+
+        paths = {
+            "checkpoints": _list("sd15_ckpt") + _list("sdxl_ckpt") + _list("flux_ckpt") + _list("wan22_ckpt"),
+            "vae": _list("sd15_vae") + _list("sdxl_vae") + _list("flux_vae") + _list("wan22_vae"),
+            "lora": _list("sd15_loras") + _list("sdxl_loras") + _list("flux_loras") + _list("wan22_loras"),
+            "text_encoders": _list("sd15_tenc") + _list("sdxl_tenc") + _list("flux_tenc") + _list("wan22_tenc"),
+        }
+        return {"paths": paths}
 
     @app.post('/api/paths')
     def set_paths(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Update per-engine paths from aggregated UI buckets.
+
+        Payload: { paths: { checkpoints: [...], vae: [...], lora: [...], text_encoders: [...] } }
+        All buckets are applied to every engine family for now.
+        """
         if not isinstance(payload, dict) or 'paths' not in payload or not isinstance(payload['paths'], dict):
             raise HTTPException(status_code=400, detail='payload must be {"paths": {...}}')
         cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
-        _save_json(cfg_path, payload['paths'])
+        current = _load_json(cfg_path) or {}
+        p = payload["paths"] or {}
+        checkpoints = list(p.get("checkpoints") or [])
+        vae = list(p.get("vae") or [])
+        lora = list(p.get("lora") or [])
+        text_encoders = list(p.get("text_encoders") or [])
+        # Start from existing config and overwrite known keys.
+        new_paths: Dict[str, Any] = dict(current)
+        # Checkpoints
+        new_paths["sd15_ckpt"] = checkpoints
+        new_paths["sdxl_ckpt"] = checkpoints
+        new_paths["flux_ckpt"] = checkpoints
+        new_paths["wan22_ckpt"] = checkpoints
+        # VAE
+        new_paths["sd15_vae"] = vae
+        new_paths["sdxl_vae"] = vae
+        new_paths["flux_vae"] = vae
+        new_paths["wan22_vae"] = vae
+        # LoRA
+        new_paths["sd15_loras"] = lora
+        new_paths["sdxl_loras"] = lora
+        new_paths["flux_loras"] = lora
+        new_paths["wan22_loras"] = lora
+        # Text encoders
+        new_paths["sd15_tenc"] = text_encoders
+        new_paths["sdxl_tenc"] = text_encoders
+        new_paths["flux_tenc"] = text_encoders
+        new_paths["wan22_tenc"] = text_encoders
+        _save_json(cfg_path, new_paths)
         return {"ok": True}
 
     # Native options store via Codex options facade (aliases defined above)

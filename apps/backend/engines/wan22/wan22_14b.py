@@ -20,6 +20,7 @@ from apps.backend.engines.wan22.wan22_common import (
     WanComponents,
     resolve_wan_repo_candidates,
     resolve_user_supplied_assets,
+    _first_existing_path_for,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -168,6 +169,10 @@ class Wan2214BEngine(BaseVideoEngine):
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
             vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, self._comp.hf_repo_dir)
+            if not vae_path:
+                vae_path = _first_existing_path_for("wan22_vae")
+            if not te_path:
+                te_path = _first_existing_path_for("wan22_tenc")
             try:
                 self._logger.info(
                     "[wan22.gguf] assets: metadata=%s te=%s vae=%s",

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Tuple
 
+from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.runtime import trace as _trace
 
 from .types import (
@@ -190,9 +191,38 @@ class ModelRegistry:
             )
 
     def _iter_checkpoint_files(self) -> Iterable[Path]:
-        candidates = [self._models_root]
-        for sub in ("Stable-diffusion", "stable-diffusion", "checkpoints", "sd", "sdxl"):
-            candidates.append(self._models_root / sub)
+        """Iterate over checkpoint files using paths.json overrides + curated defaults.
+
+        Resolution order:
+        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux_ckpt, wan22_ckpt).
+        2) Built-in defaults under models/: root, sd15, sdxl, flux.
+
+        This replaces the legacy scatter of A1111-style folders ('stable-diffusion', 'sd', 'checkpoints').
+        """
+        candidates: List[Path] = []
+
+        # 1) User overrides from apps/paths.json per engine
+        try:
+            for key in ("sd15_ckpt", "sdxl_ckpt", "flux_ckpt", "wan22_ckpt"):
+                for raw in get_paths_for(key):
+                    p = Path(raw)
+                    if p not in candidates:
+                        candidates.append(p)
+        except Exception:
+            # Do not break discovery if paths.json is invalid; fall back to defaults.
+            candidates = []
+
+        # 2) Curated built-in defaults quando não há overrides configurados.
+        if not candidates:
+            defaults = [
+                self._models_root,
+                self._models_root / "sd15",
+                self._models_root / "sdxl",
+                self._models_root / "flux",
+            ]
+            for p in defaults:
+                if p not in candidates:
+                    candidates.append(p)
 
         for directory in candidates:
             if not directory.is_dir():

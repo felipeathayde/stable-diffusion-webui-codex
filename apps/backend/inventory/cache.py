@@ -5,13 +5,15 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List
 
+from apps.backend.infra.config.paths import get_paths_for
+
 
 @dataclass(frozen=True)
 class Inventory:
     vaes: List[Dict[str, str]]
     text_encoders: List[Dict[str, str]]
     loras: List[Dict[str, str]]
-    wan22: List[Dict[str, str]]  # .gguf files under models/wan22
+    wan22: List[Dict[str, str]]  # .gguf files under WAN22 roots
     metadata: List[Dict[str, str]]  # org/repo roots under backend/huggingface
 
 
@@ -56,32 +58,37 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     mr = models_root or _models_root()
     hr = hf_root or _hf_root()
 
-    # Exact subfolder policy (no guessing):
+    # Exact subfolder policy (no guessing) for legacy locations:
     vae_dir = os.path.join(mr, "VAE")
     te_dir = os.path.join(mr, "text-encoder")
     lora_dir = os.path.join(mr, "Lora")
-    wan_dir = os.path.join(mr, "wan22")
 
     vaes = _list_files(vae_dir, (".safetensors", ".bin", ".pt"))
     text_encoders = _list_files(te_dir, (".safetensors", ".bin", ".pt"))
     loras = _list_files(lora_dir, (".safetensors", ".bin", ".pt", ".ckpt"))
-    # WAN22 GGUF with stage detection (high/low/unknown)
+
+    # WAN22 GGUF with stage detection (high/low/unknown).
+    # Prefer explicit WAN22 roots from apps/paths.json ("wan22_ckpt"); fall back to models/wan22.
     wan22: List[Dict[str, str]] = []
-    if os.path.isdir(wan_dir):
+    wan_roots = get_paths_for("wan22_ckpt") or [os.path.join(mr, "wan22")]
+    for root in wan_roots:
+        if not os.path.isdir(root):
+            continue
         try:
-            for name in os.listdir(wan_dir):
-                full = os.path.join(wan_dir, name)
-                if os.path.isfile(full) and name.lower().endswith('.gguf'):
+            for name in os.listdir(root):
+                full = os.path.join(root, name)
+                if os.path.isfile(full) and name.lower().endswith(".gguf"):
                     lower = name.lower()
-                    stage = 'unknown'
-                    if any(k in lower for k in ('high', 'highnoise', 'high_noise')):
-                        stage = 'high'
-                    elif any(k in lower for k in ('low', 'lownoise', 'low_noise')):
-                        stage = 'low'
+                    stage = "unknown"
+                    if any(k in lower for k in ("high", "highnoise", "high_noise")):
+                        stage = "high"
+                    elif any(k in lower for k in ("low", "lownoise", "low_noise")):
+                        stage = "low"
                     wan22.append({"name": name, "path": full, "stage": stage})
-            wan22.sort(key=lambda d: d["name"].lower())
         except Exception:
-            wan22 = []
+            continue
+    if wan22:
+        wan22.sort(key=lambda d: d["name"].lower())
 
     # Metadata folders: org/repo roots under hf_root
     metadata: List[Dict[str, str]] = []

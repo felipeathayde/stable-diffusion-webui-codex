@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Any, Dict, Optional, List
+
+from apps.backend.infra.config.paths import get_paths_for
 
 
 @dataclass
@@ -125,6 +128,32 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
 __all__ = ["EngineOpts", "WanComponents", "WanStageOptions", "resolve_wan_repo_candidates", "WAN_DIFFUSERS_REPO_CANDIDATES"]
 
 
+def _first_existing_path_for(key: str) -> Optional[str]:
+    """Return the first existing path for a logical key.
+
+    Semantics:
+    - Values in apps/paths.json (via get_paths_for) are treated as user overrides.
+    - If no override yields an existing path, fall back to built-in defaults
+      under the repo's `models` tree (e.g., /models/wan22-vae).
+    """
+    candidates: List[str] = list(get_paths_for(key))
+
+    # Built-in fallbacks quando não há override configurado.
+    if not candidates:
+        repo_root = Path(__file__).resolve().parents[4]
+        if key == "wan22_vae":
+            candidates.append(str(repo_root / "models" / "wan22-vae"))
+        elif key == "wan22_tenc":
+            # Prefer WAN22-specific encoder root.
+            candidates.append(str(repo_root / "models" / "wan22-tenc"))
+
+    for path in candidates:
+        p = os.path.expanduser(path)
+        if os.path.isdir(p) or os.path.isfile(p):
+            return p
+    return None
+
+
 def resolve_user_supplied_assets(extras: dict | None, fallback_metadata_dir: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Strict parsing of user-supplied asset paths.
 
@@ -133,7 +162,8 @@ def resolve_user_supplied_assets(extras: dict | None, fallback_metadata_dir: Opt
     - Text encoder: 'wan_text_encoder_path' (file) or 'wan_text_encoder_dir' (directory)
     - Tokenizer (optional): 'wan_tokenizer_dir'; if missing, use fallback_tokenizer_dir
 
-    Returns (vae_path, text_encoder_path_or_dir, tokenizer_dir). No guessing.
+    Returns (vae_path, text_encoder_path_or_dir, metadata_dir). No guessing for user inputs;
+    WAN22 defaults are applied separately using apps/paths.json when fields stay empty.
     """
     import os
     ex = extras or {}

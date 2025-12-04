@@ -1,0 +1,47 @@
+{
+  "sd15_ckpt": [
+    "models/sd15"
+  ],
+  "sd15_tenc": [
+  ],
+  "sd15_vae": [
+    "models/sd15-vae"
+  ],
+  "sd15_loras": [
+    "models/sd15-loras"
+  ],
+  "sdxl_ckpt": [
+    "models/sdxl"
+  ],
+  "sdxl_tenc": [
+  ],
+  "sdxl_vae": [
+    "models/sdxl-vae"
+  ],
+  "sdxl_loras": [
+    "models/sdxl-loras"
+  ],
+  "flux_ckpt": [
+    "models/flux"
+  ],
+  "flux_tenc": [
+  ],
+  "flux_vae": [
+    "models/flux-vae"
+  ],
+  "flux_loras": [
+    "models/flux-loras"
+  ],
+  "wan22_ckpt": [
+    "models/wan22"
+  ],
+  "wan22_tenc": [
+    "models/wan22-tenc"
+  ],
+  "wan22_vae": [
+    "models/wan22-vae"
+  ],
+  "wan22_loras": [
+    "models/wan22-loras"
+  ]
+}

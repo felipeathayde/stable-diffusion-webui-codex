@@ -2,44 +2,52 @@
     <div class="quicksettings-group">
       <label class="label-muted">WAN High model</label>
       <div class="qs-row">
-        <select class="select-md" :value="highModel" @change="$emit('update:highModel', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ builtInLabel }}</option>
-          <option v-for="m in highChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
-        </select>
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseHigh')">Browse…</button>
+        <div class="qs-pair">
+          <select class="select-md" :value="highModel" @change="$emit('update:highModel', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="m in highChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
+          </select>
+          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseHigh')">Browse…</button>
+        </div>
       </div>
     </div>
 
     <div class="quicksettings-group">
       <label class="label-muted">WAN Low model</label>
       <div class="qs-row">
-        <select class="select-md" :value="lowModel" @change="$emit('update:lowModel', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ builtInLabel }}</option>
-          <option v-for="m in lowChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
-        </select>
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseLow')">Browse…</button>
+        <div class="qs-pair">
+          <select class="select-md" :value="lowModel" @change="$emit('update:lowModel', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="m in lowChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
+          </select>
+          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseLow')">Browse…</button>
+        </div>
       </div>
     </div>
 
     <div class="quicksettings-group">
       <label class="label-muted">WAN Text Encoder</label>
       <div class="qs-row">
-        <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ builtInLabel }}</option>
-          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ te }}</option>
-        </select>
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseTe')">Browse…</button>
+        <div class="qs-pair">
+          <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ te }}</option>
+          </select>
+          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseTe')">Browse…</button>
+        </div>
       </div>
     </div>
 
     <div class="quicksettings-group">
       <label class="label-muted">WAN VAE</label>
       <div class="qs-row">
-        <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ builtInLabel }}</option>
-          <option v-for="v in vaeChoices" :key="v" :value="v">{{ v }}</option>
-        </select>
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseVae')">Browse…</button>
+        <div class="qs-pair">
+          <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="v in vaeChoices" :key="v" :value="v">{{ v }}</option>
+          </select>
+          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseVae')">Browse…</button>
+        </div>
       </div>
     </div>
 

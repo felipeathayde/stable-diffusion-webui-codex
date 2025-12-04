@@ -10,24 +10,28 @@
     <div class="quicksettings-group" v-if="!hideCheckpoint">
       <label class="label-muted">Checkpoint</label>
       <div class="qs-row">
-        <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
-          <option v-for="model in checkpoints" :key="model" :value="model">
-            {{ model }}
-          </option>
-        </select>
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('addCheckpointPath')">+</button>
+        <div class="qs-pair">
+          <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+            <option v-for="model in checkpoints" :key="model" :value="model">
+              {{ model }}
+            </option>
+          </select>
+          <button class="btn btn-sm btn-outline" type="button" @click="$emit('addCheckpointPath')">+</button>
+        </div>
       </div>
     </div>
 
     <div class="quicksettings-group">
       <label class="label-muted">VAE</label>
       <div class="qs-row">
-        <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
-          <option v-for="v in vaeChoices" :key="v" :value="v">
-            {{ v === 'Automatic' ? 'Built-in' : v }}
-          </option>
-        </select>
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('addVaePath')">+</button>
+        <div class="qs-pair">
+          <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
+            <option v-for="v in vaeChoices" :key="v" :value="v">
+              {{ v === 'Automatic' ? 'Built-in' : v }}
+            </option>
+          </select>
+          <button class="btn btn-sm btn-outline" type="button" @click="$emit('addVaePath')">+</button>
+        </div>
       </div>
     </div>
 

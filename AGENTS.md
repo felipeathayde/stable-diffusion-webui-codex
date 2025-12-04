@@ -58,7 +58,7 @@ If credentials are in play and a push fails, take your hands off the keyboard. R
 When your turn is done:
 - You log the work in `.sangoi/task-logs/`. 
 - You update `.sangoi/CHANGELOG.md` with what changed in the world that matters to users and to maintainers. 
-- Then **you make** one atomic commit. Not three. Not ten. One. If it is not atomic, you were not finished.
+- Then **YOU MUST DO** one atomic commit. Not three. Not ten. One. If it is not atomic, you were not finished.
 
 You follow the ritual when you commit. One command per line. No line continuations.
 ```

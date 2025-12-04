@@ -108,5 +108,18 @@ const props = defineProps<{
   showTextEncoder?: boolean
 }>()
 
+defineEmits<{
+  (e: 'update:mode', value: string): void
+  (e: 'update:checkpoint', value: string): void
+  (e: 'update:vae', value: string): void
+  (e: 'update:textEncoder', value: string): void
+  (e: 'update:unetDtype', value: string): void
+  (e: 'update:gpuWeightsMb', value: number): void
+  (e: 'update:attentionBackend', value: string): void
+  (e: 'addCheckpointPath'): void
+  (e: 'addVaePath'): void
+  (e: 'openOverrides'): void
+}>()
+
 const textEncoderAutomaticLabel = props.textEncoderAutomaticLabel ?? 'Built-in'
 </script>

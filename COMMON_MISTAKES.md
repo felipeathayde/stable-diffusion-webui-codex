@@ -172,6 +172,10 @@ PY`
 **Cause + fix:** `UNet runtime is organized as a package; the model definition lives under apps/backend/runtime/common/nn/unet/model.py.`
 **Correct command:** `sed -n '1,200p' apps/backend/runtime/common/nn/unet/model.py`
 
+**Wrong command:** `sed -n '1,200p' .sangoi/design/model-tabs-and-workflows.md`
+**Cause + fix:** `The model tabs/workflows spec was moved under .sangoi/design/flows/model-workflows.md; the old path no longer exists. Target the flows/ directory when reading or updating the spec.`
+**Correct command:** `sed -n '1,200p' .sangoi/design/flows/model-workflows.md`
+
 **Wrong command:** `python -m ast apps/backend/use_cases/txt2img_pipeline/runner.py apps/backend/engines/sd/sdxl.py`
 **Cause + fix:** `The stdlib ast module CLI accepts at most one input file; passing multiple paths is treated as extra arguments and causes a usage error. Run the syntax check separately for each file instead of batching them in a single call.`
 **Correct command:** `python -m ast apps/backend/use_cases/txt2img_pipeline/runner.py`

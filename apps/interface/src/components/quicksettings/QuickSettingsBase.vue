@@ -97,7 +97,7 @@ const props = defineProps<{
   vae: string
   vaeChoices: string[]
   textEncoder: string
-  textEncoderChoices: string[]
+  textEncoderChoices: any
   unetDtype: string
   unetDtypeChoices: string[]
   gpuWeightsMb: number

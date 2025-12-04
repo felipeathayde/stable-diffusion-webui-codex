@@ -250,6 +250,10 @@ PY`
 **Wrong command:** `printf "... \`find . -newer .git/codex-stamp\` ..." >> COMMON_MISTAKES.md`
 **Cause + fix:** Using double quotes with backticks executed the subshell, attempting to run `.git/codex-stamp` and failing with `Permission denied`. Use a single-quoted heredoc or escape backticks when appending literal commands.
 **Correct command:** `cat <<'EOF' >> COMMON_MISTAKES.md` (paste content, then `EOF`)
+
+**Wrong command:** `sed -n '1,260p' apps/interface/src/stores/txt2vid.ts`
+**Cause + fix:** The video store lives at `apps/interface/src/stores/video.ts`; there is no `txt2vid.ts` file. Use the existing consolidated video store path instead of guessing a legacy filename.
+**Correct command:** `sed -n '1,260p' apps/interface/src/stores/video.ts`
 **Wrong command:** `~/.venv/bin/python - <<'PY'
 from apps.backend.runtime.utils import FilterPrefixView
 from collections import OrderedDict

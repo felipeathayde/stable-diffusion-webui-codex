@@ -796,6 +796,18 @@ def build_app() -> FastAPI:
         print(color_yellow(f"[models] unload requested for tab {tab_id}"))
         return {'ok': True}
 
+    @app.get('/engines/capabilities')
+    def list_engine_capabilities() -> Dict[str, Any]:
+        """Expose semantic engine parameter surfaces for frontend gating.
+
+        Shape: { engines: { <semantic_engine>: { supports_txt2img, supports_img2img, ... } } }
+        """
+        try:
+            from apps.backend.runtime.model_registry.capabilities import serialize_engine_capabilities
+            return {"engines": serialize_engine_capabilities()}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read engine capabilities: {exc}")
+
     @app.get('/api/ui/blocks')
     def ui_blocks(tab: Optional[str] = None) -> Dict[str, Any]:
         """Return UI blocks filtered by tab and current semantic engine.

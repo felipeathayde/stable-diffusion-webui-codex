@@ -90,6 +90,21 @@ export interface VersionResponse {
   cuda_version: string | null
 }
 
+export interface EngineCapabilities {
+  supports_txt2img: boolean
+  supports_img2img: boolean
+  supports_txt2vid: boolean
+  supports_img2vid: boolean
+  supports_highres: boolean
+  supports_refiner: boolean
+  supports_lora: boolean
+  supports_controlnet: boolean
+}
+
+export interface EngineCapabilitiesResponse {
+  engines: Record<string, EngineCapabilities>
+}
+
 export interface EmbeddingsResponse {
   loaded: Record<string, { step?: number | null; vectors?: number; shape?: number[] | null; sd_checkpoint?: string | null; sd_checkpoint_name?: string | null }>
   skipped: Record<string, { step?: number | null; vectors?: number; shape?: number[] | null; sd_checkpoint?: string | null; sd_checkpoint_name?: string | null }>

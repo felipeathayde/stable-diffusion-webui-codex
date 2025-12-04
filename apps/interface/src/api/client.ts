@@ -20,6 +20,7 @@ import type {
   UiPresetsResponse,
   UiPresetApplyResponse,
   InventoryResponse,
+  EngineCapabilitiesResponse,
 } from './types'
 import type { Txt2ImgRequest } from './payloads'
 
@@ -156,6 +157,10 @@ export function fetchVersion(): Promise<VersionResponse> {
 
 export function fetchEmbeddings(): Promise<EmbeddingsResponse> {
   return requestJson<EmbeddingsResponse>('/embeddings')
+}
+
+export function fetchEngineCapabilities(): Promise<EngineCapabilitiesResponse> {
+  return requestJson<EngineCapabilitiesResponse>('/engines/capabilities')
 }
 
 export function fetchLoras(): Promise<LoraListResponse> {

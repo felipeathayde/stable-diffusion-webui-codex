@@ -1,7 +1,8 @@
 # apps/interface/src/views Overview
+<!-- tags: frontend, views, txt2img, sdxl -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-10-31
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -10,4 +11,6 @@ Status: Active
 ## Notes
 - Views should compose reusable components and stores; avoid duplicating logic that belongs in shared modules.
 - Keep routes documented in `router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
-- `Sdxl.vue` reuses the txt2img layout with the SDXL store; keep both views in sync when adjusting shared UX patterns.
+- `Sdxl.vue` reuses the txt2img layout with the SDXL store; keep both views in sync when adjusting shared UX patterns (including prompt modals like LoRA/TI selectors).
+- Txt2Img/Sdxl now render a nested “Hires Refiner” block inside the Highres card while keeping the global Refiner card under Generation Parameters.
+- `XyzPlot.vue` adds an XYZ sweep page (route `/xyz`) that drives batched txt2img runs from frontend only; uses current SDXL state as the baseline payload.

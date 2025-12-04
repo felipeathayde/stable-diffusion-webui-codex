@@ -101,9 +101,10 @@ class T5TextProcessingEngine:
 
     def encode_with_transformers(self, tokens: torch.Tensor) -> torch.Tensor:
         device = memory_management.text_encoder_device()
+        dtype = memory_management.text_encoder_dtype(device=device)
         tokens = tokens.to(device=device, dtype=torch.long)
         if hasattr(self.text_encoder, "shared"):
-            self.text_encoder.shared.to(device=device, dtype=torch.float32)
+            self.text_encoder.shared.to(device=device, dtype=dtype)
         outputs = self.text_encoder(input_ids=tokens)
         return outputs
 

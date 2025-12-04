@@ -8,6 +8,7 @@ const ModelsList = () => import('./views/ModelsList.vue')
 const ModelTabView = () => import('./views/ModelTabView.vue')
 const WorkflowsList = () => import('./views/WorkflowsList.vue')
 const Sdxl = () => import('./views/Sdxl.vue')
+const XyzPlot = () => import('./views/XyzPlot.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -24,6 +25,7 @@ const router = createRouter({
     { path: '/models/:tabId', component: ModelTabView },
     // Single canonical inference surface
     { path: '/sdxl', component: Sdxl },
+    { path: '/xyz', component: XyzPlot },
     // Utilities
     { path: '/workflows', component: WorkflowsList },
     { path: '/upscale', component: Upscale },

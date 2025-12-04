@@ -69,12 +69,57 @@
           <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
       </div>
-    </div>
+  </div>
 
     <div class="quicksettings-group">
       <label class="label-muted">Device</label>
       <div class="qs-row">
         <select class="select-md" :value="store.currentDevice" @change="(e:any)=>store.setDevice((e.target as HTMLSelectElement).value)">
+          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">Core dtype</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.coreDtype" @change="(e:any)=>store.setCoreDtype((e.target as HTMLSelectElement).value)">
+          <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+        </select>
+      </div>
+      <label class="label-muted">TE dtype</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.teDtype" @change="(e:any)=>store.setTeDtype((e.target as HTMLSelectElement).value)">
+          <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+        </select>
+      </div>
+      <label class="label-muted">VAE dtype</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.vaeDtype" @change="(e:any)=>store.setVaeDtype((e.target as HTMLSelectElement).value)">
+          <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">Core device</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.coreDevice" @change="(e:any)=>store.setCoreDevice((e.target as HTMLSelectElement).value)">
+          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          <option value="auto">auto</option>
+        </select>
+      </div>
+      <label class="label-muted">TE device</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.teDevice" @change="(e:any)=>store.setTeDevice((e.target as HTMLSelectElement).value)">
+          <option value="auto">auto</option>
+          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+      </div>
+      <label class="label-muted">VAE device</label>
+      <div class="qs-row">
+        <select class="select-md" :value="store.vaeDevice" @change="(e:any)=>store.setVaeDevice((e.target as HTMLSelectElement).value)">
+          <option value="auto">auto</option>
           <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
       </div>

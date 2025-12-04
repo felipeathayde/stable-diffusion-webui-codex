@@ -111,6 +111,13 @@ export function fetchTaskResult(taskId: string): Promise<TaskResult> {
   return requestJson<TaskResult>(`/tasks/${taskId}`)
 }
 
+export function cancelTask(taskId: string, mode: 'immediate' | 'after_current' = 'immediate'): Promise<{ status: string; mode: string }> {
+  return requestJson<{ status: string; mode: string }>(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ mode }),
+  })
+}
+
 export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void, onError?: (err: unknown) => void): () => void {
   const es = new EventSource(`${API_BASE}/tasks/${taskId}/events`)
   let ended = false

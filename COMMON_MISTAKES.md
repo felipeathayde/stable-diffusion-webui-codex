@@ -2,6 +2,10 @@
 **Cause + fix:** `Pytest is not installed in the current environment; install pytest (preferably in the active venv) before running the test suite.`
 **Correct command:** `python -m pip install pytest && python -m pytest tests/test_backend_import_lightweight.py`
 
+**Wrong command:** `sed -n '1,200p' .bottle/handoffs/HANDOFF_GUIDE`
+**Cause + fix:** `This repository keeps the handoff guide under .sangoi/handoffs/HANDOFF_GUIDE.md; the .bottle path does not exist. Check the actual guide location before reading.`
+**Correct command:** `sed -n '1,200p' .sangoi/handoffs/HANDOFF_GUIDE.md`
+
 **Wrong command:** `rg -n "huggingface_guess" legacy`
 **Cause + fix:** Repository archives legacy code under `.legacy/`, so the command targeted a non-existent `legacy/` directory; point ripgrep at `.legacy/` instead.
 **Correct command:** `rg -n "huggingface_guess" .legacy`
@@ -155,6 +159,10 @@ PY`
 **Wrong command:** `sed -n '1,160p' .sangoi/task-guidelines.md`
 **Cause + fix:** `Task guidelines were relocated to .sangoi/templates/document-guidelines.md; target the existing path to avoid file-not-found errors.`
 **Correct command:** `sed -n '1,160p' .sangoi/templates/document-guidelines.md`
+
+**Wrong command:** `sed -n '1,260p' apps/backend/patchers/controlnet/models/sd/control.py`
+**Cause + fix:** `ControlNet models live under apps/backend/patchers/controlnet/architectures/sd/; the older models/ path does not exist in this Codex layout. Target the architectures directory instead of the legacy path.`
+**Correct command:** `sed -n '1,260p' apps/backend/patchers/controlnet/architectures/sd/control.py`
 
 **Wrong command:** `sed -n '1,200p' apps/backend/runtime/adapters/utils.py`
 **Cause + fix:** `Runtime adapters do not expose a utils.py file; utility helpers live under apps/backend/runtime/utils.py.`

@@ -3,6 +3,17 @@ import { z, ZodError } from 'zod'
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 
+const RefinerOptionsSchema = z
+  .object({
+    enable: z.literal(true),
+    steps: z.number().int().min(0),
+    cfg: z.number(),
+    seed: z.number().int(),
+    model: z.string().min(1).optional(),
+    vae: z.string().min(1).optional(),
+  })
+  .strict()
+
 const HighresOptionsSchema = z
   .object({
     enable: z.literal(true),
@@ -20,17 +31,7 @@ const HighresOptionsSchema = z
     negative_prompt: z.string().optional(),
     cfg: z.number().optional(),
     distilled_cfg: z.number().optional(),
-  })
-  .strict()
-
-const RefinerOptionsSchema = z
-  .object({
-    enable: z.literal(true),
-    steps: z.number().int().min(0),
-    cfg: z.number(),
-    seed: z.number().int(),
-    model: z.string().min(1).optional(),
-    vae: z.string().min(1).optional(),
+    refiner: RefinerOptionsSchema.optional(),
   })
   .strict()
 
@@ -85,6 +86,7 @@ export interface HighresFormState {
   negativePrompt?: string
   cfg?: number
   distilledCfg?: number
+  refiner?: RefinerFormState
 }
 
 export interface RefinerFormState {
@@ -113,7 +115,7 @@ export interface Txt2ImgFormState {
   engine?: string
   model?: string
   highres?: HighresFormState
-   refiner?: RefinerFormState
+  refiner?: RefinerFormState
 }
 
 function normalizeDevice(device: string): Txt2ImgRequest['codex_device'] {
@@ -171,6 +173,16 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
       negative_prompt: state.highres.negativePrompt,
       cfg: state.highres.cfg,
       distilled_cfg: state.highres.distilledCfg,
+      refiner: state.highres.refiner?.enabled
+        ? {
+            enable: true,
+            steps: state.highres.refiner.steps,
+            cfg: state.highres.refiner.cfg,
+            seed: state.highres.refiner.seed,
+            model: state.highres.refiner.model,
+            vae: state.highres.refiner.vae,
+          }
+        : undefined,
     }
   }
   if (state.refiner?.enabled) {

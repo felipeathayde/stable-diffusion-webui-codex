@@ -13,3 +13,4 @@ Status: Active
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
 - Generation + highres + refiner controls live in `GenerationSettingsCard.vue`, `HighresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.
+- Highres card now nests a `RefinerSettingsCard` (labelled “Hires Refiner”, dense variant) so operators can configure a refiner specific to the hires pass alongside the global refiner card.

@@ -61,6 +61,12 @@ export const useSdxlStore = defineStore('sdxl', () => {
     resizeY: 0,
     steps: 0,
     upscaler: 'Use same upscaler',
+    refiner: {
+      enabled: false,
+      steps: 10,
+      cfg: cfgScale.value,
+      seed: -1,
+    },
   })
   const refiner = reactive<RefinerFormState>({
     enabled: false,

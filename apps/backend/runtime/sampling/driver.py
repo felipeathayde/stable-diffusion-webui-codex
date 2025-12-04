@@ -67,6 +67,16 @@ _KD_MAPPING = {
 }
 
 
+class _SamplingCancelled(Exception):
+    """Signal that sampling was cancelled externally."""
+
+
+def _raise_if_cancelled() -> None:
+    if backend_state.should_stop:
+        raise _SamplingCancelled("cancelled")
+
+
+
 _LMS_COEFFS = {
     1: (1.0,),
     2: (3.0 / 2.0, -1.0 / 2.0),
@@ -397,19 +407,19 @@ class CodexSampler:
                             schedule_summary,
                         )
 
-                    if self._log_enabled:
+                if self._log_enabled:
+                    head = []
+                    try:
+                        head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
+                    except Exception:
                         head = []
-                        try:
-                            head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
-                        except Exception:
-                            head = []
-                        self._logger.info(
-                            "sampler algorithm=%s scheduler=%s steps=%d head=%s",
-                            sampler_kind.value,
-                            active_context.scheduler_name,
-                            len(sigmas_run) - 1,
-                            head,
-                        )
+                    self._logger.info(
+                        "sampler algorithm=%s scheduler=%s steps=%d head=%s",
+                        sampler_kind.value,
+                        active_context.scheduler_name,
+                        len(sigmas_run) - 1,
+                        head,
+                    )
 
                     progress_bar = None
                     use_progress = active_context.enable_progress
@@ -432,7 +442,7 @@ class CodexSampler:
                         log_enabled=self._log_enabled,
                         preview_callback=preview_callback,
                         total_steps=len(sigmas_run) - 1,
-                        tick=lambda step: backend_state.tick(sampling_step=step),
+                        tick=lambda step: (_raise_if_cancelled() or backend_state.tick(sampling_step=step)),
                         preview_interval=active_context.preview_interval,
                     )
 
@@ -447,6 +457,8 @@ class CodexSampler:
                 eps_history: List[torch.Tensor] = []
 
                 for i in range(start_idx, steps):
+                    if backend_state.should_stop:
+                        raise _SamplingCancelled("cancelled")
                     sigma = sigmas[i]
                     sigma_next = sigmas[i + 1]
                     sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=x.dtype)
@@ -657,6 +669,9 @@ class CodexSampler:
                 return x
             except _PrecisionFallbackRequest:
                 self._logger.warning("Precision fallback requested for diffusion core; retrying with next dtype.")
+            except _SamplingCancelled:
+                self._logger.info("Sampling cancelled by request; aborting current run.")
+                raise RuntimeError("cancelled")
             finally:
                 if progress_bar is not None:
                     progress_bar.close()
@@ -664,6 +679,7 @@ class CodexSampler:
                     sampling_cleanup(unet)
                 if state_started:
                     backend_state.end()
+                backend_state.clear_flags()
 
             if retry:
                 memory_management.soft_empty_cache(force=True)

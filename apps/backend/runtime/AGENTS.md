@@ -1,7 +1,8 @@
 # apps/backend/runtime Overview
+<!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-10-31
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -28,6 +29,8 @@ Status: Active
 ## Notes
 - Keep runtime logic model-agnostic when possible; place model-specific code under the dedicated `{model}/` folders.
 - Avoid duplicating helpers across engines—centralize them here to maintain parity.
+- 2025-12-03: Processing models expose `RefinerConfig` and carry refiner configs on `CodexProcessingTxt2Img`/`CodexHighResConfig` (global + hires) for stage-based refiner execution.
+- 2025-12-03: Sampler driver checks `backend_state.should_stop` each step and honors `/api/tasks/{id}/cancel` (immediate) by raising `RuntimeError("cancelled")` to abort sampling.
 - 2025-11-03: New `runtime.call_trace` module exposes global function-call tracing via `enable()/disable()` and `enable_from_env()`. The API entrypoint wires this behind `--trace-debug`/`CODEX_TRACE_DEBUG` and logs each Python function call at `DEBUG` using the `backend.calltrace` logger. As of 2025-11-14, only modules under `apps.*` are recorded to avoid 3rd-party flood, and each function logs at most 10 calls by default (override via `--trace-debug-max-per-func N`, `N<=0` disables the cap).
 - 2025-11-04: Added streaming materialization helpers to `runtime.utils.FilterPrefixView`/`LazySafetensorsDict` so safetensor-backed parser components load with a single handle instead of reopening per key (prevents Windows `torch_cpu.dll` crashes during SDXL parsing).
 - 2025-11-14: Weight/bias fetch logs under `runtime.ops.operations` are now rate-limited via `CODEX_WEIGHT_FETCH_LOG_LIMIT` (default 10 per layer class). Set to `0` to disable the log entirely or raise when diagnosing dtype/offload issues.

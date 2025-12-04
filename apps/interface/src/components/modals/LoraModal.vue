@@ -12,8 +12,14 @@
     </div>
     <div class="panel-section" style="margin-top:.5rem">
       <ul class="list" role="listbox">
-        <li v-for="item in filtered" :key="item.name" class="list-item clickable" @click="insert(item.name)">
-          {{ item.name }}
+        <li v-for="item in filtered" :key="item.name" class="list-item clickable">
+          <div class="flex items-center justify-between">
+            <span>{{ item.name }}</span>
+            <span>
+              <button class="btn btn-sm btn-secondary" type="button" title="Insert into Prompt" @click.stop="insert(item.name, 'positive')">+</button>
+              <button class="btn btn-sm btn-outline" type="button" title="Insert into Negative Prompt" style="margin-left:.25rem" @click.stop="insert(item.name, 'negative')">-</button>
+            </span>
+          </div>
         </li>
       </ul>
     </div>
@@ -29,7 +35,7 @@ import Modal from '../ui/Modal.vue'
 import { fetchLoras } from '../../api/client'
 
 const props = defineProps<{ modelValue: boolean }>()
-const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e:'insert', token: string): void }>()
+const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e:'insert', payload: { token: string; target: 'positive' | 'negative' }): void }>()
 const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('update:modelValue', v) })
 
 interface LoraItem { name: string; path: string }
@@ -51,8 +57,8 @@ onMounted(async () => {
   }
 })
 
-function insert(name: string): void {
+function insert(name: string, target: 'positive' | 'negative'): void {
   const t = `<lora:${name}:${(weight.value ?? 1.0).toFixed(2)}>`
-  emit('insert', t)
+  emit('insert', { token: t, target })
 }
 </script>

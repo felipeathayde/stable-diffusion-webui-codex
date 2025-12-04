@@ -8,6 +8,7 @@ from apps.backend.runtime.processing.models import (
     CodexHighResConfig,
     CodexProcessingImg2Img,
     CodexProcessingTxt2Img,
+    RefinerConfig,
 )
 
 _log = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
             scheduler=None,
             additional_modules=tuple(),
             checkpoint_name=None,
+            refiner=None,
         )
 
     prompt_value = payload.get("hr_prompt")
@@ -72,6 +74,8 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
     if checkpoint_name is None:
         checkpoint_name = payload.get("checkpoint")
 
+    refiner_cfg = _build_refiner_config(payload.get("refiner"), default_cfg=cfg_value)
+
     return CodexHighResConfig(
         enabled=enabled,
         scale=float(payload.get("scale", 2.0)) if enabled else 1.0,
@@ -88,6 +92,28 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
         scheduler=scheduler,
         additional_modules=modules_tuple,
         checkpoint_name=checkpoint_name,
+        refiner=refiner_cfg if refiner_cfg.enabled else None,
+    )
+
+
+def _build_refiner_config(data: Mapping[str, Any] | None, *, default_cfg: float) -> RefinerConfig:
+    payload = data or {}
+    enabled = bool(payload.get("enable", False))
+    steps = int(payload.get("steps", 0) or 0)
+    cfg = float(payload.get("cfg", default_cfg))
+    seed = int(payload.get("seed", -1))
+    model_raw = payload.get("model")
+    model_name = str(model_raw).strip() if model_raw is not None else ""
+    vae_raw = payload.get("vae")
+    vae_name = str(vae_raw).strip() if vae_raw else ""
+
+    return RefinerConfig(
+        enabled=enabled and steps > 0,
+        steps=steps,
+        cfg=cfg,
+        seed=seed,
+        model=model_name or None,
+        vae=vae_name or None,
     )
 
 
@@ -133,6 +159,8 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         seed=-1 if req.seed is None else int(req.seed),
         metadata=metadata,
     )
+    refiner_cfg = _build_refiner_config(req.extras.get("refiner") if isinstance(req.extras, Mapping) else None, default_cfg=processing.guidance_scale)
+    processing.refiner = refiner_cfg if refiner_cfg.enabled else None
     if hires_cfg.enabled:
         processing.enable_hires(cfg=hires_cfg)
     for key, value in (req.extras or {}).items():

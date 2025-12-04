@@ -157,9 +157,9 @@ class ClassicTextProcessingEngine:
             # attribute existing on embeddings (many CLIP variants do not expose it).
             embeddings = self.text_encoder.transformer.text_model.embeddings
             if hasattr(embeddings, "position_embedding"):
-                embeddings.position_embedding = embeddings.position_embedding.to(dtype=torch.float32)
+                embeddings.position_embedding = embeddings.position_embedding.to(dtype=desired_dtype)
             if hasattr(embeddings, "token_embedding"):
-                embeddings.token_embedding = embeddings.token_embedding.to(dtype=torch.float32)
+                embeddings.token_embedding = embeddings.token_embedding.to(dtype=desired_dtype)
 
             tokens_device = tokens.to(target_device)
 

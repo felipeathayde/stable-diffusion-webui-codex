@@ -28,7 +28,7 @@ from apps.backend.runtime.processing.datatypes import (
     PromptContext,
     SamplingPlan,
 )
-from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
+from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.backend.runtime.workflows import (
     apply_dimension_overrides,
@@ -46,6 +46,7 @@ from apps.backend.runtime.workflows import (
     run_process_scripts,
 )
 from apps.backend.codex.loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.use_cases.txt2img_pipeline.refiner import GlobalRefinerStage, HiresRefinerStage, RefinerStage
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
@@ -55,6 +56,7 @@ class PrepareState:
     """State captured after the preparation stage."""
 
     prompt_context: PromptContext
+    hires_prompt_context: PromptContext | None
     sampling_plan: SamplingPlan
     rng: ImageRNG
     payload: ConditioningPayload
@@ -195,6 +197,27 @@ class Txt2ImgPipelineRunner:
         except Exception as exc:  # noqa: BLE001
             self._logger.debug("[sdxl] conditioning diagnostics skipped: %s", exc)
 
+    def _apply_refiner_stage(
+        self,
+        stage: RefinerStage,
+        processing: CodexProcessingTxt2Img,
+        prompt_context: PromptContext,
+        noise_settings,
+        samples: torch.Tensor,
+    ) -> torch.Tensor:
+        if not stage.is_enabled():
+            return samples
+
+        return stage.run(
+            processing=processing,
+            prompt_context=prompt_context,
+            noise_settings=noise_settings,
+            samples=samples,
+            compute_conditioning=self._compute_conditioning,
+            log_conditioning=self._log_conditioning,
+            log_tensor_stats=self._log_tensor_stats,
+        )
+
     # ------------------------------------------------------------------ public API
     @pipeline_trace
     def run(
@@ -288,6 +311,7 @@ class Txt2ImgPipelineRunner:
 
         return PrepareState(
             prompt_context=prompt_context,
+            hires_prompt_context=None,
             sampling_plan=plan,
             rng=rng,
             payload=payload,
@@ -420,6 +444,7 @@ class Txt2ImgPipelineRunner:
             loras=hr_prompt_loras,
             controls=dict(hr_prompt_controls),
         )
+        state.hires_prompt_context = hires_prompt_context
 
         processing.prompts = hires_prompt_context.prompts
         processing.negative_prompts = hires_prompt_context.negative_prompts
@@ -502,6 +527,15 @@ class Txt2ImgPipelineRunner:
             start_at_step=start_index,
         )
 
+        if processing.hires_refiner is not None:
+            samples = self._apply_refiner_stage(
+                HiresRefinerStage(processing.hires_refiner),
+                processing,
+                hires_prompt_context,
+                hires_settings,
+                samples,
+            )
+
         processing.prompts = original_attrs["prompts"]
         processing.negative_prompts = original_attrs["negative_prompts"]
         processing.width = original_attrs["width"]
@@ -520,115 +554,28 @@ class Txt2ImgPipelineRunner:
         state: PrepareState,
         samples: torch.Tensor,
     ) -> torch.Tensor:
-        """Optional SDXL refiner pass driven by extras.refiner overrides.
+        refiner_cfg = getattr(processing, "refiner", None)
+        if refiner_cfg is None:
+            overrides = getattr(processing, "override_settings", {}) or {}
+            raw = overrides.get("refiner") if isinstance(overrides, dict) else None
+            if isinstance(raw, dict):
+                refiner_cfg = RefinerConfig(
+                    enabled=bool(raw.get("enable", False)) and int(raw.get("steps", 0) or 0) > 0,
+                    steps=int(raw.get("steps", 0) or 0),
+                    cfg=float(raw.get("cfg", getattr(processing, "guidance_scale", 7.0))),
+                    seed=int(raw.get("seed", -1)),
+                    model=str(raw.get("model") or "").strip() or None,
+                    vae=str(raw.get("vae") or "").strip() or None,
+                )
 
-        Uses a dedicated SDXL refiner engine (when configured) to run an
-        additional sampling stage over the base/hires latents.
-        """
-        overrides = getattr(processing, "override_settings", {}) or {}
-        if not isinstance(overrides, dict):
-            return samples
-
-        refiner_cfg = overrides.get("refiner")
-        if not isinstance(refiner_cfg, dict):
-            return samples
-
-        enabled = bool(refiner_cfg.get("enable", True))
-        steps = int(refiner_cfg.get("steps", 0) or 0)
-        if not enabled or steps <= 0:
-            return samples
-
-        model_name = str(refiner_cfg.get("model") or "").strip()
-        if not model_name:
-            raise RuntimeError(
-                "extras.refiner is enabled but no refiner model was specified. "
-                "Provide a valid SDXL refiner checkpoint in the Refiner panel."
-            )
-
-        cfg_scale = float(refiner_cfg.get("cfg", processing.guidance_scale))
-        seed_value = int(refiner_cfg.get("seed", -1))
-        if seed_value < 0:
-            seed_value = int(torch.randint(0, 2**31 - 1, (1,)).item())
-
-        self._logger.info(
-            "[sdxl] starting refiner pass model=%s steps=%d cfg=%.3f seed=%d",
-            model_name,
-            steps,
-            cfg_scale,
-            seed_value,
+        stage = GlobalRefinerStage(refiner_cfg)
+        return self._apply_refiner_stage(
+            stage,
+            processing,
+            state.prompt_context,
+            state.sampling_plan.noise_settings,
+            samples,
         )
-
-        load_opts = EngineLoadOptions(
-            device=None,
-            dtype=None,
-            attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
-            accelerator=os.getenv("CODEX_ACCELERATOR"),
-            vae_path=str(refiner_cfg.get("vae")) if refiner_cfg.get("vae") else None,
-        )
-        try:
-            refiner_engine = _load_engine(model_name, options=load_opts)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"Failed to load SDXL refiner engine '{model_name}': {exc}") from exc
-
-        original_sd_model = processing.sd_model
-        original_width = processing.width
-        original_height = processing.height
-
-        try:
-            processing.sd_model = refiner_engine
-            latent_h, latent_w = samples.shape[-2], samples.shape[-1]
-            processing.width = latent_w * 8
-            processing.height = latent_h * 8
-            processing.guidance_scale = cfg_scale
-            processing.cfg_scale = cfg_scale
-            processing.steps = int(steps)
-
-            noise_settings = state.sampling_plan.noise_settings
-            plan = build_sampling_plan(
-                processing,
-                seeds=[seed_value],
-                subseeds=[seed_value],
-                subseed_strength=0.0,
-                noise_settings=noise_settings,
-            )
-            rng = ensure_sampler_and_rng(processing, plan, latent_channels=samples.shape[1])
-            noise = rng.next().to(samples)
-
-            cond_ref, uncond_ref = self._compute_conditioning(processing, state.prompt_context)
-            if cond_ref is None or uncond_ref is None:
-                raise RuntimeError("Failed to build conditioning for SDXL refiner; get_learned_conditioning returned None.")
-
-            payload = ConditioningPayload(conditioning=cond_ref, unconditional=uncond_ref)
-            self._log_conditioning(cond_ref, uncond_ref)
-
-            processing.update_extra_param(
-                "Refiner",
-                {
-                    "model": model_name,
-                    "steps": int(steps),
-                    "cfg": float(cfg_scale),
-                    "seed": int(seed_value),
-                },
-            )
-
-            samples_refined = execute_sampling(
-                processing,
-                plan,
-                payload,
-                state.prompt_context,
-                state.prompt_context.loras,
-                state.prompt_context.controls,
-                rng=rng,
-                noise=noise,
-                init_latent=samples,
-                start_at_step=None,
-            )
-            self._log_tensor_stats("refiner_samples", samples_refined)
-            return samples_refined
-        finally:
-            processing.sd_model = original_sd_model
-            processing.width = original_width
-            processing.height = original_height
 
     # ------------------------------------------------------------------ helpers
     @pipeline_trace

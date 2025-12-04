@@ -12,6 +12,7 @@
       <nav class="tabs-nav">
         <!-- Single canonical inference tab -->
         <RouterLink class="tab-link" to="/sdxl">sdxl</RouterLink>
+        <RouterLink class="tab-link" to="/xyz">xyz</RouterLink>
         <!-- Utilities on the right -->
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>
         <RouterLink class="tab-link" to="/upscale">upscale</RouterLink>

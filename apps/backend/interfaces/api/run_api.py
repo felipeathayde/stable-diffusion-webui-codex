@@ -68,6 +68,7 @@ from apps.backend.infra.config import args as config_args
 from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.models import api as model_api
 from apps.backend.runtime.memory import memory_management as mem_management
+from apps.backend.core.state import state as backend_state
 
 try:
     from colorama import Fore, Style  # type: ignore
@@ -139,6 +140,8 @@ class TaskEntry:
         self.error: Optional[str] = None
         self.done: asyncio.Future[bool] = loop.create_future()
         self.cleanup_handle: Optional[asyncio.TimerHandle] = None
+        self.cancel_requested: bool = False
+        self.cancel_mode: str = "immediate"  # immediate | after_current
 
     def schedule_cleanup(self, task_id: str, delay: float = 300.0) -> None:
         if self.cleanup_handle:
@@ -154,6 +157,16 @@ def get_task(task_id: str) -> Optional['TaskEntry']:
 def register_task(task_id: str, entry: 'TaskEntry') -> None:
     with tasks_lock:
         tasks[task_id] = entry
+
+
+def request_task_cancel(task_id: str, *, mode: str = "immediate") -> bool:
+    with tasks_lock:
+        entry = tasks.get(task_id)
+        if entry is None:
+            return False
+        entry.cancel_requested = True
+        entry.cancel_mode = mode if mode in {"immediate", "after_current"} else "immediate"
+        return True
 
 
 def _load_json(path: str) -> dict:
@@ -1277,6 +1290,29 @@ def build_app() -> FastAPI:
         # Validate against schema when available, then persist via Codex options
         updates = _validate_options(payload)
         updated = _opts_set_many(updates)
+
+        # Apply memory manager overrides when present
+        from apps.backend.runtime import memory_management as mem_management
+        role_map = {
+            "codex_core_device": ("core", "backend"),
+            "codex_te_device": ("text_encoder", "backend"),
+            "codex_vae_device": ("vae", "backend"),
+            "codex_core_dtype": ("core", "dtype"),
+            "codex_te_dtype": ("text_encoder", "dtype"),
+            "codex_vae_dtype": ("vae", "dtype"),
+        }
+        for key, value in payload.items():
+            if key not in role_map:
+                continue
+            role, kind = role_map[key]
+            try:
+                if kind == "backend":
+                    mem_management.set_component_backend(role, str(value))
+                else:
+                    mem_management.set_component_dtype(role, str(value))
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
+
         return {"updated": updated}
 
     @app.post('/api/options/validate')
@@ -1367,6 +1403,7 @@ def build_app() -> FastAPI:
         "negative_prompt",
         "cfg",
         "distilled_cfg",
+        "refiner",
     }
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
@@ -1478,6 +1515,22 @@ def build_app() -> FastAPI:
                     modules_list = list(hr_modules)
                 else:
                     modules_list = []
+                refiner_raw = highres.get('refiner')
+                refiner_cfg: Optional[Dict[str, Any]] = None
+                if refiner_raw is not None:
+                    if not isinstance(refiner_raw, dict):
+                        raise HTTPException(status_code=400, detail="'extras.highres.refiner' must be an object")
+                    _reject_unknown_keys(refiner_raw, {"enable", "steps", "cfg", "seed", "model", "vae"}, "extras.highres.refiner")
+                    if bool(refiner_raw.get('enable')):
+                        refiner_cfg = {
+                            "steps": _require_int_field(refiner_raw, 'steps', minimum=0),
+                            "cfg": _require_float_field(refiner_raw, 'cfg'),
+                            "seed": _require_int_field(refiner_raw, 'seed'),
+                        }
+                        if 'model' in refiner_raw:
+                            refiner_cfg['model'] = str(refiner_raw['model'])
+                        if 'vae' in refiner_raw:
+                            refiner_cfg['vae'] = str(refiner_raw['vae'])
                 highres_cfg = {
                     "denoise": float(highres['denoise']),
                     "scale": float(highres['scale']),
@@ -1493,6 +1546,7 @@ def build_app() -> FastAPI:
                     "negative_prompt": highres.get('negative_prompt') or '',
                     "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
                     "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
+                    "refiner": refiner_cfg,
                 }
 
         # Refiner options (metadata only for now)
@@ -1534,6 +1588,7 @@ def build_app() -> FastAPI:
                 "hr_negative_prompt": "",
                 "hr_cfg": fallback_cfg,
                 "hr_distilled_cfg": fallback_distilled,
+                "refiner": None,
             }
         return {
             "enable": True,
@@ -1551,6 +1606,7 @@ def build_app() -> FastAPI:
             "hr_negative_prompt": cfg.get("negative_prompt") or "",
             "hr_cfg": cfg.get("cfg") if cfg.get("cfg") is not None else fallback_cfg,
             "hr_distilled_cfg": cfg.get("distilled_cfg") if cfg.get("distilled_cfg") is not None else fallback_distilled,
+            "refiner": cfg.get("refiner"),
         }
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
@@ -1673,6 +1729,12 @@ def build_app() -> FastAPI:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                        if entry.cancel_requested and entry.cancel_mode == "immediate":
+                            entry.error = "cancelled"
+                            push({"type": "error", "message": "cancelled"})
+                            push({"type": "end"})
+                            mark_done(False)
+                            return
                         if isinstance(ev, ProgressEvent):
                             push({
                                 "type": "progress",
@@ -1837,6 +1899,12 @@ def build_app() -> FastAPI:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
+                        if entry.cancel_requested and entry.cancel_mode == "immediate":
+                            entry.error = "cancelled"
+                            push({"type": "error", "message": "cancelled"})
+                            push({"type": "end"})
+                            mark_done(False)
+                            return
                         if isinstance(ev, ProgressEvent):
                             push({
                                 "type": "progress",
@@ -2106,6 +2174,12 @@ def build_app() -> FastAPI:
                     orch = InferenceOrchestrator()
                     engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
                     for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
+                        if entry.cancel_requested and entry.cancel_mode == "immediate":
+                            entry.error = "cancelled"
+                            push({"type": "error", "message": "cancelled"})
+                            push({"type": "end"})
+                            mark_done(False)
+                            return
                         if isinstance(ev, ProgressEvent):
                             push({
                                 "type": "progress",
@@ -2229,6 +2303,20 @@ def build_app() -> FastAPI:
                     break
 
         return StreamingResponse(event_stream(), media_type='text/event-stream')
+
+    @app.post('/api/tasks/{task_id}/cancel')
+    async def task_cancel(task_id: str, payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+        mode_raw = str(payload.get('mode', 'immediate')).strip().lower() if isinstance(payload, dict) else 'immediate'
+        mode = 'after_current' if mode_raw == 'after_current' else 'immediate'
+        ok = request_task_cancel(task_id, mode=mode)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if mode == 'immediate':
+            try:
+                backend_state.stop_generating()
+            except Exception:
+                pass
+        return {"status": "cancelling", "mode": mode}
 
     # Serve built UI after API routes so /api/* is matched before the SPA fallback
     if os.path.isdir(_ui_dist_dir):

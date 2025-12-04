@@ -6,6 +6,7 @@ without relying on legacy ``modules.*`` wrappers.
 
 from .models import (
     CodexHighResConfig,
+    RefinerConfig,
     CodexProcessingBase,
     CodexProcessingImg2Img,
     CodexProcessingTxt2Img,
@@ -28,6 +29,7 @@ __all__ = [
     "CodexProcessingTxt2Img",
     "CodexProcessingImg2Img",
     "CodexHighResConfig",
+    "RefinerConfig",
     "PromptContext",
     "ConditioningPayload",
     "SamplingPlan",

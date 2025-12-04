@@ -1,7 +1,8 @@
 # apps/backend/engines/util Overview
+<!-- tags: backend, engines, util, adapters -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-12-03
 Status: Active
 
 ## Purpose
@@ -9,3 +10,4 @@ Status: Active
 
 ## Notes
 - Add shared utilities here instead of duplicating helpers inside specific engine packages.
+- `adapters.py` builds typed `RefinerConfig` for txt2img (global) and for highres payloads; `build_txt2img_processing` now populates `processing.refiner` and `CodexHighResConfig.refiner` when extras/highres refiner is enabled.

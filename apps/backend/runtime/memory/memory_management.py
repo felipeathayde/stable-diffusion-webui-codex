@@ -325,6 +325,8 @@ __all__ = [
     "args",
     "memory_config",
     "switch_primary_device",
+    "set_component_backend",
+    "set_component_dtype",
 ]
 
 
@@ -382,4 +384,116 @@ def switch_primary_device(backend: str) -> bool:
     new_cfg.device_backend = target
     reinitialize(new_cfg)
     logger.info("[memory] primary device switched to %s", normalized)
+    return True
+
+
+def set_component_backend(role: str, backend: str) -> bool:
+    """Update the preferred backend for a component role and reinitialize.
+
+    role: one of core|text_encoder|vae|clip_vision|intermediate
+    backend: one of auto|cpu|cuda|mps|xpu|directml
+    """
+    from copy import deepcopy
+    from .config import DeviceBackend
+
+    role_norm = str(role).strip().lower()
+    mapping_role = {
+        "core": DeviceRole.CORE,
+        "text_encoder": DeviceRole.TEXT_ENCODER,
+        "te": DeviceRole.TEXT_ENCODER,
+        "vae": DeviceRole.VAE,
+        "clip_vision": DeviceRole.CLIP_VISION,
+        "vision": DeviceRole.CLIP_VISION,
+        "intermediate": DeviceRole.INTERMEDIATE,
+    }
+    if role_norm not in mapping_role:
+        raise ValueError(f"Invalid role '{role}'")
+    role_enum = mapping_role[role_norm]
+
+    backend_norm = (backend or "").strip().lower()
+    mapping_backend = {
+        "auto": DeviceBackend.AUTO,
+        "cpu": DeviceBackend.CPU,
+        "cuda": DeviceBackend.CUDA,
+        "mps": DeviceBackend.MPS,
+        "xpu": DeviceBackend.XPU,
+        "directml": DeviceBackend.DIRECTML,
+    }
+    if backend_norm not in mapping_backend:
+        raise ValueError(f"Invalid backend '{backend}'")
+
+    current_cfg = _CONFIG
+    if current_cfg is None:
+        raise RuntimeError("Memory manager not initialized")
+
+    new_cfg = deepcopy(current_cfg)
+    if role_enum == DeviceRole.CORE:
+        new_cfg.device_backend = mapping_backend[backend_norm]
+    policy = new_cfg.component_policy(role_enum)
+    policy.preferred_backend = mapping_backend[backend_norm]
+    reinitialize(new_cfg)
+    logger.info("[memory] backend for %s set to %s", role_enum.value, backend_norm)
+    return True
+
+
+def set_component_dtype(role: str, dtype: str) -> bool:
+    """Force dtype for a component role. Use 'auto' to clear overrides."""
+    from copy import deepcopy
+
+    role_norm = str(role).strip().lower()
+    mapping_role = {
+        "core": DeviceRole.CORE,
+        "text_encoder": DeviceRole.TEXT_ENCODER,
+        "te": DeviceRole.TEXT_ENCODER,
+        "vae": DeviceRole.VAE,
+        "clip_vision": DeviceRole.CLIP_VISION,
+        "vision": DeviceRole.CLIP_VISION,
+        "intermediate": DeviceRole.INTERMEDIATE,
+    }
+    if role_norm not in mapping_role:
+        raise ValueError(f"Invalid role '{role}'")
+    role_enum = mapping_role[role_norm]
+
+    dtype_norm = (dtype or "").strip().lower()
+    if dtype_norm not in {"auto", "fp16", "bf16", "fp32"}:
+        raise ValueError("dtype must be one of auto|fp16|bf16|fp32")
+
+    if _CONFIG is None:
+        raise RuntimeError("Memory manager not initialized")
+
+    new_cfg = deepcopy(_CONFIG)
+
+    # Reset precision flags for the target role
+    flags = new_cfg.precision
+    if role_enum == DeviceRole.CORE:
+        flags.core_fp16 = flags.core_bf16 = flags.core_fp8_e4m3fn = flags.core_fp8_e5m2 = False
+    elif role_enum == DeviceRole.TEXT_ENCODER:
+        flags.clip_fp16 = flags.clip_fp32 = flags.clip_bf16 = flags.clip_fp8_e4m3fn = flags.clip_fp8_e5m2 = False
+    elif role_enum == DeviceRole.VAE:
+        flags.vae_fp16 = flags.vae_fp32 = flags.vae_bf16 = False
+
+    policy = new_cfg.component_policy(role_enum)
+    policy.forced_dtype = None
+
+    if dtype_norm != "auto":
+        torch_name = {
+            "fp16": "float16",
+            "bf16": "bfloat16",
+            "fp32": "float32",
+        }[dtype_norm]
+        policy.forced_dtype = torch_name
+        if role_enum == DeviceRole.CORE:
+            flags.core_fp16 = dtype_norm == "fp16"
+            flags.core_bf16 = dtype_norm == "bf16"
+        elif role_enum == DeviceRole.TEXT_ENCODER:
+            flags.clip_fp16 = dtype_norm == "fp16"
+            flags.clip_bf16 = dtype_norm == "bf16"
+            flags.clip_fp32 = dtype_norm == "fp32"
+        elif role_enum == DeviceRole.VAE:
+            flags.vae_fp16 = dtype_norm == "fp16"
+            flags.vae_bf16 = dtype_norm == "bf16"
+            flags.vae_fp32 = dtype_norm == "fp32"
+
+    reinitialize(new_cfg)
+    logger.info("[memory] dtype for %s set to %s", role_enum.value, dtype_norm)
     return True

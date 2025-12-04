@@ -271,6 +271,7 @@
   @import "./styles/components/settings-form.css";
   @import "./styles/views/settings.css";
   @import "./styles/views/test.css";
+  @import "./styles/views/xyz.css";
   @import "./styles/components/wan22-settings.css";
 
   .app-footer { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 var(--content-px); height: var(--app-footer-h); border-top: 1px solid hsla(0,0%,100%,0.08); background: hsla(0,0%,100%,0.02); font-size: 0.75rem; opacity: 0.9; backdrop-filter: blur(1rem); }

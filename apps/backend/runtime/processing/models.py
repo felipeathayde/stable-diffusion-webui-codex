@@ -27,6 +27,33 @@ def _repeat_to_length(values: Sequence[Any], length: int, *, default: Any) -> Li
 
 
 @dataclass
+class RefinerConfig:
+    """Configuration for a latent refiner stage."""
+
+    enabled: bool = False
+    steps: int = 0
+    cfg: float = 7.0
+    seed: int = -1
+    model: Optional[str] = None
+    vae: Optional[str] = None
+
+    def as_override(self) -> Dict[str, Any]:
+        if not self.enabled:
+            return {"enable": False}
+        data: Dict[str, Any] = {
+            "enable": True,
+            "steps": int(self.steps),
+            "cfg": float(self.cfg),
+            "seed": int(self.seed),
+        }
+        if self.model:
+            data["model"] = self.model
+        if self.vae:
+            data["vae"] = self.vae
+        return data
+
+
+@dataclass
 class CodexHighResConfig:
     """Configuration for high-resolution (second-pass) rendering."""
 
@@ -45,9 +72,10 @@ class CodexHighResConfig:
     scheduler: Optional[str] = None
     additional_modules: Tuple[str, ...] = field(default_factory=tuple)
     checkpoint_name: Optional[str] = None
+    refiner: "RefinerConfig | None" = None
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "enabled": self.enabled,
             "scale": self.scale,
             "denoise": self.denoise,
@@ -64,6 +92,9 @@ class CodexHighResConfig:
             "additional_modules": list(self.additional_modules),
             "checkpoint_name": self.checkpoint_name,
         }
+        if self.refiner is not None:
+            result["refiner"] = self.refiner.as_override()
+        return result
 
     def update_from_payload(self, payload: Dict[str, Any]) -> None:
         self.enabled = bool(payload.get("enabled", self.enabled))
@@ -87,6 +118,19 @@ class CodexHighResConfig:
                 self.additional_modules = (str(modules),)
         if "checkpoint_name" in payload:
             self.checkpoint_name = payload.get("checkpoint_name")
+        if "refiner" in payload and payload["refiner"] is not None:
+            ref_payload = payload["refiner"]
+            if isinstance(ref_payload, RefinerConfig):
+                self.refiner = ref_payload
+            elif isinstance(ref_payload, dict):
+                self.refiner = RefinerConfig(
+                    enabled=bool(ref_payload.get("enable", False)),
+                    steps=int(ref_payload.get("steps", 0) or 0),
+                    cfg=float(ref_payload.get("cfg", self.cfg)),
+                    seed=int(ref_payload.get("seed", -1)),
+                    model=str(ref_payload.get("model")) if ref_payload.get("model") else None,
+                    vae=str(ref_payload.get("vae")) if ref_payload.get("vae") else None,
+                )
 
 
 @dataclass
@@ -233,6 +277,8 @@ class CodexProcessingTxt2Img(CodexProcessingBase):
     """Processing description for txt2img tasks."""
 
     hires: CodexHighResConfig = field(default_factory=CodexHighResConfig)
+    refiner: "RefinerConfig | None" = None
+    hires_refiner: "RefinerConfig | None" = None
     firstpass_image: Any = None
     latent_scale_mode: Optional[Dict[str, Any]] = None
     enable_hr: bool = False
@@ -263,6 +309,7 @@ class CodexProcessingTxt2Img(CodexProcessingBase):
             self.hr_additional_modules = cfg.additional_modules
             self.hr_cfg = cfg.cfg
             self.hr_distilled_cfg = cfg.distilled_cfg
+            self.hires_refiner = cfg.refiner
         else:
             self.hr_second_pass_steps = 0
             self.hr_upscale_to_x = 0
@@ -271,6 +318,7 @@ class CodexProcessingTxt2Img(CodexProcessingBase):
             self.hr_scheduler = None
             self.hr_checkpoint_name = None
             self.hr_additional_modules = []
+            self.hires_refiner = None
 
     def ensure_hires_prompts(self) -> None:
         if not self.enable_hr:

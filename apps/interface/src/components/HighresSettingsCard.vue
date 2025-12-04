@@ -79,12 +79,26 @@
         </select>
       </div>
     </div>
+    <div v-if="enabled && showRefiner" class="hr-refiner">
+      <RefinerSettingsCard
+        label="Hires Refiner"
+        :dense="true"
+        v-model:enabled="refinerEnabled"
+        v-model:steps="refinerSteps"
+        v-model:cfg="refinerCfg"
+        v-model:seed="refinerSeed"
+        v-model:model="refinerModel"
+        v-model:vae="refinerVae"
+      />
+      <p class="hr-hint">Runs after the hires pass; choose a refiner checkpoint and overrides here.</p>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 // tags: highres, settings, grid
 import { computed } from 'vue'
+import RefinerSettingsCard from './RefinerSettingsCard.vue'
 
 const props = defineProps<{
   enabled: boolean
@@ -94,6 +108,12 @@ const props = defineProps<{
   upscaler: string
   baseWidth?: number
   baseHeight?: number
+  refinerEnabled?: boolean
+  refinerSteps?: number
+  refinerCfg?: number
+  refinerSeed?: number
+  refinerModel?: string
+  refinerVae?: string
 }>()
 
 const emit = defineEmits<{
@@ -102,6 +122,12 @@ const emit = defineEmits<{
   (e: 'update:scale', value: number): void
   (e: 'update:steps', value: number): void
   (e: 'update:upscaler', value: string): void
+  (e: 'update:refinerEnabled', value: boolean): void
+  (e: 'update:refinerSteps', value: number): void
+  (e: 'update:refinerCfg', value: number): void
+  (e: 'update:refinerSeed', value: number): void
+  (e: 'update:refinerModel', value: string): void
+  (e: 'update:refinerVae', value: string): void
 }>()
 
 const upscalerOptions = ['Use same upscaler', 'Latent (nearest)', 'Latent (Lanczos)']
@@ -114,6 +140,32 @@ const targetWidth = computed(() => {
 const targetHeight = computed(() => {
   if (!props.baseHeight || props.scale <= 1) return null
   return Math.round(props.baseHeight * props.scale)
+})
+
+const showRefiner = computed(() => props.refinerEnabled !== undefined)
+const refinerEnabled = computed({
+  get: () => Boolean(props.refinerEnabled),
+  set: (value: boolean) => emit('update:refinerEnabled', value),
+})
+const refinerSteps = computed({
+  get: () => Number.isFinite(props.refinerSteps) ? Number(props.refinerSteps) : 0,
+  set: (value: number) => emit('update:refinerSteps', value),
+})
+const refinerCfg = computed({
+  get: () => Number.isFinite(props.refinerCfg) ? Number(props.refinerCfg) : 7,
+  set: (value: number) => emit('update:refinerCfg', value),
+})
+const refinerSeed = computed({
+  get: () => Number.isFinite(props.refinerSeed) ? Number(props.refinerSeed) : -1,
+  set: (value: number) => emit('update:refinerSeed', value),
+})
+const refinerModel = computed({
+  get: () => props.refinerModel ?? '',
+  set: (value: string) => emit('update:refinerModel', value),
+})
+const refinerVae = computed({
+  get: () => props.refinerVae ?? '',
+  set: (value: string) => emit('update:refinerVae', value),
 })
 
 function toggle(): void {

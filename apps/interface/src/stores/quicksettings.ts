@@ -31,6 +31,13 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     { value: 'directml', label: 'DirectML' },
   ])
   const currentDevice = ref<string>('cuda')
+  const coreDevice = ref<string>('auto')
+  const teDevice = ref<string>('auto')
+  const vaeDevice = ref<string>('auto')
+  const dtypeChoices = ref<string[]>(['auto', 'fp16', 'bf16', 'fp32'])
+  const coreDtype = ref<string>('auto')
+  const teDtype = ref<string>('auto')
+  const vaeDtype = ref<string>('auto')
   const unetDtypeChoices = ref<string[]>([
     'Automatic',
     'Automatic (fp16 LoRA)',
@@ -128,6 +135,19 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_diffusion_device === 'string') {
       currentDevice.value = (opts as any).codex_diffusion_device
     }
+    if (typeof (opts as any).codex_core_device === 'string') {
+      coreDevice.value = (opts as any).codex_core_device
+      currentDevice.value = coreDevice.value === 'auto' ? currentDevice.value : coreDevice.value
+    }
+    if (typeof (opts as any).codex_te_device === 'string') {
+      teDevice.value = (opts as any).codex_te_device
+    }
+    if (typeof (opts as any).codex_vae_device === 'string') {
+      vaeDevice.value = (opts as any).codex_vae_device
+    }
+    if (typeof (opts as any).codex_core_dtype === 'string') coreDtype.value = (opts as any).codex_core_dtype
+    if (typeof (opts as any).codex_te_dtype === 'string') teDtype.value = (opts as any).codex_te_dtype
+    if (typeof (opts as any).codex_vae_dtype === 'string') vaeDtype.value = (opts as any).codex_vae_dtype
     if (typeof opts.forge_inference_memory === 'number') {
       gpuWeightsMb.value = opts.forge_inference_memory
     }
@@ -222,7 +242,38 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setDevice(value: string): Promise<void> {
     currentDevice.value = value
-    await updateOptions({ codex_diffusion_device: value })
+    coreDevice.value = value
+    await updateOptions({ codex_diffusion_device: value, codex_core_device: value })
+  }
+
+  async function setCoreDevice(value: string): Promise<void> {
+    coreDevice.value = value
+    await updateOptions({ codex_core_device: value })
+  }
+
+  async function setTeDevice(value: string): Promise<void> {
+    teDevice.value = value
+    await updateOptions({ codex_te_device: value })
+  }
+
+  async function setVaeDevice(value: string): Promise<void> {
+    vaeDevice.value = value
+    await updateOptions({ codex_vae_device: value })
+  }
+
+  async function setCoreDtype(value: string): Promise<void> {
+    coreDtype.value = value
+    await updateOptions({ codex_core_dtype: value })
+  }
+
+  async function setTeDtype(value: string): Promise<void> {
+    teDtype.value = value
+    await updateOptions({ codex_te_dtype: value })
+  }
+
+  async function setVaeDtype(value: string): Promise<void> {
+    vaeDtype.value = value
+    await updateOptions({ codex_vae_dtype: value })
   }
 
   async function setGpuWeightsMb(value: number): Promise<void> {
@@ -267,5 +318,18 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     gpuTotalMb,
     gpuWeightsMb,
     setGpuWeightsMb,
+    coreDevice,
+    teDevice,
+    vaeDevice,
+    coreDtype,
+    teDtype,
+    vaeDtype,
+    dtypeChoices,
+    setCoreDevice,
+    setTeDevice,
+    setVaeDevice,
+    setCoreDtype,
+    setTeDtype,
+    setVaeDtype,
   }
 })

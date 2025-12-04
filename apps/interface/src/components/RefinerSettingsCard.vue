@@ -1,7 +1,7 @@
 <template>
-  <div class="refiner-card">
+  <div :class="['refiner-card', { 'refiner-card--dense': dense } ]">
     <div class="rf-header">
-      <span class="label-muted">Refiner</span>
+      <span class="label-muted">{{ label }}</span>
       <button class="rf-switch" type="button" @click="toggle">
         <span class="rf-switch-track" :data-on="enabled ? '1' : '0'">
           <span class="rf-switch-thumb" />
@@ -36,14 +36,20 @@
 
 <script setup lang="ts">
 // tags: refiner, settings, grid
-const props = defineProps<{
+import { withDefaults } from 'vue'
+const props = withDefaults(defineProps<{
   enabled: boolean
   steps: number
   cfg: number
   seed: number
   model?: string
   vae?: string
-}>()
+  label?: string
+  dense?: boolean
+}>(), {
+  label: 'Refiner',
+  dense: false,
+})
 
 const emit = defineEmits<{
   (e: 'update:enabled', value: boolean): void
@@ -83,4 +89,3 @@ function onVaeChange(event: Event): void {
 </script>
 
 <!-- styles in styles/components/refiner-settings-card.css -->
-

@@ -70,6 +70,12 @@
             v-model:upscaler="store.highres.upscaler"
             :base-width="store.width"
             :base-height="store.height"
+            v-model:refinerEnabled="store.highres.refiner.enabled"
+            v-model:refinerSteps="store.highres.refiner.steps"
+            v-model:refinerCfg="store.highres.refiner.cfg"
+            v-model:refinerSeed="store.highres.refiner.seed"
+            v-model:refinerModel="store.highres.refiner.model"
+            v-model:refinerVae="store.highres.refiner.vae"
           />
           <RefinerSettingsCard
             v-model:enabled="store.refiner.enabled"
@@ -219,8 +225,18 @@ function sendToImg2Img(image: GeneratedImage): void {
   }
 }
 
-function onInsertToken(token: string): void {
-  store.prompt = (store.prompt ? store.prompt + ' ' : '') + token
+type PromptInsertPayload = string | { token: string; target?: 'positive' | 'negative' }
+
+function onInsertToken(payload: PromptInsertPayload): void {
+  const token = typeof payload === 'string' ? payload : payload.token
+  const target = typeof payload === 'string' ? 'positive' : (payload.target ?? 'positive')
+  if (!token) return
+
+  if (target === 'negative') {
+    store.negativePrompt = (store.negativePrompt ? store.negativePrompt + ' ' : '') + token
+  } else {
+    store.prompt = (store.prompt ? store.prompt + ' ' : '') + token
+  }
 }
 
 function sendToInpaint(image: GeneratedImage): void {

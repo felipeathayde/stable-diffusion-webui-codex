@@ -413,19 +413,19 @@ class CodexSampler:
                             schedule_summary,
                         )
 
-                if self._log_enabled:
-                    head = []
-                    try:
-                        head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
-                    except Exception:
+                    if self._log_enabled:
                         head = []
-                    self._logger.info(
-                        "sampler algorithm=%s scheduler=%s steps=%d head=%s",
-                        sampler_kind.value,
-                        active_context.scheduler_name,
-                        len(sigmas_run) - 1,
-                        head,
-                    )
+                        try:
+                            head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
+                        except Exception:
+                            head = []
+                        self._logger.info(
+                            "sampler algorithm=%s scheduler=%s steps=%d head=%s",
+                            sampler_kind.value,
+                            active_context.scheduler_name,
+                            len(sigmas_run) - 1,
+                            head,
+                        )
 
                     progress_bar = None
                     use_progress = active_context.enable_progress
@@ -457,6 +457,20 @@ class CodexSampler:
                     backend_state.end()
                     state_started = False
                     return x
+
+                if self._log_enabled:
+                    head = []
+                    try:
+                        head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
+                    except Exception:
+                        head = []
+                    self._logger.info(
+                        "sampler algorithm=%s scheduler=%s steps=%d head=%s",
+                        sampler_kind.value,
+                        active_context.scheduler_name,
+                        len(sigmas_run) - 1,
+                        head,
+                    )
 
                 eps_prev: Optional[torch.Tensor] = None
                 sigma_prev: Optional[float] = None

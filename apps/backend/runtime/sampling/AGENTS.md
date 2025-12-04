@@ -40,6 +40,7 @@
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
 - `CODEX_LOG_SAMPLER=1` logs sampler setup with scheduler name, prediction_type (from predictor/scheduler), sigma bounds, and the first few sigmas; per-step logs continue to show sigma transitions and latent norms.
+- K-diffusion routing is controlled exclusively via `CODEX_SAMPLER_ENABLE_KDIFFUSION=1`; enabling sampler logging alone (`CODEX_LOG_SAMPLER`) does not change whether k-diffusion is used.
 
 ### Pré-checagens antes do UNet
 - Após a montagem (`cond_cat(c)`), validação obrigatória:

@@ -99,7 +99,8 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       loopCount: 0, pingpong: false, trimToAudio: false, saveMetadata: true, saveOutput: true,
       rifeEnabled: true, rifeModel: 'rife47.pth', rifeTimes: 2,
     }
-    return { high: stage(), low: stage(), video }
+    const assets = { metadata: '', textEncoder: '', vae: '' }
+    return { high: stage(), low: stage(), video, assets }
   }
   // SD15/SDXL/FLUX defaults for image generation
   const imageDefaults: ImageBaseParams = {

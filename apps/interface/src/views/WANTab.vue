@@ -59,21 +59,51 @@
           <div class="grid grid-3">
             <div>
               <label class="label" for="wanMeta">Metadata Dir (input list)</label>
-              <input id="wanMeta" class="ui-input" list="dl-meta-wan" v-model="assets.metadata" placeholder="apps/backend/huggingface/<org>/<repo>" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <input
+                id="wanMeta"
+                class="ui-input"
+                list="dl-meta-wan"
+                :value="assets.metadata"
+                @input="setAssets({ metadata: ($event.target as HTMLInputElement).value })"
+                placeholder="apps/backend/huggingface/&lt;org&gt;/&lt;repo&gt;"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+              />
               <datalist id="dl-meta-wan">
                 <option v-for="m in inv.metadata" :key="m.path" :value="m.name">{{ m.name }}</option>
               </datalist>
             </div>
             <div>
               <label class="label" for="wanTE">Text Encoder (input list)</label>
-              <input id="wanTE" class="ui-input" list="dl-te-wan" v-model="assets.textEncoder" placeholder="models/text-encoder/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <input
+                id="wanTE"
+                class="ui-input"
+                list="dl-te-wan"
+                :value="assets.textEncoder"
+                @input="setAssets({ textEncoder: ($event.target as HTMLInputElement).value })"
+                placeholder="models/text-encoder/*.safetensors"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+              />
               <datalist id="dl-te-wan">
                 <option v-for="t in inv.textEncoders" :key="t.path" :value="t.name">{{ t.name }}</option>
               </datalist>
             </div>
             <div>
               <label class="label" for="wanVAE">VAE (input list)</label>
-              <input id="wanVAE" class="ui-input" list="dl-vaes-wan" v-model="assets.vae" placeholder="models/VAE/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <input
+                id="wanVAE"
+                class="ui-input"
+                list="dl-vaes-wan"
+                :value="assets.vae"
+                @input="setAssets({ vae: ($event.target as HTMLInputElement).value })"
+                placeholder="models/VAE/*.safetensors"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+              />
               <datalist id="dl-vaes-wan">
                 <option v-for="v in inv.vaes" :key="v.path" :value="v.name">{{ v.name }}</option>
               </datalist>
@@ -371,14 +401,18 @@ const high = computed<WanStageParams>(() => ((tab.value?.params as any)?.high as
 const low = computed<WanStageParams>(() => ((tab.value?.params as any)?.low as WanStageParams) || defaultStage())
 const wanFormat = computed<string>(() => (tab.value?.params as any)?.modelFormat || 'auto')
 
-// WAN assets (local state)
+// WAN assets (inventory + per-tab assets)
 const invState = reactive({
   inv: { vaes: [] as Array<{name:string;path:string}>, textEncoders: [] as Array<{name:string;path:string}>, metadata: [] as Array<{name:string;path:string}> },
   maps: { vae: {} as Record<string,string>, te: {} as Record<string,string>, meta: {} as Record<string,string> },
 })
 const inv = invState.inv
 const maps = invState.maps
-const assets = reactive({ metadata: '', textEncoder: '', vae: '' })
+
+interface WanAssetsParams { metadata: string; textEncoder: string; vae: string }
+function defaultAssets(): WanAssetsParams { return { metadata: '', textEncoder: '', vae: '' } }
+
+const assets = computed<WanAssetsParams>(() => ((tab.value?.params as any)?.assets as WanAssetsParams) || defaultAssets())
 
 function setVideo(patch: Partial<WanVideoParams>): void {
   if (!tab.value) return
@@ -394,6 +428,11 @@ function setLow(patch: Partial<WanStageParams>): void {
   if (!tab.value) return
   const current = (tab.value.params as any).low as WanStageParams
   store.updateParams(props.tabId, { low: { ...current, ...patch } })
+}
+function setAssets(patch: Partial<WanAssetsParams>): void {
+  if (!tab.value) return
+  const current = ((tab.value.params as any).assets as WanAssetsParams) || defaultAssets()
+  store.updateParams(props.tabId, { assets: { ...current, ...patch } })
 }
 
 function onFormatChange(e: Event): void {

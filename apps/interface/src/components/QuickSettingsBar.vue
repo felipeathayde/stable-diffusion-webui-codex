@@ -1,153 +1,63 @@
 <template>
   <section class="quicksettings">
-    <div class="quicksettings-group">
-      <label class="label-muted" title="Presets for UI + defaults; does not change the underlying engine semantics">Model UI</label>
-      <div class="qs-row">
-        <select class="select-md" :value="selectedPreset" @change="onPresetChange">
-          <option v-for="name in presetChoices" :key="name" :value="name">{{ name }}</option>
-        </select>
-      </div>
-    </div>
-    <div class="quicksettings-group">
-      <label class="label-muted">Mode</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentMode" @change="onModeChange">
-          <option v-for="m in filteredModeChoices" :key="m" :value="m">{{ m }}</option>
-        </select>
-      </div>
-    </div>
-    <div class="quicksettings-group" v-if="!hideCheckpoint">
-      <label class="label-muted">Checkpoint</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentModel" @change="onModelChange">
-          <option v-for="model in filteredModels" :key="model.title" :value="model.title">
-            {{ model.title }}
-          </option>
-        </select>
-      </div>
-    </div>
+    <!-- Engine-specific quicksettings surface -->
+    <QuickSettingsWan
+      v-if="activeFamily === 'wan'"
+      :high-model="wanHighModel"
+      :high-choices="wanHighDirChoices"
+      :low-model="wanLowModel"
+      :low-choices="wanLowDirChoices"
+      :text-encoder="wanTextEncoder"
+      :text-encoder-choices="wanTextEncoderChoices"
+      :vae="wanVae"
+      :vae-choices="wanVaeChoices"
+      :unet-dtype="store.currentUnetDtype"
+      :unet-dtype-choices="filteredUnetDtypeChoices"
+      :gpu-weights-mb="store.gpuWeightsMb"
+      :gpu-total-mb="store.gpuTotalMb"
+      :attention-backend="store.currentAttention"
+      :attention-choices="store.attentionChoices"
+      @update:highModel="onWanHighModelChange"
+      @update:lowModel="onWanLowModelChange"
+      @update:textEncoder="onWanTextEncoderChange"
+      @update:vae="onWanVaeChange"
+      @update:unetDtype="onUnetDtypeChange"
+      @update:gpuWeightsMb="onGpuWeightsChange"
+      @update:attentionBackend="onAttentionChange"
+      @browseHigh="onWanBrowseHigh"
+      @browseLow="onWanBrowseLow"
+      @browseTe="onWanBrowseTe"
+      @browseVae="onWanBrowseVae"
+      @openOverrides="openOverrides"
+    />
 
-    <div class="quicksettings-group">
-      <label class="label-muted">VAE</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentVae" @change="onVaeChange">
-          <option v-for="v in filteredVaeChoices" :key="v" :value="v">{{ v }}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Text Encoder</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentTextEncoders[0] ?? ''" @change="onTextEncoderChange">
-          <option value="">Automatic</option>
-          <option v-for="te in store.textEncoderChoices" :key="te" :value="te">{{ te }}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Diffusion in Low Bits</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentUnetDtype" @change="onUnetDtypeChange">
-          <option v-for="opt in filteredUnetDtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">GPU Weights (MB)</label>
-      <div class="qs-row">
-        <input class="ui-input" type="number" :min="0" :max="store.gpuTotalMb" :value="store.gpuWeightsMb" @change="onGpuWeightsChange" />
-      </div>
-  </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Attention Backend</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentAttention" @change="onAttentionChange">
-          <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-      </div>
-  </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Device</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentDevice" @change="(e:any)=>store.setDevice((e.target as HTMLSelectElement).value)">
-          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">
-        Per-component overrides
-        <span v-if="hasOverrides" class="caption" style="margin-left:.25rem">(active)</span>
-      </label>
-      <div class="qs-row">
-        <button class="btn btn-sm btn-ghost" type="button" @click="toggleAdvanced">
-          {{ showAdvanced ? 'Hide advanced' : 'Show advanced' }}
-        </button>
-        <button
-          v-if="hasOverrides"
-          class="btn btn-sm btn-outline"
-          type="button"
-          @click="resetOverrides"
-        >
-          Reset
-        </button>
-      </div>
-      <div v-if="showAdvanced" class="panel-sub" style="margin-top:.25rem">
-        <div class="grid grid-3">
-          <div>
-            <label class="label-muted">Core dtype</label>
-            <div class="qs-row">
-              <select class="select-md" :value="store.coreDtype" @change="(e:any)=>store.setCoreDtype((e.target as HTMLSelectElement).value)">
-                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-              </select>
-            </div>
-            <label class="label-muted" style="margin-top:.25rem">Core device</label>
-            <div class="qs-row">
-              <select class="select-md" :value="store.coreDevice" @change="(e:any)=>store.setCoreDevice((e.target as HTMLSelectElement).value)">
-                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                <option value="auto">auto</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label class="label-muted">TE dtype</label>
-            <div class="qs-row">
-              <select class="select-md" :value="store.teDtype" @change="(e:any)=>store.setTeDtype((e.target as HTMLSelectElement).value)">
-                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-              </select>
-            </div>
-            <label class="label-muted" style="margin-top:.25rem">TE device</label>
-            <div class="qs-row">
-              <select class="select-md" :value="store.teDevice" @change="(e:any)=>store.setTeDevice((e.target as HTMLSelectElement).value)">
-                <option value="auto">auto</option>
-                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label class="label-muted">VAE dtype</label>
-            <div class="qs-row">
-              <select class="select-md" :value="store.vaeDtype" @change="(e:any)=>store.setVaeDtype((e.target as HTMLSelectElement).value)">
-                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-              </select>
-            </div>
-            <label class="label-muted" style="margin-top:.25rem">VAE device</label>
-            <div class="qs-row">
-              <select class="select-md" :value="store.vaeDevice" @change="(e:any)=>store.setVaeDevice((e.target as HTMLSelectElement).value)">
-                <option value="auto">auto</option>
-                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <QuickSettingsBase
+      v-else
+      :mode="store.currentMode"
+      :mode-choices="filteredModeChoices"
+      :checkpoint="store.currentModel"
+      :checkpoints="filteredModelTitles"
+      :hide-checkpoint="hideCheckpoint"
+      :vae="store.currentVae"
+      :vae-choices="filteredVaeChoices"
+      :text-encoder="store.currentTextEncoders[0] ?? ''"
+      :text-encoder-choices="store.textEncoderChoices"
+      :unet-dtype="store.currentUnetDtype"
+      :unet-dtype-choices="filteredUnetDtypeChoices"
+      :gpu-weights-mb="store.gpuWeightsMb"
+      :gpu-total-mb="store.gpuTotalMb"
+      :attention-backend="store.currentAttention"
+      :attention-choices="store.attentionChoices"
+      text-encoder-automatic-label="Built-in"
+      @update:mode="onModeChange"
+      @update:checkpoint="onModelChange"
+      @update:vae="onVaeChange"
+      @update:textEncoder="onTextEncoderChange"
+      @update:unetDtype="onUnetDtypeChange"
+      @update:gpuWeightsMb="onGpuWeightsChange"
+      @update:attentionBackend="onAttentionChange"
+      @openOverrides="openOverrides"
+    />
 
     <!-- Right-most refresh button spanning to the end -->
     <div class="quicksettings-group quicksettings-right">
@@ -156,42 +66,33 @@
         <button class="btn btn-sm btn-secondary" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
       </div>
     </div>
-  
+
+    <QuickSettingsOverridesModal v-model="showOverridesModal" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
-import { useRoute } from 'vue-router'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { useModelTabsStore } from '../stores/model_tabs'
 import { fetchModelInventory } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
+import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
+import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
 
 const store = useQuicksettingsStore()
 const presets = useUiPresetsStore()
 const route = useRoute()
-const selectedPreset = ref('')
 const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
 const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
+const inventoryWan = ref<Array<{ name: string; path: string; stage: string }>>([])
 const engineCaps = useEngineCapabilitiesStore()
-const showAdvanced = ref(false)
-
-onMounted(() => {
-  void store.init()
-  void presets.init(currentTab())
-  void loadInventory()
-  void engineCaps.init()
-})
-
-watch(() => route.path, async () => {
-  await presets.init(currentTab())
-  selectedPreset.value = ''
-  await loadInventory()
-})
+const showOverridesModal = ref(false)
 
 function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   const p = route.path
@@ -201,7 +102,6 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-const presetChoices = computed(() => presets.namesFor(currentTab()))
 const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => tabsStore.activeTab?.type ?? 'sd15')
 const semanticEngine = computed<string>(() => {
   // Prefer semantic engine from UI blocks when available (video tabs etc.).
@@ -214,8 +114,14 @@ async function loadInventory(): Promise<void> {
   try {
     const inv = await fetchModelInventory()
     inventoryVaes.value = inv.vaes
+    inventoryWan.value = (inv.wan22?.gguf ?? []).map((g: any) => ({
+      name: String(g.name),
+      path: String(g.path),
+      stage: String(g.stage || 'unknown'),
+    }))
   } catch (e) {
     inventoryVaes.value = []
+    inventoryWan.value = []
   }
 }
 
@@ -234,6 +140,7 @@ const filteredModels = computed(() => {
   const fam = activeFamily.value
   return store.models.filter(m => modelMatchesFamily(m.metadata as Record<string, unknown> | undefined, m.title, m.filename, fam))
 })
+const filteredModelTitles = computed(() => filteredModels.value.map(m => m.title))
 
 function isVaeForFamily(name: string, fam: string): boolean {
   const rec = inventoryVaes.value.find(v => v.name === name || v.path.endsWith('/' + name))
@@ -264,11 +171,6 @@ const filteredUnetDtypeChoices = computed(() => {
   if (fam === 'flux') return base.filter(x => /Automatic|float8|fp16/i.test(x))
   return base
 })
-const hasOverrides = computed(() => {
-  const dtypeOverride = store.coreDtype !== 'auto' || store.teDtype !== 'auto' || store.vaeDtype !== 'auto'
-  const deviceOverride = store.coreDevice !== 'auto' || store.teDevice !== 'auto' || store.vaeDevice !== 'auto'
-  return dtypeOverride || deviceOverride
-})
 const hideCheckpoint = computed(() => {
   const p = route.path
   // In model tabs (/models), the tab manages model dirs (e.g., WAN 2.2); hide checkpoint there.
@@ -277,63 +179,174 @@ const hideCheckpoint = computed(() => {
   return isVideo && uiBlocks.semanticEngine === 'wan22'
 })
 
-async function onPresetChange(event: Event): Promise<void> {
-  const title = (event.target as HTMLSelectElement).value
-  selectedPreset.value = title
-  await presets.applyByTitle(title, currentTab())
-  // Refresh quicksettings to reflect applied checkpoint/options
-  await store.init()
-}
-
-function onModelChange(event: Event): void {
-  void store.setModel((event.target as HTMLSelectElement).value)
-}
-
-// sampler/scheduler/seed handlers removed from quicksettings
-
-function onModeChange(event: Event): void {
-  void store.setMode((event.target as HTMLSelectElement).value)
-}
-
 async function refreshAll(): Promise<void> { await store.init() }
 
-function onVaeChange(event: Event): void {
-  void store.setVae((event.target as HTMLSelectElement).value)
+// WAN-specific helpers (directories derived from inventory)
+function parentDir(path: string): string {
+  const norm = path.replace(/\\/g, '/')
+  const idx = norm.lastIndexOf('/')
+  return idx >= 0 ? norm.slice(0, idx) : norm
 }
 
-function onTextEncoderChange(event: Event): void {
-  const select = event.target as HTMLSelectElement
-  const value = select.value
-  // Backend ainda espera array; enviamos [] para Automático (vazio) ou [value]
+const wanHighDirChoices = computed(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const g of inventoryWan.value) {
+    if (g.stage !== 'high') continue
+    const dir = parentDir(g.path)
+    if (!seen.has(dir)) { seen.add(dir); out.push(dir) }
+  }
+  return out
+})
+
+const wanLowDirChoices = computed(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const g of inventoryWan.value) {
+    if (g.stage !== 'low') continue
+    const dir = parentDir(g.path)
+    if (!seen.has(dir)) { seen.add(dir); out.push(dir) }
+  }
+  return out
+})
+
+const wanHighModel = computed(() => {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return ''
+  const high = (tab.params as any).high as { modelDir?: string } | undefined
+  return high?.modelDir || ''
+})
+
+const wanLowModel = computed(() => {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return ''
+  const low = (tab.params as any).low as { modelDir?: string } | undefined
+  return low?.modelDir || ''
+})
+
+type WanAssetsParams = { metadata: string; textEncoder: string; vae: string }
+
+function currentWanAssets(): WanAssetsParams {
+  const base: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return base
+  const raw = (tab.params as any).assets as WanAssetsParams | undefined
+  return raw ? { ...base, ...raw } : base
+}
+
+const wanTextEncoder = computed(() => currentWanAssets().textEncoder || '')
+const wanVae = computed(() => currentWanAssets().vae || '')
+
+const wanTextEncoderChoices = computed(() => {
+  // Reuse global text encoder choices; WAN tab will resolve names to paths using inventory maps.
+  return store.textEncoderChoices
+})
+
+const wanVaeChoices = computed(() => filteredVaeChoices.value)
+
+// Event handlers
+async function onModeChange(value: string): Promise<void> {
+  await store.setMode(value)
+}
+
+async function onModelChange(value: string): Promise<void> {
+  await store.setModel(value)
+}
+
+async function onVaeChange(value: string): Promise<void> {
+  await store.setVae(value)
+}
+
+function onTextEncoderChange(value: string): void {
   const payload = value ? [value] : []
   void store.setTextEncoders(payload)
 }
 
-function onUnetDtypeChange(event: Event): void {
-  void store.setUnetDtype((event.target as HTMLSelectElement).value)
+function onUnetDtypeChange(value: string): void {
+  void store.setUnetDtype(value)
 }
 
-function onGpuWeightsChange(event: Event): void {
-  const v = Number((event.target as HTMLInputElement).value)
-  void store.setGpuWeightsMb(Number.isFinite(v) ? v : store.gpuWeightsMb)
+function onGpuWeightsChange(value: number): void {
+  const v = Number(value)
+  if (Number.isFinite(v)) void store.setGpuWeightsMb(v)
 }
 
-function onAttentionChange(event: Event): void {
-  void store.setAttentionBackend((event.target as HTMLSelectElement).value)
+function onAttentionChange(value: string): void {
+  void store.setAttentionBackend(value)
 }
 
-function toggleAdvanced(): void {
-  showAdvanced.value = !showAdvanced.value
+async function onWanHighModelChange(value: string): Promise<void> {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  const current = (tab.params as any).high || {}
+  await tabsStore.updateParams(tab.id, { high: { ...current, modelDir: value } })
 }
 
-function resetOverrides(): void {
-  void store.setCoreDtype('auto')
-  void store.setTeDtype('auto')
-  void store.setVaeDtype('auto')
-  void store.setCoreDevice('auto')
-  void store.setTeDevice('auto')
-  void store.setVaeDevice('auto')
+async function onWanLowModelChange(value: string): Promise<void> {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  const current = (tab.params as any).low || {}
+  await tabsStore.updateParams(tab.id, { low: { ...current, modelDir: value } })
 }
 
-// random seed button removed from quicksettings
+async function onWanTextEncoderChange(value: string): Promise<void> {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  const current = currentWanAssets()
+  await tabsStore.updateParams(tab.id, { assets: { ...current, textEncoder: value } })
+}
+
+async function onWanVaeChange(value: string): Promise<void> {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  const current = currentWanAssets()
+  await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
+}
+
+function promptForPath(label: string, current: string): string | null {
+  const next = window.prompt(label, current || '')
+  if (next === null) return null
+  const trimmed = next.trim()
+  return trimmed || null
+}
+
+async function onWanBrowseHigh(): Promise<void> {
+  const path = promptForPath('WAN High model directory (server path)', wanHighModel.value)
+  if (path) await onWanHighModelChange(path)
+}
+
+async function onWanBrowseLow(): Promise<void> {
+  const path = promptForPath('WAN Low model directory (server path)', wanLowModel.value)
+  if (path) await onWanLowModelChange(path)
+}
+
+async function onWanBrowseTe(): Promise<void> {
+  const current = wanTextEncoder.value
+  const next = promptForPath('WAN Text Encoder identifier or path', current)
+  if (next !== null) await onWanTextEncoderChange(next)
+}
+
+async function onWanBrowseVae(): Promise<void> {
+  const current = wanVae.value
+  const next = promptForPath('WAN VAE identifier or path', current)
+  if (next !== null) await onWanVaeChange(next)
+}
+
+function openOverrides(): void {
+  showOverridesModal.value = true
+}
+
+onMounted(() => {
+  void store.init()
+  void presets.init(currentTab())
+  void loadInventory()
+  void engineCaps.init()
+})
+
+watch(() => route.path, async () => {
+  await presets.init(currentTab())
+  await loadInventory()
+})
+
+// random seed button removed from quicksettings; presets applied elsewhere
 </script>

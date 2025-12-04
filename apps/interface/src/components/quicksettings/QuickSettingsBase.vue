@@ -1,0 +1,107 @@
+<template>
+  <>
+    <div class="quicksettings-group">
+      <label class="label-muted">Mode</label>
+      <div class="qs-row">
+        <select class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
+          <option v-for="m in modeChoices" :key="m" :value="m">{{ m }}</option>
+        </select>
+      </div>
+    </div>
+    <div class="quicksettings-group" v-if="!hideCheckpoint">
+      <label class="label-muted">Checkpoint</label>
+      <div class="qs-row">
+        <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+          <option v-for="model in checkpoints" :key="model" :value="model">
+            {{ model }}
+          </option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">VAE</label>
+      <div class="qs-row">
+        <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
+          <option v-for="v in vaeChoices" :key="v" :value="v">
+            {{ v === 'Automatic' ? 'Built-in' : v }}
+          </option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">Text Encoder</label>
+      <div class="qs-row">
+        <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
+          <option value="">{{ textEncoderAutomaticLabel }}</option>
+          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ te }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">Diffusion in Low Bits</label>
+      <div class="qs-row">
+        <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
+          <option v-for="opt in unetDtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">GPU VRAM (MB)</label>
+      <div class="qs-row">
+        <input
+          class="ui-input"
+          type="number"
+          :min="0"
+          :max="gpuTotalMb"
+          :value="gpuWeightsMb"
+          @change="$emit('update:gpuWeightsMb', Number(($event.target as HTMLInputElement).value))"
+        />
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">Attention Backend</label>
+      <div class="qs-row">
+        <select class="select-md" :value="attentionBackend" @change="$emit('update:attentionBackend', ($event.target as HTMLSelectElement).value)">
+          <option v-for="opt in attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
+      <label class="label-muted">Overrides</label>
+      <div class="qs-row">
+        <button class="btn btn-sm btn-outline" type="button" @click="$emit('openOverrides')">
+          Set overrides
+        </button>
+      </div>
+    </div>
+  </>
+</template>
+
+<script setup lang="ts">
+const props = defineProps<{
+  mode: string
+  modeChoices: string[]
+  checkpoint: string
+  checkpoints: string[]
+  hideCheckpoint: boolean
+  vae: string
+  vaeChoices: string[]
+  textEncoder: string
+  textEncoderChoices: string[]
+  unetDtype: string
+  unetDtypeChoices: string[]
+  gpuWeightsMb: number
+  gpuTotalMb: number
+  attentionBackend: string
+  attentionChoices: Array<{ value: string; label: string }>
+  textEncoderAutomaticLabel?: string
+}>()
+
+const textEncoderAutomaticLabel = props.textEncoderAutomaticLabel ?? 'Built-in'
+</script>

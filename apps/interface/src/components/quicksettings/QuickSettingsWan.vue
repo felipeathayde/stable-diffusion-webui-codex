@@ -1,5 +1,4 @@
 <template>
-  <>
     <div class="quicksettings-group">
       <label class="label-muted">WAN High model</label>
       <div class="qs-row">
@@ -84,7 +83,6 @@
         </button>
       </div>
     </div>
-  </>
 </template>
 
 <script setup lang="ts">

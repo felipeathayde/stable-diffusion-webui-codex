@@ -86,7 +86,7 @@
     <div class="quicksettings-group">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
-        <button class="btn btn-sm btn-outline" type="button" @click="$emit('openOverrides')">
+        <button class="btn btn-sm btn-secondary" type="button" @click="$emit('openOverrides')">
           Set overrides
         </button>
       </div>

@@ -16,7 +16,7 @@
               {{ model }}
             </option>
           </select>
-          <button class="btn btn-outline" type="button" @click="$emit('addCheckpointPath')">+</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
         </div>
       </div>
     </div>
@@ -30,7 +30,7 @@
               {{ v === 'Automatic' ? 'Built-in' : v }}
             </option>
           </select>
-          <button class="btn btn-outline" type="button" @click="$emit('addVaePath')">+</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
         </div>
       </div>
     </div>
@@ -80,7 +80,7 @@
     <div class="quicksettings-group">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
-        <button class="btn btn-secondary" type="button" @click="$emit('openOverrides')">
+        <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">
           Set overrides
         </button>
       </div>

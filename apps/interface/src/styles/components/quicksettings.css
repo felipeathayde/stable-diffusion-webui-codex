@@ -6,8 +6,10 @@
   .qs-row { display: grid; grid-auto-flow: column; align-items: stretch; gap: var(--space-sm); }
   .qs-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem; width: 100%; align-items: stretch; }
   .quicksettings .select-md,
-  .quicksettings .ui-input,
-  .quicksettings .btn-sm { height: 100%; }
+  .quicksettings .ui-input { height: 100%; }
+  .quicksettings .qs-inline-btn { height: 100%; padding-inline: 0.5rem; font-size: 0.8rem; }
+  .quicksettings .qs-refresh-btn,
+  .quicksettings .qs-overrides-btn { height: 100%; padding-inline: 0.9rem; font-size: 0.85rem; }
   .qs-actions { display: flex; align-items: center; gap: 0.4rem; padding-bottom: 2px; }
 
   /* Narrow screens: fallback to auto-fit grid */

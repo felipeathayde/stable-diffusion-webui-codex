@@ -7,7 +7,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in highChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseHigh')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseHigh')">Browse…</button>
         </div>
       </div>
     </div>
@@ -20,7 +20,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in lowChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseLow')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseLow')">Browse…</button>
         </div>
       </div>
     </div>
@@ -33,7 +33,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ te }}</option>
           </select>
-          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseTe')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseTe')">Browse…</button>
         </div>
       </div>
     </div>
@@ -46,7 +46,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="v in vaeChoices" :key="v" :value="v">{{ v }}</option>
           </select>
-          <button class="btn btn-sm btn-outline" type="button" @click="$emit('browseVae')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseVae')">Browse…</button>
         </div>
       </div>
     </div>
@@ -86,7 +86,7 @@
     <div class="quicksettings-group">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
-        <button class="btn btn-sm btn-secondary" type="button" @click="$emit('openOverrides')">
+        <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">
           Set overrides
         </button>
       </div>

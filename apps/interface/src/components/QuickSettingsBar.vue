@@ -66,7 +66,7 @@
     <div class="quicksettings-group quicksettings-right">
       <label class="label-muted">Models</label>
       <div class="qs-row">
-        <button class="btn btn-sm btn-secondary" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
+        <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
       </div>
     </div>
 

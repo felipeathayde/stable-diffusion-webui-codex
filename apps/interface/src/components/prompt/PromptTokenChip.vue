@@ -12,15 +12,27 @@
 <script setup lang="ts">
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/vue-3'
 const props = defineProps<NodeViewProps>()
-const { editor, node, getPos } = props
+const editor = props.editor
+const node = props.node
+const getPos = props.getPos
 
 function update(attrs: Record<string, unknown>): void {
   const pos = getPos()
-  if (typeof pos === 'number') editor.commands.command(({ tr }) => { tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...attrs }); return true })
+  if (typeof pos !== 'number') return
+  editor.commands.command(({ tr, dispatch }) => {
+    const trNext = tr.setNodeMarkup(pos, undefined, { ...node.attrs, ...attrs })
+    if (dispatch) dispatch(trNext)
+    return true
+  })
 }
 function remove(): void {
   const pos = getPos()
-  if (typeof pos === 'number') editor.commands.command(({ tr }) => { tr.delete(pos, pos + node.nodeSize); return true })
+  if (typeof pos !== 'number') return
+  editor.commands.command(({ tr, dispatch }) => {
+    const trNext = tr.delete(pos, pos + node.nodeSize)
+    if (dispatch) dispatch(trNext)
+    return true
+  })
 }
 function toggle(): void { update({ enabled: !node.attrs.enabled }) }
 function inc(): void { update({ weight: Math.min(Number(node.attrs.weight) + 0.1, 2.0) }) }

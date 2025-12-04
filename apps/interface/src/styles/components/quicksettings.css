@@ -1,13 +1,13 @@
 @layer components {
   /* Header-integrated quicksettings: no sticky, no extra margins. */
-  .quicksettings { position: static; z-index: auto; background: transparent; border: 0; margin: 0; border-radius: 0; padding: 0.25rem 0; display: grid; grid-template-columns: 0.5fr 2fr 2fr 1.5fr 1.5fr 1.2fr 1fr auto; gap: 0.75rem; align-items: stretch; }
+  .quicksettings { position: static; z-index: auto; background: transparent; border: 0; margin: 0; border-radius: 0; padding: 0.25rem 0; display: grid; grid-template-columns: 0.5fr 2fr 2fr 1.5fr 1.5fr 1fr auto auto; gap: 0.75rem; align-items: stretch; }
   .quicksettings-right { justify-self: end; align-self: end; }
   .quicksettings-group { display: grid; grid-template-rows: auto minmax(0, var(--control-h-md)); gap: 0.35rem; align-items: stretch; }
   .qs-row { display: grid; grid-auto-flow: column; align-items: stretch; gap: var(--space-sm); }
   .qs-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem; width: 100%; align-items: stretch; }
   .quicksettings .select-md,
   .quicksettings .ui-input { height: 100%; }
-  .quicksettings .qs-inline-btn { height: 100%; padding-inline: 0.5rem; font-size: 0.8rem; }
+  .quicksettings .qs-inline-btn { height: 100%; padding-inline: 0.8rem; }
   .quicksettings .qs-refresh-btn,
   .quicksettings .qs-overrides-btn { height: 100%; padding-inline: 0.9rem; font-size: 0.85rem; }
   .qs-actions { display: flex; align-items: center; gap: 0.4rem; padding-bottom: 2px; }

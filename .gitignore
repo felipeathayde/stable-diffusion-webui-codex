@@ -110,3 +110,4 @@ apps/server/backend/huggingface*
 
 # Prevent accidental screenshots at repo root (e.g., {UUID}.png)
 /\{*.png
+*.png

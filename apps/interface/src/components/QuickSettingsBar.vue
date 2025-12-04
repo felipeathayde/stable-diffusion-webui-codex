@@ -81,47 +81,71 @@
     </div>
 
     <div class="quicksettings-group">
-      <label class="label-muted">Core dtype</label>
+      <label class="label-muted">
+        Per-component overrides
+        <span v-if="hasOverrides" class="caption" style="margin-left:.25rem">(active)</span>
+      </label>
       <div class="qs-row">
-        <select class="select-md" :value="store.coreDtype" @change="(e:any)=>store.setCoreDtype((e.target as HTMLSelectElement).value)">
-          <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-        </select>
+        <button class="btn btn-sm btn-ghost" type="button" @click="toggleAdvanced">
+          {{ showAdvanced ? 'Hide advanced' : 'Show advanced' }}
+        </button>
+        <button
+          v-if="hasOverrides"
+          class="btn btn-sm btn-outline"
+          type="button"
+          @click="resetOverrides"
+        >
+          Reset
+        </button>
       </div>
-      <label class="label-muted">TE dtype</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.teDtype" @change="(e:any)=>store.setTeDtype((e.target as HTMLSelectElement).value)">
-          <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-        </select>
-      </div>
-      <label class="label-muted">VAE dtype</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.vaeDtype" @change="(e:any)=>store.setVaeDtype((e.target as HTMLSelectElement).value)">
-          <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Core device</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.coreDevice" @change="(e:any)=>store.setCoreDevice((e.target as HTMLSelectElement).value)">
-          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          <option value="auto">auto</option>
-        </select>
-      </div>
-      <label class="label-muted">TE device</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.teDevice" @change="(e:any)=>store.setTeDevice((e.target as HTMLSelectElement).value)">
-          <option value="auto">auto</option>
-          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-      </div>
-      <label class="label-muted">VAE device</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.vaeDevice" @change="(e:any)=>store.setVaeDevice((e.target as HTMLSelectElement).value)">
-          <option value="auto">auto</option>
-          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
+      <div v-if="showAdvanced" class="panel-sub" style="margin-top:.25rem">
+        <div class="grid grid-3">
+          <div>
+            <label class="label-muted">Core dtype</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.coreDtype" @change="(e:any)=>store.setCoreDtype((e.target as HTMLSelectElement).value)">
+                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+            <label class="label-muted" style="margin-top:.25rem">Core device</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.coreDevice" @change="(e:any)=>store.setCoreDevice((e.target as HTMLSelectElement).value)">
+                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                <option value="auto">auto</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="label-muted">TE dtype</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.teDtype" @change="(e:any)=>store.setTeDtype((e.target as HTMLSelectElement).value)">
+                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+            <label class="label-muted" style="margin-top:.25rem">TE device</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.teDevice" @change="(e:any)=>store.setTeDevice((e.target as HTMLSelectElement).value)">
+                <option value="auto">auto</option>
+                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="label-muted">VAE dtype</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.vaeDtype" @change="(e:any)=>store.setVaeDtype((e.target as HTMLSelectElement).value)">
+                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+            <label class="label-muted" style="margin-top:.25rem">VAE device</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.vaeDevice" @change="(e:any)=>store.setVaeDevice((e.target as HTMLSelectElement).value)">
+                <option value="auto">auto</option>
+                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -154,6 +178,7 @@ const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
 const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
 const engineCaps = useEngineCapabilitiesStore()
+const showAdvanced = ref(false)
 
 onMounted(() => {
   void store.init()
@@ -239,6 +264,11 @@ const filteredUnetDtypeChoices = computed(() => {
   if (fam === 'flux') return base.filter(x => /Automatic|float8|fp16/i.test(x))
   return base
 })
+const hasOverrides = computed(() => {
+  const dtypeOverride = store.coreDtype !== 'auto' || store.teDtype !== 'auto' || store.vaeDtype !== 'auto'
+  const deviceOverride = store.coreDevice !== 'auto' || store.teDevice !== 'auto' || store.vaeDevice !== 'auto'
+  return dtypeOverride || deviceOverride
+})
 const hideCheckpoint = computed(() => {
   const p = route.path
   // In model tabs (/models), the tab manages model dirs (e.g., WAN 2.2); hide checkpoint there.
@@ -290,6 +320,19 @@ function onGpuWeightsChange(event: Event): void {
 
 function onAttentionChange(event: Event): void {
   void store.setAttentionBackend((event.target as HTMLSelectElement).value)
+}
+
+function toggleAdvanced(): void {
+  showAdvanced.value = !showAdvanced.value
+}
+
+function resetOverrides(): void {
+  void store.setCoreDtype('auto')
+  void store.setTeDtype('auto')
+  void store.setVaeDtype('auto')
+  void store.setCoreDevice('auto')
+  void store.setTeDevice('auto')
+  void store.setVaeDevice('auto')
 }
 
 // random seed button removed from quicksettings

@@ -36,7 +36,6 @@
 
 <script setup lang="ts">
 // tags: refiner, settings, grid
-import { withDefaults } from 'vue'
 const props = withDefaults(defineProps<{
   enabled: boolean
   steps: number

@@ -1,16 +1,16 @@
 <template>
-  <span class="chip" :data-enabled="node.attrs.enabled ? '1' : '0'" contenteditable="false">
+  <NodeViewWrapper as="span" class="chip" :data-enabled="node.attrs.enabled ? '1' : '0'" contenteditable="false">
     <span class="chip-name">{{ node.attrs.name }}</span>
     <span class="chip-weight">{{ node.attrs.weight.toFixed(2) }}</span>
     <button class="chip-btn" type="button" @click.stop="toggle" :title="node.attrs.enabled ? 'Disable' : 'Enable'">⛔</button>
-    <button class="chip-btn" type="button" @click.stop="dec" title="Weight -">-</button>
-    <button class="chip-btn" type="button" @click.stop="inc" title="Weight +">+</button>
+    <button class="chip-btn" type="button" @click.stop="dec" title="Weight -" >-</button>
+    <button class="chip-btn" type="button" @click.stop="inc" title="Weight +" >+</button>
     <button class="chip-btn" type="button" @click.stop="remove" title="Remove">✕</button>
-  </span>
+  </NodeViewWrapper>
 </template>
 
 <script setup lang="ts">
-import type { NodeViewProps } from '@tiptap/vue-3'
+import { NodeViewWrapper, type NodeViewProps } from '@tiptap/vue-3'
 const props = defineProps<NodeViewProps>()
 const { editor, node, getPos } = props
 

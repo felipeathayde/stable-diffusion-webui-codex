@@ -156,8 +156,34 @@
           </li>
         </ul>
 
-        <h3 class="h5" style="margin-top:.75rem">Home overview (Markdown)</h3>
-        <MarkdownHelp src="/help/home-overview.md" />
+        <h3 class="h5" style="margin-top:.75rem">Inline help (Markdown)</h3>
+        <div class="toolbar">
+          <button
+            class="btn btn-sm"
+            :class="helpTopic === 'home' ? 'btn-secondary' : 'btn-ghost'"
+            type="button"
+            @click="setHelpTopic('home')"
+          >
+            Home
+          </button>
+          <button
+            class="btn btn-sm"
+            :class="helpTopic === 'wan22' ? 'btn-secondary' : 'btn-ghost'"
+            type="button"
+            @click="setHelpTopic('wan22')"
+          >
+            WAN22 video
+          </button>
+          <button
+            class="btn btn-sm"
+            :class="helpTopic === 'workflows' ? 'btn-secondary' : 'btn-ghost'"
+            type="button"
+            @click="setHelpTopic('workflows')"
+          >
+            Workflows
+          </button>
+        </div>
+        <MarkdownHelp :src="helpSrc" />
       </div>
     </div>
   </section>
@@ -169,17 +195,25 @@ import { useRouter } from 'vue-router'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 import MarkdownHelp from '../components/MarkdownHelp.vue'
 
+type HelpTopic = 'home' | 'wan22' | 'workflows'
+
 const router = useRouter()
 const store = useModelTabsStore()
 
 const newType = ref<BaseTabType>('sdxl')
 const newTitle = ref('')
+const helpTopic = ref<HelpTopic>('home')
 
 onMounted(async () => {
   await store.load()
 })
 
 const tabs = computed(() => store.orderedTabs)
+const helpSrc = computed(() => {
+  if (helpTopic.value === 'wan22') return '/help/wan22-quickstart.md'
+  if (helpTopic.value === 'workflows') return '/help/workflows-basics.md'
+  return '/help/home-overview.md'
+})
 
 async function onCreate(): Promise<void> {
   const id = await store.create(newType.value, newTitle.value.trim() || undefined)
@@ -193,5 +227,9 @@ function dup(id: string): void {
 
 function remove(id: string): void {
   void store.remove(id)
+}
+
+function setHelpTopic(topic: HelpTopic): void {
+  helpTopic.value = topic
 }
 </script>

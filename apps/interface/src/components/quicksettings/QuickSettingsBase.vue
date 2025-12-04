@@ -15,6 +15,7 @@
             {{ model }}
           </option>
         </select>
+        <button class="btn btn-sm btn-outline" type="button" @click="$emit('addCheckpointPath')">+</button>
       </div>
     </div>
 
@@ -26,10 +27,11 @@
             {{ v === 'Automatic' ? 'Built-in' : v }}
           </option>
         </select>
+        <button class="btn btn-sm btn-outline" type="button" @click="$emit('addVaePath')">+</button>
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div v-if="showTextEncoder !== false" class="quicksettings-group">
       <label class="label-muted">Text Encoder</label>
       <div class="qs-row">
         <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
@@ -99,6 +101,7 @@ const props = defineProps<{
   attentionBackend: string
   attentionChoices: Array<{ value: string; label: string }>
   textEncoderAutomaticLabel?: string
+  showTextEncoder?: boolean
 }>()
 
 const textEncoderAutomaticLabel = props.textEncoderAutomaticLabel ?? 'Built-in'

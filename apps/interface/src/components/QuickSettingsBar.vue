@@ -49,6 +49,7 @@
       :attention-backend="store.currentAttention"
       :attention-choices="store.attentionChoices"
       text-encoder-automatic-label="Built-in"
+      :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
       @update:mode="onModeChange"
       @update:checkpoint="onModelChange"
       @update:vae="onVaeChange"
@@ -56,6 +57,8 @@
       @update:unetDtype="onUnetDtypeChange"
       @update:gpuWeightsMb="onGpuWeightsChange"
       @update:attentionBackend="onAttentionChange"
+      @addCheckpointPath="onAddCheckpointPath"
+      @addVaePath="onAddVaePath"
       @openOverrides="openOverrides"
     />
 
@@ -78,7 +81,7 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { useModelTabsStore } from '../stores/model_tabs'
-import { fetchModelInventory } from '../api/client'
+import { fetchModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
@@ -301,6 +304,49 @@ async function onWanVaeChange(value: string): Promise<void> {
   if (!tab || tab.type !== 'wan') return
   const current = currentWanAssets()
   await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
+}
+
+async function onAddCheckpointPath(): Promise<void> {
+  try {
+    const res = await fetchPaths()
+    const current = (res.paths?.checkpoints || []) as string[]
+    const next = window.prompt('Add checkpoint directory (server path)', '')
+    if (!next) return
+    const trimmed = next.trim()
+    if (!trimmed) return
+    const paths = dedupePaths([...current, trimmed])
+    await updatePaths({ ...res.paths, checkpoints: paths })
+  } catch (e) {
+    console.error('[quicksettings] failed to add checkpoint path', e)
+  }
+}
+
+async function onAddVaePath(): Promise<void> {
+  try {
+    const res = await fetchPaths()
+    const current = (res.paths?.vae || []) as string[]
+    const next = window.prompt('Add VAE directory (server path)', '')
+    if (!next) return
+    const trimmed = next.trim()
+    if (!trimmed) return
+    const paths = dedupePaths([...current, trimmed])
+    await updatePaths({ ...res.paths, vae: paths })
+  } catch (e) {
+    console.error('[quicksettings] failed to add VAE path', e)
+  }
+}
+
+function dedupePaths(list: string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const p of list) {
+    const key = p.replace(/\\+/g, '/').replace(/\/$/, '')
+    if (!seen.has(key)) {
+      seen.add(key)
+      out.push(p)
+    }
+  }
+  return out
 }
 
 function promptForPath(label: string, current: string): string | null {

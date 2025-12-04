@@ -2,11 +2,12 @@
   /* Header-integrated quicksettings: no sticky, no extra margins. */
   .quicksettings { position: static; z-index: auto; background: transparent; border: 0; margin: 0; border-radius: 0; padding: 0.25rem 0; display: grid; grid-template-columns: 0.5fr 2fr 2fr 1.5fr 1.5fr 1.2fr 1fr auto; gap: 0.75rem; align-items: stretch; }
   .quicksettings-right { justify-self: end; align-self: end; }
-  .quicksettings-group { display: flex; flex-direction: column; gap: 0.35rem; }
-  .quicksettings .select-md, .quicksettings .ui-input { height: var(--control-h-md); }
-  .qs-row { display: flex; align-items: flex-end; gap: var(--space-sm); flex-wrap: wrap; }
-  .qs-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem; width: 100%; }
-  .quicksettings .qs-pair > .btn-sm { height: 100%; }
+  .quicksettings-group { display: grid; grid-template-rows: auto minmax(0, var(--control-h-md)); gap: 0.35rem; align-items: stretch; }
+  .qs-row { display: grid; grid-auto-flow: column; align-items: stretch; gap: var(--space-sm); }
+  .qs-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem; width: 100%; align-items: stretch; }
+  .quicksettings .select-md,
+  .quicksettings .ui-input,
+  .quicksettings .btn-sm { height: 100%; }
   .qs-actions { display: flex; align-items: center; gap: 0.4rem; padding-bottom: 2px; }
 
   /* Narrow screens: fallback to auto-fit grid */

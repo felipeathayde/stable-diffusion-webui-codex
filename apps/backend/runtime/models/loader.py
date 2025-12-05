@@ -17,6 +17,7 @@ from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet import UNet2DConditionModel  # legacy UNet (SD15/20)
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import SwapPolicy
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig

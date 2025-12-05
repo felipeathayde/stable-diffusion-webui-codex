@@ -198,11 +198,13 @@ class StableDiffusionXL(CodexDiffusionEngine):
         self.embedder = Timestep(256)
         # Cache textual CLIP embeddings by prompt text + polarity (cond/uncond).
         # Spatial metadata is applied per-call via embed_values.
+        # Cached tensors are stored on CPU to avoid pinning VRAM between jobs.
         self._cond_cache: dict[
             tuple,
             tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor, torch.Tensor],
         ] = {}
         # Cache spatial embedding vectors keyed by (h, w, target_h, target_w, crop_top, crop_left).
+        # Cached tensors are stored on CPU and moved back to the text encoder device on use.
         self._embed_cache: dict[tuple[int, int, int, int, int, int], torch.Tensor] = {}
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
@@ -261,6 +263,19 @@ class StableDiffusionXL(CodexDiffusionEngine):
         runtime = self._require_runtime()
         runtime.set_clip_skip(clip_skip)
         logger.debug("Clip skip set to %d for SDXL.", clip_skip)
+
+    def _post_job_cleanup(self) -> None:
+        """Post-job cleanup when smart offload is enabled.
+
+        Keeps UNet resident but nudges CUDA to release unused cached memory so the
+        next job starts from a clean allocator state without paying reload cost.
+        """
+        if not self.smart_offload_enabled:
+            return
+        try:
+            memory_management.soft_empty_cache(force=True)
+        except Exception:  # pragma: no cover - diagnostics only
+            logger.debug("SDXL post-job cleanup failed", exc_info=True)
 
     # ------------------------------------------------------------------ Tasks
     def txt2img(self, request, **kwargs: Any):  # type: ignore[override]
@@ -426,12 +441,18 @@ class StableDiffusionXL(CodexDiffusionEngine):
         timings: dict[str, float] = {}
         try:
             if sampling_times["start"] is not None and sampling_times["end"] is not None:
-                timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
+                timings["sampling_ms"] = max(
+                    0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0
+                )
             timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
             info["timings_ms"] = timings
         except Exception:
             # Timing metadata must never break result emission.
             pass
+
+        # Leave UNet resident but clean up allocator / transient caches when smart offload is enabled.
+        self._post_job_cleanup()
+
         yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
 
     def _prepare_prompt_wrappers(
@@ -491,7 +512,12 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 cache_key = (texts, bool(is_negative))
                 cached = self._cond_cache.get(cache_key)
                 if cached is not None:
-                    cond_l, pooled_l, cond_g, pooled_g = cached
+                    cached_cond_l, cached_pooled_l, cached_cond_g, cached_pooled_g = cached
+                    target_device = memory_management.text_encoder_device()
+                    cond_l = cached_cond_l.to(target_device) if cached_cond_l is not None else None
+                    pooled_l = cached_pooled_l.to(target_device) if cached_pooled_l is not None else None
+                    cond_g = cached_cond_g.to(target_device)
+                    pooled_g = cached_pooled_g.to(target_device)
                     record_smart_cache_hit("sdxl.base.text")
                 else:
                     record_smart_cache_miss("sdxl.base.text")
@@ -520,7 +546,12 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 if use_cache:
                     # Cache textual piece only (independent of spatial metadata).
                     self._cond_cache.clear()
-                    self._cond_cache[(texts, bool(is_negative))] = (cond_l, pooled_l, cond_g, pooled_g)
+                    self._cond_cache[(texts, bool(is_negative))] = (
+                        cond_l.detach().to("cpu") if cond_l is not None else None,
+                        pooled_l.detach().to("cpu") if pooled_l is not None else None,
+                        cond_g.detach().to("cpu"),
+                        pooled_g.detach().to("cpu"),
+                    )
 
             embed_key = (
                 int(height),
@@ -546,11 +577,12 @@ class StableDiffusionXL(CodexDiffusionEngine):
                     self.embedder(torch.tensor([target_height])),
                     self.embedder(torch.tensor([target_width])),
                 ]
-                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
-                if use_cache:
-                    self._embed_cache.clear()
-                    self._embed_cache[embed_key] = flat_tensor
-                flat = flat_tensor
+            flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+            if use_cache:
+                self._embed_cache.clear()
+                # Store cached embeddings on CPU to avoid pinning VRAM.
+                self._embed_cache[embed_key] = flat_tensor.to("cpu")
+            flat = flat_tensor
             flat = flat.repeat(pooled_g.shape[0], 1).to(pooled_g)
 
             # Only zero-out negative embeddings when all underlying texts are truly empty.
@@ -623,6 +655,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         super().__init__()
         self._runtime: Optional[SDEngineRuntime] = None
         self.embedder = Timestep(256)
+        # Cached tensors are stored on CPU to avoid pinning VRAM between jobs.
         self._cond_cache: dict[tuple, tuple[torch.Tensor, torch.Tensor]] = {}
         self._embed_cache: dict[tuple[int, int, int, int, int, int], torch.Tensor] = {}
 
@@ -691,7 +724,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                 cache_key = (texts, bool(is_negative))
                 cached = self._cond_cache.get(cache_key)
                 if cached is not None:
-                    cond_g, pooled = cached
+                    cached_cond_g, cached_pooled = cached
+                    target_device = memory_management.text_encoder_device()
+                    cond_g = cached_cond_g.to(target_device)
+                    pooled = cached_pooled.to(target_device)
                     record_smart_cache_hit("sdxl.refiner.text")
                 else:
                     record_smart_cache_miss("sdxl.refiner.text")
@@ -700,7 +736,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                 cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
                 if use_cache:
                     self._cond_cache.clear()
-                    self._cond_cache[(texts, bool(is_negative))] = (cond_g, pooled)
+                    self._cond_cache[(texts, bool(is_negative))] = (
+                        cond_g.detach().to("cpu"),
+                        pooled.detach().to("cpu"),
+                    )
 
             embed_key = (
                 int(height),
@@ -726,11 +765,12 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                     self.embedder(torch.tensor([height])),
                     self.embedder(torch.tensor([width])),
                 ]
-                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
-                if use_cache:
-                    self._embed_cache.clear()
-                    self._embed_cache[embed_key] = flat_tensor
-                flat = flat_tensor
+            flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+            if use_cache:
+                self._embed_cache.clear()
+                # Store cached embeddings on CPU to avoid pinning VRAM.
+                self._embed_cache[embed_key] = flat_tensor.to("cpu")
+            flat = flat_tensor
             flat = flat.repeat(pooled.shape[0], 1).to(pooled)
 
             if is_negative and all(x == "" for x in prompt):

@@ -73,6 +73,16 @@ def minimum_inference_memory() -> int:
     return _MANAGER.minimum_inference_memory()
 
 
+def memory_snapshot() -> dict:
+    """Expose a JSON-friendly view of the current runtime memory state.
+
+    This is a thin proxy around ``CodexMemoryManager.memory_snapshot`` so that
+    API layers and diagnostics tools can inspect VRAM usage without reaching
+    into the manager internals directly.
+    """
+    return _MANAGER.memory_snapshot()
+
+
 def load_models_gpu(models, memory_required: int = 0, hard_memory_preservation: int = 0):
     _MANAGER.load_models(
         _wrap_model_sequence(models),

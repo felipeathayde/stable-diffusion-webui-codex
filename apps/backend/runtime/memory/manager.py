@@ -451,6 +451,11 @@ class CodexMemoryManager:
         return self._cpu_device
 
     @property
+    def hardware_probe(self) -> HardwareProbe:
+        """Expose a read-only view of the hardware probe used for this manager."""
+        return self._probe
+
+    @property
     def signal_empty_cache(self) -> bool:
         return self._signal_empty_cache
 
@@ -660,8 +665,13 @@ class CodexMemoryManager:
         if device.type == "xpu":
             stats = torch.xpu.memory_stats(device)  # type: ignore[attr-defined]
             torch_reserved = stats.get("reserved_bytes.all.current", 0)
-            free = torch_reserved  # best effort
-            return (free, torch_reserved) if return_torch_stats else free
+            try:
+                free, total = torch.xpu.mem_get_info(device)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover
+                free, total = 0, 0
+            if return_torch_stats:
+                return free, max(torch_reserved, free)
+            return free
 
         if return_torch_stats:
             return 0, 0
@@ -669,6 +679,114 @@ class CodexMemoryManager:
 
     def minimum_inference_memory(self) -> int:
         return max(self._budgets.minimum_inference_mb * 1024 * 1024, 0)
+
+    def memory_snapshot(self) -> Dict[str, object]:
+        """Return a JSON-friendly snapshot of current memory usage and managed models.
+
+        The snapshot is intentionally shallow and avoids side effects so it can be
+        called from diagnostics endpoints without perturbing runtime behaviour.
+        """
+        device = self._primary_device
+
+        # Hardware/probe info
+        try:
+            probe_dict: Dict[str, object] = self._probe.to_dict()
+        except Exception:  # pragma: no cover - extremely defensive
+            probe_dict = {}
+
+        # Torch-level stats (best-effort; only populated when supported)
+        torch_stats: Dict[str, int] = {}
+        if device.type == "cuda":
+            try:
+                stats = torch.cuda.memory_stats(device)
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+                torch_stats = {
+                    "allocated_bytes": int(stats.get("allocated_bytes.all.current", 0)),
+                    "reserved_bytes": int(stats.get("reserved_bytes.all.current", 0)),
+                    "free_bytes": int(free_bytes),
+                    "total_bytes": int(total_bytes),
+                }
+            except Exception:  # pragma: no cover
+                torch_stats = {}
+        elif device.type == "xpu":
+            try:
+                stats = torch.xpu.memory_stats(device)  # type: ignore[attr-defined]
+                free_bytes, total_bytes = torch.xpu.mem_get_info(device)  # type: ignore[attr-defined]
+                torch_stats = {
+                    "allocated_bytes": int(stats.get("allocated_bytes.all.current", 0)),
+                    "reserved_bytes": int(stats.get("reserved_bytes.all.current", 0)),
+                    "free_bytes": int(free_bytes),
+                    "total_bytes": int(total_bytes),
+                }
+            except Exception:  # pragma: no cover
+                torch_stats = {}
+        elif device.type == "mps":
+            try:
+                allocated = int(torch.mps.current_allocated_memory())
+                total = int(torch.mps.driver_allocated_memory())
+                free = max(total - allocated, 0)
+                torch_stats = {
+                    "allocated_bytes": allocated,
+                    "reserved_bytes": allocated,
+                    "free_bytes": free,
+                    "total_bytes": total,
+                }
+            except Exception:  # pragma: no cover
+                torch_stats = {}
+
+        # Managed model records
+        models: List[Dict[str, object]] = []
+        total_inclusive = 0
+        total_exclusive = 0
+
+        for record in self._loaded_models:
+            try:
+                module = record.base_module or self._extract_module(record.loader or record.model)
+            except Exception:
+                module = None
+
+            if module is not None:
+                module_name = module.__class__.__name__
+            else:
+                module_name = type(record.model).__name__
+
+            load_device = getattr(record.load_device, "type", str(record.load_device))
+            offload_device = getattr(record.offload_device, "type", str(record.offload_device))
+
+            models.append(
+                {
+                    "module": module_name,
+                    "load_device": load_device,
+                    "offload_device": offload_device,
+                    "storage_dtype": str(record.storage_dtype).replace("torch.", ""),
+                    "inclusive_bytes": int(record.inclusive_memory),
+                    "exclusive_bytes": int(record.exclusive_memory),
+                    "accelerated": bool(record.model_accelerated),
+                }
+            )
+            total_inclusive += int(record.inclusive_memory)
+            total_exclusive += int(record.exclusive_memory)
+
+        budgets = {
+            "minimum_inference_mb": int(self._budgets.minimum_inference_mb),
+            "hard_reservation_mb": int(self._budgets.hard_reservation_mb),
+            "safety_margin_mb": int(self._budgets.safety_margin_mb),
+        }
+
+        device_backend = getattr(self._config.device_backend, "value", str(self._config.device_backend))
+
+        return {
+            "device_backend": device_backend,
+            "primary_device": str(device),
+            "probe": probe_dict,
+            "budgets": budgets,
+            "torch": torch_stats,
+            "models": models,
+            "totals": {
+                "models_inclusive_bytes": total_inclusive,
+                "models_exclusive_bytes": total_exclusive,
+            },
+        }
 
     # --------------------------------------------------------------------- dtype helpers
     def should_use_fp16(

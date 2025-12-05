@@ -475,12 +475,45 @@ def build_app() -> FastAPI:
 
     @app.get('/api/memory')
     def memory() -> Dict[str, Any]:
+        """Return a snapshot of current VRAM/CPU memory state.
+
+        This endpoint is best-effort and aimed at diagnostics / UX overlays.
+        It does not attempt to modify runtime behaviour.
+        """
         try:
-            from apps.backend import memory_management as _mm  # type: ignore
-            total = int(getattr(_mm, 'total_vram', 0))
+            from apps.backend.runtime import memory_management as _mm  # type: ignore
+
+            snap = _mm.memory_snapshot()
+        except Exception as exc:  # pragma: no cover - defensive
+            # Keep compatibility with older callers that only expect total_vram_mb.
+            try:
+                from apps.backend import memory_management as _legacy_mm  # type: ignore
+
+                total = int(getattr(_legacy_mm, 'total_vram', 0))
+            except Exception:
+                total = 0
+            return {"total_vram_mb": total, "error": str(exc)}
+
+        probe = snap.get("probe", {}) or {}
+        totals = snap.get("totals", {}) or {}
+        torch_stats = snap.get("torch", {}) or {}
+
+        total_vram_mb = probe.get("total_vram_mb") or 0
+        try:
+            total_vram_mb = int(total_vram_mb)
         except Exception:
-            total = 0
-        return {"total_vram_mb": total}
+            total_vram_mb = 0
+
+        return {
+            "device_backend": snap.get("device_backend"),
+            "primary_device": snap.get("primary_device"),
+            "total_vram_mb": total_vram_mb,
+            "probe": probe,
+            "budgets": snap.get("budgets", {}),
+            "torch": torch_stats,
+            "models": snap.get("models", []),
+            "totals": totals,
+        }
 
     @app.get('/api/settings/schema')
     def settings_schema() -> Dict[str, Any]:

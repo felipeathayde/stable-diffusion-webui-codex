@@ -117,6 +117,7 @@
           <PresetSelector
             label="Presets"
             :names="presetNames"
+            list-id="flux-preset-list"
             @apply="applyPreset"
           />
           <StyleSelector

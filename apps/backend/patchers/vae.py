@@ -68,13 +68,20 @@ def _unwrap_encode_output(output):
         return output.sample
     if torch.is_tensor(output):
         return output
-    # Legacy/variant encoders may return tuples like (latents, aux); pick first tensor.
+    # Legacy/variant encoders may return tuples like (latents, aux) or (AutoencoderKLOutput, aux).
+    # Walk the tuple/list and recursively unwrap the first tensor-like item we find.
     if isinstance(output, (tuple, list)) and output:
         for item in output:
             if torch.is_tensor(item):
                 return item
-    # Fallback: caller must handle unexpected shapes/types
-    return output
+            try:
+                inner = _unwrap_encode_output(item)
+                if torch.is_tensor(inner):
+                    return inner
+            except Exception:
+                continue
+    # Fallback: surface an explicit error instead of returning an unsupported type.
+    raise RuntimeError(f"VAE encode returned unsupported output type: {type(output)!r}")
 
 
 class _NormalizingFirstStage:

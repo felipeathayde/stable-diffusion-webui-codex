@@ -11,25 +11,89 @@
         </div>
         <div class="panel-body panel-body-scroll">
           <PromptFields v-model:prompt="store.prompt" v-model:negative="store.negativePrompt" />
-          <ParameterSection title="Generation Parameters">
-            <div class="param-grid">
-              <NumberInput v-model="store.steps" label="Steps" min="1" max="60" />
-              <NumberInput v-model="store.cfgScale" label="CFG (Flux)" step="0.1" />
-              <SeedInput v-model="store.seed" :last-seed="store.seed" @randomize="store.randomizeSeed" @reuse="store.reuseSeed" />
-              <NumberInput v-model="store.batchSize" label="Batch size" min="1" max="16" />
-              <NumberInput v-model="store.batchCount" label="Batch count" min="1" max="16" />
+          <div class="grid grid-2" style="margin-top: .75rem">
+            <div>
+              <label class="label">Steps</label>
+              <input
+                v-model.number="store.steps"
+                type="number"
+                min="1"
+                max="60"
+                class="ui-input"
+              >
             </div>
-            <div class="param-grid">
-              <NumberInput v-model="store.width" label="Width" min="64" step="64" />
-              <NumberInput v-model="store.height" label="Height" min="64" step="64" />
-              <div class="param">
-                <label class="param-label">Aspect</label>
-                <div class="aspect-row">
-                  <span>{{ store.aspectLabel }}</span>
-                </div>
+            <div>
+              <label class="label">CFG (Flux)</label>
+              <input
+                v-model.number="store.cfgScale"
+                type="number"
+                step="0.1"
+                class="ui-input"
+              >
+            </div>
+          </div>
+          <div class="grid grid-3" style="margin-top: .75rem">
+            <div>
+              <label class="label">Seed</label>
+              <input
+                v-model.number="store.seed"
+                type="number"
+                class="ui-input"
+              >
+              <div class="mt-1 flex gap-1">
+                <button class="btn btn-xs btn-secondary" type="button" @click="store.randomizeSeed">Random</button>
+                <button class="btn btn-xs btn-secondary" type="button" @click="store.reuseSeed">Reuse</button>
               </div>
             </div>
-          </ParameterSection>
+            <div>
+              <label class="label">Batch size</label>
+              <input
+                v-model.number="store.batchSize"
+                type="number"
+                min="1"
+                max="16"
+                class="ui-input"
+              >
+            </div>
+            <div>
+              <label class="label">Batch count</label>
+              <input
+                v-model.number="store.batchCount"
+                type="number"
+                min="1"
+                max="16"
+                class="ui-input"
+              >
+            </div>
+          </div>
+          <div class="grid grid-3" style="margin-top: .75rem">
+            <div>
+              <label class="label">Width</label>
+              <input
+                v-model.number="store.width"
+                type="number"
+                min="64"
+                step="64"
+                class="ui-input"
+              >
+            </div>
+            <div>
+              <label class="label">Height</label>
+              <input
+                v-model.number="store.height"
+                type="number"
+                min="64"
+                step="64"
+                class="ui-input"
+              >
+            </div>
+            <div>
+              <label class="label">Aspect</label>
+              <div class="aspect-row">
+                <span>{{ store.aspectLabel }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="panel">
@@ -108,9 +172,6 @@ import { useRouter } from 'vue-router'
 import CheckpointModal from '../components/modals/CheckpointModal.vue'
 import TextualInversionModal from '../components/modals/TextualInversionModal.vue'
 import PromptFields from '../components/prompt/PromptFields.vue'
-import ParameterSection from '../components/ParameterSection.vue'
-import NumberInput from '../components/NumberInput.vue'
-import SeedInput from '../components/SeedInput.vue'
 import ModelSelector from '../components/ModelSelector.vue'
 import SamplerSelector from '../components/SamplerSelector.vue'
 import SchedulerSelector from '../components/SchedulerSelector.vue'

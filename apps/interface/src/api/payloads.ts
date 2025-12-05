@@ -62,8 +62,6 @@ export const Txt2ImgRequestSchema = z
     smart_offload: z.boolean().optional(),
     smart_fallback: z.boolean().optional(),
     smart_cache: z.boolean().optional(),
-    smart_offload: z.boolean().optional(),
-    smart_fallback: z.boolean().optional(),
     extras: z
       .object({
         highres: HighresOptionsSchema.optional(),

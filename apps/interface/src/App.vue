@@ -14,6 +14,7 @@
         <RouterLink class="tab-link" to="/">home</RouterLink>
         <!-- Single canonical image workspace -->
         <RouterLink class="tab-link" to="/sdxl">sdxl</RouterLink>
+        <RouterLink class="tab-link" to="/flux">flux</RouterLink>
         <!-- Model & workflow tools -->
         <RouterLink class="tab-link" to="/models">models</RouterLink>
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>

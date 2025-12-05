@@ -30,3 +30,4 @@ Status: Draft
 ## Notes
 - 2025-11-04: Parser execution now materializes lazy safetensor components via dedicated helpers before running converters, preventing repeated file handle churn on Windows.
 - 2025-11-28: SDXL CLIP validation is fail-fast: missing essentials (token embeddings, layer_norm1, final LN, text_projection for CLIP-G) raises a `ValidationError` instead of proceeding with partial encoders.
+- 2025-12-05: Flux GGUF core-only parser (`families/flux.py`) now registers synthetic text encoder aliases (`clip_l`, `t5xxl`) so `TextEncoderOverrideConfig` can map Flux text encoder roots to `text_encoder`/`text_encoder_2` components even when CLIP/T5 weights live entirely outside the primary checkpoint.

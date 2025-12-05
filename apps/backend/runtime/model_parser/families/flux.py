@@ -22,11 +22,24 @@ from ..quantization import validate_component_dtypes
 _FLUX_CORE_PREFIXES = ("transformer.", "model.diffusion_model.")
 
 
+def _register_flux_text_encoders(context) -> None:
+    """Register expected Flux text encoder aliases even when weights are external.
+
+    For GGUF core-only checkpoints, CLIP-L/T5/VAE do not live in the primary
+    state_dict. We still need a stable alias → component map so that the loader
+    can apply text encoder overrides (via `TextEncoderOverrideConfig`) for
+    `clip_l` and `t5xxl`.
+    """
+    register_text_encoder(context, "clip_l", "text_encoder")
+    register_text_encoder(context, "t5xxl", "text_encoder_2")
+
+
 def build_plan(signature: ModelSignature) -> ParserPlanBundle:
     # GGUF core-only checkpoints: only the rectified-flow backbone lives in the
     # state_dict (double_blocks.+guidance), while CLIP/T5/VAE come from the
     # diffusers repo or external paths. For these, keep the plan minimal and
-    # avoid text-encoder/vae validations.
+    # avoid text-encoder/vae validations, but still declare the logical text
+    # encoders so overrides can be resolved.
     if signature.quantization.kind == QuantizationKind.GGUF:
         plan = ParserPlan(
             splits=[
@@ -35,6 +48,7 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
             ],
             converters=(),
             validations=(
+                ValidationSpec(name="register_flux_text_encoders", function=_register_flux_text_encoders),
                 ValidationSpec(name="core_presence", function=_validate_transformer_core),
                 ValidationSpec(name="dtype_sanity", function=validate_component_dtypes),
             ),

@@ -12,6 +12,7 @@ from transformers import modeling_utils
 
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.args import args
+from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
@@ -513,6 +514,83 @@ def _load_state_dict(path: str) -> Mapping[str, Any]:
     return sd
 
 
+def _load_flux_vae_state_dict() -> Mapping[str, Any]:
+    """Load VAE weights for Flux core-only GGUF from configured paths.
+
+    Flux GGUF core-only checkpoints ship only the rectified-flow backbone. VAE
+    weights are expected to live under the `flux_vae` key in `apps/paths.json`.
+
+    Each `flux_vae` entry may be either:
+      - a direct weights file (`*.safetensors`/`*.bin`/`*.pt`), or
+      - a directory containing standard VAE weights (e.g., `vae/diffusion_pytorch_model.*`).
+
+    The first path that successfully loads is used. Failures are logged and
+    we continue to the next candidate. If no usable path is found, a
+    RuntimeError is raised with guidance for configuration.
+    """
+    candidates = get_paths_for("flux_vae")
+    search_files: list[str] = []
+
+    for entry in candidates:
+        if os.path.isfile(entry):
+            search_files.append(entry)
+            continue
+        if not os.path.isdir(entry):
+            continue
+
+        # Prefer a diffusers-style VAE folder structure when present.
+        preferred_dirs = [entry, os.path.join(entry, "vae")]
+        preferred_names = [
+            "diffusion_pytorch_model.safetensors",
+            "diffusion_pytorch_model.bin",
+            "diffusion_pytorch_model.pt",
+        ]
+        found = None
+        for base in preferred_dirs:
+            if not os.path.isdir(base):
+                continue
+            for name in preferred_names:
+                candidate = os.path.join(base, name)
+                if os.path.isfile(candidate):
+                    found = candidate
+                    break
+            if found is not None:
+                break
+
+        # If no canonical file found, fall back to the first VAE-like weights file.
+        if found is None:
+            try:
+                for root, _, files in os.walk(entry):
+                    for name in sorted(files):
+                        lower = name.lower()
+                        if lower.endswith((".safetensors", ".bin", ".pt")) and "vae" in lower:
+                            found = os.path.join(root, name)
+                            break
+                    if found is not None:
+                        break
+            except Exception:
+                # Directory may be unreadable; move on to next candidate.
+                LOGGER.exception("Failed to scan Flux VAE directory %s", entry)
+                continue
+
+        if found is not None:
+            search_files.append(found)
+
+    for path in search_files:
+        try:
+            LOGGER.info("Loading Flux VAE weights from %s", path)
+            return _load_state_dict(path)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Failed to load Flux VAE weights from %s", path)
+            continue
+
+    raise RuntimeError(
+        "Flux GGUF core-only checkpoint requires external VAE weights, but no usable path was found. "
+        "Configure at least one 'flux_vae' entry in apps/paths.json pointing to a VAE file or directory "
+        "containing the VAE weights (e.g., diffusion_pytorch_model.safetensors)."
+    )
+
+
 def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> ParsedCheckpoint:
     base_state = _load_state_dict(primary_path)
     signature = registry_detect(base_state)
@@ -809,7 +887,21 @@ def _load_huggingface_component(
                     "No VAE detected in checkpoint for SDXL. Provide a VAE override (vae_path) "
                     "or use a checkpoint with an embedded SDXL VAE."
                 )
-            return None
+            # Flux GGUF core-only checkpoints carry only the rectified-flow backbone;
+            # compose them with an external VAE sourced from `flux_vae` paths.
+            signature = getattr(parsed, "signature", None)
+            quant = getattr(signature, "quantization", None)
+            extras = getattr(signature, "extras", {}) or {}
+            is_flux_core_gguf = (
+                isinstance(signature, ModelSignature)
+                and signature.family is ModelFamily.FLUX
+                and getattr(quant, "kind", None) is QuantizationKind.GGUF
+                and bool(extras.get("gguf_core_only"))
+            )
+            if is_flux_core_gguf:
+                state_dict = _load_flux_vae_state_dict()
+            else:
+                return None
 
         # Unwrap common packing shapes (e.g., {'state_dict': {...}})
         if isinstance(state_dict, Mapping) and len(state_dict) == 1 and "state_dict" in state_dict:

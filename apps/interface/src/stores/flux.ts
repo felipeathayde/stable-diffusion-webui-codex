@@ -271,6 +271,15 @@ export const useFluxStore = defineStore('flux', () => {
 
     let payload: Txt2ImgRequest
     try {
+      const teLabel = Array.isArray(quicksettings.currentTextEncoders)
+        ? quicksettings.currentTextEncoders[0]
+        : ''
+      const teOverride = typeof teLabel === 'string' && teLabel.trim().length > 0
+        ? {
+            family: 'flux',
+            label: teLabel.trim(),
+          }
+        : undefined
       payload = buildTxt2ImgPayload({
         prompt: promptText,
         negativePrompt: negativeText,
@@ -288,6 +297,7 @@ export const useFluxStore = defineStore('flux', () => {
         smartOffload: quicksettings.smartOffload,
         smartFallback: quicksettings.smartFallback,
         smartCache: quicksettings.smartCache,
+        textEncoderOverride: teOverride,
         engine: ENGINE_ID,
         model: selectedModel.value,
         highres,

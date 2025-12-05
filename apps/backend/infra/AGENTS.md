@@ -9,7 +9,7 @@ Status: Active
 
 ## Subdirectories
 - `accelerators/` — Accelerator discovery and device capability helpers.
-- `config/` — Dynamic configuration loaders and CLI argument wiring.
+- `config/` — Dynamic configuration loaders, CLI argument wiring, and shared config readers (e.g., `paths.json`).
 - `registry/` — Shared registry utilities used by engines, services, and runtime modules.
 
 ## Notes

@@ -32,7 +32,8 @@ def _iter_files(root: str, exts: Iterable[str]) -> Iterable[str]:
 
 def _default_search_roots(models_root: str = "models") -> List[str]:
     roots = []
-    for sub in ("lora", "Lora", "LoRA", "loras", "LORAS"):
+    # Built-in defaults: prefer per-model LoRA folders only.
+    for sub in ("sd15-loras", "sdxl-loras", "flux-loras", "wan22-loras"):
         p = os.path.join(models_root, sub)
         if os.path.isdir(p):
             roots.append(p)
@@ -42,10 +43,12 @@ def _default_search_roots(models_root: str = "models") -> List[str]:
         import json
 
         with open(cfg, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for p in (data or {}).get("lora", []) or []:
-            if isinstance(p, str) and os.path.isdir(p):
-                roots.append(p)
+            data = json.load(f) or {}
+        # Per-model overrides
+        for key in ("sd15_loras", "sdxl_loras", "flux_loras", "wan22_loras"):
+            for p in (data.get(key) or []):
+                if isinstance(p, str) and os.path.isdir(p):
+                    roots.append(p)
     except Exception:
         pass
     # Deduplicate while keeping order
@@ -114,4 +117,3 @@ def describe_loras(roots: List[str] | None = None) -> List[LoraEntry]:
 
 
 __all__ = ["LoraEntry", "list_loras", "describe_loras"]
-

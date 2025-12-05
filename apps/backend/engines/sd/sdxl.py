@@ -577,12 +577,12 @@ class StableDiffusionXL(CodexDiffusionEngine):
                     self.embedder(torch.tensor([target_height])),
                     self.embedder(torch.tensor([target_width])),
                 ]
-            flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
-            if use_cache:
-                self._embed_cache.clear()
-                # Store cached embeddings on CPU to avoid pinning VRAM.
-                self._embed_cache[embed_key] = flat_tensor.to("cpu")
-            flat = flat_tensor
+                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+                if use_cache:
+                    self._embed_cache.clear()
+                    # Store cached embeddings on CPU to avoid pinning VRAM.
+                    self._embed_cache[embed_key] = flat_tensor.to("cpu")
+                flat = flat_tensor
             flat = flat.repeat(pooled_g.shape[0], 1).to(pooled_g)
 
             # Only zero-out negative embeddings when all underlying texts are truly empty.

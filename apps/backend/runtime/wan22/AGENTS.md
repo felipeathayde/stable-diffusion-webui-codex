@@ -9,6 +9,7 @@ Status: Active
 
 ## Notes
 - Ensure updates stay synchronized with `apps/backend/engines/wan22/` and GGUF helpers under `runtime/gguf`.
+- 2025-12-04: `_vae_encode_init`/`_get_text_context` continue to require explicit `vae_dir`/`text_encoder_dir`; these are now commonly populated via WAN22 defaults in `apps/paths.json` when GGUF engines do not receive explicit extras.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

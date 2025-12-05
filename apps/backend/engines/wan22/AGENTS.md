@@ -12,6 +12,7 @@ Status: Active
 ## Notes
 - Keep WAN engines aligned with `runtime/wan22` and GGUF helpers to ensure strict asset handling.
 - 2025-11-30: WAN22 engines now resolve vendored Hugging Face metadata under `apps/backend/huggingface` using a repo-root anchor, replacing the old `apps/server/backend/huggingface` path.
+- 2025-12-04: GGUF execution path now applies WAN22 defaults from `apps/paths.json` (`wan22_vae`, `text_encoders`) when explicit extras are not provided, so a minimal `models/wan22/**` layout works without per-run overrides.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

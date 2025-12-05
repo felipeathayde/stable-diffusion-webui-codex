@@ -171,6 +171,10 @@ class CodexProcessingBase:
     extra_generation_params: Dict[str, Any] = field(default_factory=dict)
     override_settings: Dict[str, Any] = field(default_factory=dict)
     eta_noise_seed_delta: int = 0
+    # Smart runtime flags (per-job effective settings; callers decide defaults).
+    smart_offload: bool = False
+    smart_fallback: bool = False
+    smart_cache: bool = False
 
     # Runtime-assigned attributes (populated by orchestrator/use-cases)
     sd_model: Any = None

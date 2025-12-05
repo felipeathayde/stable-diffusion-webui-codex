@@ -798,13 +798,23 @@ def build_app() -> FastAPI:
 
     @app.get('/engines/capabilities')
     def list_engine_capabilities() -> Dict[str, Any]:
-        """Expose semantic engine parameter surfaces for frontend gating.
+        """Expose semantic engine parameter surfaces and Smart Cache diagnostics.
 
-        Shape: { engines: { <semantic_engine>: { supports_txt2img, supports_img2img, ... } } }
+        Shape:
+          {
+            engines: { <semantic_engine>: { supports_txt2img, supports_img2img, ... } },
+            smart_cache: { <bucket>: { hits, misses } }
+          }
         """
         try:
             from apps.backend.runtime.model_registry.capabilities import serialize_engine_capabilities
-            return {"engines": serialize_engine_capabilities()}
+            try:
+                from apps.backend.runtime.memory.smart_offload import get_smart_cache_stats
+
+                cache_stats = get_smart_cache_stats()
+            except Exception:
+                cache_stats = {}
+            return {"engines": serialize_engine_capabilities(), "smart_cache": cache_stats}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to read engine capabilities: {exc}")
 
@@ -1807,9 +1817,18 @@ def build_app() -> FastAPI:
 
         # Smart offload/fallback flags: prefer payload when present, otherwise fall back to options snapshot.
         snap = _opts_snapshot()
-        smart_offload = bool(payload.get("smart_offload", getattr(snap, "codex_smart_offload", False)))
-        smart_fallback = bool(payload.get("smart_fallback", getattr(snap, "codex_smart_fallback", False)))
-        smart_cache = bool(payload.get("smart_cache", getattr(snap, "codex_smart_cache", True)))
+        if "smart_offload" in payload:
+            smart_offload = bool(payload.get("smart_offload"))
+        else:
+            smart_offload = bool(getattr(snap, "codex_smart_offload", False))
+        if "smart_fallback" in payload:
+            smart_fallback = bool(payload.get("smart_fallback"))
+        else:
+            smart_fallback = bool(getattr(snap, "codex_smart_fallback", False))
+        if "smart_cache" in payload:
+            smart_cache = bool(payload.get("smart_cache"))
+        else:
+            smart_cache = bool(getattr(snap, "codex_smart_cache", False))
 
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')

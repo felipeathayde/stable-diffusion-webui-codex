@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, sdxl -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-11-28
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -17,6 +17,7 @@ Status: Active
 - 2025-11-22: SDXL engine must refuse to run when a WAN VAE is loaded (signals misuse of SDXL checkpoints); loader now supplies diffusers `AutoencoderKL` for SD/SDXL families.
 - 2025-11-23: SDXL `_build_components` now raises a `RuntimeError` when `AutoencoderKLWan` is wired into the runtime, instead of logging a warning and proceeding with corrupted decodes.
 - 2025-11-28: SDXL `get_learned_conditioning` now validates cross-attn/ADM tensors (shapes, NaN/Inf) against UNet config and fails fast on mismatches to prevent “golesma” outputs.
+- 2025-12-05: SDXL base/refiner engines honor per-job Smart Cache (`smart_cache` on `Txt2ImgRequest`/`CodexProcessingTxt2Img`) via `_SDXLPrompt.smart_cache`, with fallback to the global option when unset.
 
 ### Event Emission
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.

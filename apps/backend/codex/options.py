@@ -96,7 +96,7 @@ class OptionsSnapshot:
     codex_vae_dtype: Optional[str] = None
     codex_smart_offload: bool = False
     codex_smart_fallback: bool = False
-    codex_smart_cache: bool = True
+    codex_smart_cache: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -133,6 +133,6 @@ def get_snapshot() -> OptionsSnapshot:
         codex_vae_dtype=v.get('codex_vae_dtype'),
         codex_smart_offload=bool(v.get('codex_smart_offload', False)),
         codex_smart_fallback=bool(v.get('codex_smart_fallback', False)),
-        codex_smart_cache=bool(v.get('codex_smart_cache', True)),
+        codex_smart_cache=bool(v.get('codex_smart_cache', False)),
     )
     return snap

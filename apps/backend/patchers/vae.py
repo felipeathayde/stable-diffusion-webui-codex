@@ -304,6 +304,53 @@ class VAE:
                 except Exception:  # noqa: BLE001
                     logger.warning("Failed to restore VAE device after CPU fallback.", exc_info=True)
 
+    def _encode_cpu_fallback(self, pixel_samples_chw: torch.Tensor, regulation) -> torch.Tensor:
+        """Best-effort CPU encode path used after CUDA OOM when smart fallback is enabled.
+
+        Mirrors the GPU encode logic but runs entirely on CPU to avoid repeated
+        OOM loops on large inputs. Restores the original VAE device afterwards
+        when possible.
+        """
+        base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+        orig_device: torch.device | None = None
+        orig_dtype: torch.dtype | None = None
+        try:
+            try:
+                params = base.parameters()
+                first = next(params)
+                orig_device = first.device
+                orig_dtype = first.dtype
+            except Exception:  # noqa: BLE001
+                orig_device = None
+                orig_dtype = None
+
+            cpu_device = memory_management.cpu
+            base.to(device=cpu_device, dtype=torch.float32)
+
+            with torch.no_grad():
+                pixels_cpu = pixel_samples_chw.to(cpu_device, dtype=torch.float32)
+                pixels_in = 2.0 * pixels_cpu - 1.0
+
+                if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
+                    encoded_raw = base.encode(pixels_in, return_dict=True)
+                elif AutoencoderKLWan is not None and isinstance(base, AutoencoderKLWan):
+                    encoded_raw = base.encode(pixels_in, regulation)
+                else:
+                    try:
+                        encoded_raw = base.encode(pixels_in, regulation)
+                    except TypeError:
+                        encoded_raw = base.encode(pixels_in)
+
+                encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
+
+            return encoded
+        finally:
+            if orig_device is not None:
+                try:
+                    base.to(device=orig_device, dtype=orig_dtype or self.vae_dtype or torch.float32)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to restore VAE device after CPU encode fallback.", exc_info=True)
+
     def decode_inner(self, samples_in):
         _tensor_stats("decode_inner.latents", samples_in)
         if memory_management.VAE_ALWAYS_TILED:
@@ -427,8 +474,16 @@ class VAE:
                     encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
                     samples[x:x + batch_number] = encoded
             except memory_management.OOM_EXCEPTION:
-                print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")
-                samples = self.encode_tiled_(pixel_samples)
+                if smart_fallback_enabled():
+                    logger.warning(
+                        "VAE encode OOM on %s with tiled=%s; attempting CPU fallback.",
+                        self.device,
+                        bool(memory_management.VAE_ALWAYS_TILED),
+                    )
+                    samples = self._encode_cpu_fallback(pixel_samples, regulation)
+                else:
+                    print("Warning: Ran out of memory when regular VAE encoding, retrying with tiled VAE encoding.")
+                    samples = self.encode_tiled_(pixel_samples)
 
             if torch.isnan(samples).any():
                 logger.warning(

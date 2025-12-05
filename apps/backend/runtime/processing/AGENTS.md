@@ -1,7 +1,7 @@
 # apps/backend/runtime/processing Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -9,3 +9,4 @@ Status: Active
 
 ## Notes
 - Centralize preprocessing logic here to avoid duplicating conversions in use cases or engines.
+- `CodexProcessingBase` carries per-job smart flags (`smart_offload`, `smart_fallback`, `smart_cache`) so use-cases and engines can honor request-level overrides without consulting globals directly.

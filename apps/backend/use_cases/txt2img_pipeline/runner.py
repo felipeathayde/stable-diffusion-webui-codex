@@ -23,7 +23,11 @@ from apps.backend.runtime.processing.conditioners import (
     img2img_conditioning,
     txt2img_conditioning,
 )
-from apps.backend.runtime.memory.smart_offload import smart_cache_enabled
+from apps.backend.runtime.memory.smart_offload import (
+    smart_cache_enabled,
+    record_smart_cache_hit,
+    record_smart_cache_miss,
+)
 from apps.backend.runtime.processing.datatypes import (
     ConditioningPayload,
     HiResPlan,
@@ -115,14 +119,20 @@ class Txt2ImgPipelineRunner:
         )
 
     def _compute_conditioning(self, processing: CodexProcessingTxt2Img, context: PromptContext):
-        """Build cond/uncond using the engine's SDXL-aware helpers after prompt parsing and dimension overrides."""
+        """Build cond/uncond using the engine's SDXL-aware helpers after prompt parsing and dimension overrides.
+
+        Smart Cache is resolved per job: when ``processing.smart_cache`` is present it
+        takes precedence over the global options snapshot, so callers can flip cache
+        on/off for individual requests without touching Quicksettings.
+        """
         sd_model = getattr(processing, "sd_model", None)
         if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
             return None, None
 
         prompts = list(context.prompts or [getattr(processing, "prompt", "")])
         negative_prompts = list(context.negative_prompts or [getattr(processing, "negative_prompt", "")])
-        cache_enabled = smart_cache_enabled()
+        smart_flag = getattr(processing, "smart_cache", None)
+        cache_enabled = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
         key = None
         if cache_enabled:
             try:
@@ -150,7 +160,9 @@ class Txt2ImgPipelineRunner:
         if cache_enabled and key is not None:
             cached = self._conditioning_cache.get(key)
             if cached is not None:
+                record_smart_cache_hit("sdxl.runner.conditioning")
                 return cached
+            record_smart_cache_miss("sdxl.runner.conditioning")
 
         # Preserve spatial metadata via engine helper when available
         if hasattr(sd_model, "_prepare_prompt_wrappers"):

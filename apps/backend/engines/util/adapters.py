@@ -130,6 +130,9 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         bool(req.highres_fix),
     )
     metadata = dict(req.metadata or {})
+    smart_offload = bool(getattr(req, "smart_offload", False))
+    smart_fallback = bool(getattr(req, "smart_fallback", False))
+    smart_cache = bool(getattr(req, "smart_cache", False))
     distilled_cfg = 3.5
     try:
         meta_distilled = metadata.get("distilled_cfg_scale")
@@ -158,6 +161,9 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         scheduler=req.scheduler,
         seed=-1 if req.seed is None else int(req.seed),
         metadata=metadata,
+        smart_offload=smart_offload,
+        smart_fallback=smart_fallback,
+        smart_cache=smart_cache,
     )
     refiner_cfg = _build_refiner_config(req.extras.get("refiner") if isinstance(req.extras, Mapping) else None, default_cfg=processing.guidance_scale)
     processing.refiner = refiner_cfg if refiner_cfg.enabled else None

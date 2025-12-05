@@ -14,7 +14,11 @@ from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineR
 from apps.backend.engines.util.adapters import build_txt2img_processing
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.smart_offload import smart_cache_enabled
+from apps.backend.runtime.memory.smart_offload import (
+    smart_cache_enabled,
+    record_smart_cache_hit,
+    record_smart_cache_miss,
+)
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
@@ -111,7 +115,16 @@ def _validate_conditioning_payload(runtime: SDEngineRuntime, payload: Mapping[st
 class _SDXLPrompt(str):
     """String subclass that carries SDXL spatial metadata for conditioning."""
 
-    __slots__ = ("width", "height", "target_width", "target_height", "crop_left", "crop_top", "is_negative_prompt")
+    __slots__ = (
+        "width",
+        "height",
+        "target_width",
+        "target_height",
+        "crop_left",
+        "crop_top",
+        "is_negative_prompt",
+        "smart_cache",
+    )
 
     def __new__(
         cls,
@@ -124,6 +137,7 @@ class _SDXLPrompt(str):
         crop_left: int = 0,
         crop_top: int = 0,
         is_negative_prompt: bool = False,
+        smart_cache: Optional[bool] = None,
     ) -> "_SDXLPrompt":
         obj = super().__new__(cls, text or "")
         obj.width = int(width or 1024)
@@ -133,6 +147,7 @@ class _SDXLPrompt(str):
         obj.crop_left = int(crop_left or 0)
         obj.crop_top = int(crop_top or 0)
         obj.is_negative_prompt = bool(is_negative_prompt)
+        obj.smart_cache = None if smart_cache is None else bool(smart_cache)
         return obj
 
 
@@ -156,6 +171,20 @@ def _prompt_meta(prompts: Sequence[str]) -> Tuple[int, int, int, int, int, int, 
     crop_top = _meta("crop_top", getattr(fallback, "sdxl_crop_top", 0))
     is_negative = bool(getattr(reference, "is_negative_prompt", getattr(prompts, "is_negative_prompt", False)))
     return width, height, target_width, target_height, crop_left, crop_top, is_negative
+
+
+def _smart_cache_from_prompts(prompts: Sequence[str]) -> Optional[bool]:
+    """Extract Smart Cache override from wrapped prompts when present."""
+    try:
+        if isinstance(prompts, (list, tuple)) and prompts:
+            value = getattr(prompts[0], "smart_cache", None)
+        else:
+            value = getattr(prompts, "smart_cache", None)
+        if value is None:
+            return None
+        return bool(value)
+    except Exception:
+        return None
 
 
 class StableDiffusionXL(CodexDiffusionEngine):
@@ -405,6 +434,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
         opts = _opts()
         crop_left = int(getattr(proc, "sdxl_crop_left", getattr(opts, "sdxl_crop_left", 0)) or 0)
         crop_top = int(getattr(proc, "sdxl_crop_top", getattr(opts, "sdxl_crop_top", 0)) or 0)
+        smart_cache = getattr(proc, "smart_cache", None)
 
         wrappers: List[_SDXLPrompt] = []
         for entry in texts:
@@ -425,6 +455,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
                     crop_left=entry_crop_left,
                     crop_top=entry_crop_top,
                     is_negative_prompt=is_negative,
+                    smart_cache=smart_cache,
                 )
             )
         return wrappers
@@ -438,8 +469,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
             texts = tuple(str(x or "") for x in prompt)
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
             label = "uncond" if is_negative else "cond"
-
-            use_cache = smart_cache_enabled()
+            smart_cache = _smart_cache_from_prompts(prompt)
+            use_cache = smart_cache_enabled() if smart_cache is None else bool(smart_cache)
 
             cond_l = pooled_l = cond_g = pooled_g = None  # type: ignore[assignment]
             if use_cache:
@@ -447,6 +478,9 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 cached = self._cond_cache.get(cache_key)
                 if cached is not None:
                     cond_l, pooled_l, cond_g, pooled_g = cached
+                    record_smart_cache_hit("sdxl.base.text")
+                else:
+                    record_smart_cache_miss("sdxl.base.text")
 
             if cond_l is None or cond_g is None:
                 out_l = runtime.classic_engine("clip_l")(prompt)
@@ -485,6 +519,10 @@ class StableDiffusionXL(CodexDiffusionEngine):
             flat = None
             if use_cache:
                 flat = self._embed_cache.get(embed_key)
+                if flat is not None:
+                    record_smart_cache_hit("sdxl.base.embed")
+                else:
+                    record_smart_cache_miss("sdxl.base.embed")
             if flat is None:
                 embed_values = [
                     self.embedder(torch.tensor([height])),
@@ -629,9 +667,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         unload_clip = self.smart_offload_enabled
         try:
             texts = tuple(str(x or "") for x in prompt)
-            width, height, is_negative = _prompt_meta(prompt)
+            width, height, _, _, _, _, is_negative = _prompt_meta(prompt)
             opts = _opts()
-            use_cache = smart_cache_enabled()
+            smart_cache = _smart_cache_from_prompts(prompt)
+            use_cache = smart_cache_enabled() if smart_cache is None else bool(smart_cache)
 
             cond_g = pooled = None  # type: ignore[assignment]
             if use_cache:
@@ -639,6 +678,9 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                 cached = self._cond_cache.get(cache_key)
                 if cached is not None:
                     cond_g, pooled = cached
+                    record_smart_cache_hit("sdxl.refiner.text")
+                else:
+                    record_smart_cache_miss("sdxl.refiner.text")
 
             if cond_g is None or pooled is None:
                 cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
@@ -657,6 +699,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             flat = None
             if use_cache:
                 flat = self._embed_cache.get(embed_key)
+                if flat is not None:
+                    record_smart_cache_hit("sdxl.refiner.embed")
+                else:
+                    record_smart_cache_miss("sdxl.refiner.embed")
             if flat is None:
                 embed_values = [
                     self.embedder(torch.tensor([height])),

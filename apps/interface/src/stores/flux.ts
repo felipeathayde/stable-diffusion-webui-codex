@@ -65,7 +65,14 @@ export const useFluxStore = defineStore('flux', () => {
     negativePrompt: undefined,
     cfg: undefined,
     distilledCfg: undefined,
-    refiner: undefined,
+    refiner: {
+      enabled: false,
+      steps: 0,
+      cfg: 3.5,
+      seed: -1,
+      model: undefined,
+      vae: undefined,
+    },
   })
   const refiner = reactive<RefinerFormState>({
     enabled: false,
@@ -393,4 +400,3 @@ export const useFluxStore = defineStore('flux', () => {
 })
 
 export type FluxStore = ReturnType<typeof useFluxStore>
-

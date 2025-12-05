@@ -1,11 +1,11 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
-Date: 2025-11-03
+Date: 2025-12-05
 Owner: Runtime Maintainers
 Status: Active
 
 ## Scope
-Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict helpers.
+Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`, and state-dict helpers.
 
 ## CLIP (TE) State‑Dict Normalization
 - Goal: accept Comfy-style and Diffusers-style layouts without guessing external context.
@@ -43,3 +43,5 @@ Applies to `apps/backend/runtime/models/*` including `loader.py` and state-dict 
 - 2025-11-23: `_resolve_vae_class` no longer routes non‑WAN22 families through `AutoencoderKLWan` even when the VAE layout looks like LDM; layout is used only for key mapping, not for selecting the WAN22 VAE outside the WAN22 family.
 - 2025-11-24: `_maybe_convert_sdxl_vae_state_dict` now materialises lazy SafeTensors views before reshaping mid-attn projections to avoid torch_cpu.dll crashes on Windows during SDXL VAE conversion.
 - 2025-11-25: Loader now preserves scheduler-provided `prediction_type` when it disagrees with the model signature, logging the mismatch instead of forcing the signature value; the signature hint remains accessible via `scheduler.config.codex_signature_prediction_type`.
+- 2025-12-04: `ModelRegistry` checkpoint discovery agora usa `apps/paths.json["checkpoints"]` como override primário, com fallbacks curados em `models/` (`sd15`, `sdxl`, `flux`) em vez de varrer múltiplas pastas legacy (`stable-diffusion`, `sd`, `checkpoints`).
+- 2025-12-05: Text encoder overrides are resolved centrally in `runtime.models.loader` via `TextEncoderOverrideConfig` + `resolve_text_encoder_override_paths`, mapping `(family, /api/text-encoders label, ModelSignature.text_encoders)` to per-component weights. Overrides fail fast when families mismatch, labels are unknown, or expected `<alias>.(safetensors|bin|pt)` files are missing under the configured root.

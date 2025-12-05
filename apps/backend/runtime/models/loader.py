@@ -10,12 +10,13 @@ import torch
 from diffusers import AutoencoderKL, DiffusionPipeline
 from transformers import modeling_utils
 
+from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.args import args
+from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet import UNet2DConditionModel  # legacy UNet (SD15/20)
-from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import SwapPolicy
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
@@ -31,14 +32,12 @@ from apps.backend.runtime.model_registry.specs import (
 from apps.backend.runtime.models.state_dict import load_state_dict, transformers_convert
 from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.utils import (
+    RemapKeysView,
     beautiful_print_gguf_state_dict_statics,
     load_torch_file,
     read_arbitrary_config,
-    RemapKeysView,
 )
-from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
-from apps.backend.huggingface.assets import ensure_repo_minimal_files
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")
@@ -314,6 +313,140 @@ PREDICTION_TYPE_MAP = {
     PredictionKind.EDM: "edm",
     PredictionKind.FLOW: "flow",
 }
+
+
+class TextEncoderOverrideError(RuntimeError):
+    """Raised when a text encoder override configuration cannot be applied."""
+
+
+@dataclass(frozen=True)
+class TextEncoderOverrideConfig:
+    """Explicit selection of a text encoder root for a given model family.
+
+    family:
+        Concrete model family (`ModelFamily.SD15`, `ModelFamily.SDXL`, `ModelFamily.FLUX`, `ModelFamily.WAN22`, ...)
+        that this override is valid for.
+    root_label:
+        One of the labels exposed by `/api/text-encoders` (e.g. `sdxl//abs/.../models/sdxl-tenc`).
+    components:
+        Optional subset of logical text encoder aliases (`clip_l`, `clip_g`, `t5xxl`, `umt5xxl`, ...)
+        that should be overridden. When omitted, all encoders in `ModelSignature.text_encoders`
+        are expected to have weights under the selected root.
+    """
+
+    family: ModelFamily
+    root_label: str
+    components: tuple[str, ...] | None = None
+
+
+def _canonical_override_family(family: ModelFamily) -> ModelFamily:
+    """Map specialised families to their override bucket.
+
+    For example, SDXL refiner shares text encoder family with SDXL.
+    """
+
+    if family is ModelFamily.SDXL_REFINER:
+        return ModelFamily.SDXL
+    return family
+
+
+def resolve_text_encoder_override_paths(
+    *,
+    signature: ModelSignature,
+    estimated_config: CodexEstimatedConfig,
+    override: TextEncoderOverrideConfig | None,
+) -> Dict[str, str]:
+    """Resolve a text encoder override into concrete component weight paths.
+
+    Returns a mapping from Diffusers component name to absolute weight path,
+    e.g. ``{\"text_encoder\": \"/abs/.../clip_l.safetensors\"}``.
+
+    This helper is intentionally pure: it validates invariants and inspects
+    the filesystem, but leaves loading of the actual state dicts to callers.
+    """
+
+    if override is None:
+        return {}
+
+    model_family = _canonical_override_family(signature.family)
+    if override.family is not model_family:
+        raise TextEncoderOverrideError(
+            "Text encoder override family=%s is not compatible with model family=%s"
+            % (override.family.value, model_family.value)
+        )
+
+    roots_by_family = list_text_encoder_roots_by_family()
+    family_roots = list(roots_by_family.get(model_family.value) or [])
+    root_path: str | None = None
+    for entry in family_roots:
+        if getattr(entry, "name", None) == override.root_label:
+            root_path = getattr(entry, "path", None)
+            break
+
+    if root_path is None:
+        raise TextEncoderOverrideError(
+            "Text encoder override label %r not found for family=%s. "
+            "Refresh /api/text-encoders and choose a valid label."
+            % (override.root_label, model_family.value)
+        )
+
+    root_path = str(root_path)
+    if not os.path.isdir(root_path):
+        raise TextEncoderOverrideError(
+            "Text encoder override root %r path is not a directory: %r"
+            % (override.root_label, root_path)
+        )
+
+    # Decide which logical encoders we expect under this root.
+    if override.components:
+        aliases = tuple(override.components)
+    else:
+        aliases = tuple(te.name for te in signature.text_encoders)
+
+    if not aliases:
+        raise TextEncoderOverrideError(
+            "Model family %s declares no text encoders; override cannot be applied."
+            % model_family.value
+        )
+
+    text_map = dict(getattr(estimated_config, "text_encoder_map", {}) or {})
+    missing_aliases = [alias for alias in aliases if alias not in text_map]
+    if missing_aliases:
+        raise TextEncoderOverrideError(
+            "Text encoder override refers to unknown encoder aliases for family=%s: %s"
+            % (model_family.value, ", ".join(sorted(missing_aliases)))
+        )
+
+    # Strict file naming: each alias must have a single weights file named
+    # <alias>.<ext> under the selected root. No guessing across families.
+    try:
+        entries = set(os.listdir(root_path))
+    except Exception as exc:  # pragma: no cover - defensive
+        raise TextEncoderOverrideError(
+            "Failed to list text encoder override root %r: %s" % (root_path, exc)
+        ) from exc
+
+    component_paths: Dict[str, str] = {}
+    allowed_exts = (".safetensors", ".bin", ".pt")
+
+    for alias in aliases:
+        found = None
+        for ext in allowed_exts:
+            candidate = alias + ext
+            if candidate in entries:
+                found = os.path.join(root_path, candidate)
+                break
+        if not found:
+            expected = ", ".join(alias + ext for ext in allowed_exts)
+            raise TextEncoderOverrideError(
+                "Text encoder override root %r is missing weights for encoder %r. "
+                "Expected one of: %s"
+                % (override.root_label, alias, expected)
+            )
+        component_name = text_map[alias]
+        component_paths[component_name] = found
+
+    return component_paths
 
 
 @dataclass
@@ -1139,13 +1272,28 @@ def _apply_prediction_type(codex_components: Dict[str, Any], parsed: ParsedCheck
 
 
 @torch.inference_mode()
-def codex_loader(sd_path: str, additional_state_dicts=None):
+def codex_loader(
+    sd_path: str,
+    additional_state_dicts=None,
+    text_encoder_override: TextEncoderOverrideConfig | None = None,
+) -> DiffusionModelBundle:
     try:
         parsed = _parse_checkpoint(sd_path, additional_state_dicts or [])
     except ModelRegistryError as exc:
         raise ValueError("Failed to recognize model type!") from exc
 
     config = parsed.config
+
+    try:
+        te_override_paths = resolve_text_encoder_override_paths(
+            signature=parsed.signature,
+            estimated_config=config,
+            override=text_encoder_override,
+        )
+    except TextEncoderOverrideError as exc:
+        # Keep the surface error explicit and actionable; do not fall back silently.
+        raise RuntimeError(str(exc)) from exc
+
     component_states = {name: comp.state_dict for name, comp in config.components.items()}
 
     repo_name = config.repo_id
@@ -1165,6 +1313,16 @@ def codex_loader(sd_path: str, additional_state_dicts=None):
             continue
         lib_name, cls_name = component_info
         component_sd = component_states.get(component_name)
+
+        override_path = te_override_paths.get(component_name)
+        if override_path is not None:
+            if not os.path.isfile(override_path):
+                raise RuntimeError(
+                    "Text encoder override path for component %s does not exist: %s"
+                    % (component_name, override_path)
+                )
+            component_sd = _load_state_dict(override_path)
+
         component_obj = _load_huggingface_component(
             parsed,
             component_name,
@@ -1289,6 +1447,7 @@ def resolve_diffusion_bundle(
     model_ref: str,
     *,
     additional_state_dicts: Optional[list[str]] = None,
+    text_encoder_override: TextEncoderOverrideConfig | None = None,
 ) -> DiffusionModelBundle:
     """Resolve a diffusion model reference into a fully loaded bundle."""
     if os.path.isdir(model_ref):
@@ -1298,7 +1457,11 @@ def resolve_diffusion_bundle(
         raise ValueError(f"Not a diffusers repository (missing model_index.json): {model_ref}")
 
     if os.path.isfile(model_ref):
-        return codex_loader(model_ref, additional_state_dicts=additional_state_dicts)
+        return codex_loader(
+            model_ref,
+            additional_state_dicts=additional_state_dicts,
+            text_encoder_override=text_encoder_override,
+        )
 
     record = model_api.find_checkpoint(model_ref)
     if record is None:
@@ -1312,4 +1475,8 @@ def resolve_diffusion_bundle(
     repo_index = os.path.join(record.path, "model_index.json")
     if os.path.isfile(repo_index):
         return load_engine_from_diffusers(record.path)
-    return codex_loader(record.filename, additional_state_dicts=additional_state_dicts)
+    return codex_loader(
+        record.filename,
+        additional_state_dicts=additional_state_dicts,
+        text_encoder_override=text_encoder_override,
+    )

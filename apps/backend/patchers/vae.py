@@ -63,7 +63,17 @@ def _unwrap_encode_output(output):
                 pass
         if hasattr(dist, "mean") and torch.is_tensor(dist.mean):
             return dist.mean
-    # Some implementations return a plain tensor or an object with `.sample`
+    # Objects that are themselves distributions (e.g., DiagonalGaussianDistribution)
+    if hasattr(output, "sample") and callable(getattr(output, "sample", None)):
+        try:
+            sample = output.sample()
+            if torch.is_tensor(sample):
+                return sample
+        except Exception:  # noqa: BLE001
+            pass
+    if hasattr(output, "mean") and torch.is_tensor(getattr(output, "mean")):
+        return getattr(output, "mean")
+    # Some implementations return a plain tensor or an object with `.sample` tensor attribute
     if hasattr(output, "sample") and torch.is_tensor(getattr(output, "sample")):
         return output.sample
     if torch.is_tensor(output):

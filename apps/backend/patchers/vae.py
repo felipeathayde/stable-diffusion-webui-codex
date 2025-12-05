@@ -53,6 +53,7 @@ def _unwrap_decode_output(output):
 
 def _unwrap_encode_output(output):
     """Extract latent tensor from diffusers AutoencoderKLOutput or passthrough."""
+    # Newer diffusers-style outputs: AutoencoderKLOutput with latent_dist
     if hasattr(output, "latent_dist"):
         dist = getattr(output, "latent_dist")
         if hasattr(dist, "sample"):
@@ -62,8 +63,17 @@ def _unwrap_encode_output(output):
                 pass
         if hasattr(dist, "mean") and torch.is_tensor(dist.mean):
             return dist.mean
+    # Some implementations return a plain tensor or an object with `.sample`
     if hasattr(output, "sample") and torch.is_tensor(getattr(output, "sample")):
         return output.sample
+    if torch.is_tensor(output):
+        return output
+    # Legacy/variant encoders may return tuples like (latents, aux); pick first tensor.
+    if isinstance(output, (tuple, list)) and output:
+        for item in output:
+            if torch.is_tensor(item):
+                return item
+    # Fallback: caller must handle unexpected shapes/types
     return output
 
 

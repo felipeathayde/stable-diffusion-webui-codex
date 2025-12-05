@@ -111,12 +111,15 @@
     <div class="panel-stack">
       <div class="panel">
         <div class="panel-header three-cols results-sticky"><span>Results</span>
-          <div class="header-center"><button class="btn btn-md btn-primary results-generate" :disabled="store.isRunning" @click="onGenerate">Generate</button></div>
+          <div class="header-center">
+            <button class="btn btn-md btn-primary results-generate" :disabled="store.isRunning" @click="onGenerate">
+              Generate
+            </button>
+          </div>
           <div class="header-right results-actions">
-            <input class="ui-input" :list="'sdxl-preset-list'" v-model="presetName" placeholder="Preset" />
-            <datalist id="sdxl-preset-list"><option v-for="p in presetNames" :key="p" :value="p" /></datalist>
-            <button class="btn btn-sm btn-secondary" type="button" @click="savePreset(presetName)">Save</button>
-            <button class="btn btn-sm btn-outline" type="button" @click="applyPreset(presetName)">Apply</button>
+            <div class="gentime-display" v-if="gentimeSeconds !== null">
+              <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
+            </div>
           </div>
         </div>
         <div class="panel-body">
@@ -183,6 +186,10 @@ const styleName = ref('')
 const presetName = ref('')
 const leftStack = ref<HTMLElement | null>(null)
 const previewStyle = ref<Record<string, string>>({})
+const gentimeSeconds = computed(() => {
+  if (store.gentimeMs == null) return null
+  return store.gentimeMs / 1000
+})
 
 onMounted(() => {
   void store.init()

@@ -86,6 +86,8 @@ export const useSdxlStore = defineStore('sdxl', () => {
 
   const status = ref<Status>('idle')
   const running = ref(false)
+  const startedAt = ref<number | null>(null)
+  const finishedAt = ref<number | null>(null)
   const errorMessage = ref('')
   const taskId = ref<string>('')
   const progress = ref<ProgressState>({ ...DEFAULT_PROGRESS })
@@ -204,6 +206,8 @@ export const useSdxlStore = defineStore('sdxl', () => {
     stopStream()
     status.value = 'running'
     running.value = true
+    startedAt.value = performance.now()
+    finishedAt.value = null
     errorMessage.value = ''
     gallery.value = []
     info.value = null
@@ -311,6 +315,7 @@ export const useSdxlStore = defineStore('sdxl', () => {
           negative_prompt: negativeText,
           output_dir: 'outputs/txt2img-images',
         }
+        finishedAt.value = finishedAt.value ?? performance.now()
         break
       case 'error':
         status.value = 'error'
@@ -320,6 +325,9 @@ export const useSdxlStore = defineStore('sdxl', () => {
       case 'end':
         if (status.value !== 'error') {
           status.value = 'done'
+          if (finishedAt.value === null) {
+            finishedAt.value = performance.now()
+          }
         }
         stopStream()
         break
@@ -392,6 +400,8 @@ export const useSdxlStore = defineStore('sdxl', () => {
     selectedSampler,
     selectedScheduler,
     status,
+    startedAt,
+    finishedAt,
     errorMessage,
     taskId,
     progress,
@@ -413,7 +423,11 @@ export const useSdxlStore = defineStore('sdxl', () => {
     randomizeSeed,
     reuseSeed,
     isRunning,
-    aspectLabel,
+   aspectLabel,
+    gentimeMs: computed(() => {
+      if (startedAt.value === null || finishedAt.value === null) return null
+      return Math.max(0, finishedAt.value - startedAt.value)
+    }),
   }
 })
 

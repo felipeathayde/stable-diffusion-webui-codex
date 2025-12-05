@@ -1120,15 +1120,41 @@ def build_app() -> FastAPI:
 
     @app.get('/api/text-encoders')
     def list_text_encoders() -> Dict[str, Any]:
-        """Return available text encoder modules and current selection list (native registry)."""
-        from apps.backend.infra.registry.text_encoders import list_text_encoders as _list_tes, describe_text_encoders as _describe_tes
+        """Return available text encoder overrides and current selection list.
+
+        - `text_encoders`: flat list of labels suitable for QuickSettings (e.g., 'flux/my-te.safetensors').
+        - `current`: persisted selection from Codex options (labels as stored).
+        - `text_encoders_info`: structured metadata for each override entry.
+
+        Vendored Hugging Face text encoder metadata remains available via
+        `apps.backend.infra.registry.text_encoders.describe_text_encoders`, but is not
+        surfaced directly here for overrides.
+        """
+        from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
         from apps.backend.codex import options as _codex_opts
         try:
-            mapping = _list_tes()
-            info = _describe_tes()
-            # current selection from codex options (paths/names as configured)
+            roots_by_family = list_text_encoder_roots_by_family()
+            entries: list[dict[str, object]] = []
+            labels: list[str] = []
+            for family, roots in roots_by_family.items():
+                for root in roots:
+                    # For now, expose roots themselves as selectable labels; loaders
+                    # will map labels to concrete paths when overrides are implemented.
+                    label = root.name
+                    labels.append(label)
+                    entries.append(
+                        {
+                            "name": label,
+                            "path": root.path,
+                            "family": family,
+                            "kind": root.kind,
+                            "tags": list(root.tags),
+                            "meta": dict(root.meta),
+                        }
+                    )
+            labels_sorted = sorted(set(labels))
             selected = _codex_opts.get_additional_modules()
-            return {"text_encoders": mapping, "current": selected, "text_encoders_info": info}
+            return {"text_encoders": labels_sorted, "current": selected, "text_encoders_info": entries}
         except Exception:
             return {"text_encoders": {}, "current": [], "text_encoders_info": {}}
 

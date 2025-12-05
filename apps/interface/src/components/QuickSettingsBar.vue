@@ -41,7 +41,7 @@
       :vae="store.currentVae"
       :vae-choices="filteredVaeChoices"
       :text-encoder="store.currentTextEncoders[0] ?? ''"
-      :text-encoder-choices="store.textEncoderChoices"
+      :text-encoder-choices="filteredTextEncoderChoices"
       :unet-dtype="store.currentUnetDtype"
       :unet-dtype-choices="filteredUnetDtypeChoices"
       :gpu-weights-mb="store.gpuWeightsMb"
@@ -174,6 +174,12 @@ const filteredUnetDtypeChoices = computed(() => {
   if (fam === 'flux') return base.filter(x => /Automatic|float8|fp16/i.test(x))
   return base
 })
+
+const filteredTextEncoderChoices = computed(() => {
+  const fam = activeFamily.value
+  const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
+  return store.textEncoderChoices.filter((name) => typeof name === 'string' && name.startsWith(prefix))
+})
 const hideCheckpoint = computed(() => {
   const p = route.path
   // In model tabs (/models), the tab manages model dirs (e.g., WAN 2.2); hide checkpoint there.
@@ -241,8 +247,8 @@ const wanTextEncoder = computed(() => currentWanAssets().textEncoder || '')
 const wanVae = computed(() => currentWanAssets().vae || '')
 
 const wanTextEncoderChoices = computed(() => {
-  // Reuse global text encoder choices; WAN tab will resolve names to paths using inventory maps.
-  return store.textEncoderChoices
+  // Limit WAN choices to WAN22-specific labels (family prefix).
+  return store.textEncoderChoices.filter((name) => typeof name === 'string' && name.startsWith('wan22/'))
 })
 
 const wanVaeChoices = computed(() => filteredVaeChoices.value)

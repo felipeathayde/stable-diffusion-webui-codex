@@ -17,10 +17,10 @@ def _find_text_encoder_roots(repo_dir: str) -> List[str]:
 
 
 def list_text_encoders(vendored_hf_root: str = "apps/backend/huggingface") -> Dict[str, List[str]]:
-    """Return a mapping of available text encoders.
+    """Return a mapping of available text encoders in vendored Hugging Face trees.
 
-    The keys are repo names; the values are available subfolders (text_encoder, text_encoder_2, etc.).
-    This is a lightweight discovery over vendored trees only.
+    Keys: repo names; values: available subfolders (text_encoder, text_encoder_2, t5, ...).
+    This is used for diagnostics and documentation, not for user-configurable overrides.
     """
     out: Dict[str, List[str]] = {}
     if not os.path.isdir(vendored_hf_root):

@@ -182,7 +182,7 @@
   .gallery-grid { display: grid; gap: var(--space-sm); grid-template-columns: repeat(auto-fit, minmax(11.25rem, 1fr)); }
   .gallery-empty { box-shadow: none; border: 0.0625rem dashed hsla(0,0%,100%,0.18); background: hsla(0,0%,100%,0.015); text-align: center; padding: var(--space-lg); border-radius: 0.75rem; }
   .gallery-figure { border: 0.0625rem solid hsla(0,0%,100%,0.12); border-radius: 0.75rem; overflow: hidden; background: hsla(0,0%,100%,0.05); position: relative; display: flex; flex-direction: column; }
-  .gallery-figure img { width: 100%; display: block; }
+  .gallery-figure img { width: 100%; display: block; max-height: 100dvh; height: auto; object-fit: contain; }
   .gallery-caption { padding: 0.4rem 0.7rem; font-size: 0.72rem; opacity: 0.78; background: hsla(0,0%,0%,0.4); color: hsla(0,0%,100%,0.92); margin-top: auto; text-transform: uppercase; letter-spacing: 0.08em; }
   .gallery-overlay { position: absolute; top: 0.65rem; right: 0.65rem; display: flex; gap: 0.35rem; padding: 0.35rem 0.45rem; border-radius: 999px; background: hsla(220, 18%, 14%, 0.72); box-shadow: 0 0.5rem 1.25rem rgba(0,0,0,0.35); opacity: 0; transform: translateY(-4px); transition: opacity 0.16s ease, transform 0.16s ease; }
   .gallery-figure:hover .gallery-overlay { opacity: 1; transform: translateY(0); }

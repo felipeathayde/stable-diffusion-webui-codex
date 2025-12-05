@@ -14,9 +14,11 @@ from apps.backend.runtime.model_registry.specs import (
     ModelSignature,
     PredictionKind,
     QuantizationHint,
+    QuantizationKind,
     TextEncoderSignature,
     VAESignature,
 )
+from apps.backend.runtime.utils import ParameterGGUF
 
 
 FLUX_CORE_KEYS = (
@@ -111,6 +113,97 @@ class FluxSchnellDetector(_FluxBaseDetector):
     priority = 145
 
 
+class FluxCoreGGUFDetector(ModelDetector):
+    """Detector for Flux core-only GGUF checkpoints (transformer + guidance only).
+
+    These files typically contain only the rectified-flow backbone (double_blocks.*)
+    plus guidance layers, with no VAE or text encoders embedded. They are expected
+    to be consumed together with external CLIP-L/T5 encoders and VAE weights.
+    """
+
+    priority = 135  # run before full Flux detectors
+
+    def matches(self, bundle: SignalBundle) -> bool:  # type: ignore[override]
+        # Require core Flux blocks + guidance layers
+        if "guidance_in.in_layer.weight" not in bundle.state_dict:
+            return False
+        if not any(k.startswith("double_blocks.") for k in bundle.keys):
+            return False
+
+        # Core-only: must NOT contain the higher-level embedder/projection keys used
+        # by full Flux checkpoints.
+        for key in ("x_embedder.weight", "proj_out.weight", "context_embedder.weight"):
+            if key in bundle.state_dict:
+                return False
+
+        # Ensure this is actually a GGUF quantized checkpoint (ParameterGGUF tensors).
+        if not any(isinstance(v, ParameterGGUF) for v in bundle.state_dict.values()):
+            return False
+
+        return True
+
+    def build_signature(self, bundle: SignalBundle) -> ModelSignature:  # type: ignore[override]
+        # Derive basic channel configuration from attention weights when possible.
+        channels_in = 64
+        channels_out = 64
+        context_dim = 4096
+
+        qkv_key = "double_blocks.0.img_attn.qkv.weight"
+        qkv_shape = bundle.shape(qkv_key)
+        if qkv_shape and len(qkv_shape) == 2:
+            channels_out = int(qkv_shape[0])
+
+        guidance_key = "guidance_in.in_layer.weight"
+        adm_in_channels = _shape_at(bundle, guidance_key, dim=1)
+        double_layers = count_blocks(bundle.keys, "double_blocks.{}.")
+        single_layers = count_blocks(bundle.keys, "single_transformer_blocks.{}.")
+
+        # We still describe the expected text encoders so downstream code knows
+        # which components to load from the diffusers repo / paths, even though
+        # they are not embedded in this GGUF checkpoint.
+        text_encoders = [
+            TextEncoderSignature(
+                name="clip_l",
+                key_prefix="text_encoders.clip_l.",
+                expected_dim=768,
+                tokenizer_hint="black-forest-labs/FLUX.1-dev/tokenizer",
+            ),
+            TextEncoderSignature(
+                name="t5xxl",
+                key_prefix="text_encoders.t5xxl.",
+                expected_dim=4096,
+                tokenizer_hint="black-forest-labs/FLUX.1-dev/tokenizer_2",
+            ),
+        ]
+
+        extras = {
+            "flow_double_layers": double_layers,
+            "flow_single_layers": single_layers,
+            "guidance_embed": adm_in_channels is not None,
+            "gguf_core_only": True,
+        }
+
+        return ModelSignature(
+            family=ModelFamily.FLUX,
+            repo_hint="black-forest-labs/FLUX.1-dev",
+            prediction=PredictionKind.FLOW,
+            latent_format=LatentFormat.FLOW16,
+            quantization=QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf"),
+            core=CodexCoreSignature(
+                architecture=CodexCoreArchitecture.FLOW_TRANSFORMER,
+                channels_in=channels_in,
+                channels_out=channels_out,
+                context_dim=context_dim,
+                temporal=False,
+                depth=double_layers + single_layers,
+                key_prefixes=["double_blocks."],
+            ),
+            text_encoders=text_encoders,
+            vae=None,
+            extras=extras,
+        )
+
+
 def _shape_at(bundle: SignalBundle, key: str, dim: int) -> Optional[int]:
     shape = bundle.shape(key)
     if shape and len(shape) > dim:
@@ -123,3 +216,4 @@ def _shape_at(bundle: SignalBundle, key: str, dim: int) -> Optional[int]:
 
 REGISTRY.register(FluxDetector())
 REGISTRY.register(FluxSchnellDetector())
+REGISTRY.register(FluxCoreGGUFDetector())

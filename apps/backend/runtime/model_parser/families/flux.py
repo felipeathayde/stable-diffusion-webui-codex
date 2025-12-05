@@ -4,7 +4,7 @@ from typing import Dict
 
 import torch
 
-from apps.backend.runtime.model_registry.specs import ModelSignature
+from apps.backend.runtime.model_registry.specs import ModelSignature, QuantizationKind
 
 from ..builders import build_estimated_config, register_text_encoder
 from ..converters import convert_clip, convert_t5xxl_encoder
@@ -23,6 +23,25 @@ _FLUX_CORE_PREFIXES = ("transformer.", "model.diffusion_model.")
 
 
 def build_plan(signature: ModelSignature) -> ParserPlanBundle:
+    # GGUF core-only checkpoints: only the rectified-flow backbone lives in the
+    # state_dict (double_blocks.+guidance), while CLIP/T5/VAE come from the
+    # diffusers repo or external paths. For these, keep the plan minimal and
+    # avoid text-encoder/vae validations.
+    if signature.quantization.kind == QuantizationKind.GGUF:
+        plan = ParserPlan(
+            splits=[
+                # Core-only: include all tensors under the single transformer component.
+                SplitSpec(name="transformer", prefixes=("",)),
+            ],
+            converters=(),
+            validations=(
+                ValidationSpec(name="core_presence", function=_validate_transformer_core),
+                ValidationSpec(name="dtype_sanity", function=validate_component_dtypes),
+            ),
+        )
+        return ParserPlanBundle(plan=plan, build_config=lambda ctx: build_estimated_config(ctx, signature))
+
+    # Full Flux checkpoints: expect transformer + VAE + both text encoders.
     plan = ParserPlan(
         splits=[
             SplitSpec(name="transformer", prefixes=_FLUX_CORE_PREFIXES),

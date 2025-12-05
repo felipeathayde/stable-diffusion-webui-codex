@@ -21,6 +21,7 @@ Status: Draft
 
 ## TODO
 - Extend planners to remaining diffusion/video families (e.g., Stable Cascade, Wan camera/HuMo).
+- Add explicit plans for GGUF core-only variants (e.g., Flux transformers without embedded text encoders/VAEs) so loaders can compose them with external components.
 - Provide synthetic/unit test coverage for parser plans.
 
 ## Notes

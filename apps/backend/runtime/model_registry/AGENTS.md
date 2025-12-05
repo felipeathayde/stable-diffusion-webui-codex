@@ -1,7 +1,7 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
 Owner: Backend Maintainers
-Last Review: 2025-11-01
+Last Review: 2025-12-05
 Status: Draft
 
 ## Purpose
@@ -15,5 +15,6 @@ Status: Draft
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).
+- Extend Flux detection to cover additional GGUF layouts when they appear; the current `FluxCoreGGUFDetector` targets core-only Flux transformers (double_blocks.+guidance) with external TEnc/VAE.
 - Expose CLI/inspect tooling for diagnostics.
 - Wire registry outputs into loader/runtime paths and add regression fixtures.

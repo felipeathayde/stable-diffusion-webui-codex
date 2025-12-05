@@ -230,6 +230,24 @@ export const useFluxStore = defineStore('flux', () => {
   }
 
   async function generate(): Promise<void> {
+    // Make sure essentials are loaded before building the payload.
+    if (!models.value.length) await loadModels()
+    if (!samplers.value.length) await loadSamplers()
+    if (!schedulers.value.length) await loadSchedulers()
+
+    if (!selectedSampler.value) {
+      status.value = 'error'
+      running.value = false
+      errorMessage.value = 'Sampler is required.'
+      return
+    }
+    if (!selectedScheduler.value) {
+      status.value = 'error'
+      running.value = false
+      errorMessage.value = 'Scheduler is required.'
+      return
+    }
+
     stopStream()
     status.value = 'running'
     running.value = true
@@ -264,7 +282,7 @@ export const useFluxStore = defineStore('flux', () => {
         batchSize: batchSize.value,
         batchCount: batchCount.value,
         styles: styles.value,
-        device: quicksettings.currentDevice,
+        device: quicksettings.currentDevice || 'cpu',
         smartOffload: quicksettings.smartOffload,
         smartFallback: quicksettings.smartFallback,
         smartCache: quicksettings.smartCache,

@@ -1,21 +1,93 @@
 <template>
   <div class="space-y-4">
     <div class="panel-section">
-      <label class="label-muted">Checkpoints</label>
-      <PathList v-model="paths.checkpoints" />
+      <h3 class="label-muted">SD 1.5</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Checkpoints</label>
+          <PathList v-model="paths.sd15.ckpt" />
+        </div>
+        <div>
+          <label class="label-muted">VAE</label>
+          <PathList v-model="paths.sd15.vae" />
+        </div>
+        <div>
+          <label class="label-muted">LoRA</label>
+          <PathList v-model="paths.sd15.loras" />
+        </div>
+        <div>
+          <label class="label-muted">Text Encoders</label>
+          <PathList v-model="paths.sd15.tenc" />
+        </div>
+      </div>
     </div>
+
     <div class="panel-section">
-      <label class="label-muted">VAE</label>
-      <PathList v-model="paths.vae" />
+      <h3 class="label-muted">SDXL</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Checkpoints</label>
+          <PathList v-model="paths.sdxl.ckpt" />
+        </div>
+        <div>
+          <label class="label-muted">VAE</label>
+          <PathList v-model="paths.sdxl.vae" />
+        </div>
+        <div>
+          <label class="label-muted">LoRA</label>
+          <PathList v-model="paths.sdxl.loras" />
+        </div>
+        <div>
+          <label class="label-muted">Text Encoders</label>
+          <PathList v-model="paths.sdxl.tenc" />
+        </div>
+      </div>
     </div>
+
     <div class="panel-section">
-      <label class="label-muted">LoRA</label>
-      <PathList v-model="paths.lora" />
+      <h3 class="label-muted">Flux</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Checkpoints</label>
+          <PathList v-model="paths.flux.ckpt" />
+        </div>
+        <div>
+          <label class="label-muted">VAE</label>
+          <PathList v-model="paths.flux.vae" />
+        </div>
+        <div>
+          <label class="label-muted">LoRA</label>
+          <PathList v-model="paths.flux.loras" />
+        </div>
+        <div>
+          <label class="label-muted">Text Encoders</label>
+          <PathList v-model="paths.flux.tenc" />
+        </div>
+      </div>
     </div>
+
     <div class="panel-section">
-      <label class="label-muted">Text Encoders</label>
-      <PathList v-model="paths.text_encoders" />
+      <h3 class="label-muted">WAN22</h3>
+      <div class="space-y-2">
+        <div>
+          <label class="label-muted">Checkpoints</label>
+          <PathList v-model="paths.wan22.ckpt" />
+        </div>
+        <div>
+          <label class="label-muted">VAE</label>
+          <PathList v-model="paths.wan22.vae" />
+        </div>
+        <div>
+          <label class="label-muted">LoRA</label>
+          <PathList v-model="paths.wan22.loras" />
+        </div>
+        <div>
+          <label class="label-muted">Text Encoders</label>
+          <PathList v-model="paths.wan22.tenc" />
+        </div>
+      </div>
     </div>
+
     <div class="settings-paths-actions">
       <button class="btn btn-md btn-outline" type="button" @click="reload">Reload</button>
       <button class="btn btn-md btn-primary" type="button" @click="save">Save</button>
@@ -28,28 +100,95 @@ import { onMounted, reactive } from 'vue'
 import { fetchPaths, updatePaths } from '../../api/client'
 import PathList from './widgets/PathList.vue'
 
-type Paths = { checkpoints: string[]; vae: string[]; lora: string[]; text_encoders: string[] }
-const paths = reactive<Paths>({ checkpoints: [], vae: [], lora: [], text_encoders: [] })
+type EngineId = 'sd15' | 'sdxl' | 'flux' | 'wan22'
+type EnginePaths = { ckpt: string[]; vae: string[]; loras: string[]; tenc: string[] }
+type EnginePathsState = Record<EngineId, EnginePaths>
+type RawPaths = Record<string, string[]>
+
+const paths = reactive<EnginePathsState>({
+  sd15: { ckpt: [], vae: [], loras: [], tenc: [] },
+  sdxl: { ckpt: [], vae: [], loras: [], tenc: [] },
+  flux: { ckpt: [], vae: [], loras: [], tenc: [] },
+  wan22: { ckpt: [], vae: [], loras: [], tenc: [] },
+})
+
+const rawPaths = reactive<RawPaths>({})
+
+function getList(raw: RawPaths, key: string): string[] {
+  const value = raw[key]
+  return Array.isArray(value) ? [...value] : []
+}
 
 async function reload(): Promise<void> {
   try {
     const res = await fetchPaths()
-    const p = (res.paths || {}) as Partial<Paths>
-    paths.checkpoints = [...(p.checkpoints || [])]
-    paths.vae = [...(p.vae || [])]
-    paths.lora = [...(p.lora || [])]
-    paths.text_encoders = [...(p.text_encoders || [])]
-  } catch {}
+    const loaded = (res.paths || {}) as RawPaths
+
+    // Reset rawPaths and repopulate.
+    for (const key of Object.keys(rawPaths)) {
+      delete rawPaths[key]
+    }
+    for (const [key, value] of Object.entries(loaded)) {
+      rawPaths[key] = Array.isArray(value) ? [...value] : []
+    }
+
+    paths.sd15.ckpt = getList(loaded, 'sd15_ckpt')
+    paths.sd15.vae = getList(loaded, 'sd15_vae')
+    paths.sd15.loras = getList(loaded, 'sd15_loras')
+    paths.sd15.tenc = getList(loaded, 'sd15_tenc')
+
+    paths.sdxl.ckpt = getList(loaded, 'sdxl_ckpt')
+    paths.sdxl.vae = getList(loaded, 'sdxl_vae')
+    paths.sdxl.loras = getList(loaded, 'sdxl_loras')
+    paths.sdxl.tenc = getList(loaded, 'sdxl_tenc')
+
+    paths.flux.ckpt = getList(loaded, 'flux_ckpt')
+    paths.flux.vae = getList(loaded, 'flux_vae')
+    paths.flux.loras = getList(loaded, 'flux_loras')
+    paths.flux.tenc = getList(loaded, 'flux_tenc')
+
+    paths.wan22.ckpt = getList(loaded, 'wan22_ckpt')
+    paths.wan22.vae = getList(loaded, 'wan22_vae')
+    paths.wan22.loras = getList(loaded, 'wan22_loras')
+    paths.wan22.tenc = getList(loaded, 'wan22_tenc')
+  } catch {
+    // Keep existing state on failure; errors are surfaced elsewhere.
+  }
 }
 
 async function save(): Promise<void> {
-  await updatePaths({
-    checkpoints: paths.checkpoints,
-    vae: paths.vae,
-    lora: paths.lora,
-    text_encoders: paths.text_encoders,
-  })
+  const next: RawPaths = {}
+
+  // Preserve non-aggregated keys not managed explicitly here.
+  for (const [key, value] of Object.entries(rawPaths)) {
+    if (key === 'checkpoints' || key === 'vae' || key === 'lora' || key === 'text_encoders') continue
+    next[key] = Array.isArray(value) ? [...value] : []
+  }
+
+  next.sd15_ckpt = [...paths.sd15.ckpt]
+  next.sd15_vae = [...paths.sd15.vae]
+  next.sd15_loras = [...paths.sd15.loras]
+  next.sd15_tenc = [...paths.sd15.tenc]
+
+  next.sdxl_ckpt = [...paths.sdxl.ckpt]
+  next.sdxl_vae = [...paths.sdxl.vae]
+  next.sdxl_loras = [...paths.sdxl.loras]
+  next.sdxl_tenc = [...paths.sdxl.tenc]
+
+  next.flux_ckpt = [...paths.flux.ckpt]
+  next.flux_vae = [...paths.flux.vae]
+  next.flux_loras = [...paths.flux.loras]
+  next.flux_tenc = [...paths.flux.tenc]
+
+  next.wan22_ckpt = [...paths.wan22.ckpt]
+  next.wan22_vae = [...paths.wan22.vae]
+  next.wan22_loras = [...paths.wan22.loras]
+  next.wan22_tenc = [...paths.wan22.tenc]
+
+  await updatePaths(next)
 }
 
-onMounted(() => { void reload() })
+onMounted(() => {
+  void reload()
+})
 </script>

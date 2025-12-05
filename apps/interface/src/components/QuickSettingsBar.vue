@@ -306,16 +306,31 @@ async function onWanVaeChange(value: string): Promise<void> {
   await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
 }
 
+function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux' | 'wan'): 'sd15' | 'sdxl' | 'flux' | 'wan22' {
+  if (fam === 'wan') return 'wan22'
+  return fam
+}
+
 async function onAddCheckpointPath(): Promise<void> {
   try {
     const res = await fetchPaths()
-    const current = (res.paths?.checkpoints || []) as string[]
+    const raw = (res.paths || {}) as Record<string, string[]>
+    const fam = activeFamily.value
+    const prefix = enginePrefixForFamily(fam)
+    const key = `${prefix}_ckpt`
+    const current = (raw[key] || []) as string[]
     const next = window.prompt('Add checkpoint directory (server path)', '')
     if (!next) return
     const trimmed = next.trim()
     if (!trimmed) return
     const paths = dedupePaths([...current, trimmed])
-    await updatePaths({ ...res.paths, checkpoints: paths })
+    const payload: Record<string, string[]> = {}
+    for (const [k, v] of Object.entries(raw)) {
+      if (k === 'checkpoints' || k === 'vae' || k === 'lora' || k === 'text_encoders') continue
+      payload[k] = Array.isArray(v) ? [...v] : []
+    }
+    payload[key] = paths
+    await updatePaths(payload)
   } catch (e) {
     console.error('[quicksettings] failed to add checkpoint path', e)
   }
@@ -324,13 +339,23 @@ async function onAddCheckpointPath(): Promise<void> {
 async function onAddVaePath(): Promise<void> {
   try {
     const res = await fetchPaths()
-    const current = (res.paths?.vae || []) as string[]
+    const raw = (res.paths || {}) as Record<string, string[]>
+    const fam = activeFamily.value
+    const prefix = enginePrefixForFamily(fam)
+    const key = `${prefix}_vae`
+    const current = (raw[key] || []) as string[]
     const next = window.prompt('Add VAE directory (server path)', '')
     if (!next) return
     const trimmed = next.trim()
     if (!trimmed) return
     const paths = dedupePaths([...current, trimmed])
-    await updatePaths({ ...res.paths, vae: paths })
+    const payload: Record<string, string[]> = {}
+    for (const [k, v] of Object.entries(raw)) {
+      if (k === 'checkpoints' || k === 'vae' || k === 'lora' || k === 'text_encoders') continue
+      payload[k] = Array.isArray(v) ? [...v] : []
+    }
+    payload[key] = paths
+    await updatePaths(payload)
   } catch (e) {
     console.error('[quicksettings] failed to add VAE path', e)
   }

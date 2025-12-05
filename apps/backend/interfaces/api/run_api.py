@@ -1013,12 +1013,12 @@ def build_app() -> FastAPI:
 
     @app.get('/api/models/inventory')
     def list_models_inventory(refresh: bool = Query(False, description="If true, re-scan the models/ and huggingface/ folders.")) -> Dict[str, Any]:
-        """Inventory of model-related assets discovered at startup (strict dirs).
+        """Inventory of model-related assets discovered at startup.
 
         - vaes: files under /models/VAE
-        - text_encoders: files under /models/text-encoder
+        - text_encoders: files under /models/text-encoder plus per-engine roots from apps/paths.json (sd15_tenc, sdxl_tenc, flux_tenc, wan22_tenc)
         - loras: files under /models/Lora
-        - wan22.gguf: files under /models/wan22
+        - wan22.gguf: files under /models/wan22 (or explicit roots from apps/paths.json/wan22_ckpt)
         - metadata: org/repo roots under backend/huggingface
         """
         from apps.backend.inventory import cache as _inv_cache
@@ -1184,66 +1184,102 @@ def build_app() -> FastAPI:
     # Simple paths config for frontend-managed search locations
     @app.get('/api/paths')
     def get_paths() -> Dict[str, Any]:
-        """Expose an aggregated view of paths.json for the UI.
+        """Expose paths.json for the UI.
 
         Returned structure (for Settings → Paths):
-        { "paths": { "checkpoints": [...], "vae": [...], "lora": [...], "text_encoders": [...] } }
+        {
+          "paths": {
+            "sd15_ckpt": [...], "sd15_vae": [...], "sd15_loras": [...], "sd15_tenc": [...],
+            "sdxl_ckpt": [...], "sdxl_vae": [...], "sdxl_loras": [...], "sdxl_tenc": [...],
+            "flux_ckpt": [...], "flux_vae": [...], "flux_loras": [...], "flux_tenc": [...],
+            "wan22_ckpt": [...], "wan22_vae": [...], "wan22_loras": [...], "wan22_tenc": [...],
+            ...
+          }
+        }
 
-        Internally, paths.json is keyed per-engine (sd15_*, sdxl_*, flux_*, wan22_*).
+        For backward compatibility, aggregated buckets (`checkpoints`, `vae`, `lora`, `text_encoders`)
+        are also exposed, derived from the engine-specific keys.
         """
         cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
         raw = _load_json(cfg_path) or {}
-        # Aggregate per-engine keys into generic buckets for the UI.
+        if not isinstance(raw, dict):
+            raw = {}
+
         def _list(key: str) -> list[str]:
             v = raw.get(key) or []
             return v if isinstance(v, list) else []
 
-        paths = {
-            "checkpoints": _list("sd15_ckpt") + _list("sdxl_ckpt") + _list("flux_ckpt") + _list("wan22_ckpt"),
-            "vae": _list("sd15_vae") + _list("sdxl_vae") + _list("flux_vae") + _list("wan22_vae"),
-            "lora": _list("sd15_loras") + _list("sdxl_loras") + _list("flux_loras") + _list("wan22_loras"),
-            "text_encoders": _list("sd15_tenc") + _list("sdxl_tenc") + _list("flux_tenc") + _list("wan22_tenc"),
-        }
+        # Start from the engine-specific mapping and then add aggregated helpers.
+        paths: Dict[str, list[str]] = {}
+        for key, value in raw.items():
+            if isinstance(value, list):
+                # Coerce to list[str]
+                paths[key] = [str(item) for item in value if isinstance(item, str)]
+
+        paths["checkpoints"] = _list("sd15_ckpt") + _list("sdxl_ckpt") + _list("flux_ckpt") + _list("wan22_ckpt")
+        paths["vae"] = _list("sd15_vae") + _list("sdxl_vae") + _list("flux_vae") + _list("wan22_vae")
+        paths["lora"] = _list("sd15_loras") + _list("sdxl_loras") + _list("flux_loras") + _list("wan22_loras")
+        paths["text_encoders"] = _list("sd15_tenc") + _list("sdxl_tenc") + _list("flux_tenc") + _list("wan22_tenc")
+
         return {"paths": paths}
 
     @app.post('/api/paths')
     def set_paths(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """Update per-engine paths from aggregated UI buckets.
+        """Update paths.json from UI-managed buckets or engine-specific keys.
 
-        Payload: { paths: { checkpoints: [...], vae: [...], lora: [...], text_encoders: [...] } }
-        All buckets are applied to every engine family for now.
+        Payload: { paths: { ... } }
+        - Aggregated keys (`checkpoints`, `vae`, `lora`, `text_encoders`) are mapped to per-engine keys.
+        - Engine-specific keys (e.g., `sd15_ckpt`, `sdxl_vae`) are applied directly.
+        - Unknown keys are preserved from the existing file unless explicitly overwritten.
         """
         if not isinstance(payload, dict) or 'paths' not in payload or not isinstance(payload['paths'], dict):
             raise HTTPException(status_code=400, detail='payload must be {"paths": {...}}')
+
         cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
         current = _load_json(cfg_path) or {}
-        p = payload["paths"] or {}
-        checkpoints = list(p.get("checkpoints") or [])
-        vae = list(p.get("vae") or [])
-        lora = list(p.get("lora") or [])
-        text_encoders = list(p.get("text_encoders") or [])
-        # Start from existing config and overwrite known keys.
+        if not isinstance(current, dict):
+            current = {}
+
+        incoming = payload["paths"] or {}
         new_paths: Dict[str, Any] = dict(current)
-        # Checkpoints
-        new_paths["sd15_ckpt"] = checkpoints
-        new_paths["sdxl_ckpt"] = checkpoints
-        new_paths["flux_ckpt"] = checkpoints
-        new_paths["wan22_ckpt"] = checkpoints
-        # VAE
-        new_paths["sd15_vae"] = vae
-        new_paths["sdxl_vae"] = vae
-        new_paths["flux_vae"] = vae
-        new_paths["wan22_vae"] = vae
-        # LoRA
-        new_paths["sd15_loras"] = lora
-        new_paths["sdxl_loras"] = lora
-        new_paths["flux_loras"] = lora
-        new_paths["wan22_loras"] = lora
-        # Text encoders
-        new_paths["sd15_tenc"] = text_encoders
-        new_paths["sdxl_tenc"] = text_encoders
-        new_paths["flux_tenc"] = text_encoders
-        new_paths["wan22_tenc"] = text_encoders
+
+        # 1) Apply aggregated buckets when present (legacy behaviour).
+        checkpoints = list(incoming.get("checkpoints") or [])
+        vae = list(incoming.get("vae") or [])
+        lora = list(incoming.get("lora") or [])
+        text_encoders = list(incoming.get("text_encoders") or [])
+
+        if checkpoints or vae or lora or text_encoders:
+            new_paths["sd15_ckpt"] = checkpoints
+            new_paths["sdxl_ckpt"] = checkpoints
+            new_paths["flux_ckpt"] = checkpoints
+            new_paths["wan22_ckpt"] = checkpoints
+
+            new_paths["sd15_vae"] = vae
+            new_paths["sdxl_vae"] = vae
+            new_paths["flux_vae"] = vae
+            new_paths["wan22_vae"] = vae
+
+            new_paths["sd15_loras"] = lora
+            new_paths["sdxl_loras"] = lora
+            new_paths["flux_loras"] = lora
+            new_paths["wan22_loras"] = lora
+
+            new_paths["sd15_tenc"] = text_encoders
+            new_paths["sdxl_tenc"] = text_encoders
+            new_paths["flux_tenc"] = text_encoders
+            new_paths["wan22_tenc"] = text_encoders
+
+        # 2) Apply engine-specific keys (and any additional explicit keys) directly.
+        for key, value in incoming.items():
+            if key in {"checkpoints", "vae", "lora", "text_encoders"}:
+                # Aggregated buckets are handled above and not stored verbatim in paths.json.
+                continue
+            if value is None:
+                new_paths[key] = []
+            elif isinstance(value, list):
+                new_paths[key] = [str(item) for item in value if isinstance(item, str)]
+
         _save_json(cfg_path, new_paths)
         return {"ok": True}
 

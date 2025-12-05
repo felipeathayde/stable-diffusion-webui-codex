@@ -60,11 +60,37 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
 
     # Exact subfolder policy (no guessing) for legacy locations:
     vae_dir = os.path.join(mr, "VAE")
-    te_dir = os.path.join(mr, "text-encoder")
     lora_dir = os.path.join(mr, "Lora")
 
     vaes = _list_files(vae_dir, (".safetensors", ".bin", ".pt"))
-    text_encoders = _list_files(te_dir, (".safetensors", ".bin", ".pt"))
+
+    # Text encoders: strict models/text-encoder plus per-engine roots from apps/paths.json.
+    text_encoders: List[Dict[str, str]] = []
+    te_exts = (".safetensors", ".bin", ".pt")
+    seen_te_paths: set[str] = set()
+
+    def _append_text_encoders(root: str) -> None:
+        nonlocal text_encoders, seen_te_paths
+        for item in _list_files(root, te_exts):
+            path = item.get("path")
+            if not path or path in seen_te_paths:
+                continue
+            seen_te_paths.add(path)
+            text_encoders.append(item)
+
+    # Legacy root
+    te_dir = os.path.join(mr, "text-encoder")
+    _append_text_encoders(te_dir)
+
+    # Engine-specific roots from apps/paths.json (sd15_tenc, sdxl_tenc, flux_tenc, wan22_tenc)
+    try:
+        for key in ("sd15_tenc", "sdxl_tenc", "flux_tenc", "wan22_tenc"):
+            for root in get_paths_for(key):
+                if os.path.isdir(root):
+                    _append_text_encoders(root)
+    except Exception:
+        # Do not break inventory on misconfigured paths.json; legacy roots still apply.
+        pass
     loras = _list_files(lora_dir, (".safetensors", ".bin", ".pt", ".ckpt"))
 
     # WAN22 GGUF with stage detection (high/low/unknown).

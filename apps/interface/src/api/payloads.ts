@@ -63,6 +63,13 @@ export const Txt2ImgRequestSchema = z
       .object({
         highres: HighresOptionsSchema.optional(),
         refiner: RefinerOptionsSchema.optional(),
+        text_encoder_override: z
+          .object({
+            family: z.string().min(1),
+            label: z.string().min(1),
+            components: z.array(z.string().min(1)).optional(),
+          })
+          .optional(),
       })
       .optional(),
   })
@@ -116,6 +123,11 @@ export interface Txt2ImgFormState {
   model?: string
   highres?: HighresFormState
   refiner?: RefinerFormState
+  textEncoderOverride?: {
+    family: string
+    label: string
+    components?: string[]
+  }
 }
 
 function normalizeDevice(device: string): Txt2ImgRequest['codex_device'] {
@@ -193,6 +205,15 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
       seed: state.refiner.seed,
       model: state.refiner.model,
       vae: state.refiner.vae,
+    }
+  }
+  if (state.textEncoderOverride && state.textEncoderOverride.family && state.textEncoderOverride.label) {
+    extras.text_encoder_override = {
+      family: state.textEncoderOverride.family,
+      label: state.textEncoderOverride.label,
+      components: state.textEncoderOverride.components && state.textEncoderOverride.components.length > 0
+        ? state.textEncoderOverride.components
+        : undefined,
     }
   }
   if (Object.keys(extras).length > 0) {

@@ -10,8 +10,7 @@
           </div>
         </div>
         <div class="panel-body panel-body-scroll">
-          <PromptInput v-model="store.prompt" placeholder="Describe what you want to see..." />
-          <PromptInput v-model="store.negativePrompt" placeholder="Negative prompt" negative />
+          <PromptFields v-model:prompt="store.prompt" v-model:negative="store.negativePrompt" />
           <ParameterSection title="Generation Parameters">
             <div class="param-grid">
               <NumberInput v-model="store.steps" label="Steps" min="1" max="60" />
@@ -106,9 +105,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import CheckpointModal from '../components/CheckpointModal.vue'
-import TextualInversionModal from '../components/TextualInversionModal.vue'
-import PromptInput from '../components/prompt/PromptInput.vue'
+import CheckpointModal from '../components/modals/CheckpointModal.vue'
+import TextualInversionModal from '../components/modals/TextualInversionModal.vue'
+import PromptFields from '../components/prompt/PromptFields.vue'
 import ParameterSection from '../components/ParameterSection.vue'
 import NumberInput from '../components/NumberInput.vue'
 import SeedInput from '../components/SeedInput.vue'
@@ -181,4 +180,3 @@ function onStyleSaved(): void {
   // reactive; no-op hook for now
 }
 </script>
-

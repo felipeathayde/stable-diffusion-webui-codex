@@ -33,22 +33,24 @@
   </div>
 
   <!-- Zoom overlay -->
-  <div v-if="zoomedImage" class="modal-backdrop image-zoom-backdrop" @click.self="closeZoom">
-    <div class="modal-panel image-zoom-panel">
-      <div class="modal-header">
-        <span>Image preview</span>
-        <div class="image-zoom-controls">
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomOut">-</button>
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="setZoom(1)">1:1</button>
-          <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomIn">+</button>
-          <button class="btn btn-sm btn-secondary" type="button" @click.stop="closeZoom">Close</button>
-        </div>
+  <div v-if="zoomedImage" class="image-zoom-overlay" @click.self="closeZoom">
+    <div class="image-zoom-main">
+      <img
+        :src="imageUrl(zoomedImage)"
+        :alt="'Zoomed result'"
+        :style="zoomStyle"
+        @mousedown.prevent="onPanStart"
+      />
+    </div>
+    <div class="image-zoom-toolbar">
+      <div class="toolbar-group">
+        <button class="btn btn-sm btn-outline" type="button" @click.stop="resetView">Fit</button>
+        <button class="btn btn-sm btn-outline" type="button" @click.stop="setZoom(1)">1:1</button>
+        <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomIn">+</button>
+        <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomOut">-</button>
+        <button class="btn btn-sm btn-secondary" type="button" @click.stop="closeZoom">Close</button>
       </div>
-      <div class="modal-body image-zoom-body">
-        <div class="image-zoom-canvas">
-          <img :src="imageUrl(zoomedImage)" :alt="'Zoomed result'" :style="zoomStyle" />
-        </div>
-      </div>
+      <span class="caption">Drag to pan</span>
     </div>
   </div>
 </template>
@@ -69,6 +71,9 @@ const props = defineProps<{
 
 const zoomedImage = ref<GeneratedImage | null>(null)
 const zoom = ref(1)
+const offsetX = ref(0)
+const offsetY = ref(0)
+let panState: { startX: number; startY: number; originX: number; originY: number } | null = null
 
 function imageUrl(img: GeneratedImage): string {
   return `data:image/${img.format};base64,${img.data}`
@@ -82,10 +87,15 @@ function frameUrl(frame: unknown): string {
 function openZoom(img: GeneratedImage): void {
   zoomedImage.value = img
   zoom.value = 1
+  offsetX.value = 0
+  offsetY.value = 0
 }
 
 function closeZoom(): void {
   zoomedImage.value = null
+  panState = null
+  window.removeEventListener('mousemove', onPanMove)
+  window.removeEventListener('mouseup', onPanEnd)
 }
 
 function zoomIn(): void {
@@ -101,8 +111,39 @@ function setZoom(value: number): void {
 }
 
 const zoomStyle = computed(() => ({
-  transform: `scale(${zoom.value})`,
+  transform: `translate(${offsetX.value}px, ${offsetY.value}px) scale(${zoom.value})`,
 }))
+
+function resetView(): void {
+  zoom.value = 1
+  offsetX.value = 0
+  offsetY.value = 0
+}
+
+function onPanStart(event: MouseEvent): void {
+  panState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: offsetX.value,
+    originY: offsetY.value,
+  }
+  window.addEventListener('mousemove', onPanMove)
+  window.addEventListener('mouseup', onPanEnd)
+}
+
+function onPanMove(event: MouseEvent): void {
+  if (!panState) return
+  const dx = event.clientX - panState.startX
+  const dy = event.clientY - panState.startY
+  offsetX.value = panState.originX + dx
+  offsetY.value = panState.originY + dy
+}
+
+function onPanEnd(): void {
+  panState = null
+  window.removeEventListener('mousemove', onPanMove)
+  window.removeEventListener('mouseup', onPanEnd)
+}
 </script>
 
 <!-- styles moved to styles/components/result-viewer.css -->

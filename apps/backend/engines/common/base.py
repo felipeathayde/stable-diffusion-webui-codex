@@ -11,7 +11,12 @@ import torch
 
 from apps.backend.core.engine_interface import BaseInferenceEngine
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
-from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
+from apps.backend.runtime.model_registry.specs import ModelFamily
+from apps.backend.runtime.models.loader import (
+    DiffusionModelBundle,
+    TextEncoderOverrideConfig,
+    resolve_diffusion_bundle,
+)
 from apps.backend.runtime.utils import get_state_dict_after_quant
 from apps.backend.runtime.utils import load_torch_file
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
@@ -217,9 +222,35 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     # ------------------------------------------------------------------ Lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         raw_options: dict[str, Any] = dict(options)
+        te_override_raw = raw_options.pop("text_encoder_override", None)
         bundle_obj = raw_options.pop("_bundle", None)
+        te_override_cfg: TextEncoderOverrideConfig | None = None
+        if te_override_raw is not None:
+            if not isinstance(te_override_raw, dict):
+                raise TypeError("text_encoder_override must be a mapping when provided.")
+            family_raw = str(te_override_raw.get("family") or "").strip()
+            label_raw = str(te_override_raw.get("label") or "").strip()
+            if not family_raw or not label_raw:
+                raise RuntimeError("text_encoder_override requires non-empty 'family' and 'label' fields.")
+            try:
+                family = ModelFamily(family_raw)
+            except ValueError as exc:
+                raise RuntimeError(f"Unsupported text encoder override family='{family_raw}'") from exc
+            components_val = te_override_raw.get("components")
+            components: tuple[str, ...] | None
+            if components_val is None:
+                components = None
+            elif isinstance(components_val, (list, tuple)):
+                components = tuple(str(c).strip() for c in components_val if str(c).strip())
+            else:
+                raise RuntimeError("text_encoder_override.components must be an array of strings when provided.")
+            te_override_cfg = TextEncoderOverrideConfig(
+                family=family,
+                root_label=label_raw,
+                components=components,
+            )
         if bundle_obj is None:
-            bundle = resolve_diffusion_bundle(model_ref)
+            bundle = resolve_diffusion_bundle(model_ref, text_encoder_override=te_override_cfg)
         elif isinstance(bundle_obj, DiffusionModelBundle):
             bundle = bundle_obj
         else:

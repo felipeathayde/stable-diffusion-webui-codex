@@ -1,8 +1,8 @@
 # apps/backend/interfaces Overview
 <!-- tags: backend, api, validation -->
-Date: 2025-10-28
+Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2025-12-03
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: Active
 - 2025-12-03: `/api/txt2img` extras now accept `highres.refiner` (enable/steps/cfg/seed/model/vae) alongside the global `extras.refiner`, raising HTTP 400 on malformed nested refiner configs.
 - 2025-12-03: `/api/tasks/{task_id}/cancel` allows best-effort cancellation (immediate vs after_current flag); workers abort event streaming with `error: cancelled` when `mode=immediate`.
 - 2025-12-03: `/api/options` now accepts `codex_{core,te,vae}_{device,dtype}` to set per-role backend/dtype via memory manager; device choices auto/cuda/cpu/mps/xpu/directml, dtype auto/fp16/bf16/fp32.
+- 2025-12-05: `/api/txt2img` extras agora aceitam um objeto opcional `text_encoder_override` (family + label + components[]) validado como JSON; quando presente, o worker de txt2img o encaminha como `engine_options.text_encoder_override` para o orchestrator/engines, que por sua vez repassam o override ao `runtime.models.loader`.

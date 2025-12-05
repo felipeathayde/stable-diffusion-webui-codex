@@ -1510,7 +1510,7 @@ def build_app() -> FastAPI:
         "model",
         "sd_model_checkpoint",
     }
-    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta", "refiner"}
+    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta", "refiner", "text_encoder_override"}
     _TXT2IMG_HIGHRES_KEYS = {
         "enable",
         "denoise",
@@ -1691,6 +1691,46 @@ def build_app() -> FastAPI:
                     ref_cfg['vae'] = str(refiner['vae'])
                 extras['refiner'] = ref_cfg
 
+        # Text encoder override (family + label [+ optional components])
+        te_override = raw.get('text_encoder_override')
+        if te_override is not None:
+            if not isinstance(te_override, dict):
+                raise HTTPException(status_code=400, detail="'extras.text_encoder_override' must be an object")
+            _reject_unknown_keys(te_override, {"family", "label", "components"}, "extras.text_encoder_override")
+            family_raw = te_override.get("family")
+            label_raw = te_override.get("label")
+            if not isinstance(family_raw, str) or not family_raw.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="'extras.text_encoder_override.family' must be a non-empty string",
+                )
+            if not isinstance(label_raw, str) or not label_raw.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="'extras.text_encoder_override.label' must be a non-empty string",
+                )
+            family = family_raw.strip()
+            label = label_raw.strip()
+            # Cheap sanity: labels from /api/text-encoders use the pattern '<family>/<abs_path>'.
+            if "/" in label and not label.startswith(f"{family}/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="extras.text_encoder_override.label must start with '<family>/'",
+                )
+            components_val = te_override.get("components")
+            components: list[str] | None = None
+            if components_val is not None:
+                if not isinstance(components_val, list) or any(not isinstance(c, str) for c in components_val):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'extras.text_encoder_override.components' must be an array of strings",
+                    )
+                components = [c.strip() for c in components_val if isinstance(c, str) and c.strip()]
+            te_cfg: Dict[str, Any] = {"family": family, "label": label}
+            if components:
+                te_cfg["components"] = components
+            extras["text_encoder_override"] = te_cfg
+
         return extras, highres_cfg
 
 
@@ -1851,8 +1891,22 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
+                engine_options: Dict[str, object] = {}
+                try:
+                    extras = getattr(req, "extras", {}) or {}
+                    te_override = extras.get("text_encoder_override")
+                    if isinstance(te_override, dict):
+                        engine_options["text_encoder_override"] = dict(te_override)
+                except Exception:
+                    engine_options = {}
                 with tasks_lock:
-                    for ev in _ORCH.run(TaskType.TXT2IMG, engine_key, req, model_ref=model_ref):
+                    for ev in _ORCH.run(
+                        TaskType.TXT2IMG,
+                        engine_key,
+                        req,
+                        model_ref=model_ref,
+                        engine_options=engine_options,
+                    ):
                         if entry.cancel_requested and entry.cancel_mode == "immediate":
                             entry.error = "cancelled"
                             push({"type": "error", "message": "cancelled"})

@@ -2,7 +2,7 @@
 <!-- tags: frontend, styles, tailwind -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-03
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -12,3 +12,4 @@ Status: Active
 - Follow the semantic class naming guidance in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Add new files per component/view rather than embedding large rule sets in shared sheets.
 - 2025-12-03: Refiner styling gains an embedded/dense variant for the hires nested card; Highres card styles include a nested refiner section separator.
+- 2025-12-05: Imagens da grid de resultados (`.results-grid img`) agora respeitam `max-height: 80dvh` para evitar cortes visuais no painel de Results, mantendo o zoom detalhado no overlay full-screen do `ResultViewer`.

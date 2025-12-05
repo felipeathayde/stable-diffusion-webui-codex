@@ -18,7 +18,7 @@
   .results-grid { display: grid; gap: var(--space-sm); grid-template-columns: repeat(auto-fit, minmax(11.25rem, 1fr)); }
   .results-grid img {
     width: 100%;
-    max-height: 100dvh;
+    max-height: 80dvh;
     height: auto;
     object-fit: contain;
     border-radius: 0.75rem;

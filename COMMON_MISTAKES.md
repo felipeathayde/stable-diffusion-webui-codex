@@ -258,6 +258,9 @@ PY`
 **Wrong command:** `sed -n '1,260p' apps/interface/src/stores/txt2vid.ts`
 **Cause + fix:** The video store lives at `apps/interface/src/stores/video.ts`; there is no `txt2vid.ts` file. Use the existing consolidated video store path instead of guessing a legacy filename.
 **Correct command:** `sed -n '1,260p' apps/interface/src/stores/video.ts`
+**Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Cause + fix:** The generic `find | git add` sweep attempted to stage `__pycache__` files created by `py_compile`, which are ignored by the repo and cause `git add` to error out. Prefer staging only the tracked files you actually changed or extend the `find` filter to skip ignored directories like `__pycache__`.
+**Correct command:** `git add .sangoi/CHANGELOG.md .sangoi/handoffs/HANDOFF_2025-12-05-flux-view-and-callgraph.md .sangoi/handoffs/HANDOFF_LOG.md .sangoi/task-logs/2025-12-05-flux-view-and-callgraph.md apps/backend/runtime/model_parser/AGENTS.md apps/backend/runtime/model_parser/families/flux.py apps/backend/runtime/models/AGENTS.md apps/backend/runtime/models/loader.py apps/interface/src/stores/AGENTS.md apps/interface/src/stores/flux.ts`
 **Wrong command:** `~/.venv/bin/python - <<'PY'
 from apps.backend.runtime.utils import FilterPrefixView
 from collections import OrderedDict

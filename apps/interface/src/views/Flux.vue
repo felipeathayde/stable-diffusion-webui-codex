@@ -126,8 +126,8 @@
             </div>
           </div>
         </div>
-        <div class="panel-body">
-          <ResultViewer mode="image" :images="store.gallery" :width="store.width" :height="store.height" emptyText="No images yet. Generate to see results here." :style="previewStyle">
+        <div class="panel-body" :style="previewStyle">
+          <ResultViewer mode="image" :images="store.gallery" :width="store.width" :height="store.height" emptyText="No images yet. Generate to see results here.">
             <template #image-actions="{ image, index }">
               <button class="gallery-action" type="button" @click="sendToImg2Img(image)" title="Send to Img2Img">Send to Img2Img</button>
               <button class="gallery-action" type="button" @click="sendToInpaint(image)" title="Send to Inpaint">Send to Inpaint</button>

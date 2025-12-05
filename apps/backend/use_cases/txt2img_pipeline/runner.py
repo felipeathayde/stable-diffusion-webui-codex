@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, replace
+import time
 from typing import Sequence
 
 import numpy as np
@@ -286,7 +287,11 @@ class Txt2ImgPipelineRunner:
                 "StableDiffusionXL exige CUDA ativo (torch.cuda.is_available() retornou False). "
                 "Instale os drivers/CUDA corretos ou execute o modo somente CPU conscientemente."
             )
-
+        t_start = time.perf_counter()
+        t_prepare_end: float | None = None
+        t_base_end: float | None = None
+        t_hires_end: float | None = None
+        t_refiner_end: float | None = None
         model_device, model_dtype = self._sd_model_device_info(processing)
         if model_device is not None:
             self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
@@ -306,14 +311,37 @@ class Txt2ImgPipelineRunner:
             prompts,
         )
         base_result = self._execute_base_sampling(processing, state)
+        t_prepare_end = time.perf_counter()
 
         final_samples = base_result.samples
+        t_base_end = time.perf_counter()
 
         if state.hires_plan is not None:
             self._reload_for_hires(processing, state)
             final_samples = self._run_hires_pass(processing, state, base_result)
+            t_hires_end = time.perf_counter()
+        else:
+            t_hires_end = t_base_end
 
         final_samples = self._maybe_run_refiner_pass(processing, state, final_samples)
+        t_refiner_end = time.perf_counter()
+
+        try:
+            timings: dict[str, float] = {}
+            if t_prepare_end is not None:
+                timings["prepare_ms"] = (t_prepare_end - t_start) * 1000.0
+            if t_base_end is not None and t_prepare_end is not None:
+                timings["base_sampling_ms"] = (t_base_end - t_prepare_end) * 1000.0
+            if state.hires_plan is not None and t_hires_end is not None and t_base_end is not None:
+                timings["hires_ms"] = (t_hires_end - t_base_end) * 1000.0
+            if t_refiner_end is not None and t_hires_end is not None:
+                timings["refiner_ms"] = max(0.0, (t_refiner_end - t_hires_end) * 1000.0)
+            timings["total_pipeline_ms"] = max(0.0, (t_refiner_end or time.perf_counter()) - t_start) * 1000.0
+            processing.update_extra_param("Timings (ms)", timings)
+        except Exception:
+            # Timings must never break generation; swallow errors defensively.
+            pass
+
         return final_samples
 
     # ------------------------------------------------------------------ stages

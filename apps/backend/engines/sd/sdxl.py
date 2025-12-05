@@ -302,10 +302,12 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         # Run pipeline on a worker thread while streaming progress from backend_state
         result: dict[str, Any] = {"latents": None, "error": None}
+        sampling_times: dict[str, float | None] = {"start": None, "end": None}
         done = threading.Event()
 
         def _worker() -> None:
             try:
+                sampling_times["start"] = time.perf_counter()
                 result["latents"] = _generate_txt2img(
                     processing=proc,
                     conditioning=cond,
@@ -318,6 +320,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             except Exception as _exc:  # noqa: BLE001
                 result["error"] = _exc
             finally:
+                sampling_times["end"] = time.perf_counter()
                 done.set()
 
         threading.Thread(target=_worker, name="sdxl-txt2img-worker", daemon=True).start()
@@ -348,8 +351,10 @@ class StableDiffusionXL(CodexDiffusionEngine):
             )
 
         # Decode to RGB and package result
+        decode_start = time.perf_counter()
         decoded = decode_latent_batch(self, latents)
         images = latents_to_pil(decoded)
+        decode_end = time.perf_counter()
         # Surface prompt/seed metadata so the frontend can show the real
         # generation inputs instead of guessing from request/store state.
         try:
@@ -418,6 +423,15 @@ class StableDiffusionXL(CodexDiffusionEngine):
             }
         if extra_params:
             info["extra"] = extra_params
+        timings: dict[str, float] = {}
+        try:
+            if sampling_times["start"] is not None and sampling_times["end"] is not None:
+                timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
+            timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
+            info["timings_ms"] = timings
+        except Exception:
+            # Timing metadata must never break result emission.
+            pass
         yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
 
     def _prepare_prompt_wrappers(

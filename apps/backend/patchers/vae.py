@@ -358,6 +358,8 @@ class VAE:
                     except TypeError:
                         encoded_raw = base.encode(pixels_in)
 
+                if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
+                    encoded_raw = encoded_raw[0]
                 encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
 
             return encoded
@@ -488,6 +490,8 @@ class VAE:
                         except TypeError:
                             encoded_raw = base.encode(pixels_in)
 
+                    if isinstance(encoded_raw, (tuple, list)) and encoded_raw:
+                        encoded_raw = encoded_raw[0]
                     encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
                     samples[x:x + batch_number] = encoded
             except memory_management.OOM_EXCEPTION:

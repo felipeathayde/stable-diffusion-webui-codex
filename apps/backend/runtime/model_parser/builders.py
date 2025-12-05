@@ -94,6 +94,16 @@ _CORE_CONFIG_PRESETS: Dict[ModelFamily, Dict[str, object]] = {
     },
 }
 
+# Default diffusers repositories per family when the signature does not carry an
+# explicit repo_hint. This keeps detectors focused on state-dict structure and
+# lets configuration of base repos live in one place.
+_FALLBACK_REPOS: Dict[ModelFamily, str] = {
+    # Flux core-only GGUF checkpoints need a canonical diffusers repo to source
+    # VAE and text encoders. Default to the public dev repo; operators can
+    # override via repo_override or future configuration plumbing.
+    ModelFamily.FLUX: "black-forest-labs/FLUX.1-dev",
+}
+
 
 def register_text_encoder(context: ParserContext, alias: str, component: str) -> None:
     mapping = context.metadata.setdefault("text_encoder_map", {})
@@ -108,6 +118,8 @@ def build_estimated_config(
     extra_metadata: Dict[str, object] | None = None,
 ) -> CodexEstimatedConfig:
     repo_id = repo_override or signature.repo_hint or ""
+    if not repo_id:
+        repo_id = _FALLBACK_REPOS.get(signature.family, "")
     if not repo_id:
         raise ValidationError("Model signature missing repository hint", component="config")
 

@@ -166,13 +166,13 @@ class FluxCoreGGUFDetector(ModelDetector):
                 name="clip_l",
                 key_prefix="text_encoders.clip_l.",
                 expected_dim=768,
-                tokenizer_hint="black-forest-labs/FLUX.1-dev/tokenizer",
+                tokenizer_hint=None,
             ),
             TextEncoderSignature(
                 name="t5xxl",
                 key_prefix="text_encoders.t5xxl.",
                 expected_dim=4096,
-                tokenizer_hint="black-forest-labs/FLUX.1-dev/tokenizer_2",
+                tokenizer_hint=None,
             ),
         ]
 
@@ -185,7 +185,7 @@ class FluxCoreGGUFDetector(ModelDetector):
 
         return ModelSignature(
             family=ModelFamily.FLUX,
-            repo_hint="black-forest-labs/FLUX.1-dev",
+            repo_hint="",
             prediction=PredictionKind.FLOW,
             latent_format=LatentFormat.FLOW16,
             quantization=QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf"),

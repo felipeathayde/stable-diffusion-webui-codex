@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-03
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Active
 - 2025-12-03: `xyz.ts` store runs frontend-driven XYZ sweeps (X/Y/Z axes) using the current SDXL form as baseline, with stop support and per-cell status.
 - 2025-12-03: XYZ store now enqueues payload snapshots, supports stop-after-current vs stop-now (calling `/api/tasks/{id}/cancel`), and preserves hires/refiner in each job payload.
 - 2025-12-04: `engine_capabilities.ts` hydrates `/engines/capabilities` once and exposes a cached map keyed by semantic engine tag (sd15, sdxl, flux, wan22, hunyuan_video, svd) so views/components can hide Highres/Refiner/video-specific UI when the backend declares a surface as unsupported.
+- 2025-12-05: `quicksettings.ts`, `txt2img.ts` e `sdxl.ts` agora expõem flags `smartOffload`/`smartFallback`/`smartCache` alimentadas por `/api/options`; os stores propagam esses valores para os payloads de geração (`smart_offload`/`smart_fallback`/`smart_cache`) para controlar descarregamento entre estágios, fallback para CPU em caso de OOM e caches SDXL (TEnc/embeds).

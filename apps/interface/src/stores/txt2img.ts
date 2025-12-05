@@ -172,6 +172,9 @@ export const useTxt2ImgStore = defineStore('txt2img', () => {
         batchCount: batchCount.value,
         styles: styles.value,
         device: quicksettings.currentDevice,
+        smartOffload: quicksettings.smartOffload,
+        smartFallback: quicksettings.smartFallback,
+        smartCache: quicksettings.smartCache,
         highres,
         refiner,
       })

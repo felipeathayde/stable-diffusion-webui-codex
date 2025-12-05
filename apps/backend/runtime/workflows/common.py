@@ -441,6 +441,14 @@ def execute_sampling(
         processing.modified_noise = None
 
     def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:
+        # Skip preview decode on the final step; the engine will decode once
+        # for the actual output, avoiding redundant VAE work at the tail.
+        try:
+            if total is not None and int(total) > 0 and int(step) >= int(total):
+                return
+        except Exception:
+            # If step/total are malformed, fall back to best-effort preview.
+            pass
         img = decode_latent_batch(processing.sd_model, denoised_latent)
         arr = img[0].detach().float().cpu().clamp(-1, 1)
         arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()

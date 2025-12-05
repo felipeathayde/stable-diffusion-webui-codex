@@ -53,6 +53,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const currentUnetDtype = ref<string>('Automatic')
   const gpuTotalMb = ref<number>(12288)
   const gpuWeightsMb = ref<number>(12288)
+  const smartOffload = ref<boolean>(false)
+  const smartFallback = ref<boolean>(false)
+  const smartCache = ref<boolean>(true)
 
   // Basic engine/mode options (sync with legacy fallback)
   const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'svd', 'hunyuan_video', 'wan22'])
@@ -150,6 +153,15 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_vae_dtype === 'string') vaeDtype.value = (opts as any).codex_vae_dtype
     if (typeof opts.forge_inference_memory === 'number') {
       gpuWeightsMb.value = opts.forge_inference_memory
+    }
+    if (typeof (opts as any).codex_smart_offload === 'boolean') {
+      smartOffload.value = (opts as any).codex_smart_offload
+    }
+    if (typeof (opts as any).codex_smart_fallback === 'boolean') {
+      smartFallback.value = (opts as any).codex_smart_fallback
+    }
+    if (typeof (opts as any).codex_smart_cache === 'boolean') {
+      smartCache.value = (opts as any).codex_smart_cache
     }
   }
 
@@ -281,6 +293,21 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     await updateOptions({ forge_inference_memory: value })
   }
 
+  async function setSmartOffload(value: boolean): Promise<void> {
+    smartOffload.value = value
+    await updateOptions({ codex_smart_offload: value })
+  }
+
+  async function setSmartFallback(value: boolean): Promise<void> {
+    smartFallback.value = value
+    await updateOptions({ codex_smart_fallback: value })
+  }
+
+  async function setSmartCache(value: boolean): Promise<void> {
+    smartCache.value = value
+    await updateOptions({ codex_smart_cache: value })
+  }
+
   return {
     models,
     samplers,
@@ -331,5 +358,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     setCoreDtype,
     setTeDtype,
     setVaeDtype,
+    smartOffload,
+    smartFallback,
+    smartCache,
+    setSmartOffload,
+    setSmartFallback,
+    setSmartCache,
   }
 })

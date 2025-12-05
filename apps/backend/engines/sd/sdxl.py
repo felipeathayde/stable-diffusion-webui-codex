@@ -14,6 +14,7 @@ from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineR
 from apps.backend.engines.util.adapters import build_txt2img_processing
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import smart_cache_enabled
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
@@ -166,6 +167,14 @@ class StableDiffusionXL(CodexDiffusionEngine):
         super().__init__()
         self._runtime: Optional[SDEngineRuntime] = None
         self.embedder = Timestep(256)
+        # Cache textual CLIP embeddings by prompt text + polarity (cond/uncond).
+        # Spatial metadata is applied per-call via embed_values.
+        self._cond_cache: dict[
+            tuple,
+            tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor, torch.Tensor],
+        ] = {}
+        # Cache spatial embedding vectors keyed by (h, w, target_h, target_w, crop_top, crop_left).
+        self._embed_cache: dict[tuple[int, int, int, int, int, int], torch.Tensor] = {}
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
@@ -187,6 +196,9 @@ class StableDiffusionXL(CodexDiffusionEngine):
         runtime = assemble_engine_runtime(SDXL_SPEC, bundle.estimated_config, bundle.components)
         self._runtime = runtime
         self.register_model_family("sdxl")
+        # New runtime / weights invalidate any cached conditioning.
+        self._cond_cache.clear()
+        self._embed_cache.clear()
 
         base_vae = getattr(runtime.vae.first_stage_model, "_base", runtime.vae.first_stage_model)
         if isinstance(base_vae, AutoencoderKLWan):
@@ -423,37 +435,71 @@ class StableDiffusionXL(CodexDiffusionEngine):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
         unload_clip = self.smart_offload_enabled
         try:
-            out_l = runtime.classic_engine("clip_l")(prompt)
-            pooled_l = None
-            if isinstance(out_l, tuple) and len(out_l) == 2:
-                cond_l, pooled_l = out_l
-            else:
-                cond_l = out_l
-                pooled_l = getattr(cond_l, "pooled", None)
-
-            out_g = runtime.classic_engine("clip_g")(prompt)
-            if isinstance(out_g, tuple) and len(out_g) == 2:
-                cond_g, pooled_g = out_g
-            else:
-                # Fallback: older engines attach pooled on the tensor
-                pooled_g = getattr(out_g, "pooled", None)
-                cond_g = out_g
-                if pooled_g is None:
-                    raise RuntimeError("SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector.")
-
+            texts = tuple(str(x or "") for x in prompt)
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
             label = "uncond" if is_negative else "cond"
 
-            embed_values = [
-                self.embedder(torch.tensor([height])),
-                self.embedder(torch.tensor([width])),
-                self.embedder(torch.tensor([crop_top])),
-                self.embedder(torch.tensor([crop_left])),
-                self.embedder(torch.tensor([target_height])),
-                self.embedder(torch.tensor([target_width])),
-            ]
+            use_cache = smart_cache_enabled()
 
-            flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled_g.shape[0], 1).to(pooled_g)
+            cond_l = pooled_l = cond_g = pooled_g = None  # type: ignore[assignment]
+            if use_cache:
+                cache_key = (texts, bool(is_negative))
+                cached = self._cond_cache.get(cache_key)
+                if cached is not None:
+                    cond_l, pooled_l, cond_g, pooled_g = cached
+
+            if cond_l is None or cond_g is None:
+                out_l = runtime.classic_engine("clip_l")(prompt)
+                pooled_l = None
+                if isinstance(out_l, tuple) and len(out_l) == 2:
+                    cond_l, pooled_l = out_l
+                else:
+                    cond_l = out_l
+                    pooled_l = getattr(cond_l, "pooled", None)
+
+                out_g = runtime.classic_engine("clip_g")(prompt)
+                if isinstance(out_g, tuple) and len(out_g) == 2:
+                    cond_g, pooled_g = out_g
+                else:
+                    # Fallback: older engines attach pooled on the tensor
+                    pooled_g = getattr(out_g, "pooled", None)
+                    cond_g = out_g
+                    if pooled_g is None:
+                        raise RuntimeError(
+                            "SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector."
+                        )
+
+                if use_cache:
+                    # Cache textual piece only (independent of spatial metadata).
+                    self._cond_cache.clear()
+                    self._cond_cache[(texts, bool(is_negative))] = (cond_l, pooled_l, cond_g, pooled_g)
+
+            embed_key = (
+                int(height),
+                int(width),
+                int(target_height),
+                int(target_width),
+                int(crop_top),
+                int(crop_left),
+            )
+            flat = None
+            if use_cache:
+                flat = self._embed_cache.get(embed_key)
+            if flat is None:
+                embed_values = [
+                    self.embedder(torch.tensor([height])),
+                    self.embedder(torch.tensor([width])),
+                    self.embedder(torch.tensor([crop_top])),
+                    self.embedder(torch.tensor([crop_left])),
+                    self.embedder(torch.tensor([target_height])),
+                    self.embedder(torch.tensor([target_width])),
+                ]
+                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+                if use_cache:
+                    self._embed_cache.clear()
+                    self._embed_cache[embed_key] = flat_tensor
+                flat = flat_tensor
+            flat = flat.repeat(pooled_g.shape[0], 1).to(pooled_g)
 
             # Only zero-out negative embeddings when all underlying texts are truly empty.
             raw_texts = [str(x or "") for x in prompt]
@@ -525,6 +571,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         super().__init__()
         self._runtime: Optional[SDEngineRuntime] = None
         self.embedder = Timestep(256)
+        self._cond_cache: dict[tuple, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._embed_cache: dict[tuple[int, int, int, int, int, int], torch.Tensor] = {}
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
@@ -546,6 +594,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         runtime = assemble_engine_runtime(SDXL_REFINER_SPEC, bundle.estimated_config, bundle.components)
         self._runtime = runtime
         self.register_model_family("sdxl")
+        self._cond_cache.clear()
+        self._embed_cache.clear()
 
         logger.debug(
             "StableDiffusionXLRefiner runtime prepared with clip_skip=%d",
@@ -578,20 +628,50 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
         unload_clip = self.smart_offload_enabled
         try:
-            cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
-
+            texts = tuple(str(x or "") for x in prompt)
             width, height, is_negative = _prompt_meta(prompt)
             opts = _opts()
+            use_cache = smart_cache_enabled()
 
-            embed_values = [
-                self.embedder(torch.tensor([height])),
-                self.embedder(torch.tensor([width])),
-                self.embedder(torch.tensor([opts.sdxl_crop_top])),
-                self.embedder(torch.tensor([opts.sdxl_crop_left])),
-                self.embedder(torch.tensor([height])),
-                self.embedder(torch.tensor([width])),
-            ]
-            flat = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).repeat(pooled.shape[0], 1).to(pooled)
+            cond_g = pooled = None  # type: ignore[assignment]
+            if use_cache:
+                cache_key = (texts, bool(is_negative))
+                cached = self._cond_cache.get(cache_key)
+                if cached is not None:
+                    cond_g, pooled = cached
+
+            if cond_g is None or pooled is None:
+                cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
+                if use_cache:
+                    self._cond_cache.clear()
+                    self._cond_cache[(texts, bool(is_negative))] = (cond_g, pooled)
+
+            embed_key = (
+                int(height),
+                int(width),
+                int(opts.sdxl_crop_top),
+                int(opts.sdxl_crop_left),
+                int(height),
+                int(width),
+            )
+            flat = None
+            if use_cache:
+                flat = self._embed_cache.get(embed_key)
+            if flat is None:
+                embed_values = [
+                    self.embedder(torch.tensor([height])),
+                    self.embedder(torch.tensor([width])),
+                    self.embedder(torch.tensor([opts.sdxl_crop_top])),
+                    self.embedder(torch.tensor([opts.sdxl_crop_left])),
+                    self.embedder(torch.tensor([height])),
+                    self.embedder(torch.tensor([width])),
+                ]
+                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+                if use_cache:
+                    self._embed_cache.clear()
+                    self._embed_cache[embed_key] = flat_tensor
+                flat = flat_tensor
+            flat = flat.repeat(pooled.shape[0], 1).to(pooled)
 
             if is_negative and all(x == "" for x in prompt):
                 pooled = torch.zeros_like(pooled)

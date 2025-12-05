@@ -1509,6 +1509,9 @@ def build_app() -> FastAPI:
         "codex_engine",
         "model",
         "sd_model_checkpoint",
+        "smart_offload",
+        "smart_fallback",
+        "smart_cache",
     }
     _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta", "refiner", "text_encoder_override"}
     _TXT2IMG_HIGHRES_KEYS = {
@@ -1802,6 +1805,12 @@ def build_app() -> FastAPI:
         metadata["hr"] = bool(highres_cfg)
         metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
+        # Smart offload/fallback flags: prefer payload when present, otherwise fall back to options snapshot.
+        snap = _opts_snapshot()
+        smart_offload = bool(payload.get("smart_offload", getattr(snap, "codex_smart_offload", False)))
+        smart_fallback = bool(payload.get("smart_fallback", getattr(snap, "codex_smart_fallback", False)))
+        smart_cache = bool(payload.get("smart_cache", getattr(snap, "codex_smart_cache", True)))
+
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
 
@@ -1820,9 +1829,11 @@ def build_app() -> FastAPI:
             metadata=metadata,
             highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
             extras=extras,
+            smart_offload=smart_offload,
+            smart_fallback=smart_fallback,
+            smart_cache=smart_cache,
         )
 
-        snap = _opts_snapshot()
         engine_key = engine_override or snap.codex_engine
         model_ref = model_override or snap.sd_model_checkpoint
         return req, str(engine_key), model_ref

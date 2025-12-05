@@ -1,7 +1,7 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2025-11-03
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -27,6 +27,7 @@ Status: Active
 - VAE patcher now respects the AUTO precision ladder: decode/encode paths inspect for NaNs and escalate fp16↔bf16↔fp32 via `memory_management.report_precision_failure`; user-forced dtypes skip the ladder and surface explicit errors.
 - 2025-11-03: Host pinning for offloaded models honours `RuntimeMemoryConfig.swap.pin_shared_memory`; disable the flag to avoid Windows pagefile pressure.
 - 2025-11-22: VAE patcher unwraps diffusers `DecoderOutput`/`AutoencoderKLOutput` before `.to(...)`, preventing `'DecoderOutput' object has no attribute 'to'` when SDXL uses the standard diffusers VAE.
+- 2025-12-05: VAE patcher gains a `smart_fallback` path that, when enabled, catches CUDA OOM during decode and performs a single full-image decode on CPU instead of repeatedly retrying GPU paths (regular + tiled).
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

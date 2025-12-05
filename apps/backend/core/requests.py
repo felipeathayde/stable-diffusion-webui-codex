@@ -52,6 +52,9 @@ class BaseRequest:
     extra_networks: Sequence[str] = field(default_factory=tuple)
     clip_skip: Optional[int] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    smart_offload: bool = False
+    smart_fallback: bool = False
+    smart_cache: bool = True
 
 
 @dataclass(frozen=True)

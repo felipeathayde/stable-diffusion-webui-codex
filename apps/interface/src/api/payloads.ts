@@ -59,6 +59,11 @@ export const Txt2ImgRequestSchema = z
     metadata: z.record(z.any()).optional(),
     engine: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
+    smart_offload: z.boolean().optional(),
+    smart_fallback: z.boolean().optional(),
+    smart_cache: z.boolean().optional(),
+    smart_offload: z.boolean().optional(),
+    smart_fallback: z.boolean().optional(),
     extras: z
       .object({
         highres: HighresOptionsSchema.optional(),
@@ -121,6 +126,11 @@ export interface Txt2ImgFormState {
   device: Txt2ImgRequest['codex_device']
   engine?: string
   model?: string
+  smartOffload?: boolean
+  smartFallback?: boolean
+  smartCache?: boolean
+  smartOffload?: boolean
+  smartFallback?: boolean
   highres?: HighresFormState
   refiner?: RefinerFormState
   textEncoderOverride?: {
@@ -165,6 +175,15 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
   }
   if (state.model) {
     payload.model = state.model
+  }
+  if (typeof state.smartOffload === 'boolean') {
+    payload.smart_offload = state.smartOffload
+  }
+  if (typeof state.smartFallback === 'boolean') {
+    payload.smart_fallback = state.smartFallback
+  }
+  if (typeof state.smartCache === 'boolean') {
+    payload.smart_cache = state.smartCache
   }
 
   const extras: Record<string, unknown> = {}

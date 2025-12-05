@@ -94,6 +94,9 @@ class OptionsSnapshot:
     codex_te_dtype: Optional[str] = None
     codex_vae_device: Optional[str] = None
     codex_vae_dtype: Optional[str] = None
+    codex_smart_offload: bool = False
+    codex_smart_fallback: bool = False
+    codex_smart_cache: bool = True
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -108,6 +111,9 @@ class OptionsSnapshot:
             'codex_te_dtype': self.codex_te_dtype,
             'codex_vae_device': self.codex_vae_device,
             'codex_vae_dtype': self.codex_vae_dtype,
+            'codex_smart_offload': self.codex_smart_offload,
+            'codex_smart_fallback': self.codex_smart_fallback,
+            'codex_smart_cache': self.codex_smart_cache,
         }
 
 
@@ -125,5 +131,8 @@ def get_snapshot() -> OptionsSnapshot:
         codex_te_dtype=v.get('codex_te_dtype'),
         codex_vae_device=v.get('codex_vae_device'),
         codex_vae_dtype=v.get('codex_vae_dtype'),
+        codex_smart_offload=bool(v.get('codex_smart_offload', False)),
+        codex_smart_fallback=bool(v.get('codex_smart_fallback', False)),
+        codex_smart_cache=bool(v.get('codex_smart_cache', True)),
     )
     return snap

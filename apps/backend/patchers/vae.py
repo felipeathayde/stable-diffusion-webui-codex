@@ -16,6 +16,7 @@ except Exception:  # noqa: BLE001
 from tqdm import trange
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
+from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
 from .base import ModelPatcher
 
 logger = logging.getLogger("backend.patchers.vae")
@@ -267,6 +268,42 @@ class VAE:
         samples /= 3.0
         return samples
 
+    def _decode_cpu_fallback(self, samples_in: torch.Tensor) -> torch.Tensor:
+        """Best-effort CPU decode path used after CUDA OOM when smart fallback is enabled.
+
+        This bypasses GPU memory heuristics and runs a single full-image decode on CPU,
+        restoring the original VAE device afterwards where possible.
+        """
+        base = getattr(self.first_stage_model, "_base", self.first_stage_model)
+        orig_device: torch.device | None = None
+        orig_dtype: torch.dtype | None = None
+        try:
+            try:
+                params = base.parameters()
+                first = next(params)
+                orig_device = first.device
+                orig_dtype = first.dtype
+            except Exception:  # noqa: BLE001
+                orig_device = None
+                orig_dtype = None
+
+            cpu_device = memory_management.cpu
+            base.to(device=cpu_device, dtype=torch.float32)
+
+            with torch.no_grad():
+                samples_cpu = samples_in.to(cpu_device, dtype=torch.float32)
+                decoded_raw = self.first_stage_model.decode(samples_cpu)
+                decoded = _unwrap_decode_output(decoded_raw).to(self.output_device).float()
+                pixel_samples = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
+
+            return pixel_samples
+        finally:
+            if orig_device is not None:
+                try:
+                    base.to(device=orig_device, dtype=orig_dtype or self.vae_dtype or torch.float32)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to restore VAE device after CPU fallback.", exc_info=True)
+
     def decode_inner(self, samples_in):
         _tensor_stats("decode_inner.latents", samples_in)
         if memory_management.VAE_ALWAYS_TILED:
@@ -298,8 +335,16 @@ class VAE:
                     pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
                     _tensor_stats("decode_inner.batch_decoded", decoded)
             except memory_management.OOM_EXCEPTION:
-                print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
-                pixel_samples = self.decode_tiled_(samples_in)
+                if smart_fallback_enabled():
+                    logger.warning(
+                        "VAE decode OOM on %s with tiled=%s; attempting CPU fallback.",
+                        self.device,
+                        bool(memory_management.VAE_ALWAYS_TILED),
+                    )
+                    pixel_samples = self._decode_cpu_fallback(samples_in)
+                else:
+                    print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
+                    pixel_samples = self.decode_tiled_(samples_in)
 
             result = pixel_samples.to(self.output_device).movedim(1, -1)
             _tensor_stats("decode_inner.result", result)

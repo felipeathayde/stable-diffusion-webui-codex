@@ -1,7 +1,7 @@
 # apps/backend/codex Overview
 Date: 2025-10-28
 Owner: Backend Maintainers
-Last Review: 2025-11-01
+Last Review: 2025-12-05
 Status: Transitional
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Transitional
 - New features should target the native services/options stack; keep this package stable until all legacy paths are retired. Loader helpers now surface `DiffusionModelBundle` objects and delegate to the engine registry.
 - Once the last compatibility consumers migrate, archive this package under `.sangoi/deprecated/` and update the documentation.
 - 2025-11-02: `options.py` now persists core/TE/VAE device + dtype selections (`codex_diffusion_device`, `codex_te_device`, `codex_vae_device`, etc.) so launcher/bootstrap code can reconstruct CLI overrides without env vars.
+- 2025-12-05: Options snapshot/include flags `codex_smart_offload`/`codex_smart_fallback`, persisted in `apps/settings_values.json` and surfaced via `/api/options` so frontend quicksettings can drive smart offload/fallback behaviour without process restarts.

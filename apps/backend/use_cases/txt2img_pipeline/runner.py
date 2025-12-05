@@ -21,7 +21,9 @@ from apps.backend.runtime.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
+    txt2img_conditioning,
 )
+from apps.backend.runtime.memory.smart_offload import smart_cache_enabled
 from apps.backend.runtime.processing.datatypes import (
     ConditioningPayload,
     HiResPlan,
@@ -80,6 +82,9 @@ class Txt2ImgPipelineRunner:
 
     def __init__(self) -> None:
         self._logger = logging.getLogger("backend.use_cases.txt2img.pipeline")
+        # SDXL conditioning cache (prompt + dims → (cond, uncond))
+        # shared across runs for this runner instance.
+        self._conditioning_cache: dict[tuple, tuple[object, object]] = {}
 
     @staticmethod
     def _log_tensor_stats(label: str, tensor: torch.Tensor | None) -> None:
@@ -117,6 +122,35 @@ class Txt2ImgPipelineRunner:
 
         prompts = list(context.prompts or [getattr(processing, "prompt", "")])
         negative_prompts = list(context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+        cache_enabled = smart_cache_enabled()
+        key = None
+        if cache_enabled:
+            try:
+                engine_id = getattr(sd_model, "engine_id", None)
+                width = int(getattr(processing, "width", 0) or 0)
+                height = int(getattr(processing, "height", 0) or 0)
+                target_width = int(getattr(processing, "hr_upscale_to_x", width) or width)
+                target_height = int(getattr(processing, "hr_upscale_to_y", height) or height)
+                crop_left = int(getattr(processing, "sdxl_crop_left", 0) or 0)
+                crop_top = int(getattr(processing, "sdxl_crop_top", 0) or 0)
+                key = (
+                    engine_id,
+                    tuple(str(p or "") for p in prompts),
+                    tuple(str(p or "") for p in negative_prompts),
+                    width,
+                    height,
+                    target_width,
+                    target_height,
+                    crop_left,
+                    crop_top,
+                )
+            except Exception:
+                key = None
+
+        if cache_enabled and key is not None:
+            cached = self._conditioning_cache.get(key)
+            if cached is not None:
+                return cached
 
         # Preserve spatial metadata via engine helper when available
         if hasattr(sd_model, "_prepare_prompt_wrappers"):
@@ -140,7 +174,12 @@ class Txt2ImgPipelineRunner:
                         "Check CLIP encoders or prompt handling before sampling."
                     )
 
-        return cond, uncond
+        pair = (cond, uncond)
+        if cache_enabled and key is not None:
+            # Always keep only the most recent entry; older cache is discarded.
+            self._conditioning_cache.clear()
+            self._conditioning_cache[key] = pair
+        return pair
 
     def _log_conditioning(self, cond: object, uncond: object) -> None:
         """Optional conditioning diagnostics controlled by --debug-conditioning / CODEX_DEBUG_COND."""
@@ -464,14 +503,23 @@ class Txt2ImgPipelineRunner:
                 mode=mode,
                 antialias=antialias,
             )
-            tensor = decode_latent_batch(processing.sd_model, latents)
-            image_conditioning = img2img_conditioning(
-                processing.sd_model,
-                tensor,
-                latents,
-                image_mask=getattr(processing, "image_mask", None),
-                round_mask=getattr(processing, "round_image_mask", True),
-            )
+            # Latent hires path: only decode for inpaint models that require pixel-space conditioning.
+            if getattr(processing.sd_model, "is_inpaint", False):
+                tensor = decode_latent_batch(processing.sd_model, latents)
+                image_conditioning = img2img_conditioning(
+                    processing.sd_model,
+                    tensor,
+                    latents,
+                    image_mask=getattr(processing, "image_mask", None),
+                    round_mask=getattr(processing, "round_image_mask", True),
+                )
+            else:
+                image_conditioning = txt2img_conditioning(
+                    processing.sd_model,
+                    latents,
+                    target_width,
+                    target_height,
+                )
         else:
             decoded_samples = base_result.decoded
             if decoded_samples is None:

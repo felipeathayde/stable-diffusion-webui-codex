@@ -1,7 +1,7 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2025-10-31
+Last Review: 2025-12-05
 Status: Active
 
 ## Purpose
@@ -13,3 +13,4 @@ Status: Active
 - Keep policy changes centralized here to ensure consistent behaviour across tasks (engines, patchers, workflows).
 - AUTO precision is coordinated via a native ladder: VAE supports bf16→fp16→fp32, diffusion/text encoders bf16→fp16. Fallbacks are handled by `CodexMemoryManager.report_precision_failure` and will refuse to advance when users forced a dtype.
 - 2025-11-04: `CodexMemoryManager` now unwraps wrappers (e.g., VAE) to their `ModelPatcher`/`nn.Module` targets before allocation/load so engines can request `load_model_gpu(wrapper)` without tripping AttributeErrors.
+- 2025-12-05: `smart_offload` and `smart_fallback` flags are driven via Codex options (`codex_smart_offload`, `codex_smart_fallback`); the VAE patcher now uses `smart_fallback` to reroute decode to CPU after a CUDA OOM instead of repeatedly retrying on GPU.

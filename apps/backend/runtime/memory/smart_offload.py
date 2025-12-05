@@ -1,30 +1,39 @@
-"""Helpers for stage-wise smart offload control."""
+"""Helpers for stage-wise smart offload / fallback control."""
 
 from __future__ import annotations
 
-import os
 
+def _snapshot():
+    from apps.backend.codex import options as codex_options
 
-def _env_enabled() -> bool:
-    value = os.getenv("CODEX_SMART_OFFLOAD")
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    return codex_options.get_snapshot()
 
 
 def smart_offload_enabled() -> bool:
-    """Return True when smart offload is enabled via CLI or environment."""
-
-    if _env_enabled():
-        return True
-
+    """Return True when smart offload is enabled (Codex options only)."""
     try:
-        from apps.backend.infra.config import args as cfg
-
-        namespace = getattr(cfg, "args", None)
-        return bool(getattr(namespace, "smart_offload", False))
+        snap = _snapshot()
+        return bool(getattr(snap, "codex_smart_offload", False))
     except Exception:
         return False
 
 
-__all__ = ["smart_offload_enabled"]
+def smart_fallback_enabled() -> bool:
+    """Return True when smart CPU fallback on OOM is enabled (Codex options only)."""
+    try:
+        snap = _snapshot()
+        return bool(getattr(snap, "codex_smart_fallback", False))
+    except Exception:
+        return False
+
+
+def smart_cache_enabled() -> bool:
+    """Return True when SDXL smart caching (TE + embed_values) is enabled."""
+    try:
+        snap = _snapshot()
+        return bool(getattr(snap, "codex_smart_cache", False))
+    except Exception:
+        return False
+
+
+__all__ = ["smart_offload_enabled", "smart_fallback_enabled", "smart_cache_enabled"]

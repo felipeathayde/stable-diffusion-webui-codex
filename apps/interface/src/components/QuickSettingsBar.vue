@@ -48,6 +48,9 @@
       :gpu-total-mb="store.gpuTotalMb"
       :attention-backend="store.currentAttention"
       :attention-choices="store.attentionChoices"
+      :smart-offload="store.smartOffload"
+      :smart-fallback="store.smartFallback"
+      :smart-cache="store.smartCache"
       text-encoder-automatic-label="Built-in"
       :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
       @update:mode="onModeChange"
@@ -57,6 +60,9 @@
       @update:unetDtype="onUnetDtypeChange"
       @update:gpuWeightsMb="onGpuWeightsChange"
       @update:attentionBackend="onAttentionChange"
+      @update:smartOffload="onSmartOffloadChange"
+      @update:smartFallback="onSmartFallbackChange"
+      @update:smartCache="onSmartCacheChange"
       @addCheckpointPath="onAddCheckpointPath"
       @addVaePath="onAddVaePath"
       @openOverrides="openOverrides"
@@ -282,6 +288,18 @@ function onGpuWeightsChange(value: number): void {
 
 function onAttentionChange(value: string): void {
   void store.setAttentionBackend(value)
+}
+
+function onSmartOffloadChange(value: boolean): void {
+  void store.setSmartOffload(value)
+}
+
+function onSmartFallbackChange(value: boolean): void {
+  void store.setSmartFallback(value)
+}
+
+function onSmartCacheChange(value: boolean): void {
+  void store.setSmartCache(value)
 }
 
 async function onWanHighModelChange(value: string): Promise<void> {

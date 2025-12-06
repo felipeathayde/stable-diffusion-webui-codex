@@ -34,17 +34,6 @@
       <div class="panel">
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
-          <div class="form-field">
-            <label class="ui-label">Model Checkpoint</label>
-            <input
-              class="ui-input"
-              type="text"
-              :value="store.selectedModel"
-              placeholder="Enter FLUX checkpoint"
-              @change="onModelInputChange"
-            />
-            <p class="caption">Flux uses its built-in VAE path; pick the checkpoint label here.</p>
-          </div>
           <GenerationSettingsCard
             :samplers="store.samplers"
             :schedulers="store.schedulers"

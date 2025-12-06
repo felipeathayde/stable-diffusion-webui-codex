@@ -116,15 +116,20 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
 }
 
 const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => {
-  const tabType = tabsStore.activeTab?.type
-  if (tabType === 'sd15' || tabType === 'sdxl' || tabType === 'flux' || tabType === 'wan') {
-    return tabType
-  }
-
   const p = route.path
+  // Dedicated inference surfaces override tab state
   if (p.startsWith('/flux')) return 'flux'
   if (p.startsWith('/sdxl')) return 'sdxl'
 
+  // Model tabs: derive from active tab type
+  if (p.startsWith('/models')) {
+    const tabType = tabsStore.activeTab?.type
+    if (tabType === 'sd15' || tabType === 'sdxl' || tabType === 'flux' || tabType === 'wan') {
+      return tabType
+    }
+  }
+
+  // Fallback to global engine selection
   const eng = (store.currentEngine || '').toLowerCase()
   if (eng.startsWith('flux')) return 'flux'
   if (eng.startsWith('sdxl')) return 'sdxl'
@@ -261,7 +266,11 @@ const hideCheckpoint = computed(() => {
   return isVideo && uiBlocks.semanticEngine === 'wan22'
 })
 
-async function refreshAll(): Promise<void> { await store.init() }
+async function refreshAll(): Promise<void> {
+  await store.init()
+  await loadPaths()
+  await loadInventory()
+}
 
 // WAN-specific helpers (directories derived from inventory)
 function parentDir(path: string): string {

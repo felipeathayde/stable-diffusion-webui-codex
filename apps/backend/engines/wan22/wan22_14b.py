@@ -194,18 +194,100 @@ class Wan2214BEngine(CodexDiffusionEngine):
         # Text conditioning
         cond = self.get_learned_conditioning([prompt])
         uncond = self.get_learned_conditioning([negative_prompt])
+        
+        # Get conditioning tensors
+        cond_tensor = cond.get("crossattn") if isinstance(cond, dict) else cond
+        uncond_tensor = uncond.get("crossattn") if isinstance(uncond, dict) else uncond
 
         yield ProgressEvent(stage="sampling", percent=0.2, message="Starting sampling")
 
-        # TODO: Implement full sampling loop with WanTransformer2DModel
-        # For now, return placeholder
-        logger.warning("txt2vid sampling not fully implemented yet")
-
-        yield ProgressEvent(stage="complete", percent=1.0, message="Generation complete")
-        yield ResultEvent(payload={
-            "images": [],
-            "info": {"engine": self.engine_id, "task": "txt2vid", "status": "placeholder"},
-        })
+        # Import sampler
+        from apps.backend.runtime.wan22.sampler import sample_txt2vid
+        
+        # Resolve device and dtype
+        device = torch.device(self._device if torch.cuda.is_available() or self._device == "cpu" else "cpu")
+        dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+        dtype = dtype_map.get(self._dtype, torch.bfloat16)
+        
+        # Get transformer from unet patcher
+        transformer = self.codex_objects.unet.model
+        vae = runtime.vae
+        
+        # Load models to GPU
+        memory_management.load_model_gpu(self.codex_objects.unet)
+        
+        # Progress tracking for yield
+        progress_events = []
+        
+        def sampling_callback(step: int, total: int, latent: torch.Tensor):
+            pct = 0.2 + 0.7 * (step / total)  # 20% to 90%
+            progress_events.append(ProgressEvent(
+                stage="sampling",
+                percent=pct,
+                step=step,
+                total_steps=total,
+                message=f"Sampling step {step}/{total}",
+            ))
+        
+        try:
+            # Run sampling
+            video = sample_txt2vid(
+                transformer=transformer,
+                vae=vae,
+                cond=cond_tensor.to(device=device, dtype=dtype),
+                uncond=uncond_tensor.to(device=device, dtype=dtype) if uncond_tensor is not None else None,
+                width=width,
+                height=height,
+                num_frames=num_frames,
+                num_steps=steps,
+                cfg_scale=cfg_scale,
+                flow_shift=WAN_14B_SPEC.flow_shift,
+                seed=seed,
+                device=device,
+                dtype=dtype,
+                callback=sampling_callback,
+            )
+            
+            # Yield accumulated progress events
+            for evt in progress_events:
+                yield evt
+            
+            yield ProgressEvent(stage="decoding", percent=0.9, message="Processing output")
+            
+            # Convert video tensor to frame list
+            # video shape: [B, C, T, H, W] -> list of PIL images
+            frames = []
+            if video is not None and video.numel() > 0:
+                # Normalize to 0-255 and convert
+                video = video.float().clamp(-1, 1) * 0.5 + 0.5  # [-1,1] -> [0,1]
+                video = (video * 255).to(torch.uint8)
+                
+                # video: [B, C, T, H, W] -> iterate over T
+                B, C, T, H, W = video.shape
+                for t in range(T):
+                    frame = video[0, :, t, :, :].permute(1, 2, 0).cpu().numpy()  # [H, W, C]
+                    frames.append(frame)
+            
+            yield ProgressEvent(stage="complete", percent=1.0, message="Generation complete")
+            yield ResultEvent(payload={
+                "images": frames,
+                "info": {
+                    "engine": self.engine_id,
+                    "task": "txt2vid",
+                    "frames": len(frames),
+                    "width": width,
+                    "height": height,
+                    "steps": steps,
+                },
+            })
+            
+        except Exception as e:
+            logger.error("txt2vid failed: %s", e)
+            yield ProgressEvent(stage="error", percent=1.0, message=str(e))
+            yield ResultEvent(payload={
+                "images": [],
+                "info": {"engine": self.engine_id, "task": "txt2vid", "error": str(e)},
+            })
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:
         """Generate video from image."""

@@ -46,4 +46,3 @@ class StreamingConfig:
         if self.auto_enable_threshold_mb > 0:
             return free_vram_mb < self.auto_enable_threshold_mb
         return False
-

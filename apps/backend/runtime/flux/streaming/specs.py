@@ -122,4 +122,3 @@ def calculate_module_bytes(module: nn.Module) -> int:
     for param in module.parameters():
         total += param.numel() * param.element_size()
     return total
-

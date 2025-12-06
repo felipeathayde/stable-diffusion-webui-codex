@@ -305,4 +305,3 @@ def trace_execution_plan_with_hooks(
     )
 
     return plan
-

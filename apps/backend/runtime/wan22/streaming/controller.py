@@ -1,4 +1,8 @@
-"""Memory controller for WAN GGUF streaming with pluggable policies."""
+"""Memory controller for WAN streaming (nn.Module pattern).
+
+This mirrors the Flux streaming controller, using .to(device) on
+nn.Module blocks rather than GGUF-specific tensor operations.
+"""
 
 from __future__ import annotations
 
@@ -6,35 +10,32 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import torch
 
-from apps.backend.runtime.ops.operations_gguf import dequantize_tensor
-
-from .specs import WanBlockInfo
+from .specs import WanSegment
 
 logger = logging.getLogger("backend.runtime.wan22.streaming.controller")
 
 
 class WanStreamingPolicy(Enum):
-    """Streaming policy for WAN GGUF tensors."""
+    """Streaming policy for WAN blocks."""
 
     NAIVE = "naive"
-    """Dequantize + load block tensors → forward → unload. Lowest VRAM, slowest."""
+    """Load segment → forward → unload. Lowest VRAM, slowest."""
 
     WINDOW = "window"
-    """Keep K most recent blocks' tensors on GPU, LRU eviction."""
+    """Keep K most recent segments on GPU, LRU eviction."""
 
     AGGRESSIVE = "aggressive"
-    """Naive with prefetch of next block's tensors."""
+    """Naive with async prefetch of next segment."""
 
 
 @dataclass
-class WanTransferStats:
-    """Statistics for GGUF tensor transfers during streaming."""
+class TransferStats:
+    """Statistics for CPU↔GPU transfers during streaming."""
 
-    bytes_dequantized: int = 0
     bytes_to_gpu: int = 0
     bytes_to_cpu: int = 0
     transfers_to_gpu: int = 0
@@ -51,12 +52,8 @@ class WanTransferStats:
         self.transfers_to_cpu += 1
         self.total_time_ms += time_ms
 
-    def record_dequantize(self, bytes_count: int) -> None:
-        self.bytes_dequantized += bytes_count
-
     def summary(self) -> Dict[str, float]:
         return {
-            "dequantized_mb": self.bytes_dequantized / (1024 * 1024),
             "to_gpu_mb": self.bytes_to_gpu / (1024 * 1024),
             "to_cpu_mb": self.bytes_to_cpu / (1024 * 1024),
             "transfers_to_gpu": self.transfers_to_gpu,
@@ -67,33 +64,22 @@ class WanTransferStats:
 
 @dataclass
 class WanCoreController:
-    """Memory controller managing GGUF tensor placement for WAN streaming.
+    """Memory controller managing segment placement for WAN streaming.
 
-    The controller tracks which block tensors are on GPU and handles
-    dequantization + device transfer for GGUF quantized tensors.
-
-    Attributes:
-        storage_device: Device for offloaded tensors (typically CPU).
-        compute_device: Device for active computation (typically CUDA).
-        policy: Streaming policy determining eviction behavior.
-        window_size: For WINDOW policy, number of blocks to keep on GPU.
-        cache_dequantized: Whether to cache dequantized tensors.
+    This is identical in design to Flux's CoreController, operating on
+    nn.Module segments with .to(device) transfers.
     """
 
     storage_device: torch.device
     compute_device: torch.device
     policy: WanStreamingPolicy = WanStreamingPolicy.NAIVE
     window_size: int = 2
-    cache_dequantized: bool = True
+    non_blocking: bool = True
 
-    # Cached dequantized tensors: key -> tensor
-    _dequant_cache: Dict[str, torch.Tensor] = field(default_factory=dict, repr=False)
-    # Which blocks have their tensors on GPU
-    _on_gpu: Set[int] = field(default_factory=set, repr=False)
-    # LRU tracking
-    _access_order: List[int] = field(default_factory=list, repr=False)
-    # Stats
-    _stats: WanTransferStats = field(default_factory=WanTransferStats, repr=False)
+    _on_gpu: Set[str] = field(default_factory=set, repr=False)
+    _access_order: List[str] = field(default_factory=list, repr=False)
+    _stats: TransferStats = field(default_factory=TransferStats, repr=False)
+    _prefetch_segment: Optional[WanSegment] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.storage_device, str):
@@ -102,191 +88,114 @@ class WanCoreController:
             self.compute_device = torch.device(self.compute_device)
 
     @property
-    def stats(self) -> WanTransferStats:
+    def stats(self) -> TransferStats:
         return self._stats
 
     def reset(self) -> None:
         """Reset controller state between generations."""
         self._on_gpu.clear()
         self._access_order.clear()
-        logger.debug("WAN controller state reset")
+        self._prefetch_segment = None
 
     def reset_stats(self) -> None:
-        """Reset transfer statistics."""
-        self._stats = WanTransferStats()
+        self._stats = TransferStats()
 
-    def is_on_gpu(self, block: WanBlockInfo) -> bool:
-        """Check if block tensors are currently on GPU."""
-        return block.index in self._on_gpu
+    def is_on_gpu(self, segment: WanSegment) -> bool:
+        return segment.name in self._on_gpu
 
-    def get_tensor(
-        self,
-        state: Dict[str, Any],
-        key: str,
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        """Get tensor for a specific key, dequantizing and moving to device."""
-        cache_key = f"{key}_{dtype}"
-        if self.cache_dequantized and cache_key in self._dequant_cache:
-            return self._dequant_cache[cache_key]
-
-        tensor = state.get(key)
-        if tensor is None:
-            raise KeyError(f"Tensor not found in state: {key}")
-
-        # Dequantize if GGUF
-        if hasattr(tensor, "gguf_cls"):
-            tensor = dequantize_tensor(tensor)
-            self._stats.record_dequantize(tensor.numel() * tensor.element_size())
-
-        # Move to compute device with target dtype
-        tensor = tensor.to(device=self.compute_device, dtype=dtype)
-
-        # Cache if enabled
-        if self.cache_dequantized:
-            self._dequant_cache[cache_key] = tensor
-
-        return tensor
-
-    def ensure_block_on_device(
-        self,
-        block: WanBlockInfo,
-        state: Dict[str, Any],
-        dtype: torch.dtype,
-    ) -> Dict[str, torch.Tensor]:
-        """Ensure all block tensors are on compute device.
-
-        Args:
-            block: Block info with tensor keys.
-            state: Model state dictionary.
-            dtype: Target dtype for tensors.
-
-        Returns:
-            Dictionary of tensor key -> tensor on GPU.
-        """
-        if self.is_on_gpu(block):
-            # Update LRU
-            if block.index in self._access_order:
-                self._access_order.remove(block.index)
-            self._access_order.append(block.index)
-            # Return cached tensors
-            return {
-                k: self._dequant_cache.get(f"{k}_{dtype}")
-                for k in block.tensor_keys
-                if f"{k}_{dtype}" in self._dequant_cache
-            }
+    def ensure_on_device(self, segment: WanSegment) -> None:
+        """Ensure segment is on compute device (GPU)."""
+        if self.is_on_gpu(segment):
+            if segment.name in self._access_order:
+                self._access_order.remove(segment.name)
+            self._access_order.append(segment.name)
+            return
 
         start = time.perf_counter()
-        tensors: Dict[str, torch.Tensor] = {}
-
-        for key in block.tensor_keys:
-            tensors[key] = self.get_tensor(state, key, dtype)
-
+        segment.to_device(self.compute_device, non_blocking=self.non_blocking)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        self._on_gpu.add(block.index)
-        self._access_order.append(block.index)
-        self._stats.record_to_gpu(block.param_bytes, elapsed_ms)
+
+        self._on_gpu.add(segment.name)
+        self._access_order.append(segment.name)
+        self._stats.record_to_gpu(segment.param_bytes, elapsed_ms)
 
         logger.debug(
-            "Loaded block %d tensors to GPU (%d keys, %.2f MB, %.1f ms)",
-            block.index,
-            len(block.tensor_keys),
-            block.param_bytes / (1024 * 1024),
+            "Loaded segment '%s' to GPU (%.2f MB, %.1f ms)",
+            segment.name,
+            segment.param_bytes / (1024 * 1024),
             elapsed_ms,
         )
 
-        return tensors
+    def maybe_evict(self, segment: WanSegment, *, force: bool = False) -> None:
+        """Potentially evict segment back to storage device."""
+        if not self.is_on_gpu(segment) and not force:
+            return
 
-    def maybe_evict(self, block: WanBlockInfo) -> None:
-        """Potentially evict block tensors based on policy.
-
-        Args:
-            block: Block that just finished executing.
-        """
-        if self.policy == WanStreamingPolicy.NAIVE:
-            self._evict_block(block)
+        if self.policy == WanStreamingPolicy.NAIVE or force:
+            self._evict_segment(segment)
         elif self.policy == WanStreamingPolicy.WINDOW:
             if len(self._on_gpu) > self.window_size:
                 self._evict_lru()
         elif self.policy == WanStreamingPolicy.AGGRESSIVE:
-            self._evict_block(block)
+            self._evict_segment(segment)
 
-    def _evict_block(self, block: WanBlockInfo) -> None:
-        """Evict a specific block's tensors from cache."""
-        if not self.is_on_gpu(block):
+    def _evict_segment(self, segment: WanSegment) -> None:
+        if not self.is_on_gpu(segment):
             return
 
         start = time.perf_counter()
-        evicted_bytes = 0
-
-        # Remove from dequant cache
-        keys_to_remove = [
-            k for k in self._dequant_cache.keys()
-            if any(k.startswith(f"{tk}_") for tk in block.tensor_keys)
-        ]
-        for k in keys_to_remove:
-            tensor = self._dequant_cache.pop(k, None)
-            if tensor is not None:
-                evicted_bytes += tensor.numel() * tensor.element_size()
-
+        segment.to_device(self.storage_device, non_blocking=self.non_blocking)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        self._on_gpu.discard(block.index)
-        if block.index in self._access_order:
-            self._access_order.remove(block.index)
-        self._stats.record_to_cpu(evicted_bytes, elapsed_ms)
+
+        self._on_gpu.discard(segment.name)
+        if segment.name in self._access_order:
+            self._access_order.remove(segment.name)
+        self._stats.record_to_cpu(segment.param_bytes, elapsed_ms)
 
         logger.debug(
-            "Evicted block %d tensors (%.2f MB, %.1f ms)",
-            block.index,
-            evicted_bytes / (1024 * 1024),
+            "Evicted segment '%s' to CPU (%.2f MB, %.1f ms)",
+            segment.name,
+            segment.param_bytes / (1024 * 1024),
             elapsed_ms,
         )
 
     def _evict_lru(self) -> None:
-        """Evict least recently used block."""
         if not self._access_order:
             return
 
-        oldest_idx = self._access_order[0]
-        # Find the block info (we only have index)
-        self._on_gpu.discard(oldest_idx)
-        self._access_order.pop(0)
+        for name in self._access_order:
+            if name in self._on_gpu:
+                self._on_gpu.discard(name)
+                self._access_order.remove(name)
+                logger.debug("LRU evicted segment '%s'", name)
+                break
 
-        # Evict cached tensors for this block
-        prefix = f"blocks.{oldest_idx}."
-        keys_to_remove = [k for k in self._dequant_cache.keys() if prefix in k]
-        for k in keys_to_remove:
-            self._dequant_cache.pop(k, None)
+    def prefetch_next(self, next_segment: Optional[WanSegment]) -> None:
+        """Hint to prefetch next segment (AGGRESSIVE policy)."""
+        if self.policy != WanStreamingPolicy.AGGRESSIVE:
+            return
+        if next_segment is None or self.is_on_gpu(next_segment):
+            return
 
-        logger.debug("LRU evicted block %d", oldest_idx)
+        self._prefetch_segment = next_segment
+        next_segment.to_device(self.compute_device, non_blocking=True)
+        self._on_gpu.add(next_segment.name)
+        logger.debug("Prefetching segment '%s'", next_segment.name)
 
     def evict_all(self) -> None:
-        """Evict all block tensors from GPU."""
-        self._dequant_cache.clear()
+        """Evict all segments from GPU."""
         self._on_gpu.clear()
         self._access_order.clear()
-        logger.debug("All WAN block tensors evicted")
+        self._prefetch_segment = None
 
 
-def create_wan_controller(
+def create_controller(
     policy: str | WanStreamingPolicy = "naive",
     window_size: int = 2,
     storage_device: str = "cpu",
     compute_device: Optional[str] = None,
-    cache_dequantized: bool = True,
 ) -> WanCoreController:
-    """Factory function to create a WanCoreController.
-
-    Args:
-        policy: Streaming policy name or enum.
-        window_size: Window size for WINDOW policy.
-        storage_device: Offload device (default: "cpu").
-        compute_device: Compute device (default: auto-detect CUDA).
-        cache_dequantized: Whether to cache dequantized tensors.
-
-    Returns:
-        Configured WanCoreController instance.
-    """
+    """Factory function to create a WanCoreController."""
     if isinstance(policy, str):
         policy = WanStreamingPolicy(policy.lower())
 
@@ -298,6 +207,4 @@ def create_wan_controller(
         compute_device=torch.device(compute_device),
         policy=policy,
         window_size=window_size,
-        cache_dequantized=cache_dequantized,
     )
-

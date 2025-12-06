@@ -10,6 +10,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
+import torch
+
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
@@ -21,19 +23,17 @@ logger = logging.getLogger("backend.engines.wan22.spec")
 @dataclass(frozen=True)
 class WanTextPipelines:
     """Text processing pipelines for WAN (T5 only, no CLIP)."""
-
     t5_text: T5TextProcessingEngine
 
 
 @dataclass
 class WanEngineRuntime:
     """Runtime container for WAN engine components.
-
+    
     Analogous to FluxEngineRuntime, holds the assembled components.
     """
-
     vae: VAE
-    unet: UnetPatcher
+    unet: UnetPatcher  # wraps WanTransformer2DModel
     text: WanTextPipelines
     device: str = "cuda"
     dtype: str = "bf16"
@@ -42,12 +42,11 @@ class WanEngineRuntime:
 @dataclass(frozen=True)
 class WanEngineSpec:
     """Specification for WAN engine variants."""
-
     name: str
     default_steps: int = 20
     default_cfg_scale: float = 7.5
     flow_shift: float = 8.0
-
+    
     def is_14b(self) -> bool:
         return "14b" in self.name.lower()
 
@@ -71,9 +70,9 @@ def assemble_wan_runtime(
     emphasis_name: str = "Original",
 ) -> WanEngineRuntime:
     """Assemble WAN runtime from Codex components.
-
+    
     Mirrors assemble_flux_runtime pattern.
-
+    
     Args:
         spec: WAN engine specification.
         codex_components: Dict with 'transformer', 'vae', 'text_encoder', 'tokenizer'.
@@ -82,21 +81,23 @@ def assemble_wan_runtime(
         dtype: Target dtype.
         embedding_dir: Optional embeddings directory.
         emphasis_name: Emphasis style for T5.
-
+        
     Returns:
         Assembled WanEngineRuntime.
     """
     logger.debug("Assembling WAN runtime: %s", spec.name)
-
+    
+    # VAE
     vae_model = codex_components.get("vae")
     if vae_model is None:
         raise ValueError("WAN runtime requires 'vae' component")
     vae = VAE(model=vae_model)
-
+    
+    # Transformer -> UnetPatcher
     transformer = codex_components.get("transformer")
     if transformer is None:
         raise ValueError("WAN runtime requires 'transformer' component")
-
+    
     k_predictor = _k_predictor(spec)
     unet = UnetPatcher.from_model(
         model=transformer,
@@ -104,26 +105,25 @@ def assemble_wan_runtime(
         k_predictor=k_predictor,
         config=estimated_config,
     )
-
+    
+    # T5 text encoder
     t5_encoder = codex_components.get("text_encoder")
     t5_tokenizer = codex_components.get("tokenizer")
     if t5_encoder is None or t5_tokenizer is None:
         raise ValueError("WAN runtime requires 'text_encoder' and 'tokenizer' components")
-
+    
     t5_engine = T5TextProcessingEngine(
         text_encoder=t5_encoder,
         tokenizer=t5_tokenizer,
         emphasis_name=emphasis_name,
         min_length=1,
     )
-
+    
     logger.info(
         "WAN runtime assembled: spec=%s device=%s dtype=%s",
-        spec.name,
-        device,
-        dtype,
+        spec.name, device, dtype,
     )
-
+    
     return WanEngineRuntime(
         vae=vae,
         unet=unet,
@@ -133,6 +133,7 @@ def assemble_wan_runtime(
     )
 
 
+# Pre-defined specs
 WAN_14B_SPEC = WanEngineSpec(
     name="wan22_14b",
     default_steps=20,
@@ -155,4 +156,3 @@ __all__ = [
     "WAN_14B_SPEC",
     "WAN_5B_SPEC",
 ]
-

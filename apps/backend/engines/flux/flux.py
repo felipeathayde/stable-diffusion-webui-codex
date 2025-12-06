@@ -49,6 +49,46 @@ class Flux(CodexDiffusionEngine):
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Flux runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
 
+        # Streaming configuration from options
+        streaming_enabled = options.get("core_streaming_enabled", False)
+        if streaming_enabled:
+            streaming_policy = options.get("core_streaming_policy", "naive")
+            blocks_per_segment = options.get("core_streaming_blocks_per_segment", 4)
+            logger.info(
+                "Flux core streaming enabled: policy=%s, blocks_per_segment=%d",
+                streaming_policy,
+                blocks_per_segment,
+            )
+            try:
+                from apps.backend.runtime.flux.streaming import (
+                    trace_execution_plan,
+                    CoreController,
+                    StreamedFluxCore,
+                    StreamingPolicy,
+                )
+                # Get the actual FluxTransformer2DModel from the patcher
+                core_model = runtime.unet.model
+                plan = trace_execution_plan(core_model, blocks_per_segment=blocks_per_segment)
+                controller = CoreController(
+                    storage_device="cpu",
+                    compute_device="cuda" if torch.cuda.is_available() else "cpu",
+                    policy=StreamingPolicy(streaming_policy),
+                )
+                streamed_core = StreamedFluxCore(core_model, plan, controller)
+                # Replace the model in the patcher
+                runtime.unet.model = streamed_core
+                self._streaming_controller = controller
+                logger.info(
+                    "Flux streaming active: %d segments, %.2f MB total",
+                    len(plan),
+                    plan.total_bytes / (1024 * 1024),
+                )
+            except Exception as e:
+                logger.warning("Failed to enable Flux streaming: %s", e)
+                self._streaming_controller = None
+        else:
+            self._streaming_controller = None
+
         return CodexObjects(
             unet=runtime.unet,
             clip=runtime.clip,

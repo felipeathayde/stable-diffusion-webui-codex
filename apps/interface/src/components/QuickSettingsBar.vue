@@ -218,7 +218,11 @@ function fileInPaths(file: string, key: string): boolean {
   for (const root of roots) {
     const rNorm = normalizePath(root)
     if (!rNorm) continue
+    // Absolute root: direct prefix match.
     if (fNorm === rNorm || fNorm.startsWith(rNorm + '/')) return true
+    // Repo-relative root (e.g. 'models/flux-tenc'): match by suffix segment.
+    const rel = rNorm.startsWith('/') ? rNorm.slice(1) : rNorm
+    if (fNorm.includes('/' + rel + '/') || fNorm.endsWith('/' + rel)) return true
   }
   return false
 }

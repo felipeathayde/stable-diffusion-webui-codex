@@ -34,6 +34,8 @@ class Wan2214BEngine(BaseVideoEngine):
         super().__init__()
         self._comp: Optional[WanComponents] = None
         self._opts = EngineOpts()
+        self._streaming_enabled = False
+        self._streaming_controller = None
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
@@ -50,6 +52,19 @@ class Wan2214BEngine(BaseVideoEngine):
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
         self._opts = EngineOpts(device=dev, dtype=dty)
+        
+        # Streaming configuration
+        self._streaming_enabled = options.get("core_streaming_enabled", False)
+        self._streaming_policy = options.get("core_streaming_policy", "naive")
+        self._streaming_blocks_per_segment = options.get("core_streaming_blocks_per_segment", 4)
+        if self._streaming_enabled:
+            self._logger.info(
+                "WAN core streaming configured: policy=%s, blocks_per_segment=%d",
+                self._streaming_policy,
+                self._streaming_blocks_per_segment,
+            )
+        
+        
         comp = WanComponents()
         # Resolve path
         p = model_ref

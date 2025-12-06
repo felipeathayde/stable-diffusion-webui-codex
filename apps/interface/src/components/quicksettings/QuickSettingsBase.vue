@@ -40,7 +40,7 @@
       <div class="qs-row">
         <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
           <option value="">{{ textEncoderAutomaticLabel }}</option>
-          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ te }}</option>
+          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
       </div>
     </div>
@@ -170,4 +170,13 @@ defineEmits<{
 }>()
 
 const textEncoderAutomaticLabel = props.textEncoderAutomaticLabel ?? 'Built-in'
+
+function textEncoderLabel(raw: unknown): string {
+  const value = String(raw ?? '')
+  if (!value.includes('/')) return value
+  const [family, ...rest] = value.replace(/\\/g, '/').split('/').filter(Boolean)
+  if (!family || rest.length === 0) return value
+  const basename = rest[rest.length - 1] || rest[0]
+  return `${family}/${basename}`
+}
 </script>

@@ -40,7 +40,7 @@
       :hide-checkpoint="hideCheckpoint"
       :vae="store.currentVae"
       :vae-choices="filteredVaeChoices"
-      :text-encoder="store.currentTextEncoders[0] ?? ''"
+      :text-encoder="primaryTextEncoder"
       :text-encoder-choices="filteredTextEncoderChoices"
       :unet-dtype="store.currentUnetDtype"
       :unet-dtype-choices="filteredUnetDtypeChoices"
@@ -52,11 +52,11 @@
       :smart-fallback="store.smartFallback"
       :smart-cache="store.smartCache"
       text-encoder-automatic-label="Built-in"
-      :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
+      :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl' && activeFamily !== 'flux'"
       @update:mode="onModeChange"
       @update:checkpoint="onModelChange"
       @update:vae="onVaeChange"
-      @update:textEncoder="onTextEncoderChange"
+      @update:textEncoder="onPrimaryTextEncoderChange"
       @update:unetDtype="onUnetDtypeChange"
       @update:gpuWeightsMb="onGpuWeightsChange"
       @update:attentionBackend="onAttentionChange"
@@ -67,6 +67,33 @@
       @addVaePath="onAddVaePath"
       @openOverrides="openOverrides"
     />
+
+    <!-- Flux-specific text encoder pair -->
+    <div v-if="activeFamily === 'flux'" class="quicksettings-group">
+      <label class="label-muted">Text Encoders (Flux)</label>
+      <div class="qs-row">
+        <select
+          class="select-md"
+          :value="fluxTextEncoderPrimary"
+          @change="onPrimaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ primaryTeAutomaticLabel }}</option>
+          <option v-for="te in filteredTextEncoderChoices" :key="te" :value="te">
+            {{ textEncoderLabel(te) }}
+          </option>
+        </select>
+        <select
+          class="select-md"
+          :value="fluxTextEncoderSecondary"
+          @change="onSecondaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ secondaryTeAutomaticLabel }}</option>
+          <option v-for="te in filteredTextEncoderChoices" :key="`secondary-${te}`" :value="te">
+            {{ textEncoderLabel(te) }}
+          </option>
+        </select>
+      </div>
+    </div>
 
     <!-- Right-most refresh button spanning to the end -->
     <div class="quicksettings-group quicksettings-right">
@@ -242,8 +269,17 @@ const filteredUnetDtypeChoices = computed(() => {
 const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
   const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
-  return store.textEncoderChoices.filter((name) => typeof name === 'string' && name.startsWith(prefix))
+  return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
 })
+
+const primaryTextEncoder = computed(() => store.currentTextEncoders[0] ?? '')
+
+const fluxTextEncoders = computed(() => store.currentTextEncoders.filter((label) => typeof label === 'string' && label.startsWith('flux/')))
+const fluxTextEncoderPrimary = computed(() => fluxTextEncoders.value[0] ?? '')
+const fluxTextEncoderSecondary = computed(() => fluxTextEncoders.value[1] ?? '')
+
+const primaryTeAutomaticLabel = 'Built-in'
+const secondaryTeAutomaticLabel = 'Secondary (optional)'
 
 const currentPathsHint = computed(() => {
   const fam = activeFamily.value
@@ -348,9 +384,45 @@ async function onVaeChange(value: string): Promise<void> {
   await store.setVae(value)
 }
 
-function onTextEncoderChange(value: string): void {
-  const payload = value ? [value] : []
-  void store.setTextEncoders(payload)
+function textEncoderLabel(raw: unknown): string {
+  const value = String(raw ?? '')
+  if (!value.includes('/')) return value
+  const [family, ...rest] = value.replace(/\\/g, '/').split('/').filter(Boolean)
+  if (!family || rest.length === 0) return value
+  const basename = rest[rest.length - 1] || rest[0]
+  return `${family}/${basename}`
+}
+
+async function updateFluxTextEncoders(primary: string, secondary: string): Promise<void> {
+  const all = store.currentTextEncoders.slice()
+  const other = all.filter((label) => !String(label).startsWith('flux/'))
+  const fluxLabels: string[] = []
+  const p = primary.trim()
+  const s = secondary.trim()
+  if (p) fluxLabels.push(p)
+  if (s && s !== p) fluxLabels.push(s)
+  const next = [...other, ...fluxLabels]
+  await store.setTextEncoders(next)
+}
+
+function onPrimaryTextEncoderChange(value: string): void {
+  const fam = activeFamily.value
+  if (fam === 'flux') {
+    const primary = value || ''
+    const secondary = fluxTextEncoderSecondary.value || ''
+    void updateFluxTextEncoders(primary, secondary)
+  } else {
+    const payload = value ? [value] : []
+    void store.setTextEncoders(payload)
+  }
+}
+
+function onSecondaryTextEncoderChange(value: string): void {
+  const fam = activeFamily.value
+  if (fam !== 'flux') return
+  const primary = fluxTextEncoderPrimary.value || ''
+  const secondary = value || ''
+  void updateFluxTextEncoders(primary, secondary)
 }
 
 function onUnetDtypeChange(value: string): void {

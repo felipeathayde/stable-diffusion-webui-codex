@@ -46,71 +46,6 @@
     </div>
 
     <div class="quicksettings-group">
-      <label class="label-muted">Diffusion in Low Bits</label>
-      <div class="qs-row">
-        <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
-          <option v-for="opt in unetDtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">GPU VRAM (MB)</label>
-      <div class="qs-row">
-        <input
-          class="ui-input"
-          type="number"
-          :min="0"
-          :max="gpuTotalMb"
-          :value="gpuWeightsMb"
-          @change="$emit('update:gpuWeightsMb', Number(($event.target as HTMLInputElement).value))"
-        />
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Smart Offload</label>
-      <div class="qs-row">
-        <label class="qs-toggle">
-          <input
-            type="checkbox"
-            :checked="smartOffload"
-            @change="$emit('update:smartOffload', ($event.target as HTMLInputElement).checked)"
-          />
-          <span>Unload TE/UNet/VAE between stages</span>
-        </label>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Smart Fallback</label>
-      <div class="qs-row">
-        <label class="qs-toggle">
-          <input
-            type="checkbox"
-            :checked="smartFallback"
-            @change="$emit('update:smartFallback', ($event.target as HTMLInputElement).checked)"
-          />
-          <span>Fallback to CPU on OOM</span>
-        </label>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
-      <label class="label-muted">Smart Cache</label>
-      <div class="qs-row">
-        <label class="qs-toggle">
-          <input
-            type="checkbox"
-            :checked="smartCache"
-            @change="$emit('update:smartCache', ($event.target as HTMLInputElement).checked)"
-          />
-          <span>Cache TEnc/embeds (SDXL)</span>
-        </label>
-      </div>
-    </div>
-
-    <div class="quicksettings-group">
       <label class="label-muted">Attention Backend</label>
       <div class="qs-row">
         <select class="select-md" :value="attentionBackend" @change="$emit('update:attentionBackend', ($event.target as HTMLSelectElement).value)">
@@ -140,17 +75,10 @@ const props = defineProps<{
   vaeChoices: string[]
   textEncoder: string
   textEncoderChoices: any
-  unetDtype: string
-  unetDtypeChoices: string[]
-  gpuWeightsMb: number
-  gpuTotalMb: number
   attentionBackend: string
   attentionChoices: Array<{ value: string; label: string }>
   textEncoderAutomaticLabel?: string
   showTextEncoder?: boolean
-  smartOffload: boolean
-  smartFallback: boolean
-  smartCache: boolean
 }>()
 
 defineEmits<{
@@ -158,12 +86,7 @@ defineEmits<{
   (e: 'update:checkpoint', value: string): void
   (e: 'update:vae', value: string): void
   (e: 'update:textEncoder', value: string): void
-  (e: 'update:unetDtype', value: string): void
-  (e: 'update:gpuWeightsMb', value: number): void
   (e: 'update:attentionBackend', value: string): void
-  (e: 'update:smartOffload', value: boolean): void
-  (e: 'update:smartFallback', value: boolean): void
-  (e: 'update:smartCache', value: boolean): void
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
   (e: 'openOverrides'): void

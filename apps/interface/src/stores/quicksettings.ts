@@ -226,7 +226,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setTextEncoders(labels: string[]): Promise<void> {
     currentTextEncoders.value = labels.slice()
-    // Backend expects full paths; we post basenames and allow a resolver to map them.
+    // Labels may be backend text encoder roots or direct file paths; they are
+    // persisted as-is so future overrides can resolve them centrally.
     await updateOptions({ forge_additional_modules: labels })
   }
 

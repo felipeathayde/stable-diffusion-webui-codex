@@ -1,5 +1,5 @@
 <template>
-  <section class="quicksettings">
+  <section :class="['quicksettings', { 'quicksettings-loading': isLoadingQuicksettings }]">
     <!-- Engine-specific quicksettings surface -->
     <QuickSettingsWan
       v-if="activeFamily === 'wan'"
@@ -31,82 +31,87 @@
       @openOverrides="openOverrides"
     />
 
-    <QuickSettingsBase
-      v-else
-      :mode="store.currentMode"
-      :mode-choices="filteredModeChoices"
-      :checkpoint="store.currentModel"
-      :checkpoints="filteredModelTitles"
-      :hide-checkpoint="hideCheckpoint"
-      :vae="store.currentVae"
-      :vae-choices="filteredVaeChoices"
-      :text-encoder="primaryTextEncoder"
-      :text-encoder-choices="filteredTextEncoderChoices"
-      :unet-dtype="store.currentUnetDtype"
-      :unet-dtype-choices="filteredUnetDtypeChoices"
-      :gpu-weights-mb="store.gpuWeightsMb"
-      :gpu-total-mb="store.gpuTotalMb"
-      :attention-backend="store.currentAttention"
-      :attention-choices="store.attentionChoices"
-      :smart-offload="store.smartOffload"
-      :smart-fallback="store.smartFallback"
-      :smart-cache="store.smartCache"
-      text-encoder-automatic-label="Built-in"
-      :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl' && activeFamily !== 'flux'"
-      @update:mode="onModeChange"
-      @update:checkpoint="onModelChange"
-      @update:vae="onVaeChange"
-      @update:textEncoder="onPrimaryTextEncoderChange"
-      @update:unetDtype="onUnetDtypeChange"
-      @update:gpuWeightsMb="onGpuWeightsChange"
-      @update:attentionBackend="onAttentionChange"
-      @update:smartOffload="onSmartOffloadChange"
-      @update:smartFallback="onSmartFallbackChange"
-      @update:smartCache="onSmartCacheChange"
-      @addCheckpointPath="onAddCheckpointPath"
-      @addVaePath="onAddVaePath"
-      @openOverrides="openOverrides"
-    />
+    <template v-else>
+      <QuickSettingsBase
+        :mode="store.currentMode"
+        :mode-choices="filteredModeChoices"
+        :checkpoint="store.currentModel"
+        :checkpoints="filteredModelTitles"
+        :hide-checkpoint="hideCheckpoint"
+        :vae="store.currentVae"
+        :vae-choices="filteredVaeChoices"
+        :text-encoder="primaryTextEncoder"
+        :text-encoder-choices="filteredTextEncoderChoices"
+        :attention-backend="store.currentAttention"
+        :attention-choices="store.attentionChoices"
+        text-encoder-automatic-label="Built-in"
+        :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl' && activeFamily !== 'flux'"
+        @update:mode="onModeChange"
+        @update:checkpoint="onModelChange"
+        @update:vae="onVaeChange"
+        @update:textEncoder="onPrimaryTextEncoderChange"
+        @update:attentionBackend="onAttentionChange"
+        @addCheckpointPath="onAddCheckpointPath"
+        @addVaePath="onAddVaePath"
+        @openOverrides="openOverrides"
+      />
 
-    <!-- Flux-specific text encoder pair -->
-    <div v-if="activeFamily === 'flux'" class="quicksettings-group">
-      <label class="label-muted">Text Encoders (Flux)</label>
-      <div class="qs-row">
-        <select
-          class="select-md"
-          :value="fluxTextEncoderPrimary"
-          @change="onPrimaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">{{ primaryTeAutomaticLabel }}</option>
-          <option v-for="te in filteredTextEncoderChoices" :key="te" :value="te">
-            {{ textEncoderLabel(te) }}
-          </option>
-        </select>
-        <select
-          class="select-md"
-          :value="fluxTextEncoderSecondary"
-          @change="onSecondaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">{{ secondaryTeAutomaticLabel }}</option>
-          <option v-for="te in filteredTextEncoderChoices" :key="`secondary-${te}`" :value="te">
-            {{ textEncoderLabel(te) }}
-          </option>
-        </select>
+      <!-- Flux-specific text encoder pair -->
+      <div v-if="activeFamily === 'flux'" class="quicksettings-group">
+        <label class="label-muted">Text Encoders (Flux)</label>
+        <div class="qs-row">
+          <select
+            class="select-md"
+            :value="fluxTextEncoderPrimary"
+            @change="onPrimaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ primaryTeAutomaticLabel }}</option>
+            <option v-for="te in filteredTextEncoderChoices" :key="te" :value="te">
+              {{ textEncoderLabel(te) }}
+            </option>
+          </select>
+          <select
+            class="select-md"
+            :value="fluxTextEncoderSecondary"
+            @change="onSecondaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ secondaryTeAutomaticLabel }}</option>
+            <option v-for="te in filteredTextEncoderChoices" :key="`secondary-${te}`" :value="te">
+              {{ textEncoderLabel(te) }}
+            </option>
+          </select>
+        </div>
       </div>
-    </div>
 
-    <!-- Right-most refresh button spanning to the end -->
-    <div class="quicksettings-group quicksettings-right">
-      <label class="label-muted">Models</label>
-      <div class="qs-row">
-        <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
+      <!-- Right-most refresh button spanning to the end -->
+      <div class="quicksettings-group quicksettings-right">
+        <label class="label-muted">Models</label>
+        <div class="qs-row">
+          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
+        </div>
+        <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
+          <small class="label-muted">{{ currentPathsHint }}</small>
+        </div>
       </div>
-      <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
-        <small class="label-muted">{{ currentPathsHint }}</small>
-      </div>
-    </div>
 
-    <QuickSettingsOverridesModal v-model="showOverridesModal" />
+      <!-- Second row: performance/runtime controls -->
+      <QuickSettingsPerf
+        :unet-dtype="store.currentUnetDtype"
+        :unet-dtype-choices="filteredUnetDtypeChoices"
+        :gpu-weights-mb="store.gpuWeightsMb"
+        :gpu-total-mb="store.gpuTotalMb"
+        :smart-offload="store.smartOffload"
+        :smart-fallback="store.smartFallback"
+        :smart-cache="store.smartCache"
+        @update:unetDtype="onUnetDtypeChange"
+        @update:gpuWeightsMb="onGpuWeightsChange"
+        @update:smartOffload="onSmartOffloadChange"
+        @update:smartFallback="onSmartFallbackChange"
+        @update:smartCache="onSmartCacheChange"
+      />
+
+      <QuickSettingsOverridesModal v-model="showOverridesModal" />
+    </template>
   </section>
 </template>
 
@@ -120,6 +125,7 @@ import { useModelTabsStore } from '../stores/model_tabs'
 import { fetchModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
+import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
 import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
 
@@ -131,8 +137,10 @@ const tabsStore = useModelTabsStore()
 const pathsConfig = ref<Record<string, string[]>>({})
 const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
 const inventoryWan = ref<Array<{ name: string; path: string; stage: string }>>([])
+const inventoryTextEncoders = ref<Array<{ name: string; path: string }>>([])
 const engineCaps = useEngineCapabilitiesStore()
 const showOverridesModal = ref(false)
+const isLoadingQuicksettings = ref(false)
 
 function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   const p = route.path
@@ -180,9 +188,12 @@ async function loadInventory(): Promise<void> {
       path: String(g.path),
       stage: String(g.stage || 'unknown'),
     }))
+    // Text encoder files are available via inventory for future use (e.g., Flux overrides).
+    inventoryTextEncoders.value = inv.text_encoders ?? []
   } catch (e) {
     inventoryVaes.value = []
     inventoryWan.value = []
+    inventoryTextEncoders.value = []
   }
 }
 
@@ -238,10 +249,7 @@ function isVaeForFamily(name: string, fam: string): boolean {
   const path = rec?.path ?? ''
   if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
   if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
-  if (fam === 'flux') {
-    if (fileInPaths(path, 'flux_vae')) return true
-    return (scale !== null) ? Math.abs(Number(scale) - 0.3611) < 1e-3 : /flux/i.test(name)
-  }
+  if (fam === 'flux') return fileInPaths(path, 'flux_vae')
   return true
 }
 
@@ -268,6 +276,12 @@ const filteredUnetDtypeChoices = computed(() => {
 
 const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
+  if (fam === 'flux') {
+    // For Flux, derive choices from inventory.text_encoders constrained by flux_tenc paths.
+    return inventoryTextEncoders.value
+      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux_tenc'))
+      .map((item) => item.path)
+  }
   const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
 })
@@ -302,10 +316,18 @@ const hideCheckpoint = computed(() => {
   return isVideo && uiBlocks.semanticEngine === 'wan22'
 })
 
+async function initQuicksettings(): Promise<void> {
+  isLoadingQuicksettings.value = true
+  try {
+    await store.init()
+    await Promise.all([loadPaths(), loadInventory()])
+  } finally {
+    isLoadingQuicksettings.value = false
+  }
+}
+
 async function refreshAll(): Promise<void> {
-  await store.init()
-  await loadPaths()
-  await loadInventory()
+  await initQuicksettings()
 }
 
 // WAN-specific helpers (directories derived from inventory)
@@ -580,10 +602,8 @@ function openOverrides(): void {
 }
 
 onMounted(() => {
-  void store.init()
+  void initQuicksettings()
   void presets.init(currentTab())
-  void loadInventory()
-  void loadPaths()
   void engineCaps.init()
 })
 

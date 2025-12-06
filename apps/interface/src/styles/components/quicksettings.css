@@ -12,6 +12,46 @@
   .quicksettings .qs-overrides-btn { height: 100%; padding-inline: 0.9rem; font-size: 0.85rem; }
   .qs-actions { display: flex; align-items: center; gap: 0.4rem; padding-bottom: 2px; }
 
+  .quicksettings.quicksettings-loading .select-md {
+    animation: qs-select-pulse 0.85s ease-in-out infinite alternate;
+  }
+
+  @keyframes qs-select-pulse {
+    from { box-shadow: 0 0 0 0 hsla(0,0%,100%,0.0); }
+    to { box-shadow: 0 0 0 2px hsla(210, 70%, 65%, 0.45); }
+  }
+
+  .qs-switch { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; }
+  .qs-switch input { position: absolute; opacity: 0; pointer-events: none; }
+  .qs-switch-track {
+    position: relative;
+    width: 2.25rem;
+    height: 1.3rem;
+    border-radius: 999px;
+    background: hsla(0,0%,100%,0.12);
+    border: 1px solid hsla(0,0%,100%,0.18);
+    display: inline-flex;
+    align-items: center;
+    padding: 0 0.1rem;
+    transition: background 0.18s ease, border-color 0.18s ease;
+  }
+  .qs-switch-thumb {
+    width: 0.95rem;
+    height: 0.95rem;
+    border-radius: 999px;
+    background: hsla(0,0%,100%,0.9);
+    transform: translateX(0);
+    transition: transform 0.18s ease;
+  }
+  .qs-switch input:checked + .qs-switch-track {
+    background: hsl(var(--accent));
+    border-color: hsl(var(--accent));
+  }
+  .qs-switch input:checked + .qs-switch-track .qs-switch-thumb {
+    transform: translateX(0.9rem);
+  }
+  .qs-switch-label { opacity: 0.82; }
+
   /* Narrow screens: fallback to auto-fit grid */
   @media (max-width: 1200px) { .quicksettings { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); } }
 }

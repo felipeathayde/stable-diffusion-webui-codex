@@ -3,7 +3,7 @@
     <div class="panel-section">
       <PromptBox label="Prompt" v-model="innerPrompt" variant="positive" />
     </div>
-    <div class="panel-section">
+    <div v-if="!hideNegative" class="panel-section">
       <PromptBox label="Negative Prompt" v-model="innerNegative" variant="negative" />
     </div>
   </div>
@@ -13,7 +13,7 @@
 import { computed } from 'vue'
 import PromptBox from './PromptBox.vue'
 
-const props = defineProps<{ prompt: string; negative: string }>()
+const props = defineProps<{ prompt: string; negative: string; hideNegative?: boolean }>()
 const emit = defineEmits<{ 'update:prompt': [value: string]; 'update:negative': [value: string] }>()
 
 const innerPrompt = computed({
@@ -25,6 +25,8 @@ const innerNegative = computed({
   get: () => props.negative,
   set: (value: string) => emit('update:negative', value),
 })
+
+const hideNegative = computed(() => props.hideNegative === true)
 
 // counters moved inside PromptBox
 </script>

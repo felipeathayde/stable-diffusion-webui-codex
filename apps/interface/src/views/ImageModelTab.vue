@@ -204,14 +204,6 @@ async function generate(): Promise<void> {
     } else {
       let payload: Txt2ImgRequest
       try {
-        const teLabel = Array.isArray(quick.currentTextEncoders) ? quick.currentTextEncoders[0] : ''
-        const teOverride =
-          props.type === 'flux' && typeof teLabel === 'string' && teLabel.trim().length > 0
-            ? {
-                family: 'flux',
-                label: teLabel.trim(),
-              }
-            : undefined
         payload = buildTxt2ImgPayload({
           prompt: p.prompt,
           negativePrompt: p.negativePrompt,
@@ -228,7 +220,7 @@ async function generate(): Promise<void> {
           device: quick.currentDevice,
           engine: props.type,
           model: modelRef,
-          textEncoderOverride: teOverride,
+          textEncoderOverride: undefined,
         })
       } catch (error) {
         status.value = 'error'

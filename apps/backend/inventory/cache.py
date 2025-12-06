@@ -91,6 +91,30 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     except Exception:
         # Do not break inventory on misconfigured paths.json; legacy roots still apply.
         pass
+    # Engine-specific VAEs from apps/paths.json (flux_vae): scan roots directly without
+    # relying on filename heuristics. Any weight-like file under these roots is exposed
+    # so the UI can list concrete Flux VAEs based purely on paths.json.
+    try:
+        flux_vaes: List[Dict[str, str]] = []
+        for root in get_paths_for("flux_vae"):
+            if os.path.isdir(root):
+                for name in os.listdir(root):
+                    full = os.path.join(root, name)
+                    if os.path.isfile(full):
+                        flux_vaes.append({"name": name, "path": full})
+            elif os.path.isfile(root):
+                flux_vaes.append({"name": os.path.basename(root), "path": root})
+        if flux_vaes:
+            flux_vaes.sort(key=lambda d: d["name"].lower())
+            seen_paths = {v["path"] for v in vaes}
+            for item in flux_vaes:
+                if item["path"] not in seen_paths:
+                    vaes.append(item)
+                    seen_paths.add(item["path"])
+    except Exception:
+        # Do not break inventory on misconfigured flux_vae roots.
+        pass
+
     loras = _list_files(lora_dir, (".safetensors", ".bin", ".pt", ".ckpt"))
 
     # WAN22 GGUF with stage detection (high/low/unknown).

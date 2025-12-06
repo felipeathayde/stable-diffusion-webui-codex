@@ -17,7 +17,7 @@
           </div>
         </div>
         <div class="panel-body">
-          <PromptFields v-model:prompt="store.prompt" v-model:negative="store.negativePrompt" />
+          <PromptFields v-model:prompt="store.prompt" v-model:negative="store.negativePrompt" :hide-negative="true" />
           <div v-if="store.isRunning" class="panel-progress">
             <p><strong>Stage:</strong> {{ store.progress.stage }}</p>
             <p v-if="progressPercent !== null">Progress: {{ progressPercent.toFixed(1) }}%</p>
@@ -205,14 +205,9 @@ type PromptInsertPayload = string | { token: string; target?: 'positive' | 'nega
 
 function onInsertToken(payload: PromptInsertPayload): void {
   const token = typeof payload === 'string' ? payload : payload.token
-  const target = typeof payload === 'string' ? 'positive' : (payload.target ?? 'positive')
   if (!token) return
-
-  if (target === 'negative') {
-    store.negativePrompt = (store.negativePrompt ? store.negativePrompt + ' ' : '') + token
-  } else {
-    store.prompt = (store.prompt ? store.prompt + ' ' : '') + token
-  }
+  // Flux does not use a separate negative/uncond path; always append to the main prompt.
+  store.prompt = (store.prompt ? store.prompt + ' ' : '') + token
 }
 
 function onGenerate(event: Event): void {

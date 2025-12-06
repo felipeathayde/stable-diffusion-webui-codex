@@ -267,19 +267,13 @@ export const useFluxStore = defineStore('flux', () => {
       errorMessage.value = 'Prompt is required.'
       return
     }
-    const negativeText = negativePrompt.value.trim()
+    const negativeText = '' // Flux does not use a separate negative/uncond channel
 
     let payload: Txt2ImgRequest
     try {
-      const teLabel = Array.isArray(quicksettings.currentTextEncoders)
-        ? quicksettings.currentTextEncoders[0]
-        : ''
-      const teOverride = typeof teLabel === 'string' && teLabel.trim().length > 0
-        ? {
-            family: 'flux',
-            label: teLabel.trim(),
-          }
-        : undefined
+      // Text encoder overrides for Flux are wired end-to-end (paths.json → inventory → QuickSettings),
+      // but backend resolution is still evolving; keep payloads backwards compatible for now.
+      const teOverride = undefined
       payload = buildTxt2ImgPayload({
         prompt: promptText,
         negativePrompt: negativeText,

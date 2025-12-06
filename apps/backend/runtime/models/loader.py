@@ -563,7 +563,7 @@ def _load_flux_vae_state_dict() -> Mapping[str, Any]:
                 for root, _, files in os.walk(entry):
                     for name in sorted(files):
                         lower = name.lower()
-                        if lower.endswith((".safetensors", ".bin", ".pt")) and "vae" in lower:
+                        if lower.endswith((".safetensors", ".bin", ".pt")):
                             found = os.path.join(root, name)
                             break
                     if found is not None:

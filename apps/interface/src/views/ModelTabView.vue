@@ -22,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed, ref } from 'vue'
+import { onMounted, computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseTabHeader from '../components/BaseTabHeader.vue'
 import WANTab from './WANTab.vue'
@@ -37,10 +37,17 @@ const store = useModelTabsStore()
 const wanRef = ref<InstanceType<typeof WANTab> | null>(null)
 const imgRef = ref<InstanceType<typeof ImageModelTab> | null>(null)
 
-onMounted(() => { store.load() })
-
 const id = computed(() => String(route.params.tabId || ''))
 const tab = computed(() => store.tabs.find(t => t.id === id.value) || null)
+
+onMounted(async () => {
+  await store.load()
+  if (id.value) store.setActive(id.value)
+})
+
+watch(id, (nextId) => {
+  if (nextId) store.setActive(nextId)
+})
 
 function onRename(title: string): void { if (tab.value) store.rename(tab.value.id, title) }
 function onDuplicate(): void { if (tab.value) store.duplicate(tab.value.id) }

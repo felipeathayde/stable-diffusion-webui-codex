@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import time
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
-from apps.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest, ProgressEvent, ResultEvent
+from apps.backend.core.requests import InferenceEvent, Img2VidRequest, ProgressEvent, ResultEvent, Txt2VidRequest
 from apps.backend.engines.common.base_video import BaseVideoEngine
-from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
 from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
+from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
 from apps.backend.core.exceptions import EngineLoadError
-
-import os
-
-from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.core.progress_stream import stream_run
+from apps.backend.engines.wan22.spec import WAN_14B_SPEC, WanEngineRuntime, assemble_wan_runtime
 from apps.backend.engines.wan22.wan22_common import (
     EngineOpts,
     WanComponents,
@@ -22,6 +20,11 @@ from apps.backend.engines.wan22.wan22_common import (
     resolve_user_supplied_assets,
     _first_existing_path_for,
 )
+from apps.backend.huggingface.assets import ensure_repo_minimal_files
+from apps.backend.runtime.wan22.sampler import sample_txt2vid as wan_sample_txt2vid
+from apps.backend.runtime.workflows import build_video_plan, assemble_video_metadata, pil_to_tensor
+from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.codex import options as codex_options
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
@@ -32,6 +35,7 @@ class Wan2214BEngine(BaseVideoEngine):
 
     def __init__(self) -> None:
         super().__init__()
+        self._runtime_spec: Optional[WanEngineRuntime] = None
         self._comp: Optional[WanComponents] = None
         self._opts = EngineOpts()
 
@@ -41,15 +45,51 @@ class Wan2214BEngine(BaseVideoEngine):
             tasks=(TaskType.TXT2VID, TaskType.IMG2VID),
             model_types=("wan-2.2-14b",),
             precision=("fp16", "bf16", "fp32"),
-            extras={"notes": "WAN 2.2 14B via Diffusers or GGUF"},
+            extras={"notes": "WAN 2.2 14B via Diffusers/GGUF (default) or experimental Codex runtime/spec"},
         )
 
     # ------------------------------ lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
         self._logger.info('[wan22_14b] DEBUG: antes de função load')
+        bundle = options.pop("_bundle", None)
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
         self._opts = EngineOpts(device=dev, dtype=dty)
+        self._runtime_spec = None
+
+        # Runtime/spec is opt-in via options/UI; env toggles are deprecated.
+        use_spec_runtime_opt = options.pop("use_codex_runtime", None)
+        if use_spec_runtime_opt is None:
+            snap = codex_options.get_snapshot()
+            use_spec_runtime_opt = getattr(snap, "codex_wan22_use_spec_runtime", False)
+        use_spec_runtime = bool(use_spec_runtime_opt)
+        if bundle is not None and use_spec_runtime:
+            try:
+                if not isinstance(bundle, DiffusionModelBundle):
+                    raise TypeError(
+                        f"WAN22 14B: _bundle must be DiffusionModelBundle, got {type(bundle).__name__}"
+                    )
+                self._logger.info("WAN22 14B: assembling WanEngineRuntime from DiffusionModelBundle (experimental)")
+                runtime = assemble_wan_runtime(
+                    spec=WAN_14B_SPEC,
+                    codex_components=bundle.components,
+                    estimated_config=bundle.estimated_config,
+                    device=(dev if dev != "auto" else "cuda"),
+                    dtype=dty,
+                )
+                self._runtime_spec = runtime
+                self._comp = None
+                self.mark_loaded()
+                # NOTE: tasks will explicitly raise NotImplementedError when this experimental
+                # runtime path is active, until txt2vid/img2vid wiring is completed.
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._logger.error(
+                    "WAN22 14B: failed to assemble Codex runtime from bundle; falling back to legacy path: %s",
+                    exc,
+                )
+                self._runtime_spec = None
+
         comp = WanComponents()
         # Resolve path
         p = model_ref
@@ -152,14 +192,333 @@ class Wan2214BEngine(BaseVideoEngine):
 
     def unload(self) -> None:  # type: ignore[override]
         self._logger.info('[wan22_14b] DEBUG: antes de função unload')
+        self._runtime_spec = None
         self._comp = None
         self._logger.info('[wan22_14b] DEBUG: depois de função unload')
         self.mark_unloaded()
+
+    # ------------------------------ runtime/spec helpers
+    def _txt2vid_runtime_spec(self, request: Txt2VidRequest) -> Iterator[InferenceEvent]:
+        import torch
+        from PIL import Image
+
+        runtime = self._runtime_spec
+        if runtime is None:
+            raise RuntimeError("WAN22 runtime/spec is not initialised; load() with bundle+options first.")
+
+        start = time.perf_counter()
+
+        yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (WAN22 spec runtime)")
+
+        plan = build_video_plan(request)
+
+        width = int(getattr(request, "width", plan.width))
+        height = int(getattr(request, "height", plan.height))
+        num_frames = int(getattr(request, "num_frames", plan.frames))
+        steps = int(plan.steps or WAN_14B_SPEC.default_steps)
+
+        raw_guidance = getattr(request, "guidance_scale", None)
+        cfg_scale = float(raw_guidance) if raw_guidance is not None else float(WAN_14B_SPEC.default_cfg_scale)
+        flow_shift = float(WAN_14B_SPEC.flow_shift)
+        seed = getattr(request, "seed", None)
+
+        device_name = (runtime.device or "cuda").strip().lower()
+        if device_name == "cuda" and not (getattr(torch, "cuda", None) and torch.cuda.is_available()):
+            device_name = "cpu"
+        device = torch.device(device_name)
+
+        dtype_map = {
+            "fp16": torch.float16,
+            "float16": torch.float16,
+            "bf16": getattr(torch, "bfloat16", torch.float16),
+            "bfloat16": getattr(torch, "bfloat16", torch.float16),
+            "fp32": torch.float32,
+            "float32": torch.float32,
+        }
+        dtype_key = str(getattr(runtime, "dtype", "bf16")).strip().lower()
+        torch_dtype = dtype_map.get(dtype_key, getattr(torch, "bfloat16", torch.float16))
+
+        t5 = runtime.text.t5_text
+        prompt = getattr(request, "prompt", "") or ""
+        negative_prompt = getattr(request, "negative_prompt", "") or ""
+
+        cond_all = t5([prompt])
+        uncond_all = t5([negative_prompt]) if negative_prompt else None
+
+        if cond_all.ndim != 3:
+            raise RuntimeError(
+                f"WAN22 T5 conditioning must be 3D [chunks, tokens, dim]; got shape={tuple(cond_all.shape)}",
+            )
+        cond = cond_all[:1].to(device=device, dtype=torch_dtype)
+        uncond = None
+        if uncond_all is not None:
+            if uncond_all.ndim != 3:
+                raise RuntimeError(
+                    f"WAN22 T5 negative conditioning must be 3D [chunks, tokens, dim]; got shape={tuple(uncond_all.shape)}",
+                )
+            uncond = uncond_all[:1].to(device=device, dtype=torch_dtype)
+
+        core_model = runtime.unet.model.diffusion_model
+        core_model = core_model.to(device=device, dtype=torch_dtype)
+        vae = runtime.vae
+
+        yield ProgressEvent(stage="sample", percent=0.1, message="Sampling video latents (WAN22 spec runtime)")
+
+        video = wan_sample_txt2vid(
+            transformer=core_model,
+            vae=vae,
+            cond=cond,
+            uncond=uncond,
+            width=width,
+            height=height,
+            num_frames=num_frames,
+            num_steps=steps,
+            cfg_scale=cfg_scale,
+            flow_shift=flow_shift,
+            seed=seed,
+            device=device,
+            dtype=torch_dtype,
+        )
+
+        if not isinstance(video, torch.Tensor):
+            video = torch.as_tensor(video)
+
+        if video.ndim != 5:
+            raise RuntimeError(
+                f"WAN22 sampler expected tensor [B,C,T,H,W], got shape={tuple(video.shape)}",
+            )
+
+        yield ProgressEvent(stage="decode", percent=0.8, message="Decoding frames (WAN22 spec runtime)")
+
+        video_cpu = video[0].detach().to(device="cpu", dtype=torch.float32).clamp(0.0, 1.0)
+        if video_cpu.ndim != 4:
+            raise RuntimeError(
+                f"WAN22 sampler output rank mismatch; expected [C,T,H,W], got shape={tuple(video_cpu.shape)}",
+            )
+        c_dim, t_dim, h_dim, w_dim = video_cpu.shape
+        if c_dim not in (1, 3, 4):
+            raise RuntimeError(
+                f"WAN22 sampler produced unsupported channel count C={c_dim}; expected 1, 3, or 4.",
+            )
+
+        frames = []
+        for i in range(t_dim):
+            frame = video_cpu[:, i, :, :]
+            if frame.ndim != 3:
+                raise RuntimeError(
+                    f"WAN22 frame tensor rank mismatch; expected [C,H,W], got shape={tuple(frame.shape)}",
+                )
+            arr = (frame.movedim(0, -1).numpy() * 255.0).round().clip(0, 255).astype("uint8")
+            frames.append(Image.fromarray(arr))
+
+        extras = getattr(request, "extras", {}) or {}
+        video_opts = extras.get("video") if isinstance(extras, dict) else None
+        video_meta = self._maybe_export_video(frames, fps=int(getattr(request, "fps", plan.fps)), options=video_opts)
+
+        elapsed = time.perf_counter() - start
+        metadata = assemble_video_metadata(
+            self,
+            plan,
+            None,
+            elapsed=elapsed,
+            frame_count=len(frames),
+            task="txt2vid",
+            extra={
+                "runtime": "wan22_spec",
+                "steps": steps,
+                "guidance_scale": cfg_scale,
+            },
+            video_meta=video_meta,
+        )
+
+        payload = {
+            "images": frames,
+            "info": self._to_json(metadata),
+        }
+        self._logger.info(
+            "[wan22_14b] txt2vid runtime/spec completed: frames=%d, steps=%d, cfg=%.2f, device=%s, dtype=%s",
+            len(frames),
+            steps,
+            cfg_scale,
+            str(device),
+            str(torch_dtype),
+        )
+        yield ResultEvent(payload=payload)
+        self._logger.info('[wan22_14b] DEBUG: depois de função txt2vid (runtime/spec)')
+
+    def _img2vid_runtime_spec(self, request: Img2VidRequest) -> Iterator[InferenceEvent]:
+        import torch
+        from PIL import Image
+
+        runtime = self._runtime_spec
+        if runtime is None:
+            raise RuntimeError("WAN22 runtime/spec is not initialised; load() with bundle+options first.")
+        if getattr(request, "init_image", None) is None:
+            raise RuntimeError("img2vid requires 'init_image' when using WAN22 runtime/spec.")
+
+        start = time.perf_counter()
+
+        yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid (WAN22 spec runtime)")
+
+        plan = build_video_plan(request)
+
+        width = int(getattr(request, "width", plan.width))
+        height = int(getattr(request, "height", plan.height))
+        num_frames = int(getattr(request, "num_frames", plan.frames))
+        steps = int(plan.steps or WAN_14B_SPEC.default_steps)
+
+        raw_guidance = getattr(request, "guidance_scale", None)
+        cfg_scale = float(raw_guidance) if raw_guidance is not None else float(WAN_14B_SPEC.default_cfg_scale)
+        flow_shift = float(WAN_14B_SPEC.flow_shift)
+        seed = getattr(request, "seed", None)
+
+        device_name = (runtime.device or "cuda").strip().lower()
+        if device_name == "cuda" and not (getattr(torch, "cuda", None) and torch.cuda.is_available()):
+            device_name = "cpu"
+        device = torch.device(device_name)
+
+        dtype_map = {
+            "fp16": torch.float16,
+            "float16": torch.float16,
+            "bf16": getattr(torch, "bfloat16", torch.float16),
+            "bfloat16": getattr(torch, "bfloat16", torch.float16),
+            "fp32": torch.float32,
+            "float32": torch.float32,
+        }
+        dtype_key = str(getattr(runtime, "dtype", "bf16")).strip().lower()
+        torch_dtype = dtype_map.get(dtype_key, getattr(torch, "bfloat16", torch.float16))
+
+        t5 = runtime.text.t5_text
+        prompt = getattr(request, "prompt", "") or ""
+        negative_prompt = getattr(request, "negative_prompt", "") or ""
+
+        cond_all = t5([prompt])
+        uncond_all = t5([negative_prompt]) if negative_prompt else None
+
+        if cond_all.ndim != 3:
+            raise RuntimeError(
+                f"WAN22 T5 conditioning must be 3D [chunks, tokens, dim]; got shape={tuple(cond_all.shape)}",
+            )
+        cond = cond_all[:1].to(device=device, dtype=torch_dtype)
+        uncond = None
+        if uncond_all is not None:
+            if uncond_all.ndim != 3:
+                raise RuntimeError(
+                    f"WAN22 T5 negative conditioning must be 3D [chunks, tokens, dim]; got shape={tuple(uncond_all.shape)}",
+                )
+            uncond = uncond_all[:1].to(device=device, dtype=torch_dtype)
+
+        core_model = runtime.unet.model.diffusion_model
+        core_model = core_model.to(device=device, dtype=torch_dtype)
+        vae = runtime.vae
+
+        init_image = getattr(request, "init_image")
+        if isinstance(init_image, Image.Image):
+            init_pil = init_image
+        else:
+            raise RuntimeError(f"img2vid runtime/spec expects init_image as PIL.Image; got {type(init_image)!r}")
+
+        init_tensor = pil_to_tensor([init_pil]).to(device=device, dtype=torch_dtype)
+        with torch.inference_mode():
+            # Encode once and tile across time dimension.
+            latents_4d = vae.encode_inner(init_tensor.movedim(1, 3))
+            if not isinstance(latents_4d, torch.Tensor):
+                latents_4d = torch.as_tensor(latents_4d)
+            b, c, h_lat, w_lat = latents_4d.shape
+            latents_5d = latents_4d.view(b, c, 1, h_lat, w_lat).repeat(1, 1, num_frames, 1, 1)
+
+        yield ProgressEvent(stage="sample", percent=0.1, message="Sampling video latents (WAN22 spec runtime, img2vid)")
+
+        video = wan_sample_txt2vid(
+            transformer=core_model,
+            vae=vae,
+            cond=cond,
+            uncond=uncond,
+            width=width,
+            height=height,
+            num_frames=num_frames,
+            num_steps=steps,
+            cfg_scale=cfg_scale,
+            flow_shift=flow_shift,
+            seed=seed,
+            device=device,
+            dtype=torch_dtype,
+        )
+
+        if not isinstance(video, torch.Tensor):
+            video = torch.as_tensor(video)
+
+        if video.ndim != 5:
+            raise RuntimeError(
+                f"WAN22 sampler expected tensor [B,C,T,H,W], got shape={tuple(video.shape)}",
+            )
+
+        yield ProgressEvent(stage="decode", percent=0.8, message="Decoding frames (WAN22 spec runtime, img2vid)")
+
+        video_cpu = video[0].detach().to(device="cpu", dtype=torch.float32).clamp(0.0, 1.0)
+        if video_cpu.ndim != 4:
+            raise RuntimeError(
+                f"WAN22 sampler output rank mismatch; expected [C,T,H,W], got shape={tuple(video_cpu.shape)}",
+            )
+        c_dim, t_dim, h_dim, w_dim = video_cpu.shape
+        if c_dim not in (1, 3, 4):
+            raise RuntimeError(
+                f"WAN22 sampler produced unsupported channel count C={c_dim}; expected 1, 3, or 4.",
+            )
+
+        frames = []
+        for i in range(t_dim):
+            frame = video_cpu[:, i, :, :]
+            if frame.ndim != 3:
+                raise RuntimeError(
+                    f"WAN22 frame tensor rank mismatch; expected [C,H,W], got shape={tuple(frame.shape)}",
+                )
+            arr = (frame.movedim(0, -1).numpy() * 255.0).round().clip(0, 255).astype("uint8")
+            frames.append(Image.fromarray(arr))
+
+        extras = getattr(request, "extras", {}) or {}
+        video_opts = extras.get("video") if isinstance(extras, dict) else None
+        video_meta = self._maybe_export_video(frames, fps=int(getattr(request, "fps", plan.fps)), options=video_opts)
+
+        elapsed = time.perf_counter() - start
+        metadata = assemble_video_metadata(
+            self,
+            plan,
+            None,
+            elapsed=elapsed,
+            frame_count=len(frames),
+            task="img2vid",
+            extra={
+                "runtime": "wan22_spec",
+                "steps": steps,
+                "guidance_scale": cfg_scale,
+            },
+            video_meta=video_meta,
+        )
+
+        payload = {
+            "images": frames,
+            "info": self._to_json(metadata),
+        }
+        self._logger.info(
+            "[wan22_14b] img2vid runtime/spec completed: frames=%d, steps=%d, cfg=%.2f, device=%s, dtype=%s",
+            len(frames),
+            steps,
+            cfg_scale,
+            str(device),
+            str(torch_dtype),
+        )
+        yield ResultEvent(payload=payload)
+        self._logger.info('[wan22_14b] DEBUG: depois de função img2vid (runtime/spec)')
 
     # ------------------------------ tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         self._logger.info('[wan22_14b] DEBUG: antes de função txt2vid')
         self.ensure_loaded()
+        if self._runtime_spec is not None:
+            yield from self._txt2vid_runtime_spec(request)
+            return
+
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
             yield from _run_t2v(engine=self, comp=self._comp, request=request)
@@ -351,6 +710,9 @@ class Wan2214BEngine(BaseVideoEngine):
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         self._logger.info('[wan22_14b] DEBUG: antes de função img2vid')
         self.ensure_loaded()
+        if self._runtime_spec is not None:
+            yield from self._img2vid_runtime_spec(request)
+            return
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
             yield from _run_i2v(engine=self, comp=self._comp, request=request)

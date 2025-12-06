@@ -528,6 +528,8 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "chroma": ModelFamily.CHROMA,
     "sd20": ModelFamily.SD20,
     "sd15": ModelFamily.SD15,
+    "wan22_14b": ModelFamily.WAN22,
+    "wan22_5b": ModelFamily.WAN22,
 }
 
 FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
@@ -539,6 +541,7 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.CHROMA: "chroma",
     ModelFamily.SD20: "sd20",
     ModelFamily.SD15: "sd15",
+    ModelFamily.WAN22: "wan22_14b",
 }
 
 

@@ -113,7 +113,7 @@ import { onMounted, computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
 import { fetchSamplers, fetchSchedulers, startTxt2Img, startImg2Img, subscribeTask } from '../api/client'
-import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
+import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, formatZodError } from '../api/payloads'
 import type { Txt2ImgRequest } from '../api/payloads'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 
@@ -204,6 +204,9 @@ async function generate(): Promise<void> {
     } else {
       let payload: Txt2ImgRequest
       try {
+        const teOverride = props.type === 'flux'
+          ? deriveFluxTextEncoderOverrideFromLabels(quick.currentTextEncoders)
+          : undefined
         payload = buildTxt2ImgPayload({
           prompt: p.prompt,
           negativePrompt: p.negativePrompt,
@@ -220,7 +223,7 @@ async function generate(): Promise<void> {
           device: quick.currentDevice,
           engine: props.type,
           model: modelRef,
-          textEncoderOverride: undefined,
+          textEncoderOverride: teOverride,
         })
       } catch (error) {
         status.value = 'error'

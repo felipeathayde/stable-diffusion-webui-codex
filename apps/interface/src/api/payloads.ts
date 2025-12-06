@@ -240,6 +240,33 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
   return Txt2ImgRequestSchema.parse(payload)
 }
 
+export function deriveFluxTextEncoderOverrideFromLabels(labels: string[]): Txt2ImgFormState['textEncoderOverride'] | undefined {
+  const fluxPrefix = 'flux/'
+  const fluxLabels = labels.filter((label) => typeof label === 'string' && label.startsWith(fluxPrefix)) as string[]
+  if (fluxLabels.length === 0) return undefined
+
+  const components: string[] = []
+  const primary = fluxLabels[0]?.slice(fluxPrefix.length)
+  const secondary = fluxLabels[1]?.slice(fluxPrefix.length)
+
+  if (primary) {
+    components.push(`clip_l=${primary}`)
+  }
+  if (secondary && secondary !== primary) {
+    components.push(`t5xxl=${secondary}`)
+  }
+
+  if (components.length === 0) return undefined
+
+  return {
+    family: 'flux',
+    // Label is still required by the backend schema but is not used in explicit-path mode.
+    // Keep the `<family>/…` pattern so API-side validation passes.
+    label: 'flux/explicit',
+    components,
+  }
+}
+
 export function formatZodError(err: unknown): string {
   if (err instanceof ZodError) {
     return err.errors.map((issue) => issue.message).join('; ')

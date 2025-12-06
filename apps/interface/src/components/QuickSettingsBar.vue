@@ -57,7 +57,7 @@
       />
 
       <!-- Flux-specific text encoder pair -->
-      <div v-if="activeFamily === 'flux'" class="quicksettings-group">
+      <div v-if="activeFamily === 'flux'" class="quicksettings-group qs-group-flux-tenc">
         <label class="label-muted">Text Encoders (Flux)</label>
         <div class="qs-row">
           <select
@@ -84,7 +84,7 @@
       </div>
 
       <!-- Right-most refresh button spanning to the end -->
-      <div class="quicksettings-group quicksettings-right">
+      <div class="quicksettings-group quicksettings-right qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
           <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
@@ -122,7 +122,7 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { useModelTabsStore } from '../stores/model_tabs'
-import { fetchModelInventory, fetchPaths, updatePaths } from '../api/client'
+import { fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
@@ -179,9 +179,9 @@ const semanticEngine = computed<string>(() => {
   return store.currentEngine || 'sd15'
 })
 
-async function loadInventory(): Promise<void> {
+async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void> {
   try {
-    const inv = await fetchModelInventory()
+    const inv = options?.forceRefresh ? await refreshModelInventory() : await fetchModelInventory()
     inventoryVaes.value = inv.vaes
     inventoryWan.value = (inv.wan22?.gguf ?? []).map((g: any) => ({
       name: String(g.name),
@@ -284,7 +284,7 @@ const filteredTextEncoderChoices = computed(() => {
     // For Flux, derive choices from inventory.text_encoders constrained by flux_tenc paths.
     return inventoryTextEncoders.value
       .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux_tenc'))
-      .map((item) => item.path)
+      .map((item) => `flux/${item.path}`)
   }
   const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
@@ -320,18 +320,21 @@ const hideCheckpoint = computed(() => {
   return isVideo && uiBlocks.semanticEngine === 'wan22'
 })
 
-async function initQuicksettings(): Promise<void> {
+async function initQuicksettings(options?: { forceInventoryRefresh?: boolean }): Promise<void> {
   isLoadingQuicksettings.value = true
   try {
     await store.init()
-    await Promise.all([loadPaths(), loadInventory()])
+    await Promise.all([
+      loadPaths(),
+      loadInventory({ forceRefresh: options?.forceInventoryRefresh === true }),
+    ])
   } finally {
     isLoadingQuicksettings.value = false
   }
 }
 
 async function refreshAll(): Promise<void> {
-  await initQuicksettings()
+  await initQuicksettings({ forceInventoryRefresh: true })
 }
 
 // WAN-specific helpers (directories derived from inventory)

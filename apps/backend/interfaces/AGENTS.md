@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2025-12-05
+Last Review: 2025-12-06
 Status: Active
 
 ## Purpose
@@ -23,13 +23,13 @@ Status: Active
 - 2025-12-03: `/api/txt2img` extras now accept `highres.refiner` (enable/steps/cfg/seed/model/vae) alongside the global `extras.refiner`, raising HTTP 400 on malformed nested refiner configs.
 - 2025-12-03: `/api/tasks/{task_id}/cancel` allows best-effort cancellation (immediate vs after_current flag); workers abort event streaming with `error: cancelled` when `mode=immediate`.
 - 2025-12-03: `/api/options` now accepts `codex_{core,te,vae}_{device,dtype}` to set per-role backend/dtype via memory manager; device choices auto/cuda/cpu/mps/xpu/directml, dtype auto/fp16/bf16/fp32.
-- 2025-12-05: `/api/txt2img` extras agora aceitam um objeto opcional `text_encoder_override` (family + label + components[]) validado como JSON; quando presente, o worker de txt2img o encaminha como `engine_options.text_encoder_override` para o orchestrator/engines, que por sua vez repassam o override ao `runtime.models.loader` (via `TextEncoderOverrideConfig`).
+- 2025-12-05: `/api/txt2img` extras agora aceitam um objeto opcional `text_encoder_override` (family + label + components[]) validado como JSON; quando presente, o worker de txt2img o encaminha como `engine_options.text_encoder_override` para o orchestrator/engines, que por sua vez repassam o override ao `runtime.models.loader` (via `TextEncoderOverrideConfig`). A partir de 2025-12-06, `components[]` também aceita entradas no formato `alias=/abs/path/to/weights.safetensors` para overrides por arquivo (ex.: Flux), que o loader interpreta como `explicit_paths` sem depender de labels de `/api/text-encoders`.
 - 2025-12-05: `/api/options` e `/api/txt2img` expõem flags `codex_smart_offload`/`codex_smart_fallback`/`codex_smart_cache` (checkboxes na UI → `smart_offload`/`smart_fallback`/`smart_cache` no payload) para controlar descarregamento entre estágios, fallback para CPU em caso de OOM e caches de condicionamento SDXL; o runtime lê esses valores apenas via snapshot de opções (sem depender de env/CLI).*** End Patch*** End Patch  дәриҗassistant to=functions.apply_patchտեղassistant to=functions.apply_patch\Seeder to=functions.apply_patch ***!
 # apps/backend/interfaces Overview
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2025-12-05
+Last Review: 2025-12-06
 Status: Active
 
 ## Purpose
@@ -50,7 +50,9 @@ Status: Active
 - 2025-12-03: `/api/txt2img` extras now accept `highres.refiner` (enable/steps/cfg/seed/model/vae) alongside the global `extras.refiner`, raising HTTP 400 on malformed nested refiner configs.
 - 2025-12-03: `/api/tasks/{task_id}/cancel` allows best-effort cancellation (immediate vs after_current flag); workers abort event streaming with `error: cancelled` when `mode=immediate`.
 - 2025-12-03: `/api/options` now accepts `codex_{core,te,vae}_{device,dtype}` to set per-role backend/dtype via memory manager; device choices auto/cuda/cpu/mps/xpu/directml, dtype auto/fp16/bf16/fp32.
-- 2025-12-05: `/api/txt2img` extras agora aceitam um objeto opcional `text_encoder_override` (family + label + components[]) validado como JSON; quando presente, o worker de txt2img o encaminha como `engine_options.text_encoder_override` para o orchestrator/engines, que por sua vez repassam o override ao `runtime.models.loader` (via `TextEncoderOverrideConfig`).
+- 2025-12-05: `/api/txt2img` extras agora aceitam um objeto opcional `text_encoder_override` (family + label + components[]) validado como JSON; quando presente, o worker de txt2img o encaminha como `engine_options.text_encoder_override` para o orchestrator/engines, que por sua vez repassam o override ao `runtime.models.loader` (via `TextEncoderOverrideConfig`). A partir de 2025-12-06, `components[]` também aceita entradas no formato `alias=/abs/path/to/weights.safetensors` para overrides por arquivo (ex.: Flux), que o loader interpreta como `explicit_paths` sem depender de labels de `/api/text-encoders`.
 - 2025-12-05: `/api/options` e `/api/txt2img` expõem flags `codex_smart_offload`/`codex_smart_fallback`/`codex_smart_cache` (checkboxes na UI → `smart_offload`/`smart_fallback`/`smart_cache` no payload) para controlar descarregamento entre estágios, fallback para CPU em caso de OOM e caches de condicionamento SDXL; quando um job inclui `smart_cache`, o valor por-job prevalece sobre o snapshot global, permitindo rodar jobs mistos em uma mesma sessão.
 - 2025-12-05: `/api/engines/capabilities` passa a incluir um bloco opcional `smart_cache` com contadores de hits/misses agregados (por bucket) para diagnóstico de caching de SDXL no runtime.
 - 2025-12-05: `/api/memory` agora usa `apps.backend.runtime.memory.memory_management.memory_snapshot()` para expor um snapshot estruturado de VRAM/CPU (backend, dispositivo primário, probe, budgets, stats do torch e modelos carregados); clientes que só leem `total_vram_mb` continuam atendidos, mas novas UIs devem consumir o snapshot completo.
+- 2025-12-06: `_bootstrap_runtime` agora pré-calcula o inventário de modelos (`apps.backend.inventory.cache.refresh()`) durante o bootstrap do backend, de forma que `/api/models/inventory` esteja quente quando a UI abrir o QuickSettings; a rota continua expondo `?refresh=true` e `POST /api/models/inventory/refresh` para rescans explícitos.
+- 2025-12-06: `settings_schema.json` e `settings_registry.py` incluem chaves `codex_flux_core_streaming_*` (enabled/policy/blocks_per_segment/window_size/auto_threshold_mb) sob a seção SDXL, pensadas para controlar streaming do core Flux via `/api/options`. Por enquanto, apenas o backend consome esses valores convertendo-os em `engine_options` para o engine Flux; a UI pode optar por expô-los como controles avançados em uma fase posterior.

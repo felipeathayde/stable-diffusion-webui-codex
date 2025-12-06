@@ -49,6 +49,10 @@ export function fetchModelInventory(): Promise<InventoryResponse> {
   return requestJson<InventoryResponse>('/models/inventory')
 }
 
+export function refreshModelInventory(): Promise<InventoryResponse> {
+  return requestJson<InventoryResponse>('/models/inventory/refresh', { method: 'POST' })
+}
+
 export async function fetchSamplers(): Promise<SamplersResponse> {
   const res = await requestJson<SamplersResponse>('/samplers')
   const supported = res.samplers.filter((sampler) => sampler.supported !== false)

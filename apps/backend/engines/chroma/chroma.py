@@ -42,6 +42,7 @@ class Chroma(CodexDiffusionEngine):
             spec=CHROMA_SPEC,
             estimated_config=bundle.estimated_config,
             codex_components=bundle.components,
+            engine_options=options,
         )
         self._runtime = runtime
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg

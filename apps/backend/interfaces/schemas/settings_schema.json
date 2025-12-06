@@ -1731,7 +1731,7 @@
     },
     {
       "key": "open_dir_button_choice",
-      "label": "What directory the [📂] button opens",
+      "label": "What directory the [\ud83d\udcc2] button opens",
       "type": "radio",
       "section": "ui_gallery",
       "default": "Subdirectory",
@@ -1800,7 +1800,7 @@
       "label": "",
       "type": "text",
       "section": "infotext",
-      "default": "\nInfotext is what this software calls the text that contains generation parameters and can be used to generate the same picture again.\nIt is displayed in UI below the image. To use infotext, paste it into the prompt and click the ↙️ paste button.\n",
+      "default": "\nInfotext is what this software calls the text that contains generation parameters and can be used to generate the same picture again.\nIt is displayed in UI below the image. To use infotext, paste it into the prompt and click the \u2199\ufe0f paste button.\n",
       "min": null,
       "max": null,
       "step": null,
@@ -2111,6 +2111,70 @@
       "min": 0,
       "max": 10,
       "step": 1,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_flux_core_streaming_enabled",
+      "label": "Flux core streaming (experimental)",
+      "type": "checkbox",
+      "section": "sdxl",
+      "default": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_flux_core_streaming_policy",
+      "label": "Flux core streaming policy",
+      "type": "dropdown",
+      "section": "sdxl",
+      "default": "naive",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "naive",
+        "window",
+        "aggressive"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_flux_core_streaming_blocks_per_segment",
+      "label": "Flux core streaming blocks per segment",
+      "type": "slider",
+      "section": "sdxl",
+      "default": 4,
+      "min": 1,
+      "max": 16,
+      "step": 1,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_flux_core_streaming_window_size",
+      "label": "Flux core streaming window size",
+      "type": "slider",
+      "section": "sdxl",
+      "default": 2,
+      "min": 1,
+      "max": 16,
+      "step": 1,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_flux_core_streaming_auto_threshold_mb",
+      "label": "Flux core streaming auto-enable below free VRAM (MB)",
+      "type": "number",
+      "section": "sdxl",
+      "default": 0,
+      "min": 0,
+      "max": 65536,
+      "step": 256,
       "choices": null,
       "choices_source": null
     }

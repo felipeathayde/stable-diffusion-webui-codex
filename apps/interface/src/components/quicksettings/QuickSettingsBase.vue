@@ -1,5 +1,5 @@
 <template>
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-mode">
       <label class="label-muted">Mode</label>
       <div class="qs-row">
         <select class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
@@ -7,7 +7,7 @@
         </select>
       </div>
     </div>
-    <div class="quicksettings-group" v-if="!hideCheckpoint">
+    <div class="quicksettings-group qs-group-checkpoint" v-if="!hideCheckpoint">
       <label class="label-muted">Checkpoint</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -21,7 +21,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-vae">
       <label class="label-muted">VAE</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -35,7 +35,7 @@
       </div>
     </div>
 
-    <div v-if="showTextEncoder !== false" class="quicksettings-group">
+    <div v-if="showTextEncoder !== false" class="quicksettings-group qs-group-text-encoder">
       <label class="label-muted">Text Encoder</label>
       <div class="qs-row">
         <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
@@ -45,7 +45,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-attention">
       <label class="label-muted">Attention Backend</label>
       <div class="qs-row">
         <select class="select-md" :value="attentionBackend" @change="$emit('update:attentionBackend', ($event.target as HTMLSelectElement).value)">
@@ -54,7 +54,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-overrides">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
         <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">

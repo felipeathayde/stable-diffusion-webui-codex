@@ -331,14 +331,19 @@ class TextEncoderOverrideConfig:
     root_label:
         One of the labels exposed by `/api/text-encoders` (e.g. `sdxl//abs/.../models/sdxl-tenc`).
     components:
-        Optional subset of logical text encoder aliases (`clip_l`, `clip_g`, `t5xxl`, `umt5xxl`, ...)
-        that should be overridden. When omitted, all encoders in `ModelSignature.text_encoders`
-        are expected to have weights under the selected root.
+        Optional subset of logical text encoder aliases (`clip_l`, `clip_g`, `t5xxl`, `umt5xxl`, ...).
+        When omitted, all encoders in `ModelSignature.text_encoders` are expected to have weights
+        under the selected root or explicit path map.
+    explicit_paths:
+        Optional mapping from logical alias -> absolute weight path, e.g.
+        ``{\"clip_l\": \"/abs/.../clip_l_fp8.safetensors\"}``. When provided, the loader
+        will bypass root resolution for those aliases and use the explicit paths instead.
     """
 
     family: ModelFamily
     root_label: str
     components: tuple[str, ...] | None = None
+    explicit_paths: Dict[str, str] | None = None
 
 
 def _canonical_override_family(family: ModelFamily) -> ModelFamily:
@@ -377,6 +382,52 @@ def resolve_text_encoder_override_paths(
             % (override.family.value, model_family.value)
         )
 
+    allowed_exts = (".safetensors", ".bin", ".pt")
+
+    text_map = dict(getattr(estimated_config, "text_encoder_map", {}) or {})
+
+    # Fast path: explicit alias -> path mapping (e.g. Flux file-level overrides).
+    explicit = dict(override.explicit_paths or {})
+    if explicit:
+        if override.components:
+            aliases = tuple(override.components)
+        else:
+            aliases = tuple(explicit.keys())
+        if not aliases:
+            raise TextEncoderOverrideError(
+                "Text encoder override for family=%s provided explicit paths but no aliases."
+                % model_family.value
+            )
+        missing_aliases = [alias for alias in aliases if alias not in text_map]
+        if missing_aliases:
+            raise TextEncoderOverrideError(
+                "Text encoder override refers to unknown encoder aliases for family=%s: %s"
+                % (model_family.value, ", ".join(sorted(missing_aliases)))
+            )
+        component_paths: Dict[str, str] = {}
+        for alias in aliases:
+            path = explicit.get(alias)
+            if not path:
+                raise TextEncoderOverrideError(
+                    "Text encoder override missing explicit path for alias %r (family=%s)"
+                    % (alias, model_family.value)
+                )
+            norm = str(path)
+            if not os.path.isfile(norm):
+                raise TextEncoderOverrideError(
+                    "Text encoder override path for alias %r is not a file: %r"
+                    % (alias, norm)
+                )
+            if not norm.lower().endswith(allowed_exts):
+                raise TextEncoderOverrideError(
+                    "Text encoder override path for alias %r must end with one of: %s"
+                    % (alias, ", ".join(allowed_exts))
+                )
+            component_name = text_map[alias]
+            component_paths[component_name] = norm
+        return component_paths
+
+    # Root-based path resolution using /api/text-encoders labels.
     roots_by_family = list_text_encoder_roots_by_family()
     family_roots = list(roots_by_family.get(model_family.value) or [])
     root_path: str | None = None
@@ -411,7 +462,6 @@ def resolve_text_encoder_override_paths(
             % model_family.value
         )
 
-    text_map = dict(getattr(estimated_config, "text_encoder_map", {}) or {})
     missing_aliases = [alias for alias in aliases if alias not in text_map]
     if missing_aliases:
         raise TextEncoderOverrideError(
@@ -429,7 +479,6 @@ def resolve_text_encoder_override_paths(
         ) from exc
 
     component_paths: Dict[str, str] = {}
-    allowed_exts = (".safetensors", ".bin", ".pt")
 
     for alias in aliases:
         found = None

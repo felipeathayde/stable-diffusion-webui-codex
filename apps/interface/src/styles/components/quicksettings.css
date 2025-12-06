@@ -1,6 +1,18 @@
 @layer components {
   /* Header-integrated quicksettings: no sticky, no extra margins. */
-  .quicksettings { position: static; z-index: auto; background: transparent; border: 0; margin: 0; border-radius: 0; padding: 0.25rem 0; display: grid; grid-template-columns: 0.5fr 2fr 2fr 1.5fr 1.5fr 1fr auto auto; gap: 0.75rem; align-items: stretch; }
+  .quicksettings {
+    position: static;
+    z-index: auto;
+    background: transparent;
+    border: 0;
+    margin: 0;
+    border-radius: 0;
+    padding: 0.25rem 0;
+    display: grid;
+    grid-template-columns: 0.7fr 2fr 1.5fr 1.8fr 1.2fr 1.1fr 1.1fr;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
   .quicksettings-right { justify-self: end; align-self: end; }
   .quicksettings-group { display: grid; grid-template-rows: auto minmax(0, var(--control-h-md)); gap: 0.35rem; align-items: stretch; }
   .qs-row { display: grid; grid-auto-flow: column; align-items: stretch; gap: var(--space-sm); }
@@ -11,6 +23,23 @@
   .quicksettings .qs-refresh-btn,
   .quicksettings .qs-overrides-btn { height: 100%; padding-inline: 0.9rem; font-size: 0.85rem; }
   .qs-actions { display: flex; align-items: center; gap: 0.4rem; padding-bottom: 2px; }
+  .qs-paths-hint { grid-auto-flow: row; }
+
+  /* Two-row layout for the main QuickSettings bar (non-WAN). */
+  .quicksettings .qs-group-mode { grid-row: 1; grid-column: 1; }
+  .quicksettings .qs-group-checkpoint { grid-row: 1; grid-column: 2; }
+  .quicksettings .qs-group-vae { grid-row: 1; grid-column: 3; }
+  .quicksettings .qs-group-text-encoder,
+  .quicksettings .qs-group-flux-tenc { grid-row: 1; grid-column: 4; }
+  .quicksettings .qs-group-models { grid-row: 1; grid-column: 5; }
+
+  .quicksettings .qs-group-attention { grid-row: 2; grid-column: 1; }
+  .quicksettings .qs-group-overrides { grid-row: 2; grid-column: 2; }
+  .quicksettings .qs-group-perf-dtype { grid-row: 2; grid-column: 3; }
+  .quicksettings .qs-group-perf-vram { grid-row: 2; grid-column: 4; }
+  .quicksettings .qs-group-perf-offload { grid-row: 2; grid-column: 5; }
+  .quicksettings .qs-group-perf-fallback { grid-row: 2; grid-column: 6; }
+  .quicksettings .qs-group-perf-cache { grid-row: 2; grid-column: 7; }
 
   .quicksettings.quicksettings-loading .select-md {
     animation: qs-select-pulse 0.85s ease-in-out infinite alternate;
@@ -53,5 +82,14 @@
   .qs-switch-label { opacity: 0.82; }
 
   /* Narrow screens: fallback to auto-fit grid */
-  @media (max-width: 1200px) { .quicksettings { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); } }
+  @media (max-width: 1200px) {
+    .quicksettings {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    /* On small screens, let items flow naturally instead of forcing a 2-row layout. */
+    .quicksettings .quicksettings-group {
+      grid-column: auto !important;
+      grid-row: auto !important;
+    }
+  }
 }

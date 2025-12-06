@@ -2579,6 +2579,22 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         strict=True,
     )
     mem_management.reinitialize(runtime_config)
+    # Pre-warm model inventory at process bootstrap so `/api/models/inventory`
+    # is already hot when the UI first loads quicksettings. This avoids paying
+    # the full filesystem scan cost on the first UI request.
+    try:
+        from apps.backend.inventory import cache as _inv_cache
+        inv = _inv_cache.refresh()
+        logging.getLogger("inventory").info(
+            "inventory: initialized at startup (vaes=%d, text_encoders=%d, loras=%d, wan22.gguf=%d, metadata=%d)",
+            len(inv.get("vaes", [])),
+            len(inv.get("text_encoders", [])),
+            len(inv.get("loras", [])),
+            len(inv.get("wan22", [])),
+            len(inv.get("metadata", [])),
+        )
+    except Exception as e:
+        logging.getLogger("inventory").warning("inventory: failed to initialize at startup: %s", e)
     _RUNTIME_NAMESPACE = ns
     return ns
 

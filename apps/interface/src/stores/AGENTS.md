@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-05
+Last Review: 2025-12-06
 Status: Active
 
 ## Purpose
@@ -19,4 +19,4 @@ Status: Active
 - 2025-12-03: XYZ store now enqueues payload snapshots, supports stop-after-current vs stop-now (calling `/api/tasks/{id}/cancel`), and preserves hires/refiner in each job payload.
 - 2025-12-04: `engine_capabilities.ts` hydrates `/engines/capabilities` (under `/api` via `API_BASE`) once and exposes a cached map keyed by semantic engine tag (sd15, sdxl, flux, wan22, hunyuan_video, svd) so views/components can hide Highres/Refiner/video-specific UI when the backend declares a surface as unsupported.
 - 2025-12-05: `quicksettings.ts`, `txt2img.ts` e `sdxl.ts` agora expõem flags `smartOffload`/`smartFallback`/`smartCache` alimentadas por `/api/options`; os stores propagam esses valores para os payloads de geração (`smart_offload`/`smart_fallback`/`smart_cache`) para controlar descarregamento entre estágios, fallback para CPU em caso de OOM e caches SDXL (TEnc/embeds).
-- 2025-12-05: `flux.ts` passa a injetar `textEncoderOverride` nos payloads de `/flux` usando o primeiro text encoder selecionado nas QuickSettings (`currentTextEncoders[0]`, family=`'flux'`), alinhando o store Flux com a superfície de overrides de text encoder usada pelos model tabs de imagem; seleções adicionais de text encoder são persistidas como parte de `currentTextEncoders` para uso futuro, mas ainda não são consumidas pelo backend.
+- 2025-12-06: `flux.ts` volta a injetar `textEncoderOverride` nos payloads de `/flux`, agora usando os dois selects de text encoder da QuickSettings (labels `flux/<abs_path>` armazenados em `currentTextEncoders`) e o helper `deriveFluxTextEncoderOverrideFromLabels` para gerar componentes `clip_l=/abs/...` e `t5xxl=/abs/...`; o mesmo helper é reutilizado por `ImageModelTab.vue` quando `type === 'flux'`, garantindo que tabs de modelo e a view dedicada `/flux` compartilhem o mesmo contrato de override.

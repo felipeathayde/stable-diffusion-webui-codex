@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
+from apps.backend.runtime.flux.model import FluxTransformer2DModel
+from apps.backend.runtime.flux.streaming import (
+    StreamingConfig,
+    StreamedFluxCore,
+    StreamingPolicy,
+    CoreController,
+    trace_execution_plan,
+)
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.patchers.vae import VAE
@@ -64,11 +72,91 @@ def _k_predictor(repo: str, is_schnell: bool) -> FlowMatchEulerPrediction:
     )
 
 
+def _maybe_enable_streaming_core(
+    transformer: object,
+    *,
+    spec: FluxEngineSpec,
+    engine_options: Mapping[str, Any] | None,
+) -> object:
+    """Optionally wrap a Flux core with StreamedFluxCore based on engine options and VRAM state.
+
+    Streaming is currently only applied to the Flux engine (not Chroma) and only when
+    the transformer is a FluxTransformer2DModel instance.
+    """
+    if spec.name != "flux":
+        return transformer
+    if not isinstance(transformer, FluxTransformer2DModel):
+        return transformer
+
+    options = dict(engine_options or {})
+    streaming_config = StreamingConfig.from_options(options)
+
+    from apps.backend.runtime.memory import memory_management
+
+    core_device = memory_management.get_torch_device()
+    try:
+        free_bytes = memory_management.get_free_memory(core_device)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Flux streaming: failed to probe free memory (%s); disabling streaming", exc)
+        return transformer
+
+    try:
+        free_mb = int(free_bytes // (1024 * 1024))
+    except Exception:
+        free_mb = 0
+
+    if not streaming_config.should_enable(free_mb):
+        logger.debug("Flux streaming disabled (enabled=%s, free_vram_mb=%d)", streaming_config.enabled, free_mb)
+        return transformer
+
+    try:
+        plan = trace_execution_plan(transformer, blocks_per_segment=streaming_config.blocks_per_segment)
+        storage_device = memory_management.core_offload_device()
+
+        controller = CoreController(
+            storage_device=storage_device,
+            compute_device=core_device,
+            policy=StreamingPolicy(streaming_config.policy),
+            window_size=streaming_config.window_size,
+        )
+
+        streamed = StreamedFluxCore(transformer, plan, controller)
+
+        # Preserve loader metadata expected by KModel / patchers.
+        for attr in (
+            "storage_dtype",
+            "computation_dtype",
+            "load_device",
+            "initial_device",
+            "offload_device",
+            "architecture",
+        ):
+            if hasattr(transformer, attr):
+                setattr(streamed, attr, getattr(transformer, attr))
+        if hasattr(transformer, "codex_config"):
+            streamed.codex_config = transformer.codex_config
+
+        logger.info(
+            "Flux streaming enabled (policy=%s, blocks_per_segment=%d, window_size=%d, free_vram_mb=%d)",
+            streaming_config.policy,
+            streaming_config.blocks_per_segment,
+            streaming_config.window_size,
+            free_mb,
+        )
+        return streamed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to enable Flux streaming; falling back to non-streaming core: %s", exc, exc_info=True
+        )
+        return transformer
+
+
 def assemble_flux_runtime(
     *,
     spec: FluxEngineSpec,
     estimated_config,
     codex_components: Mapping[str, object],
+    engine_options: Mapping[str, Any] | None = None,
 ) -> FluxEngineRuntime:
     logger.debug("Assembling %s engine", spec.name)
 
@@ -87,8 +175,11 @@ def assemble_flux_runtime(
         logger.debug("Distilled CFG scale enabled for %s", spec.name)
     use_distilled_cfg = not schnell
 
+    transformer = codex_components["transformer"]
+    transformer = _maybe_enable_streaming_core(transformer, spec=spec, engine_options=engine_options)
+
     unet = UnetPatcher.from_model(
-        model=codex_components["transformer"],
+        model=transformer,
         diffusers_scheduler=None,
         k_predictor=k_predictor,
         config=estimated_config,

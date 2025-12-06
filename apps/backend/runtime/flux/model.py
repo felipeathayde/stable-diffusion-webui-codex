@@ -93,6 +93,10 @@ class FluxTransformer2DModel(nn.Module):
         context: torch.Tensor,
         y: torch.Tensor,
         guidance: Optional[torch.Tensor] = None,
+        *,
+        control=None,
+        transformer_options=None,
+        **_: object,
     ) -> torch.Tensor:
         self._validate_inputs(x, timestep, context, y, guidance)
 

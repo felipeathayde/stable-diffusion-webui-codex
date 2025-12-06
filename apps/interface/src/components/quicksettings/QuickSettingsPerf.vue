@@ -1,5 +1,5 @@
 <template>
-  <div class="quicksettings-group">
+  <div class="quicksettings-group qs-group-perf qs-group-perf-dtype">
     <label class="label-muted">Diffusion in Low Bits</label>
     <div class="qs-row">
       <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
@@ -8,7 +8,7 @@
     </div>
   </div>
 
-  <div class="quicksettings-group">
+  <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
     <label class="label-muted">GPU VRAM (MB)</label>
     <div class="qs-row">
       <input
@@ -22,7 +22,7 @@
     </div>
   </div>
 
-  <div class="quicksettings-group">
+  <div class="quicksettings-group qs-group-perf qs-group-perf-offload">
     <label class="label-muted">Smart Offload</label>
     <div class="qs-row">
       <label class="qs-switch">
@@ -37,7 +37,7 @@
     </div>
   </div>
 
-  <div class="quicksettings-group">
+  <div class="quicksettings-group qs-group-perf qs-group-perf-fallback">
     <label class="label-muted">Smart Fallback</label>
     <div class="qs-row">
       <label class="qs-switch">
@@ -52,7 +52,7 @@
     </div>
   </div>
 
-  <div class="quicksettings-group">
+  <div class="quicksettings-group qs-group-perf qs-group-perf-cache">
     <label class="label-muted">Smart Cache</label>
     <div class="qs-row">
       <label class="qs-switch">

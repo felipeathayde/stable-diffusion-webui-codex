@@ -238,16 +238,42 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 raise RuntimeError(f"Unsupported text encoder override family='{family_raw}'") from exc
             components_val = te_override_raw.get("components")
             components: tuple[str, ...] | None
+            explicit_paths: dict[str, str] | None = None
             if components_val is None:
                 components = None
             elif isinstance(components_val, (list, tuple)):
-                components = tuple(str(c).strip() for c in components_val if str(c).strip())
+                aliases: list[str] = []
+                paths: dict[str, str] = {}
+                for raw in components_val:
+                    s = str(raw).strip()
+                    if not s:
+                        continue
+                    # Support \"alias=path\" entries for explicit path overrides (e.g., Flux).
+                    if "=" in s:
+                        alias, path = s.split("=", 1)
+                        alias = alias.strip()
+                        path = path.strip()
+                        if alias and path:
+                            aliases.append(alias)
+                            paths[alias] = path
+                    else:
+                        aliases.append(s)
+                # De-duplicate aliases while preserving order.
+                seen: set[str] = set()
+                ordered_aliases: list[str] = []
+                for alias in aliases:
+                    if alias not in seen:
+                        seen.add(alias)
+                        ordered_aliases.append(alias)
+                components = tuple(ordered_aliases) if ordered_aliases else None
+                explicit_paths = paths or None
             else:
                 raise RuntimeError("text_encoder_override.components must be an array of strings when provided.")
             te_override_cfg = TextEncoderOverrideConfig(
                 family=family,
                 root_label=label_raw,
                 components=components,
+                explicit_paths=explicit_paths,
             )
         if bundle_obj is None:
             bundle = resolve_diffusion_bundle(model_ref, text_encoder_override=te_override_cfg)

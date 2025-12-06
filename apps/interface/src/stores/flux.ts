@@ -15,7 +15,7 @@ import {
   startTxt2Img,
   subscribeTask,
 } from '../api/client'
-import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
+import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, formatZodError } from '../api/payloads'
 import type { Txt2ImgRequest, HighresFormState, RefinerFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
 
@@ -271,9 +271,7 @@ export const useFluxStore = defineStore('flux', () => {
 
     let payload: Txt2ImgRequest
     try {
-      // Text encoder overrides for Flux are wired end-to-end (paths.json → inventory → QuickSettings),
-      // but backend resolution is still evolving; keep payloads backwards compatible for now.
-      const teOverride = undefined
+      const teOverride = deriveFluxTextEncoderOverrideFromLabels(quicksettings.currentTextEncoders)
       payload = buildTxt2ImgPayload({
         prompt: promptText,
         negativePrompt: negativeText,

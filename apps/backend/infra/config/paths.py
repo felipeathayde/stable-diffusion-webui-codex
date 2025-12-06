@@ -4,9 +4,35 @@ import json
 import os
 from pathlib import Path
 from typing import Dict, List
+import logging
 
 _PATHS_CACHE: Dict[str, List[str]] | None = None
 _PATHS_MTIME: float | None = None
+_LOG = logging.getLogger("backend.infra.config.paths")
+
+
+_MODEL_DIR_KEYS: tuple[str, ...] = (
+    # SD 1.5
+    "sd15_ckpt",
+    "sd15_tenc",
+    "sd15_vae",
+    "sd15_loras",
+    # SDXL
+    "sdxl_ckpt",
+    "sdxl_tenc",
+    "sdxl_vae",
+    "sdxl_loras",
+    # Flux
+    "flux_ckpt",
+    "flux_tenc",
+    "flux_vae",
+    "flux_loras",
+    # WAN22
+    "wan22_ckpt",
+    "wan22_tenc",
+    "wan22_vae",
+    "wan22_loras",
+)
 
 
 def _repo_root() -> Path:
@@ -51,9 +77,48 @@ def _load_paths_config() -> Dict[str, List[str]]:
                         items.append(v)
         cfg[key] = items
 
+    # Best-effort creation of model directories for relative roots declared
+    # in apps/paths.json. Only relative entries are touched; absolute paths
+    # are left to the operator to provision.
+    try:
+        _ensure_model_dirs(cfg)
+    except Exception:  # pragma: no cover - defensive
+        _LOG.exception("Failed to ensure model directories from paths.json")
+
     _PATHS_CACHE = cfg
     _PATHS_MTIME = stat.st_mtime
     return cfg
+
+
+def _ensure_model_dirs(cfg: Dict[str, List[str]]) -> None:
+    """Create default model directories for known keys when missing.
+
+    This is intentionally conservative:
+      - only keys in _MODEL_DIR_KEYS are considered;
+      - only relative entries are created (joined against the repo root);
+      - failures are logged but not raised.
+    """
+    root = _repo_root()
+    for key in _MODEL_DIR_KEYS:
+        values = cfg.get(key) or []
+        for entry in values:
+            v = entry.strip()
+            if not v:
+                continue
+            # Only provision directories for repo-relative paths; absolute
+            # paths may live on separate volumes or require manual setup.
+            if os.path.isabs(v):
+                continue
+            path = root / v
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:  # pragma: no cover - defensive
+                _LOG.warning(
+                    "Failed to create model directory for key %s at %s: %s",
+                    key,
+                    path,
+                    exc,
+                )
 
 
 def get_paths_config() -> Dict[str, List[str]]:

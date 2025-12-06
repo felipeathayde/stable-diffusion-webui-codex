@@ -98,6 +98,7 @@ const presets = useUiPresetsStore()
 const route = useRoute()
 const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
+const pathsConfig = ref<Record<string, string[]>>({})
 const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
 const inventoryWan = ref<Array<{ name: string; path: string; stage: string }>>([])
 const engineCaps = useEngineCapabilitiesStore()
@@ -111,7 +112,23 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => tabsStore.activeTab?.type ?? 'sd15')
+const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => {
+  const tabType = tabsStore.activeTab?.type
+  if (tabType === 'sd15' || tabType === 'sdxl' || tabType === 'flux' || tabType === 'wan') {
+    return tabType
+  }
+
+  const p = route.path
+  if (p.startsWith('/flux')) return 'flux'
+  if (p.startsWith('/sdxl')) return 'sdxl'
+
+  const eng = (store.currentEngine || '').toLowerCase()
+  if (eng.startsWith('flux')) return 'flux'
+  if (eng.startsWith('sdxl')) return 'sdxl'
+  if (eng.startsWith('wan')) return 'wan'
+
+  return 'sd15'
+})
 const semanticEngine = computed<string>(() => {
   // Prefer semantic engine from UI blocks when available (video tabs etc.).
   if (uiBlocks.semanticEngine) return uiBlocks.semanticEngine
@@ -134,13 +151,42 @@ async function loadInventory(): Promise<void> {
   }
 }
 
+async function loadPaths(): Promise<void> {
+  try {
+    const res = await fetchPaths()
+    pathsConfig.value = (res.paths || {}) as Record<string, string[]>
+  } catch (e) {
+    pathsConfig.value = {}
+  }
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\+/g, '/').replace(/\/+$/, '')
+}
+
+function fileInPaths(file: string, key: string): boolean {
+  if (!file) return false
+  const roots = pathsConfig.value[key] || []
+  if (!roots.length) return false
+  const fNorm = normalizePath(file)
+  for (const root of roots) {
+    const rNorm = normalizePath(root)
+    if (!rNorm) continue
+    if (fNorm === rNorm || fNorm.startsWith(rNorm + '/')) return true
+  }
+  return false
+}
+
 function modelMatchesFamily(meta: Record<string, unknown> | undefined, title: string, file: string, family: string): boolean {
   const fam = String((meta?.['family'] as string) || (meta?.['model_family'] as string) || '').toLowerCase()
   const t = (title || '').toLowerCase(); const f = (file || '').toLowerCase()
   if (fam) return fam.includes(family)
   if (family === 'sdxl') return t.includes('sdxl') || f.includes('sdxl')
   if (family === 'sd15') return t.includes('1.5') || t.includes('sd15') || f.includes('sd15') || f.includes('v1-5')
-  if (family === 'flux') return t.includes('flux') || f.includes('flux')
+  if (family === 'flux') {
+    if (fileInPaths(file, 'flux_ckpt')) return true
+    return t.includes('flux') || f.includes('flux')
+  }
   if (family === 'wan') return t.includes('wan') || f.includes('wan')
   return true
 }
@@ -154,9 +200,13 @@ const filteredModelTitles = computed(() => filteredModels.value.map(m => m.title
 function isVaeForFamily(name: string, fam: string): boolean {
   const rec = inventoryVaes.value.find(v => v.name === name || v.path.endsWith('/' + name))
   const scale = rec?.scaling_factor ?? null
+  const path = rec?.path ?? ''
   if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
   if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
-  if (fam === 'flux') return (scale !== null) ? Math.abs(Number(scale) - 0.3611) < 1e-3 : /flux/i.test(name)
+  if (fam === 'flux') {
+    if (fileInPaths(path, 'flux_vae')) return true
+    return (scale !== null) ? Math.abs(Number(scale) - 0.3611) < 1e-3 : /flux/i.test(name)
+  }
   return true
 }
 
@@ -435,6 +485,7 @@ onMounted(() => {
   void store.init()
   void presets.init(currentTab())
   void loadInventory()
+  void loadPaths()
   void engineCaps.init()
 })
 

@@ -103,6 +103,7 @@ export interface EngineCapabilities {
 
 export interface EngineCapabilitiesResponse {
   engines: Record<string, EngineCapabilities>
+  smart_cache?: Record<string, { hits: number; misses: number }>
 }
 
 export interface EmbeddingsResponse {

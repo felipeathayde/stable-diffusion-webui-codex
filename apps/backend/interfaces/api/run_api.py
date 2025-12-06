@@ -829,7 +829,7 @@ def build_app() -> FastAPI:
         print(color_yellow(f"[models] unload requested for tab {tab_id}"))
         return {'ok': True}
 
-    @app.get('/engines/capabilities')
+    @app.get('/api/engines/capabilities')
     def list_engine_capabilities() -> Dict[str, Any]:
         """Expose semantic engine parameter surfaces and Smart Cache diagnostics.
 

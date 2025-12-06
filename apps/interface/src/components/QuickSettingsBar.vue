@@ -74,6 +74,9 @@
       <div class="qs-row">
         <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
       </div>
+      <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
+        <small class="label-muted">{{ currentPathsHint }}</small>
+      </div>
     </div>
 
     <QuickSettingsOverridesModal v-model="showOverridesModal" />
@@ -235,6 +238,20 @@ const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
   const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && name.startsWith(prefix))
+})
+
+const currentPathsHint = computed(() => {
+  const fam = activeFamily.value
+  const prefix = enginePrefixForFamily(fam)
+  const keys = [`${prefix}_ckpt`, `${prefix}_tenc`, `${prefix}_vae`]
+  const parts: string[] = []
+  for (const key of keys) {
+    const vals = pathsConfig.value[key] || []
+    if (vals.length) {
+      parts.push(`${key}: ${vals.join(', ')}`)
+    }
+  }
+  return parts.join(' | ')
 })
 const hideCheckpoint = computed(() => {
   const p = route.path

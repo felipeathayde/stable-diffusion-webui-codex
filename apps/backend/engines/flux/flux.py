@@ -31,6 +31,10 @@ class Flux(CodexDiffusionEngine):
             model_types=("flux",),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
+            extras={
+                "samplers": ("euler", "euler_a", "ddim", "dpmpp_2m"),
+                "schedulers": ("simple", "beta", "normal"),
+            },
         )
 
     def _build_components(

@@ -6,7 +6,6 @@ from . import kernels  # noqa: F401 - triggers registration
 
 from .core import QuantType, BLOCK_SIZES, register_quant, get_quant_spec
 from .tensor import OpusParameter
-from .cache import DeviceCache, get_device_cache
 from .api import dequantize, bake, quantize
 
 __all__ = [
@@ -21,10 +20,6 @@ __all__ = [
     # Registry
     "register_quant",
     "get_quant_spec",
-    # Cache
-    "DeviceCache",
-    "get_device_cache",
 ]
 
-__version__ = "1.0.0"
-
+__version__ = "2.0.0"  # Major version bump: ComfyUI-GGUF port

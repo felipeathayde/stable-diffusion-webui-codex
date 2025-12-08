@@ -165,15 +165,24 @@ class Txt2ImgPipelineRunner:
                 return cached
             record_smart_cache_miss("sdxl.runner.conditioning")
 
+        # Distilled CFG models (Flux) don't use uncond - skip generating it entirely
+        uses_distilled_cfg = getattr(sd_model, "use_distilled_cfg_scale", False)
+        
         # Preserve spatial metadata via engine helper when available
         if hasattr(sd_model, "_prepare_prompt_wrappers"):
             prompts_wrapped = sd_model._prepare_prompt_wrappers(prompts, processing, is_negative=False)
-            negative_wrapped = sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
             cond = sd_model.get_learned_conditioning(prompts_wrapped)
-            uncond = sd_model.get_learned_conditioning(negative_wrapped)
+            if uses_distilled_cfg:
+                uncond = None
+            else:
+                negative_wrapped = sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
+                uncond = sd_model.get_learned_conditioning(negative_wrapped)
         else:
             cond = sd_model.get_learned_conditioning(prompts)
-            uncond = sd_model.get_learned_conditioning(negative_prompts)
+            if uses_distilled_cfg:
+                uncond = None
+            else:
+                uncond = sd_model.get_learned_conditioning(negative_prompts)
 
         # If uncond comes back zero for a non-empty negative prompt, fail fast instead of sampling with CFG degenerate
         non_empty_negative = any(str(p or "").strip() for p in negative_prompts)
@@ -240,12 +249,14 @@ class Txt2ImgPipelineRunner:
                 _shape(va), _dtype(va), _device(va), (_norm(va) or 0.0), float(va.detach().float().norm().item()) if va is not None else 0.0,
                 (p_mean or 0.0), (p_l2 or 0.0), (adm_mean or 0.0), (adm_l2 or 0.0),
             )
-            self._logger.info(
-                "[sdxl] uncond: cross shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f | vector shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f pooled_mean=%.4f pooled_l2=%.4f adm_mean=%.4f adm_l2=%.4f",
-                _shape(ua), _dtype(ua), _device(ua), (_norm(ua) or 0.0), float(ua.detach().float().norm().item()) if ua is not None else 0.0,
-                _shape(uv), _dtype(uv), _device(uv), (_norm(uv) or 0.0), float(uv.detach().float().norm().item()) if uv is not None else 0.0,
-                (up_mean or 0.0), (up_l2 or 0.0), (uadm_mean or 0.0), (uadm_l2 or 0.0),
-            )
+            # Only log uncond if it exists (distilled CFG models like Flux don't use uncond)
+            if uncond is not None:
+                self._logger.info(
+                    "[sdxl] uncond: cross shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f | vector shape=%s dtype=%s dev=%s mean_abs=%.4f l2=%.4f pooled_mean=%.4f pooled_l2=%.4f adm_mean=%.4f adm_l2=%.4f",
+                    _shape(ua), _dtype(ua), _device(ua), (_norm(ua) or 0.0), float(ua.detach().float().norm().item()) if ua is not None else 0.0,
+                    _shape(uv), _dtype(uv), _device(uv), (_norm(uv) or 0.0), float(uv.detach().float().norm().item()) if uv is not None else 0.0,
+                    (up_mean or 0.0), (up_l2 or 0.0), (uadm_mean or 0.0), (uadm_l2 or 0.0),
+                )
         except Exception as exc:  # noqa: BLE001
             self._logger.debug("[sdxl] conditioning diagnostics skipped: %s", exc)
 
@@ -383,7 +394,8 @@ class Txt2ImgPipelineRunner:
         uncond = unconditional_data
         if cond is None or uncond is None:
             cond, uncond = self._compute_conditioning(processing, prompt_context)
-            if cond is None or uncond is None:
+            # For distilled CFG models (Flux), uncond is intentionally None - only cond is required
+            if cond is None:
                 raise RuntimeError("Failed to build conditioning for txt2img; get_learned_conditioning returned None.")
             payload = ConditioningPayload(conditioning=cond, unconditional=uncond)
             self._log_conditioning(cond, uncond)

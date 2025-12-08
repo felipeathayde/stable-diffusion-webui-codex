@@ -38,6 +38,9 @@ class EngineParamSurface:
     supports_refiner: bool
     supports_lora: bool
     supports_controlnet: bool
+    # Optional: restrict UI to only these samplers/schedulers. None = allow all.
+    samplers: tuple[str, ...] | None = None
+    schedulers: tuple[str, ...] | None = None
 
 
 ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
@@ -73,6 +76,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
+        samplers=("euler", "euler_a", "ddim", "dpmpp_2m"),
+        schedulers=("simple", "beta", "normal"),
     ),
     # Wan 2.2 dual-stage video (txt2vid/img2vid).
     SemanticEngine.WAN22: EngineParamSurface(

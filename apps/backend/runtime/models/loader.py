@@ -1601,36 +1601,8 @@ def _load_huggingface_component(
             
             state_dict = _strip_transformer_prefixes(state_dict)
             
-            # Normalize GGUF key names to Codex model key names
-            # GGUF (Black Forest Labs format) uses different naming than Codex implementation:
-            # - GGUF: .lin. → Codex: .linear. (in ModulationMLP)
-            # - GGUF: .adaLN_modulation.1. → Codex: .modulation.1. (in LastLayer)
-            def _normalize_flux_gguf_keys(sd: Mapping[str, Any]) -> Mapping[str, Any]:
-                from apps.backend.runtime.utils import RemapKeysView
-                mapping: Dict[str, str] = {}
-                KEY_REMAP_PAIRS = [
-                    # ModulationMLP uses .lin but Codex model uses .linear
-                    (".img_mod.lin.", ".img_mod.linear."),
-                    (".txt_mod.lin.", ".txt_mod.linear."),
-                    (".modulation.lin.", ".modulation.linear."),
-                    # LastLayer uses adaLN_modulation but Codex uses modulation
-                    ("final_layer.adaLN_modulation.", "final_layer.modulation."),
-                ]
-                changed_count = 0
-                for raw_key in sd.keys():
-                    key = str(raw_key)
-                    new_key = key
-                    for old_pattern, new_pattern in KEY_REMAP_PAIRS:
-                        if old_pattern in new_key:
-                            new_key = new_key.replace(old_pattern, new_pattern)
-                            changed_count += 1
-                    mapping[new_key] = key
-                print(f"[DEBUG] Flux GGUF key normalization: total={len(mapping)} remapped={changed_count}")
-                return RemapKeysView(sd, mapping)
-            
-            if cls_name == "FluxTransformer2DModel":
-                print(f"[DEBUG] Applying Flux GGUF key normalization (cls_name={cls_name})")
-                state_dict = _normalize_flux_gguf_keys(state_dict)
+            # NOTE: GGUF key names now match Codex model names directly
+            # No remapping needed - components.py uses .lin and .adaLN_modulation
 
 
         _trace.event("load_state_dict", module=module_name, architecture=architecture_value, tensors=len(state_dict))

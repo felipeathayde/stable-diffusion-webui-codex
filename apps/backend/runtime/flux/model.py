@@ -177,10 +177,10 @@ class FluxTransformer2DModel(nn.Module):
             if guidance is None:
                 logger.error("[flux] guidance.enabled=True but guidance tensor is None!")
                 raise ValueError("guidance embedding required but not provided")
-            logger.info("[flux] forward guidance: enabled=True, shape=%s, values=[%.2f]", tuple(guidance.shape), guidance[0].item())
+            logger.debug("[flux] forward guidance: enabled=True, shape=%s, values=[%.2f]", tuple(guidance.shape), guidance[0].item())
             vec = vec + self.guidance_in(timestep_embedding(guidance, 256).to(img.dtype))
         else:
-            logger.info("[flux] forward guidance: enabled=False (schnell variant), guidance_arg=%s", guidance is not None)
+            logger.debug("[flux] forward guidance: enabled=False (schnell variant), guidance_arg=%s", guidance is not None)
 
         txt = self.txt_in(context)
         rotary = self._build_rotary(img_ids, txt_ids)

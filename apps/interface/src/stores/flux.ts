@@ -291,7 +291,7 @@ export const useFluxStore = defineStore('flux', () => {
         smartCache: quicksettings.smartCache,
         textEncoderOverride: teOverride,
         engine: ENGINE_ID,
-        model: selectedModel.value,
+        model: quicksettings.currentModel || selectedModel.value,
         highres,
         refiner,
       })
@@ -324,27 +324,28 @@ export const useFluxStore = defineStore('flux', () => {
         progress.value.totalSteps = event.total_steps ?? 0
         break
       case 'result':
-        if (event.payload && event.payload.images) {
-          gallery.value = event.payload.images
-        }
-        if (event.payload && event.payload.info) {
-          try {
-            const parsed = JSON.parse(event.payload.info) as Record<string, unknown>
-            info.value = parsed
-            const raw = (parsed as any).seed ?? (parsed as any).all_seeds?.[0]
-            const resolvedSeed = typeof raw === 'number' ? raw : Number(raw)
-            if (Number.isFinite(resolvedSeed)) {
-              lastSeed.value = resolvedSeed
-            }
-          } catch (e) {
-            info.value = { raw: event.payload.info }
+      if ((event as any).images) {
+        gallery.value = (event as any).images
+      }
+      if ((event as any).info) {
+        try {
+          const raw = (event as any).info
+          const parsed = typeof raw === 'object' ? raw : JSON.parse(raw)
+          info.value = parsed
+          const seedVal = (parsed as any).seed ?? (parsed as any).all_seeds?.[0]
+          const resolvedSeed = typeof seedVal === 'number' ? seedVal : Number(seedVal)
+          if (Number.isFinite(resolvedSeed)) {
+            lastSeed.value = resolvedSeed
           }
+        } catch (e) {
+          info.value = { raw: (event as any).info }
         }
-        if (status.value === 'running') {
-          status.value = 'done'
-          finishedAt.value = performance.now()
-        }
-        break
+      }
+      if (status.value === 'running') {
+        status.value = 'done'
+        finishedAt.value = performance.now()
+      }
+      break
       case 'error':
         status.value = 'error'
         errorMessage.value = event.message

@@ -120,5 +120,25 @@ def serialize_engine_capabilities() -> Dict[str, Dict[str, object]]:
     return {engine: asdict(surface) for engine, surface in list_engine_capabilities().items()}
 
 
-__all__ = ["SemanticEngine", "EngineParamSurface", "ENGINE_SURFACES", "list_engine_capabilities", "serialize_engine_capabilities"]
+def serialize_family_capabilities() -> Dict[str, Dict[str, object]]:
+    """Return FamilyCapabilities for all model families as JSON-serializable dicts.
+    
+    Returns:
+        Dict mapping family name (e.g. "FLUX", "SDXL") to capability dict.
+    """
+    from apps.backend.runtime.model_registry.family_runtime import FAMILY_RUNTIME_SPECS
+    
+    result = {}
+    for family, spec in FAMILY_RUNTIME_SPECS.items():
+        result[family.value] = spec.capabilities.to_dict()
+    return result
 
+
+__all__ = [
+    "SemanticEngine", 
+    "EngineParamSurface", 
+    "ENGINE_SURFACES", 
+    "list_engine_capabilities", 
+    "serialize_engine_capabilities",
+    "serialize_family_capabilities",
+]

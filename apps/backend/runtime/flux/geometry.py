@@ -30,7 +30,9 @@ def build_rotary_frequencies(
     cos_out = torch.cos(out)
     sin_out = torch.sin(out)
     stacked = torch.stack((cos_out, -sin_out, sin_out, cos_out), dim=-1)
-    rotary = stacked.view(*positions.shape, dim, 2, 2)
+    # stacked shape: (*positions.shape, dim//2, 4)
+    # We want shape: (*positions.shape, dim//2, 2, 2) for rotation matrix format
+    rotary = stacked.view(*positions.shape, dim // 2, 2, 2)
     return rotary.float()
 
 

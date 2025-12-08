@@ -30,7 +30,18 @@ def find_checkpoint(name_or_path: str) -> Optional[CheckpointRecord]:
     record = reg.get_checkpoint(name_or_path)
     if record is not None:
         return record
-    # Attempt to match by filename when a path is supplied.
+    # Try matching by title (which includes extension like 'model.gguf')
+    for candidate in reg.list_checkpoints(refresh=False):
+        if candidate.title == name_or_path:
+            return candidate
+    # Try matching by filename or stem (without extension)
+    name_stem = Path(name_or_path).stem
+    for candidate in reg.list_checkpoints(refresh=False):
+        if candidate.name == name_stem:
+            return candidate
+        if Path(candidate.filename).name == name_or_path:
+            return candidate
+    # Attempt to match by path when a file/directory path is supplied.
     path = Path(name_or_path)
     if path.is_file() or path.is_dir():
         for candidate in reg.list_checkpoints(refresh=False):

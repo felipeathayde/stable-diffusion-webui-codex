@@ -56,6 +56,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const smartOffload = ref<boolean>(false)
   const smartFallback = ref<boolean>(false)
   const smartCache = ref<boolean>(true)
+  const coreStreaming = ref<boolean>(false)
 
   // Basic engine/mode options (sync with legacy fallback)
   const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'svd', 'hunyuan_video', 'wan22'])
@@ -162,6 +163,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
     if (typeof (opts as any).codex_smart_cache === 'boolean') {
       smartCache.value = (opts as any).codex_smart_cache
+    }
+    if (typeof (opts as any).codex_core_streaming === 'boolean') {
+      coreStreaming.value = (opts as any).codex_core_streaming
     }
   }
 
@@ -309,6 +313,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     await updateOptions({ codex_smart_cache: value })
   }
 
+  async function setCoreStreaming(value: boolean): Promise<void> {
+    coreStreaming.value = value
+    await updateOptions({ codex_core_streaming: value })
+  }
+
   return {
     models,
     samplers,
@@ -362,8 +371,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     smartOffload,
     smartFallback,
     smartCache,
+    coreStreaming,
     setSmartOffload,
     setSmartFallback,
     setSmartCache,
+    setCoreStreaming,
   }
 })

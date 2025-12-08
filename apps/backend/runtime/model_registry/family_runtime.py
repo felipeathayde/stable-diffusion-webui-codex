@@ -1,0 +1,419 @@
+"""Family Runtime Specifications.
+
+This module defines runtime parameters for each model family,
+providing a centralized source of truth for latent channels,
+VAE normalization, and other family-specific settings.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
+
+from apps.backend.runtime.model_registry.specs import ModelFamily, PredictionKind
+
+
+@dataclass(frozen=True)
+class FamilyCapabilities:
+    """UI-facing capabilities for a model family.
+    
+    Used by frontend to dynamically show/hide UI elements based on
+    what the model actually supports.
+    """
+    # Conditioning support
+    supports_negative_prompt: bool = True   # False for Flux/Chroma
+    supports_cfg: bool = True               # False for distilled/turbo models
+    
+    # UI elements visibility
+    shows_clip_skip: bool = True            # False for T5-only models
+    shows_guidance_scale: bool = True       # False if CFG not used
+    shows_steps: bool = True
+    shows_seed: bool = True
+    shows_width_height: bool = True
+    
+    # Sampler/scheduler support (empty tuple = all supported)
+    supported_samplers: Tuple[str, ...] = ()
+    supported_schedulers: Tuple[str, ...] = ()
+    excluded_samplers: Tuple[str, ...] = ()     # Samplers to hide
+    excluded_schedulers: Tuple[str, ...] = ()   # Schedulers to hide
+    
+    # Resolution constraints
+    min_resolution: int = 256
+    max_resolution: int = 4096
+    resolution_step: int = 64  # Width/height must be multiple of this
+    
+    def to_dict(self) -> dict:
+        """Convert to JSON-serializable dict for API."""
+        return {
+            "supports_negative_prompt": self.supports_negative_prompt,
+            "supports_cfg": self.supports_cfg,
+            "shows_clip_skip": self.shows_clip_skip,
+            "shows_guidance_scale": self.shows_guidance_scale,
+            "shows_steps": self.shows_steps,
+            "shows_seed": self.shows_seed,
+            "shows_width_height": self.shows_width_height,
+            "supported_samplers": list(self.supported_samplers),
+            "supported_schedulers": list(self.supported_schedulers),
+            "excluded_samplers": list(self.excluded_samplers),
+            "excluded_schedulers": list(self.excluded_schedulers),
+            "min_resolution": self.min_resolution,
+            "max_resolution": self.max_resolution,
+            "resolution_step": self.resolution_step,
+        }
+
+
+# Pre-defined capabilities for common model types
+CAPABILITIES_STANDARD = FamilyCapabilities()  # SD15, SD20, SDXL
+
+CAPABILITIES_XL = FamilyCapabilities(
+    shows_clip_skip=True,  # SDXL uses dual CLIP
+)
+
+CAPABILITIES_FLOW_NO_CFG = FamilyCapabilities(
+    supports_negative_prompt=False,
+    supports_cfg=False,
+    shows_clip_skip=False,
+    shows_guidance_scale=False,  # Flux uses distilled guidance
+)
+
+CAPABILITIES_FLOW_WITH_CFG = FamilyCapabilities(
+    supports_negative_prompt=True,
+    supports_cfg=True,
+    shows_clip_skip=False,  # Uses T5
+)
+
+CAPABILITIES_TURBO = FamilyCapabilities(
+    supports_cfg=False,  # Turbo models don't use CFG
+    shows_guidance_scale=False,
+    shows_clip_skip=False,
+)
+
+
+@dataclass(frozen=True)
+class FamilyRuntimeSpec:
+    """Runtime parameters for a model family.
+    
+    These parameters determine how latents are generated, how the VAE
+    normalizes/denormalizes, and other inference-time settings.
+    """
+    family: ModelFamily
+    
+    # Latent space configuration
+    latent_channels: int  # 4 for SD/SDXL, 16 for Flux/SD3
+    latent_scale_factor: int  # Downscale factor: 8 for most
+    
+    # VAE normalization (applied during encode/decode)
+    vae_scaling_factor: float  # Multiply latent before decode
+    vae_shift_factor: float  # Shift latent before decode (0 for SD, non-zero for Flux)
+    
+    # Conditioning
+    context_dim: int  # Cross-attention dimension: 768, 2048, 4096
+    uses_pooled_output: bool  # SDXL/SD3 use pooled embeddings
+    uses_guidance_embed: bool  # Flux dev uses guidance embedding
+    
+    # Sampling defaults
+    default_cfg: float  # Default CFG scale
+    prediction: PredictionKind  # Prediction type (epsilon, v, flow)
+    
+    # Sampling parameters (new)
+    default_steps: int = 20  # Default sampling steps
+    flow_shift: Optional[float] = None  # Flow-match shift (None for non-flow models)
+    scheduler_default: str = "automatic"  # Default scheduler name
+    
+    # Text encoding parameters (new)
+    t5_min_length: Optional[int] = None  # T5 padding length (256 for Flux/SD3, None if no T5)
+    clip_skip_default: int = 1  # Default CLIP skip
+    uses_t5: bool = False  # Whether model uses T5 encoder
+    
+    # Architecture flags (new - replaces is_sdxl checks)
+    is_xl_variant: bool = False  # True for SDXL, SD35, Flux (affects AYS tables, etc.)
+    uses_adm: bool = False  # ADM/y conditioning (SDXL, SD35)
+    uses_time_ids: bool = False  # SDXL-style time_ids
+    
+    # Resolution hints (new)
+    preferred_width: int = 1024  # Default width
+    preferred_height: int = 1024  # Default height
+    patch_size: int = 1  # DiT patch size (2 for Flux/SD3, 1 for UNet)
+    
+    # Optional overrides
+    sigma_max: Optional[float] = None
+    sigma_min: Optional[float] = None
+    
+    # UI capabilities for frontend
+    capabilities: FamilyCapabilities = field(default_factory=FamilyCapabilities)
+
+
+# -----------------------------------------------------------------------------
+# Family Runtime Specs Registry
+# -----------------------------------------------------------------------------
+
+FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
+    ModelFamily.SD15: FamilyRuntimeSpec(
+        family=ModelFamily.SD15,
+        latent_channels=4,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.18215,
+        vae_shift_factor=0.0,
+        context_dim=768,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=7.5,
+        prediction=PredictionKind.EPSILON,
+        # New fields
+        default_steps=20,
+        scheduler_default="karras",
+        clip_skip_default=1,
+        preferred_width=512,
+        preferred_height=512,
+    ),
+    ModelFamily.SD20: FamilyRuntimeSpec(
+        family=ModelFamily.SD20,
+        latent_channels=4,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.18215,
+        vae_shift_factor=0.0,
+        context_dim=1024,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=7.5,
+        prediction=PredictionKind.V_PREDICTION,
+        # New fields
+        default_steps=20,
+        scheduler_default="karras",
+        clip_skip_default=1,
+        preferred_width=768,
+        preferred_height=768,
+    ),
+    ModelFamily.SDXL: FamilyRuntimeSpec(
+        family=ModelFamily.SDXL,
+        latent_channels=4,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.13025,
+        vae_shift_factor=0.0,
+        context_dim=2048,
+        uses_pooled_output=True,
+        uses_guidance_embed=False,
+        default_cfg=7.0,
+        prediction=PredictionKind.EPSILON,
+        # New fields
+        default_steps=25,
+        scheduler_default="karras",
+        clip_skip_default=2,
+        is_xl_variant=True,
+        uses_adm=True,
+        uses_time_ids=True,
+        preferred_width=1024,
+        preferred_height=1024,
+    ),
+    ModelFamily.SDXL_REFINER: FamilyRuntimeSpec(
+        family=ModelFamily.SDXL_REFINER,
+        latent_channels=4,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.13025,
+        vae_shift_factor=0.0,
+        context_dim=1280,
+        uses_pooled_output=True,
+        uses_guidance_embed=False,
+        default_cfg=5.0,
+        prediction=PredictionKind.EPSILON,
+        # New fields
+        default_steps=20,
+        scheduler_default="karras",
+        clip_skip_default=2,
+        is_xl_variant=True,
+        uses_adm=True,
+        uses_time_ids=True,
+        preferred_width=1024,
+        preferred_height=1024,
+    ),
+    ModelFamily.SD3: FamilyRuntimeSpec(
+        family=ModelFamily.SD3,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=1.5305,
+        vae_shift_factor=0.0609,
+        context_dim=4096,
+        uses_pooled_output=True,
+        uses_guidance_embed=False,
+        default_cfg=5.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=28,
+        flow_shift=3.0,
+        scheduler_default="simple",
+        t5_min_length=256,
+        uses_t5=True,
+        is_xl_variant=True,
+        uses_adm=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.SD35: FamilyRuntimeSpec(
+        family=ModelFamily.SD35,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=1.5305,
+        vae_shift_factor=0.0609,
+        context_dim=4096,
+        uses_pooled_output=True,
+        uses_guidance_embed=False,
+        default_cfg=4.5,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=28,
+        flow_shift=3.0,
+        scheduler_default="simple",
+        t5_min_length=256,
+        uses_t5=True,
+        is_xl_variant=True,
+        uses_adm=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.FLUX: FamilyRuntimeSpec(
+        family=ModelFamily.FLUX,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.3611,
+        vae_shift_factor=0.1159,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=True,  # Flux dev; Schnell is False
+        default_cfg=1.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=20,
+        flow_shift=1.15,
+        scheduler_default="simple",
+        t5_min_length=256,
+        uses_t5=True,
+        is_xl_variant=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_FLOW_NO_CFG,
+    ),
+    ModelFamily.CHROMA: FamilyRuntimeSpec(
+        family=ModelFamily.CHROMA,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.3611,
+        vae_shift_factor=0.1159,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=1.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=20,
+        flow_shift=1.15,
+        scheduler_default="simple",
+        t5_min_length=256,
+        uses_t5=True,
+        is_xl_variant=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_FLOW_NO_CFG,
+    ),
+    ModelFamily.AURA: FamilyRuntimeSpec(
+        family=ModelFamily.AURA,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.5,
+        vae_shift_factor=0.0,
+        context_dim=2048,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=3.5,
+        prediction=PredictionKind.V_PREDICTION,
+        # New fields
+        default_steps=20,
+        scheduler_default="karras",
+        patch_size=2,
+    ),
+    ModelFamily.WAN22: FamilyRuntimeSpec(
+        family=ModelFamily.WAN22,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=1.0,
+        vae_shift_factor=0.0,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=5.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=20,
+        flow_shift=8.0,  # WAN22 14B default
+        scheduler_default="simple",
+        t5_min_length=512,  # UMT5-XXL
+        uses_t5=True,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.QWEN_IMAGE: FamilyRuntimeSpec(
+        family=ModelFamily.QWEN_IMAGE,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.3611,
+        vae_shift_factor=0.1159,
+        context_dim=3584,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=4.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=8,  # ZImage turbo model
+        flow_shift=3.0,
+        scheduler_default="simple",
+        is_xl_variant=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_TURBO,
+    ),
+}
+
+
+def get_family_spec(family: ModelFamily) -> FamilyRuntimeSpec:
+    """Get the runtime spec for a model family.
+    
+    Args:
+        family: The model family enum value.
+        
+    Returns:
+        The FamilyRuntimeSpec for this family.
+        
+    Raises:
+        KeyError: If the family is not in the registry.
+    """
+    if family not in FAMILY_RUNTIME_SPECS:
+        raise KeyError(f"No runtime spec defined for family {family}")
+    return FAMILY_RUNTIME_SPECS[family]
+
+
+def get_family_spec_or_default(
+    family: ModelFamily, 
+    default: Optional[ModelFamily] = ModelFamily.SDXL
+) -> FamilyRuntimeSpec:
+    """Get the runtime spec for a model family, with fallback.
+    
+    Args:
+        family: The model family to look up.
+        default: The fallback family if not found. If None, raises KeyError.
+        
+    Returns:
+        The FamilyRuntimeSpec for this family or the default.
+    """
+    if family in FAMILY_RUNTIME_SPECS:
+        return FAMILY_RUNTIME_SPECS[family]
+    if default is not None and default in FAMILY_RUNTIME_SPECS:
+        return FAMILY_RUNTIME_SPECS[default]
+    raise KeyError(f"No runtime spec defined for family {family} and no valid default")
+
+
+__all__ = [
+    "FamilyCapabilities",
+    "CAPABILITIES_STANDARD",
+    "CAPABILITIES_XL",
+    "CAPABILITIES_FLOW_NO_CFG",
+    "CAPABILITIES_FLOW_WITH_CFG",
+    "CAPABILITIES_TURBO",
+    "FamilyRuntimeSpec",
+    "FAMILY_RUNTIME_SPECS",
+    "get_family_spec",
+    "get_family_spec_or_default",
+]

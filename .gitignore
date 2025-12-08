@@ -10,7 +10,7 @@ __pycache__
 *_m.py
 *_i.py
 !apps/backend/gguf/quants/kernels/iq_family/forge_*.py
-*.txt
+
 .DS_Store
 /output/
 /outputs/
@@ -23,7 +23,6 @@ __pycache__
 /tmp
 /output
 /model.ckpt
-/models/**/*
 /GFPGANv1.3.pth
 /gfpgan/weights/*.pth
 /ui-config.json
@@ -60,7 +59,7 @@ trace.json
 coverage.xml
 **/tests/**/expectations
 # Local SDXL debug renders at repo root
-/sdxl*.png
+
 # Keep .sangoi/docs/ docs under version control, but still ignore heavy reports.
 # (Replace previous blanket ignore.)
 !.sangoi/docs/
@@ -93,21 +92,7 @@ apps/interface/.vite/
 apps/interface/.eslintcache
 apps/interface/.pnpm-debug.log
 
-# Local reference docs / scratch dirs
-apps/backend/huggingface/**
-!apps/backend/huggingface/AGENTS.md
-!apps/backend/huggingface/__init__.py
-!apps/backend/huggingface/assets.py
-apps/server/backend/huggingface*
-/.sangoi/GuiaDeDIVsEAlinhamentoNoCSS.md
-/.sangoi/GuiaDeMigracaoGradio440para5.md
-/.sangoi/SvelteUpdatesOct24Oct25andGradioStylingCheatSheet.md
-/_ext_hg/
-/huggingface_guess.bak/
-
 # Local reference snapshots and scratch branches
 /.refs/
 
-# Prevent accidental screenshots at repo root (e.g., {UUID}.png)
-/\{*.png
-*.png
+

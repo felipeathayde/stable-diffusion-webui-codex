@@ -49,43 +49,11 @@ class Flux(CodexDiffusionEngine):
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Flux runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
 
-        # Streaming configuration from options
-        streaming_enabled = options.get("core_streaming_enabled", False)
-        if streaming_enabled:
-            streaming_policy = options.get("core_streaming_policy", "naive")
-            blocks_per_segment = options.get("core_streaming_blocks_per_segment", 4)
-            logger.info(
-                "Flux core streaming enabled: policy=%s, blocks_per_segment=%d",
-                streaming_policy,
-                blocks_per_segment,
-            )
-            try:
-                from apps.backend.runtime.flux.streaming import (
-                    trace_execution_plan,
-                    CoreController,
-                    StreamedFluxCore,
-                    StreamingPolicy,
-                )
-                # Get the actual FluxTransformer2DModel from the patcher
-                core_model = runtime.unet.model
-                plan = trace_execution_plan(core_model, blocks_per_segment=blocks_per_segment)
-                controller = CoreController(
-                    storage_device="cpu",
-                    compute_device="cuda" if torch.cuda.is_available() else "cpu",
-                    policy=StreamingPolicy(streaming_policy),
-                )
-                streamed_core = StreamedFluxCore(core_model, plan, controller)
-                # Replace the model in the patcher
-                runtime.unet.model = streamed_core
-                self._streaming_controller = controller
-                logger.info(
-                    "Flux streaming active: %d segments, %.2f MB total",
-                    len(plan),
-                    plan.total_bytes / (1024 * 1024),
-                )
-            except Exception as e:
-                logger.warning("Failed to enable Flux streaming: %s", e)
-                self._streaming_controller = None
+        # Note: Streaming is handled in assemble_flux_runtime() via _maybe_enable_streaming_core
+        # Check if streaming was enabled and store controller reference
+        from apps.backend.runtime.flux.streaming import StreamedFluxCore
+        if isinstance(runtime.unet.model, StreamedFluxCore):
+            self._streaming_controller = runtime.unet.model.controller
         else:
             self._streaming_controller = None
 
@@ -115,6 +83,25 @@ class Flux(CodexDiffusionEngine):
         memory_management.load_model_gpu(self.codex_objects.clip.patcher)
         unload_clip = self.smart_offload_enabled
         try:
+            # Check cache first if smart cache is enabled
+            texts = tuple(str(x or "") for x in prompt)
+            is_negative = bool(getattr(prompt, "is_negative_prompt", False) if hasattr(prompt, "is_negative_prompt") else False)
+            cache_key = (texts, is_negative)
+            
+            cached = self._get_cached_cond(cache_key, "flux.conditioning")
+            if cached is not None:
+                # Restore cached tensors to device
+                target_device = memory_management.text_encoder_device()
+                cond = {}
+                for k, v in cached.items():
+                    if isinstance(v, torch.Tensor):
+                        cond[k] = v.to(target_device)
+                    else:
+                        cond[k] = v
+                logger.debug("[flux] conditioning cache hit for %d prompts", len(prompt))
+                return cond
+            
+            # Cache miss - compute conditioning
             clip_branch = runtime.text.clip_text
             cond_l, pooled_l = (clip_branch(prompt) if clip_branch is not None else (None, None))
             cond_t5 = runtime.text.t5_text(prompt)
@@ -126,9 +113,22 @@ class Flux(CodexDiffusionEngine):
             if self.use_distilled_cfg_scale:
                 distilled_cfg_scale = getattr(prompt, "distilled_cfg_scale", self._guidance_default) or self._guidance_default
                 cond["guidance"] = torch.full((len(prompt),), float(distilled_cfg_scale), dtype=torch.float32)
-                logger.debug("Flux distilled cfg scale=%s", distilled_cfg_scale)
+                logger.info("[flux] guidance enabled: scale=%.2f shape=%s", distilled_cfg_scale, tuple(cond["guidance"].shape))
             else:
-                logger.debug("Flux distilled cfg disabled (schnell variant)")
+                logger.info("[flux] guidance disabled (schnell variant)")
+            
+            # Debug: log all cond keys and shapes
+            cond_info = {k: tuple(v.shape) if hasattr(v, 'shape') else type(v).__name__ for k, v in cond.items()}
+            logger.info("[flux] conditioning dict: %s", cond_info)
+
+            # Store in cache (tensors on CPU to avoid pinning VRAM)
+            cache_entry = {}
+            for k, v in cond.items():
+                if isinstance(v, torch.Tensor):
+                    cache_entry[k] = v.detach().to("cpu")
+                else:
+                    cache_entry[k] = v
+            self._set_cached_cond(cache_key, cache_entry)
 
             return cond
         finally:

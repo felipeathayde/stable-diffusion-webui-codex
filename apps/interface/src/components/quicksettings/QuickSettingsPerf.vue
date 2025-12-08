@@ -66,6 +66,21 @@
       </label>
     </div>
   </div>
+
+  <div class="quicksettings-group qs-group-perf qs-group-perf-streaming">
+    <label class="label-muted">Core Streaming</label>
+    <div class="qs-row">
+      <label class="qs-switch">
+        <input
+          type="checkbox"
+          :checked="coreStreaming"
+          @change="$emit('update:coreStreaming', ($event.target as HTMLInputElement).checked)"
+        />
+        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
+        <span class="qs-switch-label">Stream UNet blocks (large models)</span>
+      </label>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -77,6 +92,7 @@ const props = defineProps<{
   smartOffload: boolean
   smartFallback: boolean
   smartCache: boolean
+  coreStreaming: boolean
 }>()
 
 defineEmits<{
@@ -85,6 +101,7 @@ defineEmits<{
   (e: 'update:smartOffload', value: boolean): void
   (e: 'update:smartFallback', value: boolean): void
   (e: 'update:smartCache', value: boolean): void
+  (e: 'update:coreStreaming', value: boolean): void
 }>()
 </script>
 *** End Patch***  )->assistant to=functions.apply_patch ಸಂದ ***!

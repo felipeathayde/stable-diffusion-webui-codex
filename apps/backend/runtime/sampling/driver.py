@@ -260,6 +260,13 @@ class CodexSampler:
 
             steps = int(getattr(processing, "steps", 20))
             cfg_scale = float(getattr(processing, "cfg_scale", 7.0))
+            
+            # Flux Dev uses distilled CFG via guidance embedding - disable traditional CFG
+            # to avoid double scaling which corrupts the output (sand texture artifact)
+            if hasattr(self.sd_model, "use_distilled_cfg_scale") and self.sd_model.use_distilled_cfg_scale:
+                if cfg_scale != 1.0:
+                    self._logger.info("[flux] Distilled CFG active: forcing cfg_scale=1.0 (was %.2f)", cfg_scale)
+                cfg_scale = 1.0
 
             if steps <= 0:
                 raise ValueError("steps must be >= 1")

@@ -1,3 +1,6 @@
 {
-  "sd_model_checkpoint": "F:\\stable-diffusion-webui-forge\\models\\Stable-diffusion\\cyberrealisticPony_v140.safetensors"
+  "sd_model_checkpoint": "flux1-dev-Q5_0.gguf",
+  "codex_smart_cache": true,
+  "codex_smart_offload": true,
+  "codex_core_streaming": false
 }

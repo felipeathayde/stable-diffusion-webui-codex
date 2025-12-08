@@ -15,6 +15,12 @@ from .specs import (
     VAESignature,
     ModelSignature,
 )
+from .family_runtime import (
+    FamilyRuntimeSpec,
+    FAMILY_RUNTIME_SPECS,
+    get_family_spec,
+    get_family_spec_or_default,
+)
 from .errors import ModelRegistryError, UnknownModelError, AmbiguousModelError
 
 __all__ = [
@@ -29,6 +35,10 @@ __all__ = [
     "TextEncoderSignature",
     "VAESignature",
     "ModelSignature",
+    "FamilyRuntimeSpec",
+    "FAMILY_RUNTIME_SPECS",
+    "get_family_spec",
+    "get_family_spec_or_default",
     "ModelRegistryError",
     "UnknownModelError",
     "AmbiguousModelError",

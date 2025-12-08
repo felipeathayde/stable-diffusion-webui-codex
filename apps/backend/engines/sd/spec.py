@@ -8,6 +8,7 @@ from apps.backend.infra.config.args import dynamic_args
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.patchers.vae import VAE
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 
 logger = logging.getLogger("backend.engines.sd.spec")
@@ -157,6 +158,16 @@ class SDEngineRuntime:
             raise KeyError(f"Unknown T5 branch '{identifier}'.") from error
 
 
+# Map spec names to ModelFamily enum
+_NAME_TO_FAMILY = {
+    "sd15": ModelFamily.SD15,
+    "sd20": ModelFamily.SD20,
+    "sdxl": ModelFamily.SDXL,
+    "sdxl_refiner": ModelFamily.SDXL_REFINER,
+    "sd35": ModelFamily.SD35,
+}
+
+
 def assemble_engine_runtime(
     spec: SDEngineSpec,
     estimated_config,
@@ -177,8 +188,9 @@ def assemble_engine_runtime(
     logger.debug("CLIP patcher assembled for '%s'.", spec.name)
 
     vae_model = _require_component(components, spec.vae_key, f"{spec.name}.vae")
-    vae = VAE(model=vae_model)
-    logger.debug("VAE wrapper instantiated for '%s'.", spec.name)
+    family = _NAME_TO_FAMILY.get(spec.name)
+    vae = VAE(model=vae_model, family=family)
+    logger.debug("VAE wrapper instantiated for '%s' (family=%s).", spec.name, family)
 
     unet_model = _require_component(components, spec.unet_key, f"{spec.name}.unet")
     scheduler = components.get(spec.scheduler_key)

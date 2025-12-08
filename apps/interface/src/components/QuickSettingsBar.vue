@@ -1,6 +1,6 @@
 <template>
   <section :class="['quicksettings', { 'quicksettings-loading': isLoadingQuicksettings }]">
-    <!-- Engine-specific quicksettings surface -->
+    <!-- WAN-specific quicksettings -->
     <QuickSettingsWan
       v-if="activeFamily === 'wan'"
       :high-model="wanHighModel"
@@ -31,6 +31,103 @@
       @openOverrides="openOverrides"
     />
 
+    <!-- Flux-specific quicksettings -->
+    <template v-else-if="activeFamily === 'flux'">
+      <QuickSettingsFlux
+        :checkpoint="store.currentModel"
+        :checkpoints="filteredModelTitles"
+        :vae="store.currentVae"
+        :vae-choices="filteredVaeChoices"
+        :text-encoder-primary="fluxTextEncoderPrimary"
+        :text-encoder-secondary="fluxTextEncoderSecondary"
+        :text-encoder-choices="filteredTextEncoderChoices"
+        :unet-dtype="store.currentUnetDtype"
+        :unet-dtype-choices="filteredUnetDtypeChoices"
+        :attention-backend="store.currentAttention"
+        :attention-choices="store.attentionChoices"
+        @update:checkpoint="onModelChange"
+        @update:vae="onVaeChange"
+        @update:textEncoderPrimary="onPrimaryTextEncoderChange"
+        @update:textEncoderSecondary="onSecondaryTextEncoderChange"
+        @update:unetDtype="onUnetDtypeChange"
+        @update:attentionBackend="onAttentionChange"
+        @addCheckpointPath="onAddCheckpointPath"
+        @addVaePath="onAddVaePath"
+        @openOverrides="openOverrides"
+      />
+      <div class="quicksettings-group quicksettings-right qs-group-models">
+        <label class="label-muted">Models</label>
+        <div class="qs-row">
+          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+        </div>
+      </div>
+      <QuickSettingsPerf
+        :unet-dtype="store.currentUnetDtype"
+        :unet-dtype-choices="filteredUnetDtypeChoices"
+        :gpu-weights-mb="store.gpuWeightsMb"
+        :gpu-total-mb="store.gpuTotalMb"
+        :smart-offload="store.smartOffload"
+        :smart-fallback="store.smartFallback"
+        :smart-cache="store.smartCache"
+        :core-streaming="store.coreStreaming"
+        @update:unetDtype="onUnetDtypeChange"
+        @update:gpuWeightsMb="onGpuWeightsChange"
+        @update:smartOffload="onSmartOffloadChange"
+        @update:smartFallback="onSmartFallbackChange"
+        @update:smartCache="onSmartCacheChange"
+        @update:coreStreaming="onCoreStreamingChange"
+      />
+      <QuickSettingsOverridesModal v-model="showOverridesModal" />
+    </template>
+
+    <!-- Z Image-specific quicksettings -->
+    <template v-else-if="activeFamily === 'zimage'">
+      <QuickSettingsZImage
+        :checkpoint="store.currentModel"
+        :checkpoints="filteredModelTitles"
+        :vae="store.currentVae"
+        :vae-choices="filteredVaeChoices"
+        :text-encoder="primaryTextEncoder"
+        :text-encoder-choices="filteredTextEncoderChoices"
+        :unet-dtype="store.currentUnetDtype"
+        :unet-dtype-choices="filteredUnetDtypeChoices"
+        :attention-backend="store.currentAttention"
+        :attention-choices="store.attentionChoices"
+        @update:checkpoint="onModelChange"
+        @update:vae="onVaeChange"
+        @update:textEncoder="onPrimaryTextEncoderChange"
+        @update:unetDtype="onUnetDtypeChange"
+        @update:attentionBackend="onAttentionChange"
+        @addCheckpointPath="onAddCheckpointPath"
+        @addVaePath="onAddVaePath"
+        @openOverrides="openOverrides"
+      />
+      <div class="quicksettings-group quicksettings-right qs-group-models">
+        <label class="label-muted">Models</label>
+        <div class="qs-row">
+          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+        </div>
+      </div>
+      <QuickSettingsPerf
+        :unet-dtype="store.currentUnetDtype"
+        :unet-dtype-choices="filteredUnetDtypeChoices"
+        :gpu-weights-mb="store.gpuWeightsMb"
+        :gpu-total-mb="store.gpuTotalMb"
+        :smart-offload="store.smartOffload"
+        :smart-fallback="store.smartFallback"
+        :smart-cache="store.smartCache"
+        :core-streaming="store.coreStreaming"
+        @update:unetDtype="onUnetDtypeChange"
+        @update:gpuWeightsMb="onGpuWeightsChange"
+        @update:smartOffload="onSmartOffloadChange"
+        @update:smartFallback="onSmartFallbackChange"
+        @update:smartCache="onSmartCacheChange"
+        @update:coreStreaming="onCoreStreamingChange"
+      />
+      <QuickSettingsOverridesModal v-model="showOverridesModal" />
+    </template>
+
+    <!-- Default (SD15/SDXL) quicksettings -->
     <template v-else>
       <QuickSettingsBase
         :mode="store.currentMode"
@@ -45,7 +142,7 @@
         :attention-backend="store.currentAttention"
         :attention-choices="store.attentionChoices"
         text-encoder-automatic-label="Built-in"
-        :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl' && activeFamily !== 'flux'"
+        :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
         @update:mode="onModeChange"
         @update:checkpoint="onModelChange"
         @update:vae="onVaeChange"
@@ -55,46 +152,15 @@
         @addVaePath="onAddVaePath"
         @openOverrides="openOverrides"
       />
-
-      <!-- Flux-specific text encoder pair -->
-      <div v-if="activeFamily === 'flux'" class="quicksettings-group qs-group-flux-tenc">
-        <label class="label-muted">Text Encoders (Flux)</label>
-        <div class="qs-row">
-          <select
-            class="select-md"
-            :value="fluxTextEncoderPrimary"
-            @change="onPrimaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ primaryTeAutomaticLabel }}</option>
-            <option v-for="te in filteredTextEncoderChoices" :key="te" :value="te">
-              {{ textEncoderLabel(te) }}
-            </option>
-          </select>
-          <select
-            class="select-md"
-            :value="fluxTextEncoderSecondary"
-            @change="onSecondaryTextEncoderChange(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ secondaryTeAutomaticLabel }}</option>
-            <option v-for="te in filteredTextEncoderChoices" :key="`secondary-${te}`" :value="te">
-              {{ textEncoderLabel(te) }}
-            </option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Right-most refresh button spanning to the end -->
       <div class="quicksettings-group quicksettings-right qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
-          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh checkpoint, VAE and text encoder lists">Refresh</button>
+          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
         </div>
         <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
           <small class="label-muted">{{ currentPathsHint }}</small>
         </div>
       </div>
-
-      <!-- Second row: performance/runtime controls -->
       <QuickSettingsPerf
         :unet-dtype="store.currentUnetDtype"
         :unet-dtype-choices="filteredUnetDtypeChoices"
@@ -103,17 +169,19 @@
         :smart-offload="store.smartOffload"
         :smart-fallback="store.smartFallback"
         :smart-cache="store.smartCache"
+        :core-streaming="store.coreStreaming"
         @update:unetDtype="onUnetDtypeChange"
         @update:gpuWeightsMb="onGpuWeightsChange"
         @update:smartOffload="onSmartOffloadChange"
         @update:smartFallback="onSmartFallbackChange"
         @update:smartCache="onSmartCacheChange"
+        @update:coreStreaming="onCoreStreamingChange"
       />
-
       <QuickSettingsOverridesModal v-model="showOverridesModal" />
     </template>
   </section>
 </template>
+
 
 <script setup lang="ts">
 import { onMounted, computed, ref, watch } from 'vue'
@@ -127,6 +195,8 @@ import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
+import QuickSettingsFlux from './quicksettings/QuickSettingsFlux.vue'
+import QuickSettingsZImage from './quicksettings/QuickSettingsZImage.vue'
 import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
 
 const store = useQuicksettingsStore()
@@ -150,17 +220,18 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => {
+const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'>(() => {
   const p = route.path
   // Dedicated inference surfaces override tab state
   if (p.startsWith('/flux')) return 'flux'
   if (p.startsWith('/sdxl')) return 'sdxl'
+  if (p.startsWith('/zimage')) return 'zimage'
 
   // Model tabs: derive from active tab type
   if (p.startsWith('/models')) {
     const tabType = tabsStore.activeTab?.type
-    if (tabType === 'sd15' || tabType === 'sdxl' || tabType === 'flux' || tabType === 'wan') {
-      return tabType
+    if (tabType === 'sd15' || tabType === 'sdxl' || tabType === 'flux' || tabType === 'wan' || tabType === 'zimage') {
+      return tabType as 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'
     }
   }
 
@@ -169,6 +240,7 @@ const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan'>(() => {
   if (eng.startsWith('flux')) return 'flux'
   if (eng.startsWith('sdxl')) return 'sdxl'
   if (eng.startsWith('wan')) return 'wan'
+  if (eng.startsWith('zimage')) return 'zimage'
 
   return 'sd15'
 })
@@ -477,6 +549,10 @@ function onSmartFallbackChange(value: boolean): void {
 
 function onSmartCacheChange(value: boolean): void {
   void store.setSmartCache(value)
+}
+
+function onCoreStreamingChange(value: boolean): void {
+  void store.setCoreStreaming(value)
 }
 
 async function onWanHighModelChange(value: string): Promise<void> {

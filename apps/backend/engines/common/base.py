@@ -10,7 +10,13 @@ import safetensors.torch as sf
 import torch
 
 from apps.backend.core.engine_interface import BaseInferenceEngine
-from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload import (
+    smart_offload_enabled,
+    smart_fallback_enabled,
+    smart_cache_enabled,
+    record_smart_cache_hit,
+    record_smart_cache_miss,
+)
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import (
     DiffusionModelBundle,
@@ -180,6 +186,12 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._current_model_ref: str | None = None
         self._load_options: dict[str, Any] = {}
         self._smart_offload_enabled = smart_offload_enabled()
+        self._smart_fallback_enabled = smart_fallback_enabled()
+        self._smart_cache_enabled = smart_cache_enabled()
+        # Conditioning cache: keyed by (prompt_tuple, is_negative) -> dict of tensors
+        # Subclasses can use this for caching CLIP/T5/etc outputs.
+        # Tensors are stored on CPU to avoid pinning VRAM between jobs.
+        self._cond_cache: dict[tuple, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ Components
     def bind_components(self, components: CodexObjects, *, label: str | None = None) -> None:
@@ -214,6 +226,38 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     @property
     def smart_offload_enabled(self) -> bool:
         return self._smart_offload_enabled
+
+    @property
+    def smart_fallback_enabled(self) -> bool:
+        return self._smart_fallback_enabled
+
+    @property
+    def smart_cache_enabled(self) -> bool:
+        return self._smart_cache_enabled
+
+    # ------------------------------------------------------------------ Conditioning Cache
+    def _get_cached_cond(self, cache_key: tuple, bucket_name: str) -> Optional[dict[str, Any]]:
+        """Retrieve cached conditioning if smart cache is enabled and key exists."""
+        if not self._smart_cache_enabled:
+            return None
+        cached = self._cond_cache.get(cache_key)
+        if cached is not None:
+            record_smart_cache_hit(bucket_name)
+            return cached
+        record_smart_cache_miss(bucket_name)
+        return None
+
+    def _set_cached_cond(self, cache_key: tuple, cond_dict: dict[str, Any]) -> None:
+        """Store conditioning in cache (tensors should be on CPU to avoid pinning VRAM)."""
+        if not self._smart_cache_enabled:
+            return
+        # Clear old entries to keep cache bounded
+        self._cond_cache.clear()
+        self._cond_cache[cache_key] = cond_dict
+
+    def _clear_cond_cache(self) -> None:
+        """Clear conditioning cache (called on model reload)."""
+        self._cond_cache.clear()
 
     def snapshot_after_lora(self) -> None:
         """Capture the current components as the LoRA-applied snapshot."""
@@ -301,6 +345,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("Failed to determine inpaint capability.") from exc
 
+        # Map UI setting name to engine option name for streaming
+        if "codex_core_streaming" in self._load_options:
+            self._load_options["core_streaming_enabled"] = bool(self._load_options.pop("codex_core_streaming"))
+
         components = self._build_components(bundle, options=self._load_options)
 
         # Optional VAE override: explicit user path has priority over bundled VAE.
@@ -374,6 +422,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._tiling_enabled = False
         self._use_distilled_cfg_scale = False
         self.current_lora_hash = "[]"
+        self._cond_cache.clear()
 
     @abstractmethod
     def _build_components(
@@ -505,6 +554,195 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         raise NotImplementedError(f"{self.__class__.__name__}.get_prompt_lengths_on_ui must be implemented.")
+
+    # ------------------------------------------------------------------ Tasks
+    def txt2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:
+        """Generic txt2img implementation using the staged pipeline runner.
+        
+        This default implementation uses the same pipeline as SDXL.
+        Subclasses can override for custom behavior.
+        
+        Required engine methods:
+        - get_learned_conditioning(prompts) -> conditioning dict
+        - decode_first_stage(latents) -> decoded tensor
+        """
+        import json
+        import secrets
+        import threading
+        import time
+        
+        from apps.backend.core.requests import Txt2ImgRequest, ProgressEvent, ResultEvent
+        from apps.backend.core.state import state as backend_state
+        from apps.backend.engines.util.adapters import build_txt2img_processing
+        from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
+        from apps.backend.runtime.processing.conditioners import decode_latent_batch
+        from apps.backend.runtime.workflows.common import latents_to_pil
+        from apps.backend.runtime.text_processing import last_extra_generation_params
+        
+        self.ensure_loaded()
+
+        if not isinstance(request, Txt2ImgRequest):
+            raise TypeError(f"{self.__class__.__name__}.txt2img expects Txt2ImgRequest")
+
+        # Build processing descriptor from request
+        raw_seed = int(getattr(request, "seed", -1) or -1)
+        if raw_seed < 0:
+            raw_seed = secrets.randbits(32) & 0x7FFFFFFF
+
+        proc = build_txt2img_processing(request)
+        proc.sd_model = self
+        proc.seed = raw_seed
+        proc.seeds = [raw_seed]
+        proc.subseed = -1
+        proc.subseeds = [-1]
+
+        # Defer conditioning to the pipeline runner
+        prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
+        prompts = prompt_texts
+        seeds = [raw_seed]
+        subseeds = [-1]
+        subseed_strength = 0.0
+        cond = None
+        uncond = None
+
+        # Run pipeline on a worker thread while streaming progress
+        result: dict[str, Any] = {"latents": None, "error": None}
+        sampling_times: dict[str, float | None] = {"start": None, "end": None}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                sampling_times["start"] = time.perf_counter()
+                result["latents"] = _generate_txt2img(
+                    processing=proc,
+                    conditioning=cond,
+                    unconditional_conditioning=uncond,
+                    seeds=seeds,
+                    subseeds=subseeds,
+                    subseed_strength=subseed_strength,
+                    prompts=prompts,
+                )
+            except Exception as _exc:
+                result["error"] = _exc
+            finally:
+                sampling_times["end"] = time.perf_counter()
+                done.set()
+
+        threading.Thread(target=_worker, name=f"{self.engine_id}-txt2img-worker", daemon=True).start()
+
+        t0 = time.perf_counter()
+        last_step = -1
+        while not done.is_set():
+            try:
+                step = int(getattr(backend_state, "sampling_step", 0) or 0)
+                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
+            except Exception:
+                step, total = 0, 0
+            if total > 0 and step != last_step:
+                elapsed = time.perf_counter() - t0
+                eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
+                pct = max(5.0, min(99.0, (step / total) * 100.0))
+                yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+                last_step = step
+            time.sleep(0.12)
+
+        if result["error"] is not None:
+            raise result["error"]
+        latents = result["latents"]
+
+        if not isinstance(latents, torch.Tensor):
+            raise RuntimeError(
+                f"txt2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
+            )
+
+        # Decode to RGB and package result
+        decode_start = time.perf_counter()
+        decoded = decode_latent_batch(self, latents)
+        images = latents_to_pil(decoded)
+        decode_end = time.perf_counter()
+
+        # Build result metadata
+        try:
+            primary_prompt = getattr(proc, "primary_prompt", proc.prompt)
+        except Exception:
+            primary_prompt = str(getattr(proc, "prompt", ""))
+
+        try:
+            primary_negative = getattr(proc, "primary_negative_prompt", proc.negative_prompt)
+        except Exception:
+            primary_negative = str(getattr(proc, "negative_prompt", ""))
+
+        all_seeds = list(getattr(proc, "all_seeds", []) or [])
+        seed_value = None
+        if all_seeds:
+            try:
+                seed_value = int(all_seeds[0])
+            except Exception:
+                seed_value = None
+        else:
+            raw_seed = getattr(proc, "seed", None)
+            if raw_seed is not None:
+                try:
+                    seed_value = int(raw_seed)
+                except Exception:
+                    seed_value = None
+
+        extra_params: dict[str, object] = {}
+        try:
+            extra_params.update(last_extra_generation_params)
+            extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
+        except Exception:
+            extra_params = getattr(proc, "extra_generation_params", {}) or {}
+
+        info: dict[str, object] = {
+            "engine": self.engine_id,
+            "task": "txt2img",
+            "width": int(proc.width),
+            "height": int(proc.height),
+            "steps": int(proc.steps),
+            "guidance_scale": float(proc.guidance_scale),
+            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
+            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+        }
+        if primary_prompt:
+            info["prompt"] = str(primary_prompt)
+        if primary_negative:
+            info["negative_prompt"] = str(primary_negative)
+        if seed_value is not None:
+            info["seed"] = int(seed_value)
+        if all_seeds:
+            info["all_seeds"] = [int(s) for s in all_seeds]
+        if extra_params:
+            info["extra"] = extra_params
+        
+        timings: dict[str, float] = {}
+        try:
+            if sampling_times["start"] is not None and sampling_times["end"] is not None:
+                timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
+            timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
+            info["timings_ms"] = timings
+        except Exception:
+            pass
+
+        # Post-job cleanup hook
+        self._post_txt2img_cleanup()
+
+        yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
+
+    def _post_txt2img_cleanup(self) -> None:
+        """Post-job cleanup when smart offload is enabled.
+
+        Keeps UNet resident but nudges CUDA to release unused cached memory so the
+        next job starts from a clean allocator state without paying reload cost.
+        """
+        if not self.smart_offload_enabled:
+            return
+        try:
+            from apps.backend.runtime.memory import memory_management
+            memory_management.soft_empty_cache(force=True)
+        except Exception:  # pragma: no cover - diagnostics only
+            self._logger.debug("Post-job cleanup failed", exc_info=True)
+
 
     # ------------------------------------------------------------------ Persistence helpers
     def save_unet(self, filename: str) -> str:

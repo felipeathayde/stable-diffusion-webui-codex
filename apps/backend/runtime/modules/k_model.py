@@ -74,9 +74,11 @@ class KModel(torch.nn.Module):
             )
 
         # If the UNet expects class/ADM conditioning, ensure 'y' is present in kwargs
+        # Note: Flux uses pooled vector differently than SDXL ADM, so we only error if
+        # the model needs y but doesn't have it. Extra y for flow models is OK.
         needs_y = getattr(self.diffusion_model, "num_classes", None) is not None
         has_y = "y" in kwargs and isinstance(kwargs["y"], torch.Tensor)
-        if needs_y != has_y:
+        if needs_y and not has_y:
             raise ValueError(
                 f"UNet ADM conditioning mismatch: num_classes={getattr(self.diffusion_model,'num_classes',None)} "
                 f"but y_present={has_y}. Ensure SDXL pooled vector is wired as 'y'."

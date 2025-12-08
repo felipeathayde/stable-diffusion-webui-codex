@@ -117,8 +117,15 @@ class DoubleStreamBlock(nn.Module):
         img_modulated = (1 + img_mod1_scale) * self.img_norm1(img) + img_mod1_shift
         txt_modulated = (1 + txt_mod1_scale) * self.txt_norm1(txt) + txt_mod1_shift
 
-        img_attn_out = self.img_attn(img_modulated, rotary_freqs)
-        txt_attn_out = self.txt_attn(txt_modulated, rotary_freqs)
+        # Split rotary freqs: first txt_len positions are for txt, rest for img
+        # rotary_freqs has shape (B, 1, txt_len + img_len, D//2, 2, 2)
+        txt_len = txt.shape[1]
+        img_len = img.shape[1]
+        txt_rotary = rotary_freqs[:, :, :txt_len]
+        img_rotary = rotary_freqs[:, :, txt_len:txt_len + img_len]
+
+        img_attn_out = self.img_attn(img_modulated, img_rotary)
+        txt_attn_out = self.txt_attn(txt_modulated, txt_rotary)
         img = img + img_mod1_gate * img_attn_out
         txt = txt + txt_mod1_gate * txt_attn_out
 
@@ -138,6 +145,7 @@ class SingleStreamBlock(nn.Module):
         self.norm = QKNorm(hidden_size // num_heads)
         self.pre_norm = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden = int(hidden_size * mlp_ratio)
+        self.mlp_hidden_dim = mlp_hidden
         self.linear1 = nn.Linear(hidden_size, hidden_size * 3 + mlp_hidden)
         self.linear2 = nn.Linear(hidden_size + mlp_hidden, hidden_size)
         self.modulation = ModulationMLP(hidden_size, double=False)

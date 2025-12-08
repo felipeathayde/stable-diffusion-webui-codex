@@ -739,7 +739,8 @@ def _maybe_convert_sdxl_vae_state_dict(
     """
 
     family = getattr(signature, "family", None) if signature is not None else None
-    if family is not ModelFamily.SDXL:
+    # Support both SDXL and FLUX families (both use same VAE architecture)
+    if family not in (ModelFamily.SDXL, ModelFamily.FLUX):
         return state_dict
 
     keys = list(state_dict.keys())
@@ -986,6 +987,7 @@ def _load_huggingface_component(
             Uses RemapKeysView so tensors load on demand; avoids materialising
             the entire VAE just to rename keys (important for large XL VAEs).
             """
+            from apps.backend.runtime.utils import RemapKeysView
 
             prefixes = (
                 "first_stage_model.",
@@ -1012,6 +1014,8 @@ def _load_huggingface_component(
             return RemapKeysView(sd, mapping)
 
         state_dict = _strip_prefixes(state_dict)
+        # Convert LDM-style VAE keys to diffusers-style for SDXL/FLUX
+        state_dict = _maybe_convert_sdxl_vae_state_dict(state_dict, getattr(parsed, "signature", None))
 
         vae_cls = _resolve_vae_class(getattr(parsed, "signature", None), layout=vae_layout)
         try:
@@ -1062,6 +1066,25 @@ def _load_huggingface_component(
     if cls_name in {"CLIPTextModel", "CLIPTextModelWithProjection"}:
         if state_dict is None:
             return None
+        
+        # Detect T5 state dict keys - if found, load as T5 instead of CLIP
+        # This handles GGUF models that may have T5 bundled as text_encoder
+        _T5_KEY_PATTERNS = ("encoder.block.", "encoder.final_layer_norm.", "shared.weight")
+        _is_actually_t5 = any(
+            any(pattern in k for pattern in _T5_KEY_PATTERNS)
+            for k in list(state_dict.keys())[:100]
+        )
+        if _is_actually_t5:
+            # Load as T5 using T5 handler but keep in same slot
+            # The spec.py will detect the correct type later
+            _LOG.info(
+                "Detected T5 state dict in %s (expected CLIP); loading as T5 model in same slot",
+                component_name
+            )
+            # Use T5EncoderModel handler but keep this component_name (not redirecting)
+            return _load_huggingface_component(
+                parsed, component_name, lib_name, "T5EncoderModel", repo_path, state_dict
+            )
         # Build native Codex CLIP instead of HF; normalise state dict beforehand
         te_device = memory_management.text_encoder_device()
         te_dtype = memory_management.text_encoder_dtype(device=te_device)
@@ -1141,8 +1164,88 @@ def _load_huggingface_component(
         def _has_essentials(work: Mapping[str, Any]) -> bool:
             return all(key in work for key in _ESSENTIAL_KEYS)
 
-        # Load CLIP config before normalisation (layer count needed)
-        config_json = read_arbitrary_config(component_path)
+        # CLIP-ViT-Large-patch14 default config (used by Flux CLIP-L and SD1.x/2.x)
+        _CLIP_L_DEFAULT_CONFIG = {
+            "hidden_size": 768,
+            "intermediate_size": 3072,
+            "num_hidden_layers": 12,
+            "num_attention_heads": 12,
+            "hidden_act": "quick_gelu",
+            "max_position_embeddings": 77,
+            "layer_norm_eps": 1e-05,
+            "vocab_size": 49408,
+            "projection_dim": 768,
+        }
+
+        # OpenCLIP-ViT-bigG config (used by SDXL text_encoder_2)
+        _CLIP_G_DEFAULT_CONFIG = {
+            "hidden_size": 1280,
+            "intermediate_size": 5120,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 20,
+            "hidden_act": "gelu",
+            "max_position_embeddings": 77,
+            "layer_norm_eps": 1e-05,
+            "vocab_size": 49408,
+            "projection_dim": 1280,
+        }
+        
+        # Try to infer the correct config from state_dict shapes
+        def _infer_clip_config_from_state(sd: Mapping[str, Any]) -> dict | None:
+            """Infer CLIP config variant from state_dict tensor shapes."""
+            # Check embedding weight shape to determine hidden_size
+            embedding_keys = [
+                "transformer.text_model.embeddings.token_embedding.weight",
+                "text_model.embeddings.token_embedding.weight",
+            ]
+            for key in embedding_keys:
+                if key in sd:
+                    t = sd[key]
+                    if hasattr(t, "shape"):
+                        hidden_size = t.shape[1] if len(t.shape) > 1 else None
+                        if hidden_size == 1280:
+                            _LOG.info("Detected OpenCLIP-G variant (hidden_size=1280)")
+                            return _CLIP_G_DEFAULT_CONFIG
+                        elif hidden_size == 768:
+                            _LOG.info("Detected CLIP-L variant (hidden_size=768)")
+                            return _CLIP_L_DEFAULT_CONFIG
+            return None
+        
+        # Determine if we should use default CLIP config
+        use_default_config = False
+        inferred_config = None
+        
+        # Case 1: CLIP in T5 slot (text_encoder_2 is normally T5 for Flux)
+        # But for SDXL, text_encoder_2 is OpenCLIP-G, so we need to infer from state_dict
+        if component_name == "text_encoder_2":
+            inferred_config = _infer_clip_config_from_state(state_dict)
+            if inferred_config:
+                _LOG.info("CLIP loading in T5 slot (%s); using inferred config", component_name)
+                use_default_config = True
+            else:
+                _LOG.info("CLIP loading in T5 slot (%s); using CLIP-L default config", component_name)
+                inferred_config = _CLIP_L_DEFAULT_CONFIG
+                use_default_config = True
+        
+        if use_default_config:
+            config_json = inferred_config or _CLIP_L_DEFAULT_CONFIG
+        else:
+            try:
+                config_json = read_arbitrary_config(component_path)
+                # Validate it's actually a CLIP config
+                if "hidden_size" not in config_json:
+                    _LOG.warning(
+                        "Config at %s missing 'hidden_size' (got %s); using CLIP-L defaults",
+                        component_path, list(config_json.keys())[:5]
+                    )
+                    config_json = _CLIP_L_DEFAULT_CONFIG
+            except FileNotFoundError:
+                _LOG.info(
+                    "No config.json found at %s; using default CLIP-L configuration",
+                    component_path
+                )
+                config_json = _CLIP_L_DEFAULT_CONFIG
+        
         cfg = CodexCLIPTextConfig.from_dict(config_json)
 
         def _normalize_clip_state(
@@ -1155,6 +1258,13 @@ def _load_huggingface_component(
         ) -> Dict[str, Any]:
             work = _strip_known_prefixes(sd)
             work = dict(work)
+
+            # Add transformer. prefix to keys that start with text_model.
+            # This handles CLIP files that use text_model.* instead of transformer.text_model.*
+            keys_to_rename = [(k, f"transformer.{k}") for k in list(work.keys()) 
+                              if k.startswith("text_model.") and not k.startswith("transformer.")]
+            for old_key, new_key in keys_to_rename:
+                work[new_key] = work.pop(old_key)
 
             transformers_convert(work, "transformer.", "transformer.text_model.", num_layers)
             transformers_convert(work, "", "transformer.text_model.", num_layers)
@@ -1180,7 +1290,15 @@ def _load_huggingface_component(
                 work.pop("text_projection.weight", None)
                 work.pop("transformer.text_projection.weight", None)
 
-            if not _has_essentials(work):
+            # Check for essential keys with or without transformer prefix
+            _ESSENTIAL_KEYS_ALT = (
+                "text_model.embeddings.token_embedding.weight",
+                "text_model.embeddings.position_embedding.weight",
+            )
+            has_essentials = _has_essentials(work) or all(
+                any(k.endswith(key.split(".")[-1]) for k in work.keys()) for key in _ESSENTIAL_KEYS
+            )
+            if not has_essentials:
                 sample_keys = list(sorted(work.keys()))[:10]
                 raise RuntimeError(
                     "CLIP state dict normalisation failed for %s; missing essential tensors. Sample keys: %s"
@@ -1210,7 +1328,67 @@ def _load_huggingface_component(
     if cls_name == "T5EncoderModel":
         if state_dict is None:
             return None
-        t5_config = read_arbitrary_config(component_path)
+        
+        # Detect CLIP state dict keys - if found, load as CLIP instead of T5
+        # This handles checkpoints that may have CLIP bundled as text_encoder_2
+        _CLIP_KEY_PATTERNS = ("text_model.embeddings.", "text_model.encoder.layers.", "logit_scale")
+        _is_actually_clip = any(
+            any(pattern in k for pattern in _CLIP_KEY_PATTERNS)
+            for k in list(state_dict.keys())[:100]
+        )
+        if _is_actually_clip:
+            # Load as CLIP using CLIP handler but keep in same slot
+            # The spec.py will detect the correct type later
+            _LOG.info(
+                "Detected CLIP state dict in %s (expected T5); loading as CLIP model in same slot",
+                component_name
+            )
+            # Use CLIPTextModel handler but keep this component_name (not redirecting)
+            return _load_huggingface_component(
+                parsed, component_name, lib_name, "CLIPTextModel", repo_path, state_dict
+            )
+        # T5-XXL config (google/t5-v1_1-xxl) - used by Flux
+        _T5_XXL_DEFAULT_CONFIG = {
+            "d_ff": 10240,
+            "d_kv": 64,
+            "d_model": 4096,
+            "dense_act_fn": "gelu_new",
+            "is_gated_act": True,
+            "model_type": "t5",
+            "num_heads": 64,
+            "num_layers": 24,
+            "vocab_size": 32128,
+        }
+        
+        # Determine if we should use default T5 config:
+        # 1. T5 loaded in CLIP slot via redirect (component_path has CLIP config)
+        # 2. No config.json exists
+        # 3. Config exists but is wrong type (e.g., CLIP config with num_hidden_layers)
+        use_default_config = False
+        
+        # Case 1: T5 in CLIP slot (text_encoder is normally CLIP for Flux)
+        if component_name == "text_encoder":
+            _LOG.info("T5 loading in CLIP slot (%s); using T5-XXL default config", component_name)
+            use_default_config = True
+        
+        if use_default_config:
+            t5_config = _T5_XXL_DEFAULT_CONFIG
+        else:
+            try:
+                t5_config = read_arbitrary_config(component_path)
+                # Validate it's actually a T5 config
+                if "num_layers" not in t5_config:
+                    _LOG.warning(
+                        "Config at %s missing 'num_layers' (got %s); using T5-XXL defaults",
+                        component_path, list(t5_config.keys())[:5]
+                    )
+                    t5_config = _T5_XXL_DEFAULT_CONFIG
+            except FileNotFoundError:
+                _LOG.info(
+                    "No config.json found at %s; using default T5-XXL configuration",
+                    component_path
+                )
+                t5_config = _T5_XXL_DEFAULT_CONFIG
         te_device = memory_management.text_encoder_device()
         storage_dtype = memory_management.text_encoder_dtype(device=te_device)
         state_dict_dtype = memory_management.state_dict_dtype(state_dict)
@@ -1237,6 +1415,22 @@ def _load_huggingface_component(
             with modeling_utils.no_init_weights():
                 with using_codex_operations(device=te_device, dtype=storage_dtype, manual_cast_enabled=True):
                     model = IntegratedT5(t5_config)
+
+        # Normalize T5 state dict keys: add transformer. prefix if missing
+        # T5 files often have keys like encoder.block.* but model expects transformer.encoder.block.*
+        if hasattr(state_dict, 'keys'):
+            keys_to_check = list(state_dict.keys())
+            needs_prefix = any(k.startswith("encoder.") or k == "shared.weight" for k in keys_to_check[:50])
+            if needs_prefix:
+                # Create a new dict with normalized keys
+                normalized_sd = {}
+                for k, v in (state_dict.items() if hasattr(state_dict, 'items') else [(k, state_dict[k]) for k in keys_to_check]):
+                    if k.startswith("encoder.") or k == "shared.weight" or k.startswith("embed_tokens"):
+                        new_key = f"transformer.{k}"
+                        normalized_sd[new_key] = v
+                    else:
+                        normalized_sd[k] = v
+                state_dict = normalized_sd
 
         load_state_dict(
             model,
@@ -1319,6 +1513,12 @@ def _load_huggingface_component(
 
         if storage_dtype in ["nf4", "fp4", "gguf"]:
             initial_device = memory_management.core_initial_load_device(parameters=0, dtype=computation_dtype)
+            # Smart offload: load Flux transformer to CPU to prevent OOM
+            # The engine will move it to GPU on demand via streaming or memory management
+            from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+            if cls_name == "FluxTransformer2DModel" and smart_offload_enabled():
+                initial_device = torch.device("cpu")
+                LOGGER.info("[loader] Smart offload: loading FluxTransformer to CPU (will stream to GPU)")
             with using_codex_operations(device=initial_device, dtype=computation_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
                 model = model_ctor(config_json)
         else:
@@ -1373,13 +1573,83 @@ def _load_huggingface_component(
 
         if cls_name == "UNet2DConditionModel":
             state_dict = _normalize_unet_state_dict(state_dict, config_json)
+        elif cls_name in {"FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel"}:
+            # Strip common prefixes from transformer state dict keys (similar to UNet normalization)
+            from apps.backend.runtime.utils import RemapKeysView
+            _TRANSFORMER_PREFIXES = (
+                "model.diffusion_model.",
+                "model.model.",
+                "diffusion_model.",
+                "model.",
+            )
+            
+            def _strip_transformer_prefixes(sd: Mapping[str, Any]) -> Mapping[str, Any]:
+                mapping: Dict[str, str] = {}
+                for raw_key in sd.keys():
+                    key = str(raw_key)
+                    new_key = key
+                    changed = True
+                    while changed:
+                        changed = False
+                        for prefix in _TRANSFORMER_PREFIXES:
+                            if new_key.startswith(prefix):
+                                new_key = new_key[len(prefix):]
+                                changed = True
+                                break
+                    mapping[new_key] = key
+                return RemapKeysView(sd, mapping)
+            
+            state_dict = _strip_transformer_prefixes(state_dict)
+            
+            # Normalize GGUF key names to Codex model key names
+            # GGUF (Black Forest Labs format) uses different naming than Codex implementation:
+            # - GGUF: .lin. → Codex: .linear. (in ModulationMLP)
+            # - GGUF: .adaLN_modulation.1. → Codex: .modulation.1. (in LastLayer)
+            def _normalize_flux_gguf_keys(sd: Mapping[str, Any]) -> Mapping[str, Any]:
+                from apps.backend.runtime.utils import RemapKeysView
+                mapping: Dict[str, str] = {}
+                KEY_REMAP_PAIRS = [
+                    # ModulationMLP uses .lin but Codex model uses .linear
+                    (".img_mod.lin.", ".img_mod.linear."),
+                    (".txt_mod.lin.", ".txt_mod.linear."),
+                    (".modulation.lin.", ".modulation.linear."),
+                    # LastLayer uses adaLN_modulation but Codex uses modulation
+                    ("final_layer.adaLN_modulation.", "final_layer.modulation."),
+                ]
+                changed_count = 0
+                for raw_key in sd.keys():
+                    key = str(raw_key)
+                    new_key = key
+                    for old_pattern, new_pattern in KEY_REMAP_PAIRS:
+                        if old_pattern in new_key:
+                            new_key = new_key.replace(old_pattern, new_pattern)
+                            changed_count += 1
+                    mapping[new_key] = key
+                print(f"[DEBUG] Flux GGUF key normalization: total={len(mapping)} remapped={changed_count}")
+                return RemapKeysView(sd, mapping)
+            
+            if cls_name == "FluxTransformer2DModel":
+                print(f"[DEBUG] Applying Flux GGUF key normalization (cls_name={cls_name})")
+                state_dict = _normalize_flux_gguf_keys(state_dict)
+
 
         _trace.event("load_state_dict", module=module_name, architecture=architecture_value, tensors=len(state_dict))
-        try:
-            from .state_dict import safe_load_state_dict as _safe_load
-            _safe_load(model, state_dict, log_name=core_label)
-        except Exception:
-            load_state_dict(model, state_dict, log_name=core_label)
+        
+        # GGUF models require PyTorch's load_state_dict to trigger _load_from_state_dict hooks
+        # in CodexOperationsGGUF.Linear which handle the .weight/.bias mapping from GGUF format
+        if storage_dtype == "gguf":
+            print(f"[DEBUG] Using PyTorch load_state_dict for GGUF model")
+            missing, unexpected = model.load_state_dict(dict(state_dict), strict=False)
+            if missing:
+                print(f'{core_label} Missing: {len(missing)} keys')
+            if unexpected:
+                print(f'{core_label} Unexpected: {len(unexpected)} keys')
+        else:
+            try:
+                from .state_dict import safe_load_state_dict as _safe_load
+                _safe_load(model, state_dict, log_name=core_label)
+            except Exception:
+                load_state_dict(model, state_dict, log_name=core_label)
 
         # Avoid assigning to model.config (read-only on diffusers models)
         model.storage_dtype = storage_dtype
@@ -1480,6 +1750,16 @@ def codex_loader(
             component_states.pop(component_name, None)
         if component_obj is not None:
             codex_components[component_name] = component_obj
+            # Smart offload: move text encoders to CPU immediately after loading
+            # This frees VRAM so the transformer can fit later
+            from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+            if smart_offload_enabled() and component_name in ("text_encoder", "text_encoder_2"):
+                try:
+                    component_obj.to("cpu")
+                    memory_management.soft_empty_cache(force=True)
+                    LOGGER.info("[loader] Smart offload: moved %s to CPU after load", component_name)
+                except Exception as e:
+                    LOGGER.warning("[loader] Smart offload: failed to move %s to CPU: %s", component_name, e)
 
     yaml_prediction = None
     config_filename = os.path.splitext(sd_path)[0] + ".yaml"

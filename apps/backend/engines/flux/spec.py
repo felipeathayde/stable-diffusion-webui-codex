@@ -15,6 +15,7 @@ from apps.backend.runtime.flux.streaming import (
 from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.patchers.vae import VAE
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
@@ -151,6 +152,42 @@ def _maybe_enable_streaming_core(
         return transformer
 
 
+def _is_clip_encoder(model: object) -> bool:
+    """Detect if a text encoder is CLIP (has text_model attribute) vs T5."""
+    if model is None:
+        return False
+    # Check for CLIP-specific structure
+    if hasattr(model, 'transformer'):
+        transformer = model.transformer
+        if hasattr(transformer, 'text_model'):
+            return True
+    if hasattr(model, 'text_model'):
+        return True
+    # Check class name as fallback
+    cls_name = type(model).__name__
+    if 'CLIP' in cls_name or 'clip' in cls_name.lower():
+        return True
+    return False
+
+
+def _is_t5_encoder(model: object) -> bool:
+    """Detect if a text encoder is T5 (has encoder.block structure)."""
+    if model is None:
+        return False
+    # Check for T5-specific structure
+    if hasattr(model, 'transformer'):
+        transformer = model.transformer
+        if hasattr(transformer, 'encoder') and hasattr(transformer.encoder, 'block'):
+            return True
+    if hasattr(model, 'encoder') and hasattr(model.encoder, 'block'):
+        return True
+    # Check class name as fallback
+    cls_name = type(model).__name__
+    if 'T5' in cls_name or 't5' in cls_name.lower():
+        return True
+    return False
+
+
 def assemble_flux_runtime(
     *,
     spec: FluxEngineSpec,
@@ -160,13 +197,81 @@ def assemble_flux_runtime(
 ) -> FluxEngineRuntime:
     logger.debug("Assembling %s engine", spec.name)
 
-    clip_keys = {"clip_l": "text_encoder", "t5xxl": "text_encoder_2"} if spec.uses_clip_branch else {"t5xxl": "text_encoder"}
-    tokenizer_keys = {"clip_l": "tokenizer", "t5xxl": "tokenizer_2"} if spec.uses_clip_branch else {"t5xxl": "tokenizer"}
+    # Detect encoder types dynamically instead of assuming by slot position
+    # This handles GGUF models that may have encoders in swapped positions
+    te1 = codex_components.get("text_encoder")
+    te2 = codex_components.get("text_encoder_2")
+    tok1 = codex_components.get("tokenizer")
+    tok2 = codex_components.get("tokenizer_2")
+    
+    if spec.uses_clip_branch:
+        # Flux needs both CLIP and T5 - detect which is which by model structure
+        clip_encoder, clip_tokenizer = None, None
+        t5_encoder, t5_tokenizer = None, None
+        
+        # Also detect tokenizer types - CLIPTokenizer uses 'eos_token', T5 uses 'unk_token'
+        def _is_clip_tokenizer(tok):
+            if tok is None:
+                return False
+            cls_name = type(tok).__name__
+            return 'CLIP' in cls_name or 'clip' in cls_name.lower()
+        
+        def _is_t5_tokenizer(tok):
+            if tok is None:
+                return False
+            cls_name = type(tok).__name__
+            return 'T5' in cls_name or 't5' in cls_name.lower()
+        
+        # Match tokenizers by type, not by slot
+        clip_tok_candidate = tok1 if _is_clip_tokenizer(tok1) else (tok2 if _is_clip_tokenizer(tok2) else tok1)
+        t5_tok_candidate = tok2 if _is_t5_tokenizer(tok2) else (tok1 if _is_t5_tokenizer(tok1) else tok2)
+        
+        # Check te1
+        if _is_clip_encoder(te1):
+            clip_encoder = te1
+        elif _is_t5_encoder(te1):
+            t5_encoder = te1
+        
+        # Check te2
+        if _is_clip_encoder(te2):
+            clip_encoder = te2
+        elif _is_t5_encoder(te2):
+            t5_encoder = te2
+        
+        # Assign tokenizers by type, not by slot position
+        clip_tokenizer = clip_tok_candidate
+        t5_tokenizer = t5_tok_candidate
+        
+        # Fallback to position-based if detection fails
+        if clip_encoder is None and t5_encoder is None:
+            logger.warning("Could not detect encoder types; falling back to position-based assignment")
+            clip_encoder, clip_tokenizer = te1, tok1
+            t5_encoder, t5_tokenizer = te2, tok2
+        elif clip_encoder is None:
+            # T5 detected but no CLIP - check if there's another encoder
+            clip_encoder = te1 if t5_encoder is not te1 else te2
+        elif t5_encoder is None:
+            # CLIP detected but no T5 - check if there's another encoder
+            t5_encoder = te1 if clip_encoder is not te1 else te2
+        
+        logger.debug(
+            "Encoder detection: CLIP=%s (tok=%s) T5=%s (tok=%s)", 
+            type(clip_encoder).__name__ if clip_encoder else None,
+            type(clip_tokenizer).__name__ if clip_tokenizer else None,
+            type(t5_encoder).__name__ if t5_encoder else None,
+            type(t5_tokenizer).__name__ if t5_tokenizer else None,
+        )
+        
+        model_dict = {"clip_l": clip_encoder, "t5xxl": t5_encoder}
+        tokenizer_dict = {"clip_l": clip_tokenizer, "t5xxl": t5_tokenizer}
+    else:
+        # Chroma: only T5, no CLIP
+        model_dict = {"t5xxl": te1}
+        tokenizer_dict = {"t5xxl": tok1}
 
-    model_dict = {alias: codex_components[key] for alias, key in clip_keys.items()}
-    tokenizer_dict = {alias: codex_components[key] for alias, key in tokenizer_keys.items()}
     clip = CLIP(model_dict=model_dict, tokenizer_dict=tokenizer_dict, model_config=estimated_config)
-    vae = VAE(model=codex_components["vae"])
+    vae_family = ModelFamily.FLUX if spec.name == "flux" else ModelFamily.CHROMA
+    vae = VAE(model=codex_components["vae"], family=vae_family)
 
     repo = getattr(estimated_config, "huggingface_repo", "" ) or ""
     schnell = spec.is_schnell(repo)
@@ -210,11 +315,18 @@ def assemble_flux_runtime(
     t5_attr = "t5xxl"
     t5_encoder = getattr(clip.cond_stage_model, t5_attr)
     t5_tokenizer = getattr(clip.tokenizer, t5_attr)
+    
+    # Get t5_min_length from family spec
+    from apps.backend.runtime.model_registry import FAMILY_RUNTIME_SPECS
+    flux_family = ModelFamily.CHROMA if spec.name == "chroma" else ModelFamily.FLUX
+    family_spec = FAMILY_RUNTIME_SPECS.get(flux_family)
+    t5_min_len = family_spec.t5_min_length if family_spec and family_spec.t5_min_length else 256
+    
     t5_engine = T5TextProcessingEngine(
         text_encoder=t5_encoder,
         tokenizer=t5_tokenizer,
         emphasis_name=emphasis_name,
-        min_length=1,
+        min_length=t5_min_len,
     )
 
     logger.debug("Flux runtime assembled (clip branch: %s, distilled cfg: %s)", spec.uses_clip_branch, use_distilled_cfg)

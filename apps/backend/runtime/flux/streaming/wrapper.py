@@ -82,6 +82,7 @@ class StreamedFluxCore(nn.Module):
         context: torch.Tensor,
         y: torch.Tensor,
         guidance: Optional[torch.Tensor] = None,
+        **kwargs,  # Accept extra args like 'control' from sampler
     ) -> torch.Tensor:
         """Forward pass with segment-based streaming.
 

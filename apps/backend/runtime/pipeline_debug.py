@@ -31,16 +31,9 @@ def apply_env_flag(raw_value: str | None = None) -> None:
 
 
 def pipeline_trace(func: F) -> F:
-    qualname = f"{func.__module__}.{func.__qualname__}"
-
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any):
-        if PIPELINE_DEBUG_ENABLED:
-            logger.info("entrou em %s", qualname)
-        result = func(*args, **kwargs)
-        if PIPELINE_DEBUG_ENABLED:
-            logger.info("saiu de %s", qualname)
-        return result
+        return func(*args, **kwargs)
 
     return cast(F, wrapper)
 

@@ -25,13 +25,61 @@ class FluxTransformer2DModel(nn.Module):
         if config is None:
             if not raw_config:
                 raise ValueError("FluxTransformer2DModel requires configuration parameters")
-            depth = raw_config.pop("depth")
-            single_depth = raw_config.pop("depth_single_blocks")
-            axes_dim = tuple(raw_config.pop("axes_dim"))
-            theta = raw_config.pop("theta")
+            
+            # Support HuggingFace config names alongside internal names
+            # HF uses num_layers/num_single_layers, internal uses depth/depth_single_blocks
+            depth = raw_config.pop("depth", None) or raw_config.pop("num_layers", None)
+            single_depth = raw_config.pop("depth_single_blocks", None) or raw_config.pop("num_single_layers", None)
+            if depth is None or single_depth is None:
+                raise ValueError("FluxTransformer requires depth (or num_layers) and depth_single_blocks (or num_single_layers)")
+            
+            # Handle axes_dim with default for GGUF models that may not have it
+            axes_dim = raw_config.pop("axes_dim", [16, 56, 56])
+            if isinstance(axes_dim, list):
+                axes_dim = tuple(axes_dim)
+            
+            theta = raw_config.pop("theta", 10000)
             positional = FluxPositionalConfig(patch_size=2, axes_dim=axes_dim, theta=theta)
-            guidance_enabled = raw_config.pop("guidance_embed", False)
+            guidance_enabled = raw_config.pop("guidance_embed", None) or raw_config.pop("guidance_embeds", False)
             guidance = FluxGuidanceConfig(enabled=guidance_enabled)
+            
+            # Map HF config names to internal names
+            if "num_attention_heads" in raw_config and "num_heads" not in raw_config:
+                raw_config["num_heads"] = raw_config.pop("num_attention_heads")
+            if "attention_head_dim" in raw_config and "head_dim" not in raw_config:
+                raw_config["head_dim"] = raw_config.pop("attention_head_dim")
+            if "joint_attention_dim" in raw_config and "context_in_dim" not in raw_config:
+                raw_config["context_in_dim"] = raw_config.pop("joint_attention_dim")
+            if "pooled_projection_dim" in raw_config and "vec_in_dim" not in raw_config:
+                raw_config["vec_in_dim"] = raw_config.pop("pooled_projection_dim")
+            
+            # Calculate hidden_size from num_heads and head_dim if not provided
+            head_dim = raw_config.pop("head_dim", 128)  # Default head_dim for Flux
+            if "hidden_size" not in raw_config:
+                num_heads = raw_config.get("num_heads", 24)  # Default for Flux
+                raw_config["hidden_size"] = num_heads * head_dim
+            
+            # Add default mlp_ratio if not provided
+            if "mlp_ratio" not in raw_config:
+                raw_config["mlp_ratio"] = 4.0
+            
+            # Normalize in_channels from diffusers style to Codex style:
+            # - Diffusers: in_channels=64, patch_size=1 (pre-patchified, patchification is external)
+            # - Codex: in_channels=16, patch_size=2 (raw VAE channels, internal patchification)
+            # When diffusers config has patch_size=1 and in_channels=64, we need to convert
+            # to in_channels=16 since our model does patchification internally with patch_size=2
+            hf_patch_size = raw_config.get("patch_size", 2)
+            if hf_patch_size == 1 and raw_config.get("in_channels", 16) == 64:
+                # Diffusers-style: 64 = 16 * 2 * 2 (VAE channels * patch_size^2)
+                raw_config["in_channels"] = 16
+                logger.debug("Normalized in_channels from 64 (diffusers) to 16 (Codex internal patchification)")
+            
+            # Remove keys that don't belong to FluxArchitectureConfig
+            raw_config.pop("patch_size", None)  # We handle this in positional config
+            raw_config.pop("_class_name", None)
+            raw_config.pop("_diffusers_version", None)
+            raw_config.pop("_name_or_path", None)
+            
             config = FluxArchitectureConfig(
                 positional=positional,
                 guidance=guidance,
@@ -127,8 +175,12 @@ class FluxTransformer2DModel(nn.Module):
 
         if self.config.guidance.enabled:
             if guidance is None:
+                logger.error("[flux] guidance.enabled=True but guidance tensor is None!")
                 raise ValueError("guidance embedding required but not provided")
+            logger.info("[flux] forward guidance: enabled=True, shape=%s, values=[%.2f]", tuple(guidance.shape), guidance[0].item())
             vec = vec + self.guidance_in(timestep_embedding(guidance, 256).to(img.dtype))
+        else:
+            logger.info("[flux] forward guidance: enabled=False (schnell variant), guidance_arg=%s", guidance is not None)
 
         txt = self.txt_in(context)
         rotary = self._build_rotary(img_ids, txt_ids)

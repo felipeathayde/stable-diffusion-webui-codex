@@ -133,31 +133,53 @@ class _NormalizingFirstStage:
         return getattr(self._base, name)
 
     @staticmethod
-    def wrap(base):
+    def wrap(base, *, family=None):
+        """Wrap a VAE with normalization.
+        
+        Args:
+            base: The base VAE model.
+            family: Optional ModelFamily for fallback scaling/shift values.
+        
+        Returns:
+            _NormalizingFirstStage wrapper.
+        """
         cfg = getattr(base, "config", None)
-        if cfg is None:
-            raise RuntimeError("VAE model is missing config; cannot determine scaling_factor for normalization")
         # Attempt to fetch values from attribute or mapping-like config
         scale = None
         shift = 0.0
-        if hasattr(cfg, "scaling_factor"):
-            scale = getattr(cfg, "scaling_factor")
-        elif isinstance(cfg, dict):
-            scale = cfg.get("scaling_factor")
-            shift = cfg.get("shift_factor", 0.0)
-        else:
+        
+        if cfg is not None:
+            if hasattr(cfg, "scaling_factor"):
+                scale = getattr(cfg, "scaling_factor")
+            elif isinstance(cfg, dict):
+                scale = cfg.get("scaling_factor")
+                shift = cfg.get("shift_factor", 0.0)
+            else:
+                try:
+                    scale = cfg.get("scaling_factor")  # type: ignore[attr-defined]
+                    shift = cfg.get("shift_factor", 0.0)  # type: ignore[attr-defined]
+                except Exception:
+                    scale = None
+            if hasattr(cfg, "shift_factor"):
+                try:
+                    shift = float(getattr(cfg, "shift_factor"))
+                except Exception:
+                    shift = 0.0
+        
+        # Use FamilyRuntimeSpec as fallback if scale is still None
+        if scale is None and family is not None:
             try:
-                scale = cfg.get("scaling_factor")  # type: ignore[attr-defined]
-                shift = cfg.get("shift_factor", 0.0)  # type: ignore[attr-defined]
-            except Exception:
-                scale = None
-        if hasattr(cfg, "shift_factor"):
-            try:
-                shift = float(getattr(cfg, "shift_factor"))
-            except Exception:
-                shift = 0.0
+                from apps.backend.runtime.model_registry.family_runtime import get_family_spec
+                spec = get_family_spec(family)
+                scale = spec.vae_scaling_factor
+                shift = spec.vae_shift_factor
+                logger.info("[VAE] using family spec fallback: scaling_factor=%s shift_factor=%s (from %s)", scale, shift, family.value)
+            except Exception as e:
+                logger.warning("[VAE] failed to get family spec fallback: %s", e)
+        
         if scale is None:
-            raise RuntimeError("VAE config missing 'scaling_factor'; engines require normalization semantics")
+            raise RuntimeError("VAE config missing 'scaling_factor' and no family fallback available; engines require normalization semantics")
+        
         logger.info("[VAE] normalization enabled: scaling_factor=%s shift_factor=%s", scale, shift)
         return _NormalizingFirstStage(base, scale=float(scale), shift=float(shift))
 
@@ -213,7 +235,7 @@ def tiled_scale(samples, function, tile_x=64, tile_y=64, overlap=8, upscale_amou
 
 
 class VAE:
-    def __init__(self, model=None, device=None, dtype=None, no_init=False):
+    def __init__(self, model=None, device=None, dtype=None, no_init=False, *, family=None):
         if no_init:
             return
 
@@ -223,7 +245,7 @@ class VAE:
         self.latent_channels = int(model.config.latent_channels)
 
         # Ensure process_in/out are always available via adapter
-        self.first_stage_model = _NormalizingFirstStage.wrap(model.eval())
+        self.first_stage_model = _NormalizingFirstStage.wrap(model.eval(), family=family)
 
         if device is None:
             device = memory_management.vae_device()

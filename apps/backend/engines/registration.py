@@ -58,3 +58,8 @@ def register_wan22_videos(*, registry: EngineRegistry | None = None, replace: bo
     from apps.backend.engines.wan22.wan22_5b import Wan225BEngine
     _reg("wan22_14b", Wan2214BEngine, registry=registry, replace=replace, aliases=("wan22-14b",))
     _reg("wan22_5b", Wan225BEngine, registry=registry, replace=replace, aliases=("wan22-5b",))
+
+
+def register_zimage(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
+    from apps.backend.engines.zimage.zimage import ZImageEngine
+    _reg("zimage", ZImageEngine, registry=registry, replace=replace, aliases=("z-image", "z-image-turbo"))

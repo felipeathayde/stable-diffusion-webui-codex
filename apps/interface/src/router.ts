@@ -9,6 +9,7 @@ const ModelTabView = () => import('./views/ModelTabView.vue')
 const WorkflowsList = () => import('./views/WorkflowsList.vue')
 const Sdxl = () => import('./views/Sdxl.vue')
 const Flux = () => import('./views/Flux.vue')
+const ZImage = () => import('./views/ZImage.vue')
 const XyzPlot = () => import('./views/XyzPlot.vue')
 const Home = () => import('./views/Home.vue')
 
@@ -24,6 +25,7 @@ const router = createRouter({
     // Single canonical inference surface
     { path: '/sdxl', component: Sdxl },
     { path: '/flux', component: Flux },
+    { path: '/zimage', component: ZImage },
     { path: '/xyz', component: XyzPlot },
     // Utilities
     { path: '/workflows', component: WorkflowsList },

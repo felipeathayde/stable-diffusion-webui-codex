@@ -289,6 +289,10 @@ class LazySafetensorsDict(MutableMapping):
     - Keys come from the file; values are loaded on demand with safe_open.get_tensor.
     - Supports overlay writes and deletions without touching the underlying file.
     - Device: only CPU tensors are produced (parity with previous loader).
+    
+    Windows crash prevention: Once any tensor is accessed, the entire file is
+    materialized into memory to avoid reopening the file repeatedly (which causes
+    torch_cpu.dll crashes on Windows).
     """
 
     def __init__(self, filepath: str, device: str = "cpu"):
@@ -297,6 +301,8 @@ class LazySafetensorsDict(MutableMapping):
         self._overlay = {}          # in-memory writes/overrides
         self._deleted = set()       # keys logically removed
         self._keys_cache = None     # cached set of underlying keys
+        self._materialized = None   # holds all tensors after first access
+        self._materialized_triggered = False
 
     def _base_keys(self):
         if self._keys_cache is None:
@@ -304,12 +310,37 @@ class LazySafetensorsDict(MutableMapping):
                 self._keys_cache = set(f.keys())
         return self._keys_cache
 
+    def _ensure_materialized(self):
+        """Load all tensors from file once to avoid reopening repeatedly."""
+        if self._materialized is None and not self._materialized_triggered:
+            self._materialized_triggered = True
+            self._materialized = {}
+            try:
+                with safe_open(self.filepath, framework="pt", device=self.device) as f:
+                    self._keys_cache = set(f.keys())
+                    for key in f.keys():
+                        self._materialized[key] = f.get_tensor(key)
+            except Exception:
+                # If materialization fails, clear and fall back to per-key loading
+                self._materialized = None
+                self._materialized_triggered = False
+
     # Mapping protocol
     def __getitem__(self, key):
         if key in self._overlay:
             return self._overlay[key]
         if key in self._deleted:
             raise KeyError(key)
+        
+        # Materialize all tensors on first access to avoid repeated file opens
+        self._ensure_materialized()
+        
+        if self._materialized is not None:
+            if key in self._materialized:
+                return self._materialized[key]
+            raise KeyError(key)
+        
+        # Fallback for edge cases (should rarely happen)
         if key not in self._base_keys():
             raise KeyError(key)
         with safe_open(self.filepath, framework="pt", device=self.device) as f:
@@ -348,6 +379,8 @@ class LazySafetensorsDict(MutableMapping):
         return list(iter(self))
 
     def items(self):
+        # Use materialization to avoid per-item file opens
+        self._ensure_materialized()
         for k in self:
             yield k, self[k]
 

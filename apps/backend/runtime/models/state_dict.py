@@ -149,6 +149,16 @@ def safe_load_state_dict(model, sd, *, log_name=None):
 
     model_state = model.state_dict()
     model_keys = list(model_state.keys())
+
+    # If sd is a lazy safetensors dict, materialize it once to avoid reopening
+    # the file repeatedly (Windows torch_cpu.dll crash prevention).
+    materializer = getattr(sd, 'materialize', None)
+    if callable(materializer):
+        try:
+            sd = materializer()
+        except Exception:
+            pass  # Fall back to lazy access if materialize fails
+
     sd_keys = list(sd.keys()) if isinstance(sd, Mapping) and hasattr(sd, 'keys') else []
 
     missing = []

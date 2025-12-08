@@ -1,3 +1,11 @@
+# OpusQuantization integration - replaces vendored Forge GGUF kernels
+from apps.backend.opus_quantization.compat import (
+    ParameterGGUF,
+    dequantize_tensor as _opus_dequantize,
+    map_ggml_to_opus,
+    _OpusQuantBridge,
+)
+from apps.backend.opus_quantization.core import QuantType, get_quant_spec
 from apps.backend import gguf
 import torch
 import logging
@@ -102,32 +110,55 @@ def _cache_put(tid: int, t: torch.Tensor) -> None:
             _LOG.info("[gguf.ops] cache store: total_misses=%d size=%dMB items=%d", _MISSES, _CACHE_CUR_MB, len(_CACHE_ORDER))
 
 
+# OpusQuantization mapping - replaces old quants_mapping
+# Now uses OpusQuantization kernels via the bridge
+def _get_opus_bridge(ggml_type):
+    """Get an OpusQuantBridge for a GGML type."""
+    qtype = map_ggml_to_opus(ggml_type)
+    if qtype is None:
+        return None
+    return _OpusQuantBridge(qtype)
+
+# Legacy mapping for code that still uses quants_mapping directly
+# Maps to OpusQuantBridge instances instead of old gguf.Q*_* classes
 quants_mapping = {
-    gguf.GGMLQuantizationType.Q2_K: gguf.Q2_K,
-    gguf.GGMLQuantizationType.Q3_K: gguf.Q3_K,
-    gguf.GGMLQuantizationType.Q4_0: gguf.Q4_0,
-    gguf.GGMLQuantizationType.Q4_K: gguf.Q4_K,
-    gguf.GGMLQuantizationType.Q4_1: gguf.Q4_1,
-    gguf.GGMLQuantizationType.Q5_0: gguf.Q5_0,
-    gguf.GGMLQuantizationType.Q5_1: gguf.Q5_1,
-    gguf.GGMLQuantizationType.Q5_K: gguf.Q5_K,
-    gguf.GGMLQuantizationType.Q6_K: gguf.Q6_K,
-    gguf.GGMLQuantizationType.Q8_0: gguf.Q8_0,
-    gguf.GGMLQuantizationType.BF16: gguf.BF16,
+    gguf.GGMLQuantizationType.Q2_K: _OpusQuantBridge(QuantType.Q2_K),
+    gguf.GGMLQuantizationType.Q3_K: _OpusQuantBridge(QuantType.Q3_K),
+    gguf.GGMLQuantizationType.Q4_0: _OpusQuantBridge(QuantType.Q4_0),
+    gguf.GGMLQuantizationType.Q4_K: _OpusQuantBridge(QuantType.Q4_K),
+    gguf.GGMLQuantizationType.Q4_1: _OpusQuantBridge(QuantType.Q4_1),
+    gguf.GGMLQuantizationType.Q5_0: _OpusQuantBridge(QuantType.Q5_0),
+    gguf.GGMLQuantizationType.Q5_1: _OpusQuantBridge(QuantType.Q5_1),
+    gguf.GGMLQuantizationType.Q5_K: _OpusQuantBridge(QuantType.Q5_K),
+    gguf.GGMLQuantizationType.Q6_K: _OpusQuantBridge(QuantType.Q6_K),
+    gguf.GGMLQuantizationType.Q8_0: _OpusQuantBridge(QuantType.Q8_0),
+    gguf.GGMLQuantizationType.BF16: _OpusQuantBridge(QuantType.BF16),
 }
 
 
-class ParameterGGUF(torch.nn.Parameter):
+# ParameterGGUF is now imported from OpusQuantization
+# This comment preserves the location for any code that imports from here
+# The class is imported at the top: from apps.backend.opus_quantization.compat import ParameterGGUF
+
+# For backwards compatibility, we override the imported ParameterGGUF's __init__
+# to use the quants_mapping for gguf_cls
+_OriginalParameterGGUF = ParameterGGUF
+
+class ParameterGGUF(_OriginalParameterGGUF):
+    """Extended ParameterGGUF that uses the local quants_mapping."""
     def __init__(self, tensor=None, requires_grad=False, no_init=False):
-        super().__init__()
+        # Call parent __new__ logic by not calling super().__init__ directly
         if no_init:
             return
-
-        self.gguf_cls = quants_mapping.get(tensor.tensor_type, None)
-        self.real_shape = torch.Size(reversed(list(tensor.shape)))
+        
+        # Use our quants_mapping to get the bridge
+        self.gguf_cls = quants_mapping.get(getattr(tensor, 'tensor_type', None), None)
+        self.real_shape = torch.Size(reversed(list(tensor.shape))) if hasattr(tensor, 'shape') else torch.Size([])
         self.computation_dtype = torch.float16
         self.baked = False
-        return
+        
+        # Set qtype for OpusQuantization compatibility
+        self.qtype = map_ggml_to_opus(getattr(tensor, 'tensor_type', None))
 
     @property
     def shape(self):
@@ -166,7 +197,12 @@ class ParameterGGUF(torch.nn.Parameter):
         return new
 
     def to(self, *args, **kwargs):
-        return self.copy_with_data(self.data.to(*args, **kwargs))
+        new = self.copy_with_data(self.data.to(*args, **kwargs))
+        # Bake the tensor when moved if not already baked
+        # GGUF tensors need to be baked before dequantization, regardless of device
+        if not new.baked and new.gguf_cls is not None:
+            new.gguf_cls.bake(new)
+        return new
 
     def pin_memory(self, device=None):
         return self.copy_with_data(torch.Tensor.pin_memory(self, device=device))
@@ -183,6 +219,12 @@ def dequantize_tensor(tensor):
 
     if gguf_cls is None:
         return tensor
+    
+    # Lazy bake: if tensor hasn't been baked yet, bake it now
+    # This handles tensors that were created directly on CPU without going through .to()
+    if hasattr(tensor, 'baked') and not tensor.baked:
+        gguf_cls.bake(tensor)
+    
     # Optional CPU LRU cache
     tid = id(tensor)
     cached = _cache_get(tid)

@@ -297,7 +297,9 @@ class FlowMatchEulerPrediction(AbstractPrediction):
         else:
             self.mu = mu
         sigmas = torch.arange(1, self.pseudo_timestep_range + 1, 1) / self.pseudo_timestep_range
-        sigmas = FlowMatchEulerDiscreteScheduler.time_shift(None, self.mu, 1.0, sigmas)
+        # Apply time_shift formula locally (same as FlowMatchEulerDiscreteScheduler.time_shift)
+        # Formula: mu * t / (1 + (mu - 1) * t) for exponential time shift
+        sigmas = self.mu * sigmas / (1 + (self.mu - 1) * sigmas)
         self.register_buffer('sigmas', sigmas)
 
     @property
@@ -312,7 +314,17 @@ class FlowMatchEulerPrediction(AbstractPrediction):
         return sigma
 
     def sigma(self, timestep):
-        return timestep
+        # timestep is expected to be in range [0, pseudo_timestep_range-1] as indices
+        # Map to actual sigma values from the pre-computed buffer
+        if isinstance(timestep, torch.Tensor):
+            # Clamp and convert to indices
+            idx = timestep.long().clamp(0, self.pseudo_timestep_range - 1)
+            # Move sigmas to same device as index
+            sigmas = self.sigmas.to(idx.device)
+            return sigmas[idx]
+        else:
+            idx = int(max(0, min(timestep, self.pseudo_timestep_range - 1)))
+            return self.sigmas[idx]
 
     def percent_to_sigma(self, percent):
         if percent <= 0.0:

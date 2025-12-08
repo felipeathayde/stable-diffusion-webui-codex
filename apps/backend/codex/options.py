@@ -97,6 +97,7 @@ class OptionsSnapshot:
     codex_smart_offload: bool = False
     codex_smart_fallback: bool = False
     codex_smart_cache: bool = False
+    codex_core_streaming: bool = False
     codex_wan22_use_spec_runtime: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
@@ -115,6 +116,7 @@ class OptionsSnapshot:
             'codex_smart_offload': self.codex_smart_offload,
             'codex_smart_fallback': self.codex_smart_fallback,
             'codex_smart_cache': self.codex_smart_cache,
+            'codex_core_streaming': self.codex_core_streaming,
             'codex_wan22_use_spec_runtime': self.codex_wan22_use_spec_runtime,
         }
 
@@ -136,6 +138,7 @@ def get_snapshot() -> OptionsSnapshot:
         codex_smart_offload=bool(v.get('codex_smart_offload', False)),
         codex_smart_fallback=bool(v.get('codex_smart_fallback', False)),
         codex_smart_cache=bool(v.get('codex_smart_cache', False)),
+        codex_core_streaming=bool(v.get('codex_core_streaming', False)),
         codex_wan22_use_spec_runtime=bool(v.get('codex_wan22_use_spec_runtime', False)),
     )
     return snap

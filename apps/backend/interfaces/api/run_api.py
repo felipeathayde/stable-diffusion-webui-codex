@@ -831,23 +831,28 @@ def build_app() -> FastAPI:
 
     @app.get('/api/engines/capabilities')
     def list_engine_capabilities() -> Dict[str, Any]:
-        """Expose semantic engine parameter surfaces and Smart Cache diagnostics.
+        """Expose semantic engine parameter surfaces, family capabilities and Smart Cache diagnostics.
 
         Shape:
           {
             engines: { <semantic_engine>: { supports_txt2img, supports_img2img, ... } },
+            families: { <model_family>: { supports_negative_prompt, supports_cfg, ... } },
             smart_cache: { <bucket>: { hits, misses } }
           }
         """
         try:
-            from apps.backend.runtime.model_registry.capabilities import serialize_engine_capabilities
+            from apps.backend.runtime.model_registry.capabilities import serialize_engine_capabilities, serialize_family_capabilities
             try:
                 from apps.backend.runtime.memory.smart_offload import get_smart_cache_stats
 
                 cache_stats = get_smart_cache_stats()
             except Exception:
                 cache_stats = {}
-            return {"engines": serialize_engine_capabilities(), "smart_cache": cache_stats}
+            return {
+                "engines": serialize_engine_capabilities(), 
+                "families": serialize_family_capabilities(),
+                "smart_cache": cache_stats
+            }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to read engine capabilities: {exc}")
 
@@ -1961,7 +1966,14 @@ def build_app() -> FastAPI:
                     if isinstance(te_override, dict):
                         engine_options["text_encoder_override"] = dict(te_override)
                 except Exception:
-                    engine_options = {}
+                    pass
+                # Pass streaming option from settings to engine
+                try:
+                    snap = _opts_snapshot()
+                    if getattr(snap, "codex_core_streaming", False):
+                        engine_options["codex_core_streaming"] = True
+                except Exception:
+                    pass
                 with tasks_lock:
                     for ev in _ORCH.run(
                         TaskType.TXT2IMG,

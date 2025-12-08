@@ -35,8 +35,8 @@
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
           <GenerationSettingsCard
-            :samplers="store.samplers"
-            :schedulers="store.schedulers"
+            :samplers="filteredSamplers"
+            :schedulers="filteredSchedulers"
             :sampler="store.selectedSampler"
             :scheduler="store.selectedScheduler"
             :steps="store.steps"
@@ -106,10 +106,10 @@
             </button>
           </div>
           <div class="header-right results-actions">
-            <input class="ui-input" :list="'flux-preset-list'" v-model="presetName" placeholder="Preset" />
+            <!-- <input class="ui-input" :list="'flux-preset-list'" v-model="presetName" placeholder="Preset" />
             <datalist id="flux-preset-list"><option v-for="p in presetNames" :key="p" :value="p" /></datalist>
             <button class="btn btn-sm btn-secondary" type="button" @click="savePreset(presetName)">Save</button>
-            <button class="btn btn-sm btn-outline" type="button" @click="applyPreset(presetName)">Apply</button>
+            <button class="btn btn-sm btn-outline" type="button" @click="applyPreset(presetName)">Apply</button> -->
             <div class="gentime-display" v-if="gentimeSeconds !== null">
               <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
             </div>
@@ -280,6 +280,20 @@ const showGlobalRefiner = computed(() => {
   const surf = engineSurface.value
   if (!surf) return true
   return surf.supports_refiner
+})
+
+// Filter samplers/schedulers based on engine capabilities
+const filteredSamplers = computed(() => {
+  const surf = engineSurface.value
+  const allowed = surf?.samplers as string[] | null | undefined
+  if (!allowed || allowed.length === 0) return store.samplers
+  return store.samplers.filter(s => allowed.includes(s.name))
+})
+const filteredSchedulers = computed(() => {
+  const surf = engineSurface.value
+  const allowed = surf?.schedulers as string[] | null | undefined
+  if (!allowed || allowed.length === 0) return store.schedulers
+  return store.schedulers.filter(s => allowed.includes(s.name))
 })
 
 function snapshotParams(): Record<string, unknown> {

@@ -99,6 +99,9 @@ export interface EngineCapabilities {
   supports_refiner: boolean
   supports_lora: boolean
   supports_controlnet: boolean
+  // Optional: restrict UI to only these samplers/schedulers. Null/undefined = allow all.
+  samplers?: string[] | null
+  schedulers?: string[] | null
 }
 
 export interface EngineCapabilitiesResponse {

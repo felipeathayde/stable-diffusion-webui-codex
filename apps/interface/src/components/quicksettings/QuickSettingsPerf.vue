@@ -1,13 +1,5 @@
 <template>
-  <div class="quicksettings-group qs-group-perf qs-group-perf-dtype">
-    <label class="label-muted">Diffusion in Low Bits</label>
-    <div class="qs-row">
-      <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
-        <option v-for="opt in unetDtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-      </select>
-    </div>
-  </div>
-
+  <!-- GPU VRAM -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
     <label class="label-muted">GPU VRAM (MB)</label>
     <div class="qs-row">
@@ -22,62 +14,62 @@
     </div>
   </div>
 
+  <!-- Smart Offload -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-offload">
     <label class="label-muted">Smart Offload</label>
     <div class="qs-row">
-      <label class="qs-switch">
+      <label class="qs-switch" title="Unload TE/UNet/VAE between stages to save VRAM">
         <input
           type="checkbox"
           :checked="smartOffload"
           @change="$emit('update:smartOffload', ($event.target as HTMLInputElement).checked)"
         />
         <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="qs-switch-label">Unload TE/UNet/VAE between stages</span>
       </label>
     </div>
   </div>
 
+  <!-- Smart Fallback -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-fallback">
     <label class="label-muted">Smart Fallback</label>
     <div class="qs-row">
-      <label class="qs-switch">
+      <label class="qs-switch" title="Fallback to CPU when GPU runs out of memory">
         <input
           type="checkbox"
           :checked="smartFallback"
           @change="$emit('update:smartFallback', ($event.target as HTMLInputElement).checked)"
         />
         <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="qs-switch-label">Fallback to CPU on OOM</span>
       </label>
     </div>
   </div>
 
+  <!-- Smart Cache -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-cache">
     <label class="label-muted">Smart Cache</label>
     <div class="qs-row">
-      <label class="qs-switch">
+      <label class="qs-switch" title="Cache text encoder embeddings for faster subsequent generations">
         <input
           type="checkbox"
           :checked="smartCache"
           @change="$emit('update:smartCache', ($event.target as HTMLInputElement).checked)"
         />
         <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="qs-switch-label">Cache TEnc/embeds (SDXL)</span>
       </label>
     </div>
   </div>
 
+  <!-- Core Streaming -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-streaming">
     <label class="label-muted">Core Streaming</label>
     <div class="qs-row">
-      <label class="qs-switch">
+      <label class="qs-switch" title="Stream model blocks from RAM for large quantized models (GGUF)">
         <input
           type="checkbox"
           :checked="coreStreaming"
           @change="$emit('update:coreStreaming', ($event.target as HTMLInputElement).checked)"
         />
         <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="qs-switch-label">Stream UNet blocks (large models)</span>
       </label>
     </div>
   </div>
@@ -104,4 +96,3 @@ defineEmits<{
   (e: 'update:coreStreaming', value: boolean): void
 }>()
 </script>
-*** End Patch***  )->assistant to=functions.apply_patch ಸಂದ ***!

@@ -73,6 +73,42 @@
         "createdAt": "2025-12-04T15:39:13.194376",
         "updatedAt": "2025-12-04T15:39:13.194376"
       }
+    },
+    {
+      "id": "tab-chroma-5",
+      "type": "chroma",
+      "title": "Chroma",
+      "order": 5,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-12-08T12:25:00.000000",
+        "updatedAt": "2025-12-08T12:25:00.000000"
+      }
+    },
+    {
+      "id": "tab-wan14b-6",
+      "type": "wan14b",
+      "title": "WAN22 14B",
+      "order": 6,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-12-08T12:25:00.000000",
+        "updatedAt": "2025-12-08T12:25:00.000000"
+      }
+    },
+    {
+      "id": "tab-qwen-7",
+      "type": "qwen",
+      "title": "Qwen",
+      "order": 7,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-12-08T12:25:00.000000",
+        "updatedAt": "2025-12-08T12:25:00.000000"
+      }
     }
   ]
 }

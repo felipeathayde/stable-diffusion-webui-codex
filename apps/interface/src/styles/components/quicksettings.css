@@ -1,5 +1,5 @@
 @layer components {
-  /* Header-integrated quicksettings: no sticky, no extra margins. */
+  /* Header-integrated quicksettings: full width layout. */
   .quicksettings {
     position: static;
     z-index: auto;
@@ -8,38 +8,68 @@
     margin: 0;
     border-radius: 0;
     padding: 0.25rem 0;
-    display: grid;
-    grid-template-columns: 0.7fr 2fr 1.5fr 1.8fr 1.2fr 1.1fr 1.1fr;
-    gap: 0.75rem;
-    align-items: stretch;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.8rem;
+    align-items: flex-end;
+    width: 100%;
   }
-  .quicksettings-right { justify-self: end; align-self: end; }
-  .quicksettings-group { display: grid; grid-template-rows: auto minmax(0, var(--control-h-md)); gap: 0.35rem; align-items: stretch; }
-  .qs-row { display: grid; grid-auto-flow: column; align-items: stretch; gap: var(--space-sm); }
-  .qs-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem; width: 100%; align-items: stretch; }
-  .quicksettings .select-md,
-  .quicksettings .ui-input { height: 100%; }
-  .quicksettings .qs-inline-btn { height: 100%; padding-inline: 0.8rem; }
-  .quicksettings .qs-refresh-btn,
-  .quicksettings .qs-overrides-btn { height: 100%; padding-inline: 0.9rem; font-size: 0.85rem; }
-  .qs-actions { display: flex; align-items: center; gap: 0.4rem; padding-bottom: 2px; }
-  .qs-paths-hint { grid-auto-flow: row; }
-
-  /* Two-row layout for the main QuickSettings bar (non-WAN). */
-  .quicksettings .qs-group-mode { grid-row: 1; grid-column: 1; }
-  .quicksettings .qs-group-checkpoint { grid-row: 1; grid-column: 2; }
-  .quicksettings .qs-group-vae { grid-row: 1; grid-column: 3; }
+  
+  .quicksettings-group { 
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+  }
+  
+  /* Sizing hints */
+  .quicksettings .qs-group-unet-dtype { flex: 0 0 auto; min-width: 85px; }
+  .quicksettings .qs-group-checkpoint { flex: 1 1 160px; max-width: 260px; }
+  .quicksettings .qs-group-vae { flex: 1 1 120px; max-width: 180px; }
   .quicksettings .qs-group-text-encoder,
-  .quicksettings .qs-group-flux-tenc { grid-row: 1; grid-column: 4; }
-  .quicksettings .qs-group-models { grid-row: 1; grid-column: 5; }
-
-  .quicksettings .qs-group-attention { grid-row: 2; grid-column: 1; }
-  .quicksettings .qs-group-overrides { grid-row: 2; grid-column: 2; }
-  .quicksettings .qs-group-perf-dtype { grid-row: 2; grid-column: 3; }
-  .quicksettings .qs-group-perf-vram { grid-row: 2; grid-column: 4; }
-  .quicksettings .qs-group-perf-offload { grid-row: 2; grid-column: 5; }
-  .quicksettings .qs-group-perf-fallback { grid-row: 2; grid-column: 6; }
-  .quicksettings .qs-group-perf-cache { grid-row: 2; grid-column: 7; }
+  .quicksettings .qs-group-flux-tenc { flex: 1 1 200px; max-width: 320px; }
+  .quicksettings .qs-group-attention { flex: 0 0 auto; min-width: 85px; }
+  .quicksettings .qs-group-models { flex: 0 0 auto; }
+  .quicksettings .qs-group-overrides { flex: 0 0 auto; }
+  .quicksettings .qs-group-perf-vram { flex: 0 0 auto; min-width: 80px; }
+  .quicksettings .qs-group-perf-offload,
+  .quicksettings .qs-group-perf-fallback,
+  .quicksettings .qs-group-perf-cache,
+  .quicksettings .qs-group-perf-streaming { flex: 0 0 auto; }
+  
+  .qs-row { 
+    display: flex; 
+    align-items: stretch; 
+    gap: var(--space-sm); 
+    height: var(--control-h-md);
+  }
+  
+  .qs-pair { 
+    display: flex; 
+    gap: 0.25rem; 
+    align-items: stretch;
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .quicksettings .select-md,
+  .quicksettings .ui-input { 
+    height: 100%; 
+    min-width: 0;
+    flex: 1;
+  }
+  
+  .quicksettings .qs-inline-btn { width: 2rem; padding-inline: 0.5rem; flex-shrink: 0; }
+  .quicksettings .qs-refresh-btn { padding-inline: 0.6rem; font-size: 0.75rem; }
+  .quicksettings .qs-overrides-btn,
+  .quicksettings .btn-sm { padding: 0.3rem 0.5rem; font-size: 0.7rem; white-space: nowrap; }
+  
+  .qs-actions { display: flex; align-items: center; gap: 0.4rem; }
+  .qs-paths-hint { flex-direction: column; }
+  
+  /* Hide legacy */
+  .quicksettings .qs-group-mode { display: none; }
+  .quicksettings .qs-group-perf-dtype { display: none; }
 
   .quicksettings.quicksettings-loading .select-md {
     animation: qs-select-pulse 0.85s ease-in-out infinite alternate;
@@ -50,12 +80,19 @@
     to { box-shadow: 0 0 0 2px hsla(210, 70%, 65%, 0.45); }
   }
 
-  .qs-switch { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; }
+  /* Switch styling */
+  .qs-switch { 
+    display: inline-flex; 
+    align-items: center; 
+    gap: 0.3rem; 
+    cursor: pointer;
+    height: 100%;
+  }
   .qs-switch input { position: absolute; opacity: 0; pointer-events: none; }
   .qs-switch-track {
     position: relative;
-    width: 2.25rem;
-    height: 1.3rem;
+    width: 5rem;
+    height: 1.8rem;
     border-radius: 999px;
     background: hsla(0,0%,100%,0.12);
     border: 1px solid hsla(0,0%,100%,0.18);
@@ -63,10 +100,11 @@
     align-items: center;
     padding: 0 0.1rem;
     transition: background 0.18s ease, border-color 0.18s ease;
+    flex-shrink: 0;
   }
   .qs-switch-thumb {
-    width: 0.95rem;
-    height: 0.95rem;
+    width: 1.2rem;
+    height: 1.2rem;
     border-radius: 999px;
     background: hsla(0,0%,100%,0.9);
     transform: translateX(0);
@@ -77,19 +115,7 @@
     border-color: hsl(var(--accent));
   }
   .qs-switch input:checked + .qs-switch-track .qs-switch-thumb {
-    transform: translateX(0.9rem);
+    transform: translateX(3.50rem);
   }
-  .qs-switch-label { opacity: 0.82; }
-
-  /* Narrow screens: fallback to auto-fit grid */
-  @media (max-width: 1200px) {
-    .quicksettings {
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    }
-    /* On small screens, let items flow naturally instead of forcing a 2-row layout. */
-    .quicksettings .quicksettings-group {
-      grid-column: auto !important;
-      grid-row: auto !important;
-    }
-  }
+  .qs-switch-label { opacity: 0.85; white-space: nowrap; font-size: 0.7rem; }
 }

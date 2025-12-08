@@ -1,5 +1,14 @@
 <template>
   <!-- Flux-specific quicksettings row -->
+  <div class="quicksettings-group qs-group-unet-dtype">
+    <label class="label-muted">Core dtype</label>
+    <div class="qs-row">
+      <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
+        <option v-for="dt in unetDtypeChoices" :key="dt" :value="dt">{{ dt }}</option>
+      </select>
+    </div>
+  </div>
+
   <div class="quicksettings-group qs-group-checkpoint">
     <label class="label-muted">Checkpoint</label>
     <div class="qs-row">
@@ -27,23 +36,20 @@
   <div class="quicksettings-group qs-group-flux-tenc">
     <label class="label-muted">Text Encoders</label>
     <div class="qs-row">
-      <select class="select-md" :value="textEncoderPrimary" @change="$emit('update:textEncoderPrimary', ($event.target as HTMLSelectElement).value)">
-        <option value="">Built-in T5</option>
-        <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
-      </select>
-      <select class="select-md" :value="textEncoderSecondary" @change="$emit('update:textEncoderSecondary', ($event.target as HTMLSelectElement).value)">
-        <option value="">CLIP (optional)</option>
-        <option v-for="te in textEncoderChoices" :key="`sec-${te}`" :value="te">{{ textEncoderLabel(te) }}</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="quicksettings-group qs-group-unet-dtype">
-    <label class="label-muted">Unet Dtype</label>
-    <div class="qs-row">
-      <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
-        <option v-for="dt in unetDtypeChoices" :key="dt" :value="dt">{{ dt }}</option>
-      </select>
+      <div class="qs-pair">
+        <select class="select-md" :value="textEncoderPrimary" @change="$emit('update:textEncoderPrimary', ($event.target as HTMLSelectElement).value)">
+          <option value="">Built-in CLIP</option>
+          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
+        </select>
+        <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
+      </div>
+      <div class="qs-pair">
+        <select class="select-md" :value="textEncoderSecondary" @change="$emit('update:textEncoderSecondary', ($event.target as HTMLSelectElement).value)">
+          <option value="">Built-in T5</option>
+          <option v-for="te in textEncoderChoices" :key="`sec-${te}`" :value="te">{{ textEncoderLabel(te) }}</option>
+        </select>
+        <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
+      </div>
     </div>
   </div>
 
@@ -57,9 +63,9 @@
   </div>
 
   <div class="quicksettings-group qs-group-overrides">
-    <label class="label-muted">Overrides</label>
+    <label class="label-muted">&nbsp;</label>
     <div class="qs-row">
-      <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">Set overrides</button>
+      <button class="btn btn-secondary btn-sm" type="button" @click="$emit('openOverrides')">Set overrides</button>
     </div>
   </div>
 </template>
@@ -88,6 +94,7 @@ defineEmits<{
   (e: 'update:attentionBackend', value: string): void
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
+  (e: 'addTencPath'): void
   (e: 'openOverrides'): void
 }>()
 

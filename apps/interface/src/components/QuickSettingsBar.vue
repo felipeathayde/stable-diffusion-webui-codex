@@ -53,9 +53,10 @@
         @update:attentionBackend="onAttentionChange"
         @addCheckpointPath="onAddCheckpointPath"
         @addVaePath="onAddVaePath"
+        @addTencPath="onAddTencPath"
         @openOverrides="openOverrides"
       />
-      <div class="quicksettings-group quicksettings-right qs-group-models">
+      <div class="quicksettings-group qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
           <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
@@ -102,7 +103,7 @@
         @addVaePath="onAddVaePath"
         @openOverrides="openOverrides"
       />
-      <div class="quicksettings-group quicksettings-right qs-group-models">
+      <div class="quicksettings-group qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
           <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
@@ -152,7 +153,7 @@
         @addVaePath="onAddVaePath"
         @openOverrides="openOverrides"
       />
-      <div class="quicksettings-group quicksettings-right qs-group-models">
+      <div class="quicksettings-group qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
           <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
@@ -635,6 +636,31 @@ async function onAddVaePath(): Promise<void> {
     await updatePaths(payload)
   } catch (e) {
     console.error('[quicksettings] failed to add VAE path', e)
+  }
+}
+
+async function onAddTencPath(): Promise<void> {
+  try {
+    const res = await fetchPaths()
+    const raw = (res.paths || {}) as Record<string, string[]>
+    const fam = activeFamily.value
+    const prefix = enginePrefixForFamily(fam)
+    const key = `${prefix}_tenc`
+    const current = (raw[key] || []) as string[]
+    const next = window.prompt('Add Text Encoder directory (server path)', '')
+    if (!next) return
+    const trimmed = next.trim()
+    if (!trimmed) return
+    const paths = dedupePaths([...current, trimmed])
+    const payload: Record<string, string[]> = {}
+    for (const [k, v] of Object.entries(raw)) {
+      if (k === 'checkpoints' || k === 'vae' || k === 'lora' || k === 'text_encoders') continue
+      payload[k] = Array.isArray(v) ? [...v] : []
+    }
+    payload[key] = paths
+    await updatePaths(payload)
+  } catch (e) {
+    console.error('[quicksettings] failed to add text encoder path', e)
   }
 }
 

@@ -132,8 +132,7 @@ export const useImg2ImgStore = defineStore('img2img', () => {
 
     const qs = useQuicksettingsStore()
     return {
-      __strict_version: 1,
-      codex_device: qs.currentDevice,
+      device: qs.currentDevice,
       img2img_init_image: initImageData.value,
       img2img_prompt: prompt.value,
       img2img_neg_prompt: negativePrompt.value,

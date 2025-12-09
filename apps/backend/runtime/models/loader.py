@@ -1440,7 +1440,7 @@ def _load_huggingface_component(
         )
         return model
 
-    if cls_name in {"UNet2DConditionModel", "FluxTransformer2DModel", "SD3Transformer2DModel", "ChromaTransformer2DModel"}:
+    if cls_name in {"UNet2DConditionModel", "FluxTransformer2DModel", "SD3Transformer2DModel", "ChromaTransformer2DModel", "ZImageTransformer2DModel"}:
         if state_dict is None:
             return None
         # Choose configuration source per family/model class
@@ -1491,6 +1491,10 @@ def _load_huggingface_component(
         elif cls_name == "ChromaTransformer2DModel":
             from apps.backend.runtime.chroma.chroma import ChromaTransformer2DModel
             model_ctor = lambda cfg: ChromaTransformer2DModel(**cfg)
+        elif cls_name == "ZImageTransformer2DModel":
+            from apps.backend.runtime.zimage.model import ZImageTransformer2DModel
+            # Filter out HuggingFace metadata keys (starting with _)
+            model_ctor = lambda cfg: ZImageTransformer2DModel(**{k: v for k, v in cfg.items() if not k.startswith("_")})
         else:
             from apps.backend.runtime.sd.mmditx import SD3Transformer2DModel
             model_ctor = lambda cfg: SD3Transformer2DModel(**cfg)
@@ -1573,7 +1577,7 @@ def _load_huggingface_component(
 
         if cls_name == "UNet2DConditionModel":
             state_dict = _normalize_unet_state_dict(state_dict, config_json)
-        elif cls_name in {"FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel"}:
+        elif cls_name in {"FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel", "ZImageTransformer2DModel"}:
             # Strip common prefixes from transformer state dict keys (similar to UNet normalization)
             from apps.backend.runtime.utils import RemapKeysView
             _TRANSFORMER_PREFIXES = (

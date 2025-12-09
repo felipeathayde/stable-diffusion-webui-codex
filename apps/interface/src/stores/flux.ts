@@ -18,8 +18,10 @@ import {
 import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, formatZodError } from '../api/payloads'
 import type { Txt2ImgRequest, HighresFormState, RefinerFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
+import { getEngineDefaults } from './engine_config'
 
 const ENGINE_ID = 'flux'
+const ENGINE_DEFAULTS = getEngineDefaults('flux')
 const STORAGE_KEY = 'codex.flux.profile'
 
 type Status = 'idle' | 'running' | 'done' | 'error'
@@ -41,10 +43,10 @@ export const useFluxStore = defineStore('flux', () => {
 
   const prompt = ref('')
   const negativePrompt = ref('')
-  const steps = ref(20)
-  const cfgScale = ref(3.5)
-  const width = ref(1024)
-  const height = ref(1024)
+  const steps = ref(ENGINE_DEFAULTS.steps)
+  const cfgScale = ref(ENGINE_DEFAULTS.distilledCfg ?? ENGINE_DEFAULTS.cfg)
+  const width = ref(ENGINE_DEFAULTS.width)
+  const height = ref(ENGINE_DEFAULTS.height)
   const seed = ref(-1)
   const batchSize = ref(1)
   const batchCount = ref(1)

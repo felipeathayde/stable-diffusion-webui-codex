@@ -1290,10 +1290,10 @@ def build_app() -> FastAPI:
                 # Coerce to list[str]
                 paths[key] = [str(item) for item in value if isinstance(item, str)]
 
-        paths["checkpoints"] = _list("sd15_ckpt") + _list("sdxl_ckpt") + _list("flux_ckpt") + _list("wan22_ckpt")
-        paths["vae"] = _list("sd15_vae") + _list("sdxl_vae") + _list("flux_vae") + _list("wan22_vae")
-        paths["lora"] = _list("sd15_loras") + _list("sdxl_loras") + _list("flux_loras") + _list("wan22_loras")
-        paths["text_encoders"] = _list("sd15_tenc") + _list("sdxl_tenc") + _list("flux_tenc") + _list("wan22_tenc")
+        paths["checkpoints"] = _list("sd15_ckpt") + _list("sdxl_ckpt") + _list("flux_ckpt") + _list("wan22_ckpt") + _list("zimage_ckpt")
+        paths["vae"] = _list("sd15_vae") + _list("sdxl_vae") + _list("flux_vae") + _list("wan22_vae") + _list("zimage_vae")
+        paths["lora"] = _list("sd15_loras") + _list("sdxl_loras") + _list("flux_loras") + _list("wan22_loras") + _list("zimage_loras")
+        paths["text_encoders"] = _list("sd15_tenc") + _list("sdxl_tenc") + _list("flux_tenc") + _list("wan22_tenc") + _list("zimage_tenc")
 
         return {"paths": paths}
 
@@ -1328,21 +1328,25 @@ def build_app() -> FastAPI:
             new_paths["sdxl_ckpt"] = checkpoints
             new_paths["flux_ckpt"] = checkpoints
             new_paths["wan22_ckpt"] = checkpoints
+            new_paths["zimage_ckpt"] = checkpoints
 
             new_paths["sd15_vae"] = vae
             new_paths["sdxl_vae"] = vae
             new_paths["flux_vae"] = vae
             new_paths["wan22_vae"] = vae
+            new_paths["zimage_vae"] = vae
 
             new_paths["sd15_loras"] = lora
             new_paths["sdxl_loras"] = lora
             new_paths["flux_loras"] = lora
             new_paths["wan22_loras"] = lora
+            new_paths["zimage_loras"] = lora
 
             new_paths["sd15_tenc"] = text_encoders
             new_paths["sdxl_tenc"] = text_encoders
             new_paths["flux_tenc"] = text_encoders
             new_paths["wan22_tenc"] = text_encoders
+            new_paths["zimage_tenc"] = text_encoders
 
         # 2) Apply engine-specific keys (and any additional explicit keys) directly.
         for key, value in incoming.items():
@@ -1533,53 +1537,11 @@ def build_app() -> FastAPI:
                 rejected[k] = 'invalid value'
         return {"accepted": accepted, "rejected": rejected}
 
-    _TXT2IMG_ALLOWED_KEYS = {
-        "__strict_version",
-        "codex_device",
-        "device",
-        "codex_diffusion_device",
-        "prompt",
-        "negative_prompt",
-        "width",
-        "height",
-        "steps",
-        "guidance_scale",
-        "sampler",
-        "scheduler",
-        "seed",
-        "batch_size",
-        "batch_count",
-        "styles",
-        "metadata",
-        "extras",
-        "distilled_guidance_scale",
-        "engine",
-        "codex_engine",
-        "model",
-        "sd_model_checkpoint",
-        "smart_offload",
-        "smart_fallback",
-        "smart_cache",
-    }
-    _TXT2IMG_EXTRAS_KEYS = {"highres", "randn_source", "eta_noise_seed_delta", "refiner", "text_encoder_override"}
-    _TXT2IMG_HIGHRES_KEYS = {
-        "enable",
-        "denoise",
-        "scale",
-        "resize_x",
-        "resize_y",
-        "steps",
-        "upscaler",
-        "checkpoint",
-        "modules",
-        "sampler",
-        "scheduler",
-        "prompt",
-        "negative_prompt",
-        "cfg",
-        "distilled_cfg",
-        "refiner",
-    }
+    # Payload validation keys (imported from centralized types)
+    from apps.backend.types.payloads import TXT2IMG_KEYS, EXTRAS_KEYS
+    _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
+    _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
+    _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
         unknown = sorted(set(obj.keys()) - allowed)
@@ -1831,19 +1793,30 @@ def build_app() -> FastAPI:
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
-        cfg_scale = _require_float_field(payload, 'guidance_scale')
-        if 'distilled_guidance_scale' in payload:
-            distilled_cfg_scale = _require_float_field(payload, 'distilled_guidance_scale')
+        # Flow models (Flux, Z Image, Chroma) use distilled_cfg, diffusion models (SD, SDXL) use cfg
+        # At least one of cfg or distilled_cfg must be present
+        if 'cfg' in payload:
+            cfg_scale = _require_float_field(payload, 'cfg')
+        elif 'distilled_cfg' in payload:
+            # Flow model: use distilled_cfg as the guidance, set cfg to a sensible default
+            cfg_scale = 1.0  # Neutral CFG for flow models
+        else:
+            raise HTTPException(status_code=400, detail="Missing 'cfg' or 'distilled_cfg'")
+        
+        if 'distilled_cfg' in payload:
+            distilled_cfg_scale = _require_float_field(payload, 'distilled_cfg')
         else:
             distilled_cfg_scale = 3.5
         sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
         scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
         seed_val = _require_int_field(payload, 'seed')
-        batch_size = _require_int_field(payload, 'batch_size', minimum=1)
-        batch_count = _require_int_field(payload, 'batch_count', minimum=1)
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, highres_cfg = _parse_txt2img_extras(payload)
+
+        # Read batch params from extras (default to 1)
+        batch_size = int(extras.pop('batch_size', 1)) if 'batch_size' in extras else 1
+        batch_count = int(extras.pop('batch_count', 1)) if 'batch_count' in extras else 1
 
         metadata.setdefault("mode", _opts_snapshot().codex_mode)
         metadata["styles"] = styles
@@ -1868,8 +1841,31 @@ def build_app() -> FastAPI:
         else:
             smart_cache = bool(getattr(snap, "codex_smart_cache", False))
 
+        # Resolve model assets from SHA (if provided in extras)
+        from apps.backend.inventory.cache import resolve_asset_by_sha
+        model_sha = extras.get("model_sha")
+        vae_sha = extras.get("vae_sha")
+        tenc_sha = extras.get("tenc_sha")
+        
+        if model_sha:
+            model_path = resolve_asset_by_sha(model_sha)
+            if model_path:
+                extras["model_path"] = model_path
+        if vae_sha:
+            vae_path = resolve_asset_by_sha(vae_sha)
+            if vae_path:
+                extras["vae_path"] = vae_path
+        if tenc_sha:
+            tenc_path = resolve_asset_by_sha(tenc_sha)
+            if tenc_path:
+                extras["tenc_path"] = tenc_path
+
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+        
+        # GGUF models require text encoder
+        if model_override and model_override.lower().endswith('.gguf') and not tenc_sha:
+            raise HTTPException(status_code=400, detail="GGUF models require tenc_sha in extras")
 
         req = Txt2ImgRequest(
             task=TaskType.TXT2IMG,
@@ -1965,6 +1961,13 @@ def build_app() -> FastAPI:
                     te_override = extras.get("text_encoder_override")
                     if isinstance(te_override, dict):
                         engine_options["text_encoder_override"] = dict(te_override)
+                    # Read tenc_sha from payload extras (for Z Image and other engines)
+                    tenc_sha_from_payload = extras.get("tenc_sha")
+                    if tenc_sha_from_payload and isinstance(tenc_sha_from_payload, str):
+                        from apps.backend.inventory.cache import resolve_asset_by_sha
+                        resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
+                        if resolved_path:
+                            engine_options["tenc_path"] = resolved_path
                 except Exception:
                     pass
                 # Pass streaming option from settings to engine
@@ -1972,6 +1975,53 @@ def build_app() -> FastAPI:
                     snap = _opts_snapshot()
                     if getattr(snap, "codex_core_streaming", False):
                         engine_options["codex_core_streaming"] = True
+                    # Pass VAE override path if set (non-Automatic)
+                    # Check for SHA256-based selection first, fallback to label-based
+                    vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
+                    vae_label = getattr(snap, "forge_selected_vae", None) or ""
+                    if vae_sha:
+                        from apps.backend.inventory.cache import resolve_asset_by_sha
+                        resolved_path = resolve_asset_by_sha(vae_sha)
+                        if resolved_path:
+                            engine_options["vae_path"] = resolved_path
+                    elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
+                        engine_options["vae_path"] = vae_label
+                    # Pass text encoder override paths if set
+                    # Check for SHA256-based selection first, fallback to label-based
+                    tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
+                    tenc_modules = getattr(snap, "forge_additional_modules", None) or []
+                    if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
+                        first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
+                        if first_sha:
+                            from apps.backend.inventory.cache import resolve_asset_by_sha
+                            resolved_path = resolve_asset_by_sha(first_sha)
+                            if resolved_path:
+                                engine_options["tenc_path"] = resolved_path
+                    elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
+                        # Fallback: try direct path or label
+                        first_tenc = str(tenc_modules[0]) if tenc_modules else ""
+                        if first_tenc:
+                            # Check if it looks like a SHA256 (64 hex chars)
+                            if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
+                                from apps.backend.inventory.cache import resolve_asset_by_sha
+                                resolved_path = resolve_asset_by_sha(first_tenc)
+                                if resolved_path:
+                                    engine_options["tenc_path"] = resolved_path
+                            # Check if it's a path that exists
+                            elif os.path.isfile(first_tenc):
+                                engine_options["tenc_path"] = first_tenc
+                            # Extract path from label format "family/filename" if present
+                            elif "/" in first_tenc:
+                                parts = first_tenc.split("/", 1)
+                                if len(parts) == 2:
+                                    # This is a label format, try to find in inventory
+                                    filename = parts[1]
+                                    from apps.backend.inventory import cache as inv_cache
+                                    inv = inv_cache.get()
+                                    for item in inv.text_encoders:
+                                        if item.get("name") == filename:
+                                            engine_options["tenc_path"] = item.get("path", "")
+                                            break
                 except Exception:
                     pass
                 with tasks_lock:
@@ -2475,8 +2525,6 @@ def build_app() -> FastAPI:
     async def txt2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
     
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
@@ -2489,8 +2537,6 @@ def build_app() -> FastAPI:
     async def img2img(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
     
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
@@ -2503,8 +2549,6 @@ def build_app() -> FastAPI:
     async def txt2vid(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
     
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
@@ -2518,8 +2562,6 @@ def build_app() -> FastAPI:
         logging.getLogger('backend.api').info('[api] DEBUG: POST /api/img2vid received')
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
-        if payload.get('__strict_version') != 1:
-            raise HTTPException(status_code=400, detail="Missing __strict_version == 1")
     
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
@@ -2570,6 +2612,143 @@ def build_app() -> FastAPI:
             except Exception:
                 pass
         return {"status": "cancelling", "mode": mode}
+
+    # =========================================================================
+    # Tools API - GGUF Converter and other utilities
+    # =========================================================================
+    
+    _gguf_conversion_jobs: Dict[str, Dict[str, Any]] = {}
+    
+    @app.post('/api/tools/convert-gguf')
+    async def convert_to_gguf(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Start a GGUF conversion job.
+        
+        Request body:
+        {
+            "config_path": "/path/to/text_encoder/config.json",
+            "safetensors_path": "/path/to/model.safetensors",
+            "output_path": "/path/to/output.gguf",
+            "quantization": "F16" | "Q8_0" | "Q5_K" | "Q4_K"
+        }
+        """
+        import uuid
+        from apps.backend.runtime.tools.gguf_converter import (
+            ConversionConfig,
+            QuantizationType,
+            convert_safetensors_to_gguf,
+        )
+        
+        job_id = str(uuid.uuid4())[:8]
+        
+        # Validate paths
+        config_path = payload.get("config_path", "")
+        safetensors_path = payload.get("safetensors_path", "")
+        output_path = payload.get("output_path", "")
+        quant_str = payload.get("quantization", "F16")
+        
+        if not config_path or not safetensors_path or not output_path:
+            raise HTTPException(status_code=400, detail="Missing required paths")
+        
+        if not os.path.exists(config_path) and not os.path.exists(os.path.join(config_path, "config.json")):
+            raise HTTPException(status_code=400, detail=f"Config not found: {config_path}")
+        
+        if not os.path.exists(safetensors_path):
+            raise HTTPException(status_code=400, detail=f"Safetensors not found: {safetensors_path}")
+        
+        try:
+            quant = QuantizationType(quant_str)
+        except ValueError:
+            quant = QuantizationType.F16
+        
+        # Create job entry
+        _gguf_conversion_jobs[job_id] = {
+            "status": "pending",
+            "progress": 0,
+            "current_tensor": "",
+            "error": None,
+        }
+        
+        # Run conversion in background thread
+        def run_conversion():
+            try:
+                config = ConversionConfig(
+                    config_path=config_path,
+                    safetensors_path=safetensors_path,
+                    output_path=output_path,
+                    quantization=quant,
+                )
+                
+                def progress_cb(prog):
+                    _gguf_conversion_jobs[job_id].update({
+                        "status": prog.status,
+                        "progress": prog.progress_percent,
+                        "current_tensor": prog.current_tensor,
+                    })
+                
+                convert_safetensors_to_gguf(config, progress_callback=progress_cb)
+                _gguf_conversion_jobs[job_id]["status"] = "complete"
+                _gguf_conversion_jobs[job_id]["progress"] = 100
+                
+            except Exception as e:
+                _gguf_conversion_jobs[job_id]["status"] = "error"
+                _gguf_conversion_jobs[job_id]["error"] = str(e)
+        
+        thread = threading.Thread(target=run_conversion, daemon=True)
+        thread.start()
+        
+        return {"job_id": job_id, "status": "started"}
+    
+    @app.get('/api/tools/convert-gguf/{job_id}')
+    async def get_gguf_conversion_status(job_id: str) -> Dict[str, Any]:
+        """Get the status of a GGUF conversion job."""
+        if job_id not in _gguf_conversion_jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return _gguf_conversion_jobs[job_id]
+    
+    @app.get('/api/tools/browse-files')
+    async def browse_files(path: str = "", extensions: str = "") -> Dict[str, Any]:
+        """Browse files/directories for file picker.
+        
+        Query params:
+        - path: Directory to browse (empty = models folder)
+        - extensions: Comma-separated list of extensions to filter (e.g., ".safetensors,.gguf")
+        """
+        if not path:
+            path = os.path.join(os.getcwd(), "models")
+        
+        if not os.path.exists(path):
+            return {"path": path, "exists": False, "items": []}
+        
+        if os.path.isfile(path):
+            return {"path": path, "exists": True, "is_file": True, "items": []}
+        
+        ext_list = [e.strip().lower() for e in extensions.split(",") if e.strip()] if extensions else []
+        
+        items = []
+        try:
+            for entry in os.scandir(path):
+                if entry.is_dir():
+                    items.append({"name": entry.name, "type": "directory"})
+                elif entry.is_file():
+                    if not ext_list or any(entry.name.lower().endswith(ext) for ext in ext_list):
+                        items.append({
+                            "name": entry.name,
+                            "type": "file",
+                            "size": entry.stat().st_size,
+                        })
+        except PermissionError:
+            pass
+        
+        # Sort: directories first, then files
+        items.sort(key=lambda x: (0 if x["type"] == "directory" else 1, x["name"].lower()))
+        
+        return {
+            "path": path,
+            "exists": True,
+            "is_file": False,
+            "parent": str(Path(path).parent),
+            "items": items,
+        }
 
     # Serve built UI after API routes so /api/* is matched before the SPA fallback
     if os.path.isdir(_ui_dist_dir):

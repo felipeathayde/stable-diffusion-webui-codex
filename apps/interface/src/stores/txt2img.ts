@@ -18,7 +18,9 @@ import {
 import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
 import type { Txt2ImgRequest, HighresFormState, RefinerFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
+import { getEngineDefaults } from './engine_config'
 
+const ENGINE_DEFAULTS = getEngineDefaults('sd15')
 type Status = 'idle' | 'running' | 'error' | 'done'
 
 interface ProgressState {
@@ -40,10 +42,10 @@ const DEFAULT_PROGRESS: ProgressState = {
 export const useTxt2ImgStore = defineStore('txt2img', () => {
   const prompt = ref('')
   const negativePrompt = ref('')
-  const steps = ref(20)
-  const cfgScale = ref(7)
-  const width = ref(512)
-  const height = ref(512)
+  const steps = ref(ENGINE_DEFAULTS.steps)
+  const cfgScale = ref(ENGINE_DEFAULTS.cfg)
+  const width = ref(ENGINE_DEFAULTS.width)
+  const height = ref(ENGINE_DEFAULTS.height)
   const seed = ref(-1)
   const batchSize = ref(1)
   const batchCount = ref(1)

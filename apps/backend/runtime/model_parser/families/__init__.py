@@ -6,7 +6,7 @@ from apps.backend.runtime.model_registry.specs import ModelFamily, ModelSignatur
 
 from ..errors import UnsupportedFamilyError
 from ..specs import ParserPlanBundle
-from . import chroma, flux, sd1, sd2, sd3, sdxl, wan22
+from . import chroma, flux, sd1, sd2, sd3, sdxl, wan22, zimage
 
 
 _BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
@@ -19,6 +19,7 @@ _BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
     ModelFamily.FLUX: flux.build_plan,
     ModelFamily.CHROMA: chroma.build_plan,
     ModelFamily.WAN22: wan22.build_plan,
+    ModelFamily.ZIMAGE: zimage.build_plan,
 }
 
 

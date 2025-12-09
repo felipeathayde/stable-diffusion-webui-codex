@@ -33,42 +33,69 @@ logger = logging.getLogger("backend.engines.common.base")
 
 @dataclass(slots=True)
 class CodexObjects:
-    """Container for core diffusion components attached to an engine."""
+    """Container for core diffusion components attached to an engine.
+    
+    text_encoders is a flexible dict allowing engines to specify their own
+    text encoder types (e.g., {"clip": ...}, {"qwen3": ...}, {"clip": ..., "t5": ...}).
+    """
 
     unet: Any
-    clip: Any
     vae: Any
+    text_encoders: dict[str, Any]  # Flexible text encoders dict
     clipvision: Any | None = None
+
+    # Backwards compatibility: access clip via property
+    @property
+    def clip(self) -> Any:
+        """Get CLIP text encoder (backwards compatible)."""
+        return self.text_encoders.get("clip")
+    
+    @clip.setter
+    def clip(self, value: Any) -> None:
+        """Set CLIP text encoder (backwards compatible)."""
+        self.text_encoders["clip"] = value
 
     def shallow_copy(self) -> "CodexObjects":
         """Return a shallow copy preserving component references."""
         return CodexObjects(
             unet=self.unet,
-            clip=self.clip,
             vae=self.vae,
+            text_encoders=dict(self.text_encoders),  # Shallow copy of dict
             clipvision=self.clipvision,
         )
 
-    def validate(self, context: str) -> None:
-        """Ensure all mandatory components are present."""
+    def validate(self, context: str, *, required_text_encoders: tuple[str, ...] = ("clip",)) -> None:
+        """Ensure all mandatory components are present.
+        
+        Args:
+            context: Error message context.
+            required_text_encoders: Tuple of required text encoder names.
+        """
         if self.unet is None:
             raise ValueError(f"{context}: UNet component is required.")
-        if self.clip is None:
-            raise ValueError(f"{context}: CLIP component is required.")
         if self.vae is None:
             raise ValueError(f"{context}: VAE component is required.")
+        for te_name in required_text_encoders:
+            if te_name not in self.text_encoders or self.text_encoders[te_name] is None:
+                raise ValueError(f"{context}: '{te_name}' text encoder is required.")
 
     def describe(self) -> dict[str, str]:
         """Return human-readable component metadata for logging."""
         def _name(component: Any) -> str:
             return component.__class__.__name__ if component is not None else "None"
 
-        return {
+        result = {
             "unet": _name(self.unet),
-            "clip": _name(self.clip),
             "vae": _name(self.vae),
             "clipvision": _name(self.clipvision),
         }
+        # Add text encoders to description
+        for te_name, te_obj in self.text_encoders.items():
+            result[f"text_encoder.{te_name}"] = _name(te_obj)
+        # Backwards compat: also include "clip" key directly if present
+        if "clip" in self.text_encoders:
+            result["clip"] = _name(self.text_encoders["clip"])
+        return result
 
 
 class _ComponentTracker:
@@ -86,25 +113,25 @@ class _ComponentTracker:
             raise TypeError(f"{context}: expected CodexObjects, received {type(value).__name__}.")
         return value
 
-    def initialize(self, components: CodexObjects, *, context: str) -> None:
+    def initialize(self, components: CodexObjects, *, context: str, required_text_encoders: tuple[str, ...] = ("clip",)) -> None:
         components = self._ensure_codex_objects(components, context)
-        components.validate(context)
+        components.validate(context, required_text_encoders=required_text_encoders)
         self._active = components
         self._original = components.shallow_copy()
         self._after_lora = components.shallow_copy()
         snapshot = components.describe()
         self._logger.debug(
-            "Engine components bound (%s): unet=%s clip=%s vae=%s clipvision=%s",
+            "Engine components bound (%s): unet=%s vae=%s clipvision=%s text_encoders=%s",
             context,
             snapshot["unet"],
-            snapshot["clip"],
             snapshot["vae"],
             snapshot["clipvision"],
+            list(components.text_encoders.keys()),
         )
 
-    def replace_active(self, components: CodexObjects, *, context: str) -> None:
+    def replace_active(self, components: CodexObjects, *, context: str, required_text_encoders: tuple[str, ...] = ("clip",)) -> None:
         components = self._ensure_codex_objects(components, context)
-        components.validate(context)
+        components.validate(context, required_text_encoders=required_text_encoders)
         self._active = components
         self._logger.debug(
             "Engine components replaced (%s): %s", context, components.describe()
@@ -115,16 +142,16 @@ class _ComponentTracker:
         self._after_lora = active.shallow_copy()
         snapshot = self._after_lora.describe()
         self._logger.debug(
-            "Stored post-LoRA snapshot: unet=%s clip=%s vae=%s clipvision=%s",
+            "Stored post-LoRA snapshot: unet=%s vae=%s clipvision=%s text_encoders=%s",
             snapshot["unet"],
-            snapshot["clip"],
             snapshot["vae"],
             snapshot["clipvision"],
+            list(active.text_encoders.keys()),
         )
 
-    def set_after_lora(self, components: CodexObjects, *, context: str) -> None:
+    def set_after_lora(self, components: CodexObjects, *, context: str, required_text_encoders: tuple[str, ...] = ("clip",)) -> None:
         components = self._ensure_codex_objects(components, context)
-        components.validate(context)
+        components.validate(context, required_text_encoders=required_text_encoders)
         self._after_lora = components
         self._logger.debug(
             "External post-LoRA snapshot registered (%s): %s",
@@ -132,9 +159,9 @@ class _ComponentTracker:
             components.describe(),
         )
 
-    def set_original(self, components: CodexObjects, *, context: str) -> None:
+    def set_original(self, components: CodexObjects, *, context: str, required_text_encoders: tuple[str, ...] = ("clip",)) -> None:
         components = self._ensure_codex_objects(components, context)
-        components.validate(context)
+        components.validate(context, required_text_encoders=required_text_encoders)
         self._original = components
         self._logger.debug(
             "Original component snapshot replaced (%s): %s",
@@ -194,10 +221,21 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._cond_cache: dict[tuple, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ Components
+    @property
+    def required_text_encoders(self) -> tuple[str, ...]:
+        """Text encoders required by this engine. Override in subclasses.
+        
+        Default is ("clip",) for SD/SDXL compatibility.
+        Other engines can override, e.g., ("qwen3",) for Z Image.
+        """
+        return ("clip",)
+
     def bind_components(self, components: CodexObjects, *, label: str | None = None) -> None:
         """Bind engine components and seed original/LoRA snapshots."""
         context = label or self.__class__.__name__
-        self._component_tracker.initialize(components, context=context)
+        self._component_tracker.initialize(
+            components, context=context, required_text_encoders=self.required_text_encoders
+        )
 
     @property
     def codex_objects(self) -> CodexObjects:
@@ -205,7 +243,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     @codex_objects.setter
     def codex_objects(self, value: CodexObjects) -> None:
-        self._component_tracker.replace_active(value, context="codex_objects setter")
+        self._component_tracker.replace_active(
+            value, context="codex_objects setter", required_text_encoders=self.required_text_encoders
+        )
 
     @property
     def codex_objects_original(self) -> CodexObjects:
@@ -213,7 +253,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     @codex_objects_original.setter
     def codex_objects_original(self, value: CodexObjects) -> None:
-        self._component_tracker.set_original(value, context="codex_objects_original")
+        self._component_tracker.set_original(
+            value, context="codex_objects_original", required_text_encoders=self.required_text_encoders
+        )
 
     @property
     def codex_objects_after_applying_lora(self) -> CodexObjects:
@@ -221,7 +263,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     @codex_objects_after_applying_lora.setter
     def codex_objects_after_applying_lora(self, value: CodexObjects) -> None:
-        self._component_tracker.set_after_lora(value, context="codex_objects_after_applying_lora")
+        self._component_tracker.set_after_lora(
+            value, context="codex_objects_after_applying_lora", required_text_encoders=self.required_text_encoders
+        )
 
     @property
     def smart_offload_enabled(self) -> bool:

@@ -17,7 +17,7 @@ class ModelFamily(Enum):
     CHROMA = "chroma"
     KOALA = "koala"
     ZERO123 = "zero123"
-    QWEN_IMAGE = "qwen_image"
+    ZIMAGE = "zimage"
     WAN22 = "wan22"
     AURA = "aura"
     HUNYUAN = "hunyuan"
@@ -44,7 +44,7 @@ class LatentFormat(Enum):
     CHROMA_RADIANCE = "chroma_radiance"
     CASCADE = "cascade"
     WAN22 = "wan22"
-    QWEN_IMAGE = "qwen_image"
+    ZIMAGE = "zimage"
     OTHER = "other"
 
 

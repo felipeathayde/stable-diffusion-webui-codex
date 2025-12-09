@@ -22,8 +22,10 @@ import {
 import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
 import type { Txt2ImgRequest } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
+import { getEngineDefaults } from './engine_config'
 
 const ENGINE_ID = 'zimage'
+const ENGINE_DEFAULTS = getEngineDefaults('zimage')
 const STORAGE_KEY = 'codex.zimage.profile'
 
 type Status = 'idle' | 'running' | 'done' | 'error'
@@ -43,13 +45,13 @@ const DEFAULT_PROGRESS: ProgressState = {
 export const useZImageStore = defineStore('zimage', () => {
   const quicksettings = useQuicksettingsStore()
 
-  // Z Image defaults: 1024x1024, 8 steps, CFG 4.0
+  // Z Image defaults from engine_config
   const prompt = ref('')
   const negativePrompt = ref('')
-  const steps = ref(8)
-  const cfgScale = ref(4.0)
-  const width = ref(1024)
-  const height = ref(1024)
+  const steps = ref(ENGINE_DEFAULTS.steps)
+  const cfgScale = ref(ENGINE_DEFAULTS.distilledCfg ?? ENGINE_DEFAULTS.cfg)
+  const width = ref(ENGINE_DEFAULTS.width)
+  const height = ref(ENGINE_DEFAULTS.height)
   const seed = ref(-1)
   const batchSize = ref(1)
   const batchCount = ref(1)

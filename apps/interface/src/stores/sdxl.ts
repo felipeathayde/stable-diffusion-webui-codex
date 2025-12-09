@@ -18,10 +18,10 @@ import {
 import { buildTxt2ImgPayload, formatZodError } from '../api/payloads'
 import type { Txt2ImgRequest, HighresFormState, RefinerFormState } from '../api/payloads'
 import { useQuicksettingsStore } from './quicksettings'
+import { getEngineDefaults } from './engine_config'
 
 const ENGINE_ID = 'sdxl'
-const DEFAULT_WIDTH = 1024
-const DEFAULT_HEIGHT = 1024
+const ENGINE_DEFAULTS = getEngineDefaults('sdxl')
 const STORAGE_KEY = 'codex.sdxl.profile.v1'
 
 interface ProgressState {
@@ -45,10 +45,10 @@ const DEFAULT_PROGRESS: ProgressState = {
 export const useSdxlStore = defineStore('sdxl', () => {
   const prompt = ref('')
   const negativePrompt = ref('')
-  const steps = ref(30)
-  const cfgScale = ref(7)
-  const width = ref(DEFAULT_WIDTH)
-  const height = ref(DEFAULT_HEIGHT)
+  const steps = ref(ENGINE_DEFAULTS.steps)
+  const cfgScale = ref(ENGINE_DEFAULTS.cfg)
+  const width = ref(ENGINE_DEFAULTS.width)
+  const height = ref(ENGINE_DEFAULTS.height)
   const seed = ref(-1)
   const batchSize = ref(1)
   const batchCount = ref(1)

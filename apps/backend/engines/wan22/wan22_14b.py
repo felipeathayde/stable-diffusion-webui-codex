@@ -106,10 +106,15 @@ class Wan2214BEngine(CodexDiffusionEngine):
 
         return CodexObjects(
             unet=runtime.unet,
-            clip=None,  # WAN uses T5 only, accessed via runtime.text
             vae=runtime.vae,
+            text_encoders={"t5": runtime.text.t5_text},  # WAN uses T5 only
             clipvision=None,
         )
+
+    @property
+    def required_text_encoders(self) -> tuple[str, ...]:
+        """WAN22 uses T5 text encoder only, not CLIP."""
+        return ("t5",)
 
     def _on_unload(self) -> None:
         self._runtime = None

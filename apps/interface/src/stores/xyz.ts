@@ -7,7 +7,7 @@ import { buildTxt2ImgPayload } from '../api/payloads'
 import type { Txt2ImgRequest } from '../api/payloads'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { AXIS_OPTIONS, buildCombos, labelOf, parseAxisValues, type AxisParam, type AxisValue, type XyzCell } from '../utils/xyz'
-import { useSdxlStore } from './sdxl'
+import { useModelTabsStore, type ImageBaseParams } from './model_tabs'
 import { useQuicksettingsStore } from './quicksettings'
 
 type Status = 'idle' | 'running' | 'stopped' | 'error' | 'done'
@@ -87,26 +87,27 @@ export const useXyzStore = defineStore('xyz', () => {
   }
 
   function buildBaseForm(): any {
-    const sdxl = useSdxlStore()
+    const tabs = useModelTabsStore()
     const quick = useQuicksettingsStore()
+    const activeTab = tabs.activeTab
+    const params = activeTab?.params as ImageBaseParams | undefined
+    
     return {
-      prompt: sdxl.prompt,
-      negativePrompt: sdxl.negativePrompt,
-      width: sdxl.width,
-      height: sdxl.height,
-      steps: sdxl.steps,
-      guidanceScale: sdxl.cfgScale,
-      sampler: sdxl.selectedSampler || 'automatic',
-      scheduler: sdxl.selectedScheduler || 'automatic',
-      seed: sdxl.seed,
-      batchSize: sdxl.batchSize,
-      batchCount: sdxl.batchCount,
+      prompt: params?.prompt ?? '',
+      negativePrompt: params?.negativePrompt ?? '',
+      width: params?.width ?? 1024,
+      height: params?.height ?? 1024,
+      steps: params?.steps ?? 30,
+      guidanceScale: params?.cfgScale ?? 7,
+      sampler: params?.sampler || 'automatic',
+      scheduler: params?.scheduler || 'automatic',
+      seed: params?.seed ?? -1,
+      batchSize: 1,
+      batchCount: 1,
       styles: [],
       device: quick.currentDevice,
-      engine: 'sdxl',
-      model: sdxl.selectedModel,
-      highres: { ...sdxl.highres },
-      refiner: { ...sdxl.refiner },
+      engine: activeTab?.type || 'sdxl',
+      model: quick.currentModel,
     }
   }
 
@@ -192,13 +193,17 @@ export const useXyzStore = defineStore('xyz', () => {
   }
 
   async function run(): Promise<void> {
-    const sdxl = useSdxlStore()
+    const tabs = useModelTabsStore()
+    const quick = useQuicksettingsStore()
+    const activeTab = tabs.activeTab
+    const params = activeTab?.params as ImageBaseParams | undefined
+    
     if (!xValues.value.length) {
       errorMessage.value = 'X axis needs at least one value.'
       status.value = 'error'
       return
     }
-    if (!sdxl.prompt.trim()) {
+    if (!params?.prompt?.trim()) {
       errorMessage.value = 'Prompt must not be empty before running XYZ.'
       status.value = 'error'
       return
@@ -217,9 +222,9 @@ export const useXyzStore = defineStore('xyz', () => {
     jobs.value = []
 
     // Ensure engine/model are set before firing many tasks
-    if (sdxl.selectedModel) {
+    if (quick.currentModel) {
       try {
-        await updateOptions({ codex_engine: 'sdxl', sd_model_checkpoint: sdxl.selectedModel })
+        await updateOptions({ codex_engine: activeTab?.type || 'sdxl', sd_model_checkpoint: quick.currentModel })
       } catch (err) {
         errorMessage.value = err instanceof Error ? err.message : String(err)
         status.value = 'error'

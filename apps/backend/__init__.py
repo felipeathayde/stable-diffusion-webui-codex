@@ -83,114 +83,48 @@ __all__ = [
 
 # Lazy exports to avoid pulling heavy dependencies (WAN engines, torch, HF) during
 # package import. Engines/text-processing objects are resolved on first access.
-_ENGINE_EXPORTS = {
-    "register_default_engines",
-    "Wan2214BEngine",
-    "Wan225BEngine",
-    "WanI2V14BEngine",
-    "WanT2V14BEngine",
-}
-
-_TEXT_EXPORTS = {
-    "ClassicTextProcessingEngine",
-    "EmbeddingDatabase",
-    "T5TextProcessingEngine",
-    "embedding_from_b64",
-    "embedding_to_b64",
-    "text_emphasis",
-    "text_parsing",
-    "textual_inversion",
-}
-
-_RUNTIME_EXPORTS = {
-    "attention",
-    "logging",
-    "memory_management",
-    "models",
-    "nn",
-    "ops",
-    "shared",
-    "stream",
-    "text_processing",
-    "utils",
-}
-
-_PATCHER_EXPORTS = {
-    "CLIP",
-    "ControlLora",
-    "ControlNet",
-    "LoraLoader",
-    "ModelPatcher",
-    "T2IAdapter",
-    "UnetPatcher",
-    "VAE",
-    "apply_controlnet_advanced",
-    "clip_preprocess",
-    "extra_weight_calculators",
-    "load_lora",
-    "load_t2i_adapter",
-    "merge_lora_to_weight",
-    "model_lora_keys_clip",
-    "model_lora_keys_unet",
-    "set_model_options_patch_replace",
-    "set_model_options_post_cfg_function",
-    "set_model_options_pre_cfg_function",
-}
-
-_SERVICE_EXPORTS = {
-    "ImageService",
-    "MediaService",
-    "OptionsService",
-    "ProgressService",
-    "SamplerService",
-}
+from apps.backend.types.exports import LAZY_EXPORTS as _LAZY
 
 
 def __getattr__(name: str):  # pragma: no cover - runtime dispatch
     # Engines and registration (WAN heavy deps) are loaded on demand.
-    if name in _ENGINE_EXPORTS:
+    if name in _LAZY.ENGINES:
         from . import engines as _engines
-
         value = getattr(_engines, name)
         globals()[name] = value
         return value
 
     # Text processing exports are torch-bound; keep lazy to avoid import errors
     # in environments without torch until explicitly needed.
-    if name in _TEXT_EXPORTS:
+    if name in _LAZY.TEXT_PROCESSING:
         from .runtime import text_processing as _tp
-
         value = getattr(_tp, name)
         globals()[name] = value
         return value
 
     # Lazy-export runtime helpers to avoid circular imports during package init.
-    if name in _RUNTIME_EXPORTS:
+    if name in _LAZY.RUNTIME:
         from . import runtime as _runtime
-
         value = getattr(_runtime, name)
         globals()[name] = value
         return value
 
     # Patchers
-    if name in _PATCHER_EXPORTS:
+    if name in _LAZY.PATCHERS:
         from . import patchers as _patchers
-
         value = getattr(_patchers, name)
         globals()[name] = value
         return value
 
     # Services
-    if name in _SERVICE_EXPORTS:
+    if name in _LAZY.SERVICES:
         from . import services as _services
-
         value = getattr(_services, name)
         globals()[name] = value
         return value
 
     if name == "ensure_repo_minimal_files":
         from .huggingface import ensure_repo_minimal_files as _ermf
-
         globals()[name] = _ermf
         return _ermf
     raise AttributeError(name)

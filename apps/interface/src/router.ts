@@ -7,27 +7,28 @@ const Settings = () => import('./views/Settings.vue')
 const ModelsList = () => import('./views/ModelsList.vue')
 const ModelTabView = () => import('./views/ModelTabView.vue')
 const WorkflowsList = () => import('./views/WorkflowsList.vue')
-const Sdxl = () => import('./views/Sdxl.vue')
-const Flux = () => import('./views/Flux.vue')
-const ZImage = () => import('./views/ZImage.vue')
 const XyzPlot = () => import('./views/XyzPlot.vue')
 const Home = () => import('./views/Home.vue')
+const ToolsTab = () => import('./views/ToolsTab.vue')
+const EngineView = () => import('./views/EngineView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     // Default landing: engine-agnostic home workspace
     { path: '/', component: Home },
-    // Model tabs remain accessible but are no longer surfaced as top-level inference tabs,
-    // and WAN22 video flows live exclusively under model tabs (no standalone /txt2vid/img2vid routes).
+    // Model tabs - dynamic engine tabs
     { path: '/models', component: ModelsList },
     { path: '/models/:tabId', component: ModelTabView },
-    // Single canonical inference surface
-    { path: '/sdxl', component: Sdxl },
-    { path: '/flux', component: Flux },
-    { path: '/zimage', component: ZImage },
+    // Engine routes - redirect to dynamic tabs
+    { path: '/sd15', component: EngineView, props: { engine: 'sd15' } },
+    { path: '/sdxl', component: EngineView, props: { engine: 'sdxl' } },
+    { path: '/flux', component: EngineView, props: { engine: 'flux' } },
+    { path: '/zimage', component: EngineView, props: { engine: 'zimage' } },
+    { path: '/chroma', component: EngineView, props: { engine: 'chroma' } },
     { path: '/xyz', component: XyzPlot },
     // Utilities
+    { path: '/tools', component: ToolsTab },
     { path: '/workflows', component: WorkflowsList },
     { path: '/upscale', component: Upscale },
     { path: '/pnginfo', component: PngInfo },
@@ -37,3 +38,4 @@ const router = createRouter({
 })
 
 export default router
+

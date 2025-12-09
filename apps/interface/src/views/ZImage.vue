@@ -37,6 +37,8 @@
             :seed="store.seed"
             :batch-size="store.batchSize"
             :batch-count="store.batchCount"
+            :show-cfg="true"
+            cfg-label="Distilled CFG"
             @update:sampler="setSampler"
             @update:scheduler="setScheduler"
             @update:steps="(v:number)=>store.steps=v"

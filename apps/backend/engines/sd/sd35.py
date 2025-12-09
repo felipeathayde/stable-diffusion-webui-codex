@@ -54,8 +54,8 @@ class StableDiffusion3(CodexDiffusionEngine):
 
         return CodexObjects(
             unet=runtime.unet,
-            clip=runtime.clip,
             vae=runtime.vae,
+            text_encoders={"clip": runtime.clip},
             clipvision=None,
         )
 

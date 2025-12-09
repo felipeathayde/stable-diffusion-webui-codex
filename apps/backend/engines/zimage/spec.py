@@ -39,7 +39,7 @@ class ZImageEngineSpec:
     with optional per-variant overrides.
     """
     name: str = "zimage"
-    family: ModelFamily = ModelFamily.QWEN_IMAGE
+    family: ModelFamily = ModelFamily.ZIMAGE
     
     # Optional overrides (if None, delegates to FamilyRuntimeSpec)
     _flow_shift_override: Optional[float] = field(default=None, repr=False)
@@ -78,6 +78,62 @@ def _k_predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
     return FlowMatchEulerPrediction(mu=spec.flow_shift)
 
 
+def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
+    """Load VAE from external path for GGUF models.
+    
+    Uses the shared Flow16 VAE loader since Z Image uses the same
+    16-channel latent space as Flux.
+    """
+    import torch
+    from apps.backend.runtime.common.vae import load_flow16_vae, find_flow16_vae
+    
+    torch_dtype = torch.bfloat16 if dtype == "bf16" else torch.float16 if dtype == "fp16" else torch.float32
+    
+    # Find VAE if path not provided
+    if vae_path is None:
+        from apps.backend.infra.config.paths import get_paths_for
+        search_paths = get_paths_for("flux_vae") + get_paths_for("zimage_vae")
+        vae_path = find_flow16_vae(search_paths)
+    
+    if vae_path is None:
+        raise ValueError(
+            "Z Image GGUF requires external VAE. "
+            "Please select a VAE or place one in models/zimage-vae/ or models/flux-vae/"
+        )
+    
+    return load_flow16_vae(vae_path, dtype=torch_dtype)
+
+
+def _load_external_text_encoder(tenc_path: str | None, dtype: str = "bf16") -> object:
+    """Load Qwen3 text encoder from external path for GGUF models."""
+    import os
+    import torch
+    
+    # Text encoder path is required - no automatic fallback
+    if tenc_path is None:
+        raise ValueError(
+            "Z Image GGUF requires external text encoder (Qwen3-4B). "
+            "Please select one in the UI or place it in models/zimage-tenc/"
+        )
+    
+    logger.info("Loading external text encoder from: %s", tenc_path)
+    torch_dtype = torch.bfloat16 if dtype == "bf16" else torch.float16 if dtype == "fp16" else torch.float32
+    
+    # Detect if GGUF or safetensors
+    if tenc_path.lower().endswith(".gguf"):
+        # Load GGUF text encoder
+        from apps.backend.runtime.zimage.text_encoder import ZImageTextEncoder
+        encoder = ZImageTextEncoder.from_gguf(tenc_path, torch_dtype=torch_dtype)
+    else:
+        # Load safetensors text encoder
+        from safetensors.torch import load_file
+        from apps.backend.runtime.zimage.text_encoder import ZImageTextEncoder
+        state_dict = load_file(tenc_path)
+        encoder = ZImageTextEncoder.from_state_dict(state_dict, torch_dtype=torch_dtype)
+    
+    return encoder
+
+
 def assemble_zimage_runtime(
     *,
     spec: ZImageEngineSpec,
@@ -85,32 +141,51 @@ def assemble_zimage_runtime(
     estimated_config: Any,
     device: str = "cuda",
     dtype: str = "bf16",
+    external_vae_path: str | None = None,
+    external_tenc_path: str | None = None,
 ) -> ZImageEngineRuntime:
     """Assemble Z Image runtime from components.
     
     Args:
         spec: Engine specification.
-        codex_components: Dict with 'transformer', 'vae', 'text_encoder'.
+        codex_components: Dict with 'transformer', optionally 'vae', 'text_encoder'.
         estimated_config: Model config.
         device: Target device.
         dtype: Target dtype.
+        external_vae_path: Path to external VAE (for GGUF models).
+        external_tenc_path: Path to external text encoder (for GGUF models).
     
     Returns:
         Assembled ZImageEngineRuntime.
     """
     logger.debug("Assembling Z Image runtime")
     
-    # VAE
-    vae_model = codex_components.get("vae")
-    if vae_model is None:
-        raise ValueError("Z Image requires 'vae' component")
-    vae = VAE(model=vae_model, family=ModelFamily.QWEN_IMAGE)
-    
-    # Transformer -> UnetPatcher
+    # Get transformer (always required)
     transformer = codex_components.get("transformer")
     if transformer is None:
         raise ValueError("Z Image requires 'transformer' component")
     
+    # Detect if this is a GGUF/core-only model (no VAE or text encoder in components)
+    vae_model = codex_components.get("vae")
+    text_encoder = codex_components.get("text_encoder")
+    
+    is_core_only = vae_model is None or text_encoder is None
+    
+    if is_core_only:
+        logger.info("Detected GGUF/core-only model - loading external VAE and text encoder")
+        
+        # Load external VAE
+        if vae_model is None:
+            vae_model = _load_external_vae(external_vae_path, dtype=dtype)
+        
+        # Load external text encoder
+        if text_encoder is None:
+            text_encoder = _load_external_text_encoder(external_tenc_path, dtype=dtype)
+    
+    # Wrap VAE
+    vae = VAE(model=vae_model, family=ModelFamily.ZIMAGE)
+    
+    # Wrap transformer in UnetPatcher
     k_predictor = _k_predictor(spec)
     unet = UnetPatcher.from_model(
         model=transformer,
@@ -119,15 +194,11 @@ def assemble_zimage_runtime(
         config=estimated_config,
     )
     
-    # Text encoder
-    text_encoder = codex_components.get("text_encoder")
-    if text_encoder is None:
-        raise ValueError("Z Image requires 'text_encoder' component")
-    
+    # Wrap text encoder
     from apps.backend.runtime.zimage.text_encoder import ZImageTextProcessingEngine
     text_engine = ZImageTextProcessingEngine(text_encoder)
     
-    logger.info("Z Image runtime assembled: device=%s dtype=%s", device, dtype)
+    logger.info("Z Image runtime assembled: device=%s dtype=%s core_only=%s", device, dtype, is_core_only)
     
     return ZImageEngineRuntime(
         vae=vae,

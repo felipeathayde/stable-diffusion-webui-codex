@@ -179,9 +179,10 @@ export interface WorkflowsResponse { version: number; workflows: Array<{ id: str
 
 // Model inventory (for populating selects)
 export interface InventoryResponse {
-  vaes: Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>
-  text_encoders: Array<{ name: string; path: string }>
+  vaes: Array<{ name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>
+  text_encoders: Array<{ name: string; path: string; sha256?: string }>
   loras: Array<{ name: string; path: string }>
   wan22: { gguf: Array<{ name: string; path: string; stage: 'high' | 'low' | 'unknown' }> }
   metadata: Array<{ name: string; path: string }>
 }
+

@@ -99,10 +99,10 @@
           <div class="swap-col"></div>
         </div>
       </div>
-      <div class="cell">
+      <div class="cell" v-if="showCfg">
         <div class="cfg-row">
           <div class="field cfg-field">
-            <label class="label-muted">CFG Scale</label>
+            <label class="label-muted">{{ cfgLabel }}</label>
             <div class="number-with-controls">
               <input class="ui-input ui-input-sm w-cfg pad-right" type="number" :min="0" :max="30" step="0.5" :value="cfgScale" @change="onCfgChange" />
               <div class="stepper">
@@ -155,7 +155,13 @@ const props = defineProps<{
   minHeight?: number
   maxWidth?: number
   maxHeight?: number
+  // Conditional visibility
+  showCfg?: boolean
+  cfgLabel?: string
 }>()
+
+const showCfg = computed(() => props.showCfg ?? true)
+const cfgLabel = computed(() => props.cfgLabel ?? 'CFG Scale')
 
 const emit = defineEmits({
   'update:sampler': (value: string) => true,

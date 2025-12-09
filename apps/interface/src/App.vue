@@ -23,6 +23,7 @@
         <RouterLink class="tab-link" to="/models">models</RouterLink>
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>
         <!-- Utilities on the right -->
+        <RouterLink class="tab-link" to="/tools">🔧 tools</RouterLink>
         <RouterLink class="tab-link" to="/upscale">upscale</RouterLink>
         <RouterLink class="tab-link" to="/pnginfo">png info</RouterLink>
         <RouterLink class="tab-link" to="/extensions">extensions</RouterLink>

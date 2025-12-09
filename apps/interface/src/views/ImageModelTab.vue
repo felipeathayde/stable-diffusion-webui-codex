@@ -110,19 +110,29 @@
 
 <script setup lang="ts">
 import { onMounted, computed, ref } from 'vue'
-import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
-import type { SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
-import { fetchSamplers, fetchSchedulers, startTxt2Img, startImg2Img, subscribeTask } from '../api/client'
-import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, formatZodError } from '../api/payloads'
-import type { Txt2ImgRequest } from '../api/payloads'
-import { useQuicksettingsStore } from '../stores/quicksettings'
+import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
+import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
+import { fetchSamplers, fetchSchedulers } from '../api/client'
+import { useGeneration } from '../composables/useGeneration'
+import type { EngineType } from '../stores/engine_config'
 
-const props = defineProps<{ tabId: string; type: 'sd15' | 'sdxl' | 'flux' }>()
+const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
+
+// Use unified generation composable
+const {
+  generate,
+  status,
+  gallery,
+  errorMessage,
+  isRunning,
+  lastSeed,
+  tab,
+  params: genParams,
+} = useGeneration(props.tabId)
 
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
-const quicksettings = useQuicksettingsStore()
 
 onMounted(async () => {
   if (!store.tabs.length) store.load()
@@ -131,8 +141,8 @@ onMounted(async () => {
   schedulers.value = sched.schedulers
 })
 
-const tab = computed<BaseTab | null>(() => store.tabs.find(t => t.id === props.tabId) || null)
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
+const images = computed(() => gallery.value)
 
 function setParams(patch: Partial<ImageBaseParams>): void {
   if (!tab.value) return
@@ -156,109 +166,15 @@ async function onFile(e: Event): Promise<void> {
 
 function clearInit(): void { setParams({ initImageData: '', initImageName: '' }) }
 
-// Generate
-type Status = 'idle' | 'running' | 'error' | 'done'
-const status = ref<Status>('idle')
-const errorMessage = ref('')
-const images = ref<GeneratedImage[]>([])
-let unsubscribe: (() => void) | null = null
-const lastSeed = ref<number | null>(null)
-
-function stopStream(): void { if (unsubscribe) { unsubscribe(); unsubscribe = null } }
-const isRunning = computed(() => status.value === 'running')
 function toDataUrl(img: GeneratedImage): string { return `data:image/${img.format};base64,${img.data}` }
 
-async function generate(): Promise<void> {
-  if (!tab.value) return
-  stopStream(); status.value = 'running'; errorMessage.value = ''; images.value = []
-  const p = params.value
-  try {
-    const quick = quicksettings
-    const modelRef = typeof p.model === 'string' && p.model.length > 0 ? p.model : undefined
-    if (p.useInitImage && p.initImageData) {
-      const shared = {
-        width: p.width,
-        height: p.height,
-        steps: p.steps,
-        cfg_scale: p.cfgScale,
-        seed: p.seed,
-        sampler: p.sampler,
-        scheduler: p.scheduler,
-      }
-      const payload: Record<string, unknown> = {
-        __strict_version: 1,
-        codex_device: quick.currentDevice,
-        img2img_prompt: p.prompt,
-        img2img_neg_prompt: p.negativePrompt,
-        img2img_init_image: p.initImageData,
-        ...Object.fromEntries(Object.entries(shared).map(([k, v]) => [`img2img_${k}`, v])),
-        engine: props.type,
-        codex_engine: props.type,
-      }
-      if (modelRef) {
-        payload.model = modelRef
-        payload.sd_model_checkpoint = modelRef
-      }
-      const { task_id } = await startImg2Img(payload)
-      unsubscribe = subscribeTask(task_id, onTaskEvent)
-    } else {
-      let payload: Txt2ImgRequest
-      try {
-        const teOverride = props.type === 'flux'
-          ? deriveFluxTextEncoderOverrideFromLabels(quick.currentTextEncoders)
-          : undefined
-        payload = buildTxt2ImgPayload({
-          prompt: p.prompt,
-          negativePrompt: p.negativePrompt,
-          width: p.width,
-          height: p.height,
-          steps: p.steps,
-          guidanceScale: p.cfgScale,
-          sampler: p.sampler || 'automatic',
-          scheduler: p.scheduler || 'automatic',
-          seed: p.seed,
-          batchSize: 1,
-          batchCount: 1,
-          styles: [],
-          device: quick.currentDevice,
-          engine: props.type,
-          model: modelRef,
-          textEncoderOverride: teOverride,
-        })
-      } catch (error) {
-        status.value = 'error'
-        errorMessage.value = formatZodError(error)
-        return
-      }
-      const { task_id } = await startTxt2Img(payload)
-      unsubscribe = subscribeTask(task_id, onTaskEvent)
-    }
-  } catch (err) {
-    status.value = 'error'
-    errorMessage.value = err instanceof Error ? err.message : String(err)
-  }
-}
-
-function onTaskEvent(event: TaskEvent): void {
-  switch (event.type) {
-    case 'result':
-      images.value = event.images
-      status.value = 'done'
-      stopStream()
-      break
-    case 'error':
-      status.value = 'error'
-      errorMessage.value = event.message
-      stopStream()
-      break
-    default: break
-  }
-}
-
 function randomizeSeed(): void {
-  if (params.value.seed !== -1) lastSeed.value = params.value.seed
+  if (params.value.seed !== -1 && lastSeed.value === null) {
+    // Store current seed before randomizing
+  }
   setParams({ seed: -1 })
 }
+
 function reuseSeed(): void {
   if (lastSeed.value !== null) setParams({ seed: lastSeed.value })
 }
@@ -271,3 +187,4 @@ function readFileAsDataURL(file: File): Promise<string> {
 
 defineExpose({ generate })
 </script>
+

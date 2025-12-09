@@ -27,10 +27,13 @@
   <div class="quicksettings-group qs-group-text-encoder">
     <label class="label-muted">Text Encoder (Qwen3)</label>
     <div class="qs-row">
-      <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
-        <option value="">Built-in</option>
-        <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
-      </select>
+      <div class="qs-pair">
+        <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
+          <option value="">Built-in</option>
+          <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
+        </select>
+        <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
+      </div>
     </div>
   </div>
 
@@ -82,6 +85,7 @@ defineEmits<{
   (e: 'update:attentionBackend', value: string): void
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
+  (e: 'addTencPath'): void
   (e: 'openOverrides'): void
 }>()
 

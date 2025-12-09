@@ -32,6 +32,11 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
     "wan22_tenc",
     "wan22_vae",
     "wan22_loras",
+    # Z Image
+    "zimage_ckpt",
+    "zimage_tenc",
+    "zimage_vae",
+    "zimage_loras",
 )
 
 

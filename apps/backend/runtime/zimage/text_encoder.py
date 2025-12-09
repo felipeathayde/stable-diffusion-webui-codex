@@ -1,12 +1,14 @@
-"""Qwen3 Text Encoder for Z Image.
+"""Qwen3-4B Text Encoder for Z Image.
 
-Wrapper for Qwen3 4B model used as text encoder in Z Image Turbo.
+Wrapper for Qwen3-4B model used as text encoder in Z Image Turbo.
+Based on ComfyUI's comfy/text_encoders/z_image.py.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+import os
+from typing import List, Optional, Dict, Any
 
 import torch
 import torch.nn as nn
@@ -18,71 +20,215 @@ logger = logging.getLogger("backend.runtime.zimage.text_encoder")
 QWEN3_TEMPLATE = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
 
 
-class Qwen3TextEncoder(nn.Module):
-    """Wrapper for Qwen3 4B text encoder.
+class ZImageTextEncoder(nn.Module):
+    """Text encoder for Z Image using Qwen3-4B.
     
-    Uses HuggingFace transformers Qwen2 model internally.
+    Wraps a Qwen3-4B model for text encoding. The model can be:
+    - A safetensors checkpoint (qwen_3_4b.safetensors)
+    - A GGUF quantized model (Qwen3-4B-Q8_0.gguf)
+    - An FP8 quantized model (qwen3_4b_fp8_scaled.safetensors)
+    
+    The model uses a chat template format for text encoding.
     """
     
     def __init__(
         self,
-        model_path: Optional[str] = None,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16,
+        qwen_model: nn.Module,
+        hidden_size: int = 2560,
+        layer_idx: int = -2,
     ):
-        super().__init__()
-        self.device = device
-        self.dtype = dtype
-        self.hidden_size = 2560  # Qwen3 4B hidden size
+        """Initialize the text encoder wrapper.
         
-        self._model = None
+        Args:
+            qwen_model: The underlying Qwen3-4B model.
+            hidden_size: Hidden dimension of the model (2560 for Qwen3-4B).
+            layer_idx: Which hidden layer to use (-2 = second-to-last).
+        """
+        super().__init__()
+        self.model = qwen_model
+        self.hidden_size = hidden_size
+        self.layer_idx = layer_idx
         self._tokenizer = None
-        self._model_path = model_path
     
-    def load_model(self, model_path: Optional[str] = None):
-        """Load the underlying Qwen3 model."""
-        path = model_path or self._model_path
-        if path is None:
-            raise ValueError("model_path required to load Qwen3")
+    @classmethod
+    def from_gguf(cls, gguf_path: str, torch_dtype: torch.dtype = torch.bfloat16) -> "ZImageTextEncoder":
+        """Load text encoder from GGUF file using native Qwen3_4B.
+        
+        Args:
+            gguf_path: Path to the GGUF file.
+            torch_dtype: Target dtype for the model.
+        
+        Returns:
+            ZImageTextEncoder instance.
+        """
+        logger.info("Loading Qwen3 text encoder from GGUF: %s", gguf_path)
+        
+        # Import native Qwen3 implementation
+        from .qwen3 import Qwen3_4B, Qwen3Config, remap_gguf_keys
+        
+        # Load GGUF state dict using our infrastructure
+        from apps.backend.opus_quantization.gguf_loader import load_gguf_state_dict
         
         try:
-            from transformers import Qwen2TokenizerFast, Qwen2Model
+            # Load GGUF file
+            logger.info("Loading GGUF state dict...")
+            gguf_state_dict = load_gguf_state_dict(gguf_path)
+            logger.info("Loaded %d tensors from GGUF", len(gguf_state_dict))
             
-            logger.info("Loading Qwen3 4B from %s", path)
-            self._tokenizer = Qwen2TokenizerFast.from_pretrained(path)
-            self._model = Qwen2Model.from_pretrained(
-                path,
-                torch_dtype=self.dtype,
-            ).to(self.device)
-            self._model.eval()
-            logger.info("Qwen3 4B loaded successfully")
+            # Remap keys from GGUF format to our model format
+            logger.info("Remapping GGUF keys to native format...")
+            state_dict = remap_gguf_keys(gguf_state_dict, num_layers=36)
+            logger.info("Remapped to %d native keys", len(state_dict))
+            
+            # Create model with native Qwen3_4B
+            config = Qwen3Config()
+            model = Qwen3_4B(config, dtype=torch_dtype)
+            
+            # Load state dict
+            missing, unexpected = model.load_sd(state_dict)
+            if missing:
+                logger.warning("Missing keys: %s", missing[:10])
+            if unexpected:
+                logger.debug("Unexpected keys: %s", unexpected[:10])
+            
+            model = model.to(dtype=torch_dtype)
+            
+            param_count = sum(p.numel() for p in model.parameters())
+            logger.info("GGUF text encoder loaded: %d params (%.2fB)", 
+                       param_count, param_count / 1e9)
+            
+            return cls(model, hidden_size=2560, layer_idx=-2)
+            
+        except ImportError as e:
+            logger.error("GGUF loader not available: %s", e)
+            raise ValueError(f"GGUF loader not available: {e}")
+        except Exception as e:
+            logger.error("Failed to load GGUF text encoder: %s", e)
+            raise ValueError(f"Failed to load GGUF text encoder from {gguf_path}: {e}")
+    
+    @classmethod
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], torch_dtype: torch.dtype = torch.bfloat16) -> "ZImageTextEncoder":
+        """Load text encoder from state_dict.
+        
+        Args:
+            state_dict: State dict with model weights.
+            torch_dtype: Target dtype for the model.
+        
+        Returns:
+            ZImageTextEncoder instance.
+        """
+        logger.info("Loading Qwen3 text encoder from state_dict (%d keys)", len(state_dict))
+        
+        try:
+            from transformers import Qwen3ForCausalLM, Qwen3Config
+            
+            # Create config for Qwen3-4B (Z Image architecture)
+            # Params from: apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/text_encoder/config.json
+            # CRITICAL: Z Image uses head_dim=128 explicitly (not hidden_size/num_heads=80)
+            config = Qwen3Config(
+                vocab_size=151936,
+                hidden_size=2560,
+                intermediate_size=9728,
+                num_hidden_layers=36,
+                num_attention_heads=32,
+                num_key_value_heads=8,
+                head_dim=128,  # Z Image Qwen3 uses explicit head_dim=128
+                max_position_embeddings=40960,
+                tie_word_embeddings=True,
+                torch_dtype=torch_dtype,
+            )
+            
+            # Initialize model with config
+            model = Qwen3ForCausalLM(config)
+            
+            # Load weights - need to map keys if necessary
+            # Check if keys have 'model.' prefix
+            if any(k.startswith("model.") for k in state_dict.keys()):
+                # Keys already have model. prefix - load directly
+                model.load_state_dict(state_dict, strict=False)
+            else:
+                # Add model. prefix to keys
+                mapped_sd = {f"model.{k}" if not k.startswith("model.") and not k.startswith("lm_head") else k: v for k, v in state_dict.items()}
+                model.load_state_dict(mapped_sd, strict=False)
+            
+            model.to(dtype=torch_dtype)
+            
+            encoder = cls(model, hidden_size=2560, layer_idx=-2)
+            logger.info("Safetensors text encoder loaded successfully")
+            return encoder
+            
+        except Exception as e:
+            logger.error("Failed to load text encoder from state_dict: %s", e)
+            raise ValueError(f"Failed to load text encoder from state_dict: {e}")
+    
+    @property
+    def device(self) -> torch.device:
+        """Get the device of the model parameters."""
+        try:
+            return next(self.model.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+    
+    @property
+    def dtype(self) -> torch.dtype:
+        """Get the dtype of the model parameters."""
+        try:
+            return next(self.model.parameters()).dtype
+        except StopIteration:
+            return torch.float32
+    
+    def load_tokenizer(self, tokenizer_path: Optional[str] = None):
+        """Load the Qwen tokenizer.
+        
+        Args:
+            tokenizer_path: Path to tokenizer files. If None, uses default.
+        """
+        try:
+            from transformers import Qwen2Tokenizer
+            
+            if tokenizer_path is None:
+                # Try to find tokenizer in common locations
+                tokenizer_path = os.path.join(
+                    os.path.dirname(__file__),
+                    "..", "..", "text_processing", "tokenizers", "qwen25_tokenizer"
+                )
+            
+            if os.path.exists(tokenizer_path):
+                self._tokenizer = Qwen2Tokenizer.from_pretrained(tokenizer_path)
+            else:
+                # Fall back to HuggingFace hub
+                self._tokenizer = Qwen2Tokenizer.from_pretrained("Qwen/Qwen2.5-3B")
+            
+            logger.info("Qwen tokenizer loaded successfully")
             
         except ImportError:
-            logger.error("transformers library required for Qwen3")
+            logger.error("transformers library required for Qwen tokenizer")
             raise
-    
-    @property
-    def model(self):
-        if self._model is None:
-            raise RuntimeError("Qwen3 model not loaded. Call load_model() first.")
-        return self._model
-    
-    @property
-    def tokenizer(self):
-        if self._tokenizer is None:
-            raise RuntimeError("Qwen3 tokenizer not loaded. Call load_model() first.")
-        return self._tokenizer
     
     def tokenize(
         self,
         texts: List[str],
         max_length: int = 512,
-    ) -> dict:
-        """Tokenize text with chat template."""
-        templated = [QWEN3_TEMPLATE.format(t) for t in texts]
+        apply_template: bool = True,
+    ) -> Dict[str, torch.Tensor]:
+        """Tokenize text with optional chat template.
         
-        tokens = self.tokenizer(
-            templated,
+        Args:
+            texts: List of text prompts.
+            max_length: Maximum token length.
+            apply_template: Whether to apply the chat template.
+        
+        Returns:
+            Dict with 'input_ids' and 'attention_mask' tensors.
+        """
+        if self._tokenizer is None:
+            self.load_tokenizer()
+        
+        if apply_template:
+            texts = [QWEN3_TEMPLATE.format(t) for t in texts]
+        
+        tokens = self._tokenizer(
+            texts,
             padding=True,
             truncation=True,
             max_length=max_length,
@@ -99,17 +245,19 @@ class Qwen3TextEncoder(nn.Module):
         self,
         texts: List[str],
         max_length: int = 512,
+        apply_template: bool = True,
     ) -> torch.Tensor:
         """Encode texts to embeddings.
         
         Args:
             texts: List of text prompts.
             max_length: Maximum token length.
+            apply_template: Whether to apply the chat template.
         
         Returns:
             Text embeddings [B, L, hidden_size].
         """
-        tokens = self.tokenize(texts, max_length)
+        tokens = self.tokenize(texts, max_length, apply_template)
         
         outputs = self.model(
             input_ids=tokens["input_ids"],
@@ -118,7 +266,7 @@ class Qwen3TextEncoder(nn.Module):
         )
         
         # Use second-to-last layer (like CLIP)
-        hidden = outputs.hidden_states[-2]
+        hidden = outputs.hidden_states[self.layer_idx]
         
         return hidden.to(self.dtype)
     
@@ -132,14 +280,25 @@ class Qwen3TextEncoder(nn.Module):
 
 
 class ZImageTextProcessingEngine:
-    """Text processing engine for Z Image (matches Flux pattern)."""
+    """Text processing engine for Z Image (matches Flux pattern).
+    
+    This class wraps the text encoder and provides a consistent interface
+    for text encoding across different model families.
+    """
     
     def __init__(
         self,
-        text_encoder: Qwen3TextEncoder,
+        text_encoder: ZImageTextEncoder,
         emphasis_name: str = "Original",
         max_length: int = 512,
     ):
+        """Initialize the text processing engine.
+        
+        Args:
+            text_encoder: The Z Image text encoder.
+            emphasis_name: Name of emphasis style (unused, for compatibility).
+            max_length: Maximum token length.
+        """
         self.text_encoder = text_encoder
         self.emphasis_name = emphasis_name
         self.max_length = max_length
@@ -152,3 +311,8 @@ class ZImageTextProcessingEngine:
         """Tokenize without encoding."""
         tokens = self.text_encoder.tokenize(texts, self.max_length)
         return tokens["input_ids"].tolist()
+
+
+class Qwen3TextEncoder(ZImageTextEncoder):
+    """Alias for backward compatibility."""
+    pass

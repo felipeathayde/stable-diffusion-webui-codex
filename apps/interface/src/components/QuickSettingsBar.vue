@@ -101,6 +101,7 @@
         @update:attentionBackend="onAttentionChange"
         @addCheckpointPath="onAddCheckpointPath"
         @addVaePath="onAddVaePath"
+        @addTencPath="onAddTencPath"
         @openOverrides="openOverrides"
       />
       <div class="quicksettings-group qs-group-models">
@@ -311,6 +312,10 @@ function modelMatchesFamily(meta: Record<string, unknown> | undefined, title: st
     return t.includes('flux') || f.includes('flux')
   }
   if (family === 'wan') return t.includes('wan') || f.includes('wan')
+  if (family === 'zimage') {
+    if (fileInPaths(file, 'zimage_ckpt')) return true
+    return t.includes('zimage') || t.includes('z-image') || t.includes('z_image') || f.includes('zimage') || f.includes('z-image') || f.includes('z_image')
+  }
   return true
 }
 
@@ -327,6 +332,7 @@ function isVaeForFamily(name: string, fam: string): boolean {
   if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
   if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
   if (fam === 'flux') return fileInPaths(path, 'flux_vae')
+  if (fam === 'zimage') return fileInPaths(path, 'zimage_vae') || fileInPaths(path, 'flux_vae')  // Z Image uses same VAE as Flux
   return true
 }
 
@@ -358,6 +364,12 @@ const filteredTextEncoderChoices = computed(() => {
     return inventoryTextEncoders.value
       .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux_tenc'))
       .map((item) => `flux/${item.path}`)
+  }
+  if (fam === 'zimage') {
+    // For Z Image, derive choices from inventory.text_encoders constrained by zimage_tenc paths.
+    return inventoryTextEncoders.value
+      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'zimage_tenc'))
+      .map((item) => `zimage/${item.path}`)
   }
   const prefix = fam === 'wan' ? 'wan22/' : `${fam}/`
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
@@ -584,7 +596,7 @@ async function onWanVaeChange(value: string): Promise<void> {
   await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
 }
 
-function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux' | 'wan'): 'sd15' | 'sdxl' | 'flux' | 'wan22' {
+function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'): 'sd15' | 'sdxl' | 'flux' | 'wan22' | 'zimage' {
   if (fam === 'wan') return 'wan22'
   return fam
 }

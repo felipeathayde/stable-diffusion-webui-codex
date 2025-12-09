@@ -109,6 +109,32 @@
         "createdAt": "2025-12-08T12:25:00.000000",
         "updatedAt": "2025-12-08T12:25:00.000000"
       }
+    },
+    {
+      "id": "tab-1765302434570",
+      "type": "zimage",
+      "title": "Z Image",
+      "order": 8,
+      "enabled": true,
+      "params": {
+        "prompt": "",
+        "negativePrompt": "",
+        "width": 1024,
+        "height": 1024,
+        "sampler": "",
+        "scheduler": "",
+        "steps": 8,
+        "cfgScale": 1,
+        "seed": -1,
+        "useInitImage": false,
+        "initImageData": "",
+        "initImageName": "",
+        "distilledCfgScale": 1
+      },
+      "meta": {
+        "createdAt": "2025-12-09T17:47:14.570383",
+        "updatedAt": "2025-12-09T17:47:14.570383"
+      }
     }
   ]
 }

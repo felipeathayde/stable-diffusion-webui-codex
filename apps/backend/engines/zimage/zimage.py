@@ -57,16 +57,29 @@ class ZImageEngine(CodexDiffusionEngine):
             estimated_config=bundle.estimated_config,
             device=self._device,
             dtype=self._dtype,
+            external_vae_path=options.get("vae_path"),
+            external_tenc_path=options.get("tenc_path"),
+        )
+        logger.info(
+            "Z Image build: vae_path=%s tenc_path=%s all_options=%s",
+            options.get("vae_path"),
+            options.get("tenc_path"),
+            list(options.keys()),
         )
         self._runtime = runtime
         logger.info("Z Image runtime assembled")
 
         return CodexObjects(
             unet=runtime.unet,
-            clip=None,  # Z Image uses Qwen3, not CLIP
             vae=runtime.vae,
+            text_encoders={"qwen3": runtime.text.qwen3_text},
             clipvision=None,
         )
+
+    @property
+    def required_text_encoders(self) -> tuple[str, ...]:
+        """Z Image uses Qwen3 text encoder, not CLIP."""
+        return ("qwen3",)
 
     def _on_unload(self) -> None:
         self._runtime = None
@@ -170,6 +183,10 @@ class ZImageEngine(CodexDiffusionEngine):
 
             yield ProgressEvent(stage="decoding", percent=0.9, message="Decoding latents")
 
+            # Squeeze T dimension before decode: [B, C, T, H, W] -> [B, C, H, W]
+            if latents.dim() == 5:
+                latents = latents.squeeze(2)
+
             # Decode
             images = self.decode_first_stage(latents)
 
@@ -217,13 +234,13 @@ class ZImageEngine(CodexDiffusionEngine):
         dtype: torch.dtype,
     ) -> torch.Tensor:
         """Flow-matching sampling with CFG."""
-        # Latent shape
+        # Latent shape: [B, C, T, H, W] (5D for video-like format)
         latent_h = height // 8
         latent_w = width // 8
         latent_c = 16  # Flux VAE
 
         B = cond.shape[0]
-        shape = (B, latent_c, latent_h, latent_w)
+        shape = (B, latent_c, 1, latent_h, latent_w)  # T=1 for single image
 
         # Seed
         if seed is not None:

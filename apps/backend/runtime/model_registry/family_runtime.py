@@ -346,8 +346,8 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         uses_t5=True,
         capabilities=CAPABILITIES_FLOW_WITH_CFG,
     ),
-    ModelFamily.QWEN_IMAGE: FamilyRuntimeSpec(
-        family=ModelFamily.QWEN_IMAGE,
+    ModelFamily.ZIMAGE: FamilyRuntimeSpec(
+        family=ModelFamily.ZIMAGE,
         latent_channels=16,
         latent_scale_factor=8,
         vae_scaling_factor=0.3611,

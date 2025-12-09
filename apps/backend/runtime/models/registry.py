@@ -60,8 +60,52 @@ def _read_json(path: Path) -> Mapping[str, object]:
 @dataclass
 class _HashCacheEntry:
     mtime: float
+    size: int  # file size for extra validation
     sha256: str
     short_hash: str
+
+
+# Persistent hash cache file location (under models/)
+_HASH_CACHE_FILE = _default_models_root() / ".hashes.json"
+
+
+def _load_hash_cache() -> Dict[str, _HashCacheEntry]:
+    """Load persistent hash cache from disk."""
+    cache: Dict[str, _HashCacheEntry] = {}
+    try:
+        if _HASH_CACHE_FILE.is_file():
+            with _HASH_CACHE_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            for path, entry in data.items():
+                if isinstance(entry, dict):
+                    cache[path] = _HashCacheEntry(
+                        mtime=float(entry.get("mtime", 0)),
+                        size=int(entry.get("size", 0)),
+                        sha256=str(entry.get("sha256", "")),
+                        short_hash=str(entry.get("short_hash", "")),
+                    )
+    except Exception as e:
+        _LOGGER.debug("hash cache load failed: %s", e)
+    return cache
+
+
+def _save_hash_cache(cache: Dict[str, _HashCacheEntry]) -> None:
+    """Persist hash cache to disk."""
+    try:
+        data = {
+            path: {
+                "mtime": entry.mtime,
+                "size": entry.size,
+                "sha256": entry.sha256,
+                "short_hash": entry.short_hash,
+            }
+            for path, entry in cache.items()
+        }
+        _HASH_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _HASH_CACHE_FILE.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        _LOGGER.debug("hash cache save failed: %s", e)
 
 
 class ModelRegistry:
@@ -73,7 +117,8 @@ class ModelRegistry:
         self._lock = threading.Lock()
         self._checkpoints: Dict[str, CheckpointRecord] = {}
         self._vaes: Dict[str, VAERecord] = {}
-        self._hash_cache: Dict[str, _HashCacheEntry] = {}
+        self._hash_cache: Dict[str, _HashCacheEntry] = _load_hash_cache()  # Load from disk
+        self._hash_cache_dirty = False  # Track if we need to save
         self._last_scan: float | None = None
 
     # ------------------------------------------------------------------
@@ -122,6 +167,10 @@ class ModelRegistry:
         self._checkpoints = checkpoints
         self._vaes = vaes
         self._last_scan = time.time()
+        # Persist hash cache if we computed any new hashes
+        if self._hash_cache_dirty:
+            _save_hash_cache(self._hash_cache)
+            self._hash_cache_dirty = False
         _LOGGER.info(
             "model_registry: scan complete checkpoints=%d vaes=%d ms=%.1f",
             len(checkpoints),
@@ -203,7 +252,7 @@ class ModelRegistry:
 
         # 1) User overrides from apps/paths.json per engine
         try:
-            for key in ("sd15_ckpt", "sdxl_ckpt", "flux_ckpt", "wan22_ckpt"):
+            for key in ("sd15_ckpt", "sdxl_ckpt", "flux_ckpt", "wan22_ckpt", "zimage_ckpt"):
                 for raw in get_paths_for(key):
                     p = Path(raw)
                     if p not in candidates:
@@ -219,6 +268,7 @@ class ModelRegistry:
                 self._models_root / "sd15",
                 self._models_root / "sdxl",
                 self._models_root / "flux",
+                self._models_root / "zimage",
             ]
             for p in defaults:
                 if p not in candidates:
@@ -310,18 +360,22 @@ class ModelRegistry:
             return None, None
         key = str(path)
         entry = self._hash_cache.get(key)
-        if entry and entry.mtime == stat.st_mtime:
+        # Cache hit: validate by mtime AND size (both must match)
+        if entry and entry.mtime == stat.st_mtime and entry.size == stat.st_size:
             sha256 = entry.sha256
             short_hash = entry.short_hash or None
             return sha256, short_hash
+        # Cache miss: compute hash (slow path, but only happens once per file)
         try:
+            _LOGGER.debug("computing sha256 for %s (%.1f MB)", path.name, stat.st_size / 1e6)
             sha256 = _sha256(path)
             short_hash = sha256[:10]
         except Exception:
             sha256 = None
             short_hash = None
         if sha256:
-            self._hash_cache[key] = _HashCacheEntry(stat.st_mtime, sha256, short_hash or "")
+            self._hash_cache[key] = _HashCacheEntry(stat.st_mtime, stat.st_size, sha256, short_hash or "")
+            self._hash_cache_dirty = True  # Mark for persistence
         return sha256, short_hash
 
 

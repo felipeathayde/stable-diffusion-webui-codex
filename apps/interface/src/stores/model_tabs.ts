@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
+import { type EngineType, getEngineConfig, getEngineDefaults, getAllEngines } from './engine_config'
 
-export type BaseTabType = 'sd15' | 'sdxl' | 'flux' | 'wan'
+export type BaseTabType = EngineType
 
 export interface BaseTabMeta {
   createdAt: string
@@ -87,13 +88,17 @@ function uuid(): string {
 }
 
 function defaultParams(type: BaseTabType): Record<string, unknown> {
-  if (type === 'wan') {
+  const config = getEngineConfig(type)
+  const defaults = getEngineDefaults(type)
+  
+  // Video engines (WAN22)
+  if (config.capabilities.isVideoEngine) {
     const stage = (): WanStageParams => ({
-      modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1,
+      modelDir: '', sampler: '', scheduler: '', steps: defaults.steps, cfgScale: defaults.cfg, seed: -1,
       lightning: false, loraEnabled: false, loraPath: '', loraWeight: 1.0,
     })
     const video: WanVideoParams = {
-      prompt: '', negativePrompt: '', width: 768, height: 432, fps: 24, frames: 16,
+      prompt: '', negativePrompt: '', width: defaults.width, height: defaults.height, fps: 24, frames: 16,
       useInitImage: false, initImageData: '', initImageName: '',
       filenamePrefix: 'wan22', format: 'video/h264-mp4', pixFmt: 'yuv420p', crf: 15,
       loopCount: 0, pingpong: false, trimToAudio: false, saveMetadata: true, saveOutput: true,
@@ -102,12 +107,28 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     const assets = { metadata: '', textEncoder: '', vae: '' }
     return { high: stage(), low: stage(), video, assets }
   }
-  // SD15/SDXL/FLUX defaults for image generation
+  
+  // Image engines (SD15, SDXL, Flux, Z Image, Chroma)
   const imageDefaults: ImageBaseParams = {
-    prompt: '', negativePrompt: '', width: 1024, height: 1024,
-    sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1,
-    useInitImage: false, initImageData: '', initImageName: '',
+    prompt: '',
+    negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
+    width: defaults.width,
+    height: defaults.height,
+    sampler: '',
+    scheduler: '',
+    steps: defaults.steps,
+    cfgScale: defaults.cfg,
+    seed: -1,
+    useInitImage: false,
+    initImageData: '',
+    initImageName: '',
   }
+  
+  // Add distilledCfg for flow engines
+  if (config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined) {
+    return { ...imageDefaults, distilledCfgScale: defaults.distilledCfg }
+  }
+  
   return imageDefaults
 }
 
@@ -148,17 +169,17 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   function bootstrap(): void {
-    // Cria 4 bases padrão: sd15, sdxl, flux, wan
+    // Create tabs for all registered engines
     const createdAt = nowIso()
-    const list: Array<{ type: BaseTabType; title: string }> = [
-      { type: 'sd15', title: 'SD 1.5' },
-      { type: 'sdxl', title: 'SDXL' },
-      { type: 'flux', title: 'FLUX' },
-      { type: 'wan', title: 'WAN 2.2' },
-    ]
-    tabs.value = list.map((it, idx) => ({
-      id: uuid(), type: it.type, title: it.title, order: idx, enabled: true,
-      params: defaultParams(it.type), meta: { createdAt, updatedAt: createdAt },
+    const engines = getAllEngines()
+    tabs.value = engines.map((engine, idx) => ({
+      id: uuid(),
+      type: engine.id as BaseTabType,
+      title: engine.label,
+      order: idx,
+      enabled: true,
+      params: defaultParams(engine.id as BaseTabType),
+      meta: { createdAt, updatedAt: createdAt },
     }))
     activeId.value = tabs.value[0]?.id ?? ''
     save()

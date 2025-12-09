@@ -33,7 +33,7 @@ def _hf_root() -> str:
     return str(_repo_root() / "apps" / "backend" / "huggingface")
 
 
-def _list_files(dir_path: str, exts: tuple[str, ...]) -> List[Dict[str, str]]:
+def _list_files(dir_path: str, exts: tuple[str, ...], *, include_sha: bool = False) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
     if not os.path.isdir(dir_path):
         return out
@@ -41,10 +41,59 @@ def _list_files(dir_path: str, exts: tuple[str, ...]) -> List[Dict[str, str]]:
         for name in os.listdir(dir_path):
             full = os.path.join(dir_path, name)
             if os.path.isfile(full) and name.lower().endswith(exts):
-                out.append({"name": name, "path": full})
+                item: Dict[str, str] = {"name": name, "path": full}
+                if include_sha:
+                    sha = _get_file_sha256(full)
+                    if sha:
+                        item["sha256"] = sha
+                out.append(item)
     except Exception:
         return out
     return sorted(out, key=lambda d: d["name"].lower())
+
+
+def _get_file_sha256(path: str) -> str | None:
+    """Get SHA256 for a file, using registry cache if available."""
+    try:
+        from apps.backend.runtime.models.registry import get_registry
+        reg = get_registry()
+        # Use registry's hash method if available
+        entry = reg._hash_cache.get(path)
+        if entry is not None:
+            return entry.sha256
+        # Compute hash if not cached (only for smaller files to avoid slowdown)
+        size = os.path.getsize(path)
+        if size > 5 * 1024 * 1024 * 1024:  # Skip files > 5GB
+            return None
+        import hashlib
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            while chunk := f.read(1024 * 1024):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+# SHA256 -> Path resolution cache (populated during scan)
+_SHA_TO_PATH: Dict[str, str] = {}
+
+
+def resolve_asset_by_sha(sha256: str) -> str | None:
+    """Resolve a SHA256 hash to its file path from the inventory cache.
+    
+    Searches all model types: text encoders, VAEs, LoRAs, and WAN22 GGUF models.
+    """
+    global _SHA_TO_PATH
+    if not _SHA_TO_PATH:
+        # Populate cache from current inventory (all model types)
+        inv = get()
+        for item in inv["text_encoders"] + inv["vaes"] + inv["loras"] + inv["wan22"]:
+            sha = item.get("sha256")
+            path = item.get("path")
+            if sha and path:
+                _SHA_TO_PATH[sha] = path
+    return _SHA_TO_PATH.get(sha256)
 
 
 def _list_dirs(dir_path: str) -> List[str]:
@@ -62,16 +111,16 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     vae_dir = os.path.join(mr, "VAE")
     lora_dir = os.path.join(mr, "Lora")
 
-    vaes = _list_files(vae_dir, (".safetensors", ".bin", ".pt"))
+    vaes = _list_files(vae_dir, (".safetensors", ".bin", ".pt"), include_sha=True)
 
     # Text encoders: strict models/text-encoder plus per-engine roots from apps/paths.json.
     text_encoders: List[Dict[str, str]] = []
-    te_exts = (".safetensors", ".bin", ".pt")
+    te_exts = (".safetensors", ".bin", ".pt", ".gguf")
     seen_te_paths: set[str] = set()
 
     def _append_text_encoders(root: str) -> None:
         nonlocal text_encoders, seen_te_paths
-        for item in _list_files(root, te_exts):
+        for item in _list_files(root, te_exts, include_sha=True):
             path = item.get("path")
             if not path or path in seen_te_paths:
                 continue
@@ -82,40 +131,49 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     te_dir = os.path.join(mr, "text-encoder")
     _append_text_encoders(te_dir)
 
-    # Engine-specific roots from apps/paths.json (sd15_tenc, sdxl_tenc, flux_tenc, wan22_tenc)
+    # Engine-specific roots from apps/paths.json (sd15_tenc, sdxl_tenc, flux_tenc, wan22_tenc, zimage_tenc)
     try:
-        for key in ("sd15_tenc", "sdxl_tenc", "flux_tenc", "wan22_tenc"):
+        for key in ("sd15_tenc", "sdxl_tenc", "flux_tenc", "wan22_tenc", "zimage_tenc"):
             for root in get_paths_for(key):
                 if os.path.isdir(root):
                     _append_text_encoders(root)
     except Exception:
         # Do not break inventory on misconfigured paths.json; legacy roots still apply.
         pass
-    # Engine-specific VAEs from apps/paths.json (flux_vae): scan roots directly without
+    # Engine-specific VAEs from apps/paths.json (flux_vae, zimage_vae): scan roots directly without
     # relying on filename heuristics. Any weight-like file under these roots is exposed
-    # so the UI can list concrete Flux VAEs based purely on paths.json.
+    # so the UI can list concrete Flux/ZImage VAEs based purely on paths.json.
     try:
-        flux_vaes: List[Dict[str, str]] = []
-        for root in get_paths_for("flux_vae"):
-            if os.path.isdir(root):
-                for name in os.listdir(root):
-                    full = os.path.join(root, name)
-                    if os.path.isfile(full):
-                        flux_vaes.append({"name": name, "path": full})
-            elif os.path.isfile(root):
-                flux_vaes.append({"name": os.path.basename(root), "path": root})
-        if flux_vaes:
-            flux_vaes.sort(key=lambda d: d["name"].lower())
+        engine_vaes: List[Dict[str, str]] = []
+        for key in ("flux_vae", "zimage_vae"):
+            for root in get_paths_for(key):
+                if os.path.isdir(root):
+                    for name in os.listdir(root):
+                        full = os.path.join(root, name)
+                        if os.path.isfile(full):
+                            sha = _get_file_sha256(full)
+                            entry: Dict[str, str] = {"name": name, "path": full}
+                            if sha:
+                                entry["sha256"] = sha
+                            engine_vaes.append(entry)
+                elif os.path.isfile(root):
+                    sha = _get_file_sha256(root)
+                    entry = {"name": os.path.basename(root), "path": root}
+                    if sha:
+                        entry["sha256"] = sha
+                    engine_vaes.append(entry)
+        if engine_vaes:
+            engine_vaes.sort(key=lambda d: d["name"].lower())
             seen_paths = {v["path"] for v in vaes}
-            for item in flux_vaes:
+            for item in engine_vaes:
                 if item["path"] not in seen_paths:
                     vaes.append(item)
                     seen_paths.add(item["path"])
     except Exception:
-        # Do not break inventory on misconfigured flux_vae roots.
+        # Do not break inventory on misconfigured VAE roots.
         pass
 
-    loras = _list_files(lora_dir, (".safetensors", ".bin", ".pt", ".ckpt"))
+    loras = _list_files(lora_dir, (".safetensors", ".bin", ".pt", ".ckpt"), include_sha=True)
 
     # WAN22 GGUF with stage detection (high/low/unknown).
     # Prefer explicit WAN22 roots from apps/paths.json ("wan22_ckpt"); fall back to models/wan22.
@@ -134,7 +192,11 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
                         stage = "high"
                     elif any(k in lower for k in ("low", "lownoise", "low_noise")):
                         stage = "low"
-                    wan22.append({"name": name, "path": full, "stage": stage})
+                    sha = _get_file_sha256(full)
+                    entry: Dict[str, str] = {"name": name, "path": full, "stage": stage}
+                    if sha:
+                        entry["sha256"] = sha
+                    wan22.append(entry)
         except Exception:
             continue
     if wan22:

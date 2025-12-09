@@ -1,5 +1,7 @@
 import { z, ZodError } from 'zod'
 
+// Flow models use distilled_cfg, no negative prompt
+const FLOW_ENGINES = ['flux', 'zimage', 'chroma'] as const
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 
@@ -42,19 +44,17 @@ const PromptSchema = z
 
 export const Txt2ImgRequestSchema = z
   .object({
-    __strict_version: z.literal(1),
-    codex_device: DeviceEnum,
+    device: DeviceEnum,
     prompt: PromptSchema,
     negative_prompt: z.string().optional().default(''),
     width: z.number().int().min(8).max(8192),
     height: z.number().int().min(8).max(8192),
     steps: z.number().int().min(1),
-    guidance_scale: z.number(),
+    cfg: z.number().optional(),  // Diffusion models (SD, SDXL)
+    distilled_cfg: z.number().optional(),  // Flow models (Flux, Z Image, Chroma)
     sampler: z.string().min(1),
     scheduler: z.string().min(1),
     seed: z.number().int(),
-    batch_size: z.number().int().min(1),
-    batch_count: z.number().int().min(1),
     styles: z.array(z.string().min(1)).optional(),
     metadata: z.record(z.any()).optional(),
     engine: z.string().min(1).optional(),
@@ -73,7 +73,16 @@ export const Txt2ImgRequestSchema = z
             components: z.array(z.string().min(1)).optional(),
           })
           .optional(),
+        // Batch params
+        batch_size: z.number().int().min(1).optional(),
+        batch_count: z.number().int().min(1).optional(),
+        // SHA-based model selection
+        tenc_sha: z.string().optional(),
+        vae_sha: z.string().optional(),
+        lora_sha: z.string().optional(),
+        model_sha: z.string().optional(),
       })
+      .passthrough()  // Allow additional dynamic keys for engine-specific extras
       .optional(),
   })
   .strict()
@@ -121,14 +130,12 @@ export interface Txt2ImgFormState {
   batchSize: number
   batchCount: number
   styles?: string[]
-  device: Txt2ImgRequest['codex_device']
+  device: Txt2ImgRequest['device']
   engine?: string
   model?: string
   smartOffload?: boolean
   smartFallback?: boolean
   smartCache?: boolean
-  smartOffload?: boolean
-  smartFallback?: boolean
   highres?: HighresFormState
   refiner?: RefinerFormState
   textEncoderOverride?: {
@@ -136,31 +143,40 @@ export interface Txt2ImgFormState {
     label: string
     components?: string[]
   }
+  extras?: Record<string, unknown>
 }
 
-function normalizeDevice(device: string): Txt2ImgRequest['codex_device'] {
+function normalizeDevice(device: string): Txt2ImgRequest['device'] {
   const normalized = device.trim().toLowerCase()
   if (DEVICE_VALUES.includes(normalized as (typeof DEVICE_VALUES)[number])) {
-    return normalized as Txt2ImgRequest['codex_device']
+    return normalized as Txt2ImgRequest['device']
   }
   throw new Error(`Unsupported device '${device}'`)
 }
 
 export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
+  const isFlowModel = FLOW_ENGINES.includes(state.engine as typeof FLOW_ENGINES[number])
+  
   const payload: Record<string, unknown> = {
-    __strict_version: 1,
-    codex_device: normalizeDevice(state.device),
+    device: normalizeDevice(state.device),
     prompt: state.prompt.trim(),
-    negative_prompt: state.negativePrompt ?? '',
     width: state.width,
     height: state.height,
     steps: state.steps,
-    guidance_scale: state.guidanceScale,
     sampler: state.sampler,
     scheduler: state.scheduler,
     seed: state.seed,
-    batch_size: state.batchSize,
-    batch_count: state.batchCount,
+  }
+  
+  // Flow models: use distilled_cfg, no negative prompt
+  // Diffusion models: use cfg with negative prompt
+  if (isFlowModel) {
+    payload.distilled_cfg = state.guidanceScale
+  } else {
+    payload.cfg = state.guidanceScale
+    if (state.negativePrompt?.trim()) {
+      payload.negative_prompt = state.negativePrompt
+    }
   }
 
   const styles = state.styles?.filter((entry) => entry.trim().length > 0) ?? []
@@ -184,7 +200,10 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
     payload.smart_cache = state.smartCache
   }
 
-  const extras: Record<string, unknown> = {}
+  const extras: Record<string, unknown> = {
+    batch_size: state.batchSize,
+    batch_count: state.batchCount,
+  }
   if (state.highres?.enabled) {
     extras.highres = {
       enable: true,
@@ -231,6 +250,14 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
       components: state.textEncoderOverride.components && state.textEncoderOverride.components.length > 0
         ? state.textEncoderOverride.components
         : undefined,
+    }
+  }
+  // Merge engine-specific extras from state (e.g., tenc_sha for Z Image)
+  if (state.extras) {
+    for (const [key, value] of Object.entries(state.extras)) {
+      if (value !== undefined) {
+        extras[key] = value
+      }
     }
   }
   if (Object.keys(extras).length > 0) {

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo } from '../api/types'
-import { fetchModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchVaes, fetchTextEncoders, fetchMemory } from '../api/client'
+import { fetchModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchVaes, fetchTextEncoders, fetchMemory, fetchModelInventory } from '../api/client'
 
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
@@ -17,6 +17,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const currentVae = ref<string>('Automatic')
   const textEncoderChoices = ref<string[]>([])
   const currentTextEncoders = ref<string[]>([])
+  // SHA256 lookup maps for text encoders and VAEs (populated from inventory)
+  const textEncoderShaMap = ref<Map<string, string>>(new Map())
+  const vaeShaMap = ref<Map<string, string>>(new Map())
   const attentionChoices = ref<{ value: string; label: string }[]>([
     { value: 'torch-sdpa', label: 'Torch (SDPA)' },
     { value: 'xformers', label: 'xFormers' },
@@ -217,6 +220,27 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       if (Array.isArray(res.current) && currentTextEncoders.value.length === 0) {
         currentTextEncoders.value = res.current
       }
+      // Also load inventory for SHA256 lookup
+      try {
+        const inv = await fetchModelInventory()
+        const shaMap = new Map<string, string>()
+        for (const te of inv.text_encoders || []) {
+          if (te.name && te.sha256) {
+            shaMap.set(te.name, te.sha256)
+          }
+        }
+        textEncoderShaMap.value = shaMap
+        // Also populate VAE SHA map
+        const vaeMap = new Map<string, string>()
+        for (const v of inv.vaes || []) {
+          if (v.name && v.sha256) {
+            vaeMap.set(v.name, v.sha256)
+          }
+        }
+        vaeShaMap.value = vaeMap
+      } catch (_) {
+        // Non-critical - SHA lookup will just be empty
+      }
     } catch (e) {
       // Graceful when endpoint not present yet
       textEncoderChoices.value = textEncoderChoices.value.length ? textEncoderChoices.value : []
@@ -230,9 +254,20 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setTextEncoders(labels: string[]): Promise<void> {
     currentTextEncoders.value = labels.slice()
+    // Look up SHA256 for each label from our inventory map
+    const shas: string[] = []
+    for (const label of labels) {
+      const sha = textEncoderShaMap.value.get(label)
+      if (sha) shas.push(sha)
+    }
     // Labels may be backend text encoder roots or direct file paths; they are
     // persisted as-is so future overrides can resolve them centrally.
-    await updateOptions({ forge_additional_modules: labels })
+    // Also send SHA256 values for direct backend resolution.
+    const opts: Record<string, unknown> = { forge_additional_modules: labels }
+    if (shas.length > 0) {
+      opts.forge_additional_modules_sha = shas
+    }
+    await updateOptions(opts)
   }
 
   async function loadMemory(): Promise<void> {
@@ -376,5 +411,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     setSmartFallback,
     setSmartCache,
     setCoreStreaming,
+    // SHA maps for asset resolution
+    textEncoderShaMap,
+    vaeShaMap,
   }
 })

@@ -46,5 +46,17 @@
   ],
   "wan22_loras": [
     "models/wan22-loras"
+  ],
+  "zimage_ckpt": [
+    "models/zimage"
+  ],
+  "zimage_tenc": [
+    "models/zimage-tenc"
+  ],
+  "zimage_vae": [
+    "models/zimage-vae"
+  ],
+  "zimage_loras": [
+    "models/zimage-loras"
   ]
 }

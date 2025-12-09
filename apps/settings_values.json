@@ -1,6 +1,7 @@
 {
-  "sd_model_checkpoint": "flux1-dev-Q5_0.gguf",
+  "sd_model_checkpoint": "z_image_turbo-Q8_0.gguf",
   "codex_smart_cache": true,
   "codex_smart_offload": true,
-  "codex_core_streaming": false
+  "codex_core_streaming": true,
+  "codex_smart_fallback": false
 }

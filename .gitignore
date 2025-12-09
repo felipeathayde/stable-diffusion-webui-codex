@@ -42,12 +42,14 @@ __pycache__
 notification.mp3
 /SwinIR
 /textual_inversion
-.vscode
+.vscode	
 /extensions
 /test/stdout.txt
 /test/stderr.txt
 /cache.json*
 /config_states/
+# Hash cache for model registry (computed per-machine)
+.hashes.json
 /node_modules
 /package-lock.json
 /.coverage*
@@ -93,6 +95,3 @@ apps/interface/.eslintcache
 apps/interface/.pnpm-debug.log
 
 # Local reference snapshots and scratch branches
-/.refs/
-
-

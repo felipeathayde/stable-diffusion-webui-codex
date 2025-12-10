@@ -129,9 +129,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
     if (Array.isArray(opts.forge_additional_modules)) {
       currentTextEncoders.value = (opts.forge_additional_modules as unknown[])
-        .map(String)
-        .map((p) => p.split('\\').pop()!.split('/').pop()!)
-        .filter((b) => textEncoderChoices.value.includes(b))
+        .map((entry) => String(entry).trim())
+        .filter((entry) => entry.length > 0)
     }
     if (typeof opts.forge_unet_storage_dtype === 'string') {
       currentUnetDtype.value = opts.forge_unet_storage_dtype
@@ -224,9 +223,26 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       try {
         const inv = await fetchModelInventory()
         const shaMap = new Map<string, string>()
+        const prefixes = ['sd15', 'sdxl', 'flux', 'wan22', 'zimage']
         for (const te of inv.text_encoders || []) {
-          if (te.name && te.sha256) {
-            shaMap.set(te.name, te.sha256)
+          const sha = typeof te.sha256 === 'string' ? te.sha256 : ''
+          if (!sha) continue
+          const name = typeof te.name === 'string' ? te.name : ''
+          const rawPath = typeof te.path === 'string' ? te.path : ''
+          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+          const keys = new Set<string>()
+          if (name) keys.add(name)
+          if (rawPath) keys.add(rawPath)
+          if (normPath) keys.add(normPath)
+          const basename = normPath ? normPath.split('/').pop() : name
+          if (basename) keys.add(basename)
+          if (normPath) {
+            for (const prefix of prefixes) {
+              keys.add(`${prefix}/${normPath}`)
+            }
+          }
+          for (const key of keys) {
+            shaMap.set(key, sha)
           }
         }
         textEncoderShaMap.value = shaMap
@@ -247,6 +263,18 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
+  function resolveTextEncoderSha(label: string | null | undefined): string | undefined {
+    if (!label) return undefined
+    const normalized = label.replace(/\\+/g, '/')
+    const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
+    const tail = normalized.split('/').pop() || ''
+    return (
+      textEncoderShaMap.value.get(normalized) ||
+      textEncoderShaMap.value.get(withoutPrefix) ||
+      textEncoderShaMap.value.get(tail)
+    )
+  }
+
   async function setVae(label: string): Promise<void> {
     currentVae.value = label
     await updateOptions({ forge_selected_vae: label })
@@ -257,7 +285,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     // Look up SHA256 for each label from our inventory map
     const shas: string[] = []
     for (const label of labels) {
-      const sha = textEncoderShaMap.value.get(label)
+      const sha = resolveTextEncoderSha(label)
       if (sha) shas.push(sha)
     }
     // Labels may be backend text encoder roots or direct file paths; they are
@@ -413,6 +441,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     setCoreStreaming,
     // SHA maps for asset resolution
     textEncoderShaMap,
+    resolveTextEncoderSha,
     vaeShaMap,
   }
 })

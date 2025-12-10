@@ -237,6 +237,18 @@ export const useZImageStore = defineStore('zimage', () => {
       return
     }
 
+    const extras: Record<string, unknown> = {}
+    const tencLabel = quicksettings.currentTextEncoders[0]
+    const tencSha = quicksettings.resolveTextEncoderSha(tencLabel)
+    if (tencSha) {
+      extras.tenc_sha = tencSha
+    } else {
+      status.value = 'error'
+      running.value = false
+      errorMessage.value = 'Select a Z Image text encoder so the request can send tenc_sha.'
+      return
+    }
+
     let payload: Txt2ImgRequest
     try {
       payload = buildTxt2ImgPayload({
@@ -258,6 +270,7 @@ export const useZImageStore = defineStore('zimage', () => {
         smartCache: quicksettings.smartCache,
         engine: ENGINE_ID,
         model: quicksettings.currentModel || selectedModel.value,
+        extras,
       })
     } catch (error) {
       status.value = 'error'

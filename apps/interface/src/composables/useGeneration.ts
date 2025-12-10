@@ -96,11 +96,13 @@ export function useGeneration(tabId: string) {
     if (config.capabilities.requiresTenc) {
       // Get first text encoder and look up its SHA
       const firstTenc = quicksettings.currentTextEncoders[0]
-      if (firstTenc) {
-        const sha = quicksettings.textEncoderShaMap.get(firstTenc)
-        if (sha) {
-          extras.tenc_sha = sha
-        }
+      const sha = quicksettings.resolveTextEncoderSha(firstTenc)
+      if (sha) {
+        extras.tenc_sha = sha
+      } else {
+        state.value.status = 'error'
+        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
+        return
       }
     }
     

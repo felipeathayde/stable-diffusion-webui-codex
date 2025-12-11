@@ -12,4 +12,4 @@ Status: Active
 
 ## Notes
 - Add reusable building blocks here to avoid duplication across model-specific runtimes.
-- `vae.py` normalises Flow16 VAE safetensors by stripping common prefixes and fails fast on incompatible (non‑16‑channel) VAEs to avoid noisy decodes.
+- `vae.py` normalises Flow16 VAE safetensors by stripping common prefixes, reusing SDXL/Flux LDM→diffusers key conversion for Z Image, and fails fast on incompatible (non‑16‑channel) VAEs to avoid noisy decodes.

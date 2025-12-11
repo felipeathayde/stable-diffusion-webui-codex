@@ -10,7 +10,7 @@ __pycache__
 *_m.py
 *_i.py
 !apps/backend/gguf/quants/kernels/iq_family/forge_*.py
-
+.refs
 .DS_Store
 /output/
 /outputs/
@@ -95,3 +95,7 @@ apps/interface/.eslintcache
 apps/interface/.pnpm-debug.log
 
 # Local reference snapshots and scratch branches
+*.png
+*.txt
+.sangoi/reports/tooling/pyright/*
+

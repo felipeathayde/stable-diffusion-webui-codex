@@ -739,8 +739,8 @@ def _maybe_convert_sdxl_vae_state_dict(
     """
 
     family = getattr(signature, "family", None) if signature is not None else None
-    # Support both SDXL and FLUX families (both use same VAE architecture)
-    if family not in (ModelFamily.SDXL, ModelFamily.FLUX):
+    # Support SDXL, FLUX and ZIMAGE families (all share the same VAE key layout)
+    if family not in (ModelFamily.SDXL, ModelFamily.FLUX, ModelFamily.ZIMAGE):
         return state_dict
 
     keys = list(state_dict.keys())

@@ -6,12 +6,11 @@ Alibaba Z Image Turbo (6B) txt2img engine following Flux pattern.
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
-from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2ImgRequest
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
@@ -97,8 +96,37 @@ class ZImageEngine(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
         runtime = self._require_runtime()
-        cond = runtime.text.qwen3_text(prompts)
-        return {"crossattn": cond}
+        
+        # Load text encoder to GPU using memory management (same pattern as Flux)
+        memory_management.load_model_gpu(runtime.clip.patcher)
+        unload_clip = self.smart_offload_enabled
+        
+        # Lumina 2 / Z Image conditioning format
+        # System prompt + <Prompt Start> + User Prompt
+        system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts."
+        formatted_prompts = [f"{system_prompt} <Prompt Start> {p}" for p in prompts]
+        
+        try:
+            cond = runtime.text.qwen3_text(formatted_prompts)
+        finally:
+            if unload_clip:
+                memory_management.unload_model(runtime.clip.patcher)
+        
+        # Z Image uses Qwen3 which doesn't have pooled output like CLIP.
+        # Provide a zeros placeholder for 'vector' to satisfy compile_conditions.
+        batch_size = len(prompts)
+        # Use a small vector dimension - this is just a placeholder
+        vector = torch.zeros(batch_size, 768, dtype=cond.dtype, device=cond.device)
+        
+        # Distilled CFG guidance (Z Image uses distilled guidance like Flux)
+        distilled_cfg = getattr(prompts, "distilled_cfg_scale", ZIMAGE_SPEC.default_cfg_scale) or ZIMAGE_SPEC.default_cfg_scale
+        guidance = torch.full((batch_size,), float(distilled_cfg), dtype=torch.float32)
+        
+        return {
+            "crossattn": cond,
+            "vector": vector,
+            "guidance": guidance,
+        }
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
@@ -122,160 +150,10 @@ class ZImageEngine(CodexDiffusionEngine):
         runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.vae)
         try:
+            # VAE returns BCHW in [-1, 1] range directly
             return runtime.vae.decode(x)
         finally:
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
 
-    # ------------------------------------------------------------------ Tasks
-    def txt2img(self, request: Txt2ImgRequest, **kwargs: Any) -> Iterator[InferenceEvent]:
-        """Generate image from text prompt."""
-        self.ensure_loaded()
-        runtime = self._require_runtime()
 
-        yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2img")
-
-        # Parameters
-        prompt = request.prompt
-        negative_prompt = getattr(request, "negative_prompt", "") or ""
-        width = int(getattr(request, "width", 1024) or 1024)
-        height = int(getattr(request, "height", 1024) or 1024)
-        steps = int(getattr(request, "steps", ZIMAGE_SPEC.default_steps) or ZIMAGE_SPEC.default_steps)
-        cfg_scale = float(getattr(request, "cfg_scale", ZIMAGE_SPEC.default_cfg_scale) or ZIMAGE_SPEC.default_cfg_scale)
-        seed = getattr(request, "seed", None)
-
-        logger.info("txt2img: %dx%d, %d steps, cfg=%.1f", width, height, steps, cfg_scale)
-
-        yield ProgressEvent(stage="encoding", percent=0.1, message="Encoding prompt")
-
-        # Text conditioning
-        cond = self.get_learned_conditioning([prompt])
-        uncond = self.get_learned_conditioning([negative_prompt])
-
-        cond_tensor = cond.get("crossattn")
-        uncond_tensor = uncond.get("crossattn")
-
-        yield ProgressEvent(stage="sampling", percent=0.2, message="Starting sampling")
-
-        # Device/dtype
-        device = torch.device(self._device if torch.cuda.is_available() else "cpu")
-        dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
-        dtype = dtype_map.get(self._dtype, torch.bfloat16)
-
-        # Get transformer
-        transformer = self.codex_objects.unet.model
-        memory_management.load_model_gpu(self.codex_objects.unet)
-
-        try:
-            # Sample
-            latents = self._sample_flow_matching(
-                transformer=transformer,
-                cond=cond_tensor.to(device=device, dtype=dtype),
-                uncond=uncond_tensor.to(device=device, dtype=dtype),
-                width=width,
-                height=height,
-                steps=steps,
-                cfg_scale=cfg_scale,
-                seed=seed,
-                device=device,
-                dtype=dtype,
-            )
-
-            yield ProgressEvent(stage="decoding", percent=0.9, message="Decoding latents")
-
-            # Squeeze T dimension before decode: [B, C, T, H, W] -> [B, C, H, W]
-            if latents.dim() == 5:
-                latents = latents.squeeze(2)
-
-            # Decode
-            images = self.decode_first_stage(latents)
-
-            # Convert to output format
-            images = images.float().clamp(-1, 1) * 0.5 + 0.5
-            images = (images * 255).to(torch.uint8)
-
-            # [B, C, H, W] -> list
-            output_images = []
-            for i in range(images.shape[0]):
-                img = images[i].permute(1, 2, 0).cpu().numpy()
-                output_images.append(img)
-
-            yield ProgressEvent(stage="complete", percent=1.0, message="Generation complete")
-            yield ResultEvent(payload={
-                "images": output_images,
-                "info": {
-                    "engine": self.engine_id,
-                    "task": "txt2img",
-                    "width": width,
-                    "height": height,
-                    "steps": steps,
-                },
-            })
-
-        except Exception as e:
-            logger.error("txt2img failed: %s", e)
-            yield ProgressEvent(stage="error", percent=1.0, message=str(e))
-            yield ResultEvent(payload={
-                "images": [],
-                "info": {"engine": self.engine_id, "error": str(e)},
-            })
-
-    def _sample_flow_matching(
-        self,
-        transformer,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-        width: int,
-        height: int,
-        steps: int,
-        cfg_scale: float,
-        seed: Optional[int],
-        device: torch.device,
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        """Flow-matching sampling with CFG."""
-        # Latent shape: [B, C, T, H, W] (5D for video-like format)
-        latent_h = height // 8
-        latent_w = width // 8
-        latent_c = 16  # Flux VAE
-
-        B = cond.shape[0]
-        shape = (B, latent_c, 1, latent_h, latent_w)  # T=1 for single image
-
-        # Seed
-        if seed is not None:
-            torch.manual_seed(seed)
-
-        # Initial noise
-        x = torch.randn(shape, device=device, dtype=dtype)
-
-        # Sigma schedule (flow-matching)
-        shift = ZIMAGE_SPEC.flow_shift
-        timesteps = torch.linspace(1.0, 0.0, steps + 1, device=device, dtype=dtype)
-        sigmas = shift * timesteps / (1 + (shift - 1) * timesteps)
-
-        # Euler integration
-        for i in range(steps):
-            t = sigmas[i]
-            t_next = sigmas[i + 1]
-
-            timestep = torch.full((B,), float(t), device=device, dtype=dtype)
-
-            # CFG: batch cond and uncond
-            x_in = torch.cat([x, x], dim=0)
-            cond_in = torch.cat([cond, uncond], dim=0)
-            t_in = torch.cat([timestep, timestep], dim=0)
-
-            v_pred = transformer(x_in, t_in, cond_in)
-
-            v_cond, v_uncond = v_pred.chunk(2, dim=0)
-            v = v_uncond + cfg_scale * (v_cond - v_uncond)
-
-            # Euler step
-            dt = float(t_next) - float(t)
-            x = x + dt * v
-
-            if (i + 1) % 2 == 0:
-                logger.debug("Step %d/%d: t=%.3f", i + 1, steps, float(t))
-
-        return x

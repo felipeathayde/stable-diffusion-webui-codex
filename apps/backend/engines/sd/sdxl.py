@@ -637,7 +637,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             logger.info("[decode] latents stats=%s", _tensor_stats(x))
             sample = self.codex_objects.vae.first_stage_model.process_out(x)
             logger.info("[decode] after_process_out=%s", _tensor_stats(sample))
-            sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+            sample = self.codex_objects.vae.decode(sample)
             logger.info("[decode] decoded_tensor=%s", _tensor_stats(sample))
             return sample.to(x)
         finally:
@@ -814,7 +814,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+            sample = self.codex_objects.vae.decode(sample)
             return sample.to(x)
         finally:
             if unload_vae:

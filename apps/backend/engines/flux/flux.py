@@ -163,7 +163,7 @@ class Flux(CodexDiffusionEngine):
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            sample = self.codex_objects.vae.decode(sample).movedim(-1, 1) * 2.0 - 1.0
+            sample = self.codex_objects.vae.decode(sample)
             return sample.to(x)
         finally:
             if unload_vae:

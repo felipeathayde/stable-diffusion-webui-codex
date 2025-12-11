@@ -6,13 +6,42 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
+from apps.backend.patchers.base import ModelPatcher
 from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.memory import memory_management
 
 logger = logging.getLogger("backend.engines.zimage.spec")
+
+
+class ZImageCLIP:
+    """CLIP-like wrapper for Z Image text encoder with memory management support.
+    
+    This wrapper provides a `patcher` attribute that integrates with the
+    memory management system, allowing automatic GPU loading/offloading.
+    """
+    
+    def __init__(self, text_encoder):
+        """Initialize with a ZImageTextEncoder.
+        
+        Args:
+            text_encoder: A ZImageTextEncoder instance with a `model` attribute.
+        """
+        self.text_encoder = text_encoder
+        
+        # Create ModelPatcher for memory management integration
+        load_device = memory_management.text_encoder_device()
+        offload_device = memory_management.text_encoder_offload_device()
+        
+        # The patcher wraps the underlying model, enabling load_model_gpu/unload_model
+        self.patcher = ModelPatcher(
+            text_encoder.model,
+            load_device=load_device,
+            offload_device=offload_device,
+        )
 
 
 @dataclass(frozen=True)
@@ -27,6 +56,7 @@ class ZImageEngineRuntime:
     vae: VAE
     unet: UnetPatcher  # wraps ZImageTransformer2DModel
     text: ZImageTextPipelines
+    clip: ZImageCLIP  # wrapper with ModelPatcher for memory management
     device: str = "cuda"
     dtype: str = "bf16"
 
@@ -52,10 +82,13 @@ class ZImageEngineSpec:
     
     @property
     def flow_shift(self) -> float:
-        """Flow-match shift, delegating to FamilyRuntimeSpec if not overridden."""
+        """Flow-match shift, delegating to FamilyRuntimeSpec if not overridden.
+        
+        Z Image TURBO uses shift=1.0 (like Flux Schnell), not 3.0 (normal models).
+        """
         if self._flow_shift_override is not None:
             return self._flow_shift_override
-        return self._get_family_spec().flow_shift or 3.0
+        return self._get_family_spec().flow_shift or 1.0  # Turbo models use 1.0
     
     @property
     def default_steps(self) -> int:
@@ -158,12 +191,23 @@ def assemble_zimage_runtime(
     Returns:
         Assembled ZImageEngineRuntime.
     """
+    import torch
+    
+    def _log_vram(label: str) -> None:
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            alloc = torch.cuda.memory_allocated()
+            logger.info("[zimage-assemble] %s: free=%.2f GB, alloc=%.2f GB", label, free/1e9, alloc/1e9)
+    
     logger.debug("Assembling Z Image runtime")
+    _log_vram("START")
     
     # Get transformer (always required)
     transformer = codex_components.get("transformer")
     if transformer is None:
         raise ValueError("Z Image requires 'transformer' component")
+    
+    _log_vram("AFTER get transformer")
     
     # Detect if this is a GGUF/core-only model (no VAE or text encoder in components)
     vae_model = codex_components.get("vae")
@@ -177,13 +221,16 @@ def assemble_zimage_runtime(
         # Load external VAE
         if vae_model is None:
             vae_model = _load_external_vae(external_vae_path, dtype=dtype)
+            _log_vram("AFTER load external VAE")
         
         # Load external text encoder
         if text_encoder is None:
             text_encoder = _load_external_text_encoder(external_tenc_path, dtype=dtype)
+            _log_vram("AFTER load external TEnc")
     
     # Wrap VAE
     vae = VAE(model=vae_model, family=ModelFamily.ZIMAGE)
+    _log_vram("AFTER VAE wrapper")
     
     # Wrap transformer in UnetPatcher
     k_predictor = _k_predictor(spec)
@@ -193,17 +240,24 @@ def assemble_zimage_runtime(
         k_predictor=k_predictor,
         config=estimated_config,
     )
+    _log_vram("AFTER UnetPatcher.from_model")
     
-    # Wrap text encoder
+    # Wrap text encoder with ZImageCLIP for memory management
+    clip = ZImageCLIP(text_encoder)
+    _log_vram("AFTER ZImageCLIP wrapper")
+    
+    # Create text processing engine
     from apps.backend.runtime.zimage.text_encoder import ZImageTextProcessingEngine
     text_engine = ZImageTextProcessingEngine(text_encoder)
     
+    _log_vram("FINAL")
     logger.info("Z Image runtime assembled: device=%s dtype=%s core_only=%s", device, dtype, is_core_only)
     
     return ZImageEngineRuntime(
         vae=vae,
         unet=unet,
         text=ZImageTextPipelines(qwen3_text=text_engine),
+        clip=clip,
         device=device,
         dtype=dtype,
     )

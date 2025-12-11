@@ -68,6 +68,9 @@ class ZImageEngine(CodexDiffusionEngine):
         self._runtime = runtime
         logger.info("Z Image runtime assembled")
 
+        # Turbo models use distilled guidance; disable CFG/uncond conditioning.
+        self.use_distilled_cfg_scale = True
+
         return CodexObjects(
             unet=runtime.unet,
             vae=runtime.vae,
@@ -155,5 +158,4 @@ class ZImageEngine(CodexDiffusionEngine):
         finally:
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
-
 

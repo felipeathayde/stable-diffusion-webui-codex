@@ -257,7 +257,8 @@ class VAE:
             dtype = memory_management.vae_dtype(device=device)
 
         self.vae_dtype: torch.dtype | None = None
-        self._apply_precision(dtype)
+        self._pending_dtype = dtype  # Will be applied lazily when VAE is first used
+        self.offload_device = offload_device
         self.output_device = memory_management.intermediate_device()
 
         self.patcher = ModelPatcher(
@@ -279,18 +280,19 @@ class VAE:
         n.output_device = self.output_device
         return n
 
-    def _apply_precision(self, dtype: torch.dtype) -> None:
+    def _apply_precision(self, dtype: torch.dtype, device: torch.device | str | None = None) -> None:
         if dtype == self.vae_dtype:
             return
         previous = self.vae_dtype
+        target_device = device if device is not None else self.device
         base = getattr(self.first_stage_model, "_base", self.first_stage_model)
-        base.to(device=self.device, dtype=dtype)
+        base.to(device=target_device, dtype=dtype)
         self.vae_dtype = dtype
         logger.info(
             "VAE precision updated: %s -> %s on %s",
             "none" if previous is None else str(previous),
             str(dtype),
-            self.device,
+            target_device,
         )
 
     def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap=16):
@@ -444,7 +446,10 @@ class VAE:
                     print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
                     pixel_samples = self.decode_tiled_(samples_in)
 
-            result = pixel_samples.to(self.output_device).movedim(1, -1)
+            # Return BCHW format in [-1, 1] range directly
+            # This is what sampling pipelines expect - no conversion needed in engines
+            result = pixel_samples.to(self.output_device)
+            result = result * 2.0 - 1.0  # [0,1] → [-1,1]
             _tensor_stats("decode_inner.result", result)
             if torch.isnan(result).any():
                 logger.warning(
@@ -480,7 +485,8 @@ class VAE:
     def decode_tiled(self, samples, tile_x=64, tile_y=64, overlap=16):
         memory_management.load_model_gpu(self.patcher)
         output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
-        return output.movedim(1, -1)
+        # Return BCHW format in [-1, 1] range like decode_inner
+        return output * 2.0 - 1.0
 
     def encode_inner(self, pixel_samples):
         if memory_management.VAE_ALWAYS_TILED:

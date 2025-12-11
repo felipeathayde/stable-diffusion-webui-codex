@@ -380,10 +380,11 @@ def _q8_0_dequantize(blocks: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
     blocked = flat[:n_blocks * BLOCK_SIZE].view(n_blocks, BLOCK_SIZE)
     
     # Scale is stored as float16 in original GGUF format - convert to target dtype
-    d = blocked[:, :2].contiguous().view(torch.float16).to(dtype)
-    qs = blocked[:, 2:].contiguous().view(torch.int8).to(dtype)
+    # Scale is 2 bytes viewed as float16, but we need shape (n_blocks, 1) for broadcasting
+    d = blocked[:, :2].contiguous().view(torch.float16).to(dtype).unsqueeze(-1)  # (n_blocks, 1)
+    qs = blocked[:, 2:].contiguous().view(torch.int8).to(dtype)  # (n_blocks, 32)
     
-    result = d * qs
+    result = d * qs  # Now broadcasts correctly: (n_blocks, 1) * (n_blocks, 32) = (n_blocks, 32)
     
     if output_shape is not None:
         result = result.view(output_shape)

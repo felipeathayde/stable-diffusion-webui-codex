@@ -53,24 +53,17 @@ def _list_files(dir_path: str, exts: tuple[str, ...], *, include_sha: bool = Fal
 
 
 def _get_file_sha256(path: str) -> str | None:
-    """Get SHA256 for a file, using registry cache if available."""
+    """Get SHA256 for a file, using registry cache with persistence.
+    
+    Uses registry._hash_for which updates and persists the cache to disk.
+    """
     try:
+        from pathlib import Path
         from apps.backend.runtime.models.registry import get_registry
         reg = get_registry()
-        # Use registry's hash method if available
-        entry = reg._hash_cache.get(path)
-        if entry is not None:
-            return entry.sha256
-        # Compute hash if not cached (only for smaller files to avoid slowdown)
-        size = os.path.getsize(path)
-        if size > 5 * 1024 * 1024 * 1024:  # Skip files > 5GB
-            return None
-        import hashlib
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            while chunk := f.read(1024 * 1024):
-                h.update(chunk)
-        return h.hexdigest()
+        # Use registry's _hash_for which updates cache and marks dirty for persistence
+        sha256, _ = reg._hash_for(Path(path))
+        return sha256
     except Exception:
         return None
 
@@ -211,6 +204,16 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
                 "path": repo,
             })
     metadata.sort(key=lambda d: d["name"].lower())
+
+    # Persist any newly computed hashes to disk
+    try:
+        from apps.backend.runtime.models.registry import get_registry, _save_hash_cache
+        reg = get_registry()
+        if reg._hash_cache_dirty:
+            _save_hash_cache(reg._hash_cache)
+            reg._hash_cache_dirty = False
+    except Exception:
+        pass
 
     return Inventory(vaes=vaes, text_encoders=text_encoders, loras=loras, wan22=wan22, metadata=metadata)
 

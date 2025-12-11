@@ -1633,6 +1633,16 @@ def build_app() -> FastAPI:
             if isinstance(val, bool) or not isinstance(val, (int, float)):
                 raise HTTPException(status_code=400, detail="'extras.eta_noise_seed_delta' must be numeric")
             extras['eta_noise_seed_delta'] = int(val)
+        # SHA keys for asset selection (from dataclass)
+        from apps.backend.types.payloads import SHA_KEYS
+        for key in SHA_KEYS.ALL:
+            if key in raw:
+                extras[key] = str(raw[key])
+        # Batch params
+        if 'batch_size' in raw:
+            extras['batch_size'] = int(raw['batch_size'])
+        if 'batch_count' in raw:
+            extras['batch_count'] = int(raw['batch_count'])
         # Highres options
         highres = raw.get('highres')
         highres_cfg: Optional[Dict[str, Any]] = None
@@ -1856,9 +1866,19 @@ def build_app() -> FastAPI:
             if vae_path:
                 extras["vae_path"] = vae_path
         if tenc_sha:
-            tenc_path = resolve_asset_by_sha(tenc_sha)
-            if tenc_path:
-                extras["tenc_path"] = tenc_path
+            # tenc_sha can be a string (single encoder) or list (multiple encoders like Flux)
+            if isinstance(tenc_sha, list):
+                tenc_paths = []
+                for sha in tenc_sha:
+                    path = resolve_asset_by_sha(sha)
+                    if path:
+                        tenc_paths.append(path)
+                if tenc_paths:
+                    extras["tenc_path"] = tenc_paths
+            else:
+                tenc_path = resolve_asset_by_sha(tenc_sha)
+                if tenc_path:
+                    extras["tenc_path"] = tenc_path
 
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
@@ -2882,7 +2902,40 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         print(color_red(f"[INIT] {exc}"))
         raise SystemExit(1) from exc
 
-    uvicorn.run(api_app, host=host, port=port, log_level='info')
+    # Configure Uvicorn logging to match our unified format
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": True,
+        "formatters": {
+            "default": {
+                "format": "[%(asctime)s] %(levelname)-8s %(message)s",
+                "datefmt": "%m/%d/%y %H:%M:%S",
+            },
+            "access": {
+                "format": "[%(asctime)s] %(levelname)-8s %(client_addr)s - %(request_line)s %(status_code)s",
+                "datefmt": "%m/%d/%y %H:%M:%S",
+            },
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+            },
+            "access": {
+                "formatter": "access",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+            },
+        },
+        "loggers": {
+            "": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
+    uvicorn.run(api_app, host=host, port=port, log_level='info', log_config=log_config)
 
 
 if __name__ == '__main__':

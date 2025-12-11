@@ -140,7 +140,9 @@ def core_offload_device():
 
 
 def core_initial_load_device(parameters, dtype):
-    return _MANAGER.get_device(DeviceRole.CORE)
+    # Return offload device (CPU) for lazy loading - models will be moved to GPU
+    # by the memory manager when actually needed
+    return _MANAGER.get_offload_device(DeviceRole.CORE)
 
 
 def text_encoder_device():

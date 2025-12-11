@@ -87,6 +87,38 @@ def _parse_level(value: Optional[str]) -> int:
     return resolved
 
 
+class LevelFilter(logging.Filter):
+    """Filter that enables/disables log levels based on individual env vars.
+    
+    Checks CODEX_LOG_DEBUG, CODEX_LOG_INFO, CODEX_LOG_WARNING, CODEX_LOG_ERROR.
+    If set to "1"/"true"/"yes"/"on", that level is allowed.
+    If set to "0"/"false"/"no"/"off", that level is blocked.
+    If not set, defaults apply (DEBUG=0, INFO=1, WARNING=1, ERROR=1).
+    """
+    
+    def __init__(self) -> None:
+        super().__init__()
+        self._level_flags = self._read_flags()
+    
+    def _read_flags(self) -> dict[int, bool]:
+        """Read level flags from environment."""
+        def _is_enabled(env_var: str, default: str) -> bool:
+            val = os.environ.get(env_var, default).strip().lower()
+            return val in ("1", "true", "yes", "on")
+        
+        return {
+            logging.DEBUG: _is_enabled("CODEX_LOG_DEBUG", "0"),
+            logging.INFO: _is_enabled("CODEX_LOG_INFO", "1"),
+            logging.WARNING: _is_enabled("CODEX_LOG_WARNING", "1"),
+            logging.ERROR: _is_enabled("CODEX_LOG_ERROR", "1"),
+            logging.CRITICAL: True,  # Always show critical
+        }
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return True if the record should be logged."""
+        return self._level_flags.get(record.levelno, True)
+
+
 def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = True) -> None:
     """Initialize root logger based on env vars, only once.
 
@@ -106,12 +138,12 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
     )
     resolved_level = _parse_level(level_name)
 
-    # Basic, readable format
+    # Concise format: [MM/DD/YY HH:MM:SS] LEVEL     message
     fmt = os.environ.get(
         "CODEX_LOG_FORMAT",
-        "%(asctime)s.%(msecs)03d %(levelname)-8s %(name)s: %(message)s",
+        "[%(asctime)s] %(levelname)-8s %(message)s",
     )
-    datefmt = "%H:%M:%S"
+    datefmt = "%m/%d/%y %H:%M:%S"
 
     root = logging.getLogger()
     root.setLevel(resolved_level)
@@ -124,6 +156,7 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
         return env.strip().lower() in {"1", "true", "yes", "on"}
 
     def _build_stream_handler() -> logging.Handler:
+        level_filter = LevelFilter()
         if not _should_force_plain() and RichHandler is not None and Console is not None:
             console = Console(color_system="auto", soft_wrap=True, highlight=False, emoji=False)
             handler: logging.Handler = RichHandler(
@@ -139,6 +172,7 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
             handler = logging.StreamHandler(stream=sys.stderr)
             handler.setLevel(resolved_level)
             handler.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
+        handler.addFilter(level_filter)
         if install_tqdm_bridge and tqdm is not None:
             handler = TqdmAwareHandler(handler)
         return handler
@@ -172,6 +206,7 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
             fh = logging.FileHandler(log_file, encoding="utf-8")
             fh.setLevel(resolved_level)
             fh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
+            fh.addFilter(LevelFilter())
             root.addHandler(fh)
         except Exception:
             # If file handler fails, keep stderr logging only; do not crash startup

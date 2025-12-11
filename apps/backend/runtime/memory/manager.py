@@ -902,6 +902,21 @@ class CodexMemoryManager:
         models_to_load: List[_LoadedModelRecord] = []
         already_loaded: List[_LoadedModelRecord] = []
 
+        # DEBUG: Log memory state before loading
+        if self._primary_device.type == "cuda":
+            free_bytes, total_bytes = torch.cuda.mem_get_info(self._primary_device)
+            allocated = torch.cuda.memory_allocated(self._primary_device)
+            reserved = torch.cuda.memory_reserved(self._primary_device)
+            logger.info(
+                "[memory-debug] BEFORE load_models: free=%.2f GB, allocated=%.2f GB, reserved=%.2f GB, total=%.2f GB",
+                free_bytes / 1e9, allocated / 1e9, reserved / 1e9, total_bytes / 1e9,
+            )
+            logger.info(
+                "[memory-debug] Currently loaded models (%d): %s",
+                len(self._loaded_models),
+                [r.base_module.__class__.__name__ if r.base_module else "?" for r in self._loaded_models],
+            )
+
         for model in models:
             record = self._find_loaded_model(model)
             if record:
@@ -1052,24 +1067,51 @@ class CodexMemoryManager:
             )
         # Ensure cache of module for downstream accounting
         record.base_module = module
+        target_name = module.__class__.__name__
+
+        # DEBUG: Log module size before loading
+        module_size_bytes = self.module_size(module)
+        logger.info(
+            "[memory-debug] _load_record: module=%s size=%.2f GB target_device=%s",
+            target_name, module_size_bytes / 1e9, record.load_device,
+        )
+
+        # DEBUG: Log current device of module parameters
+        try:
+            first_param = next(module.parameters(), None)
+            if first_param is not None:
+                logger.info(
+                    "[memory-debug] module %s current device: %s dtype=%s",
+                    target_name, first_param.device, first_param.dtype,
+                )
+        except Exception:
+            pass
+
         try:
             if smart_offload_enabled() and getattr(record.load_device, "type", "") == "cuda":
                 torch.cuda.empty_cache()
+                # DEBUG: Log after empty_cache
+                if self._primary_device.type == "cuda":
+                    free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)
+                    logger.info("[memory-debug] AFTER empty_cache: free=%.2f GB", free_bytes / 1e9)
+
             if hasattr(loader, "model_patches_to"):
+                logger.info("[memory-debug] calling model_patches_to(%s)", record.load_device)
                 loader.model_patches_to(record.load_device)
                 loader.model_patches_to(record.storage_dtype)
             elif hasattr(loader, "to"):
+                logger.info("[memory-debug] calling loader.to(device=%s)", record.load_device)
                 loader.to(device=record.load_device)
                 if record.storage_dtype is not None:
                     loader.to(dtype=record.storage_dtype)
             if hasattr(loader, "codex_patch_model"):
+                logger.info("[memory-debug] calling codex_patch_model(%s)", record.load_device)
                 loader.codex_patch_model(record.load_device)
             if hasattr(loader, "current_device"):
                 setattr(loader, "current_device", record.load_device)
             record.inclusive_memory = self.module_size(module)
             record.exclusive_memory = record.inclusive_memory
             record.model_accelerated = True
-            target_name = module.__class__.__name__
             compute_dtype = None
             try:
                 dtype_attr = getattr(module, "computation_dtype", None)
@@ -1081,6 +1123,11 @@ class CodexMemoryManager:
                     compute_dtype = getattr(module, "dtype")
             except Exception:  # pragma: no cover
                 compute_dtype = None
+
+            # DEBUG: Log memory after load
+            if self._primary_device.type == "cuda":
+                free_bytes, _ = torch.cuda.mem_get_info(self._primary_device)
+                logger.info("[memory-debug] AFTER load %s: free=%.2f GB", target_name, free_bytes / 1e9)
 
             logger.info(
                 "[memory] loaded %s to device=%s storage=%s compute=%s mem=%d",

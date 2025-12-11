@@ -274,6 +274,18 @@ export const useFluxStore = defineStore('flux', () => {
     let payload: Txt2ImgRequest
     try {
       const teOverride = deriveFluxTextEncoderOverrideFromLabels(quicksettings.currentTextEncoders)
+      
+      // Build extras with tenc_sha array for all text encoders
+      const extras: Record<string, unknown> = {}
+      const tencShas: string[] = []
+      for (const label of quicksettings.currentTextEncoders) {
+        const sha = quicksettings.resolveTextEncoderSha(label)
+        if (sha) tencShas.push(sha)
+      }
+      if (tencShas.length > 0) {
+        extras.tenc_sha = tencShas
+      }
+      
       payload = buildTxt2ImgPayload({
         prompt: promptText,
         negativePrompt: negativeText,
@@ -296,6 +308,7 @@ export const useFluxStore = defineStore('flux', () => {
         model: quicksettings.currentModel || selectedModel.value,
         highres,
         refiner,
+        extras,
       })
     } catch (error) {
       status.value = 'error'
@@ -326,28 +339,31 @@ export const useFluxStore = defineStore('flux', () => {
         progress.value.totalSteps = event.total_steps ?? 0
         break
       case 'result':
-      if ((event as any).images) {
-        gallery.value = (event as any).images
-      }
-      if ((event as any).info) {
-        try {
-          const raw = (event as any).info
-          const parsed = typeof raw === 'object' ? raw : JSON.parse(raw)
-          info.value = parsed
-          const seedVal = (parsed as any).seed ?? (parsed as any).all_seeds?.[0]
-          const resolvedSeed = typeof seedVal === 'number' ? seedVal : Number(seedVal)
-          if (Number.isFinite(resolvedSeed)) {
-            lastSeed.value = resolvedSeed
-          }
-        } catch (e) {
-          info.value = { raw: (event as any).info }
+        // TaskEvent 'result' has images and info directly on the event
+        if (event.images) {
+          gallery.value = event.images
         }
-      }
-      if (status.value === 'running') {
-        status.value = 'done'
-        finishedAt.value = performance.now()
-      }
-      break
+        if (event.info) {
+          try {
+            // info may already be parsed object or string
+            const infoObj = typeof event.info === 'string' 
+              ? JSON.parse(event.info) as Record<string, unknown>
+              : event.info as Record<string, unknown>
+            info.value = infoObj
+            const raw = (infoObj as any).seed ?? (infoObj as any).all_seeds?.[0]
+            const resolvedSeed = typeof raw === 'number' ? raw : Number(raw)
+            if (Number.isFinite(resolvedSeed)) {
+              lastSeed.value = resolvedSeed
+            }
+          } catch {
+            info.value = { raw: event.info }
+          }
+        }
+        if (status.value === 'running') {
+          status.value = 'done'
+          finishedAt.value = performance.now()
+        }
+        break
       case 'error':
         status.value = 'error'
         errorMessage.value = event.message

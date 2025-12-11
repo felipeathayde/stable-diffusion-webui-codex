@@ -77,7 +77,7 @@ export const Txt2ImgRequestSchema = z
         batch_size: z.number().int().min(1).optional(),
         batch_count: z.number().int().min(1).optional(),
         // SHA-based model selection
-        tenc_sha: z.string().optional(),
+        tenc_sha: z.union([z.string(), z.array(z.string())]).optional(),
         vae_sha: z.string().optional(),
         lora_sha: z.string().optional(),
         model_sha: z.string().optional(),

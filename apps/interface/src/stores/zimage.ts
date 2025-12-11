@@ -238,6 +238,7 @@ export const useZImageStore = defineStore('zimage', () => {
     }
 
     const extras: Record<string, unknown> = {}
+    // Z Image models (GGUF, FP8, BF16) are all core-only and require external text encoder
     const tencLabel = quicksettings.currentTextEncoders[0]
     const tencSha = quicksettings.resolveTextEncoderSha(tencLabel)
     if (tencSha) {
@@ -245,7 +246,7 @@ export const useZImageStore = defineStore('zimage', () => {
     } else {
       status.value = 'error'
       running.value = false
-      errorMessage.value = 'Select a Z Image text encoder so the request can send tenc_sha.'
+      errorMessage.value = 'Select a Z Image text encoder.'
       return
     }
 
@@ -300,20 +301,24 @@ export const useZImageStore = defineStore('zimage', () => {
         progress.value.totalSteps = event.total_steps ?? 0
         break
       case 'result':
-        if (event.payload?.images) {
-          gallery.value = event.payload.images
+        // TaskEvent 'result' has images and info directly on the event
+        if (event.images) {
+          gallery.value = event.images
         }
-        if (event.payload?.info) {
+        if (event.info) {
           try {
-            const parsed = JSON.parse(event.payload.info) as Record<string, unknown>
-            info.value = parsed
-            const raw = (parsed as any).seed ?? (parsed as any).all_seeds?.[0]
+            // info may already be parsed object or string
+            const infoObj = typeof event.info === 'string' 
+              ? JSON.parse(event.info) as Record<string, unknown>
+              : event.info as Record<string, unknown>
+            info.value = infoObj
+            const raw = (infoObj as any).seed ?? (infoObj as any).all_seeds?.[0]
             const resolvedSeed = typeof raw === 'number' ? raw : Number(raw)
             if (Number.isFinite(resolvedSeed)) {
               lastSeed.value = resolvedSeed
             }
           } catch {
-            info.value = { raw: event.payload.info }
+            info.value = { raw: event.info }
           }
         }
         if (status.value === 'running') {

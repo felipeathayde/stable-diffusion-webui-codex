@@ -22,6 +22,7 @@ from apps.backend.runtime.utils import ParameterGGUF
 
 
 # Core keys for Z Image Turbo (NextDiT/Lumina2 format)
+# Some checkpoints use these directly, others have model.diffusion_model. prefix
 ZIMAGE_CORE_KEYS = (
     "x_embedder.weight",
     "cap_embedder.0.weight",
@@ -30,12 +31,31 @@ ZIMAGE_CORE_KEYS = (
     "final_layer.linear.weight",
 )
 
+# Prefix used by some safetensors exports (FP8, BF16)
+_DIFFUSION_MODEL_PREFIX = "model.diffusion_model."
+
+
+def _has_zimage_keys(bundle: SignalBundle) -> bool:
+    """Check if bundle has Z Image core keys, with or without prefix."""
+    keys_set = set(bundle.keys)
+    
+    # Check unprefixed (GGUF format)
+    if all(k in keys_set for k in ZIMAGE_CORE_KEYS):
+        return True
+    
+    # Check with model.diffusion_model. prefix (safetensors format)
+    prefixed_keys = tuple(_DIFFUSION_MODEL_PREFIX + k for k in ZIMAGE_CORE_KEYS)
+    if all(k in keys_set for k in prefixed_keys):
+        return True
+    
+    return False
+
 
 class ZImageDetector(ModelDetector):
     priority = 160
 
     def matches(self, bundle: SignalBundle) -> bool:  # type: ignore[override]
-        if not has_all_keys(bundle, *ZIMAGE_CORE_KEYS):
+        if not _has_zimage_keys(bundle):
             return False
         # Skip Wan family (temporal) by checking absence of modulation head.
         if any(key.endswith("head.modulation") for key in bundle.keys):
@@ -46,11 +66,17 @@ class ZImageDetector(ModelDetector):
         # Detect if this is a GGUF quantized checkpoint
         is_gguf = any(isinstance(v, ParameterGGUF) for v in bundle.state_dict.values())
         
-        # NextDiT/Lumina2 format keys
-        x_embedder = _shape(bundle, "x_embedder.weight")
-        cap_embedder = _shape(bundle, "cap_embedder.0.weight")
-        final_layer = _shape(bundle, "final_layer.linear.weight")
-        t_embedder = _shape(bundle, "t_embedder.mlp.0.weight")
+        # Detect which key prefix is used (prefixed for safetensors, unprefixed for GGUF)
+        keys_set = set(bundle.keys)
+        prefix = ""
+        if (_DIFFUSION_MODEL_PREFIX + "x_embedder.weight") in keys_set:
+            prefix = _DIFFUSION_MODEL_PREFIX
+        
+        # NextDiT/Lumina2 format keys (with detected prefix)
+        x_embedder = _shape(bundle, prefix + "x_embedder.weight")
+        cap_embedder = _shape(bundle, prefix + "cap_embedder.0.weight")
+        final_layer = _shape(bundle, prefix + "final_layer.linear.weight")
+        t_embedder = _shape(bundle, prefix + "t_embedder.mlp.0.weight")
 
         # Infer dimensions from checkpoint shapes (with safe access)
         hidden_dim = x_embedder[0] if x_embedder and len(x_embedder) >= 1 else 3840
@@ -66,10 +92,10 @@ class ZImageDetector(ModelDetector):
         channels_in = latent_channels * 4  # patch_size^2 * latent_channels
         channels_out = latent_channels
 
-        num_layers = count_blocks(bundle.keys, "layers.{}.")
+        num_layers = count_blocks(bundle.keys, prefix + "layers.{}.")
         num_layers = num_layers if num_layers else 30
         
-        num_refiner_layers = count_blocks(bundle.keys, "context_refiner.{}.")
+        num_refiner_layers = count_blocks(bundle.keys, prefix + "context_refiner.{}.")
         num_refiner_layers = num_refiner_layers if num_refiner_layers else 2
 
         num_heads = hidden_dim // 128 if hidden_dim and hidden_dim % 128 == 0 else 30
@@ -82,7 +108,9 @@ class ZImageDetector(ModelDetector):
             "num_heads": num_heads,
             "latent_channels": latent_channels,
             "guidance_embeds": False,
-            "gguf_core_only": is_gguf,
+            # Both GGUF and prefixed safetensors (FP8/BF16) are core-only
+            # They don't have embedded VAE or text encoder
+            "gguf_core_only": is_gguf or bool(prefix),
         }
 
         text_encoders = [
@@ -94,8 +122,9 @@ class ZImageDetector(ModelDetector):
             )
         ]
 
-        # Only set VAE signature if not GGUF (GGUF doesn't have embedded VAE)
-        vae = VAESignature(key_prefix="vae.", latent_channels=latent_channels) if not is_gguf else None
+        # Core-only models (GGUF or prefixed safetensors) don't have embedded VAE
+        is_core_only = is_gguf or bool(prefix)
+        vae = VAESignature(key_prefix="vae.", latent_channels=latent_channels) if not is_core_only else None
         
         # Set quantization hint based on detection
         if is_gguf:
@@ -116,7 +145,7 @@ class ZImageDetector(ModelDetector):
                 context_dim=context_dim,
                 temporal=False,
                 depth=num_layers,
-                key_prefixes=["layers."],
+                key_prefixes=[prefix + "layers."] if prefix else ["layers."],
             ),
             text_encoders=text_encoders,
             vae=vae,

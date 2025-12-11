@@ -42,6 +42,8 @@ class ZImageConfig:
     num_refiner_layers: int = 2
     num_heads: int = 30  # 3840 / 128
     head_dim: int = 128
+    qkv_bias: bool = False
+    out_bias: bool = False
     t_dim: int = 256  # Timestep embedding dimension
     mlp_hidden: int = 10240
     eps: float = 1e-5
@@ -97,7 +99,7 @@ class TimestepEmbedder(nn.Module):
         freqs = torch.exp(
             -math.log(10000.0) * torch.arange(half, device=t.device, dtype=torch.float32) / half
         )
-        args = t.float()[:, None] * freqs[None, :] * 1000.0
+        args = t.float()[:, None] * freqs[None, :]
         emb = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         
         return self.mlp(emb.to(dtype))
@@ -117,96 +119,147 @@ class SwiGLU(nn.Module):
 
 
 class RoPEEmbedding(nn.Module):
-    """3D Rotary Position Embedding.
+    """3D Rotary Position Embedding using ComfyUI's flux/math.py format.
     
-    Note: Simplified version that handles dimension mismatches gracefully.
+    This matches ComfyUI's EmbedND from comfy/ldm/flux/layers.py which is
+    used by NextDiT (Lumina2) models including Z Image.
+    
+    The output is a rotation matrix of shape [B, 1, N, head_dim//2, 2, 2]
+    that can be applied to Q/K tensors via the apply_rope function.
     """
     
-    def __init__(self, head_dim: int, theta: float = 10000.0):
+    def __init__(self, head_dim: int, theta: float = 10000.0, axes_dim: tuple = None):
         super().__init__()
         self.head_dim = head_dim
         self.theta = theta
+        # Default axes_dim for Z Image: split head_dim into 3 axes
+        # Z Image head_dim=128 -> 128/2=64 -> split as 16+24+24=64 approximately
+        # We'll use a simple even split if not provided
+        if axes_dim is None:
+            # Compute even split for 3 axes
+            half_dim = head_dim // 2
+            d0 = half_dim // 3 + (1 if half_dim % 3 > 0 else 0)
+            d1 = half_dim // 3 + (1 if half_dim % 3 > 1 else 0)  
+            d2 = half_dim - d0 - d1
+            axes_dim = (d0, d1, d2)
+        self.axes_dim = axes_dim
     
-    def forward(self, pos_ids: torch.Tensor) -> torch.Tensor:
-        """Compute RoPE frequencies.
+    def _rope_single_axis(self, pos: torch.Tensor, dim: int) -> torch.Tensor:
+        """Compute RoPE for a single axis.
         
         Args:
-            pos_ids: [B, N, num_axes] position IDs
+            pos: [B, N] positions for this axis
+            dim: dimension to use for this axis
+            
+        Returns:
+            Rotation matrices [B, N, dim//2, 2, 2]
+        """
+        assert dim % 2 == 0
+        device = pos.device
+        
+        # Create frequency scale: linspace from 0 to (dim-2)/dim
+        scale = torch.linspace(0, (dim - 2) / dim, steps=dim // 2, 
+                               dtype=torch.float32, device=device)
+        omega = 1.0 / (self.theta ** scale)
+        
+        # [B, N] x [dim//2] -> [B, N, dim//2]
+        out = pos.unsqueeze(-1).float() * omega.unsqueeze(0).unsqueeze(0)
+        
+        # Build rotation matrix [cos, -sin; sin, cos]
+        cos_out = torch.cos(out)
+        sin_out = torch.sin(out)
+        
+        # Stack as [B, N, dim//2, 4] then reshape to [B, N, dim//2, 2, 2]
+        stacked = torch.stack([cos_out, -sin_out, sin_out, cos_out], dim=-1)
+        rot_matrix = stacked.view(*pos.shape, dim // 2, 2, 2)
+        
+        return rot_matrix.float()
+    
+    def forward(self, pos_ids: torch.Tensor) -> torch.Tensor:
+        """Compute RoPE rotation matrices for 3D positions.
+        
+        Args:
+            pos_ids: [B, N, num_axes] position IDs (Time, Height, Width)
         
         Returns:
-            freqs: [B, N, head_dim//2, 2] containing (cos, sin)
+            freqs: [B, 1, N, head_dim//2, 2, 2] rotation matrices
         """
         B, N, num_axes = pos_ids.shape
         device = pos_ids.device
-        dtype = pos_ids.dtype
         
-        # Use head_dim // 2 for pairs
-        half_dim = self.head_dim // 2
+        # Compute rotation matrix for each axis and concatenate
+        emb_list = []
+        for i in range(min(num_axes, len(self.axes_dim))):
+            axis_pos = pos_ids[..., i]  # [B, N]
+            axis_dim = self.axes_dim[i] * 2  # Double because _rope_single_axis expects full dim
+            axis_emb = self._rope_single_axis(axis_pos, axis_dim)  # [B, N, dim_i, 2, 2]
+            emb_list.append(axis_emb)
         
-        # Simple 1D RoPE based on first axis
-        # More complex multi-axis RoPE can be added later
-        positions = pos_ids[..., 0]  # Use first axis as main position
+        # Concatenate along the dimension axis: [B, N, sum(axes_dim), 2, 2]
+        emb = torch.cat(emb_list, dim=-3)
         
-        freqs = 1.0 / (self.theta ** (
-            torch.arange(0, half_dim, device=device, dtype=torch.float32) / half_dim
-        ))
-        
-        # [B, N] @ [half_dim] -> [B, N, half_dim]
-        angles = positions.unsqueeze(-1).float() * freqs.unsqueeze(0).unsqueeze(0)
-        
-        # Return [B, N, half_dim, 2] with (cos, sin)
-        return torch.stack([angles.cos(), angles.sin()], dim=-1)
+        # Add head dimension: [B, 1, N, head_dim//2, 2, 2]
+        return emb.unsqueeze(1)
 
 
-def apply_rope(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-    """Apply rotary position embedding.
+def apply_rope_single(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
+    """Apply rotary position embedding to a single tensor.
+    
+    This matches ComfyUI's apply_rope1 from comfy/ldm/flux/math.py.
     
     Args:
-        x: [B, H, N, D] query or key tensor
-        freqs: [B, N, D//2, 2] rotation frequencies
+        x: [B, N, H, D] query or key tensor where D = head_dim
+        freqs: [B, N, 1, D//2, 2, 2] rotation matrices (after movedim)
     
     Returns:
-        Rotated tensor [B, H, N, D]
+        Rotated tensor [B, N, H, D]
     """
-    B, H, N, D = x.shape
-    half_D = D // 2
+    # Reshape x to [B, N, H, D//2, 1, 2] 
+    x_reshaped = x.to(dtype=freqs.dtype).reshape(*x.shape[:-1], -1, 1, 2)
     
-    # Ensure freqs has right shape
-    if freqs.shape[2] != half_D:
-        # If dimension mismatch, return x unchanged
-        # This is a fallback for when RoPE dims don't match
-        return x
+    # freqs is [B, N, 1, D//2, 2, 2], broadcasts over H dimension (dim 2)
+    # Compute: freqs[..., 0] * x[..., 0] + freqs[..., 1] * x[..., 1]
+    x_out = freqs[..., 0] * x_reshaped[..., 0]
+    x_out = x_out + freqs[..., 1] * x_reshaped[..., 1]
     
-    # Reshape x to pairs: [B, H, N, D//2, 2]
-    x_reshape = x.view(B, H, N, half_D, 2)
+    return x_out.reshape(*x.shape).type_as(x)
+
+
+def apply_rope_pair(q: torch.Tensor, k: torch.Tensor, freqs: torch.Tensor) -> tuple:
+    """Apply rotary position embedding to query and key.
     
-    # Expand freqs: [B, N, D//2, 2] -> [B, 1, N, D//2, 2]
-    freqs = freqs.unsqueeze(1)
-    cos = freqs[..., 0]
-    sin = freqs[..., 1]
+    This matches ComfyUI's apply_rope from comfy/ldm/flux/math.py.
     
-    # Apply rotation
-    x_rot = torch.stack([
-        x_reshape[..., 0] * cos - x_reshape[..., 1] * sin,
-        x_reshape[..., 0] * sin + x_reshape[..., 1] * cos,
-    ], dim=-1)
+    Args:
+        q: [B, N, H, D] query tensor
+        k: [B, N, H, D] key tensor
+        freqs: [B, 1, N, D//2, 2, 2] rotation matrices from RoPEEmbedding
     
-    return x_rot.view(B, H, N, D)
+    Returns:
+        Tuple of rotated (q, k) tensors [B, N, H, D]
+    """
+    # movedim(1, 2) to get [B, N, 1, D//2, 2, 2] for broadcasting
+    freqs = freqs.movedim(1, 2)
+    return apply_rope_single(q, freqs), apply_rope_single(k, freqs)
 
 
 class Attention(nn.Module):
-    """Self-attention with combined QKV, QK normalization, and RoPE."""
+    """Self-attention with combined QKV, QK normalization, and RoPE.
     
-    def __init__(self, dim: int, num_heads: int, head_dim: int, eps: float = 1e-5):
+    Matches ComfyUI's JointAttention dimension ordering for RoPE.
+    Q/K/V are [B, N, H, D] during RoPE, then [B, H, N, D] for SDPA.
+    """
+    
+    def __init__(self, dim: int, num_heads: int, head_dim: int, eps: float = 1e-5, qkv_bias: bool = False, out_bias: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.inner_dim = num_heads * head_dim
         
-        self.qkv = nn.Linear(dim, self.inner_dim * 3, bias=False)
+        self.qkv = nn.Linear(dim, self.inner_dim * 3, bias=qkv_bias)
         self.q_norm = RMSNorm(head_dim, eps=eps)
         self.k_norm = RMSNorm(head_dim, eps=eps)
-        self.out = nn.Linear(self.inner_dim, dim, bias=False)
+        self.out = nn.Linear(self.inner_dim, dim, bias=out_bias)
     
     def forward(
         self,
@@ -216,16 +269,23 @@ class Attention(nn.Module):
     ) -> torch.Tensor:
         B, N, _ = x.shape
         
+        # QKV projection and reshape to [B, N, 3, H, D]
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # Split into [B, N, H, D] each - matching ComfyUI JointAttention
+        q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         
+        # QK normalization (operates on last dim = head_dim)
         q = self.q_norm(q)
         k = self.k_norm(k)
         
+        # Apply RoPE in [B, N, H, D] format (matching ComfyUI)
         if freqs is not None:
-            q = apply_rope(q, freqs)
-            k = apply_rope(k, freqs)
+            q, k = apply_rope_pair(q, k, freqs)
+        
+        # Transpose to [B, H, N, D] for SDPA
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
         
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
         out = out.transpose(1, 2).reshape(B, N, self.inner_dim)
@@ -235,9 +295,10 @@ class Attention(nn.Module):
 class TransformerBlock(nn.Module):
     """Transformer block with adaLN modulation.
     
-    Architecture from checkpoint:
-    - adaLN_modulation.0: Linear(t_dim, 6 * modulation_dim) where modulation_dim=2560
-    - The modulation is then projected/broadcast to hidden_dim=3840
+    Architecture matching ComfyUI's NextDiT for z_image_modulation:
+    - adaLN_modulation.0: Linear(min(dim, 256), 4 * dim) = Linear(256, 4*3840)
+    - Outputs 4 modulation values: scale_msa, gate_msa, scale_mlp, gate_mlp
+    - Uses tanh gating like NextDiT
     """
     
     def __init__(
@@ -247,31 +308,24 @@ class TransformerBlock(nn.Module):
         head_dim: int,
         mlp_hidden: int,
         t_dim: int = 256,
-        modulation_dim: int = 2560,  # Different from hidden_dim!
         eps: float = 1e-5,
+        **kwargs,  # Ignore extra args like modulation_dim
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.modulation_dim = modulation_dim
         
-        # adaLN modulation: t_dim -> 6 * modulation_dim
-        # Then project to hidden_dim if needed
+        # z_image_modulation: Linear(min(dim, 256), 4 * dim)
+        # For dim=3840, min(3840, 256) = 256, output = 4*3840 = 15360
         self.adaLN_modulation = nn.Sequential(
-            nn.Linear(t_dim, 6 * modulation_dim, bias=True),
+            nn.Linear(t_dim, 4 * hidden_dim, bias=True),
         )
-        
-        # Projection from modulation_dim to hidden_dim if different
-        if modulation_dim != hidden_dim:
-            self.mod_proj = nn.Linear(modulation_dim, hidden_dim, bias=False)
-        else:
-            self.mod_proj = None
         
         # Attention norms
         self.attention_norm1 = RMSNorm(hidden_dim, eps=eps)
         self.attention_norm2 = RMSNorm(hidden_dim, eps=eps)
         
         # Attention
-        self.attention = Attention(hidden_dim, num_heads, head_dim, eps=eps)
+        self.attention = Attention(hidden_dim, num_heads, head_dim, eps=eps, qkv_bias=kwargs.get("qkv_bias", False), out_bias=kwargs.get("out_bias", False))
         
         # FFN norms
         self.ffn_norm1 = RMSNorm(hidden_dim, eps=eps)
@@ -279,12 +333,6 @@ class TransformerBlock(nn.Module):
         
         # FFN
         self.feed_forward = SwiGLU(hidden_dim, mlp_hidden, bias=False)
-    
-    def _project_mod(self, m: torch.Tensor) -> torch.Tensor:
-        """Project modulation from modulation_dim to hidden_dim if needed."""
-        if self.mod_proj is not None:
-            return self.mod_proj(m)
-        return m
     
     def forward(
         self,
@@ -294,28 +342,21 @@ class TransformerBlock(nn.Module):
         t_emb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if t_emb is not None:
-            mod = self.adaLN_modulation(t_emb)
-            # Split into 6 parts: shift1, scale1, gate1, shift2, scale2, gate2
-            mod = mod.view(x.shape[0], 6, self.modulation_dim)
-            shift1, scale1, gate1, shift2, scale2, gate2 = mod.unbind(1)
+            # Get modulation values (4 * hidden_dim total)
+            mod = self.adaLN_modulation(t_emb)  # [B, 4 * hidden_dim]
+            scale_msa, gate_msa, scale_mlp, gate_mlp = mod.chunk(4, dim=-1)
             
-            # Project to hidden_dim
-            shift1 = self._project_mod(shift1)
-            scale1 = self._project_mod(scale1)
-            gate1 = self._project_mod(gate1)
-            shift2 = self._project_mod(shift2)
-            scale2 = self._project_mod(scale2)
-            gate2 = self._project_mod(gate2)
-            
-            # Attention with modulation
+            # Attention with modulation (tanh gating like NextDiT)
             normed = self.attention_norm1(x)
-            normed = self.attention_norm2(normed * (1 + scale1.unsqueeze(1)) + shift1.unsqueeze(1))
-            x = x + gate1.unsqueeze(1) * self.attention(normed, attention_mask, freqs)
+            normed = normed * (1 + scale_msa.unsqueeze(1))
+            attn_out = self.attention(normed, attention_mask, freqs)
+            x = x + gate_msa.unsqueeze(1).tanh() * self.attention_norm2(attn_out)
             
             # FFN with modulation
             normed = self.ffn_norm1(x)
-            normed = self.ffn_norm2(normed * (1 + scale2.unsqueeze(1)) + shift2.unsqueeze(1))
-            x = x + gate2.unsqueeze(1) * self.feed_forward(normed)
+            normed = normed * (1 + scale_mlp.unsqueeze(1))
+            ffn_out = self.feed_forward(normed)
+            x = x + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(ffn_out)
         else:
             x = x + self.attention(self.attention_norm2(self.attention_norm1(x)), attention_mask, freqs)
             x = x + self.feed_forward(self.ffn_norm2(self.ffn_norm1(x)))
@@ -324,13 +365,13 @@ class TransformerBlock(nn.Module):
 
 
 class RefinerBlock(nn.Module):
-    """Refiner block for context/noise (no adaLN modulation)."""
+    """Refiner block for context (no adaLN modulation)."""
     
-    def __init__(self, dim: int, num_heads: int, head_dim: int, mlp_hidden: int, eps: float = 1e-5):
+    def __init__(self, dim: int, num_heads: int, head_dim: int, mlp_hidden: int, eps: float = 1e-5, **kwargs):
         super().__init__()
         self.attention_norm1 = RMSNorm(dim, eps=eps)
         self.attention_norm2 = RMSNorm(dim, eps=eps)
-        self.attention = Attention(dim, num_heads, head_dim, eps=eps)
+        self.attention = Attention(dim, num_heads, head_dim, eps=eps, qkv_bias=kwargs.get("qkv_bias", False), out_bias=kwargs.get("out_bias", False))
         self.ffn_norm1 = RMSNorm(dim, eps=eps)
         self.ffn_norm2 = RMSNorm(dim, eps=eps)
         self.feed_forward = SwiGLU(dim, mlp_hidden, bias=False)
@@ -340,21 +381,81 @@ class RefinerBlock(nn.Module):
         x: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         freqs: Optional[torch.Tensor] = None,
+        t_emb: Optional[torch.Tensor] = None,  # Ignored for context_refiner
     ) -> torch.Tensor:
         x = x + self.attention(self.attention_norm2(self.attention_norm1(x)), attention_mask, freqs)
         x = x + self.feed_forward(self.ffn_norm2(self.ffn_norm1(x)))
         return x
 
 
+class NoiseRefinerBlock(nn.Module):
+    """Noise refiner block with adaLN modulation for Z Image.
+    
+    Unlike context_refiner, noise_refiner uses timestep-conditioned modulation
+    similar to the main transformer blocks but with only 4 modulation values
+    (scale_msa, gate_msa, scale_mlp, gate_mlp).
+    """
+    
+    def __init__(self, dim: int, num_heads: int, head_dim: int, mlp_hidden: int, 
+                 t_dim: int = 256, eps: float = 1e-5, **kwargs):
+        super().__init__()
+        self.dim = dim
+        
+        # adaLN modulation: t_dim -> 4 * dim (scale_msa, gate_msa, scale_mlp, gate_mlp)
+        # For z_image_modulation, input is min(dim, 256) = 256
+        self.adaLN_modulation = nn.Sequential(
+            nn.Linear(t_dim, 4 * dim, bias=True),
+        )
+        
+        self.attention_norm1 = RMSNorm(dim, eps=eps)
+        self.attention_norm2 = RMSNorm(dim, eps=eps)
+        self.attention = Attention(dim, num_heads, head_dim, eps=eps, qkv_bias=kwargs.get("qkv_bias", False), out_bias=kwargs.get("out_bias", False))
+        self.ffn_norm1 = RMSNorm(dim, eps=eps)
+        self.ffn_norm2 = RMSNorm(dim, eps=eps)
+        self.feed_forward = SwiGLU(dim, mlp_hidden, bias=False)
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        freqs: Optional[torch.Tensor] = None,
+        t_emb: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if t_emb is not None:
+            # Get modulation values
+            mod = self.adaLN_modulation(t_emb)  # [B, 4 * dim]
+            scale_msa, gate_msa, scale_mlp, gate_mlp = mod.chunk(4, dim=-1)
+            
+            # Attention with modulation (tanh gating like ComfyUI's NextDiT)
+            normed = self.attention_norm1(x)
+            normed = normed * (1 + scale_msa.unsqueeze(1))
+            attn_out = self.attention(normed, attention_mask, freqs)
+            x = x + gate_msa.unsqueeze(1).tanh() * self.attention_norm2(attn_out)
+            
+            # FFN with modulation
+            normed = self.ffn_norm1(x)
+            normed = normed * (1 + scale_mlp.unsqueeze(1))
+            ffn_out = self.feed_forward(normed)
+            x = x + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(ffn_out)
+        else:
+            x = x + self.attention(self.attention_norm2(self.attention_norm1(x)), attention_mask, freqs)
+            x = x + self.feed_forward(self.ffn_norm2(self.ffn_norm1(x)))
+        
+        return x
+
+
 class FinalLayer(nn.Module):
     """Final layer with adaLN modulation.
     
-    Note: checkpoint uses only scale modulation (hidden_dim), not shift+scale (2*hidden_dim)
+    Uses LayerNorm with elementwise_affine=False (no learnable params) to match
+    the GGUF checkpoint structure from ComfyUI's NextDiT. The GGUF doesn't have
+    weights for this norm layer because ComfyUI uses non-affine LayerNorm.
     """
     
-    def __init__(self, hidden_dim: int, t_dim: int, out_dim: int, eps: float = 1e-5):
+    def __init__(self, hidden_dim: int, t_dim: int, out_dim: int, eps: float = 1e-6):
         super().__init__()
-        self.norm = RMSNorm(hidden_dim, eps=eps)
+        # ComfyUI uses LayerNorm(elementwise_affine=False), so no weight/bias in norm
+        self.norm_final = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=eps)
         # Checkpoint: adaLN_modulation.1.weight is [hidden_dim, t_dim]
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
@@ -364,8 +465,9 @@ class FinalLayer(nn.Module):
     
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         scale = self.adaLN_modulation(t_emb)
-        x = self.norm(x) * (1 + scale.unsqueeze(1))  # Only scale modulation
+        x = self.norm_final(x) * (1 + scale.unsqueeze(1))  # Only scale modulation
         return self.linear(x)
+
 
 
 # =============================================================================
@@ -377,8 +479,6 @@ class ZImageTransformer2DModel(nn.Module):
     
     def __init__(
         self,
-        config: Optional[ZImageConfig] = None,
-        # Allow individual kwargs from HuggingFace config
         hidden_dim: int = 3840,
         context_dim: int = 2560,
         latent_channels: int = 16,
@@ -387,10 +487,14 @@ class ZImageTransformer2DModel(nn.Module):
         num_refiner_layers: int = 2,
         num_heads: int = 30,
         head_dim: int = 128,
+        qkv_bias: bool = False,  # Lumina uses bias=False for QKV
+        out_bias: bool = False,
         t_dim: int = 256,
         mlp_hidden: int = 10240,
         eps: float = 1e-5,
-        rope_theta: float = 10000.0,
+        rope_theta: float = 256.0,  # Z Image uses 256.0, NOT 10000.0!
+        time_scale: float = 1000.0,  # Z Image uses 1000.0 timestep scaling
+        config: Optional[ZImageConfig] = None,
         **kwargs,  # Ignore unknown HuggingFace config parameters
     ):
         super().__init__()
@@ -410,7 +514,11 @@ class ZImageTransformer2DModel(nn.Module):
                 mlp_hidden=mlp_hidden,
                 eps=eps,
                 rope_theta=rope_theta,
+                qkv_bias=qkv_bias,
+                out_bias=out_bias,
             )
+        # Store time_scale for timestep embedding
+        self.time_scale = time_scale
         self.config = config
         
         self.patch_size = config.patch_size
@@ -439,12 +547,15 @@ class ZImageTransformer2DModel(nn.Module):
         # Refiners use different hidden_dim (context_dim for context_refiner)
         # Actually, they share the same hidden_dim after embedding
         self.context_refiner = nn.ModuleList([
-            RefinerBlock(config.hidden_dim, config.num_heads, config.head_dim, config.mlp_hidden, config.eps)
+            RefinerBlock(config.hidden_dim, config.num_heads, config.head_dim, config.mlp_hidden, config.eps,
+                         qkv_bias=config.qkv_bias, out_bias=config.out_bias)
             for _ in range(config.num_refiner_layers)
         ])
         
         self.noise_refiner = nn.ModuleList([
-            RefinerBlock(config.hidden_dim, config.num_heads, config.head_dim, config.mlp_hidden, config.eps)
+            NoiseRefinerBlock(config.hidden_dim, config.num_heads, config.head_dim, 
+                              config.mlp_hidden, config.t_dim, config.eps,
+                              qkv_bias=config.qkv_bias, out_bias=config.out_bias)
             for _ in range(config.num_refiner_layers)
         ])
         
@@ -456,8 +567,9 @@ class ZImageTransformer2DModel(nn.Module):
                 head_dim=config.head_dim,
                 mlp_hidden=config.mlp_hidden,
                 t_dim=config.t_dim,
-                modulation_dim=config.context_dim,  # Modulation uses context_dim (2560)
                 eps=config.eps,
+                qkv_bias=config.qkv_bias,
+                out_bias=config.out_bias,
             )
             for _ in range(config.num_layers)
         ])
@@ -465,49 +577,66 @@ class ZImageTransformer2DModel(nn.Module):
         # Final layer
         out_dim = config.patch_size * config.patch_size * config.latent_channels
         self.final_layer = FinalLayer(config.hidden_dim, config.t_dim, out_dim, config.eps)
+        
+        self.cnt = 0
     
     def _patchify(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple[int, int]]:
         B, C, H, W = x.shape
+        # Flatten x: [B, C, H, W] -> [B, H*W, C] (wrong)
+        # Patchify: split into patches of size p
+        # [B, C, H, W] -> [B, (H/p)*(W/p), C*p*p]
+        
         p = self.patch_size
+        assert H % p == 0 and W % p == 0, f"Image size ({H}, {W}) must be divisible by patch size {p}"
         
-        pad_h = (p - H % p) % p
-        pad_w = (p - W % p) % p
-        if pad_h or pad_w:
-            x = F.pad(x, (0, pad_w, 0, pad_h))
+        h_tokens = H // p
+        w_tokens = W // p
         
-        _, _, H_pad, W_pad = x.shape
-        x = x.view(B, C, H_pad // p, p, W_pad // p, p)
-        x = x.permute(0, 2, 4, 1, 3, 5).contiguous()
-        x = x.view(B, (H_pad // p) * (W_pad // p), C * p * p)
+        # Unfold/Reshape approach
+        # [B, C, H, W] -> [B, C, h, p, w, p]
+        x = x.reshape(B, C, h_tokens, p, w_tokens, p)
+        # Permute to [B, h, w, p, p, C]
+        x = x.permute(0, 2, 4, 3, 5, 1)
+        # Flatten to [B, h*w, p*p*C]
+        x = x.reshape(B, h_tokens * w_tokens, p * p * C)
         
         return x, (H, W)
-    
-    def _unpatchify(self, x: torch.Tensor, img_size: Tuple[int, int], cap_len: int) -> torch.Tensor:
-        H, W = img_size
+
+    def _unpatchify(self, x: torch.Tensor, original_size: Tuple[int, int], cap_len: int) -> torch.Tensor:
+        # x starts with caption tokens, remove them
+        # x: [B, N, D_out]
+        # D_out = patch_size * patch_size * latent_channels
+        
+        x = x[:, cap_len:, :]
+        
+        H, W = original_size
         p = self.patch_size
-        H_pad = (H + p - 1) // p * p
-        W_pad = (W + p - 1) // p * p
+        h_tokens = H // p
+        w_tokens = W // p
+        B = x.shape[0]
+        C = self.latent_channels
         
-        x = x[:, cap_len:]
-        B, N, D = x.shape
-        H_tokens, W_tokens = H_pad // p, W_pad // p
+        # [B, h*w, p*p*C] -> [B, h, w, p, p, C]
+        x = x.reshape(B, h_tokens, w_tokens, p, p, C)
+        # Permute to [B, C, h, p, w, p]
+        x = x.permute(0, 5, 1, 3, 2, 4)
+        # Reshape to [B, C, H, W]
+        x = x.reshape(B, C, H, W)
         
-        x = x.view(B, H_tokens, W_tokens, self.latent_channels, p, p)
-        x = x.permute(0, 3, 1, 4, 2, 5).contiguous()
-        x = x.view(B, self.latent_channels, H_pad, W_pad)
-        
-        return x[:, :, :H, :W]
+        return x
     
     def _get_position_ids(self, cap_len: int, h_tokens: int, w_tokens: int, B: int, device: torch.device) -> torch.Tensor:
         total_len = cap_len + h_tokens * w_tokens
         pos_ids = torch.zeros(B, total_len, 3, device=device)
         
-        pos_ids[:, :cap_len, 0] = torch.arange(cap_len, device=device).float()
+        # Caption: time axis starts at 1.0 (ComfyUI line 519)
+        pos_ids[:, :cap_len, 0] = torch.arange(cap_len, device=device).float() + 1.0
         
         h_idx = torch.arange(h_tokens, device=device).view(-1, 1).repeat(1, w_tokens).flatten()
         w_idx = torch.arange(w_tokens, device=device).view(1, -1).repeat(h_tokens, 1).flatten()
         
-        pos_ids[:, cap_len:, 0] = cap_len
+        # Image: time axis = cap_len + 1 (ComfyUI line 538)
+        pos_ids[:, cap_len:, 0] = cap_len + 1
         pos_ids[:, cap_len:, 1] = h_idx.float()
         pos_ids[:, cap_len:, 2] = w_idx.float()
         
@@ -528,31 +657,45 @@ class ZImageTransformer2DModel(nn.Module):
         else:
             was_5d = False
         
-        B, C, H, W = x.shape
-        
-        # Timestep embedding
-        t_emb = self.t_embedder(timestep, dtype=x.dtype)
-        
-        # Patchify
+        # Patchify image input
         img_patches, img_size = self._patchify(x)
         img_patches = self.x_embedder(img_patches)
         
+        # Timestep embedding
+        # NextDiT/Lumina2 convention: invert timestep for flow matching
+        # ComfyUI uses time_scale=1.0 by default
+        t_inv = 1.0 - timestep
+        # Apply time_scale before embedding (ComfyUI line 583)
+        t_emb = self.t_embedder(t_inv * self.time_scale, dtype=x.dtype)
+        
         # Caption embedding
         cap_feats = self.cap_embedder(context)
+        
+        # DEBUG LOGS
+        if self.cnt < 3: # Only log first few steps
+            logger.info(f"[zimage-debug] timestep (sigma): {timestep[0]:.4f}")
+            logger.info(f"[zimage-debug] t_inv (1-sigma): {t_inv[0]:.4f}")
+            logger.info(f"[zimage-debug] t_emb={t_emb[0, :8]}... range=[{t_emb.min():.2f}, {t_emb.max():.2f}]")
+            logger.info(f"[zimage-debug] img_patches range=[{img_patches.min():.2f}, {img_patches.max():.2f}] mean={img_patches.mean():.4f}")
+            logger.info(f"[zimage-debug] cap_feats range=[{cap_feats.min():.2f}, {cap_feats.max():.2f}] mean={cap_feats.mean():.4f}")
+            self.cnt += 1
+            
         cap_len = cap_feats.shape[1]
         
         # Position IDs
+        B = img_patches.shape[0]
         h_tokens = (img_size[0] + self.patch_size - 1) // self.patch_size
         w_tokens = (img_size[1] + self.patch_size - 1) // self.patch_size
         pos_ids = self._get_position_ids(cap_len, h_tokens, w_tokens, B, x.device)
         freqs = self.rope(pos_ids)
         
         # Refiners
+        # freqs is now [B, 1, N, D//2, 2, 2], slice on dimension 2 (N)
         for layer in self.context_refiner:
-            cap_feats = layer(cap_feats, None, freqs[:, :cap_len])
+            cap_feats = layer(cap_feats, None, freqs[:, :, :cap_len])
         
         for layer in self.noise_refiner:
-            img_patches = layer(img_patches, None, freqs[:, cap_len:])
+            img_patches = layer(img_patches, None, freqs[:, :, cap_len:], t_emb)
         
         # Concatenate
         full_seq = torch.cat([cap_feats, img_patches], dim=1)
@@ -568,7 +711,16 @@ class ZImageTransformer2DModel(nn.Module):
         if was_5d:
             output = output.unsqueeze(2)
         
-        return -output  # Velocity conversion
+        # DEBUG: Log output statistics before negation
+        if self.cnt < 3:
+            logger.info(f"[zimage-debug] output BEFORE negation: range=[{output.min():.4f}, {output.max():.4f}] mean={output.mean():.4f} norm={output.norm():.2f}")
+        
+        result = -output  # Velocity conversion (negative velocity for flow matching)
+        
+        if self.cnt < 3:
+            logger.info(f"[zimage-debug] output AFTER negation: range=[{result.min():.4f}, {result.max():.4f}] mean={result.mean():.4f} norm={result.norm():.2f}")
+        
+        return result
 
 
 # =============================================================================

@@ -69,9 +69,12 @@ def build_plan(signature: ModelSignature) -> ParserPlanBundle:
 def _validate_transformer_core(context):
     """Validate that the transformer core has key blocks."""
     unet = context.require("transformer").tensors
-    # Check for NextDiT/Lumina2 style keys
-    key = "layers.0.adaLN_modulation.0.weight"
-    if key not in unet:
-        # Also accept without prefix
-        if "model.layers.0.adaLN_modulation.0.weight" not in unet:
-            raise ValidationError("Z Image transformer missing adaLN modulation layer", component="transformer")
+    # Check for NextDiT/Lumina2 style keys with various prefixes
+    base_key = "layers.0.adaLN_modulation.0.weight"
+    possible_keys = [
+        base_key,  # GGUF format
+        f"model.{base_key}",  # Some safetensors
+        f"model.diffusion_model.{base_key}",  # FP8/BF16 safetensors
+    ]
+    if not any(k in unet for k in possible_keys):
+        raise ValidationError("Z Image transformer missing adaLN modulation layer", component="transformer")

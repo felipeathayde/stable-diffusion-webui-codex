@@ -68,6 +68,7 @@ class ZImageTextEncoder(nn.Module):
         
         # Load GGUF state dict using our infrastructure
         from apps.backend.opus_quantization.gguf_loader import load_gguf_state_dict
+        from apps.backend.runtime.ops.operations import using_codex_operations
         
         try:
             # Load GGUF file
@@ -80,18 +81,40 @@ class ZImageTextEncoder(nn.Module):
             state_dict = remap_gguf_keys(gguf_state_dict, num_layers=36)
             logger.info("Remapped to %d native keys", len(state_dict))
             
-            # Create model with native Qwen3_4B
-            config = Qwen3Config()
-            model = Qwen3_4B(config, dtype=torch_dtype)
-            
-            # Load state dict
-            missing, unexpected = model.load_sd(state_dict)
-            if missing:
-                logger.warning("Missing keys: %s", missing[:10])
-            if unexpected:
-                logger.debug("Unexpected keys: %s", unexpected[:10])
-            
-            model = model.to(dtype=torch_dtype)
+            # Use Codex operations context to enable GGUF tensor support
+            # This patches torch.nn.Linear to CodexOperationsGGUF.Linear which handles ParameterGGUF
+            with using_codex_operations(bnb_dtype='gguf', manual_cast_enabled=True, device=None, dtype=torch_dtype):
+                # Create model with native Qwen3_4B inside the context
+                config = Qwen3Config()
+                model = Qwen3_4B(config, dtype=torch_dtype)
+                
+                # DEBUG: Verify patch application
+                logger.info("DEBUG: Model embed_tokens type: %s", type(model.model.embed_tokens))
+                logger.info("DEBUG: Model q_proj type: %s", type(model.model.layers[0].self_attn.q_proj))
+                
+                # DEBUG: Inspect state dict entry for embedding
+                emb_key = "model.embed_tokens.weight"
+                if emb_key in state_dict:
+                    emb_tensor = state_dict[emb_key]
+                    logger.info("DEBUG: State dict %s type: %s", emb_key, type(emb_tensor))
+                    logger.info("DEBUG: State dict %s shape: %s", emb_key, emb_tensor.shape)
+                    if hasattr(emb_tensor, 'real_shape'):
+                        logger.info("DEBUG: State dict %s real_shape: %s", emb_key, emb_tensor.real_shape)
+
+                # Load state dict - patched layers will handle GGUF tensors correctly
+                try:
+                    missing, unexpected = model.load_sd(state_dict)
+                    if missing:
+                        logger.warning("Missing keys: %s", missing[:10])
+                    if unexpected:
+                        logger.debug("Unexpected keys: %s", unexpected[:10])
+                except RuntimeError as e:
+                    logger.error("DEBUG: RuntimeError during load_sd: %s", e)
+                    # Dump model shape for comparison
+                    logger.error("DEBUG: Model embedding weight shape: %s", model.model.embed_tokens.weight.shape)
+                    raise
+                
+                model = model.to(dtype=torch_dtype)
             
             param_count = sum(p.numel() for p in model.parameters())
             logger.info("GGUF text encoder loaded: %d params (%.2fB)", 
@@ -100,8 +123,8 @@ class ZImageTextEncoder(nn.Module):
             return cls(model, hidden_size=2560, layer_idx=-2)
             
         except ImportError as e:
-            logger.error("GGUF loader not available: %s", e)
-            raise ValueError(f"GGUF loader not available: {e}")
+            logger.error("GGUF loader/ops not available: %s", e)
+            raise ValueError(f"GGUF loader/ops not available: {e}")
         except Exception as e:
             logger.error("Failed to load GGUF text encoder: %s", e)
             raise ValueError(f"Failed to load GGUF text encoder from {gguf_path}: {e}")
@@ -120,37 +143,20 @@ class ZImageTextEncoder(nn.Module):
         logger.info("Loading Qwen3 text encoder from state_dict (%d keys)", len(state_dict))
         
         try:
-            from transformers import Qwen3ForCausalLM, Qwen3Config
+            # Use native Qwen3_4B implementation (compatible with ComfyUI format)
+            from .qwen3 import Qwen3_4B, Qwen3Config
             
-            # Create config for Qwen3-4B (Z Image architecture)
-            # Params from: apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/text_encoder/config.json
-            # CRITICAL: Z Image uses head_dim=128 explicitly (not hidden_size/num_heads=80)
-            config = Qwen3Config(
-                vocab_size=151936,
-                hidden_size=2560,
-                intermediate_size=9728,
-                num_hidden_layers=36,
-                num_attention_heads=32,
-                num_key_value_heads=8,
-                head_dim=128,  # Z Image Qwen3 uses explicit head_dim=128
-                max_position_embeddings=40960,
-                tie_word_embeddings=True,
-                torch_dtype=torch_dtype,
-            )
+            config = Qwen3Config()
+            model = Qwen3_4B(config, dtype=torch_dtype)
             
-            # Initialize model with config
-            model = Qwen3ForCausalLM(config)
+            # Load weights - native implementation has compatible key format
+            missing, unexpected = model.load_sd(state_dict)
+            if missing:
+                logger.warning("Missing keys: %s", missing[:10])
+            if unexpected:
+                logger.debug("Unexpected keys: %s", unexpected[:10])
             
-            # Load weights - need to map keys if necessary
-            # Check if keys have 'model.' prefix
-            if any(k.startswith("model.") for k in state_dict.keys()):
-                # Keys already have model. prefix - load directly
-                model.load_state_dict(state_dict, strict=False)
-            else:
-                # Add model. prefix to keys
-                mapped_sd = {f"model.{k}" if not k.startswith("model.") and not k.startswith("lm_head") else k: v for k, v in state_dict.items()}
-                model.load_state_dict(mapped_sd, strict=False)
-            
+            # Move to target dtype
             model.to(dtype=torch_dtype)
             
             encoder = cls(model, hidden_size=2560, layer_idx=-2)
@@ -240,7 +246,7 @@ class ZImageTextEncoder(nn.Module):
             "attention_mask": tokens["attention_mask"].to(self.device),
         }
     
-    @torch.inference_mode()
+    @torch.no_grad()
     def encode(
         self,
         texts: List[str],
@@ -259,14 +265,30 @@ class ZImageTextEncoder(nn.Module):
         """
         tokens = self.tokenize(texts, max_length, apply_template)
         
-        outputs = self.model(
-            input_ids=tokens["input_ids"],
-            attention_mask=tokens["attention_mask"],
-            output_hidden_states=True,
-        )
+        # Check if this is our native Qwen3_4B model or a HuggingFace model
+        # Native Qwen3_4B returns (hidden_states, intermediate) tuple
+        # HuggingFace models return an object with .hidden_states attribute
+        is_native_model = hasattr(self.model, 'load_sd')  # Native Qwen3_4B has load_sd method
         
-        # Use second-to-last layer (like CLIP)
-        hidden = outputs.hidden_states[self.layer_idx]
+        if is_native_model:
+            # Native Qwen3_4B: use intermediate_output to get second-to-last layer
+            hidden_states, intermediate = self.model(
+                input_ids=tokens["input_ids"],
+                attention_mask=tokens["attention_mask"],
+                intermediate_output=self.layer_idx,  # -2 = second-to-last layer
+                final_layer_norm_intermediate=True,
+            )
+            # intermediate contains the second-to-last layer output (with final norm applied)
+            hidden = intermediate if intermediate is not None else hidden_states
+        else:
+            # HuggingFace model: use output_hidden_states
+            outputs = self.model(
+                input_ids=tokens["input_ids"],
+                attention_mask=tokens["attention_mask"],
+                output_hidden_states=True,
+            )
+            # Use second-to-last layer (like CLIP)
+            hidden = outputs.hidden_states[self.layer_idx]
         
         return hidden.to(self.dtype)
     

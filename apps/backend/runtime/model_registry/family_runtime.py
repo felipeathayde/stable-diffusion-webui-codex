@@ -359,7 +359,7 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=8,  # ZImage turbo model
-        flow_shift=3.0,
+        flow_shift=1.0,  # Turbo model uses 1.0 (like Flux Schnell)
         scheduler_default="simple",
         is_xl_variant=True,
         patch_size=2,

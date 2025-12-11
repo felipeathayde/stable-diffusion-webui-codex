@@ -1,3 +1,4 @@
+import logging
 import math
 import torch
 import einops
@@ -6,6 +7,7 @@ from apps.backend.infra.config.args import args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.misc import efficient_dot_product_attention
 
+_LOGGER = logging.getLogger("backend.attention")
 
 # Avoid importing via backend facade during runtime package init to prevent cycles
 
@@ -354,7 +356,7 @@ def slice_attention_single_head_spatial(q, k, v):
             steps *= 2
             if steps > 128:
                 raise e
-            print("out of memory error, increasing steps and trying again {}".format(steps))
+            _LOGGER.warning("OOM during attention, increasing steps to %d", steps)
 
     return r1
 
@@ -401,26 +403,26 @@ def pytorch_attention_single_head_spatial(q, k, v):
 
 
 if memory_management.xformers_enabled():
-    print("Using xformers cross attention")
+    _LOGGER.info("using xformers cross attention")
     attention_function = attention_xformers
 elif memory_management.pytorch_attention_enabled():
-    print("Using pytorch cross attention")
+    _LOGGER.info("using pytorch cross attention")
     attention_function = attention_pytorch
 elif args.attention_split:
-    print("Using split optimization for cross attention")
+    _LOGGER.info("using split optimization for cross attention")
     attention_function = attention_split
 else:
-    print("Using sub quadratic optimization for cross attention")
+    _LOGGER.info("using sub quadratic optimization for cross attention")
     attention_function = attention_sub_quad
 
 if memory_management.xformers_enabled_vae():
-    print("Using xformers attention for VAE")
+    _LOGGER.info("using xformers attention for VAE")
     attention_function_single_head_spatial = xformers_attention_single_head_spatial
 elif memory_management.pytorch_attention_enabled():
-    print("Using pytorch attention for VAE")
+    _LOGGER.info("using pytorch attention for VAE")
     attention_function_single_head_spatial = pytorch_attention_single_head_spatial
 else:
-    print("Using split attention for VAE")
+    _LOGGER.info("using split attention for VAE")
     attention_function_single_head_spatial = normal_attention_single_head_spatial
 
 

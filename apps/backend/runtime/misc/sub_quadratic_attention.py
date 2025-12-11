@@ -10,6 +10,7 @@
 #   https://arxiv.org/abs/2112.05682v2
 
 from functools import partial
+import logging
 import torch
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
@@ -19,6 +20,8 @@ from torch import Tensor
 from typing import List
 
 from apps.backend.runtime.memory import memory_management
+
+_log = logging.getLogger("backend.runtime.misc.sub_quadratic_attention")
 
 
 try:
@@ -178,7 +181,7 @@ def _get_attention_scores_no_kv_chunking(
         attn_probs = attn_scores.softmax(dim=-1)
         del attn_scores
     except memory_management.OOM_EXCEPTION:
-        print("ran out of memory while running softmax in  _get_attention_scores_no_kv_chunking, trying slower in place softmax instead")
+        _log.warning("ran out of memory while running softmax in _get_attention_scores_no_kv_chunking, trying slower in place softmax instead")
         attn_scores -= attn_scores.max(dim=-1, keepdim=True).values
         torch.exp(attn_scores, out=attn_scores)
         summed = torch.sum(attn_scores, dim=-1, keepdim=True)

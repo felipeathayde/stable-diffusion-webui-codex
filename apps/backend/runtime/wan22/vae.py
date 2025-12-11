@@ -1,8 +1,11 @@
+import logging
 import torch
 import numpy as np
 from apps.backend.runtime.attention import attention_function_single_head_spatial
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from torch import nn
+
+_log = logging.getLogger("backend.runtime.wan22.vae")
 
 
 def nonlinearity(x):
@@ -215,7 +218,7 @@ class Decoder(nn.Module):
         block_in = ch * ch_mult[self.num_resolutions - 1]
         curr_res = resolution // 2 ** (self.num_resolutions - 1)
         self.z_shape = (1, z_channels, curr_res, curr_res)
-        print("Working with z of shape {} = {} dimensions.".format(self.z_shape, np.prod(self.z_shape)))
+        _log.info("Working with z of shape %s = %d dimensions.", self.z_shape, np.prod(self.z_shape))
 
         self.conv_in = nn.Conv2d(z_channels, block_in, kernel_size=3, stride=1, padding=1)
 

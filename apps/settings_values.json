@@ -1,7 +1,11 @@
 {
-  "sd_model_checkpoint": "z_image_turbo-Q8_0.gguf",
+  "sd_model_checkpoint": "z-image-turbo-fp8-e4m3fn.safetensors",
   "codex_smart_cache": true,
   "codex_smart_offload": true,
   "codex_core_streaming": true,
-  "codex_smart_fallback": false
+  "codex_smart_fallback": false,
+  "codex_te_device": "cuda",
+  "codex_te_dtype": "bf16",
+  "codex_vae_device": "cuda",
+  "codex_vae_dtype": "bf16"
 }

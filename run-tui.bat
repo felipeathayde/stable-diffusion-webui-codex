@@ -20,7 +20,7 @@ if defined PYTHONPATH (
     set "PYTHONPATH=%ROOT%"
 )
 
-set "SCRIPT=%ROOT%apps\codex_launcher.py"
+set "SCRIPT=%ROOT%apps\tui_launcher.py"
 set "CODEX_ROOT=%ROOT%"
 
 "%PY_BIN%" "%SCRIPT%" %*

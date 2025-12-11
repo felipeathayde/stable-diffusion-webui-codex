@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 import math
 from typing import Iterable, Sequence, Tuple
 
 import torch
 from einops import repeat
 from torch import nn
+
+_log = logging.getLogger("backend.runtime.common.nn.unet.utils")
 
 
 def checkpoint(function, args, parameters, enable: bool = False):
@@ -47,7 +51,7 @@ def apply_control(tensor, control, name):
             try:
                 tensor = tensor + ctrl
             except Exception:
-                print("warning control could not be applied", tensor.shape, ctrl.shape)
+                _log.warning("control could not be applied tensor=%s ctrl=%s", tensor.shape, ctrl.shape)
     return tensor
 
 

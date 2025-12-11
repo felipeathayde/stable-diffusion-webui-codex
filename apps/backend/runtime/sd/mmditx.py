@@ -6,6 +6,7 @@
 
 ## minor modifications to SD3Transformer2DModel.__init__() and SD3Transformer2DModel.forward()
 
+import logging
 import math
 from typing import Dict, List, Optional
 
@@ -13,6 +14,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
+
+_log = logging.getLogger("backend.runtime.sd.mmditx")
 
 def attention(q, k, v, heads, mask=None):
     """Convenience wrapper around a basic attention operation"""
@@ -768,8 +771,16 @@ class SD3Transformer2DModel(nn.Module):
     ):
         super().__init__()
         if verbose:
-            print(
-                f"mmdit initializing with: {input_size=}, {patch_size=}, {in_channels=}, {depth=}, {mlp_ratio=}, {learn_sigma=}, {adm_in_channels=}, {context_embedder_config=}, {register_length=}, {rmsnorm=}, {scale_mod_only=}, {swiglu=}, {out_channels=}, {pos_embed_scaling_factor=}, {pos_embed_offset=}, {pos_embed_max_size=}, {num_patches=}, {qk_norm=}, {qkv_bias=}, {dtype=}, {device=}"
+            _log.debug(
+                "mmdit initializing with: input_size=%s, patch_size=%s, in_channels=%s, depth=%s, "
+                "mlp_ratio=%s, learn_sigma=%s, adm_in_channels=%s, context_embedder_config=%s, "
+                "register_length=%s, rmsnorm=%s, scale_mod_only=%s, swiglu=%s, out_channels=%s, "
+                "pos_embed_scaling_factor=%s, pos_embed_offset=%s, pos_embed_max_size=%s, "
+                "num_patches=%s, qk_norm=%s, qkv_bias=%s, dtype=%s, device=%s",
+                input_size, patch_size, in_channels, depth, mlp_ratio, learn_sigma,
+                adm_in_channels, context_embedder_config, register_length, rmsnorm,
+                scale_mod_only, swiglu, out_channels, pos_embed_scaling_factor,
+                pos_embed_offset, pos_embed_max_size, num_patches, qk_norm, qkv_bias, dtype, device
             )
         self.dtype = dtype
         self.learn_sigma = learn_sigma

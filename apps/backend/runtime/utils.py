@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from collections.abc import MutableMapping
@@ -11,6 +12,8 @@ from safetensors.torch import safe_open
 from apps.backend import gguf
 from apps.backend.runtime.misc import checkpoint_pickle
 from apps.backend.runtime.ops.operations_gguf import ParameterGGUF
+
+_log = logging.getLogger("backend.runtime.utils")
 
 
 # Avoid importing the whole `runtime.ops` package here (it imports `utils`,
@@ -268,7 +271,7 @@ def load_torch_file(ckpt, safe_load=True, device=None):
     pl_sd = _load_pickled_checkpoint(checkpoint_path, device, safe_load)
 
     if "global_step" in pl_sd:
-        print(f"Global Step: {pl_sd['global_step']}")
+        _log.info("Global Step: %s", pl_sd['global_step'])
 
     if "state_dict" in pl_sd:
         return pl_sd["state_dict"]
@@ -562,5 +565,5 @@ def beautiful_print_gguf_state_dict_statics(state_dict):
                 type_counts[type_name] += 1
             else:
                 type_counts[type_name] = 1
-    print(f'GGUF state dict: {type_counts}')
+    _log.info('GGUF state dict: %s', type_counts)
     return

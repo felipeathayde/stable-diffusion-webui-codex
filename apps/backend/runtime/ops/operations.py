@@ -774,7 +774,7 @@ def automatic_memory_management():
 
     memory_management.soft_empty_cache()
     elapsed = time.perf_counter() - start
-    print(f"Automatic Memory Management: {len(module_list)} Modules in {elapsed:.2f} seconds.")
+    logger.info("Automatic Memory Management: %d Modules in %.2f seconds.", len(module_list), elapsed)
 
 
 class DynamicSwapInstaller:

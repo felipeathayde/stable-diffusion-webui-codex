@@ -32,7 +32,7 @@ def load_state_dict(model, sd, ignore_errors=[], log_name=None, ignore_start=Non
 
     log_name = log_name or type(model).__name__
     if len(missing) > 0:
-        print(f'{log_name} Missing: {len(missing)} keys')
+        _log.warning('%s Missing: %d keys', log_name, len(missing))
         # Sample a few keys at DEBUG for diagnostics
         _log.debug("%s missing_count=%d sample=%s", log_name, len(missing), missing[:10])
         _log.info("%s missing_keys=%s", log_name, missing)
@@ -43,7 +43,7 @@ def load_state_dict(model, sd, ignore_errors=[], log_name=None, ignore_start=Non
             "keys": missing,
         })
     if len(unexpected) > 0:
-        print(f'{log_name} Unexpected: {len(unexpected)} keys')
+        _log.warning('%s Unexpected: %d keys', log_name, len(unexpected))
         _log.debug("%s unexpected_count=%d sample=%s", log_name, len(unexpected), unexpected[:10])
         _log.info("%s unexpected_keys=%s", log_name, unexpected)
         _append_key_record({
@@ -196,7 +196,7 @@ def safe_load_state_dict(model, sd, *, log_name=None):
 
     unexpected = [k for k in sd_keys if k not in model_keys]
     if missing:
-        print(f'{log_name} Missing: {len(missing)} keys')
+        _log.warning('%s Missing: %d keys', log_name, len(missing))
         _log.debug("%s missing_count=%d sample=%s", log_name, len(missing), missing[:10])
         _append_key_record({
             "component": log_name,
@@ -205,7 +205,7 @@ def safe_load_state_dict(model, sd, *, log_name=None):
             "keys": missing,
         })
     if unexpected:
-        print(f'{log_name} Unexpected: {len(unexpected)} keys')
+        _log.warning('%s Unexpected: %d keys', log_name, len(unexpected))
         _log.debug("%s unexpected_count=%d sample=%s", log_name, len(unexpected), unexpected[:10])
         _append_key_record({
             "component": log_name,

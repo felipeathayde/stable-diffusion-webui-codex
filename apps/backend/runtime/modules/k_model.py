@@ -18,7 +18,7 @@ class KModel(torch.nn.Module):
         self.storage_dtype = model.storage_dtype
         self.computation_dtype = model.computation_dtype
 
-        print(f'K-Model Created: {dict(storage_dtype=self.storage_dtype, computation_dtype=self.computation_dtype)}')
+        logger.info('K-Model Created: storage_dtype=%s computation_dtype=%s', self.storage_dtype, self.computation_dtype)
 
         self.diffusion_model = model
 
@@ -121,3 +121,11 @@ class KModel(torch.nn.Module):
                 dtype_size = 4
 
         return scaler * area * dtype_size * 16384
+
+    def forward(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
+        """Standard forward method that delegates to apply_model.
+        
+        This is required by the memory management system which expects a 'forward' method.
+        """
+        return self.apply_model(x, t, c_concat=c_concat, c_crossattn=c_crossattn, 
+                                control=control, transformer_options=transformer_options, **kwargs)

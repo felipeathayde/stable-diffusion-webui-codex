@@ -1393,14 +1393,14 @@ def _load_huggingface_component(
         storage_dtype = memory_management.text_encoder_dtype(device=te_device)
         state_dict_dtype = memory_management.state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
-            print(f"Using Detected T5 Data Type: {state_dict_dtype}")
+            LOGGER.info("Using Detected T5 Data Type: %s", state_dict_dtype)
             storage_dtype = state_dict_dtype
             if state_dict_dtype in ["nf4", "fp4", "gguf"]:
-                print("Using pre-quant state dict!")
+                LOGGER.info("Using pre-quant state dict!")
                 if state_dict_dtype == "gguf":
                     beautiful_print_gguf_state_dict_statics(state_dict)
         else:
-            print(f"Using Default T5 Data Type: {storage_dtype}")
+            LOGGER.info("Using Default T5 Data Type: %s", storage_dtype)
 
         if storage_dtype in ["nf4", "fp4", "gguf"]:
             with modeling_utils.no_init_weights():
@@ -1510,22 +1510,39 @@ def _load_huggingface_component(
             storage_dtype = "gguf"
 
         load_device = memory_management.get_torch_device()
-        computation_dtype = memory_management.get_computation_dtype(load_device, parameters=0, supported_dtypes=supported_dtypes)
         offload_device = memory_management.core_offload_device()
 
         mem_config = memory_management.memory_config
 
         if storage_dtype in ["nf4", "fp4", "gguf"]:
+            # For quantized models, compute computation_dtype based on the actual load device
+            # This will be the GPU device where computations happen
+            computation_dtype = memory_management.get_computation_dtype(load_device, parameters=0, supported_dtypes=supported_dtypes)
+            
             initial_device = memory_management.core_initial_load_device(parameters=0, dtype=computation_dtype)
-            # Smart offload: load Flux transformer to CPU to prevent OOM
+            # Smart offload: load transformers to CPU to prevent OOM
             # The engine will move it to GPU on demand via streaming or memory management
             from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
-            if cls_name == "FluxTransformer2DModel" and smart_offload_enabled():
+            _SMART_OFFLOAD_TRANSFORMERS = {
+                "FluxTransformer2DModel",
+                "ZImageTransformer2DModel",
+                "ChromaTransformer2DModel",
+                "SD3Transformer2DModel",
+            }
+            if cls_name in _SMART_OFFLOAD_TRANSFORMERS and smart_offload_enabled():
                 initial_device = torch.device("cpu")
-                LOGGER.info("[loader] Smart offload: loading FluxTransformer to CPU (will stream to GPU)")
-            with using_codex_operations(device=initial_device, dtype=computation_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
+                LOGGER.info("[loader] Smart offload: loading %s to CPU (will stream to GPU)", cls_name)
+            
+            # For GGUF on CPU, use bfloat16 for storage to avoid unnecessary upcasting
+            # The model will automatically cast to appropriate dtype during forward pass on GPU
+            construct_dtype = torch.bfloat16 if memory_management.is_device_cpu(initial_device) else computation_dtype
+            
+            with using_codex_operations(device=initial_device, dtype=construct_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
                 model = model_ctor(config_json)
         else:
+            # Non-quantized models: compute computation_dtype for non-quantized path
+            computation_dtype = memory_management.get_computation_dtype(load_device, parameters=0, supported_dtypes=supported_dtypes)
+            
             prefer_gpu = bool(getattr(mem_config, "gpu_prefer_construct", False))
             construct_device = load_device if prefer_gpu else memory_management.core_initial_load_device(parameters=0, dtype=storage_dtype)
             initial_device = construct_device
@@ -1614,12 +1631,12 @@ def _load_huggingface_component(
         # GGUF models require PyTorch's load_state_dict to trigger _load_from_state_dict hooks
         # in CodexOperationsGGUF.Linear which handle the .weight/.bias mapping from GGUF format
         if storage_dtype == "gguf":
-            print(f"[DEBUG] Using PyTorch load_state_dict for GGUF model")
+            LOGGER.debug("Using PyTorch load_state_dict for GGUF model")
             missing, unexpected = model.load_state_dict(dict(state_dict), strict=False)
             if missing:
-                print(f'{core_label} Missing: {len(missing)} keys')
+                LOGGER.warning('%s Missing: %d keys: %s', core_label, len(missing), missing[:10])
             if unexpected:
-                print(f'{core_label} Unexpected: {len(unexpected)} keys')
+                LOGGER.warning('%s Unexpected: %d keys: %s', core_label, len(unexpected), unexpected[:10])
         else:
             try:
                 from .state_dict import safe_load_state_dict as _safe_load

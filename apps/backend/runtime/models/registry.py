@@ -30,7 +30,18 @@ _VAE_EXTS = {".safetensors", ".ckpt", ".pt"}
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[5]
+    """Get repo root from CODEX_ROOT environment variable.
+    
+    Raises EnvironmentError if CODEX_ROOT is not set.
+    """
+    import os
+    env_root = os.environ.get("CODEX_ROOT")
+    if not env_root:
+        raise EnvironmentError(
+            "CODEX_ROOT environment variable is not set. "
+            "Please use run-webui.bat or run-tui.bat to launch the application."
+        )
+    return Path(env_root).resolve()
 
 
 def _default_models_root() -> Path:
@@ -72,6 +83,7 @@ _HASH_CACHE_FILE = _default_models_root() / ".hashes.json"
 def _load_hash_cache() -> Dict[str, _HashCacheEntry]:
     """Load persistent hash cache from disk."""
     cache: Dict[str, _HashCacheEntry] = {}
+    _LOGGER.info("loading hash cache from %s", _HASH_CACHE_FILE)
     try:
         if _HASH_CACHE_FILE.is_file():
             with _HASH_CACHE_FILE.open("r", encoding="utf-8") as f:
@@ -84,8 +96,11 @@ def _load_hash_cache() -> Dict[str, _HashCacheEntry]:
                         sha256=str(entry.get("sha256", "")),
                         short_hash=str(entry.get("short_hash", "")),
                     )
+            _LOGGER.info("hash cache loaded: %d entries", len(cache))
+        else:
+            _LOGGER.info("hash cache not found, will compute hashes on first scan")
     except Exception as e:
-        _LOGGER.debug("hash cache load failed: %s", e)
+        _LOGGER.warning("hash cache load failed: %s", e)
     return cache
 
 
@@ -117,9 +132,15 @@ class ModelRegistry:
         self._lock = threading.Lock()
         self._checkpoints: Dict[str, CheckpointRecord] = {}
         self._vaes: Dict[str, VAERecord] = {}
-        self._hash_cache: Dict[str, _HashCacheEntry] = _load_hash_cache()  # Load from disk
+        self._hash_cache: Dict[str, _HashCacheEntry] | None = None  # Lazy load
         self._hash_cache_dirty = False  # Track if we need to save
         self._last_scan: float | None = None
+
+    def _ensure_hash_cache(self) -> Dict[str, _HashCacheEntry]:
+        """Lazy load hash cache on first access."""
+        if self._hash_cache is None:
+            self._hash_cache = _load_hash_cache()
+        return self._hash_cache
 
     # ------------------------------------------------------------------
     # Public API
@@ -169,7 +190,7 @@ class ModelRegistry:
         self._last_scan = time.time()
         # Persist hash cache if we computed any new hashes
         if self._hash_cache_dirty:
-            _save_hash_cache(self._hash_cache)
+            _save_hash_cache(self._ensure_hash_cache())
             self._hash_cache_dirty = False
         _LOGGER.info(
             "model_registry: scan complete checkpoints=%d vaes=%d ms=%.1f",
@@ -359,7 +380,8 @@ class ModelRegistry:
         except FileNotFoundError:
             return None, None
         key = str(path)
-        entry = self._hash_cache.get(key)
+        cache = self._ensure_hash_cache()
+        entry = cache.get(key)
         # Cache hit: validate by mtime AND size (both must match)
         if entry and entry.mtime == stat.st_mtime and entry.size == stat.st_size:
             sha256 = entry.sha256
@@ -374,7 +396,7 @@ class ModelRegistry:
             sha256 = None
             short_hash = None
         if sha256:
-            self._hash_cache[key] = _HashCacheEntry(stat.st_mtime, stat.st_size, sha256, short_hash or "")
+            cache[key] = _HashCacheEntry(stat.st_mtime, stat.st_size, sha256, short_hash or "")
             self._hash_cache_dirty = True  # Mark for persistence
         return sha256, short_hash
 

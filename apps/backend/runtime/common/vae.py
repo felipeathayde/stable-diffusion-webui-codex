@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Mapping, Any
 
 import torch
 
@@ -70,6 +70,36 @@ def load_flow16_vae(
     from diffusers import AutoencoderKL
     
     logger.info("Loading Flow16 VAE from: %s", vae_path)
+
+    def _strip_known_prefixes(sd: Mapping[str, Any]) -> dict[str, Any]:
+        """Strip common VAE prefixes (Comfy/SD checkpoints) to diffusers keys.
+
+        Flow16 VAEs show up in a few layouts:
+        - diffusers keys (encoder.*, decoder.*)
+        - same keys prefixed with first_stage_model./vae./model./module.
+
+        We normalise by repeatedly removing known prefixes.
+        """
+        prefixes = (
+            "first_stage_model.",
+            "vae.",
+            "model.",
+            "module.",
+        )
+        out: dict[str, Any] = {}
+        for raw_key, value in sd.items():
+            key = str(raw_key)
+            new_key = key
+            changed = True
+            while changed:
+                changed = False
+                for prefix in prefixes:
+                    if new_key.startswith(prefix):
+                        new_key = new_key[len(prefix) :]
+                        changed = True
+                        break
+            out[new_key] = value
+        return out
     
     try:
         if os.path.isdir(vae_path):
@@ -79,14 +109,27 @@ def load_flow16_vae(
             # Single safetensors file - create with correct config
             from safetensors.torch import load_file
             state_dict = load_file(vae_path)
+            if isinstance(state_dict, Mapping):
+                state_dict = _strip_known_prefixes(state_dict)
             
             vae = AutoencoderKL(**FLOW16_VAE_CONFIG)
+            expected_total = len(vae.state_dict())
             missing, unexpected = vae.load_state_dict(state_dict, strict=False)
             
             if missing:
                 logger.warning("VAE missing keys: %s", missing[:5])
             if unexpected:
                 logger.debug("VAE unexpected keys: %s", unexpected[:5])
+
+            # Fail loudly if this is not actually a Flow16 VAE.
+            # A mismatched 4‑channel VAE will otherwise decode pure noise.
+            if missing:
+                ratio = len(missing) / max(expected_total, 1)
+                if ratio > 0.05:
+                    raise ValueError(
+                        f"Incompatible Flow16 VAE at {vae_path}: missing {len(missing)}/{expected_total} keys "
+                        f"after prefix stripping. Please supply a 16‑channel Flow VAE (Flux/Z Image)."
+                    )
             
             vae = vae.to(dtype=dtype)
         

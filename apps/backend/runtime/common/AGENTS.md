@@ -12,3 +12,4 @@ Status: Active
 
 ## Notes
 - Add reusable building blocks here to avoid duplication across model-specific runtimes.
+- `vae.py` normalises Flow16 VAE safetensors by stripping common prefixes and fails fast on incompatible (non‑16‑channel) VAEs to avoid noisy decodes.

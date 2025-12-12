@@ -3,8 +3,16 @@
 ## Finding Summary
 
 ### ✅ FIXES APPLIED
-1. **rope_theta = 256.0** (was 10000.0) - CRITICAL FIX
-2. **time_scale = 1000.0** (was 1.0) - CRITICAL FIX
+1. **Honor HF transformer config** (`apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/transformer/config.json`)
+   - `rope_theta = 256.0`
+   - `axes_dims = (32, 48, 48)` (RoPE axis split)
+   - `t_scale = 1000.0` (timestep scaling)
+2. **Honor HF scheduler config** (`apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/scheduler/scheduler_config.json`)
+   - `shift = 3.0` (default)
+3. **Fix VAE latent normalization**
+   - Apply `process_out()` before VAE decode for Flow16 (Flux/Z-Image) latents, otherwise decodes can collapse to gray/noise.
+4. **Flow16 VAE config parity (HF Flux/Z-Image)**
+   - `use_quant_conv = false`, `use_post_quant_conv = false` (avoids misleading missing-key warnings like `quant_conv.*` with official VAEs)
 
 ### 📊 RESULTS FROM ZIMAGE_8
 
@@ -14,8 +22,8 @@
 - No more divergence in early steps
 
 **Remaining Issue:**
-- Scheduler has HUGE jump at final step: sigma 0.334→0.0003
-- This causes norm to spike back up in steps 6-8
+- If output still looks noisy, inspect the sigma ladder near the tail (large last-step drops can destabilize very low-step runs).
+  - Quick sanity: `python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 8 --scheduler simple --mu 3 --pseudo-timestep-range 1000` should report `predict_min≈0.003` (not `≈0.0003` from a 10k ladder).
 
 ### 🧪 RECOMMENDED TESTS
 
@@ -25,9 +33,8 @@
 - Should eliminate the large jump problem
 
 **Test 2: Adjust Shift (Alternative)**
-- Try shift=1.0 instead of 3.0
-- Makes sigma distribution more linear
-- May help with the final step jump
+- Try a smaller `shift` only if you have evidence the default (3.0) is wrong for your specific checkpoint.
+- Default for Z Image Turbo is `shift=3.0` per HF scheduler config.
 
 **Test 3: Different Scheduler (If above fail)**
 - Try "normal" scheduler instead of "simple"
@@ -49,6 +56,11 @@ import sys
 sys.path.insert(0, '.')
 # Your test code here with steps=20
 "
+```
+
+**Option C: Sigma Ladder Sanity (no models required)**
+```powershell
+python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 8 --scheduler simple --mu 3 --pseudo-timestep-range 1000
 ```
 
 ### 🎯 EXPECTED OUTCOME

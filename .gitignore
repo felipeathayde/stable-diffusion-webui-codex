@@ -12,6 +12,7 @@ __pycache__
 !apps/backend/gguf/quants/kernels/iq_family/forge_*.py
 .refs
 .DS_Store
+*:Zone.Identifier
 /output/
 /outputs/
 /ESRGAN/*
@@ -98,4 +99,3 @@ apps/interface/.pnpm-debug.log
 *.png
 *.txt
 .sangoi/reports/tooling/pyright/*
-

@@ -122,7 +122,12 @@ class ZImageEngine(CodexDiffusionEngine):
         vector = torch.zeros(batch_size, 768, dtype=cond.dtype, device=cond.device)
         
         # Distilled CFG guidance (Z Image uses distilled guidance like Flux)
-        distilled_cfg = getattr(prompts, "distilled_cfg_scale", ZIMAGE_SPEC.default_cfg_scale) or ZIMAGE_SPEC.default_cfg_scale
+        ref = prompts[0] if prompts else prompts
+        distilled_cfg = getattr(
+            ref,
+            "distilled_cfg_scale",
+            getattr(prompts, "distilled_cfg_scale", ZIMAGE_SPEC.default_cfg_scale),
+        ) or ZIMAGE_SPEC.default_cfg_scale
         guidance = torch.full((batch_size,), float(distilled_cfg), dtype=torch.float32)
         
         return {
@@ -143,7 +148,12 @@ class ZImageEngine(CodexDiffusionEngine):
         runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.vae)
         try:
-            return runtime.vae.encode(x)
+            # Match Flux/Z-Image Flow16 VAE semantics:
+            # - VAE wrapper expects pixel samples as BHWC in [0, 1]
+            # - Latents used by the flow core must be normalized via process_in()
+            sample = runtime.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+            sample = runtime.vae.first_stage_model.process_in(sample)
+            return sample.to(x)
         finally:
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
@@ -153,9 +163,12 @@ class ZImageEngine(CodexDiffusionEngine):
         runtime = self._require_runtime()
         memory_management.load_model_gpu(self.codex_objects.vae)
         try:
-            # VAE returns BCHW in [-1, 1] range directly
-            return runtime.vae.decode(x)
+            # Match Flux/Z-Image Flow16 VAE semantics:
+            # - Model operates in normalized latent space
+            # - VAE decode expects denormalized latents via process_out()
+            sample = runtime.vae.first_stage_model.process_out(x)
+            sample = runtime.vae.decode(sample)
+            return sample.to(x)
         finally:
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
-

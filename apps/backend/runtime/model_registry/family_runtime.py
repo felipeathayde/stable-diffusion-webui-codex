@@ -352,14 +352,14 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         latent_scale_factor=8,
         vae_scaling_factor=0.3611,
         vae_shift_factor=0.1159,
-        context_dim=3584,
+        context_dim=2560,
         uses_pooled_output=False,
         uses_guidance_embed=False,
         default_cfg=4.0,
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=8,  # ZImage turbo model
-        flow_shift=1.0,  # Turbo model uses 1.0 (like Flux Schnell)
+        flow_shift=3.0,  # HF scheduler config (FlowMatchEulerDiscreteScheduler shift=3.0)
         scheduler_default="simple",
         is_xl_variant=True,
         patch_size=2,

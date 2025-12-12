@@ -84,11 +84,11 @@ class ZImageEngineSpec:
     def flow_shift(self) -> float:
         """Flow-match shift, delegating to FamilyRuntimeSpec if not overridden.
         
-        Z Image TURBO uses shift=1.0 (like Flux Schnell), not 3.0 (normal models).
+        Z Image Turbo (HF scheduler config) uses shift=3.0.
         """
         if self._flow_shift_override is not None:
             return self._flow_shift_override
-        return self._get_family_spec().flow_shift or 1.0  # Turbo models use 1.0
+        return self._get_family_spec().flow_shift or 3.0
     
     @property
     def default_steps(self) -> int:
@@ -108,7 +108,8 @@ class ZImageEngineSpec:
 def _k_predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
     """Create flow-match predictor for Z Image."""
     logger.debug("Using FlowMatch predictor for Z Image (shift=%.2f)", spec.flow_shift)
-    return FlowMatchEulerPrediction(mu=spec.flow_shift)
+    # HF scheduler config: FlowMatchEulerDiscreteScheduler with num_train_timesteps=1000 and shift=3.0
+    return FlowMatchEulerPrediction(pseudo_timestep_range=1000, mu=spec.flow_shift)
 
 
 def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:

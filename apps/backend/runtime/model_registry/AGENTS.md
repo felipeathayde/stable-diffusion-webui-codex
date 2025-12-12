@@ -1,7 +1,7 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
 Owner: Backend Maintainers
-Last Review: 2025-12-05
+Last Review: 2025-12-12
 Status: Draft
 
 ## Purpose
@@ -12,6 +12,7 @@ Status: Draft
 - Core dataclasses/enums (now `CodexCoreSignature`/`CodexCoreArchitecture`) in place with manifest-driven metadata harvesting.
 - Detectors implemented for SD1.x, SDXL (base/refiner), Flux (dev/schnell), AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, and Qwen Image.
  - `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/highres/refiner/LoRA/ControlNet) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
+ - 2025-12-12: Z Image runtime metadata was corrected (`context_dim=2560`, `flow_shift=3.0`) to match the canonical HF assets for Z-Image Turbo.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

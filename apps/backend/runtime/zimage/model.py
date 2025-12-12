@@ -26,6 +26,7 @@ import torch.nn.functional as F
 
 logger = logging.getLogger("backend.runtime.zimage.model")
 
+_DEFAULT_ZIMAGE_AXES_DIMS: tuple[int, int, int] = (32, 48, 48)
 
 # =============================================================================
 # Configuration
@@ -42,12 +43,16 @@ class ZImageConfig:
     num_refiner_layers: int = 2
     num_heads: int = 30  # 3840 / 128
     head_dim: int = 128
+    qk_norm: bool = True
     qkv_bias: bool = False
     out_bias: bool = False
     t_dim: int = 256  # Timestep embedding dimension
     mlp_hidden: int = 10240
     eps: float = 1e-5
-    rope_theta: float = 10000.0
+    # HF config: apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/transformer/config.json
+    rope_theta: float = 256.0
+    axes_dims: tuple[int, int, int] = (32, 48, 48)  # Must sum to head_dim
+    t_scale: float = 1000.0
     
     @property
     def in_channels(self) -> int:
@@ -119,30 +124,40 @@ class SwiGLU(nn.Module):
 
 
 class RoPEEmbedding(nn.Module):
-    """3D Rotary Position Embedding using ComfyUI's flux/math.py format.
+    """3D Rotary Position Embedding using ComfyUI's flux/math.py rotation-matrix format.
     
     This matches ComfyUI's EmbedND from comfy/ldm/flux/layers.py which is
-    used by NextDiT (Lumina2) models including Z Image.
+    also used by NextDiT-style diffusion transformers.
     
     The output is a rotation matrix of shape [B, 1, N, head_dim//2, 2, 2]
     that can be applied to Q/K tensors via the apply_rope function.
     """
     
-    def __init__(self, head_dim: int, theta: float = 10000.0, axes_dim: tuple = None):
+    def __init__(
+        self,
+        head_dim: int,
+        theta: float = 10000.0,
+        axes_dims: tuple[int, int, int] | None = None,
+    ):
         super().__init__()
         self.head_dim = head_dim
         self.theta = theta
-        # Default axes_dim for Z Image: split head_dim into 3 axes
-        # Z Image head_dim=128 -> 128/2=64 -> split as 16+24+24=64 approximately
-        # We'll use a simple even split if not provided
-        if axes_dim is None:
-            # Compute even split for 3 axes
-            half_dim = head_dim // 2
-            d0 = half_dim // 3 + (1 if half_dim % 3 > 0 else 0)
-            d1 = half_dim // 3 + (1 if half_dim % 3 > 1 else 0)  
-            d2 = half_dim - d0 - d1
-            axes_dim = (d0, d1, d2)
-        self.axes_dim = axes_dim
+        # axes_dims is specified in full head_dim units (must sum to head_dim),
+        # matching Hugging Face config keys ("axes_dims") and ComfyUI's EmbedND.
+        if axes_dims is None:
+            # Z Image Turbo default: 1/4 time axis, rest split across spatial axes.
+            # head_dim=128 -> (32, 48, 48)
+            time_dim = max(2, head_dim // 4)
+            time_dim -= time_dim % 2
+            spatial = (head_dim - time_dim) // 2
+            spatial -= spatial % 2
+            last = head_dim - time_dim - spatial
+            axes_dims = (time_dim, spatial, last)
+        if sum(int(v) for v in axes_dims) != int(head_dim):
+            raise ValueError(f"axes_dims must sum to head_dim={head_dim}; got {axes_dims}")
+        if any(int(v) % 2 != 0 for v in axes_dims):
+            raise ValueError(f"axes_dims entries must be even; got {axes_dims}")
+        self.axes_dims = tuple(int(v) for v in axes_dims)
     
     def _rope_single_axis(self, pos: torch.Tensor, dim: int) -> torch.Tensor:
         """Compute RoPE for a single axis.
@@ -157,13 +172,19 @@ class RoPEEmbedding(nn.Module):
         assert dim % 2 == 0
         device = pos.device
         
-        # Create frequency scale: linspace from 0 to (dim-2)/dim
-        scale = torch.linspace(0, (dim - 2) / dim, steps=dim // 2, 
-                               dtype=torch.float32, device=device)
-        omega = 1.0 / (self.theta ** scale)
+        # Match ComfyUI's flux/math.py numeric path: build omega in float64 for stability,
+        # then return float32 rotation matrices.
+        scale = torch.linspace(
+            0,
+            (dim - 2) / dim,
+            steps=dim // 2,
+            dtype=torch.float64,
+            device=device,
+        )
+        omega = 1.0 / (float(self.theta) ** scale)
         
         # [B, N] x [dim//2] -> [B, N, dim//2]
-        out = pos.unsqueeze(-1).float() * omega.unsqueeze(0).unsqueeze(0)
+        out = pos.unsqueeze(-1).to(dtype=torch.float32) * omega.unsqueeze(0).unsqueeze(0)
         
         # Build rotation matrix [cos, -sin; sin, cos]
         cos_out = torch.cos(out)
@@ -173,7 +194,7 @@ class RoPEEmbedding(nn.Module):
         stacked = torch.stack([cos_out, -sin_out, sin_out, cos_out], dim=-1)
         rot_matrix = stacked.view(*pos.shape, dim // 2, 2, 2)
         
-        return rot_matrix.float()
+        return rot_matrix.to(dtype=torch.float32)
     
     def forward(self, pos_ids: torch.Tensor) -> torch.Tensor:
         """Compute RoPE rotation matrices for 3D positions.
@@ -189,10 +210,10 @@ class RoPEEmbedding(nn.Module):
         
         # Compute rotation matrix for each axis and concatenate
         emb_list = []
-        for i in range(min(num_axes, len(self.axes_dim))):
+        for i in range(min(num_axes, len(self.axes_dims))):
             axis_pos = pos_ids[..., i]  # [B, N]
-            axis_dim = self.axes_dim[i] * 2  # Double because _rope_single_axis expects full dim
-            axis_emb = self._rope_single_axis(axis_pos, axis_dim)  # [B, N, dim_i, 2, 2]
+            axis_dim = self.axes_dims[i]
+            axis_emb = self._rope_single_axis(axis_pos, axis_dim)  # [B, N, dim_i//2, 2, 2]
             emb_list.append(axis_emb)
         
         # Concatenate along the dimension axis: [B, N, sum(axes_dim), 2, 2]
@@ -250,15 +271,25 @@ class Attention(nn.Module):
     Q/K/V are [B, N, H, D] during RoPE, then [B, H, N, D] for SDPA.
     """
     
-    def __init__(self, dim: int, num_heads: int, head_dim: int, eps: float = 1e-5, qkv_bias: bool = False, out_bias: bool = False):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        head_dim: int,
+        eps: float = 1e-5,
+        *,
+        qk_norm: bool = True,
+        qkv_bias: bool = False,
+        out_bias: bool = False,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.inner_dim = num_heads * head_dim
         
         self.qkv = nn.Linear(dim, self.inner_dim * 3, bias=qkv_bias)
-        self.q_norm = RMSNorm(head_dim, eps=eps)
-        self.k_norm = RMSNorm(head_dim, eps=eps)
+        self.q_norm = RMSNorm(head_dim, eps=eps) if qk_norm else nn.Identity()
+        self.k_norm = RMSNorm(head_dim, eps=eps) if qk_norm else nn.Identity()
         self.out = nn.Linear(self.inner_dim, dim, bias=out_bias)
     
     def forward(
@@ -325,7 +356,15 @@ class TransformerBlock(nn.Module):
         self.attention_norm2 = RMSNorm(hidden_dim, eps=eps)
         
         # Attention
-        self.attention = Attention(hidden_dim, num_heads, head_dim, eps=eps, qkv_bias=kwargs.get("qkv_bias", False), out_bias=kwargs.get("out_bias", False))
+        self.attention = Attention(
+            hidden_dim,
+            num_heads,
+            head_dim,
+            eps=eps,
+            qk_norm=bool(kwargs.get("qk_norm", True)),
+            qkv_bias=kwargs.get("qkv_bias", False),
+            out_bias=kwargs.get("out_bias", False),
+        )
         
         # FFN norms
         self.ffn_norm1 = RMSNorm(hidden_dim, eps=eps)
@@ -371,7 +410,15 @@ class RefinerBlock(nn.Module):
         super().__init__()
         self.attention_norm1 = RMSNorm(dim, eps=eps)
         self.attention_norm2 = RMSNorm(dim, eps=eps)
-        self.attention = Attention(dim, num_heads, head_dim, eps=eps, qkv_bias=kwargs.get("qkv_bias", False), out_bias=kwargs.get("out_bias", False))
+        self.attention = Attention(
+            dim,
+            num_heads,
+            head_dim,
+            eps=eps,
+            qk_norm=bool(kwargs.get("qk_norm", True)),
+            qkv_bias=kwargs.get("qkv_bias", False),
+            out_bias=kwargs.get("out_bias", False),
+        )
         self.ffn_norm1 = RMSNorm(dim, eps=eps)
         self.ffn_norm2 = RMSNorm(dim, eps=eps)
         self.feed_forward = SwiGLU(dim, mlp_hidden, bias=False)
@@ -409,7 +456,15 @@ class NoiseRefinerBlock(nn.Module):
         
         self.attention_norm1 = RMSNorm(dim, eps=eps)
         self.attention_norm2 = RMSNorm(dim, eps=eps)
-        self.attention = Attention(dim, num_heads, head_dim, eps=eps, qkv_bias=kwargs.get("qkv_bias", False), out_bias=kwargs.get("out_bias", False))
+        self.attention = Attention(
+            dim,
+            num_heads,
+            head_dim,
+            eps=eps,
+            qk_norm=bool(kwargs.get("qk_norm", True)),
+            qkv_bias=kwargs.get("qkv_bias", False),
+            out_bias=kwargs.get("out_bias", False),
+        )
         self.ffn_norm1 = RMSNorm(dim, eps=eps)
         self.ffn_norm2 = RMSNorm(dim, eps=eps)
         self.feed_forward = SwiGLU(dim, mlp_hidden, bias=False)
@@ -492,14 +547,42 @@ class ZImageTransformer2DModel(nn.Module):
         t_dim: int = 256,
         mlp_hidden: int = 10240,
         eps: float = 1e-5,
-        rope_theta: float = 256.0,  # Z Image uses 256.0, NOT 10000.0!
-        time_scale: float = 1000.0,  # Z Image uses 1000.0 timestep scaling
+        qk_norm: bool = True,
+        rope_theta: float = 256.0,
+        axes_dims: tuple[int, int, int] | None = None,
+        time_scale: float | None = None,
         config: Optional[ZImageConfig] = None,
         **kwargs,  # Ignore unknown HuggingFace config parameters
     ):
         super().__init__()
-        
-        # Create config from kwargs if not provided
+
+        # HuggingFace config compatibility: map common keys when present.
+        # We keep canonical names (hidden_dim/context_dim/...) internally.
+        if config is None:
+            hidden_dim = int(kwargs.pop("dim", hidden_dim))
+            context_dim = int(kwargs.pop("cap_feat_dim", context_dim))
+            latent_channels = int(kwargs.pop("in_channels", latent_channels))
+            if "all_patch_size" in kwargs and patch_size == 2:
+                raw_patch = kwargs.pop("all_patch_size")
+                if isinstance(raw_patch, (list, tuple)) and raw_patch:
+                    patch_size = int(raw_patch[0])
+            num_layers = int(kwargs.pop("n_layers", num_layers))
+            num_refiner_layers = int(kwargs.pop("n_refiner_layers", num_refiner_layers))
+            num_heads = int(kwargs.pop("n_heads", num_heads))
+            eps = float(kwargs.pop("norm_eps", eps))
+            qk_norm = bool(kwargs.pop("qk_norm", qk_norm))
+            if axes_dims is None and "axes_dims" in kwargs:
+                raw_axes = kwargs.pop("axes_dims")
+                if isinstance(raw_axes, (list, tuple)) and len(raw_axes) == 3:
+                    axes_dims = (int(raw_axes[0]), int(raw_axes[1]), int(raw_axes[2]))
+            if time_scale is None and "t_scale" in kwargs:
+                time_scale = float(kwargs.pop("t_scale"))
+
+        # HF config key is "t_scale"; default to 1000.0 for Z Image Turbo.
+        if time_scale is None:
+            time_scale = 1000.0
+
+        # Create config from resolved values if not provided
         if config is None:
             config = ZImageConfig(
                 hidden_dim=hidden_dim,
@@ -514,12 +597,14 @@ class ZImageTransformer2DModel(nn.Module):
                 mlp_hidden=mlp_hidden,
                 eps=eps,
                 rope_theta=rope_theta,
+                axes_dims=axes_dims or _DEFAULT_ZIMAGE_AXES_DIMS,
+                t_scale=float(time_scale),
+                qk_norm=qk_norm,
                 qkv_bias=qkv_bias,
                 out_bias=out_bias,
             )
-        # Store time_scale for timestep embedding
-        self.time_scale = time_scale
         self.config = config
+        self.time_scale = float(getattr(config, "t_scale", float(time_scale)))
         
         self.patch_size = config.patch_size
         self.hidden_dim = config.hidden_dim
@@ -541,21 +626,21 @@ class ZImageTransformer2DModel(nn.Module):
         self.x_pad_token = nn.Parameter(torch.zeros(1, config.hidden_dim))
         self.cap_pad_token = nn.Parameter(torch.zeros(1, config.hidden_dim))
         
-        # RoPE
-        self.rope = RoPEEmbedding(config.head_dim, config.rope_theta)
+        # RoPE (axes_dims must sum to head_dim)
+        self.rope = RoPEEmbedding(config.head_dim, config.rope_theta, axes_dims=getattr(config, "axes_dims", None))
         
         # Refiners use different hidden_dim (context_dim for context_refiner)
         # Actually, they share the same hidden_dim after embedding
         self.context_refiner = nn.ModuleList([
             RefinerBlock(config.hidden_dim, config.num_heads, config.head_dim, config.mlp_hidden, config.eps,
-                         qkv_bias=config.qkv_bias, out_bias=config.out_bias)
+                         qk_norm=config.qk_norm, qkv_bias=config.qkv_bias, out_bias=config.out_bias)
             for _ in range(config.num_refiner_layers)
         ])
         
         self.noise_refiner = nn.ModuleList([
             NoiseRefinerBlock(config.hidden_dim, config.num_heads, config.head_dim, 
                               config.mlp_hidden, config.t_dim, config.eps,
-                              qkv_bias=config.qkv_bias, out_bias=config.out_bias)
+                              qk_norm=config.qk_norm, qkv_bias=config.qkv_bias, out_bias=config.out_bias)
             for _ in range(config.num_refiner_layers)
         ])
         
@@ -570,6 +655,7 @@ class ZImageTransformer2DModel(nn.Module):
                 eps=config.eps,
                 qkv_bias=config.qkv_bias,
                 out_bias=config.out_bias,
+                qk_norm=config.qk_norm,
             )
             for _ in range(config.num_layers)
         ])
@@ -627,18 +713,18 @@ class ZImageTransformer2DModel(nn.Module):
     
     def _get_position_ids(self, cap_len: int, h_tokens: int, w_tokens: int, B: int, device: torch.device) -> torch.Tensor:
         total_len = cap_len + h_tokens * w_tokens
-        pos_ids = torch.zeros(B, total_len, 3, device=device)
+        pos_ids = torch.zeros(B, total_len, 3, device=device, dtype=torch.int32)
         
-        # Caption: time axis starts at 1.0 (ComfyUI line 519)
-        pos_ids[:, :cap_len, 0] = torch.arange(cap_len, device=device).float() + 1.0
+        # Caption tokens occupy the time axis [0..cap_len-1]
+        pos_ids[:, :cap_len, 0] = torch.arange(cap_len, device=device, dtype=torch.int32)
         
-        h_idx = torch.arange(h_tokens, device=device).view(-1, 1).repeat(1, w_tokens).flatten()
-        w_idx = torch.arange(w_tokens, device=device).view(1, -1).repeat(h_tokens, 1).flatten()
+        h_idx = torch.arange(h_tokens, device=device, dtype=torch.int32).view(-1, 1).repeat(1, w_tokens).flatten()
+        w_idx = torch.arange(w_tokens, device=device, dtype=torch.int32).view(1, -1).repeat(h_tokens, 1).flatten()
         
-        # Image: time axis = cap_len + 1 (ComfyUI line 538)
-        pos_ids[:, cap_len:, 0] = cap_len + 1
-        pos_ids[:, cap_len:, 1] = h_idx.float()
-        pos_ids[:, cap_len:, 2] = w_idx.float()
+        # Image tokens share a constant time axis = cap_len
+        pos_ids[:, cap_len:, 0] = int(cap_len)
+        pos_ids[:, cap_len:, 1] = h_idx
+        pos_ids[:, cap_len:, 2] = w_idx
         
         return pos_ids
     
@@ -663,9 +749,7 @@ class ZImageTransformer2DModel(nn.Module):
         
         # Timestep embedding
         # NextDiT/Lumina2 convention: invert timestep for flow matching
-        # ComfyUI uses time_scale=1.0 by default
         t_inv = 1.0 - timestep
-        # Apply time_scale before embedding (ComfyUI line 583)
         t_emb = self.t_embedder(t_inv * self.time_scale, dtype=x.dtype)
         
         # Caption embedding
@@ -781,7 +865,7 @@ def load_zimage_from_state_dict(
         mlp_hidden=mlp_hidden,
     )
     
-    model = ZImageTransformer2DModel(config)
+    model = ZImageTransformer2DModel(config=config)
     
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     

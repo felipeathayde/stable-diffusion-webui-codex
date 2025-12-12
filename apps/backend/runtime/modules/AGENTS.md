@@ -2,7 +2,7 @@
 <!-- tags: runtime, modules, k_prediction -->
 Date: 2025-11-10
 Owner: Runtime Maintainers
-Last Review: 2025-11-10
+Last Review: 2025-12-12
 Status: Active
 
 ## Purpose
@@ -22,3 +22,4 @@ Status: Active
 
 ## Logging
 - Logger `backend.runtime.k_model` em nível DEBUG registra shapes de `x`, `t`, `context` e `y` antes do forward do UNet.
+- 2025-12-12: Added opt-in deep logs for Z Image via `CODEX_ZIMAGE_DEBUG=1` / `CODEX_ZIMAGE_DEBUG_APPLY_MODEL=1` (KModel.apply_model tensor stats + forwarded extra cond keys).

@@ -3,6 +3,7 @@
 # Copyright Codex 2024
 
 
+import os
 import torch
 import math
 import collections
@@ -17,6 +18,26 @@ from apps.backend.runtime.ops import cleanup_cache
 logger = logging.getLogger("backend.runtime.sampling")
 from .condition import Condition, compile_conditions, compile_weighted_conditions
 from apps.backend.infra.config.args import dynamic_args, args
+
+_TRUE = {"1", "true", "yes", "on"}
+_ZIMAGE_SAMPLING_DEBUG_COUNT = 0
+
+
+def _env_flag(name: str) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in _TRUE
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return int(default)
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return int(default)
 
 
 def get_area_and_mult(conds, x_in, timestep_in):
@@ -326,6 +347,34 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
         model, cond, uncond_, x, timestep, model_options = fn(model, cond, uncond_, x, timestep, model_options)
 
     cond_pred, uncond_pred = calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+
+    # Optional deep diagnostics for flow models (Z Image/Flux): log CFG routing and tensor norms.
+    global _ZIMAGE_SAMPLING_DEBUG_COUNT
+    debug_enabled = _env_flag("CODEX_ZIMAGE_DEBUG") or _env_flag("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER")
+    debug_limit = max(0, _env_int("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER_N", 3))
+    if debug_enabled and _ZIMAGE_SAMPLING_DEBUG_COUNT < debug_limit:
+        try:
+            sigma0 = float(timestep.detach().view(-1)[0].item()) if isinstance(timestep, torch.Tensor) else float(timestep)
+        except Exception:
+            sigma0 = float("nan")
+        try:
+            cond_norm = float(cond_pred.detach().float().norm().item()) if isinstance(cond_pred, torch.Tensor) else float("nan")
+        except Exception:
+            cond_norm = float("nan")
+        try:
+            uncond_norm = float(uncond_pred.detach().float().norm().item()) if isinstance(uncond_pred, torch.Tensor) else float("nan")
+        except Exception:
+            uncond_norm = float("nan")
+        logger.info(
+            "[zimage-debug] sampling_inner sigma=%.6g cond_scale=%.4g edit_strength=%.4g uncond_present=%s cond_norm=%.6g uncond_norm=%.6g",
+            sigma0,
+            float(cond_scale),
+            float(edit_strength),
+            uncond_ is not None,
+            cond_norm,
+            uncond_norm,
+        )
+        _ZIMAGE_SAMPLING_DEBUG_COUNT += 1
 
     # Distilled / turbo models may omit unconditional conditioning entirely.
     # In that case, skip CFG math and return the conditional prediction as-is.

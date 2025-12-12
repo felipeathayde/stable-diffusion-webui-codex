@@ -1,5 +1,6 @@
 import torch
 import logging
+import os
 
 from apps.backend.runtime import attention
 from apps.backend.runtime.memory import memory_management
@@ -7,6 +8,39 @@ from apps.backend.runtime.modules.k_prediction import k_prediction_from_diffuser
 
 
 logger = logging.getLogger("backend.runtime.k_model")
+
+_TRUE = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in _TRUE
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return int(default)
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return int(default)
+
+
+def _tensor_stats(label: str, tensor: torch.Tensor | None) -> str:
+    if tensor is None or not torch.is_tensor(tensor):
+        return f"{label}=<none>"
+    with torch.no_grad():
+        data = tensor.detach()
+        stats = data.float()
+        return (
+            f"{label}:shape={tuple(data.shape)} dtype={data.dtype} dev={data.device} "
+            f"min={float(stats.min().item()):.6g} max={float(stats.max().item()):.6g} "
+            f"mean={float(stats.mean().item()):.6g} std={float(stats.std(unbiased=False).item()):.6g} "
+            f"norm={float(stats.norm().item()):.6g}"
+        )
 
 
 class KModel(torch.nn.Module):
@@ -28,6 +62,10 @@ class KModel(torch.nn.Module):
             self.predictor = k_predictor
 
     def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
+        debug_enabled = _env_flag("CODEX_ZIMAGE_DEBUG") or _env_flag("CODEX_ZIMAGE_DEBUG_APPLY_MODEL")
+        debug_limit = max(0, _env_int("CODEX_ZIMAGE_DEBUG_APPLY_MODEL_N", 3))
+        debug_count = int(getattr(self, "_codex_apply_model_debug_count", 0) or 0)
+
         sigma = t
         xc = self.predictor.calculate_input(sigma, x)
         if c_concat is not None:
@@ -46,6 +84,43 @@ class KModel(torch.nn.Module):
                 if extra.dtype != torch.int and extra.dtype != torch.long:
                     extra = extra.to(dtype)
             extra_conds[o] = extra
+
+        if debug_enabled and debug_count < debug_limit:
+            try:
+                sigma0 = float(sigma.detach().view(-1)[0].item()) if torch.is_tensor(sigma) else float(sigma)
+            except Exception:
+                sigma0 = float("nan")
+            cond_flags = transformer_options.get("cond_or_uncond") if isinstance(transformer_options, dict) else None
+            if isinstance(cond_flags, (list, tuple)):
+                cond_count = sum(1 for v in cond_flags if int(v) == 0)
+                uncond_count = len(cond_flags) - cond_count
+                cond_summary = f"cond={cond_count} uncond={uncond_count}"
+            else:
+                cond_summary = "n/a"
+
+            extras_keys = sorted(str(k) for k in extra_conds.keys())
+            logger.info(
+                "[zimage-debug] apply_model sigma=%.6g pred=%s extras=%s cond_or_uncond=%s",
+                sigma0,
+                getattr(self.predictor, "prediction_type", None),
+                extras_keys,
+                cond_summary,
+            )
+            logger.info("[zimage-debug] %s", _tensor_stats("x", x))
+            logger.info("[zimage-debug] %s", _tensor_stats("xc", xc))
+            logger.info("[zimage-debug] %s", _tensor_stats("context", context))
+            if isinstance(extra_conds.get("y"), torch.Tensor):
+                logger.info("[zimage-debug] %s", _tensor_stats("y", extra_conds.get("y")))
+            if isinstance(extra_conds.get("guidance"), torch.Tensor):
+                logger.info("[zimage-debug] %s", _tensor_stats("guidance", extra_conds.get("guidance")))
+            # transformer_options often carries sigma/cond flags; keep it compact.
+            if isinstance(transformer_options, dict):
+                try:
+                    keys = sorted(str(k) for k in transformer_options.keys())
+                    logger.info("[zimage-debug] transformer_options keys=%s", keys)
+                except Exception:
+                    pass
+            setattr(self, "_codex_apply_model_debug_count", debug_count + 1)
 
         # Invariants: context and optional y must be consistent with diffusion model config
         if not isinstance(context, torch.Tensor) or context.ndim != 3:
@@ -107,6 +182,9 @@ class KModel(torch.nn.Module):
         model_output = self.diffusion_model(
             xc, t, context=context, control=control, transformer_options=transformer_options, **extra_conds
         ).float()
+
+        if debug_enabled and debug_count < debug_limit:
+            logger.info("[zimage-debug] %s", _tensor_stats("model_output", model_output))
         return self.predictor.calculate_denoised(sigma, model_output, x)
 
     def memory_required(self, input_shape):

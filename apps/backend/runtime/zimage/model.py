@@ -26,6 +26,8 @@ import torch.nn.functional as F
 
 logger = logging.getLogger("backend.runtime.zimage.model")
 
+from .debug import env_flag, env_int, tensor_stats
+
 _DEFAULT_ZIMAGE_AXES_DIMS: tuple[int, int, int] = (32, 48, 48)
 
 # =============================================================================
@@ -665,6 +667,23 @@ class ZImageTransformer2DModel(nn.Module):
         self.final_layer = FinalLayer(config.hidden_dim, config.t_dim, out_dim, config.eps)
         
         self.cnt = 0
+
+        if env_flag("CODEX_ZIMAGE_DEBUG_CONFIG", False):
+            logger.info(
+                "[zimage-debug] core_config dim=%d context_dim=%d latent_channels=%d patch=%d layers=%d refiners=%d heads=%d head_dim=%d qk_norm=%s rope_theta=%s axes_dims=%s t_scale=%s",
+                int(config.hidden_dim),
+                int(config.context_dim),
+                int(config.latent_channels),
+                int(config.patch_size),
+                int(config.num_layers),
+                int(config.num_refiner_layers),
+                int(config.num_heads),
+                int(config.head_dim),
+                bool(config.qk_norm),
+                str(config.rope_theta),
+                str(getattr(config, "axes_dims", None)),
+                str(getattr(config, "t_scale", None)),
+            )
     
     def _patchify(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple[int, int]]:
         B, C, H, W = x.shape
@@ -755,14 +774,20 @@ class ZImageTransformer2DModel(nn.Module):
         # Caption embedding
         cap_feats = self.cap_embedder(context)
         
+        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_STEPS", 3)
+        debug_verbose = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False)
+        debug_layers = env_flag("CODEX_ZIMAGE_DEBUG_LAYERS", False)
+        debug_step = int(self.cnt)
+
         # DEBUG LOGS
-        if self.cnt < 3: # Only log first few steps
+        if debug_step < debug_limit:  # Only log first few steps
             logger.info(f"[zimage-debug] timestep (sigma): {timestep[0]:.4f}")
             logger.info(f"[zimage-debug] t_inv (1-sigma): {t_inv[0]:.4f}")
             logger.info(f"[zimage-debug] t_emb={t_emb[0, :8]}... range=[{t_emb.min():.2f}, {t_emb.max():.2f}]")
             logger.info(f"[zimage-debug] img_patches range=[{img_patches.min():.2f}, {img_patches.max():.2f}] mean={img_patches.mean():.4f}")
             logger.info(f"[zimage-debug] cap_feats range=[{cap_feats.min():.2f}, {cap_feats.max():.2f}] mean={cap_feats.mean():.4f}")
-            self.cnt += 1
+            if debug_verbose:
+                logger.info("[zimage-debug] forward.kwargs keys=%s", sorted(str(k) for k in kwargs.keys()))
             
         cap_len = cap_feats.shape[1]
         
@@ -772,21 +797,34 @@ class ZImageTransformer2DModel(nn.Module):
         w_tokens = (img_size[1] + self.patch_size - 1) // self.patch_size
         pos_ids = self._get_position_ids(cap_len, h_tokens, w_tokens, B, x.device)
         freqs = self.rope(pos_ids)
+        if debug_layers and debug_step < debug_limit:
+            tensor_stats(logger, "rope.pos_ids", pos_ids)
+            # freqs is large but bounded; stats help spot dtype/device mismatches.
+            tensor_stats(logger, "rope.freqs", freqs)
         
         # Refiners
         # freqs is now [B, 1, N, D//2, 2, 2], slice on dimension 2 (N)
         for layer in self.context_refiner:
             cap_feats = layer(cap_feats, None, freqs[:, :, :cap_len])
+        if debug_layers and debug_step < debug_limit:
+            tensor_stats(logger, "after.context_refiner", cap_feats)
         
         for layer in self.noise_refiner:
             img_patches = layer(img_patches, None, freqs[:, :, cap_len:], t_emb)
+        if debug_layers and debug_step < debug_limit:
+            tensor_stats(logger, "after.noise_refiner", img_patches)
         
         # Concatenate
         full_seq = torch.cat([cap_feats, img_patches], dim=1)
+        if debug_layers and debug_step < debug_limit:
+            tensor_stats(logger, "full_seq", full_seq)
         
         # Main transformer
-        for layer in self.layers:
+        layer_every = max(1, env_int("CODEX_ZIMAGE_DEBUG_LAYER_EVERY", 10))
+        for idx, layer in enumerate(self.layers):
             full_seq = layer(full_seq, None, freqs, t_emb)
+            if debug_layers and debug_step < debug_limit and ((idx == 0) or ((idx + 1) % layer_every == 0) or ((idx + 1) == len(self.layers))):
+                tensor_stats(logger, f"layer.{idx+1:02d}.full_seq", full_seq)
         
         # Final projection
         output = self.final_layer(full_seq, t_emb)
@@ -796,13 +834,15 @@ class ZImageTransformer2DModel(nn.Module):
             output = output.unsqueeze(2)
         
         # DEBUG: Log output statistics before negation
-        if self.cnt < 3:
+        if debug_step < debug_limit:
             logger.info(f"[zimage-debug] output BEFORE negation: range=[{output.min():.4f}, {output.max():.4f}] mean={output.mean():.4f} norm={output.norm():.2f}")
         
         result = -output  # Velocity conversion (negative velocity for flow matching)
         
-        if self.cnt < 3:
+        if debug_step < debug_limit:
             logger.info(f"[zimage-debug] output AFTER negation: range=[{result.min():.4f}, {result.max():.4f}] mean={result.mean():.4f} norm={result.norm():.2f}")
+
+        self.cnt = debug_step + 1
         
         return result
 

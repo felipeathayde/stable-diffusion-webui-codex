@@ -15,6 +15,7 @@ import torch.nn as nn
 
 logger = logging.getLogger("backend.runtime.zimage.text_encoder")
 
+from .debug import env_flag, env_int, find_indices, summarize_ints, tensor_stats, truncate_text
 
 # Chat template for Qwen3 (matches ComfyUI z_image.py)
 QWEN3_TEMPLATE = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
@@ -230,8 +231,25 @@ class ZImageTextEncoder(nn.Module):
         if self._tokenizer is None:
             self.load_tokenizer()
         
+        debug_text = env_flag("CODEX_ZIMAGE_DEBUG_TENC_TEXT", False)
+        debug_tokens = env_flag("CODEX_ZIMAGE_DEBUG_TENC_TOKENS", False)
+        debug_decode = env_flag("CODEX_ZIMAGE_DEBUG_TENC_DECODE", False)
+        text_max = env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)
+
+        # Match ComfyUI behavior: if the user already provided a chat template,
+        # do not wrap again.
         if apply_template:
-            texts = [QWEN3_TEMPLATE.format(t) for t in texts]
+            wrapped: list[str] = []
+            for raw in texts:
+                s = str(raw)
+                if s.startswith("<|im_start|>") or s.startswith("<|start_header_id|>"):
+                    wrapped.append(s)
+                else:
+                    wrapped.append(QWEN3_TEMPLATE.format(s))
+            texts = wrapped
+
+        if debug_text and texts:
+            logger.info("[zimage-debug] tenc.tokenize apply_template=%s text0=%s", apply_template, truncate_text(texts[0], limit=text_max))
         
         tokens = self._tokenizer(
             texts,
@@ -240,6 +258,37 @@ class ZImageTextEncoder(nn.Module):
             max_length=max_length,
             return_tensors="pt",
         )
+
+        if debug_tokens and "input_ids" in tokens:
+            try:
+                ids0 = tokens["input_ids"][0].tolist()
+                pad_id = getattr(self._tokenizer, "pad_token_id", None)
+                logger.info(
+                    "[zimage-debug] tenc.tokens shape=%s pad_id=%s ids=%s",
+                    tuple(tokens["input_ids"].shape),
+                    str(pad_id),
+                    summarize_ints([int(v) for v in ids0], window=12),
+                )
+                # Common Qwen token ids (observed in ComfyUI Qwen tokenizer): im_start=151644, im_end=151645.
+                # We log indices to help compare template slicing logic.
+                for name, tok in (("im_start", 151644), ("im_end", 151645)):
+                    idxs = find_indices([int(v) for v in ids0], tok, limit=8)
+                    if idxs:
+                        logger.info("[zimage-debug] tenc.tokens %s=%d idx=%s", name, tok, idxs)
+                if isinstance(pad_id, int):
+                    pad_idxs = find_indices([int(v) for v in ids0], int(pad_id), limit=8)
+                    if pad_idxs:
+                        logger.info("[zimage-debug] tenc.tokens pad idx=%s", pad_idxs)
+            except Exception:
+                logger.exception("[zimage-debug] failed to summarize token ids")
+
+        if debug_decode and "input_ids" in tokens:
+            try:
+                ids0 = tokens["input_ids"][0].tolist()
+                decoded = self._tokenizer.decode(ids0)
+                logger.info("[zimage-debug] tenc.decode text0=%s", truncate_text(decoded, limit=text_max))
+            except Exception:
+                logger.exception("[zimage-debug] failed to decode token ids")
         
         return {
             "input_ids": tokens["input_ids"].to(self.device),
@@ -264,19 +313,40 @@ class ZImageTextEncoder(nn.Module):
             Text embeddings [B, L, hidden_size].
         """
         tokens = self.tokenize(texts, max_length, apply_template)
+
+        debug_run = env_flag("CODEX_ZIMAGE_DEBUG_TENC_RUN", False)
+        if debug_run:
+            tensor_stats(logger, "tenc.input_ids", tokens.get("input_ids"))
+            tensor_stats(logger, "tenc.attention_mask", tokens.get("attention_mask"))
         
         # Check if this is our native Qwen3_4B model or a HuggingFace model
         # Native Qwen3_4B returns (hidden_states, intermediate) tuple
         # HuggingFace models return an object with .hidden_states attribute
         is_native_model = hasattr(self.model, 'load_sd')  # Native Qwen3_4B has load_sd method
+
+        layer_idx = self.layer_idx
+        layer_override = os.getenv("CODEX_ZIMAGE_QWEN_LAYER_IDX")
+        if layer_override is not None:
+            try:
+                layer_idx = int(str(layer_override).strip())
+            except Exception:
+                layer_idx = self.layer_idx
+        final_norm = env_flag("CODEX_ZIMAGE_QWEN_FINAL_NORM_INTERMEDIATE", True)
+        if debug_run:
+            logger.info(
+                "[zimage-debug] tenc.encode native=%s layer_idx=%s final_norm_intermediate=%s",
+                bool(is_native_model),
+                str(layer_idx),
+                bool(final_norm),
+            )
         
         if is_native_model:
             # Native Qwen3_4B: use intermediate_output to get second-to-last layer
             hidden_states, intermediate = self.model(
                 input_ids=tokens["input_ids"],
                 attention_mask=tokens["attention_mask"],
-                intermediate_output=self.layer_idx,  # -2 = second-to-last layer
-                final_layer_norm_intermediate=True,
+                intermediate_output=layer_idx,  # -2 = second-to-last layer (default)
+                final_layer_norm_intermediate=bool(final_norm),
             )
             # intermediate contains the second-to-last layer output (with final norm applied)
             hidden = intermediate if intermediate is not None else hidden_states
@@ -288,7 +358,10 @@ class ZImageTextEncoder(nn.Module):
                 output_hidden_states=True,
             )
             # Use second-to-last layer (like CLIP)
-            hidden = outputs.hidden_states[self.layer_idx]
+            hidden = outputs.hidden_states[layer_idx]
+
+        if debug_run:
+            tensor_stats(logger, "tenc.hidden", hidden)
         
         return hidden.to(self.dtype)
     

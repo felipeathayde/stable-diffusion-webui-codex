@@ -14,10 +14,20 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.runtime.zimage.debug import env_flag, env_int, truncate_text
 
 from .spec import ZIMAGE_SPEC, ZImageEngineRuntime, assemble_zimage_runtime
 
 logger = logging.getLogger("backend.engines.zimage.zimage")
+
+
+class _ZImagePromptList(list[str]):
+    """List-like prompt wrapper used to carry per-run metadata."""
+
+    def __init__(self, items: list[str], *, distilled_cfg_scale: float, is_negative_prompt: bool) -> None:
+        super().__init__(items)
+        self.distilled_cfg_scale = float(distilled_cfg_scale)
+        self.is_negative_prompt = bool(is_negative_prompt)
 
 
 class ZImageEngine(CodexDiffusionEngine):
@@ -95,6 +105,22 @@ class ZImageEngine(CodexDiffusionEngine):
         # Z Image doesn't use CLIP
         pass
 
+    def _prepare_prompt_wrappers(
+        self,
+        texts: list[str],
+        proc: Any,
+        *,
+        is_negative: bool,
+    ) -> _ZImagePromptList:
+        distilled = getattr(proc, "distilled_guidance_scale", None)
+        if distilled is None:
+            distilled = getattr(proc, "distilled_cfg", None)
+        try:
+            distilled_value = float(distilled) if distilled is not None else float(ZIMAGE_SPEC.default_cfg_scale)
+        except Exception:
+            distilled_value = float(ZIMAGE_SPEC.default_cfg_scale)
+        return _ZImagePromptList([str(t or "") for t in texts], distilled_cfg_scale=distilled_value, is_negative_prompt=is_negative)
+
     @torch.inference_mode()
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
@@ -104,10 +130,19 @@ class ZImageEngine(CodexDiffusionEngine):
         memory_management.load_model_gpu(runtime.clip.patcher)
         unload_clip = self.smart_offload_enabled
         
-        # Lumina 2 / Z Image conditioning format
-        # System prompt + <Prompt Start> + User Prompt
-        system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts."
+        # Lumina 2 / Z Image conditioning format (historical; keep for now).
+        # Note: tokenizer applies the Qwen3 chat template separately unless the prompt
+        # already begins with '<|im_start|>'.
+        system_prompt = (
+            "You are an assistant designed to generate superior images with the superior degree of image-text alignment "
+            "based on textual prompts or user prompts."
+        )
         formatted_prompts = [f"{system_prompt} <Prompt Start> {p}" for p in prompts]
+        if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False) and formatted_prompts:
+            logger.info(
+                "[zimage-debug] prompt0=%s",
+                truncate_text(formatted_prompts[0], limit=env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)),
+            )
         
         try:
             cond = runtime.text.qwen3_text(formatted_prompts)
@@ -122,13 +157,10 @@ class ZImageEngine(CodexDiffusionEngine):
         vector = torch.zeros(batch_size, 768, dtype=cond.dtype, device=cond.device)
         
         # Distilled CFG guidance (Z Image uses distilled guidance like Flux)
-        ref = prompts[0] if prompts else prompts
-        distilled_cfg = getattr(
-            ref,
-            "distilled_cfg_scale",
-            getattr(prompts, "distilled_cfg_scale", ZIMAGE_SPEC.default_cfg_scale),
-        ) or ZIMAGE_SPEC.default_cfg_scale
+        distilled_cfg = getattr(prompts, "distilled_cfg_scale", ZIMAGE_SPEC.default_cfg_scale) or ZIMAGE_SPEC.default_cfg_scale
         guidance = torch.full((batch_size,), float(distilled_cfg), dtype=torch.float32)
+        if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False):
+            logger.info("[zimage-debug] distilled_cfg_scale=%.3f", float(distilled_cfg))
         
         return {
             "crossattn": cond,

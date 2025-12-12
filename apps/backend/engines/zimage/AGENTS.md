@@ -19,4 +19,5 @@ Status: Active
 ## Notes / Decisions
 - **Distilled CFG:** Turbo models run single-branch conditioning (`use_distilled_cfg_scale=True`); negative prompts are ignored by design.
 - **VAE normalization:** decode must apply `vae.first_stage_model.process_out(latents)` before `vae.decode(...)` (Flux/Z-Image latent format).
-
+- **Prompt wrappers:** `ZImageEngine._prepare_prompt_wrappers(...)` attaches `distilled_cfg_scale` to the prompt list from `processing.distilled_guidance_scale` so the UI “guidance” slider can be propagated into conditioning logs (and any future guidance embedding usage).
+- **Debugging:** set `CODEX_ZIMAGE_DEBUG_PROMPT=1` to log the formatted prompt string and `distilled_cfg_scale` used for the run.

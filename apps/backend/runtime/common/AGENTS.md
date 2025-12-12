@@ -1,7 +1,7 @@
 # apps/backend/runtime/common Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-12-12
 Status: Active
 
 ## Purpose
@@ -13,3 +13,4 @@ Status: Active
 ## Notes
 - Add reusable building blocks here to avoid duplication across model-specific runtimes.
 - `vae.py` normalises Flow16 VAE safetensors by stripping common prefixes, reusing SDXL/Flux LDM→diffusers key conversion for Z Image, and fails fast on incompatible (non‑16‑channel) VAEs to avoid noisy decodes.
+  - Flow16 config parity: includes `use_quant_conv=false` / `use_post_quant_conv=false` (HF Flux/Z-Image configs) so missing quant conv weights do not trigger false drift warnings.

@@ -1,3 +1,11 @@
+**Wrong command:** `sed -n '1,260p' apps/backend/use_cases/txt2img_pipeline.py`
+**Cause + fix:** `Txt2img pipeline is a package directory under apps/backend/use_cases/txt2img_pipeline/; the runner lives at runner.py. List the directory before assuming a flat file path.`
+**Correct command:** `ls -la apps/backend/use_cases/txt2img_pipeline && sed -n '1,260p' apps/backend/use_cases/txt2img_pipeline/runner.py`
+
+**Wrong command:** `find apps -name AGENTS.md -maxdepth 4 | sort`
+**Cause + fix:** `find global options like -maxdepth must appear before the test expressions; placing it after -name triggers warnings and can change behavior.`
+**Correct command:** `find apps -maxdepth 4 -name AGENTS.md | sort`
+
 **Wrong command:** `python -m pytest tests/test_backend_import_lightweight.py`
 **Cause + fix:** `Pytest is not installed in the current environment; install pytest (preferably in the active venv) before running the test suite.`
 **Correct command:** `python -m pip install pytest && python -m pytest tests/test_backend_import_lightweight.py`
@@ -531,3 +539,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=
 **Wrong command:** `npm install --save-dev vitest --cache $HOME/.npm-cache`
 **Cause + fix:** The fallback cache path `~/.npm-cache` was also root-owned; use a fresh cache directory under `.codextools` instead.
 **Correct command:** `npm install --save-dev vitest --cache /home/lucas/.codextools/npm-cache`
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -ლა .sangoi/task-logs | sed -n '1,120p'
+Cause and fix: The `-l` flag was typed with a non-ASCII character (likely a locale/encoding artifact), so `ls` interpreted it as an invalid option. Use plain ASCII flags (e.g. `-la`) or `ls --help` to confirm supported options.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la .sangoi/task-logs | head -n 80

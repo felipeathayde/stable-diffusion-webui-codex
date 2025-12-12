@@ -19,6 +19,12 @@ logger = logging.getLogger("backend.runtime.common.vae")
 
 
 # Configuration for 16-channel flow-based VAE (used by Flux, Z Image)
+# NOTE: Flow16 VAE config mirrors the canonical diffusers configs shipped for:
+# - `apps/backend/huggingface/black-forest-labs/FLUX.1-dev/vae/config.json`
+# - `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/vae/config.json`
+#
+# In particular: these VAEs disable quant/post-quant convs (`use_quant_conv=false`)
+# so the weight files may legitimately omit `quant_conv.*` and `post_quant_conv.*`.
 FLOW16_VAE_CONFIG = {
     "act_fn": "silu",
     "block_out_channels": [128, 256, 512, 512],
@@ -28,9 +34,13 @@ FLOW16_VAE_CONFIG = {
         "DownEncoderBlock2D",
         "DownEncoderBlock2D",
     ],
+    "force_upcast": True,
     "in_channels": 3,
     "latent_channels": 16,  # 16-channel latent space
+    "latents_mean": None,
+    "latents_std": None,
     "layers_per_block": 2,
+    "mid_block_add_attention": True,
     "norm_num_groups": 32,
     "out_channels": 3,
     "sample_size": 1024,
@@ -42,6 +52,8 @@ FLOW16_VAE_CONFIG = {
         "UpDecoderBlock2D",
         "UpDecoderBlock2D",
     ],
+    "use_post_quant_conv": False,
+    "use_quant_conv": False,
 }
 
 
@@ -129,9 +141,9 @@ def load_flow16_vae(
             missing, unexpected = vae.load_state_dict(state_dict, strict=False)
             
             if missing:
-                logger.warning("VAE missing keys: %s", missing[:5])
+                logger.warning("VAE missing keys (%d): %s", len(missing), missing[:5])
             if unexpected:
-                logger.debug("VAE unexpected keys: %s", unexpected[:5])
+                logger.debug("VAE unexpected keys (%d): %s", len(unexpected), unexpected[:5])
 
             # Fail loudly if this is not actually a Flow16 VAE.
             # A mismatched 4‑channel VAE will otherwise decode pure noise.

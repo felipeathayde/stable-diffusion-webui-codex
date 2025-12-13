@@ -23,12 +23,13 @@
 
 **Remaining Issue:**
 - If output still looks noisy, inspect the sigma ladder near the tail (large last-step drops can destabilize very low-step runs).
-  - Quick sanity: `python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 8 --scheduler simple --mu 3 --pseudo-timestep-range 1000` should report `predict_min≈0.003` (not `≈0.0003` from a 10k ladder).
+  - Diffusers `ZImagePipeline` recommends `num_inference_steps=9` for Turbo (≈8 effective updates; last `dt=0`).
+  - Quick sanity: `python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 9 --scheduler simple --mu 3 --pseudo-timestep-range 1000` should end with `..., 0.5, 0.3, 0, 0`.
 
 ### 🧪 RECOMMENDED TESTS
 
 **Test 1: More Steps (Recommended)**
-- Use 20 steps instead of 8
+- Use 20 steps instead of 9
 - This will create smoother sigma transitions
 - Should eliminate the large jump problem
 
@@ -44,7 +45,7 @@
 
 **Option A: Via UI**
 1. Keep same prompt and settings
-2. Change steps from 8 to 20
+2. Change steps from 9 to 20
 3. Generate zimage_9
 
 **Option B: Test Script**
@@ -60,7 +61,7 @@ sys.path.insert(0, '.')
 
 **Option C: Sigma Ladder Sanity (no models required)**
 ```powershell
-python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 8 --scheduler simple --mu 3 --pseudo-timestep-range 1000
+python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 9 --scheduler simple --mu 3 --pseudo-timestep-range 1000
 ```
 
 ### 🎯 EXPECTED OUTCOME

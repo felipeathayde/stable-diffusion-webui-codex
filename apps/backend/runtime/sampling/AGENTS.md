@@ -25,7 +25,7 @@
 - Karras Sigmas: Euler in diffusers typically uses Karras sigmas when enabled. We intentionally reuse the Karras schedule for `EULER_DISCRETE`. The integrator determines ODE vs ancestral behavior.
 - Simple schedule: `SIMPLE` is predictor-aware and always appends a terminal 0.
   - Default path mirrors Forge's `simple_scheduler`, sampling directly from the predictor's `sigmas` ladder (highest-to-lowest).
-  - Z Image Turbo parity: when the predictor is `FlowMatchEulerPrediction(pseudo_timestep_range=1000)` we instead mirror diffusers `FlowMatchEulerDiscreteScheduler.set_timesteps` (linear-in-sigma then apply shift again). This matches the expected tail sigma for 8-step runs.
+  - Z Image Turbo parity: when the predictor is `FlowMatchEulerPrediction(pseudo_timestep_range=1000)` we mirror diffusers `ZImagePipeline` behavior: force `sigma_min=0.0`, use a base `linspace(1→0)` ladder, apply `shift` once, and append terminal 0 (double-zero tail). Default `steps=9` yields ~8 effective updates (last `dt=0`).
 - Precision guardrails: `driver.py` observes UNet outputs for NaNs and escalates precision via `memory_management.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 - Diagnostics: set `CODEX_LOG_SAMPLER=1` to log sampler setup and per-step norms; set `CODEX_LOG_SIGMAS=1` to dump the sigma ladder (first/last and a compact summary) for schedule comparisons.
 - 2025-12-12: Added opt-in deep logs for flow debugging: `CODEX_ZIMAGE_DEBUG=1` / `CODEX_ZIMAGE_DEBUG_SAMPLING_INNER=1` prints CFG routing + cond/uncond norms for the first few inner-loop calls.

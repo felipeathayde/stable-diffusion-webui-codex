@@ -129,11 +129,13 @@ def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.devi
     - Append a terminal 0 as the last sigma.
     """
     # Special case: FlowMatchEulerPrediction (Z Image Turbo) expects the diffusers
-    # FlowMatchEulerDiscreteScheduler stepping schedule. Diffusers builds a linear
-    # ramp in *sigma space* from sigma_max→sigma_min, then applies the shift
-    # transform again (and appends a terminal 0). For Z Image this produces a
-    # notably different tail sigma (e.g. 8 steps ends at ~0.00893 rather than
-    # the predictor sigma_min ~0.00299), and the wrong tail destabilizes samples.
+    # `ZImagePipeline` schedule shape:
+    # - The pipeline sets `scheduler.sigma_min = 0.0` and calls `set_timesteps(N)`.
+    # - This yields base sigmas linearly spaced from 1.0 -> 0.0 (inclusive),
+    #   then applies the `shift` transform once (and appends a terminal 0).
+    # - Because 0.0 is already present as the final inference sigma, the schedule
+    #   ends with a double-zero tail (dt=0 for the last step). This matches the
+    #   upstream recommendation `num_inference_steps=9` to get 8 effective steps.
     mu = getattr(predictor, "mu", None)
     pseudo = getattr(predictor, "pseudo_timestep_range", None)
     if mu is not None and int(pseudo or 0) == 1000:
@@ -141,11 +143,12 @@ def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.devi
             mu_value = float(mu)
         except Exception:  # noqa: BLE001 - defensive
             mu_value = 0.0
-        if mu_value > 0.0 and mu_value != 1.0:
-            sigma_min = float(getattr(predictor, "sigma_min"))
-            sigma_max = float(getattr(predictor, "sigma_max"))
-            base = torch.linspace(sigma_max, sigma_min, int(steps), device=device, dtype=dtype)
-            shifted = mu_value * base / (1.0 + (mu_value - 1.0) * base)
+        if mu_value > 0.0:
+            base = torch.linspace(1.0, 0.0, int(steps), device=device, dtype=dtype)
+            if mu_value == 1.0:
+                shifted = base
+            else:
+                shifted = mu_value * base / (1.0 + (mu_value - 1.0) * base)
             return _append_zero(shifted, device=device, dtype=dtype)
 
     base_sigmas = getattr(predictor, "sigmas", None)

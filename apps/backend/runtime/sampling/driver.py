@@ -274,6 +274,14 @@ class CodexSampler:
                 raise ValueError(f"noise must be BCHW; got shape={tuple(noise.shape)}")
 
             target_dtype = memory_management.core_dtype()
+            # Diffusers flow pipelines (Flux/Z-Image) keep latents in fp32 for the
+            # scheduler integration even when the core runs in bf16/fp16. Keeping
+            # x/eps in low precision can destabilize the tail and produce "noise soup".
+            pred_type = getattr(getattr(model, "predictor", None), "prediction_type", None)
+            if isinstance(pred_type, str) and pred_type.lower() == "const":
+                if target_dtype in (torch.float16, torch.bfloat16):
+                    self._logger.info("[flow] Forcing sampling latents to float32 (was %s)", str(target_dtype))
+                target_dtype = torch.float32
             noise = base_noise.to(dtype=target_dtype)
 
             if init_latent is not None and init_latent.dtype != noise.dtype:

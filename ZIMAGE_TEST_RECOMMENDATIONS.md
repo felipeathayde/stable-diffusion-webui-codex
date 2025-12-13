@@ -25,6 +25,7 @@
 - If output still looks noisy, inspect the sigma ladder near the tail (large last-step drops can destabilize very low-step runs).
   - Diffusers `ZImagePipeline` recommends `num_inference_steps=9` for Turbo (≈8 effective updates; last `dt=0`).
   - Quick sanity: `python tools/diagnostics/inspect_flow_sigma_schedule.py --steps 9 --scheduler simple --mu 3 --pseudo-timestep-range 1000` should end with `..., 0.5, 0.3, 0, 0`.
+  - If your log shows `norm(eps)=0` on the very last step (`sigma=0 -> 0`), that’s expected (dt=0). What matters is whether `norm(x)` stabilizes instead of blowing up near the tail.
 
 ### 🧪 RECOMMENDED TESTS
 

@@ -116,7 +116,70 @@ class OpusParameter(torch.nn.Parameter):
         
         Automatically bakes the tensor if not already baked.
         """
-        new = self.copy_with_data(self.data.to(*args, **kwargs))
+        # Quantized tensors store packed bytes; never cast storage dtype.
+        if self.qtype is not None:
+            device = kwargs.get("device", None)
+            dtype = kwargs.get("dtype", None)
+            non_blocking = bool(kwargs.get("non_blocking", False))
+            copy = bool(kwargs.get("copy", False))
+            memory_format = kwargs.get("memory_format", None)
+
+            if len(args) == 1:
+                arg0 = args[0]
+                if isinstance(arg0, torch.dtype):
+                    dtype = arg0
+                elif isinstance(arg0, torch.Tensor):
+                    device = arg0.device
+                    dtype = arg0.dtype
+                else:
+                    device = arg0
+            elif len(args) == 2:
+                arg0, arg1 = args
+                if isinstance(arg0, torch.dtype):
+                    dtype = arg0
+                    non_blocking = bool(arg1)
+                elif isinstance(arg0, torch.Tensor):
+                    device = arg0.device
+                    dtype = arg0.dtype
+                    non_blocking = bool(arg1)
+                else:
+                    device = arg0
+                    dtype = arg1
+            elif len(args) == 3:
+                arg0, arg1, arg2 = args
+                if isinstance(arg0, torch.dtype):
+                    dtype = arg0
+                    non_blocking = bool(arg1)
+                    copy = bool(arg2)
+                elif isinstance(arg0, torch.Tensor):
+                    device = arg0.device
+                    dtype = arg0.dtype
+                    non_blocking = bool(arg1)
+                    copy = bool(arg2)
+                else:
+                    device = arg0
+                    dtype = arg1
+                    non_blocking = bool(arg2)
+            elif len(args) == 4:
+                device, dtype, non_blocking, copy = args
+                non_blocking = bool(non_blocking)
+                copy = bool(copy)
+            elif len(args) > 4:
+                raise TypeError(f"OpusParameter.to() expected at most 4 positional arguments, got {len(args)}")
+
+            move_kwargs: dict[str, object] = {"non_blocking": non_blocking}
+            if device is not None:
+                move_kwargs["device"] = device
+            if copy:
+                move_kwargs["copy"] = True
+            if memory_format is not None:
+                move_kwargs["memory_format"] = memory_format
+
+            new = self.copy_with_data(self.data.to(**move_kwargs))
+            if isinstance(dtype, torch.dtype):
+                new.computation_dtype = dtype
+        else:
+            new = self.copy_with_data(self.data.to(*args, **kwargs))
         
         # Always bake when moving - needed for dequantization
         if not new.baked and new.qtype is not None:

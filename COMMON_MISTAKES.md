@@ -1,3 +1,7 @@
+**Wrong command:** `~/.venv/binpython -m pytest -q tests/backend/test_opus_quantization_parametergguf_to.py`
+**Cause + fix:** `Typo in the venv interpreter path (missing /bin/python). Use the correct virtualenv Python path when running tests.`
+**Correct command:** `~/.venv/bin/python -m pytest -q tests/backend/test_opus_quantization_parametergguf_to.py`
+
 **Wrong command:** `CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
 **Cause + fix:** `apps.backend.interfaces.api.run_api expects CODEX_ROOT to be set by the launcher (run-webui/run-tui). When invoking the module directly, export CODEX_ROOT (and in CPU-only sandboxes also force CODEX_DIFFUSION_DEVICE=cpu) before running.`
 **Correct command:** `CODEX_ROOT=/home/lucas/work/stable-diffusion-webui-codex CODEX_DIFFUSION_DEVICE=cpu CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`

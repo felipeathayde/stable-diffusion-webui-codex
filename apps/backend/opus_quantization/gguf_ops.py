@@ -1,15 +1,13 @@
 import torch
 import logging
 import threading
-import numpy as np
 from .compat import (
     ParameterGGUF as _BaseParameterGGUF,
-    dequantize_tensor as _opus_dequantize,
     map_ggml_to_opus,
     _OpusQuantBridge,
     GGMLQuantizationType,
 )
-from .core import QuantType, get_quant_spec
+from .core import QuantType
 
 # Simple, optional CPU LRU cache for dequantized GGUF tensors.
 # Default: disabled. Can be enabled by set_cache_policy('cpu_lru', limit_mb).
@@ -134,68 +132,7 @@ quants_mapping = {
 }
 
 
-class ParameterGGUF(_BaseParameterGGUF):
-    """Extended ParameterGGUF that uses the local quants_mapping."""
-    def __init__(self, tensor=None, requires_grad=False, no_init=False):
-        # Call parent __new__ logic by not calling super().__init__ directly
-        if no_init:
-            return
-        
-        # Use our quants_mapping to get the bridge
-        self.gguf_cls = quants_mapping.get(getattr(tensor, 'tensor_type', None), None)
-        self.real_shape = torch.Size(reversed(list(tensor.shape))) if hasattr(tensor, 'shape') else torch.Size([])
-        self.computation_dtype = torch.float16
-        self.baked = False
-        
-        # Set qtype for OpusQuantization compatibility
-        self.qtype = map_ggml_to_opus(getattr(tensor, 'tensor_type', None))
-
-    @property
-    def shape(self):
-        return self.real_shape
-
-    def __new__(cls, tensor=None, requires_grad=False, no_init=False):
-        # Avoid torch.tensor(...tensor...) construction to silence copy warnings and preserve dtype
-        src = tensor.data
-        if isinstance(src, torch.Tensor):
-            base = src.detach().clone()
-        else:
-            # Prefer a NumPy→torch path that never creates a non-writable view to silence
-            # "non-writable tensor" warnings from torch.as_tensor/from_numpy.
-            try:
-                arr = np.asarray(src)
-                if not arr.flags.writeable:
-                    # Make a private, writeable copy before creating a tensor
-                    arr = np.array(arr, copy=True)
-                base = torch.from_numpy(arr)
-            except Exception:
-                # Fallback: force a copy via torch.tensor (may be slower but always safe)
-                base = torch.tensor(src)
-        return super().__new__(cls, base, requires_grad=requires_grad)
-
-    def dequantize_as_pytorch_parameter(self):
-        if self.gguf_cls is not None:
-            self.gguf_cls.bake(self)
-        return torch.nn.Parameter(dequantize_tensor(self), requires_grad=False)
-
-    def copy_with_data(self, data):
-        new = ParameterGGUF(data, no_init=True)
-        new.gguf_cls = self.gguf_cls
-        new.real_shape = self.real_shape
-        new.computation_dtype = self.computation_dtype
-        new.baked = self.baked
-        return new
-
-    def to(self, *args, **kwargs):
-        new = self.copy_with_data(self.data.to(*args, **kwargs))
-        # Bake the tensor when moved if not already baked
-        # GGUF tensors need to be baked before dequantization, regardless of device
-        if not new.baked and new.gguf_cls is not None:
-            new.gguf_cls.bake(new)
-        return new
-
-    def pin_memory(self, device=None):
-        return self.copy_with_data(torch.Tensor.pin_memory(self, device=device))
+ParameterGGUF = _BaseParameterGGUF
 
 
 def dequantize_tensor(tensor):

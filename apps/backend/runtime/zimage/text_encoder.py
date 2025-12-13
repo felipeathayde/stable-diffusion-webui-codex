@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 import torch
@@ -191,26 +192,55 @@ class ZImageTextEncoder(nn.Module):
             tokenizer_path: Path to tokenizer files. If None, uses default.
         """
         try:
-            from transformers import Qwen2Tokenizer
-            
-            if tokenizer_path is None:
-                # Try to find tokenizer in common locations
-                tokenizer_path = os.path.join(
-                    os.path.dirname(__file__),
-                    "..", "..", "text_processing", "tokenizers", "qwen25_tokenizer"
-                )
-            
-            if os.path.exists(tokenizer_path):
-                self._tokenizer = Qwen2Tokenizer.from_pretrained(tokenizer_path)
-            else:
-                # Fall back to HuggingFace hub
-                self._tokenizer = Qwen2Tokenizer.from_pretrained("Qwen/Qwen2.5-3B")
-            
-            logger.info("Qwen tokenizer loaded successfully")
-            
+            from transformers import AutoTokenizer
         except ImportError:
             logger.error("transformers library required for Qwen tokenizer")
             raise
+
+        # Prefer explicit config, then vendored HF assets, then ComfyUI tokenizer snapshot.
+        repo_root = Path(__file__).resolve().parents[4]
+        runtime_root = Path(__file__).resolve().parents[1]
+
+        candidates: list[str] = []
+        env_override = os.getenv("CODEX_ZIMAGE_TOKENIZER_PATH")
+        if env_override:
+            candidates.append(env_override)
+        if tokenizer_path:
+            candidates.insert(0, tokenizer_path)
+
+        hf_tokenizer = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo" / "tokenizer"
+        candidates.append(str(hf_tokenizer))
+
+        comfy_tokenizer = runtime_root / "text_processing" / "tokenizers" / "qwen25_tokenizer"
+        candidates.append(str(comfy_tokenizer))
+
+        errors: list[str] = []
+        for raw in candidates:
+            raw = str(raw).strip()
+            if not raw:
+                continue
+            p = Path(os.path.expanduser(raw))
+            if not p.is_absolute():
+                p = repo_root / p
+            try:
+                p = p.resolve()
+            except Exception:
+                p = p.absolute()
+            if not p.exists():
+                continue
+            try:
+                self._tokenizer = AutoTokenizer.from_pretrained(str(p), local_files_only=True, use_fast=True)
+                logger.info("Qwen tokenizer loaded: %s", str(p))
+                return
+            except Exception as exc:  # noqa: BLE001 - try next candidate
+                errors.append(f"{p}: {type(exc).__name__}: {exc}")
+
+        detail = "\n".join(errors) if errors else "<no load errors captured>"
+        raise RuntimeError(
+            "Failed to load a Qwen tokenizer for Z Image. "
+            "Set CODEX_ZIMAGE_TOKENIZER_PATH or provide tokenizer_path explicitly. "
+            f"Tried: {candidates}\nErrors:\n{detail}"
+        )
     
     def tokenize(
         self,
@@ -245,7 +275,19 @@ class ZImageTextEncoder(nn.Module):
                 if s.startswith("<|im_start|>") or s.startswith("<|start_header_id|>"):
                     wrapped.append(s)
                 else:
-                    wrapped.append(QWEN3_TEMPLATE.format(s))
+                    # Prefer the tokenizer's built-in chat template when available.
+                    # This keeps us aligned with the tokenizer files shipped with HF/ComfyUI.
+                    rendered = None
+                    if hasattr(self._tokenizer, "apply_chat_template"):
+                        try:
+                            rendered = self._tokenizer.apply_chat_template(  # type: ignore[attr-defined]
+                                [{"role": "user", "content": s}],
+                                tokenize=False,
+                                add_generation_prompt=True,
+                            )
+                        except Exception:
+                            rendered = None
+                    wrapped.append(rendered if isinstance(rendered, str) and rendered else QWEN3_TEMPLATE.format(s))
             texts = wrapped
 
         if debug_text and texts:

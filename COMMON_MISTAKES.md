@@ -1,3 +1,7 @@
+**Wrong command:** `CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
+**Cause + fix:** `apps.backend.interfaces.api.run_api expects CODEX_ROOT to be set by the launcher (run-webui/run-tui). When invoking the module directly, export CODEX_ROOT (and in CPU-only sandboxes also force CODEX_DIFFUSION_DEVICE=cpu) before running.`
+**Correct command:** `CODEX_ROOT=/home/lucas/work/stable-diffusion-webui-codex CODEX_DIFFUSION_DEVICE=cpu CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
+
 **Wrong command:** `sed -n '1,260p' apps/backend/use_cases/txt2img_pipeline.py`
 **Cause + fix:** `Txt2img pipeline is a package directory under apps/backend/use_cases/txt2img_pipeline/; the runner lives at runner.py. List the directory before assuming a flat file path.`
 **Correct command:** `ls -la apps/backend/use_cases/txt2img_pipeline && sed -n '1,260p' apps/backend/use_cases/txt2img_pipeline/runner.py`

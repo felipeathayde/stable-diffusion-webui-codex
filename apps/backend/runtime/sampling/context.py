@@ -128,6 +128,26 @@ def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.devi
     - Map timesteps back to sigmas via `predictor.sigma(t)`.
     - Append a terminal 0 as the last sigma.
     """
+    # Special case: FlowMatchEulerPrediction (Z Image Turbo) expects the diffusers
+    # FlowMatchEulerDiscreteScheduler stepping schedule. Diffusers builds a linear
+    # ramp in *sigma space* from sigma_max→sigma_min, then applies the shift
+    # transform again (and appends a terminal 0). For Z Image this produces a
+    # notably different tail sigma (e.g. 8 steps ends at ~0.00893 rather than
+    # the predictor sigma_min ~0.00299), and the wrong tail destabilizes samples.
+    mu = getattr(predictor, "mu", None)
+    pseudo = getattr(predictor, "pseudo_timestep_range", None)
+    if mu is not None and int(pseudo or 0) == 1000:
+        try:
+            mu_value = float(mu)
+        except Exception:  # noqa: BLE001 - defensive
+            mu_value = 0.0
+        if mu_value > 0.0 and mu_value != 1.0:
+            sigma_min = float(getattr(predictor, "sigma_min"))
+            sigma_max = float(getattr(predictor, "sigma_max"))
+            base = torch.linspace(sigma_max, sigma_min, int(steps), device=device, dtype=dtype)
+            shifted = mu_value * base / (1.0 + (mu_value - 1.0) * base)
+            return _append_zero(shifted, device=device, dtype=dtype)
+
     base_sigmas = getattr(predictor, "sigmas", None)
     if base_sigmas is None:
         raise RuntimeError("predictor does not expose 'sigmas' needed for simple scheduler")
@@ -264,7 +284,9 @@ def build_sigma_schedule(
     kind = SchedulerName.from_string(scheduler_name)
 
     if kind is SchedulerName.AUTOMATIC:
-        return torch.linspace(sigma_max, sigma_min, steps + 1, device=device, dtype=dtype)
+        # Linear sigma ramp with a terminal 0 (matches sampler expectation).
+        sigmas = torch.linspace(sigma_max, sigma_min, steps, device=device, dtype=dtype)
+        return _append_zero(sigmas, device=device, dtype=dtype)
     if kind is SchedulerName.SIMPLE:
         if predictor is None:
             raise RuntimeError("predictor required for simple scheduler")

@@ -355,11 +355,11 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         context_dim=2560,
         uses_pooled_output=False,
         uses_guidance_embed=False,
-        default_cfg=4.0,
+        default_cfg=0.0,  # Turbo models use guidance_scale=0 (no CFG)
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=9,  # Diffusers ZImagePipeline recommends 9 (≈8 effective; last dt=0)
-        flow_shift=3.0,  # HF scheduler config (FlowMatchEulerDiscreteScheduler shift=3.0)
+        flow_shift=1.0,   # Turbo uses linear schedule (shift=1.0), not shifted (shift=3.0)
         scheduler_default="simple",
         is_xl_variant=True,
         patch_size=2,

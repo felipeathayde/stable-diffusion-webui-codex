@@ -324,6 +324,38 @@ class Txt2ImgPipelineRunner:
         t_base_end: float | None = None
         t_hires_end: float | None = None
         t_refiner_end: float | None = None
+        
+        # Z Image Diffusers bypass: route to Diffusers pipeline when flag is enabled
+        if os.environ.get("CODEX_ZIMAGE_DIFFUSERS_BYPASS", "").lower() in ("1", "true", "yes", "on"):
+            sd_model = getattr(processing, "sd_model", None)
+            engine_id = getattr(sd_model, "engine_id", "") if sd_model else ""
+            if engine_id == "zimage" and hasattr(sd_model, "sample_with_diffusers"):
+                self._logger.info("[zimage] Diffusers bypass enabled - routing to ZImagePipeline")
+                prompt = prompts[0] if prompts else getattr(processing, "prompt", "")
+                width = int(getattr(processing, "width", 1024) or 1024)
+                height = int(getattr(processing, "height", 1024) or 1024)
+                steps = int(getattr(processing, "steps", 9) or 9)
+                cfg = float(getattr(processing, "cfg_scale", 0.0) or 0.0)
+                seed = seeds[0] if seeds else None
+                
+                images = sd_model.sample_with_diffusers(
+                    prompt=prompt,
+                    height=height,
+                    width=width,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                    seed=seed,
+                )
+                # Convert PIL images to tensor format expected by pipeline
+                from apps.backend.runtime.workflows import pil_to_tensor
+                if images:
+                    # pil_to_tensor returns decoded RGB tensor
+                    decoded_tensor = pil_to_tensor(images)
+                    # Mark as already decoded so base.py skips decode_latent_batch
+                    decoded_tensor._already_decoded = True
+                    return decoded_tensor
+                return torch.zeros(1, 3, height, width)
+        
         model_device, model_dtype = self._sd_model_device_info(processing)
         if model_device is not None:
             self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
@@ -373,6 +405,15 @@ class Txt2ImgPipelineRunner:
         except Exception:
             # Timings must never break generation; swallow errors defensively.
             pass
+
+        # Auto-print and save timeline trace if enabled
+        try:
+            from apps.backend.runtime.timeline import auto_save_and_print
+            trace_path = auto_save_and_print()
+            if trace_path:
+                processing.update_extra_param("Timeline Trace", trace_path)
+        except Exception:
+            pass  # Timeline should never break generation
 
         return final_samples
 

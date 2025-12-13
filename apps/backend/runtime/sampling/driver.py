@@ -16,6 +16,7 @@ from ...core.state import state as backend_state
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
+from apps.backend.runtime.timeline import timeline
 
 
 try:
@@ -162,6 +163,8 @@ def _run_kdiffusion_sampler(
     def _callback(payload):
         idx = int(payload.get("i", step_counter["i"]))
         step_counter["i"] = idx
+        timeline.exit("sampling", f"step[{idx}]")
+        timeline.enter("sampling", f"step[{idx+1}]")
         if tick is not None:
             tick(idx + 1)
         if preview_callback is not None and preview_interval > 0:
@@ -173,6 +176,9 @@ def _run_kdiffusion_sampler(
         if progress_bar is not None:
             progress_bar.update(1)
 
+    # Timeline: mark first step entry
+    timeline.enter("sampling", "step[0]")
+    
     out = sampler_fn(
         kd_model,
         x,
@@ -181,6 +187,9 @@ def _run_kdiffusion_sampler(
         callback=_callback,
         disable=not log_enabled,
     )
+    
+    # Timeline: close final step
+    timeline.exit("sampling", f"step[{step_counter['i']}]")
 
     if progress_bar is not None:
         progress_bar.close()

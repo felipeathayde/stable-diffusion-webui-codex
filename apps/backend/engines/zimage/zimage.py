@@ -14,6 +14,7 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.runtime.timeline import timeline_node
 from apps.backend.runtime.zimage.debug import env_flag, env_int, truncate_text
 
 from .spec import ZIMAGE_SPEC, ZImageEngineRuntime, assemble_zimage_runtime
@@ -121,6 +122,7 @@ class ZImageEngine(CodexDiffusionEngine):
             distilled_value = float(ZIMAGE_SPEC.default_cfg_scale)
         return _ZImagePromptList([str(t or "") for t in texts], distilled_cfg_scale=distilled_value, is_negative_prompt=is_negative)
 
+    @timeline_node("text_encoding", "get_learned_conditioning")
     @torch.inference_mode()
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
@@ -130,22 +132,17 @@ class ZImageEngine(CodexDiffusionEngine):
         memory_management.load_model_gpu(runtime.clip.patcher)
         unload_clip = self.smart_offload_enabled
         
-        # Lumina 2 / Z Image conditioning format (historical; keep for now).
-        # Note: tokenizer applies the Qwen3 chat template separately unless the prompt
-        # already begins with '<|im_start|>'.
-        system_prompt = (
-            "You are an assistant designed to generate superior images with the superior degree of image-text alignment "
-            "based on textual prompts or user prompts."
-        )
-        formatted_prompts = [f"{system_prompt} <Prompt Start> {p}" for p in prompts]
-        if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False) and formatted_prompts:
+        # Per diffusers reference: pass prompts directly - the tokenizer's
+        # apply_chat_template with enable_thinking=True handles formatting.
+        # Do NOT add manual system prompt or <Prompt Start> markers.
+        if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False) and prompts:
             logger.info(
                 "[zimage-debug] prompt0=%s",
-                truncate_text(formatted_prompts[0], limit=env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)),
+                truncate_text(prompts[0], limit=env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)),
             )
         
         try:
-            cond = runtime.text.qwen3_text(formatted_prompts)
+            cond = runtime.text.qwen3_text(prompts)
         finally:
             if unload_clip:
                 memory_management.unload_model(runtime.clip.patcher)
@@ -156,11 +153,13 @@ class ZImageEngine(CodexDiffusionEngine):
         # Use a small vector dimension - this is just a placeholder
         vector = torch.zeros(batch_size, 768, dtype=cond.dtype, device=cond.device)
         
-        # Distilled CFG guidance (Z Image uses distilled guidance like Flux)
-        distilled_cfg = getattr(prompts, "distilled_cfg_scale", ZIMAGE_SPEC.default_cfg_scale) or ZIMAGE_SPEC.default_cfg_scale
-        guidance = torch.full((batch_size,), float(distilled_cfg), dtype=torch.float32)
+        # Distilled CFG guidance - Z Image Turbo uses guidance=0.0 (no CFG)
+        # NOTE: Can't use `or` here because 0.0 is valid but falsy in Python
+        raw_cfg = getattr(prompts, "distilled_cfg_scale", None)
+        distilled_cfg = float(raw_cfg) if raw_cfg is not None else float(ZIMAGE_SPEC.default_cfg_scale)
+        guidance = torch.full((batch_size,), distilled_cfg, dtype=torch.float32)
         if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False):
-            logger.info("[zimage-debug] distilled_cfg_scale=%.3f", float(distilled_cfg))
+            logger.info("[zimage-debug] distilled_cfg_scale=%.3f", distilled_cfg)
         
         return {
             "crossattn": cond,
@@ -175,6 +174,7 @@ class ZImageEngine(CodexDiffusionEngine):
         length = len(tokens[0])
         return length, max(512, length)
 
+    @timeline_node("vae", "encode_first_stage")
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         runtime = self._require_runtime()
@@ -190,6 +190,7 @@ class ZImageEngine(CodexDiffusionEngine):
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
 
+    @timeline_node("vae", "decode_first_stage")
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         runtime = self._require_runtime()
@@ -204,3 +205,101 @@ class ZImageEngine(CodexDiffusionEngine):
         finally:
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
+
+    @torch.inference_mode()
+    def sample_with_diffusers(
+        self,
+        prompt: str,
+        *,
+        negative_prompt: Optional[str] = None,
+        height: int = 1024,
+        width: int = 1024,
+        num_inference_steps: int = 9,
+        guidance_scale: float = 0.0,
+        seed: Optional[int] = None,
+    ) -> list:
+        """Run generation using Diffusers ZImagePipeline directly.
+        
+        This bypasses all Codex sampling and uses Diffusers scheduler exactly
+        as in the reference implementation. For debugging/validation.
+        
+        Args:
+            prompt: Text prompt
+            negative_prompt: Negative prompt for CFG (typically None for Turbo)
+            height: Image height
+            width: Image width  
+            num_inference_steps: Sampling steps (9 for Turbo)
+            guidance_scale: CFG scale (0.0 for Turbo)
+            seed: Random seed
+        
+        Returns:
+            List of PIL images
+        """
+        from .standalone_sampler import sample_zimage_diffusers_math, decode_latents
+        from PIL import Image
+        import numpy as np
+        
+        runtime = self._require_runtime()
+        
+        logger.info("[zimage] Running standalone Diffusers-math sampler")
+        
+        # Step 1: Encode prompt using OUR working text encoder
+        # This already works correctly and handles all the Qwen3 specifics
+        prompts_list = [prompt] if isinstance(prompt, str) else list(prompt)
+        cond = self.get_learned_conditioning(prompts_list)
+        text_embeddings = cond["crossattn"]  # [B, seq, hidden]
+        
+        logger.info("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
+        
+        # Step 2: Get transformer (raw model, not wrapped)
+        transformer_model = runtime.unet.model.diffusion_model
+        
+        # Load transformer to GPU
+        memory_management.load_model_gpu(runtime.unet)
+        
+        try:
+            # Step 3: Sample using Diffusers scheduler + negation
+            computation_dtype = torch.bfloat16 if self._dtype == "bf16" else torch.float16
+            
+            if seed is not None:
+                generator = torch.Generator(device=self._device).manual_seed(seed)
+            else:
+                generator = None
+            
+            latents = sample_zimage_diffusers_math(
+                transformer=transformer_model,
+                text_embeddings=text_embeddings,
+                height=height,
+                width=width,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                generator=generator,
+                device=self._device,
+                dtype=computation_dtype,
+            )
+            
+            logger.info("[zimage] sampling done, latents: shape=%s dtype=%s", latents.shape, latents.dtype)
+            
+        finally:
+            if self.smart_offload_enabled:
+                memory_management.unload_model(runtime.unet)
+        
+        # Step 4: Decode latents to images
+        memory_management.load_model_gpu(self.codex_objects.vae)
+        try:
+            images_tensor = decode_latents(runtime.vae, latents)
+            
+            # Convert to PIL images
+            images = []
+            for i in range(images_tensor.shape[0]):
+                img_np = images_tensor[i].permute(1, 2, 0).cpu().float().numpy()
+                img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
+                images.append(Image.fromarray(img_np))
+            
+            logger.info("[zimage] decoded %d images", len(images))
+            return images
+            
+        finally:
+            if self.smart_offload_enabled:
+                memory_management.unload_model(self.codex_objects.vae)
+

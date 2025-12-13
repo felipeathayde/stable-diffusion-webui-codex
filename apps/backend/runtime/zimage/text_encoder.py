@@ -280,11 +280,23 @@ class ZImageTextEncoder(nn.Module):
                     rendered = None
                     if hasattr(self._tokenizer, "apply_chat_template"):
                         try:
+                            # Z Image uses enable_thinking=True per diffusers reference
                             rendered = self._tokenizer.apply_chat_template(  # type: ignore[attr-defined]
                                 [{"role": "user", "content": s}],
                                 tokenize=False,
                                 add_generation_prompt=True,
+                                enable_thinking=True,  # Critical for Z Image
                             )
+                        except TypeError:
+                            # Fallback if tokenizer doesn't support enable_thinking
+                            try:
+                                rendered = self._tokenizer.apply_chat_template(
+                                    [{"role": "user", "content": s}],
+                                    tokenize=False,
+                                    add_generation_prompt=True,
+                                )
+                            except Exception:
+                                rendered = None
                         except Exception:
                             rendered = None
                     wrapped.append(rendered if isinstance(rendered, str) and rendered else QWEN3_TEMPLATE.format(s))

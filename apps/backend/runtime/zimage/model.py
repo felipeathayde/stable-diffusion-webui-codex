@@ -54,6 +54,7 @@ class ZImageConfig:
     # HF config: apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/transformer/config.json
     rope_theta: float = 256.0
     axes_dims: tuple[int, int, int] = (32, 48, 48)  # Must sum to head_dim
+    axes_lens: tuple[int, int, int] = (1536, 512, 512)  # Max positions per axis
     t_scale: float = 1000.0
     
     @property
@@ -126,144 +127,142 @@ class SwiGLU(nn.Module):
 
 
 class RoPEEmbedding(nn.Module):
-    """3D Rotary Position Embedding using ComfyUI's flux/math.py rotation-matrix format.
+    """3D Rotary Position Embedding using diffusers' complex polar format.
     
-    This matches ComfyUI's EmbedND from comfy/ldm/flux/layers.py which is
-    also used by NextDiT-style diffusion transformers.
+    This matches diffusers' RopeEmbedder from transformer_z_image.py exactly:
+    - Uses torch.polar to create complex frequency embedding
+    - Precomputes freqs_cis for axes_lens positions
+    - Returns complex64 tensor for multiplication with Q/K
     
-    The output is a rotation matrix of shape [B, 1, N, head_dim//2, 2, 2]
-    that can be applied to Q/K tensors via the apply_rope function.
+    Key parameters from HF config:
+    - axes_dims: [32, 48, 48] (must sum to head_dim=128)
+    - axes_lens: [1536, 512, 512] (max positions per axis)
+    - theta: 256.0 (base frequency)
     """
     
     def __init__(
         self,
         head_dim: int,
-        theta: float = 10000.0,
+        theta: float = 256.0,
         axes_dims: tuple[int, int, int] | None = None,
+        axes_lens: tuple[int, int, int] | None = None,
     ):
         super().__init__()
         self.head_dim = head_dim
         self.theta = theta
-        # axes_dims is specified in full head_dim units (must sum to head_dim),
-        # matching Hugging Face config keys ("axes_dims") and ComfyUI's EmbedND.
+        
+        # Default axes_dims from HF config
         if axes_dims is None:
-            # Z Image Turbo default: 1/4 time axis, rest split across spatial axes.
-            # head_dim=128 -> (32, 48, 48)
-            time_dim = max(2, head_dim // 4)
-            time_dim -= time_dim % 2
-            spatial = (head_dim - time_dim) // 2
-            spatial -= spatial % 2
-            last = head_dim - time_dim - spatial
-            axes_dims = (time_dim, spatial, last)
+            axes_dims = (32, 48, 48)  # Z Image Turbo default
         if sum(int(v) for v in axes_dims) != int(head_dim):
             raise ValueError(f"axes_dims must sum to head_dim={head_dim}; got {axes_dims}")
-        if any(int(v) % 2 != 0 for v in axes_dims):
-            raise ValueError(f"axes_dims entries must be even; got {axes_dims}")
         self.axes_dims = tuple(int(v) for v in axes_dims)
+        
+        # Default axes_lens from HF config
+        if axes_lens is None:
+            axes_lens = (1536, 512, 512)  # Z Image Turbo default
+        self.axes_lens = tuple(int(v) for v in axes_lens)
+        
+        # Precomputed freqs (will be populated on first forward)
+        self.freqs_cis: list[torch.Tensor] | None = None
     
-    def _rope_single_axis(self, pos: torch.Tensor, dim: int) -> torch.Tensor:
-        """Compute RoPE for a single axis.
+    def _precompute_freqs_cis(self, device: torch.device) -> list[torch.Tensor]:
+        """Precompute complex freq embeddings for each axis.
         
-        Args:
-            pos: [B, N] positions for this axis
-            dim: dimension to use for this axis
-            
-        Returns:
-            Rotation matrices [B, N, dim//2, 2, 2]
+        Matches diffusers RopeEmbedder.precompute_freqs_cis exactly.
         """
-        assert dim % 2 == 0
-        device = pos.device
-        
-        # Match ComfyUI's flux/math.py numeric path: build omega in float64 for stability,
-        # then return float32 rotation matrices.
-        scale = torch.linspace(
-            0,
-            (dim - 2) / dim,
-            steps=dim // 2,
-            dtype=torch.float64,
-            device=device,
-        )
-        omega = 1.0 / (float(self.theta) ** scale)
-        
-        # [B, N] x [dim//2] -> [B, N, dim//2]
-        out = pos.unsqueeze(-1).to(dtype=torch.float32) * omega.unsqueeze(0).unsqueeze(0)
-        
-        # Build rotation matrix [cos, -sin; sin, cos]
-        cos_out = torch.cos(out)
-        sin_out = torch.sin(out)
-        
-        # Stack as [B, N, dim//2, 4] then reshape to [B, N, dim//2, 2, 2]
-        stacked = torch.stack([cos_out, -sin_out, sin_out, cos_out], dim=-1)
-        rot_matrix = stacked.view(*pos.shape, dim // 2, 2, 2)
-        
-        return rot_matrix.to(dtype=torch.float32)
+        freqs_cis = []
+        for d, e in zip(self.axes_dims, self.axes_lens):
+            # freqs = 1.0 / (theta ** (arange(0, d, 2) / d))
+            freqs = 1.0 / (self.theta ** (torch.arange(0, d, 2, dtype=torch.float64, device="cpu") / d))
+            timestep = torch.arange(e, device="cpu", dtype=torch.float64)
+            freqs = torch.outer(timestep, freqs).float()
+            # Convert to complex via polar form: e^(i*theta) = cos(theta) + i*sin(theta)
+            freqs_cis_i = torch.polar(torch.ones_like(freqs), freqs).to(torch.complex64)
+            freqs_cis.append(freqs_cis_i.to(device))
+        return freqs_cis
     
     def forward(self, pos_ids: torch.Tensor) -> torch.Tensor:
-        """Compute RoPE rotation matrices for 3D positions.
+        """Compute RoPE complex embeddings for 3D positions.
         
         Args:
-            pos_ids: [B, N, num_axes] position IDs (Time, Height, Width)
+            pos_ids: [B, N, num_axes] position IDs (Frame, Height, Width)
+                     or [N, num_axes] for unbatched
         
         Returns:
-            freqs: [B, 1, N, head_dim//2, 2, 2] rotation matrices
+            freqs: [B, N, head_dim//2] complex64 tensor 
+                   (or [N, head_dim//2] for unbatched)
         """
+        # Handle both batched [B, N, 3] and unbatched [N, 3] inputs
+        was_batched = pos_ids.ndim == 3
+        if not was_batched:
+            pos_ids = pos_ids.unsqueeze(0)  # [1, N, 3]
+        
         B, N, num_axes = pos_ids.shape
         device = pos_ids.device
         
-        # Compute rotation matrix for each axis and concatenate
-        emb_list = []
+        # Lazy precomputation
+        if self.freqs_cis is None:
+            self.freqs_cis = self._precompute_freqs_cis(device)
+        else:
+            # Ensure on correct device
+            if self.freqs_cis[0].device != device:
+                self.freqs_cis = [fc.to(device) for fc in self.freqs_cis]
+        
+        # Gather freqs for each axis and concatenate
+        result_list = []
         for i in range(min(num_axes, len(self.axes_dims))):
-            axis_pos = pos_ids[..., i]  # [B, N]
-            axis_dim = self.axes_dims[i]
-            axis_emb = self._rope_single_axis(axis_pos, axis_dim)  # [B, N, dim_i//2, 2, 2]
-            emb_list.append(axis_emb)
+            idx = pos_ids[..., i].long()  # [B, N]
+            # Clamp to valid range
+            idx = idx.clamp(0, self.axes_lens[i] - 1)
+            # Gather: freqs_cis[i] is [axes_lens[i], axes_dims[i]//2]
+            # idx is [B, N], result is [B, N, axes_dims[i]//2]
+            gathered = self.freqs_cis[i][idx.view(-1)].view(B, N, -1)
+            result_list.append(gathered)
         
-        # Concatenate along the dimension axis: [B, N, sum(axes_dim), 2, 2]
-        emb = torch.cat(emb_list, dim=-3)
+        # Concatenate along last dim: [B, N, sum(axes_dims)//2] = [B, N, head_dim//2]
+        result = torch.cat(result_list, dim=-1)
         
-        # Add head dimension: [B, 1, N, head_dim//2, 2, 2]
-        return emb.unsqueeze(1)
+        if not was_batched:
+            result = result.squeeze(0)
+        
+        return result
 
 
-def apply_rope_single(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-    """Apply rotary position embedding to a single tensor.
+def apply_rotary_emb(x_in: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+    """Apply rotary embedding using complex multiplication.
     
-    This matches ComfyUI's apply_rope1 from comfy/ldm/flux/math.py.
+    Matches diffusers' ZSingleStreamAttnProcessor.apply_rotary_emb exactly.
     
     Args:
-        x: [B, N, H, D] query or key tensor where D = head_dim
-        freqs: [B, N, 1, D//2, 2, 2] rotation matrices (after movedim)
+        x_in: [B, N, H, D] query or key tensor where D = head_dim
+        freqs_cis: [B, N, D//2] complex64 freq embeddings
     
     Returns:
         Rotated tensor [B, N, H, D]
     """
-    # Reshape x to [B, N, H, D//2, 1, 2] 
-    x_reshaped = x.to(dtype=freqs.dtype).reshape(*x.shape[:-1], -1, 1, 2)
-    
-    # freqs is [B, N, 1, D//2, 2, 2], broadcasts over H dimension (dim 2)
-    # Compute: freqs[..., 0] * x[..., 0] + freqs[..., 1] * x[..., 1]
-    x_out = freqs[..., 0] * x_reshaped[..., 0]
-    x_out = x_out + freqs[..., 1] * x_reshaped[..., 1]
-    
-    return x_out.reshape(*x.shape).type_as(x)
+    with torch.amp.autocast("cuda", enabled=False):
+        # Reshape x to complex: [B, N, H, D] -> [B, N, H, D//2] complex
+        x = torch.view_as_complex(x_in.float().reshape(*x_in.shape[:-1], -1, 2))
+        # freqs_cis is [B, N, D//2], needs unsqueeze for head broadcast
+        freqs_cis = freqs_cis.unsqueeze(2)  # [B, N, 1, D//2]
+        # Complex multiply and convert back
+        x_out = torch.view_as_real(x * freqs_cis).flatten(3)
+        return x_out.type_as(x_in)
 
 
 def apply_rope_pair(q: torch.Tensor, k: torch.Tensor, freqs: torch.Tensor) -> tuple:
     """Apply rotary position embedding to query and key.
     
-    This matches ComfyUI's apply_rope from comfy/ldm/flux/math.py.
-    
     Args:
         q: [B, N, H, D] query tensor
         k: [B, N, H, D] key tensor
-        freqs: [B, 1, N, D//2, 2, 2] rotation matrices from RoPEEmbedding
+        freqs: [B, N, D//2] complex freq embeddings
     
     Returns:
         Tuple of rotated (q, k) tensors [B, N, H, D]
     """
-    # movedim(1, 2) to get [B, N, 1, D//2, 2, 2] for broadcasting
-    freqs = freqs.movedim(1, 2)
-    return apply_rope_single(q, freqs), apply_rope_single(k, freqs)
+    return apply_rotary_emb(q, freqs), apply_rotary_emb(k, freqs)
 
 
 class Attention(nn.Module):
@@ -552,6 +551,7 @@ class ZImageTransformer2DModel(nn.Module):
         qk_norm: bool = True,
         rope_theta: float = 256.0,
         axes_dims: tuple[int, int, int] | None = None,
+        axes_lens: tuple[int, int, int] | None = None,
         time_scale: float | None = None,
         config: Optional[ZImageConfig] = None,
         **kwargs,  # Ignore unknown HuggingFace config parameters
@@ -577,6 +577,10 @@ class ZImageTransformer2DModel(nn.Module):
                 raw_axes = kwargs.pop("axes_dims")
                 if isinstance(raw_axes, (list, tuple)) and len(raw_axes) == 3:
                     axes_dims = (int(raw_axes[0]), int(raw_axes[1]), int(raw_axes[2]))
+            if axes_lens is None and "axes_lens" in kwargs:
+                raw_lens = kwargs.pop("axes_lens")
+                if isinstance(raw_lens, (list, tuple)) and len(raw_lens) == 3:
+                    axes_lens = (int(raw_lens[0]), int(raw_lens[1]), int(raw_lens[2]))
             if time_scale is None and "t_scale" in kwargs:
                 time_scale = float(kwargs.pop("t_scale"))
 
@@ -600,6 +604,7 @@ class ZImageTransformer2DModel(nn.Module):
                 eps=eps,
                 rope_theta=rope_theta,
                 axes_dims=axes_dims or _DEFAULT_ZIMAGE_AXES_DIMS,
+                axes_lens=axes_lens or (1536, 512, 512),
                 t_scale=float(time_scale),
                 qk_norm=qk_norm,
                 qkv_bias=qkv_bias,
@@ -628,8 +633,13 @@ class ZImageTransformer2DModel(nn.Module):
         self.x_pad_token = nn.Parameter(torch.zeros(1, config.hidden_dim))
         self.cap_pad_token = nn.Parameter(torch.zeros(1, config.hidden_dim))
         
-        # RoPE (axes_dims must sum to head_dim)
-        self.rope = RoPEEmbedding(config.head_dim, config.rope_theta, axes_dims=getattr(config, "axes_dims", None))
+        # RoPE (axes_dims must sum to head_dim, axes_lens from HF config)
+        self.rope = RoPEEmbedding(
+            config.head_dim, 
+            config.rope_theta, 
+            axes_dims=getattr(config, "axes_dims", None),
+            axes_lens=getattr(config, "axes_lens", None),
+        )
         
         # Refiners use different hidden_dim (context_dim for context_refiner)
         # Actually, they share the same hidden_dim after embedding
@@ -684,6 +694,15 @@ class ZImageTransformer2DModel(nn.Module):
                 str(getattr(config, "axes_dims", None)),
                 str(getattr(config, "t_scale", None)),
             )
+    
+    @property
+    def dtype(self) -> torch.dtype:
+        """Return model dtype for Diffusers CPU offload compatibility."""
+        # Return dtype of first parameter, or default to bfloat16
+        try:
+            return next(self.parameters()).dtype
+        except StopIteration:
+            return torch.bfloat16
     
     def _patchify(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple[int, int]]:
         B, C, H, W = x.shape
@@ -767,9 +786,14 @@ class ZImageTransformer2DModel(nn.Module):
         img_patches = self.x_embedder(img_patches)
         
         # Timestep embedding
-        # NextDiT/Lumina2 convention: invert timestep for flow matching
-        t_inv = 1.0 - timestep
-        t_emb = self.t_embedder(t_inv * self.time_scale, dtype=x.dtype)
+        # Diffusers ZImagePipeline does: t = (1000 - scheduler_t) / 1000 in pipeline,
+        # then t = t * t_scale in transformer.
+        # Our sampler passes sigma directly in [1→0] (1=start/noise, 0=end/clean).
+        # So we just scale sigma by t_scale - NO inversion needed.
+        # When sigma=1.0 (start), we want t_emb from t=1000 (high noise).
+        # When sigma=0.0 (end), we want t_emb from t=0 (no noise).
+        t_scaled = timestep * self.time_scale  # sigma * 1000
+        t_emb = self.t_embedder(t_scaled, dtype=x.dtype)
         
         # Caption embedding
         cap_feats = self.cap_embedder(context)
@@ -782,7 +806,7 @@ class ZImageTransformer2DModel(nn.Module):
         # DEBUG LOGS
         if debug_step < debug_limit:  # Only log first few steps
             logger.info(f"[zimage-debug] timestep (sigma): {timestep[0]:.4f}")
-            logger.info(f"[zimage-debug] t_inv (1-sigma): {t_inv[0]:.4f}")
+            logger.info(f"[zimage-debug] t_scaled: {t_scaled[0]:.4f}")
             logger.info(f"[zimage-debug] t_emb={t_emb[0, :8]}... range=[{t_emb.min():.2f}, {t_emb.max():.2f}]")
             logger.info(f"[zimage-debug] img_patches range=[{img_patches.min():.2f}, {img_patches.max():.2f}] mean={img_patches.mean():.4f}")
             logger.info(f"[zimage-debug] cap_feats range=[{cap_feats.min():.2f}, {cap_feats.max():.2f}] mean={cap_feats.mean():.4f}")
@@ -803,14 +827,14 @@ class ZImageTransformer2DModel(nn.Module):
             tensor_stats(logger, "rope.freqs", freqs)
         
         # Refiners
-        # freqs is now [B, 1, N, D//2, 2, 2], slice on dimension 2 (N)
+        # freqs is now [B, N, D//2] complex64, slice on dimension 1 (N)
         for layer in self.context_refiner:
-            cap_feats = layer(cap_feats, None, freqs[:, :, :cap_len])
+            cap_feats = layer(cap_feats, None, freqs[:, :cap_len])
         if debug_layers and debug_step < debug_limit:
             tensor_stats(logger, "after.context_refiner", cap_feats)
         
         for layer in self.noise_refiner:
-            img_patches = layer(img_patches, None, freqs[:, :, cap_len:], t_emb)
+            img_patches = layer(img_patches, None, freqs[:, cap_len:], t_emb)
         if debug_layers and debug_step < debug_limit:
             tensor_stats(logger, "after.noise_refiner", img_patches)
         
@@ -833,18 +857,30 @@ class ZImageTransformer2DModel(nn.Module):
         if was_5d:
             output = output.unsqueeze(2)
         
-        # DEBUG: Log output statistics before negation
+        # DEBUG: Log output statistics
         if debug_step < debug_limit:
-            logger.info(f"[zimage-debug] output BEFORE negation: range=[{output.min():.4f}, {output.max():.4f}] mean={output.mean():.4f} norm={output.norm():.2f}")
-        
-        result = -output  # Velocity conversion (negative velocity for flow matching)
-        
-        if debug_step < debug_limit:
-            logger.info(f"[zimage-debug] output AFTER negation: range=[{result.min():.4f}, {result.max():.4f}] mean={result.mean():.4f} norm={result.norm():.2f}")
+            logger.info(f"[zimage-debug] output: range=[{output.min():.4f}, {output.max():.4f}] mean={output.mean():.4f} norm={output.norm():.2f}")
 
         self.cnt = debug_step + 1
         
-        return result
+        # CRITICAL: Negate output for k-diffusion sampler compatibility.
+        # 
+        # Flow-matching model predicts velocity v = dx/dt = noise - x_0
+        # For denoising to move toward x_0, the sampler needs to step in direction of -v.
+        #
+        # k-diffusion Euler update rule:
+        #   denoised = x - model_output * sigma  (from 'const' prediction type)
+        #   eps = (x - denoised) / sigma = model_output
+        #   x_new = x - (sigma - sigma_next) * eps = x - dt * model_output
+        #
+        # If model returns +v:
+        #   x_new = x - dt * v  → moves AWAY from x_0 (wrong!)
+        # 
+        # If model returns -v:
+        #   x_new = x - dt * (-v) = x + dt * v → moves TOWARD x_0 (correct!)
+        #
+        # Log 6 confirmed: without negation, norm(x) increased 566→1305 (diverging).
+        return -output
 
 
 # =============================================================================

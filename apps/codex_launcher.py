@@ -409,6 +409,8 @@ class CodexGUILauncher(tk.Tk):
             ("CODEX_TRACE_DEBUG", "Trace Debug (very verbose)"),
             ("CODEX_PIPELINE_DEBUG", "Pipeline Debug"),
             ("CODEX_DUMP_LATENTS", "Dump Latents"),
+            ("CODEX_TIMELINE", "Timeline Tracer (TVA-style execution timeline)"),
+            ("CODEX_ZIMAGE_DIFFUSERS_BYPASS", "Z Image: Use Diffusers Pipeline (bypasses Codex sampler)"),
         ]
 
         self._debug_flags: Dict[str, tk.BooleanVar] = {}

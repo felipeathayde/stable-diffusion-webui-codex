@@ -701,7 +701,11 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
         # Decode to RGB and package result
         decode_start = time.perf_counter()
-        decoded = decode_latent_batch(self, latents)
+        # Check if bypass already decoded (latents has _already_decoded flag)
+        if getattr(latents, "_already_decoded", False):
+            decoded = latents  # Skip decode, already RGB tensor
+        else:
+            decoded = decode_latent_batch(self, latents)
         images = latents_to_pil(decoded)
         decode_end = time.perf_counter()
 

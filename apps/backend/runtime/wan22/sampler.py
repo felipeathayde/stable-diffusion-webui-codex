@@ -14,6 +14,8 @@ from torch import nn
 
 logger = logging.getLogger("backend.runtime.wan22.sampler")
 
+WAN_FLOW_MULTIPLIER_DEFAULT = 1000.0
+
 
 def get_flow_sigmas(
     num_steps: int,
@@ -71,6 +73,7 @@ class WanVideoSampler:
         num_steps: int = 20,
         cfg_scale: float = 7.5,
         flow_shift: float = 8.0,
+        flow_multiplier: float = WAN_FLOW_MULTIPLIER_DEFAULT,
         seed: Optional[int] = None,
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
     ) -> torch.Tensor:
@@ -83,6 +86,7 @@ class WanVideoSampler:
             num_steps: Number of sampling steps.
             cfg_scale: Classifier-free guidance scale.
             flow_shift: Flow shift parameter.
+            flow_multiplier: Multiplier applied to the model timestep input (sigma -> timestep).
             seed: Random seed (optional).
             callback: Progress callback(step, total, latent).
         
@@ -101,15 +105,15 @@ class WanVideoSampler:
         x = torch.randn(shape, device=device, dtype=dtype)
         
         # Create sigma schedule
-        sigmas = get_flow_sigmas(num_steps, shift=flow_shift, device=device, dtype=dtype)
+        sigmas = get_flow_sigmas(num_steps, shift=flow_shift, device=device, dtype=torch.float32)
         
         # Handle uncond
         if uncond is None:
             uncond = torch.zeros_like(cond)
         
         self._logger.info(
-            "WAN sampling: shape=%s steps=%d cfg=%.1f shift=%.1f",
-            shape, num_steps, cfg_scale, flow_shift,
+            "WAN sampling: shape=%s steps=%d cfg=%.1f shift=%.1f multiplier=%.1f",
+            shape, num_steps, cfg_scale, flow_shift, float(flow_multiplier),
         )
         
         # Euler ODE integration
@@ -117,8 +121,9 @@ class WanVideoSampler:
             t = sigmas[i]
             t_next = sigmas[i + 1]
             
-            # Create timestep tensor (normalized 0-1)
-            timestep = torch.full((B,), float(t), device=device, dtype=dtype)
+            # Model expects timestep-like scale (sigma -> sigma * multiplier).
+            # Keep the sigma ladder itself in [0,1] for dt integration.
+            timestep = torch.full((B,), float(t) * float(flow_multiplier), device=device, dtype=torch.float32)
             
             # CFG: run model twice (conditional + unconditional)
             # Batch both together for efficiency
@@ -167,12 +172,13 @@ def sample_txt2vid(
     height: int = 432,
     num_frames: int = 16,
     num_steps: int = 20,
-    cfg_scale: float = 7.5,
-    flow_shift: float = 8.0,
-    seed: Optional[int] = None,
-    device: torch.device = torch.device("cuda"),
-    dtype: torch.dtype = torch.bfloat16,
-    callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        cfg_scale: float = 7.5,
+        flow_shift: float = 8.0,
+        flow_multiplier: float = WAN_FLOW_MULTIPLIER_DEFAULT,
+        seed: Optional[int] = None,
+        device: torch.device = torch.device("cuda"),
+        dtype: torch.dtype = torch.bfloat16,
+        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
 ) -> torch.Tensor:
     """High-level txt2vid sampling function.
     
@@ -187,6 +193,7 @@ def sample_txt2vid(
         num_steps: Sampling steps.
         cfg_scale: CFG scale.
         flow_shift: Flow shift.
+        flow_multiplier: Multiplier applied to the model timestep input (sigma -> timestep).
         seed: Random seed.
         device: Device.
         dtype: Dtype.
@@ -215,6 +222,7 @@ def sample_txt2vid(
         num_steps=num_steps,
         cfg_scale=cfg_scale,
         flow_shift=flow_shift,
+        flow_multiplier=flow_multiplier,
         seed=seed,
         callback=callback,
     )

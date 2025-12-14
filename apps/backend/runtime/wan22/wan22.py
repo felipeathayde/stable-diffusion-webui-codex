@@ -40,6 +40,29 @@ _DEBUG_IO = False  # set True to enable entry/exit logs
 WAN_FLOW_SHIFT_DEFAULT = 8.0
 WAN_FLOW_MULTIPLIER = 1000.0
 
+def _wan_log_sigmas_enabled() -> bool:
+    """Return True when sigma/timestep parity logs should be emitted."""
+    for key in ("WAN_LOG_SIGMAS", "CODEX_LOG_SIGMAS"):
+        v = os.getenv(key)
+        if v is None:
+            continue
+        if v.strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+def _summarize_tensor(t: object, *, window: int = 6) -> str:
+    try:
+        if not isinstance(t, torch.Tensor):
+            return "<not-a-tensor>"
+        values = [float(v) for v in t.detach().cpu().reshape(-1).tolist()]
+    except Exception:
+        return "<unavailable>"
+    if len(values) <= window * 2:
+        return ",".join(f"{v:.6g}" for v in values)
+    head = ",".join(f"{v:.6g}" for v in values[:window])
+    tail = ",".join(f"{v:.6g}" for v in values[-window:])
+    return f"{head},...,{tail}"
+
 def _resolve_i2v_order() -> str:
     """Return channel order for I2V concatenation.
     - 'lat_first': latents(16) then cond extras (mask4+img16) → matches Comfy (xc + c_concat).
@@ -237,6 +260,22 @@ def _sample_stage_latents_generator(
     total = len(timesteps)
 
     flow_progress = torch.linspace(1.0, 0.0, total, device=device, dtype=torch.float32) if total > 1 else torch.ones(1, device=device, dtype=torch.float32)
+    parity_idxs = {0, max(0, total // 2 - 1), max(0, total - 1)}
+
+    if _wan_log_sigmas_enabled():
+        try:
+            sigmas = getattr(scheduler, 'sigmas', None)
+            if isinstance(sigmas, torch.Tensor):
+                log.info(
+                    "[wan22.gguf] %s schedule: scheduler=%s timesteps=%d sigmas=%s",
+                    stage_name,
+                    scheduler.__class__.__name__,
+                    int(total),
+                    _summarize_tensor(sigmas),
+                )
+            _log_t_mapping(scheduler, timesteps, label=stage_name, logger=logger)
+        except Exception:
+            pass
 
     yield {
         "type": "progress",
@@ -254,6 +293,27 @@ def _sample_stage_latents_generator(
         percent = float(flow_progress[idx].item()) if total > 1 else 1.0
         sigma_value = _time_snr_shift(flow_shift, percent)
         di_timestep = float(sigma_value * flow_multiplier)
+
+        if _wan_log_sigmas_enabled() and idx in parity_idxs:
+            try:
+                sched_sigmas = getattr(scheduler, 'sigmas', None)
+                sched_sigma = None
+                if isinstance(sched_sigmas, torch.Tensor) and sched_sigmas.numel() >= (idx + 1):
+                    sched_sigma = float(sched_sigmas[idx].item())
+                log.info(
+                    "[wan22.gguf] %s t-in[%d/%d]: percent=%.4f sigma_shifted=%.6g flow_multiplier=%.1f di_timestep=%.6g sched_timestep=%s sched_sigma=%s",
+                    stage_name,
+                    idx + 1,
+                    total,
+                    percent,
+                    float(sigma_value),
+                    float(flow_multiplier),
+                    float(di_timestep),
+                    str(timestep),
+                    str(sched_sigma),
+                )
+            except Exception:
+                pass
 
         if cfg_scale is None:
             eps = model(state, di_timestep, prompt_embeds)
@@ -1121,13 +1181,23 @@ def _log_t_mapping(scheduler, timesteps, label: str, logger: Any) -> None:
         vals: list[float] = []
         sigmas = getattr(scheduler, 'sigmas', None)
         for i in idxs:
-            if sigmas is not None and len(sigmas) == n:
-                s = float(sigmas[i]); s_min = float(sigmas[-1]); s_max = float(sigmas[0])
+            sig_ok = bool(sigmas is not None and len(sigmas) in (n, n + 1))
+            if sig_ok:
+                s = float(sigmas[i])
+                s_min = float(sigmas[-1])
+                s_max = float(sigmas[0])
                 t = max(0.0, min(1.0, (s - s_min) / (s_max - s_min))) if (s_max - s_min) > 0 else 0.0
             else:
                 t = 1.0 - (float(i) / float(max(1, n - 1)))
             vals.append(t)
-        log.info("[wan22.gguf] t-map(%s): t0=%.4f tmid=%.4f tend=%.4f (sigmas=%s)", label, vals[0], vals[1], vals[2], bool(sigmas is not None and len(sigmas)==n))
+        log.info(
+            "[wan22.gguf] t-map(%s): t0=%.4f tmid=%.4f tend=%.4f (sigmas=%s)",
+            label,
+            vals[0],
+            vals[1],
+            vals[2],
+            bool(sigmas is not None and len(sigmas) in (n, n + 1)),
+        )
     except Exception:
         pass
 

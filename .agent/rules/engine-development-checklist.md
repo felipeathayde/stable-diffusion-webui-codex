@@ -183,6 +183,88 @@ def _build_components(self, bundle, *, options):
 
 ---
 
+## 7. Paridade (Diffusers/ComfyUI) — onde a “golesma” nasce
+
+Quando um engine “funciona” (sem crash) mas só gera ruído, quase sempre é drift em **paridade**:
+scheduler/sigmas, semântica de timestep, sinal do modelo, ordem do stream, ou matemática do bloco (norms/residuals).
+
+Links úteis (evidência / leitura aprofundada):
+- `.sangoi/reports/2025-12-14-zimage-golesma-parity-postmortem.md`
+- `.sangoi/handoffs/HANDOFF_2025-12-14-zimage-golesma-diffusers-parity.md`
+- `.sangoi/handoffs/HANDOFF_2025-12-14-zimage-golesma-2-refiner-norm-parity.md`
+- `.sangoi/handoffs/HANDOFF_2025-12-14-wan22-14b-scrutiny.md`
+
+### 7.1 Sigma schedule (flow): `shift`, `sigma_min`, tail
+
+Checklist mínimo:
+- [ ] Logar o sigma ladder (head + tail) com `CODEX_LOG_SIGMAS=1`.
+- [ ] Confirmar `shift` e `sigma_min` batem com os assets HF / implementação de referência.
+- [ ] Se o upstream tiver `..., 0, 0` (double-zero tail), isso é esperado (último `dt=0`).
+
+**Anti‑padrão:** assumir que “steps=8” ou “shift=1” é universal; para alguns flows (ex. Z‑Image Turbo) não é.
+
+### 7.2 Semântica de timestep: `sigma` vs `t_inv`
+
+Alguns pipelines passam `t_norm` como “tempo normalizado” (0 no começo → 1 no final) e o core multiplica por `t_scale`.
+Outros passam `sigma` diretamente (1 no começo → 0 no final).
+
+Checklist mínimo:
+- [ ] No core, documentar explicitamente qual semântica entra no timestep embedder.
+- [ ] Logar nos primeiros steps (debug) os valores derivados: `sigma`, `t_inv`, `t_scaled`.
+
+### 7.3 Sinal (negation): “um `-` a mais” mata tudo
+
+Para modelos flow/velocity, é comum o pipeline precisar negar o output **uma vez** antes da integração.
+Se você negar duas vezes (core nega + pipeline nega), o sampler anda na direção errada.
+
+Checklist mínimo:
+- [ ] Definir **onde** ocorre a negation (core ou pipeline) e manter só um lugar.
+- [ ] Se existir rota “standalone/diffusers-math”, garantir que ela não aplica o `-` duas vezes.
+
+### 7.4 Token stream order + RoPE pos_ids (modelos multimodais)
+
+Para modelos que juntam streams (ex.: image tokens + caption tokens):
+- A ordem do `torch.cat` no “unified stream” importa.
+- O `pos_ids`/RoPE precisa seguir o upstream (inclui offsets e padding multi‑of‑32).
+
+Checklist mínimo:
+- [ ] Confirmar ordem do stream (ex.: **image→caption** vs **caption→image**).
+- [ ] Confirmar `pos_ids` com offsets idênticos ao reference (start coords, padding coords).
+- [ ] Confirmar que pads usam `*_pad_token` e que o mask (quando existir) tem semântica correta (bool mask em SDPA: True=keep).
+
+### 7.5 Ordem correta de norms nos blocos *non‑modulated* (o “detalhe assassino”)
+
+Quando um bloco roda sem adaLN modulation (ex.: refiner de caption), a ordem correta costuma ser:
+- `attn_out = attn(norm1(x))`
+- `x = x + norm2(attn_out)`
+- `x = x + norm2_ffn(ffn(norm1_ffn(x)))`
+
+**Anti‑padrões que causam conditioning drift:**
+- Double‑norm no input da attention (`norm2(norm1(x))` como entrada).
+- `norm2` entrando no MLP (normalização errada no input do FFN).
+
+Esse bug foi a última peça que destravou a saída do Z‑Image (de “golesma” para imagens coerentes).
+
+### 7.6 Dtype da integração (flow): latents fp32
+
+Mesmo quando o core roda em bf16/fp16, o integrador/scheduler pode precisar de latents fp32 para evitar drift no tail.
+
+Checklist mínimo:
+- [ ] Logar dtype dos latents no loop de sampling.
+- [ ] Se o upstream integra em fp32, replicar.
+
+### 7.7 GGUF: `Q4_K_M` não significa “um único quant”
+
+GGUF é quantização **por tensor**. Um arquivo “Q4_K_M” pode misturar:
+- tensores BF16 (ex.: embeddings/norms), e
+- K‑family variados (Q4_K/Q5_K/Q6_K) em diferentes camadas.
+
+Checklist mínimo:
+- [ ] Não tratar “apareceu Q5_K/Q6_K no log” como bug automaticamente.
+- [ ] Só vira suspeito se: shape/stride inválido, NaNs, ou qtype incompatível com a camada.
+
+---
+
 ## Checklist Completo para Novo Engine
 
 ### Loader (runtime/models/loader.py)
@@ -215,3 +297,6 @@ def _build_components(self, bundle, *, options):
 - `apps/backend/runtime/memory/smart_offload.py` - Funções de offload
 - `apps/backend/patchers/base.py` - ModelPatcher
 - `apps/backend/patchers/vae.py` - VAE wrapper
+- `.sangoi/templates/wan22-gguf-request.json` — payload de referência para WAN22 GGUF (high/low + assets).
+- `.sangoi/reports/comparisons/wan22-img2vid-mapping.md` — mapping de inputs/canais para WAN22 I2V.
+- `.sangoi/research/runtime/wan22-text-encoder-compat.md` — TE configs/tokenizer (vendored) vs pesos (user-supplied).

@@ -359,7 +359,7 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=9,  # Diffusers ZImagePipeline recommends 9 (≈8 effective; last dt=0)
-        flow_shift=1.0,   # Turbo uses linear schedule (shift=1.0), not shifted (shift=3.0)
+        flow_shift=3.0,   # HF scheduler_config.json for Z-Image-Turbo uses shift=3.0
         scheduler_default="simple",
         is_xl_variant=True,
         patch_size=2,

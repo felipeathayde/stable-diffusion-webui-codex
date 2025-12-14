@@ -29,6 +29,7 @@ logger = logging.getLogger("backend.runtime.zimage.model")
 from .debug import env_flag, env_int, tensor_stats
 
 _DEFAULT_ZIMAGE_AXES_DIMS: tuple[int, int, int] = (32, 48, 48)
+_SEQ_MULTI_OF = 32
 
 # =============================================================================
 # Configuration
@@ -318,7 +319,12 @@ class Attention(nn.Module):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        
+
+        # Match diffusers ZSingleStreamAttnProcessor: accept [B, seq_len] boolean masks
+        # (True = keep, False = mask) and broadcast them across heads/queries.
+        if attention_mask is not None and attention_mask.ndim == 2:
+            attention_mask = attention_mask[:, None, None, :]
+
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
         out = out.transpose(1, 2).reshape(B, N, self.inner_dim)
         return self.out(out)
@@ -726,17 +732,16 @@ class ZImageTransformer2DModel(nn.Module):
         
         return x, (H, W)
 
-    def _unpatchify(self, x: torch.Tensor, original_size: Tuple[int, int], cap_len: int) -> torch.Tensor:
-        # x starts with caption tokens, remove them
-        # x: [B, N, D_out]
-        # D_out = patch_size * patch_size * latent_channels
-        
-        x = x[:, cap_len:, :]
-        
+    def _unpatchify(self, x: torch.Tensor, original_size: Tuple[int, int]) -> torch.Tensor:
+        # Diffusers unpatchify uses the FIRST `ori_len` tokens as image tokens, and the tail
+        # contains caption tokens (and/or padded image tokens). Mirror that behavior here.
         H, W = original_size
         p = self.patch_size
         h_tokens = H // p
         w_tokens = W // p
+        ori_len = h_tokens * w_tokens
+        x = x[:, :ori_len, :]
+
         B = x.shape[0]
         C = self.latent_channels
         
@@ -749,21 +754,59 @@ class ZImageTransformer2DModel(nn.Module):
         
         return x
     
-    def _get_position_ids(self, cap_len: int, h_tokens: int, w_tokens: int, B: int, device: torch.device) -> torch.Tensor:
-        total_len = cap_len + h_tokens * w_tokens
-        pos_ids = torch.zeros(B, total_len, 3, device=device, dtype=torch.int32)
-        
-        # Caption tokens occupy the time axis [0..cap_len-1]
-        pos_ids[:, :cap_len, 0] = torch.arange(cap_len, device=device, dtype=torch.int32)
-        
-        h_idx = torch.arange(h_tokens, device=device, dtype=torch.int32).view(-1, 1).repeat(1, w_tokens).flatten()
-        w_idx = torch.arange(w_tokens, device=device, dtype=torch.int32).view(1, -1).repeat(h_tokens, 1).flatten()
-        
-        # Image tokens share a constant time axis = cap_len
-        pos_ids[:, cap_len:, 0] = int(cap_len)
-        pos_ids[:, cap_len:, 1] = h_idx
-        pos_ids[:, cap_len:, 2] = w_idx
-        
+    @staticmethod
+    def _create_coordinate_grid(
+        size: tuple[int, int, int],
+        *,
+        start: tuple[int, int, int],
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Diffusers-parity coordinate grid builder (transformer_z_image.create_coordinate_grid)."""
+        axes = [
+            torch.arange(x0, x0 + span, dtype=torch.int32, device=device)
+            for x0, span in zip(start, size)
+        ]
+        grids = torch.meshgrid(*axes, indexing="ij")
+        return torch.stack(grids, dim=-1)
+
+    def _build_pos_ids(
+        self,
+        *,
+        cap_total_len: int,
+        h_tokens: int,
+        w_tokens: int,
+        image_total_len: int,
+        B: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Build unified position IDs matching diffusers Z-Image tokenization semantics.
+
+        Notes
+        - Token order is: image tokens first, caption tokens after.
+        - Caption positions start at (1,0,0) and include multi-of-32 padding.
+        - Image time coordinate starts at cap_total_len+1 (even though tokens come first).
+        - Image padding positions (to multi-of-32) use (0,0,0).
+        """
+        cap_pos = self._create_coordinate_grid(
+            (int(cap_total_len), 1, 1),
+            start=(1, 0, 0),
+            device=device,
+        ).flatten(0, 2)
+
+        # Image positions are (F,H,W) with F=1 for Z-Image Turbo.
+        image_start_t = int(cap_total_len) + 1
+        image_pos = self._create_coordinate_grid(
+            (1, int(h_tokens), int(w_tokens)),
+            start=(image_start_t, 0, 0),
+            device=device,
+        ).flatten(0, 2)
+        image_ori_len = int(image_pos.shape[0])
+        if int(image_total_len) > image_ori_len:
+            pad = torch.zeros((int(image_total_len) - image_ori_len, 3), device=device, dtype=torch.int32)
+            image_pos = torch.cat([image_pos, pad], dim=0)
+
+        pos_ids = torch.cat([image_pos, cap_pos], dim=0)  # [N_total, 3]
+        pos_ids = pos_ids.unsqueeze(0).expand(int(B), -1, -1).contiguous()
         return pos_ids
     
     def forward(
@@ -783,20 +826,42 @@ class ZImageTransformer2DModel(nn.Module):
         
         # Patchify image input
         img_patches, img_size = self._patchify(x)
+        image_ori_len = int(img_patches.shape[1])
+        image_padding_len = (-image_ori_len) % _SEQ_MULTI_OF
+        image_total_len = image_ori_len + int(image_padding_len)
+        if image_padding_len:
+            img_patches = torch.cat(
+                [img_patches, img_patches[:, -1:, :].repeat(1, int(image_padding_len), 1)],
+                dim=1,
+            )
         img_patches = self.x_embedder(img_patches)
+        if image_padding_len:
+            image_pad_mask = torch.zeros((int(img_patches.shape[0]), image_total_len), device=x.device, dtype=torch.bool)
+            image_pad_mask[:, image_ori_len:] = True
+            img_patches[image_pad_mask] = self.x_pad_token.type_as(img_patches)
         
         # Timestep embedding
-        # Diffusers ZImagePipeline does: t = (1000 - scheduler_t) / 1000 in pipeline,
-        # then t = t * t_scale in transformer.
-        # Our sampler passes sigma directly in [1→0] (1=start/noise, 0=end/clean).
-        # So we just scale sigma by t_scale - NO inversion needed.
-        # When sigma=1.0 (start), we want t_emb from t=1000 (high noise).
-        # When sigma=0.0 (end), we want t_emb from t=0 (no noise).
-        t_scaled = timestep * self.time_scale  # sigma * 1000
+        # Diffusers ZImagePipeline passes `t_norm = (1000 - timestep) / 1000`.
+        # Our runtime uses k-diffusion-style `sigma` in [1→0]. For parity we invert:
+        #   t_inv = 1 - sigma  (0 at start, 1 at end), then apply `t_scale` (default 1000.0).
+        t_inv = 1.0 - timestep
+        t_scaled = t_inv * self.time_scale
         t_emb = self.t_embedder(t_scaled, dtype=x.dtype)
         
         # Caption embedding
+        cap_ori_len = int(context.shape[1])
+        cap_padding_len = (-cap_ori_len) % _SEQ_MULTI_OF
+        cap_total_len = cap_ori_len + int(cap_padding_len)
+        if cap_padding_len:
+            context = torch.cat(
+                [context, context[:, -1:, :].repeat(1, int(cap_padding_len), 1)],
+                dim=1,
+            )
         cap_feats = self.cap_embedder(context)
+        if cap_padding_len:
+            cap_pad_mask = torch.zeros((int(cap_feats.shape[0]), cap_total_len), device=x.device, dtype=torch.bool)
+            cap_pad_mask[:, cap_ori_len:] = True
+            cap_feats[cap_pad_mask] = self.cap_pad_token.type_as(cap_feats)
         
         debug_limit = env_int("CODEX_ZIMAGE_DEBUG_STEPS", 3)
         debug_verbose = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False)
@@ -805,7 +870,8 @@ class ZImageTransformer2DModel(nn.Module):
 
         # DEBUG LOGS
         if debug_step < debug_limit:  # Only log first few steps
-            logger.info(f"[zimage-debug] timestep (sigma): {timestep[0]:.4f}")
+            logger.info(f"[zimage-debug] sigma: {timestep[0]:.4f}")
+            logger.info(f"[zimage-debug] t_inv: {t_inv[0]:.4f}")
             logger.info(f"[zimage-debug] t_scaled: {t_scaled[0]:.4f}")
             logger.info(f"[zimage-debug] t_emb={t_emb[0, :8]}... range=[{t_emb.min():.2f}, {t_emb.max():.2f}]")
             logger.info(f"[zimage-debug] img_patches range=[{img_patches.min():.2f}, {img_patches.max():.2f}] mean={img_patches.mean():.4f}")
@@ -813,46 +879,57 @@ class ZImageTransformer2DModel(nn.Module):
             if debug_verbose:
                 logger.info("[zimage-debug] forward.kwargs keys=%s", sorted(str(k) for k in kwargs.keys()))
             
-        cap_len = cap_feats.shape[1]
-        
         # Position IDs
-        B = img_patches.shape[0]
-        h_tokens = (img_size[0] + self.patch_size - 1) // self.patch_size
-        w_tokens = (img_size[1] + self.patch_size - 1) // self.patch_size
-        pos_ids = self._get_position_ids(cap_len, h_tokens, w_tokens, B, x.device)
+        B = int(img_patches.shape[0])
+        h_tokens = (int(img_size[0]) + self.patch_size - 1) // self.patch_size
+        w_tokens = (int(img_size[1]) + self.patch_size - 1) // self.patch_size
+        pos_ids = self._build_pos_ids(
+            cap_total_len=int(cap_total_len),
+            h_tokens=int(h_tokens),
+            w_tokens=int(w_tokens),
+            image_total_len=int(image_total_len),
+            B=B,
+            device=x.device,
+        )
         freqs = self.rope(pos_ids)
         if debug_layers and debug_step < debug_limit:
             tensor_stats(logger, "rope.pos_ids", pos_ids)
             # freqs is large but bounded; stats help spot dtype/device mismatches.
             tensor_stats(logger, "rope.freqs", freqs)
         
-        # Refiners
-        # freqs is now [B, N, D//2] complex64, slice on dimension 1 (N)
+        # Diffusers order: refine image first, then caption. Token order in unified stream:
+        # image tokens first, caption tokens after.
+        attn_mask_img = torch.ones((B, int(image_total_len)), device=x.device, dtype=torch.bool)
+        attn_mask_cap = torch.ones((B, int(cap_total_len)), device=x.device, dtype=torch.bool)
+
+        for layer in self.noise_refiner:
+            img_patches = layer(img_patches, attn_mask_img, freqs[:, : int(image_total_len)], t_emb)
+        if debug_layers and debug_step < debug_limit:
+            tensor_stats(logger, "after.noise_refiner", img_patches)
+
         for layer in self.context_refiner:
-            cap_feats = layer(cap_feats, None, freqs[:, :cap_len])
+            cap_start = int(image_total_len)
+            cap_end = cap_start + int(cap_total_len)
+            cap_feats = layer(cap_feats, attn_mask_cap, freqs[:, cap_start:cap_end])
         if debug_layers and debug_step < debug_limit:
             tensor_stats(logger, "after.context_refiner", cap_feats)
         
-        for layer in self.noise_refiner:
-            img_patches = layer(img_patches, None, freqs[:, cap_len:], t_emb)
-        if debug_layers and debug_step < debug_limit:
-            tensor_stats(logger, "after.noise_refiner", img_patches)
-        
         # Concatenate
-        full_seq = torch.cat([cap_feats, img_patches], dim=1)
+        full_seq = torch.cat([img_patches, cap_feats], dim=1)
         if debug_layers and debug_step < debug_limit:
             tensor_stats(logger, "full_seq", full_seq)
         
         # Main transformer
+        full_mask = torch.ones((B, int(full_seq.shape[1])), device=x.device, dtype=torch.bool)
         layer_every = max(1, env_int("CODEX_ZIMAGE_DEBUG_LAYER_EVERY", 10))
         for idx, layer in enumerate(self.layers):
-            full_seq = layer(full_seq, None, freqs, t_emb)
+            full_seq = layer(full_seq, full_mask, freqs, t_emb)
             if debug_layers and debug_step < debug_limit and ((idx == 0) or ((idx + 1) % layer_every == 0) or ((idx + 1) == len(self.layers))):
                 tensor_stats(logger, f"layer.{idx+1:02d}.full_seq", full_seq)
         
         # Final projection
         output = self.final_layer(full_seq, t_emb)
-        output = self._unpatchify(output, img_size, cap_len)
+        output = self._unpatchify(output, img_size)
         
         if was_5d:
             output = output.unsqueeze(2)

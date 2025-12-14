@@ -1,7 +1,7 @@
 # apps/backend/runtime/zimage
 Date: 2025-12-12
 Owner: Runtime Maintainers
-Last Review: 2025-12-13
+Last Review: 2025-12-14
 Status: Active
 
 ## Purpose
@@ -20,6 +20,11 @@ Status: Active
 ## Notes / Decisions
 - **Timesteps:** model receives `sigma∈[0,1]`, uses `t_inv = 1 - sigma`, and applies `t_scale` (default 1000.0) before timestep embedding (HF config parity).
 - **RoPE:** `axes_dims` are full head-dim units and must sum to `head_dim` (HF config default `(32,48,48)` for `head_dim=128`).
+- **Token order + pos_ids:** match diffusers `transformer_z_image.py`:
+  - unified sequence is **image tokens first**, **caption tokens after**.
+  - caption pos_ids use `create_coordinate_grid(size=(cap_len_padded,1,1), start=(1,0,0))`.
+  - image pos_ids use `create_coordinate_grid(size=(1,H//p,W//p), start=(cap_len_padded+1,0,0))` and padding uses `(0,0,0)`.
+  - pad tokens are set via `x_pad_token` / `cap_pad_token` (pads are part of the sequence; attention mask only matters for cross-item padding).
 - **VAE normalization:** Flow16 (Flux/Z-Image) scaling/shift is applied outside the runtime core via `vae.first_stage_model.process_in/out`.
 - **Tokenizer source of truth:** prefer the vendored HF tokenizer at `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/tokenizer` (no hub fetch). Override with `CODEX_ZIMAGE_TOKENIZER_PATH` when needed.
 - **Debugging:** enable extra logs with env flags:

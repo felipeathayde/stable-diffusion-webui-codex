@@ -4,8 +4,8 @@ Uses OUR loader/encoder/transformer but follows Diffusers scheduler exactly.
 This bypasses all k-diffusion machinery and uses FlowMatchEulerDiscreteScheduler.
 
 Key insight from Diffusers pipeline_z_image.py:
-- noise_pred = -model_output (line 558)
-- scheduler.step(noise_pred, t, latents) (line 561)
+- Diffusers computes `noise_pred = -model_output` before `scheduler.step(...)`.
+- Codex Z-Image core returns `noise_pred` already; do not double-negate.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def sample_zimage_diffusers_math(
     - Uses OUR transformer directly (GGUF-loaded ZImageTransformer2DModel)
     - Uses OUR text embeddings (from ZImageTextEncoder)
     - Uses Diffusers scheduler for timestep/sigma management
-    - Applies NEGATION to model output as Diffusers does
+    - Matches diffusers schedule semantics (shift + sigma_min=0)
     
     Args:
         transformer: Our ZImageTransformer2DModel
@@ -63,11 +63,13 @@ def sample_zimage_diffusers_math(
     latent_height = height // vae_scale
     latent_width = width // vae_scale
     
-    # Create scheduler (shift=1.0 for Turbo)
+    # Create scheduler (HF scheduler_config.json: shift=3.0, use_dynamic_shifting=false)
     scheduler = FlowMatchEulerDiscreteScheduler(
         num_train_timesteps=1000,
-        shift=1.0,
+        shift=3.0,
     )
+    # Match diffusers ZImagePipeline: force a terminal sigma of 0.0 (double-zero tail after set_timesteps).
+    scheduler.sigma_min = 0.0
     scheduler.set_timesteps(num_inference_steps, device=device)
     timesteps = scheduler.timesteps
     
@@ -96,16 +98,11 @@ def sample_zimage_diffusers_math(
             # Prepare model input
             latent_model_input = latents.to(dtype)
             
-            # Create timestep tensor for transformer
-            timestep_tensor = t.expand(batch_size).to(device)
-            
             # Call our transformer
-            # OUR transformer forward (model.py lines 788-795) expects:
-            # - sigma in [1→0] where 1=start/noise, 0=end/clean
-            # - It does: t_scaled = sigma * time_scale (1000)
-            # 
-            # Scheduler returns t: 1000=start → 0=end
-            # So: sigma = t/1000 gives us sigma=1 at start, sigma=0 at end
+            # Our transformer expects `sigma` in [1→0] (1=start/noise, 0=end/clean).
+            # It internally uses `t_inv = 1 - sigma` and applies `t_scale` (1000.0) to match diffusers.
+            #
+            # Scheduler returns timesteps t = sigma * 1000 (1000=start → 0=end), so sigma = t/1000.
             sigma = float(t) / 1000.0
             sigma_tensor = torch.full((batch_size,), sigma, device=device, dtype=dtype)
             
@@ -115,9 +112,9 @@ def sample_zimage_diffusers_math(
                 context=text_embeddings.to(dtype),
             )
             
-            # CRITICAL: Negate model output as Diffusers does!
-            # From pipeline_z_image.py line 558: noise_pred = -noise_pred
-            noise_pred = -model_output.float()
+            # Our Z-Image core returns the negated velocity (noise_pred) already.
+            # Diffusers does the negation in the pipeline; do NOT double-negate here.
+            noise_pred = model_output.float()
             
             # Compute previous sample using scheduler
             latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]

@@ -404,8 +404,13 @@ class TransformerBlock(nn.Module):
             ffn_out = self.feed_forward(normed)
             x = x + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(ffn_out)
         else:
-            x = x + self.attention(self.attention_norm2(self.attention_norm1(x)), attention_mask, freqs)
-            x = x + self.feed_forward(self.ffn_norm2(self.ffn_norm1(x)))
+            # Diffusers parity (ZImageTransformerBlock modulation=False):
+            # - attn_out = attention(attention_norm1(x))
+            # - x = x + attention_norm2(attn_out)
+            attn_out = self.attention(self.attention_norm1(x), attention_mask, freqs)
+            x = x + self.attention_norm2(attn_out)
+            # - x = x + ffn_norm2(feed_forward(ffn_norm1(x)))
+            x = x + self.ffn_norm2(self.feed_forward(self.ffn_norm1(x)))
         
         return x
 
@@ -437,8 +442,9 @@ class RefinerBlock(nn.Module):
         freqs: Optional[torch.Tensor] = None,
         t_emb: Optional[torch.Tensor] = None,  # Ignored for context_refiner
     ) -> torch.Tensor:
-        x = x + self.attention(self.attention_norm2(self.attention_norm1(x)), attention_mask, freqs)
-        x = x + self.feed_forward(self.ffn_norm2(self.ffn_norm1(x)))
+        attn_out = self.attention(self.attention_norm1(x), attention_mask, freqs)
+        x = x + self.attention_norm2(attn_out)
+        x = x + self.ffn_norm2(self.feed_forward(self.ffn_norm1(x)))
         return x
 
 
@@ -500,8 +506,9 @@ class NoiseRefinerBlock(nn.Module):
             ffn_out = self.feed_forward(normed)
             x = x + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(ffn_out)
         else:
-            x = x + self.attention(self.attention_norm2(self.attention_norm1(x)), attention_mask, freqs)
-            x = x + self.feed_forward(self.ffn_norm2(self.ffn_norm1(x)))
+            attn_out = self.attention(self.attention_norm1(x), attention_mask, freqs)
+            x = x + self.attention_norm2(attn_out)
+            x = x + self.ffn_norm2(self.feed_forward(self.ffn_norm1(x)))
         
         return x
 

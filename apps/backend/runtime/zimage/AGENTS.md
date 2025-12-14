@@ -25,6 +25,11 @@ Status: Active
   - caption pos_ids use `create_coordinate_grid(size=(cap_len_padded,1,1), start=(1,0,0))`.
   - image pos_ids use `create_coordinate_grid(size=(1,H//p,W//p), start=(cap_len_padded+1,0,0))` and padding uses `(0,0,0)`.
   - pad tokens are set via `x_pad_token` / `cap_pad_token` (pads are part of the sequence; attention mask only matters for cross-item padding).
+- **Non-modulated blocks parity:** when a block runs without adaLN modulation (context refiner, or any `t_emb=None` path), it must follow diffusers ordering:
+  - `attn_out = attention(attention_norm1(x))`
+  - `x = x + attention_norm2(attn_out)`
+  - `x = x + ffn_norm2(feed_forward(ffn_norm1(x)))`
+  Avoid applying `attention_norm2(attention_norm1(x))` as attention input (double-norm) or feeding `ffn_norm2(...)` into the MLP.
 - **VAE normalization:** Flow16 (Flux/Z-Image) scaling/shift is applied outside the runtime core via `vae.first_stage_model.process_in/out`.
 - **Tokenizer source of truth:** prefer the vendored HF tokenizer at `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/tokenizer` (no hub fetch). Override with `CODEX_ZIMAGE_TOKENIZER_PATH` when needed.
 - **Debugging:** enable extra logs with env flags:

@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2025-12-06
+Last Review: 2025-12-13
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 - 2025-11-30: WAN22 engines now resolve vendored Hugging Face metadata under `apps/backend/huggingface` using a repo-root anchor, replacing the old `apps/server/backend/huggingface` path.
 - 2025-12-04: GGUF execution path now applies WAN22 defaults from `apps/paths.json` (`wan22_vae`, `text_encoders`) when explicit extras are not provided, so a minimal `models/wan22/**` layout works without per-run overrides.
 - 2025-12-06: `spec.py` introduz `WanEngineSpec`/`WanEngineRuntime` + `assemble_wan_runtime`; `Wan2214BEngine` aceita um `_bundle: DiffusionModelBundle` opcional e pode montar um runtime Codex experimental quando `codex_wan22_use_spec_runtime`/`use_codex_runtime` estiver ativo; `txt2vid`/`img2vid` usam esse runtime/spec + sampler (`sample_txt2vid`) como caminho opt-in, mantendo GGUF/Diffusers como defaults.
+- 2025-12-13: caminho GGUF do engine 5B foi alinhado ao runtime WAN22 (`apps/backend/runtime/wan22/wan22.py`) e agora carrega o stage GGUF direto em `WanTransformer2DModel` (nn.Module), removendo dependência do runner `WanDiTGGUF`.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

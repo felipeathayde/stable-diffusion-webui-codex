@@ -572,6 +572,35 @@ else:
 
 
 class CodexOperationsGGUF(CodexOperations):
+    class _GGUFMixin:
+        def _gguf_init_dummy(self) -> None:
+            ctx = get_operation_context()
+            dtype = ctx.dtype or torch.float32
+            device = ctx.device
+            self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
+            self.parameters_manual_cast = ctx.manual_cast_enabled
+
+        def _gguf_load_params(self, state_dict, prefix: str) -> None:
+            if not hasattr(self, "dummy"):
+                return
+            computation_dtype = self.dummy.dtype
+            if computation_dtype not in (torch.float16, torch.bfloat16):
+                computation_dtype = torch.float16
+            if prefix + "weight" in state_dict:
+                self.weight = state_dict[prefix + "weight"].to(device=self.dummy.device)
+                if hasattr(self.weight, "computation_dtype"):
+                    self.weight.computation_dtype = computation_dtype
+            if prefix + "bias" in state_dict:
+                self.bias = state_dict[prefix + "bias"].to(device=self.dummy.device)
+                if hasattr(self.bias, "computation_dtype"):
+                    self.bias.computation_dtype = computation_dtype
+            del self.dummy
+
+        def _apply(self, fn, recurse=True):
+            for name, param in self.named_parameters(recurse=False, remove_duplicate=True):
+                setattr(self, name, utils.tensor2parameter(fn(param)))
+            return self
+
     class Linear(torch.nn.Module):
         def __init__(self, *args, **kwargs):
             super().__init__()
@@ -691,6 +720,294 @@ class CodexOperationsGGUF(CodexOperations):
                     self.scale_grad_by_freq,
                     self.sparse,
                 )
+
+    class Conv1d(_GGUFMixin, CodexOperations.Conv1d):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x):
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return super()._conv_forward(x, weight, bias)
+
+    class Conv2d(_GGUFMixin, CodexOperations.Conv2d):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x):
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return super()._conv_forward(x, weight, bias)
+
+    class Conv3d(_GGUFMixin, CodexOperations.Conv3d):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x):
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return super()._conv_forward(x, weight, bias)
+
+    class ConvTranspose1d(_GGUFMixin, CodexOperations.ConvTranspose1d):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x, output_size=None):
+            def fn(_x, weight, bias):
+                output_padding = self._output_padding(
+                    _x, output_size, self.stride, self.padding, self.kernel_size, 1, self.dilation
+                )
+                return torch.nn.functional.conv_transpose1d(
+                    _x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation
+                )
+
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return fn(x, weight, bias)
+
+    class ConvTranspose2d(_GGUFMixin, CodexOperations.ConvTranspose2d):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x, output_size=None):
+            def fn(_x, weight, bias):
+                output_padding = self._output_padding(
+                    _x, output_size, self.stride, self.padding, self.kernel_size, 2, self.dilation
+                )
+                return torch.nn.functional.conv_transpose2d(
+                    _x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation
+                )
+
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return fn(x, weight, bias)
+
+    class ConvTranspose3d(_GGUFMixin, CodexOperations.ConvTranspose3d):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x, output_size=None):
+            def fn(_x, weight, bias):
+                output_padding = self._output_padding(
+                    _x, output_size, self.stride, self.padding, self.kernel_size, 3, self.dilation
+                )
+                return torch.nn.functional.conv_transpose3d(
+                    _x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation
+                )
+
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return fn(x, weight, bias)
+
+    class GroupNorm(_GGUFMixin, CodexOperations.GroupNorm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x):
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return torch.nn.functional.group_norm(x, self.num_groups, weight, bias, self.eps)
+
+    class LayerNorm(_GGUFMixin, CodexOperations.LayerNorm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gguf_init_dummy()
+
+        def _load_from_state_dict(
+            self,
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        ):
+            if hasattr(self, "dummy"):
+                self._gguf_load_params(state_dict, prefix)
+            else:
+                if prefix + "weight" in state_dict:
+                    self.weight = state_dict[prefix + "weight"]
+                if prefix + "bias" in state_dict:
+                    self.bias = state_dict[prefix + "bias"]
+
+        def forward(self, x):
+            weight, bias, signal = weights_manual_cast(
+                self,
+                x,
+                weight_fn=dequantize_tensor,
+                bias_fn=dequantize_tensor,
+            )
+            with main_stream_worker(weight, bias, signal):
+                return torch.nn.functional.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
 
 
 @contextlib.contextmanager

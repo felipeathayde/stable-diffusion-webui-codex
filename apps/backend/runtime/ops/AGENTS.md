@@ -1,7 +1,7 @@
 # apps/backend/runtime/ops Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-10-30
+Last Review: 2025-12-13
 Status: Active
 
 ## Purpose
@@ -10,3 +10,4 @@ Status: Active
 ## Notes
 - Introduce new ops here and document their expected inputs/outputs to keep usages consistent.
 - `operations_bnb.py` now exposes a `BnbQuantConfig` + registry so downstream loaders request 4bit helpers without importing bitsandbytes internals; register additional quant types in the registry (and update documentation) when new variants land.
+- 2025-12-13: `CodexOperationsGGUF` now supports GGUF-style state dict loading for `Linear`/`Embedding` plus Conv/Norm variants (`Conv{1,2,3}d`, `ConvTranspose{1,2,3}d`, `GroupNorm`, `LayerNorm`) so nn.Module runtimes (ex.: WAN22) can load GGUF weights without model-specific runners.

@@ -173,7 +173,7 @@ class Wan225BEngine(BaseVideoEngine):
         if getattr(self._comp, 'pipeline', None) is not None:
             yield from _run_t2v(engine=self, comp=self._comp, request=request)
         else:
-            from apps.backend.runtime.nn import wan22 as gguf
+            from apps.backend.runtime.wan22 import wan22 as gguf
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (GGUF)")
             ex = getattr(request, 'extras', {}) or {}
             vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, self._comp.hf_repo_dir)
@@ -252,7 +252,7 @@ class Wan225BEngine(BaseVideoEngine):
         if getattr(self._comp, 'pipeline', None) is not None:
             yield from _run_i2v(engine=self, comp=self._comp, request=request)
         else:
-            from apps.backend.runtime.nn import wan22 as gguf
+            from apps.backend.runtime.wan22 import wan22 as gguf
             if getattr(request, 'init_image', None) is None:
                 raise RuntimeError("img2vid requires 'init_image'")
             yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid (GGUF)")

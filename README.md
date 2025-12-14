@@ -50,7 +50,7 @@ News are moved to this link: [Click here to see the News section](https://github
 - This repository is licensed under the GNU Affero General Public License, version 3.0 or (at your option) any later version.
 - SPDX: `AGPL-3.0-or-later`.
 - Full text: see the `LICENSE` file and <https://www.gnu.org/licenses/agpl-3.0-standalone.html>.
-- Third‑party components under `.refs/Forge-A1111/` and `extensions-builtin/` may include their own licenses (e.g., MIT); see the LICENSE files within those folders for details. Their original terms remain applicable.
+- Third-party components under `.refs/Forge-A1111/` and `extensions-builtin/` may include their own licenses (e.g., MIT); see the LICENSE files within those folders for details. Their original terms remain applicable.
 
 AGPL §13 (Network Use)
 - The UI footer shows a “Source (AGPL)” link. Configure its target at build time using the env var `VITE_SOURCE_URL` (e.g., your Git remote or a tarball URL for this exact source).

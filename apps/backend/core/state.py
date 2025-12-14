@@ -136,7 +136,7 @@ class BackendState:
         return self.interrupted or self.stopping_generation or self.skipped
 
     def dict(self) -> dict[str, Any]:
-        # drop lock and non‑serializable fields
+        # drop lock and non-serializable fields
         d = asdict(self)
         d.pop("_lock", None)
         return d

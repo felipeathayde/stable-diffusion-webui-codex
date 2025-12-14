@@ -146,13 +146,13 @@ def load_flow16_vae(
                 logger.debug("VAE unexpected keys (%d): %s", len(unexpected), unexpected[:5])
 
             # Fail loudly if this is not actually a Flow16 VAE.
-            # A mismatched 4‑channel VAE will otherwise decode pure noise.
+            # A mismatched 4-channel VAE will otherwise decode pure noise.
             if missing:
                 ratio = len(missing) / max(expected_total, 1)
                 if ratio > 0.05:
                     raise ValueError(
                         f"Incompatible Flow16 VAE at {vae_path}: missing {len(missing)}/{expected_total} keys "
-                        f"after prefix stripping. Please supply a 16‑channel Flow VAE (Flux/Z Image)."
+                        f"after prefix stripping. Please supply a 16-channel Flow VAE (Flux/Z Image)."
                     )
             
             vae = vae.to(dtype=dtype)

@@ -310,7 +310,7 @@ def build_app() -> FastAPI:
     )
 
     media = MediaService()
-    # Native options facade (JSON‑backed). Import early so helpers are available
+    # Native options facade (JSON-backed). Import early so helpers are available
     # to any route or startup function defined below.
     from apps.backend.codex.options import (
         get_value as _opts_get,

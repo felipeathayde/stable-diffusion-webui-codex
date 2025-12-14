@@ -8,7 +8,7 @@ Status: Active
 Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py`.
 
 ## Design Guidelines
-- No legacy imports. Keep APIs Codex‑native, clear, and typed.
+- No legacy imports. Keep APIs Codex-native, clear, and typed.
 - Preserve A1111/Comfy behaviour (chunking, emphasis, TI) while modernising structure.
 - Avoid hard dependencies on upstream internals that drift between HF releases.
 
@@ -36,4 +36,4 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 - The loader now normalizes CLIP state dicts that come rooted at `text_model.*` by lifting them under `transformer.*` so they match `IntegratedCLIP` keys. This avoids spurious `Missing/Unexpected` when checkpoints already use the modern `text_model.*` layout but omit the outer `transformer` prefix.
 
 ## Not Implemented
-- Non‑classic emphasis variants outside the configured registry will raise `NotImplementedError` when wired.
+- Non-classic emphasis variants outside the configured registry will raise `NotImplementedError` when wired.

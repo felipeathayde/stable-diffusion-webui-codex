@@ -201,7 +201,7 @@ Checklist mínimo:
 - [ ] Confirmar `shift` e `sigma_min` batem com os assets HF / implementação de referência.
 - [ ] Se o upstream tiver `..., 0, 0` (double-zero tail), isso é esperado (último `dt=0`).
 
-**Anti‑padrão:** assumir que “steps=8” ou “shift=1” é universal; para alguns flows (ex. Z‑Image Turbo) não é.
+**Anti-padrão:** assumir que “steps=8” ou “shift=1” é universal; para alguns flows (ex. Z-Image Turbo) não é.
 
 ### 7.2 Semântica de timestep: `sigma` vs `t_inv`
 
@@ -225,25 +225,25 @@ Checklist mínimo:
 
 Para modelos que juntam streams (ex.: image tokens + caption tokens):
 - A ordem do `torch.cat` no “unified stream” importa.
-- O `pos_ids`/RoPE precisa seguir o upstream (inclui offsets e padding multi‑of‑32).
+- O `pos_ids`/RoPE precisa seguir o upstream (inclui offsets e padding multi-of-32).
 
 Checklist mínimo:
 - [ ] Confirmar ordem do stream (ex.: **image→caption** vs **caption→image**).
 - [ ] Confirmar `pos_ids` com offsets idênticos ao reference (start coords, padding coords).
 - [ ] Confirmar que pads usam `*_pad_token` e que o mask (quando existir) tem semântica correta (bool mask em SDPA: True=keep).
 
-### 7.5 Ordem correta de norms nos blocos *non‑modulated* (o “detalhe assassino”)
+### 7.5 Ordem correta de norms nos blocos *non-modulated* (o “detalhe assassino”)
 
 Quando um bloco roda sem adaLN modulation (ex.: refiner de caption), a ordem correta costuma ser:
 - `attn_out = attn(norm1(x))`
 - `x = x + norm2(attn_out)`
 - `x = x + norm2_ffn(ffn(norm1_ffn(x)))`
 
-**Anti‑padrões que causam conditioning drift:**
-- Double‑norm no input da attention (`norm2(norm1(x))` como entrada).
+**Anti-padrões que causam conditioning drift:**
+- Double-norm no input da attention (`norm2(norm1(x))` como entrada).
 - `norm2` entrando no MLP (normalização errada no input do FFN).
 
-Esse bug foi a última peça que destravou a saída do Z‑Image (de “golesma” para imagens coerentes).
+Esse bug foi a última peça que destravou a saída do Z-Image (de “golesma” para imagens coerentes).
 
 ### 7.6 Dtype da integração (flow): latents fp32
 
@@ -257,7 +257,7 @@ Checklist mínimo:
 
 GGUF é quantização **por tensor**. Um arquivo “Q4_K_M” pode misturar:
 - tensores BF16 (ex.: embeddings/norms), e
-- K‑family variados (Q4_K/Q5_K/Q6_K) em diferentes camadas.
+- K-family variados (Q4_K/Q5_K/Q6_K) em diferentes camadas.
 
 Checklist mínimo:
 - [ ] Não tratar “apareceu Q5_K/Q6_K no log” como bug automaticamente.

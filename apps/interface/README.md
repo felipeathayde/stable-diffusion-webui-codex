@@ -8,7 +8,7 @@ Regra essencial: sem estilos inline. Use apenas utilitários Tailwind + tokens d
 - Proxy `/api` aponta para `API_HOST:API_PORT` (configurado via TUI ou env vars).
 
 ## Estrutura
-- `src/styles.css`: tokens (dark‑first) + utilitários semânticos.
+- `src/styles.css`: tokens (dark-first) + utilitários semânticos.
 - `src/views`: telas (txt2img, img2img, extras, settings).
 - `src/router.ts`: rotas simples.
 

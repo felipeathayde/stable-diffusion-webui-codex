@@ -15,7 +15,7 @@
               <button class="step-btn" type="button" title="Decrease" @click="fpsDec">−</button>
             </div>
           </div>
-          <span class="caption" style="margin-left:.5rem">~ {{ durationLabel }}</span>
+          <span class="caption vc-duration">~ {{ durationLabel }}</span>
         </div>
       </div>
     </div>
@@ -78,4 +78,3 @@ function fpsDec(): void {
 </script>
 
 <!-- Uses shared styles (gen-card layout avoided to keep focus on video-only params) -->
-

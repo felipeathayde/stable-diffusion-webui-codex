@@ -2,7 +2,7 @@
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2025-12-14
+Last Review: 2025-12-15
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - For Flux, `QuickSettingsBar` hides the base text encoder field and exposes a Flux-only pair of text encoder selectors based on individual files under `flux_tenc`; wiring to backend overrides is intentionally deferred to a dedicated handoff.
 - 2025-12-14: WAN text encoder selector now lists explicit `.safetensors` files under `wan22_tenc` and stores values as `wan22/<abs_path>` for consistent labeling; payload builders must normalize before sending to backend.
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.
+- 2025-12-15: QuickSettings WAN groups now use `.qs-group-wan-*` sizing hooks so the header flex layout doesn’t collapse all controls to the left on wide screens.

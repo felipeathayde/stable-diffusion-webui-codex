@@ -28,6 +28,11 @@
   .quicksettings .qs-group-vae { flex: 1 1 120px; max-width: 180px; }
   .quicksettings .qs-group-text-encoder,
   .quicksettings .qs-group-flux-tenc { flex: 1 1 200px; max-width: 320px; }
+  .quicksettings .qs-group-wan-high,
+  .quicksettings .qs-group-wan-low { flex: 1 1 160px; max-width: 260px; }
+  .quicksettings .qs-group-wan-metadata { flex: 1 1 140px; max-width: 240px; }
+  .quicksettings .qs-group-wan-text-encoder { flex: 1 1 200px; max-width: 320px; }
+  .quicksettings .qs-group-wan-vae { flex: 1 1 120px; max-width: 200px; }
   .quicksettings .qs-group-attention { flex: 0 0 auto; min-width: 85px; }
   .quicksettings .qs-group-models { flex: 0 0 auto; }
   .quicksettings .qs-group-overrides { flex: 0 0 auto; }

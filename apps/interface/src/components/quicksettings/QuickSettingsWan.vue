@@ -1,5 +1,5 @@
 <template>
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-wan-high">
       <label class="label-muted">WAN High model</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -12,7 +12,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-wan-low">
       <label class="label-muted">WAN Low model</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -25,7 +25,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-wan-metadata">
       <label class="label-muted">WAN Metadata</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -38,7 +38,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-wan-text-encoder">
       <label class="label-muted">WAN Text Encoder</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -51,7 +51,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-wan-vae">
       <label class="label-muted">WAN VAE</label>
       <div class="qs-row">
         <div class="qs-pair">
@@ -64,7 +64,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-unet-dtype">
       <label class="label-muted">Diffusion in Low Bits</label>
       <div class="qs-row">
         <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
@@ -73,7 +73,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
       <label class="label-muted">GPU VRAM (MB)</label>
       <div class="qs-row">
         <input
@@ -87,7 +87,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-attention">
       <label class="label-muted">Attention Backend</label>
       <div class="qs-row">
         <select class="select-md" :value="attentionBackend" @change="$emit('update:attentionBackend', ($event.target as HTMLSelectElement).value)">
@@ -96,7 +96,7 @@
       </div>
     </div>
 
-    <div class="quicksettings-group">
+    <div class="quicksettings-group qs-group-overrides">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
         <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">

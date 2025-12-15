@@ -264,6 +264,7 @@
   @import "./styles/components/refiner-settings-card.css";
   @import "./styles/components/result-viewer.css";
   @import "./styles/components/prompt-fields.css";
+  @import "./styles/components/video-settings-card.css";
   @import "./styles/components/quicksettings.css";
   @import "./styles/components/views-shared.css";
   @import "./styles/components/prompt-box.css";

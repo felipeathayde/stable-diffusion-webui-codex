@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2025-12-14
+Last Review: 2025-12-15
 Status: Active
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Active
 - `ResultViewer.vue` exibe um overlay full-screen para zoom de imagens (sem modal encaixotado): o preview da galeria continua grande no card, enquanto o overlay usa o viewport inteiro com ferramenta lateral para pan/zoom (drag para pan, botões de Fit/1:1/+/−/Close na barra à direita).
 - 2025-12-14: QuickSettings WAN text encoder dropdown now prefers concrete `.safetensors` files under `wan22_tenc`, emitting `wan22/<abs_path>` values that the WAN payload builder normalizes before POSTing.
 - 2025-12-14: WAN tab UI panels live under `components/wan/` (`WanStagePanel.vue`, `WanVideoOutputPanel.vue`) to avoid duplicating High/Low/Output markup in the view.
+- 2025-12-15: `VideoSettingsCard.vue` gained a dedicated stylesheet (`styles/components/video-settings-card.css`) and the WAN tab’s parameter sections were restyled to use card layouts consistently.

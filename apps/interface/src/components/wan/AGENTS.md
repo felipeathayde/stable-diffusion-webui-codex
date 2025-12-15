@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2025-12-14
+Last Review: 2025-12-15
 Status: Active
 
 ## Purpose
@@ -15,3 +15,4 @@ Status: Active
 ## Notes
 - Keep these components dumb: props in, emits out. Do not fetch inventory or call backend APIs here.
 - Prefer shared selectors (`SamplerSelector.vue`, `SchedulerSelector.vue`) over ad-hoc `<select>` blocks.
+- 2025-12-15: Panels were restyled to render as cards (`.gen-card`) inside WANTab’s “Generation Parameters” panel, using responsive `.wan22-grid` + `.wan22-toggle*` classes.

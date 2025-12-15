@@ -1,113 +1,110 @@
 <template>
-  <div class="panel">
-    <div class="panel-header">
-      <h3 class="h4">{{ title }}</h3>
+  <div class="gen-card">
+    <div class="wan22-toggle-head">
+      <span class="label-muted">{{ title }}</span>
     </div>
-    <div class="panel-body">
-      <div class="grid grid-3">
-        <SamplerSelector
-          :samplers="samplers"
-          :modelValue="stage.sampler"
-          :label="samplerLabel"
-          :allow-empty="true"
-          @update:modelValue="(v) => updateStage({ sampler: v })"
+
+    <div class="wan22-grid">
+      <SamplerSelector
+        :samplers="samplers"
+        :modelValue="stage.sampler"
+        :label="samplerLabel"
+        :allow-empty="true"
+        @update:modelValue="(v) => updateStage({ sampler: v })"
+      />
+      <SchedulerSelector
+        :schedulers="schedulers"
+        :modelValue="stage.scheduler"
+        :label="schedulerLabel"
+        :allow-empty="true"
+        @update:modelValue="(v) => updateStage({ scheduler: v })"
+      />
+      <div>
+        <label class="label-muted">Steps</label>
+        <input
+          class="ui-input"
+          type="number"
+          min="1"
+          :disabled="disabled"
+          :value="stage.steps"
+          @change="updateStage({ steps: toInt($event, stage.steps) })"
         />
-        <SchedulerSelector
-          :schedulers="schedulers"
-          :modelValue="stage.scheduler"
-          :label="schedulerLabel"
-          :allow-empty="true"
-          @update:modelValue="(v) => updateStage({ scheduler: v })"
+      </div>
+      <div>
+        <label class="label-muted">CFG</label>
+        <input
+          class="ui-input"
+          type="number"
+          step="0.5"
+          :disabled="disabled"
+          :value="stage.cfgScale"
+          @change="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })"
         />
-        <div>
-          <label class="label">Steps</label>
+      </div>
+      <div>
+        <label class="label-muted">Seed</label>
+        <div class="flex flex-wrap gap-2 items-center">
           <input
             class="ui-input"
             type="number"
-            min="1"
             :disabled="disabled"
-            :value="stage.steps"
-            @change="updateStage({ steps: toInt($event, stage.steps) })"
+            :value="stage.seed"
+            @change="updateStage({ seed: toInt($event, stage.seed) })"
           />
+          <button class="btn btn-sm btn-secondary" type="button" :disabled="disabled" @click="randomizeSeed">Random</button>
+          <button class="btn btn-sm btn-secondary" type="button" :disabled="disabled || lastSeed === null" @click="reuseSeed">Reuse</button>
         </div>
       </div>
-
-      <div class="grid grid-3 mt-2">
-        <div>
-          <label class="label">CFG</label>
-          <input
-            class="ui-input"
-            type="number"
-            step="0.5"
-            :disabled="disabled"
-            :value="stage.cfgScale"
-            @change="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })"
-          />
-        </div>
-        <div>
-          <label class="label">Seed</label>
-          <div class="grid grid-3">
-            <input
-              class="ui-input"
-              type="number"
-              :disabled="disabled"
-              :value="stage.seed"
-              @change="updateStage({ seed: toInt($event, stage.seed) })"
-            />
-            <button class="btn btn-sm" type="button" :disabled="disabled" @click="randomizeSeed">Random</button>
-            <button class="btn btn-sm" type="button" :disabled="disabled || lastSeed === null" @click="reuseSeed">Reuse</button>
-          </div>
-        </div>
-        <div v-if="showModelDir">
-          <label class="label">Model Dir</label>
-          <input
-            class="ui-input"
-            type="text"
-            :disabled="disabled"
-            :value="stage.modelDir"
-            @change="updateStage({ modelDir: ($event.target as HTMLInputElement).value })"
-            placeholder="/path/to/high-or-low"
-          />
-        </div>
+      <div v-if="showModelDir">
+        <label class="label-muted">Model Dir</label>
+        <input
+          class="ui-input"
+          type="text"
+          :disabled="disabled"
+          :value="stage.modelDir"
+          @change="updateStage({ modelDir: ($event.target as HTMLInputElement).value })"
+          placeholder="/path/to/high-or-low"
+        />
       </div>
-
-      <div class="panel-sub mt-2">
-        <label class="switch-label">
-          <input type="checkbox" :disabled="disabled" :checked="stage.lightning" @change="onLightning" />
-          <span>Lightning</span>
-        </label>
-        <label class="switch-label ml-4">
-          <input type="checkbox" :disabled="disabled" :checked="stage.loraEnabled" @change="onLoraEnabled" />
-          <span>Use LoRA</span>
-        </label>
-        <div v-if="stage.loraEnabled" class="grid grid-2 mt-2">
-          <div>
-            <label class="label">LoRA Path</label>
-            <input
-              class="ui-input"
-              type="text"
-              :disabled="disabled"
-              :value="stage.loraPath"
-              @change="updateStage({ loraPath: ($event.target as HTMLInputElement).value })"
-            />
-          </div>
-          <div>
-            <label class="label">Weight</label>
-            <input
-              class="ui-input"
-              type="number"
-              step="0.05"
-              :disabled="disabled"
-              :value="stage.loraWeight"
-              @change="updateStage({ loraWeight: toFloat($event, stage.loraWeight) })"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div v-if="showModelDir && !stage.modelDir" class="error mt-2">{{ title }}: model directory is empty.</div>
-      <div v-if="stage.loraEnabled && !stage.loraPath" class="error mt-1">{{ title }}: LoRA enabled but path is empty.</div>
     </div>
+
+    <div class="wan22-toggle-row">
+      <label class="wan22-toggle">
+        <input type="checkbox" :disabled="disabled" :checked="stage.lightning" @change="onLightning" />
+        <span>Lightning</span>
+      </label>
+      <label class="wan22-toggle">
+        <input type="checkbox" :disabled="disabled" :checked="stage.loraEnabled" @change="onLoraEnabled" />
+        <span>Use LoRA</span>
+      </label>
+    </div>
+
+    <div v-if="stage.loraEnabled" class="wan22-grid">
+      <div>
+        <label class="label-muted">LoRA Path</label>
+        <input
+          class="ui-input"
+          type="text"
+          :disabled="disabled"
+          :value="stage.loraPath"
+          @change="updateStage({ loraPath: ($event.target as HTMLInputElement).value })"
+        />
+      </div>
+      <div>
+        <label class="label-muted">Weight</label>
+        <input
+          class="ui-input"
+          type="number"
+          step="0.05"
+          :disabled="disabled"
+          :value="stage.loraWeight"
+          @change="updateStage({ loraWeight: toFloat($event, stage.loraWeight) })"
+        />
+      </div>
+    </div>
+
+    <div v-if="showModelDir && !stage.modelDir" class="panel-error">{{ title }}: model directory is empty.</div>
+    <div v-if="stage.loraEnabled && !stage.loraPath" class="panel-error">{{ title }}: LoRA enabled but path is empty.</div>
   </div>
 </template>
 

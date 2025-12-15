@@ -2,42 +2,18 @@
   <section v-if="tab" class="panels">
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header">
-          <h3 class="h4">Prompt & Input</h3>
-        </div>
+        <div class="panel-header"><span>Prompt</span></div>
         <div class="panel-body">
-          <div class="grid grid-2">
-            <div>
-              <label class="label">Prompt</label>
-              <textarea class="ui-textarea" rows="3" :disabled="isRunning" :value="video.prompt" @input="setVideo({ prompt: ($event.target as HTMLTextAreaElement).value })"></textarea>
-              <label class="label mt-2">Negative</label>
-              <textarea class="ui-textarea" rows="2" :disabled="isRunning" :value="video.negativePrompt" @input="setVideo({ negativePrompt: ($event.target as HTMLTextAreaElement).value })"></textarea>
-            </div>
-            <div>
-              <div class="grid grid-2">
-                <div>
-                  <label class="label">Width</label>
-                  <input class="ui-input" type="number" min="64" step="8" :disabled="isRunning" :value="video.width" @change="setVideo({ width: toInt($event, video.width) })" />
-                </div>
-                <div>
-                  <label class="label">Height</label>
-                  <input class="ui-input" type="number" min="64" step="8" :disabled="isRunning" :value="video.height" @change="setVideo({ height: toInt($event, video.height) })" />
-                </div>
-              </div>
-              <VideoSettingsCard
-                :frames="video.frames"
-                :fps="video.fps"
-                @update:frames="(v:number)=>setVideo({ frames: v })"
-                @update:fps="(v:number)=>setVideo({ fps: v })"
-              />
-            </div>
-          </div>
+          <PromptFields v-model:prompt="videoPrompt" v-model:negative="videoNegative" />
 
-          <div class="panel-sub mt-3">
-            <label class="switch-label">
-              <input type="checkbox" :disabled="isRunning" :checked="video.useInitImage" @change="onInitToggle" />
-              <span>Use Initial Image (img2vid)</span>
-            </label>
+          <div class="gen-card">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">Initial Image (img2vid)</span>
+              <label class="wan22-toggle">
+                <input type="checkbox" :disabled="isRunning" :checked="video.useInitImage" @change="onInitToggle" />
+                <span>Enable</span>
+              </label>
+            </div>
             <div v-if="video.useInitImage" class="mt-2">
               <InitialImageCard
                 label="Image"
@@ -48,73 +24,105 @@
                 @clear="clearInit"
               >
                 <template #footer>
-                  <div v-if="video.initImageName" class="muted mt-1">{{ video.initImageName }}</div>
+                  <div v-if="video.initImageName" class="caption mt-1">{{ video.initImageName }}</div>
                 </template>
               </InitialImageCard>
             </div>
+            <p v-else class="caption">Disabled (txt2vid).</p>
           </div>
 
-          <div class="panel-sub mt-3">
-            <h4 class="h6 m-0 mb-1">WAN Runtime & Assets</h4>
-            <div class="grid grid-3">
+          <div v-if="errorMessage" class="panel-error">{{ errorMessage }}</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Generation Parameters</div>
+        <div class="panel-body">
+          <div class="gen-card">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">WAN Runtime & Assets</span>
+            </div>
+            <div class="wan22-grid">
               <div>
-                <label class="label">Model Format</label>
+                <label class="label-muted">Model Format</label>
                 <select class="select-md" :disabled="isRunning" :value="wanFormat" @change="onFormatChange">
                   <option value="auto">Auto</option>
                   <option value="diffusers">Diffusers</option>
                   <option value="gguf">GGUF</option>
                 </select>
-                <p class="muted mt-1">Assets are managed by QuickSettings (header).</p>
+                <p class="caption mt-1">Assets are managed by QuickSettings (header).</p>
               </div>
               <div>
-                <label class="label">High model dir</label>
-                <div class="muted break-words">{{ high.modelDir || 'Unset (set in QuickSettings)' }}</div>
+                <label class="label-muted">High model dir</label>
+                <div class="caption break-words">{{ high.modelDir || 'Unset (set in QuickSettings)' }}</div>
               </div>
               <div>
-                <label class="label">Low model dir</label>
-                <div class="muted break-words">{{ low.modelDir || 'Unset (set in QuickSettings)' }}</div>
+                <label class="label-muted">Low model dir</label>
+                <div class="caption break-words">{{ low.modelDir || 'Unset (set in QuickSettings)' }}</div>
               </div>
             </div>
-            <div class="grid grid-3 mt-2">
+            <div class="wan22-grid">
               <div>
-                <label class="label">Text Encoder</label>
-                <div class="muted break-words">{{ assets.textEncoder || 'Built-in / paths.json default' }}</div>
+                <label class="label-muted">Text Encoder</label>
+                <div class="caption break-words">{{ assets.textEncoder || 'Built-in / paths.json default' }}</div>
               </div>
               <div>
-                <label class="label">VAE</label>
-                <div class="muted break-words">{{ assets.vae || 'Built-in / paths.json default' }}</div>
+                <label class="label-muted">VAE</label>
+                <div class="caption break-words">{{ assets.vae || 'Built-in / paths.json default' }}</div>
               </div>
               <div>
-                <label class="label">Metadata Dir</label>
-                <div class="muted break-words">{{ assets.metadata || 'Built-in / vendored HF metadata' }}</div>
+                <label class="label-muted">Metadata Dir</label>
+                <div class="caption break-words">{{ assets.metadata || 'Built-in / vendored HF metadata' }}</div>
               </div>
             </div>
-            <div class="error mt-2" v-if="!high.modelDir && !low.modelDir">
+            <div class="panel-error" v-if="!high.modelDir && !low.modelDir">
               WAN model directory is empty. Set WAN High/Low model dirs in QuickSettings.
             </div>
           </div>
+
+          <div class="gen-card">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">Video</span>
+            </div>
+            <div class="wan22-grid">
+              <div>
+                <label class="label-muted">Width</label>
+                <input class="ui-input" type="number" min="64" step="8" :disabled="isRunning" :value="video.width" @change="setVideo({ width: toInt($event, video.width) })" />
+              </div>
+              <div>
+                <label class="label-muted">Height</label>
+                <input class="ui-input" type="number" min="64" step="8" :disabled="isRunning" :value="video.height" @change="setVideo({ height: toInt($event, video.height) })" />
+              </div>
+            </div>
+            <VideoSettingsCard
+              :frames="video.frames"
+              :fps="video.fps"
+              @update:frames="(v:number)=>setVideo({ frames: v })"
+              @update:fps="(v:number)=>setVideo({ fps: v })"
+            />
+          </div>
+
+          <WanStagePanel
+            title="High Noise"
+            :stage="high"
+            :samplers="samplers"
+            :schedulers="schedulers"
+            :disabled="isRunning"
+            @update:stage="setHigh"
+          />
+
+          <WanStagePanel
+            title="Low Noise"
+            :stage="low"
+            :samplers="samplers"
+            :schedulers="schedulers"
+            :disabled="isRunning"
+            @update:stage="setLow"
+          />
+
+          <WanVideoOutputPanel :video="video" :disabled="isRunning" @update:video="setVideo" />
         </div>
       </div>
-
-      <WanStagePanel
-        title="High Noise"
-        :stage="high"
-        :samplers="samplers"
-        :schedulers="schedulers"
-        :disabled="isRunning"
-        @update:stage="setHigh"
-      />
-
-      <WanStagePanel
-        title="Low Noise"
-        :stage="low"
-        :samplers="samplers"
-        :schedulers="schedulers"
-        :disabled="isRunning"
-        @update:stage="setLow"
-      />
-
-      <WanVideoOutputPanel :video="video" :disabled="isRunning" @update:video="setVideo" />
     </div>
 
     <!-- Right column: Results -->
@@ -131,7 +139,6 @@
               Step {{ progress.step }} / {{ progress.totalSteps }}
             </p>
           </div>
-          <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
           <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet." />
         </div>
       </div>
@@ -157,6 +164,7 @@ import { fetchSamplers, fetchSchedulers } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
+import PromptFields from '../components/prompt/PromptFields.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration } from '../composables/useVideoGeneration'
@@ -215,6 +223,16 @@ function setLow(patch: Partial<WanStageParams>): void {
   const current = (tab.value.params as any).low as WanStageParams
   store.updateParams(props.tabId, { low: { ...current, ...patch } })
 }
+
+const videoPrompt = computed({
+  get: () => video.value.prompt,
+  set: (value: string) => setVideo({ prompt: value }),
+})
+
+const videoNegative = computed({
+  get: () => video.value.negativePrompt,
+  set: (value: string) => setVideo({ negativePrompt: value }),
+})
 
 function onFormatChange(e: Event): void {
   if (!tab.value) return

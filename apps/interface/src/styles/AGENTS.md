@@ -2,7 +2,7 @@
 <!-- tags: frontend, styles, tailwind -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-06
+Last Review: 2025-12-15
 Status: Active
 
 ## Purpose
@@ -14,3 +14,4 @@ Status: Active
 - 2025-12-03: Refiner styling gains an embedded/dense variant for the hires nested card; Highres card styles include a nested refiner section separator.
 - 2025-12-05: Imagens da grid de resultados (`.results-grid img`) agora respeitam `max-height: 80dvh` para evitar cortes visuais no painel de Results, mantendo o zoom detalhado no overlay full-screen do `ResultViewer`.
  - 2025-12-06: `components/quicksettings.css` agora posiciona o header de QuickSettings em duas linhas fixas (primeira linha: modo/checkpoint/VAE/text encoder/refresh de modelos; segunda linha: attention backend, overrides e blocos de performance `qs-group-perf-*`), com um fallback responsivo que solta as restrições de grid em telas estreitas.
+ - 2025-12-15: Added `components/video-settings-card.css` so `VideoSettingsCard.vue` has real layout styles (previously used classes that only existed inside `.gen-card` scope).

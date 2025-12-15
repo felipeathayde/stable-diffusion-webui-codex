@@ -1,6 +1,6 @@
 <template>
   <div class="form-field">
-    <label class="label">{{ labelText }}</label>
+    <label class="label-muted">{{ labelText }}</label>
     <select class="select-md" :value="modelValue" @change="onChange">
       <option v-if="allowEmpty" value="">{{ emptyLabelText }}</option>
       <option v-for="s in schedulers" :key="s.name" :value="s.name">

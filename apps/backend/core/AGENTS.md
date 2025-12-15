@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2025-10-28
+Last Review: 2025-12-14
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 ## Notes
 - New engine integrations must conform to `engine_interface.py` and register via `registry.py`.
 - Keep RNG and device logic centralized here—avoid duplicating random seeding in downstream modules.
+- 2025-12-14: Video requests (`Txt2VidRequest`/`Img2VidRequest`) include `steps` explicitly (defaulting to 30 to match `/api/{txt2vid,img2vid}`) so API parsing and `build_video_plan()` stay aligned.

@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, txt2img, sdxl -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-05
+Last Review: 2025-12-14
 Status: Active
 
 ## Purpose
@@ -15,3 +15,7 @@ Status: Active
 - `Sdxl.vue` reuses the txt2img layout with the SDXL store; keep both views in sync when adjusting shared UX patterns (including prompt modals like LoRA/TI selectors). A gentime badge ao lado do botão Generate mostra o tempo aproximado entre o clique e a chegada do primeiro resultado, alimentado por `store.gentimeMs`.
 - Txt2Img/Sdxl now render a nested “Hires Refiner” block inside the Highres card while keeping the global Refiner card under Generation Parameters.
 - `XyzPlot.vue` adds an XYZ sweep page (route `/xyz`) that drives batched txt2img runs from frontend only; uses current SDXL state as the baseline payload.
+- 2025-12-14: `WANTab.vue` uses typed (Zod) WAN video payload builders and surfaces streaming progress + returned `info` JSON to reduce request drift during WAN22 pipeline testing.
+- 2025-12-14: `WANTab.vue` was de-bloated by extracting High/Low + Output panels into `components/wan/*` and treating WAN assets (model dirs/TE/VAE) as QuickSettings responsibility (tab shows a summary + validates before starting runs).
+- 2025-12-14: Removed the legacy standalone `Txt2Vid.vue` view; WAN video entry stays exclusively under model tabs (`/models/:tabId` with `type === 'wan'`).
+- 2025-12-14: `ModelTabView.vue` keys per-tab views by `tab.id` so switching `/models/:tabId` remounts the correct tab implementation (prevents composables binding a stale id).

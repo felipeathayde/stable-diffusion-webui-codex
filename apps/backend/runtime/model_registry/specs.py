@@ -18,6 +18,7 @@ class ModelFamily(Enum):
     KOALA = "koala"
     ZERO123 = "zero123"
     ZIMAGE = "zimage"
+    QWEN_IMAGE = "qwen_image"
     WAN22 = "wan22"
     AURA = "aura"
     HUNYUAN = "hunyuan"
@@ -45,6 +46,7 @@ class LatentFormat(Enum):
     CASCADE = "cascade"
     WAN22 = "wan22"
     ZIMAGE = "zimage"
+    QWEN_IMAGE = "qwen_image"
     OTHER = "other"
 
 
@@ -104,6 +106,10 @@ class ModelSignature:
     text_encoders: List[TextEncoderSignature]
     vae: Optional[VAESignature]
     extras: Dict[str, object] = field(default_factory=dict)
+
+    @property
+    def unet(self) -> CodexCoreSignature:
+        return self.core
 
 
 __all__ = [

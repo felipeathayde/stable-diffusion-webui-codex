@@ -386,10 +386,53 @@ def build_app() -> FastAPI:
             return '14b'
         return None
 
+    def _looks_like_wan_gguf_dir(p: Optional[str]) -> bool:
+        """Best-effort detection of a WAN GGUF directory (or .gguf file path)."""
+        if not p:
+            return False
+        raw = str(p).strip()
+        if not raw:
+            return False
+        try:
+            if os.path.isfile(raw):
+                return raw.lower().endswith(".gguf")
+        except Exception:
+            pass
+        try:
+            abspath = raw if os.path.isabs(raw) else os.path.abspath(raw)
+            if not os.path.isdir(abspath):
+                return False
+            with os.scandir(abspath) as it:
+                for entry in it:
+                    try:
+                        if entry.is_file() and entry.name.lower().endswith(".gguf"):
+                            return True
+                    except Exception:
+                        continue
+        except Exception:
+            return False
+        return False
+
     def _pick_wan_engine(extras: Dict[str, Any]) -> str:
         """Choose wan22_14b or wan22_5b from provided WAN extras; default to 14b."""
+        # GGUF path is implemented under wan22_5b today (both txt2vid and img2vid).
+        wan_format = str(extras.get("wan_format") or "").strip().lower()
+        if wan_format == "gguf":
+            return "wan22_5b"
         wh = extras.get('wan_high') or {}
         wl = extras.get('wan_low') or {}
+
+        # Auto-detect GGUF if the user points to a folder containing .gguf files.
+        # This keeps the "Model Format: Auto" UX working for common layouts like models/wan22/*.gguf.
+        if wan_format in ("", "auto"):
+            try:
+                if isinstance(wh, dict) and _looks_like_wan_gguf_dir(str(wh.get("model_dir") or "")):
+                    return "wan22_5b"
+                if isinstance(wl, dict) and _looks_like_wan_gguf_dir(str(wl.get("model_dir") or "")):
+                    return "wan22_5b"
+            except Exception:
+                pass
+
         cand = None
         try:
             if isinstance(wh, dict) and wh.get('model_dir'):
@@ -2321,6 +2364,7 @@ def build_app() -> FastAPI:
             negative_prompt=negative_prompt,
             width=width_val,
             height=height_val,
+            steps=steps_val,
             fps=fps_val,
             num_frames=frames_val,
             sampler=sampler_name,
@@ -2420,6 +2464,7 @@ def build_app() -> FastAPI:
             init_image=init_image,
             width=width_val,
             height=height_val,
+            steps=steps_val,
             fps=fps_val,
             num_frames=frames_val,
             sampler=sampler_name,

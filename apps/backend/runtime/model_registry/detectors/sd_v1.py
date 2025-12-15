@@ -38,10 +38,6 @@ class StableDiffusionV1Detector:
         shape = bundle.shape("model.diffusion_model.input_blocks.0.0.weight")
         if not shape or shape[1] not in (4, 9):
             return False
-        # SD1.x UNet has 12 input blocks (0..11)
-        blocks = count_blocks(bundle.keys, "model.diffusion_model.input_blocks.{}.")
-        if blocks < 10:
-            return False
         # Text encoder hidden size 768
         txt_shape = bundle.shape("cond_stage_model.transformer.text_model.embeddings.token_embedding.weight")
         if not txt_shape or txt_shape[-1] != 768:

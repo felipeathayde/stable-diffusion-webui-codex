@@ -83,6 +83,7 @@ class Img2ImgRequest(BaseRequest):
 class Txt2VidRequest(BaseRequest):
     width: int = 768
     height: int = 432
+    steps: int = 30
     num_frames: int = 16
     fps: int = 24
     motion_strength: Optional[float] = None
@@ -95,6 +96,7 @@ class Img2VidRequest(BaseRequest):
     init_image: Any = None
     width: int = 768
     height: int = 432
+    steps: int = 30
     num_frames: int = 16
     fps: int = 24
     motion_strength: Optional[float] = None

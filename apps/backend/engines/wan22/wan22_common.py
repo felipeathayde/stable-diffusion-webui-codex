@@ -36,8 +36,8 @@ class WanComponents:
 @dataclass
 class WanStageOptions:
     model_dir: Optional[str] = None
-    sampler: Optional[str] = "Automatic"
-    scheduler: Optional[str] = "Automatic"
+    sampler: Optional[str] = None
+    scheduler: Optional[str] = None
     steps: int = 12
     cfg_scale: Optional[float] = None
     lora_path: Optional[str] = None
@@ -53,8 +53,8 @@ class WanStageOptions:
             return WanStageOptions(steps=default_steps, cfg_scale=default_cfg)
         return WanStageOptions(
             model_dir=str(obj.get("model_dir")) if obj.get("model_dir") else None,
-            sampler=str(obj.get("sampler")) if obj.get("sampler") else "Automatic",
-            scheduler=str(obj.get("scheduler")) if obj.get("scheduler") else "Automatic",
+            sampler=str(obj.get("sampler")) if obj.get("sampler") else None,
+            scheduler=str(obj.get("scheduler")) if obj.get("scheduler") else None,
             steps=int(obj.get("steps") or default_steps),
             cfg_scale=(float(obj.get("cfg_scale")) if obj.get("cfg_scale") is not None else default_cfg),
             lora_path=str(obj.get("lora_path")) if obj.get("lora_path") else None,

@@ -7,6 +7,8 @@
       :high-choices="wanHighDirChoices"
       :low-model="wanLowModel"
       :low-choices="wanLowDirChoices"
+      :metadata-dir="wanMetadataDir"
+      :metadata-choices="wanMetadataChoices"
       :text-encoder="wanTextEncoder"
       :text-encoder-choices="wanTextEncoderChoices"
       :vae="wanVae"
@@ -19,6 +21,7 @@
       :attention-choices="store.attentionChoices"
       @update:highModel="onWanHighModelChange"
       @update:lowModel="onWanLowModelChange"
+      @update:metadataDir="onWanMetadataDirChange"
       @update:textEncoder="onWanTextEncoderChange"
       @update:vae="onWanVaeChange"
       @update:unetDtype="onUnetDtypeChange"
@@ -26,6 +29,7 @@
       @update:attentionBackend="onAttentionChange"
       @browseHigh="onWanBrowseHigh"
       @browseLow="onWanBrowseLow"
+      @browseMetadata="onWanBrowseMetadata"
       @browseTe="onWanBrowseTe"
       @browseVae="onWanBrowseVae"
       @openOverrides="openOverrides"
@@ -210,6 +214,7 @@ const pathsConfig = ref<Record<string, string[]>>({})
 const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
 const inventoryWan = ref<Array<{ name: string; path: string; stage: string }>>([])
 const inventoryTextEncoders = ref<Array<{ name: string; path: string }>>([])
+const inventoryMetadata = ref<Array<{ name: string; path: string }>>([])
 const engineCaps = useEngineCapabilitiesStore()
 const showOverridesModal = ref(false)
 const isLoadingQuicksettings = ref(false)
@@ -264,10 +269,12 @@ async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void
     }))
     // Text encoder files are available via inventory for future use (e.g., Flux overrides).
     inventoryTextEncoders.value = inv.text_encoders ?? []
+    inventoryMetadata.value = inv.metadata ?? []
   } catch (e) {
     inventoryVaes.value = []
     inventoryWan.value = []
     inventoryTextEncoders.value = []
+    inventoryMetadata.value = []
   }
 }
 
@@ -477,13 +484,41 @@ function currentWanAssets(): WanAssetsParams {
 
 const wanTextEncoder = computed(() => currentWanAssets().textEncoder || '')
 const wanVae = computed(() => currentWanAssets().vae || '')
+const wanMetadataDir = computed(() => currentWanAssets().metadata || '')
 
-const wanTextEncoderChoices = computed(() => {
-  // Limit WAN choices to WAN22-specific labels (family prefix).
-  return store.textEncoderChoices.filter((name) => typeof name === 'string' && name.startsWith('wan22/'))
+const wanMetadataChoices = computed(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of inventoryMetadata.value) {
+    const name = String(item.name || '')
+    // Keep the dropdown focused on WAN2.2 metadata repos; users can still Browse… for arbitrary paths.
+    if (name && !name.startsWith('Wan-AI/')) continue
+    const path = String(item.path || '').trim()
+    if (!path) continue
+    if (!seen.has(path)) { seen.add(path); out.push(path) }
+  }
+  return out
 })
 
-const wanVaeChoices = computed(() => filteredVaeChoices.value)
+const wanTextEncoderChoices = computed(() => {
+  // WAN22 GGUF requires an explicit TE weights file (.safetensors). Prefer concrete
+  // files under the configured wan22_tenc roots rather than root labels from /api/text-encoders.
+  return inventoryTextEncoders.value
+    .filter((item) => typeof item.path === 'string' && item.path.toLowerCase().endsWith('.safetensors') && fileInPaths(item.path, 'wan22_tenc'))
+    .map((item) => `wan22/${item.path}`)
+})
+
+const wanVaeChoices = computed(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of inventoryVaes.value) {
+    const path = String(item.path || '')
+    if (!path) continue
+    if (!fileInPaths(path, 'wan22_vae')) continue
+    if (!seen.has(path)) { seen.add(path); out.push(path) }
+  }
+  return out
+})
 
 // Event handlers
 async function onModeChange(value: string): Promise<void> {
@@ -580,6 +615,13 @@ async function onWanLowModelChange(value: string): Promise<void> {
   if (!tab || tab.type !== 'wan') return
   const current = (tab.params as any).low || {}
   await tabsStore.updateParams(tab.id, { low: { ...current, modelDir: value } })
+}
+
+async function onWanMetadataDirChange(value: string): Promise<void> {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  const current = currentWanAssets()
+  await tabsStore.updateParams(tab.id, { assets: { ...current, metadata: value } })
 }
 
 async function onWanTextEncoderChange(value: string): Promise<void> {
@@ -706,10 +748,19 @@ async function onWanBrowseLow(): Promise<void> {
   if (path) await onWanLowModelChange(path)
 }
 
+async function onWanBrowseMetadata(): Promise<void> {
+  const path = promptForPath('WAN Metadata directory (server path)', wanMetadataDir.value)
+  if (path) await onWanMetadataDirChange(path)
+}
+
 async function onWanBrowseTe(): Promise<void> {
   const current = wanTextEncoder.value
   const next = promptForPath('WAN Text Encoder identifier or path', current)
-  if (next !== null) await onWanTextEncoderChange(next)
+  if (next === null) return
+  const normalized = next.replace(/\\+/g, '/')
+  // Keep the stored value consistent with the dropdown labels (wan22/<abs_path>).
+  const stored = normalized.startsWith('wan22/') || !normalized.startsWith('/') ? normalized : `wan22/${normalized}`
+  await onWanTextEncoderChange(stored)
 }
 
 async function onWanBrowseVae(): Promise<void> {

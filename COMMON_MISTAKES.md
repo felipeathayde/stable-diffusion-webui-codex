@@ -1,3 +1,11 @@
+**Wrong command:** `rg -n "Unit test that `prepare_txt2vid`" .sangoi/plans/2025-12-14-wan22-ui-backend-alignment.md`
+**Cause + fix:** `Backticks are command substitution in bash; the shell tries to execute the text inside them before rg runs. Use single quotes around patterns that contain backticks (or escape them) so the pattern is passed literally to rg.`
+**Correct command:** `rg -n --fixed-strings 'Unit test that `prepare_txt2vid`' .sangoi/plans/2025-12-14-wan22-ui-backend-alignment.md`
+
+**Wrong command:** `rg -n "<<<<<<<|=======|>>>>>>>" .`
+**Cause + fix:** `This repo vendors tokenizer vocab files that include tokens like "========" and ">>>>>>>>", producing huge false-positive output that looks like merge conflicts. Exclude the Hugging Face vocab/tokenizer JSON trees (or search only source globs) when checking for real conflict markers.`
+**Correct command:** `rg -n "<<<<<<<|=======|>>>>>>>" --glob '!apps/backend/huggingface/**' --glob '!**/vocab.json' --glob '!**/tokenizer.json' --glob '!apps/interface/dist/**' .`
+
 **Wrong command:** `~/.venv/binpython -m pytest -q tests/backend/test_opus_quantization_parametergguf_to.py`
 **Cause + fix:** `Typo in the venv interpreter path (missing /bin/python). Use the correct virtualenv Python path when running tests.`
 **Correct command:** `~/.venv/bin/python -m pytest -q tests/backend/test_opus_quantization_parametergguf_to.py`

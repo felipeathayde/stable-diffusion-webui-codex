@@ -7,7 +7,6 @@ from typing import Any, Mapping, Sequence
 
 from apps.backend.codex import lora as codex_lora
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
-from apps.backend.patchers.lora_apply import apply_loras_to_engine
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
 
 logger = logging.getLogger(__name__)
@@ -26,18 +25,21 @@ def build_video_plan(request: Any) -> VideoPlan:
     return VideoPlan(
         sampler_name=getattr(request, "sampler", None),
         scheduler_name=getattr(request, "scheduler", None),
-        steps=int(getattr(request, "steps", 12) or 12),
+        steps=int(getattr(request, "steps", 30) or 30),
         frames=int(getattr(request, "num_frames", 16) or 16),
         fps=int(getattr(request, "fps", 24) or 24),
         width=int(getattr(request, "width", 768) or 768),
         height=int(getattr(request, "height", 432) or 432),
-        guidance_scale=getattr(request, "cfg_scale", None),
+        guidance_scale=getattr(request, "guidance_scale", None),
         extras=extras,
     )
 
 
 def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> Any | None:
     """Apply globally selected LoRAs to the engine, returning stats when available."""
+
+    # Lazy import to keep workflow module dependency-light for non-LoRA users.
+    from apps.backend.patchers.lora_apply import apply_loras_to_engine
 
     try:
         selections = codex_lora.get_selections()

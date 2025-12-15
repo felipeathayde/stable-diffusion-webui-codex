@@ -1,7 +1,7 @@
 # apps/backend/runtime/workflows Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-10-30
+Last Review: 2025-12-14
 Status: Active
 
 ## Purpose
@@ -18,3 +18,5 @@ Status: Active
 - Modules in this directory must stay dependency-light and only import from `apps.*` namespaces.
 - Prefer adding new workflow stages here rather than duplicating logic inside `apps/backend/use_cases/`.
 - Helper functions should raise explicit errors; avoid silent fallbacks or catching broad exceptions.
+- 2025-12-14: `build_video_plan()` reads `steps` + `guidance_scale` directly from the request; LoRA application uses a lazy import to keep the module dependency-light for non-LoRA users.
+- 2025-12-14: Video plan defaults `steps` to 30 when an ad-hoc caller omits it (matching `/api/{txt2vid,img2vid}` defaults) to avoid drifting configs.

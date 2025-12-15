@@ -11,6 +11,7 @@ from .chroma import ChromaDetector
 from .stable_cascade import StableCascadeStageBDetector, StableCascadeStageCDetector
 from .wan22 import Wan22Detector
 from .zimage import ZImageDetector
+from .qwen_image import QwenImageDetector
 
 __all__ = [
     "StableDiffusionV1Detector",
@@ -25,5 +26,5 @@ __all__ = [
     "StableCascadeStageCDetector",
     "Wan22Detector",
     "ZImageDetector",
+    "QwenImageDetector",
 ]
-

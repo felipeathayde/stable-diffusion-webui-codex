@@ -13,8 +13,8 @@
       @send-to-workflows="onSendToWorkflows"
     />
 
-    <WANTab v-if="tab.type === 'wan'" :tab-id="tab.id" ref="wanRef" />
-    <ImageModelTab v-else :tab-id="tab.id" :type="tab.type as any" ref="imgRef" />
+    <WANTab v-if="tab.type === 'wan'" :tab-id="tab.id" :key="tab.id" ref="wanRef" />
+    <ImageModelTab v-else :tab-id="tab.id" :key="tab.id" :type="tab.type as any" ref="imgRef" />
   </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab não encontrada.</div></div>

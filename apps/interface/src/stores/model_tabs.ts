@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
-import { type EngineType, getEngineConfig, getEngineDefaults, getAllEngines } from './engine_config'
+import type { ApiTab } from '../api/types'
+import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
 
-export type BaseTabType = EngineType
+export type BaseTabType = ApiTab['type']
 
 export interface BaseTabMeta {
   createdAt: string
@@ -88,27 +89,50 @@ function uuid(): string {
 }
 
 function defaultParams(type: BaseTabType): Record<string, unknown> {
-  const config = getEngineConfig(type)
-  const defaults = getEngineDefaults(type)
-  
-  // Video engines (WAN22)
-  if (config.capabilities.isVideoEngine) {
+  // Video tabs (WAN)
+  if (type === 'wan') {
     const stage = (): WanStageParams => ({
-      modelDir: '', sampler: '', scheduler: '', steps: defaults.steps, cfgScale: defaults.cfg, seed: -1,
-      lightning: false, loraEnabled: false, loraPath: '', loraWeight: 1.0,
+      modelDir: '',
+      sampler: '',
+      scheduler: '',
+      steps: 30,
+      cfgScale: 7,
+      seed: -1,
+      lightning: false,
+      loraEnabled: false,
+      loraPath: '',
+      loraWeight: 1.0,
     })
     const video: WanVideoParams = {
-      prompt: '', negativePrompt: '', width: defaults.width, height: defaults.height, fps: 24, frames: 16,
-      useInitImage: false, initImageData: '', initImageName: '',
-      filenamePrefix: 'wan22', format: 'video/h264-mp4', pixFmt: 'yuv420p', crf: 15,
-      loopCount: 0, pingpong: false, trimToAudio: false, saveMetadata: true, saveOutput: true,
-      rifeEnabled: true, rifeModel: 'rife47.pth', rifeTimes: 2,
+      prompt: '',
+      negativePrompt: '',
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 16,
+      useInitImage: false,
+      initImageData: '',
+      initImageName: '',
+      filenamePrefix: 'wan22',
+      format: 'video/h264-mp4',
+      pixFmt: 'yuv420p',
+      crf: 15,
+      loopCount: 0,
+      pingpong: false,
+      trimToAudio: false,
+      saveMetadata: true,
+      saveOutput: true,
+      rifeEnabled: true,
+      rifeModel: 'rife47.pth',
+      rifeTimes: 2,
     }
     const assets = { metadata: '', textEncoder: '', vae: '' }
-    return { high: stage(), low: stage(), video, assets }
+    return { high: stage(), low: stage(), video, assets, modelFormat: 'auto' }
   }
-  
-  // Image engines (SD15, SDXL, Flux, Z Image, Chroma)
+
+  // Image tabs (SD15, SDXL, Flux)
+  const config = getEngineConfig(type as EngineType)
+  const defaults = getEngineDefaults(type as EngineType)
   const imageDefaults: ImageBaseParams = {
     prompt: '',
     negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
@@ -132,6 +156,20 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
   return imageDefaults
 }
 
+function normalizeTabType(type: unknown): BaseTabType {
+  const raw = String(type || '').trim()
+  if (!raw) return 'sd15'
+  const value = raw.toLowerCase()
+  if (value === 'wan22' || value === 'wan22_14b' || value === 'wan22_5b') return 'wan'
+  if (value === 'sd15' || value === 'sdxl' || value === 'flux' || value === 'wan') return value as BaseTabType
+  // Fail closed: unknown tab types fall back to a safe image tab.
+  return 'sd15'
+}
+
+function normalizeTab(tab: BaseTab): BaseTab {
+  return { ...tab, type: normalizeTabType((tab as any).type) }
+}
+
 export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
@@ -146,7 +184,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     try {
       const res = await fetchTabs()
       if (res && Array.isArray(res.tabs)) {
-        tabs.value = res.tabs as unknown as BaseTab[]
+        tabs.value = (res.tabs as unknown as BaseTab[]).map(normalizeTab)
         tabs.value.sort((a, b) => a.order - b.order)
         activeId.value = tabs.value[0]?.id ?? ''
         save()
@@ -159,7 +197,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as { tabs: BaseTab[]; activeId: string }
-        tabs.value = parsed.tabs || []
+        tabs.value = (parsed.tabs || []).map(normalizeTab)
         activeId.value = parsed.activeId || (tabs.value[0]?.id ?? '')
         tabs.value.sort((a, b) => a.order - b.order)
         return
@@ -169,16 +207,16 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   function bootstrap(): void {
-    // Create tabs for all registered engines
+    // Create minimal default tabs when backend persistence is unavailable.
     const createdAt = nowIso()
-    const engines = getAllEngines()
-    tabs.value = engines.map((engine, idx) => ({
+    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'wan']
+    tabs.value = types.map((type, idx) => ({
       id: uuid(),
-      type: engine.id as BaseTabType,
-      title: engine.label,
+      type,
+      title: type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label,
       order: idx,
       enabled: true,
-      params: defaultParams(engine.id as BaseTabType),
+      params: defaultParams(type),
       meta: { createdAt, updatedAt: createdAt },
     }))
     activeId.value = tabs.value[0]?.id ?? ''
@@ -188,17 +226,18 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   async function create(type: BaseTabType, title?: string): Promise<string> {
     const id = uuid()
     const createdAt = nowIso()
+    const defaultTitle = type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label
     const nextOrder = tabs.value.length ? Math.max(...tabs.value.map(t => t.order)) + 1 : 0
     tabs.value.push({
       id,
       type,
-      title: title || type.toUpperCase(),
+      title: title || defaultTitle,
       order: nextOrder,
       enabled: true,
       params: defaultParams(type),
       meta: { createdAt, updatedAt: createdAt },
     })
-    try { await createTabApi({ type, title: title || type.toUpperCase(), params: defaultParams(type) }) } catch { /* ignore */ }
+    try { await createTabApi({ type, title: title || defaultTitle, params: defaultParams(type) }) } catch { /* ignore */ }
     save()
     return id
   }

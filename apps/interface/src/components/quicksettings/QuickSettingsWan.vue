@@ -26,12 +26,25 @@
     </div>
 
     <div class="quicksettings-group">
+      <label class="label-muted">WAN Metadata</label>
+      <div class="qs-row">
+        <div class="qs-pair">
+          <select class="select-md" :value="metadataDir" @change="$emit('update:metadataDir', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="m in metadataChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
+          </select>
+          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseMetadata')">Browse…</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="quicksettings-group">
       <label class="label-muted">WAN Text Encoder</label>
       <div class="qs-row">
         <div class="qs-pair">
           <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
             <option value="">{{ builtInLabel }}</option>
-            <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ te }}</option>
+            <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ encoderLabel(te) }}</option>
           </select>
           <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseTe')">Browse…</button>
         </div>
@@ -44,7 +57,7 @@
         <div class="qs-pair">
           <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
             <option value="">{{ builtInLabel }}</option>
-            <option v-for="v in vaeChoices" :key="v" :value="v">{{ v }}</option>
+            <option v-for="v in vaeChoices" :key="v" :value="v">{{ dirLabel(v) }}</option>
           </select>
           <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseVae')">Browse…</button>
         </div>
@@ -99,6 +112,8 @@ const props = defineProps<{
   highChoices: string[]
   lowModel: string
   lowChoices: string[]
+  metadataDir: string
+  metadataChoices: string[]
   textEncoder: string
   textEncoderChoices: string[]
   vae: string
@@ -118,5 +133,16 @@ function dirLabel(path: string): string {
   if (!norm) return ''
   const idx = norm.lastIndexOf('/')
   return idx >= 0 ? norm.slice(idx + 1) || norm : norm
+}
+
+function encoderLabel(value: string): string {
+  const norm = String(value || '').replace(/\\/g, '/')
+  if (!norm) return ''
+  if (!norm.includes('/')) return norm
+  const [family, ...rest] = norm.split('/').filter(Boolean)
+  if (!family || rest.length === 0) return norm
+  const tail = rest[rest.length - 1] || rest[0]
+  // For file labels like wan22//abs/path/to/file.safetensors, show wan22/file.safetensors.
+  return `${family}/${tail}`
 }
 </script>

@@ -120,8 +120,23 @@
   .main-content { flex: 1; padding: var(--space-lg) var(--content-px); display: flex; flex-direction: column; gap: var(--space-lg); background: hsla(0,0%,100%,0.02); }
 
   /* Horizontal tabs (Codex-like) */
-  .tabs-nav { display: flex; align-items: center; gap: 0.25rem; padding: 0.5rem var(--content-px); padding-bottom: 0; border-bottom: 0.0625rem solid hsla(0,0%,100%,0.08); background: hsla(0,0%,100%,0.02); }
-  .tab-link { padding: 0.45rem 0.85rem; border-radius: 0.5rem 0.5rem 0 0; border: 0.0625rem solid transparent; color: hsla(0,0%,100%,0.8); text-transform: lowercase; font-weight: 600; position: relative; top: 0; }
+  .tabs-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.5rem var(--content-px);
+    padding-bottom: 0;
+    border-bottom: 0.0625rem solid hsla(0,0%,100%,0.08);
+    background: hsla(0,0%,100%,0.02);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    /* Subtle edge fade to hint scroll (always-on, avoids JS). */
+    -webkit-mask-image: linear-gradient(to right, transparent 0, black 1rem, black calc(100% - 1rem), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, black 1rem, black calc(100% - 1rem), transparent 100%);
+  }
+  .tab-link { padding: 0.45rem 0.85rem; border-radius: 0.5rem 0.5rem 0 0; border: 0.0625rem solid transparent; color: hsla(0,0%,100%,0.8); text-transform: lowercase; font-weight: 600; position: relative; top: 0; flex: 0 0 auto; }
   .tab-link.router-link-active { background: var(--color-panel); border-color: var(--color-border); border-bottom-color: transparent; color: var(--color-foreground); margin-bottom: -0.0625rem; z-index: 2; }
   .tab-link:hover { background: hsla(0,0%,100%,0.06); color: var(--color-foreground); }
 
@@ -273,6 +288,7 @@
   @import "./styles/views/settings.css";
   @import "./styles/views/test.css";
   @import "./styles/views/xyz.css";
+  @import "./styles/views/wan.css";
   @import "./styles/components/wan22-settings.css";
 
   .app-footer { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 var(--content-px); height: var(--app-footer-h); border-top: 1px solid hsla(0,0%,100%,0.08); background: hsla(0,0%,100%,0.02); font-size: 0.75rem; opacity: 0.9; backdrop-filter: blur(1rem); }

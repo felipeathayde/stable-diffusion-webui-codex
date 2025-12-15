@@ -1,6 +1,6 @@
 <template>
-  <div class="gen-card">
-    <div class="wan22-toggle-head">
+  <div :class="embedded ? '' : 'gen-card'">
+    <div v-if="!embedded" class="wan22-toggle-head">
       <span class="label-muted">{{ title }}</span>
     </div>
 
@@ -123,11 +123,13 @@ const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
   showModelDir?: boolean
+  embedded?: boolean
   disabled?: boolean
   samplerLabel?: string
   schedulerLabel?: string
 }>(), {
   showModelDir: false,
+  embedded: false,
   disabled: false,
   samplerLabel: 'Sampler',
   schedulerLabel: 'Scheduler',

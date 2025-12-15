@@ -2,7 +2,17 @@
   <div class="vid-card">
     <div class="vc-grid">
       <div class="field">
-        <label class="label-muted">Frames: {{ frames }}</label>
+        <label class="label-muted">Frames</label>
+        <div class="row-inline">
+          <div class="number-with-controls">
+            <input class="ui-input ui-input-sm w-batch pad-right" type="number" :min="minFrames" :max="maxFrames" step="1" :value="frames" @change="onFramesNumber" />
+            <div class="stepper">
+              <button class="step-btn" type="button" title="Increase" @click="framesInc">+</button>
+              <button class="step-btn" type="button" title="Decrease" @click="framesDec">−</button>
+            </div>
+          </div>
+          <span class="caption">min {{ minFrames }} · max {{ maxFrames }}</span>
+        </div>
         <input class="slider" type="range" :min="minFrames" :max="maxFrames" step="1" :value="frames" @input="onFramesRange" />
       </div>
       <div class="field">
@@ -58,6 +68,22 @@ const maxFps = computed(() => props.maxFps)
 
 function onFramesRange(e: Event): void {
   emit('update:frames', Number((e.target as HTMLInputElement).value))
+}
+
+function onFramesNumber(e: Event): void {
+  let v = Number((e.target as HTMLInputElement).value)
+  if (Number.isNaN(v)) v = minFrames.value
+  v = Math.max(minFrames.value, Math.min(maxFrames.value, v))
+  emit('update:frames', v)
+}
+
+function framesInc(): void {
+  const v = Math.min(maxFrames.value, Number(props.frames) + 1)
+  emit('update:frames', v)
+}
+function framesDec(): void {
+  const v = Math.max(minFrames.value, Number(props.frames) - 1)
+  emit('update:frames', v)
 }
 
 function onFpsNumber(e: Event): void {

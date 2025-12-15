@@ -1,0 +1,126 @@
+@layer components {
+  /* WAN prefers a slightly wider results column. */
+  .wan-panels {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  }
+
+  @media (max-width: 68.75rem) {
+    .wan-panels {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .wan-callout-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .wan-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+
+  .wan-progress {
+    width: 100%;
+    height: 0.65rem;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .wan-progress::-webkit-progress-bar {
+    background: hsla(0, 0%, 100%, 0.12);
+    border-radius: 999px;
+  }
+
+  .wan-progress::-webkit-progress-value {
+    background: hsl(var(--accent));
+    border-radius: 999px;
+  }
+
+  .wan-progress::-moz-progress-bar {
+    background: hsl(var(--accent));
+    border-radius: 999px;
+  }
+
+  .wan-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: var(--space-sm);
+  }
+
+  .wan-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .wan-history-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 0.65rem 0.75rem;
+    border-radius: 0.75rem;
+    border: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
+    background: hsla(0, 0%, 100%, 0.03);
+    box-shadow: inset 0 0.0625rem 0 hsla(0, 0%, 100%, 0.05);
+  }
+
+  .wan-history-item.is-selected {
+    border-color: hsla(210, 70%, 65%, 0.65);
+  }
+
+  .wan-history-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
+  .wan-history-title {
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+
+  .wan-history-sub {
+    font-size: 0.75rem;
+    opacity: 0.8;
+    word-break: break-word;
+  }
+
+  .wan-history-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+
+  .wan-results-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    max-width: 34rem;
+    text-align: left;
+    opacity: 1;
+  }
+
+  .wan-empty-title {
+    font-weight: 800;
+    font-size: 1rem;
+    opacity: 0.95;
+  }
+
+  .wan-empty-steps {
+    margin: 0;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    opacity: 0.85;
+  }
+}

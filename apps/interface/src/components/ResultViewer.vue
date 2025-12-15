@@ -16,7 +16,9 @@
           </figure>
         </div>
       </template>
-      <div v-else class="viewer-empty">{{ emptyText }}</div>
+      <div v-else class="viewer-empty">
+        <slot name="empty" :mode="mode" :emptyText="emptyText">{{ emptyText }}</slot>
+      </div>
     </template>
 
     <!-- Frames mode (video) -->
@@ -28,7 +30,9 @@
           </figure>
         </div>
       </template>
-      <div v-else class="viewer-empty">{{ emptyText }}</div>
+      <div v-else class="viewer-empty">
+        <slot name="empty" :mode="mode" :emptyText="emptyText">{{ emptyText }}</slot>
+      </div>
     </template>
   </div>
 

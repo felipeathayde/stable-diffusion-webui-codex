@@ -72,12 +72,46 @@
           <ul v-else class="list" style="margin-top:.5rem">
             <li v-for="t in tabs" :key="t.id" class="list-row">
               <div class="list-col grow">
-                <RouterLink class="link" :to="`/models/${t.id}`">{{ t.title }}</RouterLink>
-                <span class="muted" style="margin-left:.5rem">{{ t.type.toUpperCase() }}</span>
+                <div class="grid grid-2" style="align-items:center">
+                  <div>
+                    <RouterLink class="link" :to="`/models/${t.id}`">{{ t.title }}</RouterLink>
+                    <span class="muted" style="margin-left:.5rem">{{ t.type.toUpperCase() }}</span>
+                  </div>
+                  <div style="text-align:right">
+                    <label class="switch-label" style="justify-content:flex-end">
+                      <input type="checkbox" :checked="t.enabled" @change="setEnabled(t.id, ($event.target as HTMLInputElement).checked)" />
+                      <span>Enabled</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="grid grid-2" style="margin-top:.5rem">
+                  <div>
+                    <label class="label">Title</label>
+                    <input
+                      class="ui-input"
+                      type="text"
+                      :value="titleDraft[t.id] ?? t.title"
+                      @input="setTitleDraft(t.id, ($event.target as HTMLInputElement).value)"
+                      @change="commitTitle(t.id)"
+                      @blur="commitTitle(t.id)"
+                      placeholder="Tab title"
+                      aria-label="Tab title"
+                    />
+                  </div>
+                  <div>
+                    <label class="label">Models</label>
+                    <div class="grid grid-3">
+                      <button class="btn btn-sm btn-secondary" type="button" :disabled="tabBusy[t.id]" @click="load(t.id)">Load</button>
+                      <button class="btn btn-sm" type="button" :disabled="tabBusy[t.id]" @click="unload(t.id)">Unload</button>
+                      <button class="btn btn-sm btn-ghost" type="button" @click="void router.push(`/models/${t.id}`)">Open</button>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="tabError[t.id]" class="panel-error" style="margin-top:.5rem">{{ tabError[t.id] }}</div>
               </div>
               <div class="list-col">
-                <button class="btn btn-sm" type="button" @click="dup(t.id)">Duplicate</button>
-                <button class="btn btn-sm btn-destructive" type="button" style="margin-left:.5rem" @click="remove(t.id)">Remove</button>
+                <button class="btn btn-sm" type="button" :disabled="tabBusy[t.id]" @click="dup(t.id)">Duplicate</button>
+                <button class="btn btn-sm btn-destructive" type="button" style="margin-left:.5rem" :disabled="tabBusy[t.id]" @click="remove(t.id)">Remove</button>
               </div>
             </li>
           </ul>
@@ -190,10 +224,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 import MarkdownHelp from '../components/MarkdownHelp.vue'
+import { loadModelsForTab, unloadModelsForTab } from '../api/client'
 
 type HelpTopic = 'home' | 'wan22' | 'workflows'
 
@@ -203,9 +238,13 @@ const store = useModelTabsStore()
 const newType = ref<BaseTabType>('sdxl')
 const newTitle = ref('')
 const helpTopic = ref<HelpTopic>('home')
+const titleDraft = reactive<Record<string, string>>({})
+const tabBusy = reactive<Record<string, boolean>>({})
+const tabError = reactive<Record<string, string>>({})
 
 onMounted(async () => {
   await store.load()
+  for (const t of store.orderedTabs) titleDraft[t.id] = t.title
 })
 
 const tabs = computed(() => store.orderedTabs)
@@ -221,12 +260,88 @@ async function onCreate(): Promise<void> {
   if (id) void router.push(`/models/${id}`)
 }
 
-function dup(id: string): void {
-  void store.duplicate(id)
+function setTitleDraft(id: string, v: string): void {
+  titleDraft[id] = v
 }
 
-function remove(id: string): void {
-  void store.remove(id)
+async function commitTitle(id: string): Promise<void> {
+  const t = store.tabs.find(x => x.id === id)
+  if (!t) return
+  const next = String(titleDraft[id] ?? t.title).trim()
+  if (!next || next === t.title) {
+    titleDraft[id] = t.title
+    return
+  }
+  tabError[id] = ''
+  tabBusy[id] = true
+  try {
+    await store.rename(id, next)
+  } catch (e) {
+    tabError[id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    tabBusy[id] = false
+  }
+}
+
+async function setEnabled(id: string, enabled: boolean): Promise<void> {
+  tabError[id] = ''
+  tabBusy[id] = true
+  try {
+    await store.setEnabled(id, enabled)
+  } catch (e) {
+    tabError[id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    tabBusy[id] = false
+  }
+}
+
+async function load(id: string): Promise<void> {
+  tabError[id] = ''
+  tabBusy[id] = true
+  try {
+    await loadModelsForTab(id)
+  } catch (e) {
+    tabError[id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    tabBusy[id] = false
+  }
+}
+
+async function unload(id: string): Promise<void> {
+  tabError[id] = ''
+  tabBusy[id] = true
+  try {
+    await unloadModelsForTab(id)
+  } catch (e) {
+    tabError[id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    tabBusy[id] = false
+  }
+}
+
+async function dup(id: string): Promise<void> {
+  tabError[id] = ''
+  tabBusy[id] = true
+  try {
+    const newId = await store.duplicate(id)
+    if (newId) titleDraft[newId] = store.tabs.find(t => t.id === newId)?.title ?? ''
+  } catch (e) {
+    tabError[id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    tabBusy[id] = false
+  }
+}
+
+async function remove(id: string): Promise<void> {
+  tabError[id] = ''
+  tabBusy[id] = true
+  try {
+    await store.remove(id)
+  } catch (e) {
+    tabError[id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    tabBusy[id] = false
+  }
 }
 
 function setHelpTopic(topic: HelpTopic): void {

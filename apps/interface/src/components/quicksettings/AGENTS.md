@@ -21,3 +21,4 @@ Status: Active
 - 2025-12-14: WAN text encoder selector now lists explicit `.safetensors` files under `wan22_tenc` and stores values as `wan22/<abs_path>` for consistent labeling; payload builders must normalize before sending to backend.
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.
 - 2025-12-15: QuickSettings WAN groups now use `.qs-group-wan-*` sizing hooks so the header flex layout doesn’t collapse all controls to the left on wide screens.
+- 2025-12-15: WAN “Browse…” actions in `QuickSettingsWan.vue` are rendered as compact `+` icon buttons to match the header quicksettings affordance.

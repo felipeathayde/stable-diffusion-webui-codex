@@ -7,7 +7,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in highChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseHigh')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseHigh')">+</button>
         </div>
       </div>
     </div>
@@ -20,7 +20,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in lowChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseLow')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseLow')">+</button>
         </div>
       </div>
     </div>
@@ -33,7 +33,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in metadataChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseMetadata')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseMetadata')">+</button>
         </div>
       </div>
     </div>
@@ -46,7 +46,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ encoderLabel(te) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseTe')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseTe')">+</button>
         </div>
       </div>
     </div>
@@ -59,7 +59,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="v in vaeChoices" :key="v" :value="v">{{ dirLabel(v) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('browseVae')">Browse…</button>
+          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseVae')">+</button>
         </div>
       </div>
     </div>

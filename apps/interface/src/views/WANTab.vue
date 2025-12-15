@@ -123,6 +123,23 @@
           <WanVideoOutputPanel :video="video" :disabled="isRunning" @update:video="setVideo" />
         </div>
       </div>
+
+      <div class="panel">
+        <div class="panel-header">Workflows</div>
+        <div class="panel-body">
+          <div class="gen-card">
+            <div class="grid grid-2" style="align-items:center">
+              <div>
+                <button class="btn btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">Send to Workflows</button>
+                <RouterLink class="btn btn-ghost" to="/workflows" style="margin-left:.5rem">Open</RouterLink>
+              </div>
+              <div style="text-align:right" class="caption">Saves a snapshot of this tab’s params.</div>
+            </div>
+            <div v-if="workflowOk" class="caption mt-1">{{ workflowOk }}</div>
+            <div v-if="workflowErr" class="panel-error mt-2">{{ workflowErr }}</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Right column: Results -->
@@ -168,6 +185,7 @@ import PromptFields from '../components/prompt/PromptFields.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration } from '../composables/useVideoGeneration'
+import { createWorkflow } from '../api/client'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
@@ -262,6 +280,31 @@ const {
   info,
   errorMessage,
 } = useVideoGeneration(props.tabId)
+
+const workflowBusy = ref(false)
+const workflowOk = ref('')
+const workflowErr = ref('')
+
+async function sendToWorkflows(): Promise<void> {
+  if (!tab.value) return
+  workflowOk.value = ''
+  workflowErr.value = ''
+  workflowBusy.value = true
+  try {
+    await createWorkflow({
+      name: `${tab.value.title} — ${new Date().toLocaleString()}`,
+      source_tab_id: tab.value.id,
+      type: tab.value.type,
+      engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
+      params_snapshot: tab.value.params as Record<string, unknown>,
+    })
+    workflowOk.value = 'Workflow saved.'
+  } catch (e) {
+    workflowErr.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    workflowBusy.value = false
+  }
+}
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 

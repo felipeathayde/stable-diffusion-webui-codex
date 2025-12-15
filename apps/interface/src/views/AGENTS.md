@@ -21,3 +21,4 @@ Status: Active
 - 2025-12-14: Removed the legacy standalone `Txt2Vid.vue` view; WAN video entry stays exclusively under model tabs (`/models/:tabId` with `type === 'wan'`).
 - 2025-12-14: `ModelTabView.vue` keys per-tab views by `tab.id` so switching `/models/:tabId` remounts the correct tab implementation (prevents composables binding a stale id).
 - 2025-12-15: Added `RedirectToModelTab.vue` and router aliases so legacy nav paths can redirect into `/models/:tabId` (WAN) without spamming Vue Router “No match found” warnings.
+- 2025-12-15: Model-tab actions (rename/enable/load/unload/duplicate/remove) were moved out of the per-tab view; `Home.vue` is now the canonical place to manage tabs, and the per-tab “Send to Workflows” action lives in a dedicated panel under Generation Parameters.

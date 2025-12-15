@@ -84,6 +84,24 @@
       </div>
     </div>
 
+    <!-- Workflows -->
+    <div class="panel">
+      <div class="panel-header"><h3 class="h4">Workflows</h3></div>
+      <div class="panel-body">
+        <div class="grid grid-2" style="align-items:center">
+          <div>
+            <button class="btn btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">Send to Workflows</button>
+            <RouterLink class="btn btn-ghost" to="/workflows" style="margin-left:.5rem">Open</RouterLink>
+          </div>
+          <div style="text-align:right" class="caption">
+            Saves a snapshot of this tab’s params.
+          </div>
+        </div>
+        <div v-if="workflowOk" class="caption mt-2">{{ workflowOk }}</div>
+        <div v-if="workflowErr" class="panel-error mt-2">{{ workflowErr }}</div>
+      </div>
+    </div>
+
     <!-- Results -->
     <div class="panel">
       <div class="panel-header sticky">
@@ -115,6 +133,7 @@ import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import { useGeneration } from '../composables/useGeneration'
 import type { EngineType } from '../stores/engine_config'
+import { createWorkflow } from '../api/client'
 
 const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
@@ -143,6 +162,31 @@ onMounted(async () => {
 
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
 const images = computed(() => gallery.value)
+
+const workflowBusy = ref(false)
+const workflowOk = ref('')
+const workflowErr = ref('')
+
+async function sendToWorkflows(): Promise<void> {
+  if (!tab.value) return
+  workflowOk.value = ''
+  workflowErr.value = ''
+  workflowBusy.value = true
+  try {
+    await createWorkflow({
+      name: `${tab.value.title} — ${new Date().toLocaleString()}`,
+      source_tab_id: tab.value.id,
+      type: tab.value.type,
+      engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
+      params_snapshot: tab.value.params as Record<string, unknown>,
+    })
+    workflowOk.value = 'Workflow saved.'
+  } catch (e) {
+    workflowErr.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    workflowBusy.value = false
+  }
+}
 
 function setParams(patch: Partial<ImageBaseParams>): void {
   if (!tab.value) return
@@ -187,4 +231,3 @@ function readFileAsDataURL(file: File): Promise<string> {
 
 defineExpose({ generate })
 </script>
-

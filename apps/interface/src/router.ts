@@ -11,6 +11,7 @@ const XyzPlot = () => import('./views/XyzPlot.vue')
 const Home = () => import('./views/Home.vue')
 const ToolsTab = () => import('./views/ToolsTab.vue')
 const EngineView = () => import('./views/EngineView.vue')
+const RedirectToModelTab = () => import('./views/RedirectToModelTab.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -27,6 +28,9 @@ const router = createRouter({
     { path: '/zimage', component: EngineView, props: { engine: 'zimage' } },
     { path: '/chroma', component: EngineView, props: { engine: 'chroma' } },
     { path: '/xyz', component: XyzPlot },
+    // Legacy aliases (keep old nav links working without router warnings)
+    { path: '/wan14b', component: RedirectToModelTab, props: { type: 'wan' } },
+    { path: '/qwen', redirect: '/zimage' },
     // Utilities
     { path: '/tools', component: ToolsTab },
     { path: '/workflows', component: WorkflowsList },
@@ -38,4 +42,3 @@ const router = createRouter({
 })
 
 export default router
-

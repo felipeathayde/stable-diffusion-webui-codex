@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import List, Optional, Union
 
-# Import types from centralized location (backward-compat re-export)
 from apps.backend.types.samplers import SamplerKind, ApplyOutcome
 
 from apps.backend.runtime.sampling.catalog import SAMPLER_ALIAS_TO_CANONICAL

@@ -5,7 +5,7 @@ from typing import Iterable
 
 import torch
 
-from apps.backend.runtime.utils import ParameterGGUF
+from apps.backend.quantization.tensor import CodexParameter
 from apps.backend.runtime.model_registry.specs import QuantizationHint, QuantizationKind
 from .errors import ValidationError
 
@@ -13,7 +13,7 @@ from .errors import ValidationError
 def detect_quantization_from_tensors(tensors: Iterable[object]) -> QuantizationHint:
     has_fp4 = False
     for value in tensors:
-        if isinstance(value, ParameterGGUF):
+        if isinstance(value, CodexParameter) and value.qtype is not None:
             return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf")
         if isinstance(value, torch.Tensor):
             if value.dtype == torch.float8_e4m3fn:
@@ -72,7 +72,7 @@ def validate_component_dtypes(context) -> None:
             continue
         has_floating = False
         for value in component.tensors.values():
-            if isinstance(value, ParameterGGUF):
+            if isinstance(value, CodexParameter) and value.qtype is not None:
                 has_floating = True
                 break
             if isinstance(value, torch.Tensor) and torch.is_floating_point(value):

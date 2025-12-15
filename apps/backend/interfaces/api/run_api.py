@@ -91,11 +91,6 @@ except Exception:
 _initialized = False
 _RUNTIME_NAMESPACE: Optional[Any] = None
 _APP: Optional[FastAPI] = None
-_APP_DEPRECATION = (
-    "Importing apps.backend.interfaces.api.run_api:app without factory is deprecated. "
-    "Prefer `uvicorn --factory apps.backend.interfaces.api.run_api:create_api_app`, "
-    "but a module-level app is provided for compatibility."
-)
 
 
 def ensure_initialized() -> None:
@@ -103,13 +98,7 @@ def ensure_initialized() -> None:
     if _initialized:
         return
 
-    try:
-        from apps.backend.codex.initialization import (
-            initialize_codex,
-        )
-    except Exception:  # pragma: no cover - optional compatibility layer
-        def initialize_codex() -> None:
-            return None
+    from apps.backend.codex.initialization import initialize_codex
 
     # Native initialization only (no legacy bootstrap)
     initialize_codex()
@@ -318,8 +307,6 @@ def build_app() -> FastAPI:
         get_snapshot as _opts_snapshot,
         _load as _opts_load_native,  # private, but safe here
     )
-    def _opts_load() -> Dict[str, Any]:  # thin alias used by existing helpers
-        return _opts_load_native()
     _embedding_db = None  # lazy init
     _settings_schema_cache: Optional[Dict[str, Any]] = None
     _settings_values_path = os.path.join(os.getcwd(), 'apps', 'settings_values.json')
@@ -528,14 +515,7 @@ def build_app() -> FastAPI:
 
             snap = _mm.memory_snapshot()
         except Exception as exc:  # pragma: no cover - defensive
-            # Keep compatibility with older callers that only expect total_vram_mb.
-            try:
-                from apps.backend import memory_management as _legacy_mm  # type: ignore
-
-                total = int(getattr(_legacy_mm, 'total_vram', 0))
-            except Exception:
-                total = 0
-            return {"total_vram_mb": total, "error": str(exc)}
+            raise HTTPException(status_code=500, detail=f"memory snapshot failed: {exc}")
 
         probe = snap.get("probe", {}) or {}
         totals = snap.get("totals", {}) or {}
@@ -1025,7 +1005,7 @@ def build_app() -> FastAPI:
     @app.get('/api/settings/values')
     def settings_values() -> Dict[str, Any]:
         try:
-            vals = _opts_load()
+            vals = _opts_load_native()
             idx = _field_index() if _settings_registry_ok else {}
             if idx:
                 vals = {k: vals.get(k) for k in idx.keys()}
@@ -1037,7 +1017,7 @@ def build_app() -> FastAPI:
     def _apply_saved_settings() -> None:
         if not _settings_registry_ok:
             return
-        saved = _opts_load()
+        saved = _opts_load_native()
         if not isinstance(saved, dict) or not saved:
             return
         idx = _field_index()
@@ -1314,38 +1294,26 @@ def build_app() -> FastAPI:
           }
         }
 
-        For backward compatibility, aggregated buckets (`checkpoints`, `vae`, `lora`, `text_encoders`)
-        are also exposed, derived from the engine-specific keys.
+        This endpoint exposes only the engine-specific keys from apps/paths.json.
         """
         cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
         raw = _load_json(cfg_path) or {}
         if not isinstance(raw, dict):
             raw = {}
 
-        def _list(key: str) -> list[str]:
-            v = raw.get(key) or []
-            return v if isinstance(v, list) else []
-
-        # Start from the engine-specific mapping and then add aggregated helpers.
         paths: Dict[str, list[str]] = {}
         for key, value in raw.items():
             if isinstance(value, list):
                 # Coerce to list[str]
                 paths[key] = [str(item) for item in value if isinstance(item, str)]
 
-        paths["checkpoints"] = _list("sd15_ckpt") + _list("sdxl_ckpt") + _list("flux_ckpt") + _list("wan22_ckpt") + _list("zimage_ckpt")
-        paths["vae"] = _list("sd15_vae") + _list("sdxl_vae") + _list("flux_vae") + _list("wan22_vae") + _list("zimage_vae")
-        paths["lora"] = _list("sd15_loras") + _list("sdxl_loras") + _list("flux_loras") + _list("wan22_loras") + _list("zimage_loras")
-        paths["text_encoders"] = _list("sd15_tenc") + _list("sdxl_tenc") + _list("flux_tenc") + _list("wan22_tenc") + _list("zimage_tenc")
-
         return {"paths": paths}
 
     @app.post('/api/paths')
     def set_paths(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """Update paths.json from UI-managed buckets or engine-specific keys.
+        """Update paths.json from engine-specific keys.
 
         Payload: { paths: { ... } }
-        - Aggregated keys (`checkpoints`, `vae`, `lora`, `text_encoders`) are mapped to per-engine keys.
         - Engine-specific keys (e.g., `sd15_ckpt`, `sdxl_vae`) are applied directly.
         - Unknown keys are preserved from the existing file unless explicitly overwritten.
         """
@@ -1360,42 +1328,8 @@ def build_app() -> FastAPI:
         incoming = payload["paths"] or {}
         new_paths: Dict[str, Any] = dict(current)
 
-        # 1) Apply aggregated buckets when present (legacy behaviour).
-        checkpoints = list(incoming.get("checkpoints") or [])
-        vae = list(incoming.get("vae") or [])
-        lora = list(incoming.get("lora") or [])
-        text_encoders = list(incoming.get("text_encoders") or [])
-
-        if checkpoints or vae or lora or text_encoders:
-            new_paths["sd15_ckpt"] = checkpoints
-            new_paths["sdxl_ckpt"] = checkpoints
-            new_paths["flux_ckpt"] = checkpoints
-            new_paths["wan22_ckpt"] = checkpoints
-            new_paths["zimage_ckpt"] = checkpoints
-
-            new_paths["sd15_vae"] = vae
-            new_paths["sdxl_vae"] = vae
-            new_paths["flux_vae"] = vae
-            new_paths["wan22_vae"] = vae
-            new_paths["zimage_vae"] = vae
-
-            new_paths["sd15_loras"] = lora
-            new_paths["sdxl_loras"] = lora
-            new_paths["flux_loras"] = lora
-            new_paths["wan22_loras"] = lora
-            new_paths["zimage_loras"] = lora
-
-            new_paths["sd15_tenc"] = text_encoders
-            new_paths["sdxl_tenc"] = text_encoders
-            new_paths["flux_tenc"] = text_encoders
-            new_paths["wan22_tenc"] = text_encoders
-            new_paths["zimage_tenc"] = text_encoders
-
-        # 2) Apply engine-specific keys (and any additional explicit keys) directly.
+        # Apply engine-specific keys (and any additional explicit keys) directly.
         for key, value in incoming.items():
-            if key in {"checkpoints", "vae", "lora", "text_encoders"}:
-                # Aggregated buckets are handled above and not stored verbatim in paths.json.
-                continue
             if value is None:
                 new_paths[key] = []
             elif isinstance(value, list):
@@ -1408,7 +1342,7 @@ def build_app() -> FastAPI:
 
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
-        return {"values": _opts_load()}
+        return {"values": _opts_load_native()}
 
     @app.get('/api/options/keys')
     def get_options_keys() -> Dict[str, Any]:
@@ -2877,38 +2811,10 @@ def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mappin
     # Build a fresh app each time to avoid stale/None globals under factory mode
     app = build_app()
     if app is None:
-        logging.getLogger("backend.api").error(
-            "build_app() returned None; constructing minimal API fallback (health/version only)."
-        )
-        fallback = FastAPI(title="SD WebUI API (fallback)", version="0.0.0-fallback")
-
-        @fallback.get("/api/health")
-        def _health() -> Dict[str, bool]:
-            return {"ok": True}
-
-        @fallback.get("/api/version")
-        def _version() -> Dict[str, Any]:
-            return {
-                "app_version": fallback.version,
-                "git_commit": None,
-                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-                "torch_version": None,
-                "cuda_version": None,
-            }
-
-        app = fallback
+        raise RuntimeError("build_app() returned None")
     global _APP
     _APP = app
     return app
-
-# Provide module-level ASGI app for ASGI servers that import run_api:app directly
-async def app(scope, receive, send):  # type: ignore[override]
-    """ASGI entrypoint for non-factory launches (uvicorn run_api:app)."""
-    global _APP
-    if _APP is None:
-        _APP = create_api_app(argv=sys.argv[1:], env=os.environ)
-    await _APP(scope, receive, send)
-
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     host = '0.0.0.0'

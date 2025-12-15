@@ -14,8 +14,6 @@ class LazyExports:
         "register_default_engines",
         "Wan2214BEngine",
         "Wan225BEngine",
-        "WanI2V14BEngine",
-        "WanT2V14BEngine",
     })
     
     TEXT_PROCESSING: FrozenSet[str] = frozenset({

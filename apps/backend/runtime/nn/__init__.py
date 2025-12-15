@@ -63,11 +63,4 @@ __all__ = [
     "t2i_adapter",
 ]
 
-# Compatibility alias: allow absolute import of wan_latent_norms when older paths were cached
-# This keeps runtime resilient without introducing legacy shims elsewhere.
-try:
-    import importlib, sys as _sys
-    _wl = importlib.import_module('apps.backend.runtime.wan22.wan_latent_norms')
-    _sys.modules[__name__ + '.wan_latent_norms'] = _wl
-except Exception:
-    pass
+ 

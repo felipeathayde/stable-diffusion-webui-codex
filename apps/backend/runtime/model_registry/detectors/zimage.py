@@ -18,7 +18,7 @@ from apps.backend.runtime.model_registry.specs import (
     TextEncoderSignature,
     VAESignature,
 )
-from apps.backend.runtime.utils import ParameterGGUF
+from apps.backend.quantization.tensor import CodexParameter
 
 
 # Core keys for Z Image Turbo (NextDiT/Lumina2 format)
@@ -64,7 +64,7 @@ class ZImageDetector(ModelDetector):
 
     def build_signature(self, bundle: SignalBundle) -> ModelSignature:  # type: ignore[override]
         # Detect if this is a GGUF quantized checkpoint
-        is_gguf = any(isinstance(v, ParameterGGUF) for v in bundle.state_dict.values())
+        is_gguf = any(isinstance(v, CodexParameter) and v.qtype is not None for v in bundle.state_dict.values())
         
         # Detect which key prefix is used (prefixed for safetensors, unprefixed for GGUF)
         keys_set = set(bundle.keys)

@@ -44,17 +44,6 @@ class CodexObjects:
     text_encoders: dict[str, Any]  # Flexible text encoders dict
     clipvision: Any | None = None
 
-    # Backwards compatibility: access clip via property
-    @property
-    def clip(self) -> Any:
-        """Get CLIP text encoder (backwards compatible)."""
-        return self.text_encoders.get("clip")
-    
-    @clip.setter
-    def clip(self, value: Any) -> None:
-        """Set CLIP text encoder (backwards compatible)."""
-        self.text_encoders["clip"] = value
-
     def shallow_copy(self) -> "CodexObjects":
         """Return a shallow copy preserving component references."""
         return CodexObjects(
@@ -92,9 +81,6 @@ class CodexObjects:
         # Add text encoders to description
         for te_name, te_obj in self.text_encoders.items():
             result[f"text_encoder.{te_name}"] = _name(te_obj)
-        # Backwards compat: also include "clip" key directly if present
-        if "clip" in self.text_encoders:
-            result["clip"] = _name(self.text_encoders["clip"])
         return result
 
 
@@ -531,16 +517,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         legacy = {"sd1", "sd2", "sd3", "sdxl"}
         return any(family in legacy for family in self._model_families)
 
-    # ------------------------------------------------------------------ Legacy attributes (compatibility)
-    @property
-    def tiling_enabled(self) -> bool:
-        return self._tiling_enabled
-
-    @tiling_enabled.setter
-    def tiling_enabled(self, enabled: bool) -> None:
-        self._tiling_enabled = bool(enabled)
-        self._logger.debug("Tiling toggled to %s", self._tiling_enabled)
-
+    # ------------------------------------------------------------------ Engine flags
     @property
     def use_distilled_cfg_scale(self) -> bool:
         return self._use_distilled_cfg_scale
@@ -549,36 +526,6 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def use_distilled_cfg_scale(self, enabled: bool) -> None:
         self._use_distilled_cfg_scale = bool(enabled)
         self._logger.debug("Distilled CFG scale toggled to %s", self._use_distilled_cfg_scale)
-
-    @property
-    def first_stage_model(self) -> Any:
-        vae = getattr(self.codex_objects, "vae", None)
-        model = getattr(vae, "first_stage_model", None)
-        if model is None:
-            raise RuntimeError("VAE first_stage_model is unavailable on this engine.")
-        return model
-
-    @first_stage_model.setter
-    def first_stage_model(self, value: Any) -> None:
-        vae = getattr(self.codex_objects, "vae", None)
-        if vae is None:
-            raise RuntimeError("Cannot set first_stage_model without a VAE component.")
-        setattr(vae, "first_stage_model", value)
-
-    @property
-    def cond_stage_model(self) -> Any:
-        clip = getattr(self.codex_objects, "clip", None)
-        model = getattr(clip, "cond_stage_model", None)
-        if model is None:
-            raise RuntimeError("CLIP cond_stage_model is unavailable on this engine.")
-        return model
-
-    @cond_stage_model.setter
-    def cond_stage_model(self, value: Any) -> None:
-        clip = getattr(self.codex_objects, "clip", None)
-        if clip is None:
-            raise RuntimeError("Cannot set cond_stage_model without a CLIP component.")
-        setattr(clip, "cond_stage_model", value)
 
     # ------------------------------------------------------------------ Abstract hooks
     def set_clip_skip(self, clip_skip: int) -> None:

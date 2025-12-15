@@ -11,7 +11,7 @@ from typing import Dict, Optional, Tuple
 import torch
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management, stream
-from .operations_gguf import dequantize_tensor
+from .operations_gguf import CodexParameter, dequantize_tensor
 
 logger = logging.getLogger("backend.runtime.ops.operations")
 
@@ -587,11 +587,11 @@ class CodexOperationsGGUF(CodexOperations):
             if computation_dtype not in (torch.float16, torch.bfloat16):
                 computation_dtype = torch.float16
             if prefix + "weight" in state_dict:
-                self.weight = state_dict[prefix + "weight"].to(device=self.dummy.device)
+                self.weight = utils.tensor2parameter(state_dict[prefix + "weight"].to(device=self.dummy.device))
                 if hasattr(self.weight, "computation_dtype"):
                     self.weight.computation_dtype = computation_dtype
             if prefix + "bias" in state_dict:
-                self.bias = state_dict[prefix + "bias"].to(device=self.dummy.device)
+                self.bias = utils.tensor2parameter(state_dict[prefix + "bias"].to(device=self.dummy.device))
                 if hasattr(self.bias, "computation_dtype"):
                     self.bias.computation_dtype = computation_dtype
             del self.dummy
@@ -627,11 +627,13 @@ class CodexOperationsGGUF(CodexOperations):
                 if computation_dtype not in (torch.float16, torch.bfloat16):
                     computation_dtype = torch.float16
                 if prefix + "weight" in state_dict:
-                    self.weight = state_dict[prefix + "weight"].to(device=self.dummy.device)
-                    self.weight.computation_dtype = computation_dtype
+                    self.weight = utils.tensor2parameter(state_dict[prefix + "weight"].to(device=self.dummy.device))
+                    if hasattr(self.weight, "computation_dtype"):
+                        self.weight.computation_dtype = computation_dtype
                 if prefix + "bias" in state_dict:
-                    self.bias = state_dict[prefix + "bias"].to(device=self.dummy.device)
-                    self.bias.computation_dtype = computation_dtype
+                    self.bias = utils.tensor2parameter(state_dict[prefix + "bias"].to(device=self.dummy.device))
+                    if hasattr(self.bias, "computation_dtype"):
+                        self.bias.computation_dtype = computation_dtype
                 del self.dummy
             else:
                 if prefix + "weight" in state_dict:
@@ -647,7 +649,7 @@ class CodexOperationsGGUF(CodexOperations):
         def forward(self, x):
             if self.bias is not None and self.bias.dtype != x.dtype:
                 self.bias = utils.tensor2parameter(dequantize_tensor(self.bias).to(x.dtype))
-            if self.weight is not None and self.weight.dtype != x.dtype and getattr(self.weight, "gguf_cls", None) is None:
+            if self.weight is not None and self.weight.dtype != x.dtype and not isinstance(self.weight, CodexParameter):
                 self.weight = utils.tensor2parameter(self.weight.to(x.dtype))
             weight, bias, signal = weights_manual_cast(
                 self,
@@ -690,8 +692,9 @@ class CodexOperationsGGUF(CodexOperations):
                 if computation_dtype not in (torch.float16, torch.bfloat16):
                     computation_dtype = torch.float16
                 if prefix + "weight" in state_dict:
-                    self.weight = state_dict[prefix + "weight"].to(device=self.dummy.device)
-                    self.weight.computation_dtype = computation_dtype
+                    self.weight = utils.tensor2parameter(state_dict[prefix + "weight"].to(device=self.dummy.device))
+                    if hasattr(self.weight, "computation_dtype"):
+                        self.weight.computation_dtype = computation_dtype
                 del self.dummy
             else:
                 if prefix + "weight" in state_dict:

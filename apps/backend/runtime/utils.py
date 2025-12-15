@@ -9,9 +9,8 @@ import safetensors.torch
 import torch
 from safetensors.torch import safe_open
 
-from apps.backend import gguf
 from apps.backend.runtime.misc import checkpoint_pickle
-from apps.backend.runtime.ops.operations_gguf import ParameterGGUF
+from apps.backend.quantization.tensor import CodexParameter
 
 _log = logging.getLogger("backend.runtime.utils")
 
@@ -279,11 +278,9 @@ def load_torch_file(ckpt, safe_load=True, device=None):
 
 
 def _load_gguf_state_dict(path):
-    reader = gguf.GGUFReader(path)
-    state_dict = {}
-    for tensor in reader.tensors:
-        state_dict[str(tensor.name)] = ParameterGGUF(tensor)
-    return state_dict
+    from apps.backend.quantization.gguf_loader import load_gguf_state_dict
+
+    return load_gguf_state_dict(path, dequantize=False)
 
 
 class LazySafetensorsDict(MutableMapping):
@@ -555,12 +552,10 @@ def get_state_dict_after_quant(model, prefix=''):
 
 
 def beautiful_print_gguf_state_dict_statics(state_dict):
-    from gguf.constants import GGMLQuantizationType
     type_counts = {}
     for k, v in state_dict.items():
-        gguf_cls = getattr(v, 'gguf_cls', None)
-        if gguf_cls is not None:
-            type_name = gguf_cls.__name__
+        if isinstance(v, CodexParameter) and v.qtype is not None:
+            type_name = v.qtype.name
             if type_name in type_counts:
                 type_counts[type_name] += 1
             else:

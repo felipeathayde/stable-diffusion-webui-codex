@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 import torch
 from torch import nn
 
-from apps.backend.runtime.ops.operations_gguf import dequantize_tensor as gguf_dequantize_tensor
+from apps.backend.runtime.ops.operations_gguf import CodexParameter, dequantize_tensor as gguf_dequantize_tensor
 
 from .sdpa import sdpa as wan_sdpa
 
@@ -58,7 +58,7 @@ class WanRMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         w = self.weight
-        if hasattr(w, "gguf_cls"):
+        if isinstance(w, CodexParameter) and w.qtype is not None:
             w = gguf_dequantize_tensor(w)
         if not torch.is_tensor(w):
             w = torch.as_tensor(w)
@@ -551,7 +551,7 @@ def load_wan_transformer_from_state_dict(
     Can handle both native format and converted GGUF weights.
 
     Args:
-        state_dict: Model weights (may contain ParameterGGUF)
+        state_dict: Model weights (may contain CodexParameter)
         config: Model configuration (derived from state if not provided)
 
     Returns:

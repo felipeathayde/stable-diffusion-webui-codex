@@ -3,7 +3,7 @@
 import sys
 sys.path.insert(0, '.')
 
-from apps.backend.gguf.gguf_reader import GGUFReader
+from apps.backend.quantization.gguf import GGUFReader
 
 path = sys.argv[1] if len(sys.argv) > 1 else 'models/flux/flux1-dev-Q2_K.gguf'
 print(f"Loading: {path}")

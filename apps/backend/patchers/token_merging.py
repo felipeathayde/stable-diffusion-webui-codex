@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from typing import Tuple
 import math
 import torch
@@ -120,13 +119,4 @@ def apply_token_merging(engine, ratio: float | int | None, strategy: str | None 
     unet_patcher.set_transformer_option("patches", patches)
 
 
-@contextmanager
-def SkipWritingToConfig():
-    """No-op context manager kept for call-site compatibility.
-
-    We do not write legacy config files; keeping this as a placeholder.
-    """
-    yield
-
-
-__all__ = ["apply_token_merging", "SkipWritingToConfig"]
+__all__ = ["apply_token_merging"]

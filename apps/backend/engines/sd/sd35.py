@@ -74,7 +74,7 @@ class StableDiffusion3(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.clip.patcher)
+        memory_management.load_model_gpu(self.codex_objects.text_encoders["clip"].patcher)
         unload_clip = self.smart_offload_enabled
         try:
             cond_l, pooled_l = runtime.classic_engine("clip_l")(prompt)
@@ -109,7 +109,7 @@ class StableDiffusion3(CodexDiffusionEngine):
             return cond
         finally:
             if unload_clip:
-                memory_management.unload_model(self.codex_objects.clip.patcher)
+                memory_management.unload_model(self.codex_objects.text_encoders["clip"].patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

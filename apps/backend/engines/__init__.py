@@ -30,9 +30,6 @@ __all__ = [
     "register_default_engines",
     "Wan2214BEngine",
     "Wan225BEngine",
-    # Compatibility aliases
-    "WanI2V14BEngine",
-    "WanT2V14BEngine",
 ]
 
 _ENGINE_EXPORTS = {
@@ -40,25 +37,11 @@ _ENGINE_EXPORTS = {
     "Wan225BEngine": ("apps.backend.engines.wan22.wan22_5b", "Wan225BEngine"),
 }
 
-_ALIAS_EXPORTS = {
-    "WanI2V14BEngine": "Wan2214BEngine",
-    "WanT2V14BEngine": "Wan2214BEngine",
-}
-
-
 def __getattr__(name: str):  # pragma: no cover - runtime dispatch
     if name in _ENGINE_EXPORTS:
         module_name, attr = _ENGINE_EXPORTS[name]
         mod = import_module(module_name)
         value = getattr(mod, attr)
-        globals()[name] = value
-        return value
-
-    if name in _ALIAS_EXPORTS:
-        target = _ALIAS_EXPORTS[name]
-        value = getattr(sys.modules[__name__], target, None)  # may be set via globals above
-        if value is None:
-            value = __getattr__(target)
         globals()[name] = value
         return value
 

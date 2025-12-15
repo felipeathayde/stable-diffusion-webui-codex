@@ -1,0 +1,94 @@
+# CodexQuantization - Core types, registry, and base classes
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional, Tuple, Any
+
+import torch
+
+from .gguf.constants import GGMLQuantizationType as QuantType
+from .gguf.constants import GGML_QUANT_SIZES as BLOCK_SIZES
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "QuantType",
+    "BLOCK_SIZES",
+    "QuantSpec",
+    "register_quant",
+    "get_quant_spec",
+    "QUANT_REGISTRY",
+]
+
+
+# Type aliases for kernel functions
+DequantizeFn = Callable[[torch.Tensor, torch.dtype], torch.Tensor]
+QuantizeFn = Callable[[torch.Tensor, Any], torch.Tensor]
+BakeFn = Callable[[Any], None]
+DequantizeNumpyFn = Callable  # For numpy compatibility
+
+
+@dataclass
+class QuantSpec:
+    """Specification for a quantization type."""
+    qtype: QuantType
+    block_size: int
+    type_size: int
+    
+    # PyTorch kernels
+    dequantize: Optional[DequantizeFn] = None
+    quantize: Optional[QuantizeFn] = None
+    bake: Optional[BakeFn] = None
+    
+    # NumPy kernels (for compatibility)
+    dequantize_numpy: Optional[DequantizeNumpyFn] = None
+    quantize_numpy: Optional[DequantizeNumpyFn] = None
+    
+    # Metadata
+    description: str = ""
+    requires_bake: bool = True
+
+
+# Global registry
+QUANT_REGISTRY: Dict[QuantType, QuantSpec] = {}
+
+
+def register_quant(
+    qtype: QuantType,
+    *,
+    dequantize: Optional[DequantizeFn] = None,
+    quantize: Optional[QuantizeFn] = None,
+    bake: Optional[BakeFn] = None,
+    dequantize_numpy: Optional[DequantizeNumpyFn] = None,
+    quantize_numpy: Optional[DequantizeNumpyFn] = None,
+    description: str = "",
+    requires_bake: bool = True,
+) -> None:
+    """Register a quantization type with its kernels."""
+    if qtype not in BLOCK_SIZES:
+        raise ValueError(f"Unknown quant type: {qtype}")
+    
+    block_size, type_size = BLOCK_SIZES[qtype]
+    
+    spec = QuantSpec(
+        qtype=qtype,
+        block_size=block_size,
+        type_size=type_size,
+        dequantize=dequantize,
+        quantize=quantize,
+        bake=bake,
+        dequantize_numpy=dequantize_numpy,
+        quantize_numpy=quantize_numpy,
+        description=description or qtype.name,
+        requires_bake=requires_bake,
+    )
+    
+    QUANT_REGISTRY[qtype] = spec
+    logger.debug("Registered quant type: %s (block=%d, bytes=%d)", qtype.name, block_size, type_size)
+
+
+def get_quant_spec(qtype: QuantType) -> Optional[QuantSpec]:
+    """Get the specification for a quantization type."""
+    return QUANT_REGISTRY.get(qtype)

@@ -69,7 +69,7 @@ class ZImageTextEncoder(nn.Module):
         from .qwen3 import Qwen3_4B, Qwen3Config, remap_gguf_keys
         
         # Load GGUF state dict using our infrastructure
-        from apps.backend.opus_quantization.gguf_loader import load_gguf_state_dict
+        from apps.backend.quantization.gguf_loader import load_gguf_state_dict
         from apps.backend.runtime.ops.operations import using_codex_operations
         
         try:
@@ -84,7 +84,7 @@ class ZImageTextEncoder(nn.Module):
             logger.info("Remapped to %d native keys", len(state_dict))
             
             # Use Codex operations context to enable GGUF tensor support
-            # This patches torch.nn.Linear to CodexOperationsGGUF.Linear which handles ParameterGGUF
+            # This patches torch.nn.Linear to CodexOperationsGGUF.Linear which handles CodexParameter
             with using_codex_operations(bnb_dtype='gguf', manual_cast_enabled=True, device=None, dtype=torch_dtype):
                 # Create model with native Qwen3_4B inside the context
                 config = Qwen3Config()
@@ -424,7 +424,7 @@ class ZImageTextEncoder(nn.Module):
         texts: List[str],
         max_length: int = 512,
     ) -> torch.Tensor:
-        """Forward pass (alias for encode)."""
+        """Forward pass."""
         return self.encode(texts, max_length)
 
 
@@ -445,7 +445,7 @@ class ZImageTextProcessingEngine:
         
         Args:
             text_encoder: The Z Image text encoder.
-            emphasis_name: Name of emphasis style (unused, for compatibility).
+            emphasis_name: Name of emphasis style (unused).
             max_length: Maximum token length.
         """
         self.text_encoder = text_encoder
@@ -461,7 +461,3 @@ class ZImageTextProcessingEngine:
         tokens = self.text_encoder.tokenize(texts, self.max_length)
         return tokens["input_ids"].tolist()
 
-
-class Qwen3TextEncoder(ZImageTextEncoder):
-    """Alias for backward compatibility."""
-    pass

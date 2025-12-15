@@ -6,9 +6,9 @@
 **Cause + fix:** `This repo vendors tokenizer vocab files that include tokens like "========" and ">>>>>>>>", producing huge false-positive output that looks like merge conflicts. Exclude the Hugging Face vocab/tokenizer JSON trees (or search only source globs) when checking for real conflict markers.`
 **Correct command:** `rg -n "<<<<<<<|=======|>>>>>>>" --glob '!apps/backend/huggingface/**' --glob '!**/vocab.json' --glob '!**/tokenizer.json' --glob '!apps/interface/dist/**' .`
 
-**Wrong command:** `~/.venv/binpython -m pytest -q tests/backend/test_opus_quantization_parametergguf_to.py`
+**Wrong command:** `~/.venv/binpython -m pytest -q tests/backend/test_codex_quantization_parametergguf_to.py`
 **Cause + fix:** `Typo in the venv interpreter path (missing /bin/python). Use the correct virtualenv Python path when running tests.`
-**Correct command:** `~/.venv/bin/python -m pytest -q tests/backend/test_opus_quantization_parametergguf_to.py`
+**Correct command:** `~/.venv/bin/python -m pytest -q tests/backend/test_codex_quantization_parametergguf_to.py`
 
 **Wrong command:** `CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
 **Cause + fix:** `apps.backend.interfaces.api.run_api expects CODEX_ROOT to be set by the launcher (run-webui/run-tui). When invoking the module directly, export CODEX_ROOT (and in CPU-only sandboxes also force CODEX_DIFFUSION_DEVICE=cpu) before running.`
@@ -21,6 +21,10 @@
 **Wrong command:** `find apps -name AGENTS.md -maxdepth 4 | sort`
 **Cause + fix:** `find global options like -maxdepth must appear before the test expressions; placing it after -name triggers warnings and can change behavior.`
 **Correct command:** `find apps -maxdepth 4 -name AGENTS.md | sort`
+
+**Wrong command:** `find apps/backend -name AGENTS.md -maxdepth 4`
+**Cause + fix:** `find global options like -maxdepth must appear before the test expressions; placing it after -name triggers warnings and can change behavior.`
+**Correct command:** `find apps/backend -maxdepth 4 -name AGENTS.md`
 
 **Wrong command:** `python -m pytest tests/test_backend_import_lightweight.py`
 **Cause + fix:** `Pytest is not installed in the current environment; install pytest (preferably in the active venv) before running the test suite.`
@@ -103,11 +107,12 @@ PY`
 **Wrong command:** `python - <<'PY'
 import ast, pathlib
 files = [
-    pathlib.Path('apps/backend/gguf/quants/__init__.py'),
-    pathlib.Path('apps/backend/gguf/quants/registry.py'),
-    pathlib.Path('apps/backend/gguf/quants/utils.py'),
-    pathlib.Path('apps/backend/gguf/quants/kernels/__init__.py'),
-    pathlib.Path('apps/backend/gguf/quants/kernels/base/__init__.py'),
+    pathlib.Path('apps/backend/quantization/dequant.py'),
+    pathlib.Path('apps/backend/quantization/kernels/__init__.py'),
+    pathlib.Path('apps/backend/quantization/api.py'),
+    pathlib.Path('apps/backend/quantization/gguf/__init__.py'),
+    pathlib.Path('apps/backend/quantization/gguf/reader.py'),
+    pathlib.Path('apps/backend/quantization/gguf/writer.py'),
 ]
 for path in files:
     ast.parse(path.read_text())
@@ -117,11 +122,12 @@ PY`
 **Correct command:** `python - <<'PY'
 import ast, pathlib
 files = [
-    pathlib.Path('apps/backend/gguf/quants/__init__.py'),
-    pathlib.Path('apps/backend/gguf/quants/registry.py'),
-    pathlib.Path('apps/backend/gguf/quants/utils.py'),
-    pathlib.Path('apps/backend/gguf/quants/kernels/__init__.py'),
-    pathlib.Path('apps/backend/gguf/quants/kernels/base/__init__.py'),
+    pathlib.Path('apps/backend/quantization/dequant.py'),
+    pathlib.Path('apps/backend/quantization/kernels/__init__.py'),
+    pathlib.Path('apps/backend/quantization/api.py'),
+    pathlib.Path('apps/backend/quantization/gguf/__init__.py'),
+    pathlib.Path('apps/backend/quantization/gguf/reader.py'),
+    pathlib.Path('apps/backend/quantization/gguf/writer.py'),
 ]
 for path in files:
     ast.parse(path.read_text())
@@ -130,32 +136,24 @@ PY`
 
 **Wrong command:** `python - <<'PY'
 import importlib
-mod = importlib.import_module('apps.backend.gguf.quants')
-print('kernels:', sorted(name for name in ['Q4_0','Q5_0','Q8_0'] if hasattr(mod, name)))
+mod = importlib.import_module('apps.backend.quantization')
+print('loaded', hasattr(mod, 'QuantType'))
 PY`
-**Cause + fix:** `Importing the package pulls apps.backend.__init__, which depends on optional safetensors; avoid runtime imports when lightweight structural checks suffice.`
+**Cause + fix:** `Importing backend packages can pull heavy deps (torch, safetensors) and trigger registration side effects; use ast.parse when you only need a syntax check.`
 **Correct command:** `python - <<'PY'
 import ast, pathlib
-path = pathlib.Path('apps/backend/gguf/quants/__init__.py')
+path = pathlib.Path('apps/backend/quantization/__init__.py')
 ast.parse(path.read_text())
 print('syntax ok')
 PY`
 
-**Wrong command:** `python tools/gguf/compare_codex_forge.py --iterations 1 --blocks 2 --log-level DEBUG`
+**Wrong command:** `python tools/debug/test_dequant.py`
 **Cause + fix:** `System interpreter lacks project dependencies (numpy, torch); use the repository's virtualenv when executing tooling.`
-**Correct command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --iterations 1 --blocks 2 --log-level DEBUG`
-
-**Wrong command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --iterations 1 --blocks 2 --log-level DEBUG`
-**Cause + fix:** `IQ-family layouts still being ported; limit comparisons to supported K-family until the IQ metadata is in place.`
-**Correct command:** `~/.venv/bin/python tools/gguf/compare_codex_forge.py --types Q2_K Q3_K Q4_K Q5_K Q6_K`
+**Correct command:** `~/.venv/bin/python tools/debug/test_dequant.py`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** `The blanket find walks into legacy submodules under .refs/Forge-A1111, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
 **Correct command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-
-**Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-**Cause + fix:** `Repository .gitignore filters *_m.py, so the new Forge IQ modules stay ignored and git add aborts; whitelist the directory before rerunning.`
-**Correct command:** `printf '!apps/backend/gguf/quants/kernels/iq_family/forge_*.py\n' >> .gitignore && git add .gitignore`
 
 **Wrong command:** `git commit -m "feat(gguf): port iq-family forge kernels"`
 **Cause + fix:** `Global git identity isn't configured in this workspace; set user.name and user.email before committing.`

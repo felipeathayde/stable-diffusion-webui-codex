@@ -8,6 +8,8 @@ from typing import Callable, Dict, Iterable, List, Mapping, MutableMapping, Opti
 import torch
 from tqdm.auto import tqdm
 
+from apps.backend.quantization.api import quantize_numpy
+from apps.backend.quantization.tensor import CodexParameter
 from apps.backend.runtime import utils
 from apps.backend.runtime.adapters.lora import (
     convert_specs_to_patch_dict,
@@ -707,7 +709,12 @@ class CodexLoraLoader:
                     raise TypeError(f"LoRA target {param_key} is not a torch.nn.Parameter.")
 
                 if param_key not in self.backup:
-                    self.backup[param_key] = parameter.detach().to(device=offload_device).clone()
+                    if isinstance(parameter, CodexParameter) and parameter.qtype is not None:
+                        self.backup[param_key] = parameter.copy_with_data(
+                            parameter.data.detach().to(device=offload_device).clone()
+                        )
+                    else:
+                        self.backup[param_key] = parameter.detach().to(device=offload_device).clone()
 
                 bnb_layer = None
                 gguf_parameter = None
@@ -716,7 +723,7 @@ class CodexLoraLoader:
                 if hasattr(parameter, "bnb_quantized"):
                     bnb_layer = parent_layer
                     tensor = self._dequantize_bnb(parameter)
-                elif getattr(parameter, "gguf_cls", None) is not None:
+                elif isinstance(parameter, CodexParameter) and parameter.qtype is not None:
                     gguf_parameter = parameter
                     tensor = dequantize_tensor(parameter)
                 else:
@@ -742,13 +749,26 @@ class CodexLoraLoader:
                         computation_dtype=torch.float32,
                     )
 
-                merged = merged.to(dtype=parameter.dtype, device=parameter.device)
+                if gguf_parameter is None:
+                    merged = merged.to(dtype=parameter.dtype, device=parameter.device)
 
                 if bnb_layer is not None:
                     bnb_layer.reload_weight(merged)
                 elif gguf_parameter is not None:
-                    gguf_cls = gguf_parameter.gguf_cls
-                    gguf_cls.quantize_pytorch(merged, gguf_parameter)
+                    # Re-quantize offline-merged weights back into GGUF packed storage.
+                    # We do this explicitly (no implicit dtype casts): storage stays byte-packed.
+                    qtype = gguf_parameter.qtype
+                    if qtype is None:
+                        raise RuntimeError(f"Unexpected GGUF parameter without qtype: {param_key}")
+
+                    packed = quantize_numpy(merged.detach().cpu().numpy(), qtype)
+                    restored = CodexParameter(
+                        packed,
+                        qtype=qtype,
+                        shape=tuple(merged.shape),
+                        computation_dtype=gguf_parameter.computation_dtype,
+                    ).to(device=parameter.device, dtype=gguf_parameter.computation_dtype)
+                    utils.set_attr_raw(self.model, param_key, restored)
                 else:
                     utils.set_attr_raw(self.model, param_key, torch.nn.Parameter(merged, requires_grad=False))
 
@@ -769,7 +789,12 @@ class CodexLoraLoader:
         self.online_parents.clear()
 
         for key, tensor in self.backup.items():
-            restored = tensor.to(device=parameter_devices.get(key, tensor.device)).clone()
+            target_device = parameter_devices.get(key, tensor.device)
+            if isinstance(tensor, CodexParameter) and tensor.qtype is not None:
+                restored = tensor.to(device=target_device, dtype=tensor.computation_dtype)
+                utils.set_attr_raw(self.model, key, restored)
+                continue
+            restored = tensor.to(device=target_device).clone()
             utils.set_attr_raw(self.model, key, torch.nn.Parameter(restored, requires_grad=False))
         self.backup.clear()
 
@@ -813,6 +838,13 @@ class CodexLoraLoader:
     def _offload_model(self, parameter_devices: Mapping[str, torch.device], offload_device: torch.device) -> None:
         for key in parameter_devices.keys():
             parameter = utils.get_attr(self.model, key)
+            if isinstance(parameter, CodexParameter) and parameter.qtype is not None:
+                utils.set_attr_raw(
+                    self.model,
+                    key,
+                    parameter.to(device=offload_device, dtype=parameter.computation_dtype),
+                )
+                continue
             utils.set_attr_raw(
                 self.model,
                 key,

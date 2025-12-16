@@ -384,8 +384,8 @@ PY`
 **Cause and fix:** `CLI invocation limited the push to ~1s and the remote handshake didn't finish in time, so the helper timed out even though git was fine.`
 **Correct command:** `git push -u origin HEAD` (let it run without the artificial timeout)
 **Wrong command:** `ls docs/plan`
-**Cause + fix:** `Only \`docs/notes\` and \`docs/troubleshooting\` exist; targeting the non-existent \`docs/plan\` path raises ENOENT. List the real \`docs\` tree first to discover valid subdirectories.`
-**Correct command:** `ls docs`
+**Cause + fix:** `This repository does not ship a \`docs/\` tree; documentation lives under \`.sangoi/\` (plans under \`.sangoi/plans\`). List the real doc root first instead of drilling into removed paths.`
+**Correct command:** `ls .sangoi`
 **Wrong command:** `python - <<'PY'
 from apps.backend.interfaces.api.run_api import app
 print(type(app))
@@ -485,8 +485,8 @@ PY`
 **Cause and fix:** `Pytest is not installed in the current environment, so the module import fails. Install pytest (or use the project’s test runner) before invoking the test.`
 **Correct command:** `python -m pip install pytest`
 **Wrong command:** `ls docs/plan`
-**Cause + fix:** The repository has `docs/notes` and `docs/troubleshooting` only; the `docs/plan` folder never existed, so the path errors. List `docs/` first to discover the available subdirectories.
-**Correct command:** `ls docs`
+**Cause + fix:** The repository has no `docs/` directory; documentation lives under `.sangoi/`, so `docs/plan` errors. List the real doc root first to discover the available subdirectories.
+**Correct command:** `ls .sangoi`
 
 **Wrong command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom apps.backend.runtime.models.state_dict import load_state_dict\nfrom pathlib import Path\npath = Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors')\nload_state_dict(path)\nPY`
 **Cause + fix:** `load_state_dict` expects a model plus a state-dict mapping; calling it with only a path raises a missing-argument error. To inspect checkpoint keys, load the safetensors mapping with `load_torch_file` instead.
@@ -516,16 +516,16 @@ Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '1,260
 Cause and fix: The classic text processing engine lives in `apps/backend/runtime/text_processing/classic_engine.py`; there is no `classic.py` module in that package, so sed failed with ENOENT. Point sed at the actual engine file.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '1,260p' apps/backend/runtime/text_processing/classic_engine.py
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs && ls docs/plan && ls docs/legacy`
-**Cause + fix:** `The repository only exposes \`docs/notes\` and \`docs/troubleshooting\`; historical \`docs/plan\` and \`docs/legacy\` paths were moved into \`.sangoi/plans\` and \`.sangoi/research\`. List the real locations instead of chaining non-existent subdirectories.`
-**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs && ls .sangoi/plans && ls .sangoi/research`
+**Cause + fix:** `The repository does not ship a \`docs/\` directory; historical docs paths were consolidated under \`.sangoi/**\`. List the real locations instead of chaining removed subdirectories.`
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi && ls .sangoi/plans && ls .sangoi/research`
 
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/legacy`
 **Cause + fix:** `There is no \`docs/legacy\` directory; legacy documentation and research now live under \`.sangoi/research\` and related subtrees. Target those folders instead of the removed docs/legacy path.`
 **Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/research`
 
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/notes && head -n 20 docs/notes/2025-10-22-roadmap.md`
-**Cause + fix:** `The \`docs/notes\` directory currently only contains \`legacy-vae-and-dtype.md\`; a \`2025-10-22-roadmap.md\` file was assumed but does not exist. Discover available notes with \`ls\` and open the actual filenames instead of guessing.`
-**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls docs/notes && head -n 20 docs/notes/legacy-vae-and-dtype.md`
+**Cause + fix:** `There is no \`docs/notes\` tree in this repo; roadmap/timeline docs live under \`.sangoi/roadmap/\`. Discover available files with \`ls\` and open the actual filenames instead of guessing.`
+**Correct command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .sangoi/roadmap && head -n 20 .sangoi/roadmap/timeline-2025Q4.md`
 
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,620p' apps/backend/runtime/sampling/sampling_function_inner.py
 Cause and fix: The sampling inner loop lives in `apps/backend/runtime/sampling/__init__.py`; there is no separate `sampling_function_inner.py` module, so sed failed with ENOENT. Point sed at the package file that defines `sampling_function_inner`.
@@ -536,11 +536,11 @@ Cause and fix: The trace script imports `apps.backend`, which in turn imports `t
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
 **Wrong command:** `ls docs/plan`
 **Cause + fix:** The repository has no `docs/plan/` directory; list the actual docs root before drilling into paths.
-**Correct command:** `ls docs`
+**Correct command:** `ls .sangoi`
 
 **Wrong command:** `ls docs/legacy`
 **Cause + fix:** There is no `docs/legacy/` tree; inspect the existing docs layout instead of assuming a legacy folder.
-**Correct command:** `ls docs`
+**Correct command:** `ls .sangoi`
 
 **Wrong command:** `ls .legacy`
 **Cause + fix:** The repo does not ship a `.legacy` directory; reference snapshots now live under `.refs/` (e.g., `.refs/Forge-A1111/`). Use `find` to confirm before targeting paths.

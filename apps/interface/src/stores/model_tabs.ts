@@ -36,6 +36,21 @@ export interface WanVideoParams {
   useInitImage: boolean
   initImageData: string
   initImageName: string
+  // Optional initial video (vid2vid)
+  useInitVideo: boolean
+  initVideoPath: string
+  initVideoName: string
+  // vid2vid controls
+  vid2vidStrength: number
+  vid2vidMethod: 'native' | 'flow_chunks'
+  vid2vidUseSourceFps: boolean
+  vid2vidUseSourceFrames: boolean
+  vid2vidChunkFrames: number
+  vid2vidOverlapFrames: number
+  vid2vidPreviewFrames: number
+  vid2vidFlowEnabled: boolean
+  vid2vidFlowUseLarge: boolean
+  vid2vidFlowDownscale: number
   // Export options
   filenamePrefix: string
   format: string
@@ -113,6 +128,19 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       useInitImage: false,
       initImageData: '',
       initImageName: '',
+      useInitVideo: false,
+      initVideoPath: '',
+      initVideoName: '',
+      vid2vidStrength: 0.8,
+      vid2vidMethod: 'flow_chunks',
+      vid2vidUseSourceFps: true,
+      vid2vidUseSourceFrames: true,
+      vid2vidChunkFrames: 16,
+      vid2vidOverlapFrames: 4,
+      vid2vidPreviewFrames: 48,
+      vid2vidFlowEnabled: true,
+      vid2vidFlowUseLarge: false,
+      vid2vidFlowDownscale: 2,
       filenamePrefix: 'wan22',
       format: 'video/h264-mp4',
       pixFmt: 'yuv420p',

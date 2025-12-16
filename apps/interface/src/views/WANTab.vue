@@ -13,8 +13,9 @@
             <div class="subtabs">
               <button class="subtab" type="button" :disabled="isRunning" :class="{ active: mode === 'txt2vid' }" @click="setInputMode('txt2vid')">Text (txt2vid)</button>
               <button class="subtab" type="button" :disabled="isRunning" :class="{ active: mode === 'img2vid' }" @click="setInputMode('img2vid')">Image (img2vid)</button>
+              <button class="subtab" type="button" :disabled="isRunning" :class="{ active: mode === 'vid2vid' }" @click="setInputMode('vid2vid')">Video (vid2vid)</button>
             </div>
-            <div v-if="video.useInitImage" class="mt-2">
+            <div v-if="mode === 'img2vid'" class="mt-2">
               <InitialImageCard
                 label="Image"
                 :disabled="isRunning"
@@ -27,6 +28,30 @@
                   <div v-if="video.initImageName" class="caption mt-1">{{ video.initImageName }}</div>
                 </template>
               </InitialImageCard>
+            </div>
+            <div v-else-if="mode === 'vid2vid'" class="mt-2">
+              <InitialVideoCard
+                label="Video"
+                :disabled="isRunning"
+                :src="initVideoPreviewUrl"
+                :hasVideo="Boolean(initVideoPreviewUrl)"
+                @set="onInitVideoFile"
+                @clear="clearInitVideo"
+              >
+                <template #footer>
+                  <div class="wan22-grid mt-2">
+                    <div>
+                      <label class="label-muted">Video path (optional)</label>
+                      <input class="ui-input" type="text" :disabled="isRunning" :value="video.initVideoPath" placeholder="relative/path/to/video.mp4" @change="setVideo({ initVideoPath: ($event.target as HTMLInputElement).value })" />
+                      <p class="caption mt-1">Paths are restricted server-side; upload is recommended.</p>
+                    </div>
+                    <div>
+                      <label class="label-muted">Selected file</label>
+                      <div class="caption break-words">{{ video.initVideoName || 'None' }}</div>
+                    </div>
+                  </div>
+                </template>
+              </InitialVideoCard>
             </div>
             <p v-else class="caption">Text mode: no initial image.</p>
           </div>
@@ -111,6 +136,67 @@
               @update:frames="(v:number)=>setVideo({ frames: v })"
               @update:fps="(v:number)=>setVideo({ fps: v })"
             />
+          </div>
+
+          <div v-if="mode === 'vid2vid'" class="gen-card">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">Video2Video</span>
+            </div>
+            <div class="wan22-grid">
+              <div>
+                <label class="label-muted">Strength</label>
+                <input class="ui-input" type="number" min="0" max="1" step="0.05" :disabled="isRunning" :value="video.vid2vidStrength" @change="setVideo({ vid2vidStrength: Number(($event.target as HTMLInputElement).value) })" />
+                <p class="caption mt-1">Higher = more change. Lower = closer to source video.</p>
+              </div>
+              <div>
+                <label class="label-muted">Method</label>
+                <select class="select-md" :disabled="isRunning" :value="video.vid2vidMethod" @change="setVideo({ vid2vidMethod: (($event.target as HTMLSelectElement).value === 'native' ? 'native' : 'flow_chunks') })">
+                  <option value="flow_chunks">Flow chunks (GGUF-friendly)</option>
+                  <option value="native">Native (Diffusers video input)</option>
+                </select>
+              </div>
+              <div>
+                <label class="label-muted">Chunk Frames</label>
+                <input class="ui-input" type="number" min="2" max="128" :disabled="isRunning" :value="video.vid2vidChunkFrames" @change="setVideo({ vid2vidChunkFrames: toInt($event, video.vid2vidChunkFrames) })" />
+              </div>
+              <div>
+                <label class="label-muted">Overlap</label>
+                <input class="ui-input" type="number" min="0" max="127" :disabled="isRunning" :value="video.vid2vidOverlapFrames" @change="setVideo({ vid2vidOverlapFrames: toInt($event, video.vid2vidOverlapFrames) })" />
+              </div>
+            </div>
+            <div class="wan22-toggle-row">
+              <label class="wan22-toggle">
+                <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFps" @change="setVideo({ vid2vidUseSourceFps: ($event.target as HTMLInputElement).checked })" />
+                <span>Use source FPS</span>
+              </label>
+              <label class="wan22-toggle">
+                <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFrames" @change="setVideo({ vid2vidUseSourceFrames: ($event.target as HTMLInputElement).checked })" />
+                <span>Use source length</span>
+              </label>
+              <label class="wan22-toggle">
+                <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidFlowEnabled" @change="setVideo({ vid2vidFlowEnabled: ($event.target as HTMLInputElement).checked })" />
+                <span>Optical flow</span>
+              </label>
+            </div>
+            <div v-if="video.vid2vidFlowEnabled" class="wan22-grid">
+              <div>
+                <label class="label-muted">Flow downscale</label>
+                <input class="ui-input" type="number" min="1" max="8" :disabled="isRunning" :value="video.vid2vidFlowDownscale" @change="setVideo({ vid2vidFlowDownscale: toInt($event, video.vid2vidFlowDownscale) })" />
+                <p class="caption mt-1">Higher = faster/rougher. 2 is a good default.</p>
+              </div>
+              <div>
+                <label class="label-muted">Model</label>
+                <select class="select-md" :disabled="isRunning" :value="video.vid2vidFlowUseLarge ? 'large' : 'small'" @change="setVideo({ vid2vidFlowUseLarge: (($event.target as HTMLSelectElement).value === 'large') })">
+                  <option value="small">RAFT small</option>
+                  <option value="large">RAFT large</option>
+                </select>
+              </div>
+              <div>
+                <label class="label-muted">Preview frames</label>
+                <input class="ui-input" type="number" min="1" max="512" :disabled="isRunning" :value="video.vid2vidPreviewFrames" @change="setVideo({ vid2vidPreviewFrames: toInt($event, video.vid2vidPreviewFrames) })" />
+                <p class="caption mt-1">UI preview only; full video is exported to disk.</p>
+              </div>
+            </div>
           </div>
 
           <details class="accordion" open>
@@ -218,13 +304,21 @@
               <button class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
             </div>
           </div>
+          <div v-if="videoUrl" class="gen-card mb-3">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">Exported Video</span>
+              <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
+            </div>
+            <video class="w-full rounded" :src="videoUrl" controls />
+            <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_OUTPUT_ROOT is writable.</p>
+          </div>
           <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
             <template #empty>
               <div class="wan-results-empty">
                 <div class="wan-empty-title">No results yet</div>
                 <ol class="wan-empty-steps">
                   <li v-if="needsWanModels">Set WAN High/Low models in QuickSettings.</li>
-                  <li>Pick a mode (Text or Image) and write your prompt.</li>
+                  <li>Pick a mode (Text, Image, or Video) and write your prompt.</li>
                   <li>Adjust resolution/stages as needed.</li>
                   <li>Click Generate.</li>
                 </ol>
@@ -332,12 +426,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed, ref } from 'vue'
+import { onMounted, onBeforeUnmount, computed, ref } from 'vue'
 import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
+import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
 import PromptFields from '../components/prompt/PromptFields.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
@@ -449,6 +544,7 @@ const {
   progress,
   frames: framesResult,
   info,
+  videoUrl,
   errorMessage,
   mode,
   history,
@@ -460,7 +556,35 @@ const {
   queueMax,
   enqueue,
   clearQueue,
+  setInitVideoFile,
+  clearInitVideoFile,
 } = useVideoGeneration(props.tabId)
+
+const initVideoPreviewUrl = ref('')
+
+function onInitVideoFile(file: File): void {
+  try {
+    if (initVideoPreviewUrl.value) URL.revokeObjectURL(initVideoPreviewUrl.value)
+  } catch { /* ignore */ }
+  initVideoPreviewUrl.value = URL.createObjectURL(file)
+  setInitVideoFile(file)
+  setVideo({ useInitVideo: true, initVideoName: file.name, initVideoPath: '' })
+}
+
+function clearInitVideo(): void {
+  clearInitVideoFile()
+  try {
+    if (initVideoPreviewUrl.value) URL.revokeObjectURL(initVideoPreviewUrl.value)
+  } catch { /* ignore */ }
+  initVideoPreviewUrl.value = ''
+  setVideo({ initVideoName: '', initVideoPath: '' })
+}
+
+onBeforeUnmount(() => {
+  try {
+    if (initVideoPreviewUrl.value) URL.revokeObjectURL(initVideoPreviewUrl.value)
+  } catch { /* ignore */ }
+})
 
 const needsWanModels = computed(() => !high.value.modelDir && !low.value.modelDir)
 const copyNotice = ref('')
@@ -480,12 +604,19 @@ function focusWanModelsQuicksettings(): void {
   el?.focus()
 }
 
-function setInputMode(next: 'txt2vid' | 'img2vid'): void {
+function setInputMode(next: 'txt2vid' | 'img2vid' | 'vid2vid'): void {
   if (next === 'txt2vid') {
-    setVideo({ useInitImage: false, initImageData: '', initImageName: '' })
+    clearInitVideo()
+    setVideo({ useInitVideo: false, initVideoName: '', initVideoPath: '', useInitImage: false, initImageData: '', initImageName: '' })
     return
   }
-  setVideo({ useInitImage: true })
+  if (next === 'img2vid') {
+    clearInitVideo()
+    setVideo({ useInitVideo: false, initVideoName: '', initVideoPath: '', useInitImage: true })
+    return
+  }
+  // vid2vid
+  setVideo({ useInitVideo: true, useInitImage: false, initImageData: '', initImageName: '' })
 }
 
 const durationLabel = computed(() => {
@@ -497,8 +628,22 @@ const durationLabel = computed(() => {
 
 function buildCurrentSnapshot(): Record<string, unknown> {
   return {
-    mode: video.value.useInitImage ? 'img2vid' : 'txt2vid',
+    mode: video.value.useInitVideo ? 'vid2vid' : (video.value.useInitImage ? 'img2vid' : 'txt2vid'),
     initImageName: video.value.initImageName || '',
+    initVideoName: video.value.initVideoName || '',
+    initVideoPath: video.value.initVideoPath || '',
+    vid2vid: {
+      strength: video.value.vid2vidStrength,
+      method: video.value.vid2vidMethod,
+      useSourceFps: video.value.vid2vidUseSourceFps,
+      useSourceFrames: video.value.vid2vidUseSourceFrames,
+      chunkFrames: video.value.vid2vidChunkFrames,
+      overlapFrames: video.value.vid2vidOverlapFrames,
+      previewFrames: video.value.vid2vidPreviewFrames,
+      flowEnabled: video.value.vid2vidFlowEnabled,
+      flowUseLarge: video.value.vid2vidFlowUseLarge,
+      flowDownscale: video.value.vid2vidFlowDownscale,
+    },
     prompt: String(video.value.prompt || ''),
     negativePrompt: String(video.value.negativePrompt || ''),
     width: video.value.width,
@@ -608,15 +753,13 @@ async function queueNext(): Promise<void> {
 function applyHistory(item: VideoRunHistoryItem): void {
   const snap = (item.paramsSnapshot || {}) as any
 
-  const nextMode: 'txt2vid' | 'img2vid' = snap.mode === 'img2vid' ? 'img2vid' : 'txt2vid'
-  if (nextMode === 'txt2vid') {
-    setVideo({ useInitImage: false })
-  } else {
-    setVideo({ useInitImage: true })
-  }
+  const rawMode = String(snap.mode || '').toLowerCase()
+  const nextMode: 'txt2vid' | 'img2vid' | 'vid2vid' = rawMode === 'vid2vid' ? 'vid2vid' : (rawMode === 'img2vid' ? 'img2vid' : 'txt2vid')
+  setInputMode(nextMode)
 
   const output = snap.output || {}
   const interpolation = snap.interpolation || {}
+  const v2v = snap.vid2vid || {}
 
   setVideo({
     prompt: String(snap.prompt || ''),
@@ -625,6 +768,18 @@ function applyHistory(item: VideoRunHistoryItem): void {
     height: Number(snap.height) || video.value.height,
     frames: Number(snap.frames) || video.value.frames,
     fps: Number(snap.fps) || video.value.fps,
+    initVideoName: String(snap.initVideoName || video.value.initVideoName),
+    initVideoPath: String(snap.initVideoPath || video.value.initVideoPath),
+    vid2vidStrength: Number.isFinite(v2v.strength) ? Number(v2v.strength) : video.value.vid2vidStrength,
+    vid2vidMethod: (String(v2v.method || '').toLowerCase() === 'native' ? 'native' : 'flow_chunks'),
+    vid2vidUseSourceFps: typeof v2v.useSourceFps === 'boolean' ? Boolean(v2v.useSourceFps) : video.value.vid2vidUseSourceFps,
+    vid2vidUseSourceFrames: typeof v2v.useSourceFrames === 'boolean' ? Boolean(v2v.useSourceFrames) : video.value.vid2vidUseSourceFrames,
+    vid2vidChunkFrames: Number.isFinite(v2v.chunkFrames) ? Number(v2v.chunkFrames) : video.value.vid2vidChunkFrames,
+    vid2vidOverlapFrames: Number.isFinite(v2v.overlapFrames) ? Number(v2v.overlapFrames) : video.value.vid2vidOverlapFrames,
+    vid2vidPreviewFrames: Number.isFinite(v2v.previewFrames) ? Number(v2v.previewFrames) : video.value.vid2vidPreviewFrames,
+    vid2vidFlowEnabled: typeof v2v.flowEnabled === 'boolean' ? Boolean(v2v.flowEnabled) : video.value.vid2vidFlowEnabled,
+    vid2vidFlowUseLarge: typeof v2v.flowUseLarge === 'boolean' ? Boolean(v2v.flowUseLarge) : video.value.vid2vidFlowUseLarge,
+    vid2vidFlowDownscale: Number.isFinite(v2v.flowDownscale) ? Number(v2v.flowDownscale) : video.value.vid2vidFlowDownscale,
     filenamePrefix: String(output.filenamePrefix || video.value.filenamePrefix),
     format: String(output.format || video.value.format),
     pixFmt: String(output.pixFmt || video.value.pixFmt),

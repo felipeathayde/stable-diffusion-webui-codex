@@ -88,6 +88,7 @@ class Txt2VidRequest(BaseRequest):
     fps: int = 24
     motion_strength: Optional[float] = None
     extrapolation: Optional[str] = None
+    video_options: Optional[Mapping[str, Any]] = None
     extras: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -100,9 +101,26 @@ class Img2VidRequest(BaseRequest):
     num_frames: int = 16
     fps: int = 24
     motion_strength: Optional[float] = None
+    video_options: Optional[Mapping[str, Any]] = None
+    extras: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Vid2VidRequest(BaseRequest):
+    """Video-to-video request (source video + prompt → output video)."""
+
+    video_path: str = ""
+    width: int = 768
+    height: int = 432
+    steps: int = 30
+    num_frames: int = 16
+    fps: int = 24
+    strength: Optional[float] = None
+    motion_strength: Optional[float] = None
+    video_options: Optional[Mapping[str, Any]] = None
     extras: Mapping[str, Any] = field(default_factory=dict)
 
 
 # Convenience tuple for type checkers / consumers that need to accept either
 ImageRequest = Union[Txt2ImgRequest, Img2ImgRequest]
-VideoRequest = Union[Txt2VidRequest, Img2VidRequest]
+VideoRequest = Union[Txt2VidRequest, Img2VidRequest, Vid2VidRequest]

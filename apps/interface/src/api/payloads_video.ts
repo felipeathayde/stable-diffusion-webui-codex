@@ -93,6 +93,38 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
 
 export type WanImg2VidPayload = z.infer<typeof WanImg2VidPayloadSchema>
 
+export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
+  vid2vid_prompt: PromptSchema,
+  vid2vid_neg_prompt: z.string().optional().default(''),
+  vid2vid_width: z.number().int().min(8).max(8192),
+  vid2vid_height: z.number().int().min(8).max(8192),
+  vid2vid_steps: z.number().int().min(1),
+  vid2vid_fps: z.number().int().min(1).max(240),
+  vid2vid_num_frames: z.number().int().min(1).max(4096),
+  vid2vid_sampler: z.string().min(1).optional(),
+  vid2vid_scheduler: z.string().min(1).optional(),
+  vid2vid_seed: z.number().int().optional(),
+  vid2vid_cfg_scale: z.number().optional(),
+  vid2vid_strength: z.number().min(0).max(1).optional(),
+  vid2vid_method: z.enum(['native', 'flow_chunks']).optional(),
+  vid2vid_use_source_fps: z.boolean().optional(),
+  vid2vid_use_source_frames: z.boolean().optional(),
+  vid2vid_start_seconds: z.number().min(0).optional(),
+  vid2vid_end_seconds: z.number().min(0).optional(),
+  vid2vid_max_frames: z.number().int().min(1).optional(),
+  vid2vid_chunk_frames: z.number().int().min(2).max(128).optional(),
+  vid2vid_overlap_frames: z.number().int().min(0).max(127).optional(),
+  vid2vid_preview_frames: z.number().int().min(1).max(512).optional(),
+  vid2vid_flow_enabled: z.boolean().optional(),
+  vid2vid_flow_use_large: z.boolean().optional(),
+  vid2vid_flow_downscale: z.number().int().min(1).max(8).optional(),
+  vid2vid_flow_device: z.string().min(1).optional(),
+  // Path-based inputs are supported but restricted server-side; prefer multipart upload.
+  vid2vid_video_path: z.string().min(1).optional(),
+}).strict()
+
+export type WanVid2VidPayload = z.infer<typeof WanVid2VidPayloadSchema>
+
 export interface WanStageInput {
   modelDir: string
   sampler: string
@@ -146,6 +178,24 @@ export interface WanVideoCommonInput {
   assets: WanAssetsInput
   output: WanVideoOutputInput
   interpolation: WanInterpolationInput
+}
+
+export interface WanVid2VidInput extends WanVideoCommonInput {
+  strength: number
+  method: 'native' | 'flow_chunks'
+  useSourceFps: boolean
+  useSourceFrames: boolean
+  startSeconds?: number
+  endSeconds?: number
+  maxFrames?: number
+  chunkFrames?: number
+  overlapFrames?: number
+  previewFrames?: number
+  flowEnabled: boolean
+  flowUseLarge: boolean
+  flowDownscale: number
+  flowDevice?: string
+  videoPath?: string
 }
 
 function normalizeDevice(device: string): WanTxt2VidPayload['codex_device'] {
@@ -296,4 +346,53 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
   addWanAssets(payload, input.assets)
 
   return WanImg2VidPayloadSchema.parse(payload)
+}
+
+export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayload {
+  const payload: Record<string, unknown> = {
+    codex_device: normalizeDevice(input.device),
+    vid2vid_prompt: input.prompt,
+    vid2vid_neg_prompt: input.negativePrompt,
+    vid2vid_width: input.width,
+    vid2vid_height: input.height,
+    vid2vid_fps: input.fps,
+    vid2vid_num_frames: input.frames,
+    // Use High as the representative defaults for engines that ignore stage overrides.
+    vid2vid_steps: input.high.steps,
+    vid2vid_cfg_scale: input.high.cfgScale,
+    vid2vid_seed: input.high.seed,
+    vid2vid_strength: input.strength,
+    vid2vid_method: input.method,
+    vid2vid_use_source_fps: input.useSourceFps,
+    vid2vid_use_source_frames: input.useSourceFrames,
+    vid2vid_flow_enabled: input.flowEnabled,
+    vid2vid_flow_use_large: input.flowUseLarge,
+    vid2vid_flow_downscale: input.flowDownscale,
+  }
+
+  const sampler = String(input.high.sampler || '').trim()
+  if (sampler) payload.vid2vid_sampler = sampler
+  const scheduler = String(input.high.scheduler || '').trim()
+  if (scheduler) payload.vid2vid_scheduler = scheduler
+
+  if (typeof input.startSeconds === 'number') payload.vid2vid_start_seconds = input.startSeconds
+  if (typeof input.endSeconds === 'number') payload.vid2vid_end_seconds = input.endSeconds
+  if (typeof input.maxFrames === 'number') payload.vid2vid_max_frames = input.maxFrames
+  if (typeof input.chunkFrames === 'number') payload.vid2vid_chunk_frames = input.chunkFrames
+  if (typeof input.overlapFrames === 'number') payload.vid2vid_overlap_frames = input.overlapFrames
+  if (typeof input.previewFrames === 'number') payload.vid2vid_preview_frames = input.previewFrames
+  if (typeof input.flowDevice === 'string' && input.flowDevice.trim()) payload.vid2vid_flow_device = input.flowDevice.trim()
+
+  const vp = String(input.videoPath || '').trim()
+  if (vp) payload.vid2vid_video_path = vp
+
+  addWanOutput(payload, input.output)
+  addWanInterpolation(payload, input.interpolation)
+
+  payload.wan_high = stageToPayload(input.high)
+  payload.wan_low = stageToPayload(input.low)
+  payload.wan_format = input.format
+  addWanAssets(payload, input.assets)
+
+  return WanVid2VidPayloadSchema.parse(payload)
 }

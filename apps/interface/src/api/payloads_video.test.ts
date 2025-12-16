@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildWanImg2VidPayload, buildWanTxt2VidPayload } from './payloads_video'
+import { buildWanImg2VidPayload, buildWanTxt2VidPayload, buildWanVid2VidPayload } from './payloads_video'
 
 describe('WAN video payload builders', () => {
   it('builds a txt2vid payload with stage overrides and video options', () => {
@@ -120,5 +120,46 @@ describe('WAN video payload builders', () => {
     expect(payload.img2vid_init_image).toBe('data:image/png;base64,AAAA')
     expect(payload.wan_text_encoder_dir).toBe('/models/wan22-tenc')
     expect(payload.wan_text_encoder_path).toBeUndefined()
+  })
+
+  it('builds a vid2vid payload (multipart upload path optional) with flow settings', () => {
+    const payload = buildWanVid2VidPayload({
+      device: 'cuda',
+      prompt: '  v2v  ',
+      negativePrompt: '',
+      width: 768,
+      height: 432,
+      fps: 24,
+      frames: 96,
+      strength: 0.75,
+      method: 'flow_chunks',
+      useSourceFps: true,
+      useSourceFrames: true,
+      flowEnabled: true,
+      flowUseLarge: false,
+      flowDownscale: 2,
+      high: { modelDir: '/models/wan22', sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
+      low: { modelDir: '/models/wan22', sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
+      format: 'gguf',
+      assets: { metadataDir: '', textEncoder: '', vaePath: '' },
+      output: {
+        filenamePrefix: 'wan22',
+        format: 'video/h264-mp4',
+        pixFmt: 'yuv420p',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+        trimToAudio: false,
+        saveMetadata: true,
+        saveOutput: true,
+      },
+      interpolation: { enabled: false, model: '', times: 2 },
+    })
+
+    expect(payload.codex_device).toBe('cuda')
+    expect(payload.vid2vid_prompt).toBe('v2v')
+    expect(payload.vid2vid_strength).toBe(0.75)
+    expect(payload.vid2vid_method).toBe('flow_chunks')
+    expect(payload.vid2vid_flow_enabled).toBe(true)
   })
 })

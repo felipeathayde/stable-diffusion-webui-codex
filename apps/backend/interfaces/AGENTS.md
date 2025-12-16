@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2025-12-14
+Last Review: 2025-12-16
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2025-12-06: `_bootstrap_runtime` agora pré-calcula o inventário de modelos (`apps.backend.inventory.cache.refresh()`) durante o bootstrap do backend, de forma que `/api/models/inventory` esteja quente quando a UI abrir o QuickSettings; a rota continua expondo `?refresh=true` e `POST /api/models/inventory/refresh` para rescans explícitos.
 - 2025-12-06: `settings_schema.json` e `settings_registry.py` incluem chaves `codex_flux_core_streaming_*` (enabled/policy/blocks_per_segment/window_size/auto_threshold_mb) sob a seção SDXL, pensadas para controlar streaming do core Flux via `/api/options`. Por enquanto, apenas o backend consome esses valores convertendo-os em `engine_options` para o engine Flux; a UI pode optar por expô-los como controles avançados em uma fase posterior.
 - 2025-12-14: `/api/txt2vid` e `/api/img2vid` populam `steps` em `Txt2VidRequest/Img2VidRequest` e o plano de vídeo (`build_video_plan`) lê `guidance_scale` (alinhamento de contrato com o runtime).
+- 2025-12-16: Added `/api/vid2vid` (multipart: `video` upload + JSON `payload`) and `/api/output/{rel_path}` for root-scoped serving of exported videos. Path-based vid2vid inputs are allowed but restricted to the backend working directory to avoid permission surprises; upload is recommended.

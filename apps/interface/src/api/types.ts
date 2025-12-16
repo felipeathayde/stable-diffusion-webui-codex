@@ -65,7 +65,7 @@ export interface GeneratedImage {
 export type TaskEvent =
   | { type: 'status'; stage: string }
   | { type: 'progress'; stage: string; percent?: number | null; step?: number | null; total_steps?: number | null; eta_seconds?: number | null }
-  | { type: 'result'; images: GeneratedImage[]; info: unknown }
+  | { type: 'result'; images: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
   | { type: 'error'; message: string }
   | { type: 'end' }
 
@@ -75,6 +75,7 @@ export interface TaskResult {
   result?: {
     images: GeneratedImage[]
     info: unknown
+    video?: { rel_path?: string | null; mime?: string | null }
   }
 }
 
@@ -95,6 +96,7 @@ export interface EngineCapabilities {
   supports_img2img: boolean
   supports_txt2vid: boolean
   supports_img2vid: boolean
+  supports_vid2vid?: boolean
   supports_highres: boolean
   supports_refiner: boolean
   supports_lora: boolean
@@ -185,4 +187,3 @@ export interface InventoryResponse {
   wan22: { gguf: Array<{ name: string; path: string; stage: 'high' | 'low' | 'unknown' }> }
   metadata: Array<{ name: string; path: string }>
 }
-

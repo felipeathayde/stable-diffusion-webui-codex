@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2025-12-14
+Last Review: 2025-12-16
 Status: Active
 
 ## Purpose
@@ -17,6 +17,7 @@ Status: Active
 - 2025-12-06: `spec.py` introduz `WanEngineSpec`/`WanEngineRuntime` + `assemble_wan_runtime`; `Wan2214BEngine` aceita um `_bundle: DiffusionModelBundle` opcional e pode montar um runtime Codex experimental quando `codex_wan22_use_spec_runtime`/`use_codex_runtime` estiver ativo; `txt2vid`/`img2vid` usam esse runtime/spec + sampler (`sample_txt2vid`) como caminho opt-in, mantendo GGUF/Diffusers como defaults.
 - 2025-12-13: caminho GGUF do engine 5B foi alinhado ao runtime WAN22 (`apps/backend/runtime/wan22/wan22.py`) e agora carrega o stage GGUF direto em `WanTransformer2DModel` (nn.Module), removendo dependência do runner `WanDiTGGUF`.
 - 2025-12-14: engine 5B GGUF agora consome overrides por stage via `extras.wan_high/wan_low` (steps/cfg/sampler/scheduler/model_dir) e valida text encoder `.safetensors` (file ou dir com 1 arquivo).
+- 2025-12-16: `wan22_5b` now supports `vid2vid` via `apps/backend/use_cases/vid2vid.py` (optical-flow-guided chunking built on `img2vid` + ffmpeg IO/export). Flow uses torchvision RAFT (lazy-loaded) and will fail fast if torch/torchvision are missing.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

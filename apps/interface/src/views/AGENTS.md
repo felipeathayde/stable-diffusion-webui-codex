@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, txt2img, sdxl -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-15
+Last Review: 2025-12-16
 Status: Active
 
 ## Purpose
@@ -18,6 +18,7 @@ Status: Active
 - 2025-12-14: `WANTab.vue` uses typed (Zod) WAN video payload builders and surfaces streaming progress + returned `info` JSON to reduce request drift during WAN22 pipeline testing.
 - 2025-12-14: `WANTab.vue` was de-bloated by extracting High/Low + Output panels into `components/wan/*` and treating WAN assets (model dirs/TE/VAE) as QuickSettings responsibility (tab shows a summary + validates before starting runs).
 - 2025-12-15: `WANTab.vue` parameters UI was reshaped to mirror Txt2Img’s layout (Prompt + Generation Parameters with cards); prompt now uses `PromptFields`.
+- 2025-12-16: `WANTab.vue` adds a `vid2vid` mode (video upload + flow-chunks params) and shows exported video playback when the backend returns `video.rel_path` from `/api/vid2vid`.
 - 2025-12-14: Removed the legacy standalone `Txt2Vid.vue` view; WAN video entry stays exclusively under model tabs (`/models/:tabId` with `type === 'wan'`).
 - 2025-12-14: `ModelTabView.vue` keys per-tab views by `tab.id` so switching `/models/:tabId` remounts the correct tab implementation (prevents composables binding a stale id).
 - 2025-12-15: Added `RedirectToModelTab.vue` and router aliases so legacy nav paths can redirect into `/models/:tabId` (WAN) without spamming Vue Router “No match found” warnings.

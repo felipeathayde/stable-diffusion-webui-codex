@@ -23,6 +23,7 @@ class TaskType(str, Enum):
     UPSCALE = "upscale"
     TXT2VID = "txt2vid"
     IMG2VID = "img2vid"
+    VID2VID = "vid2vid"
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,9 @@ class BaseInferenceEngine(ABC):
     def img2vid(self, request: "Img2VidRequest", **kwargs: Any) -> Iterator["InferenceEvent"]:
         raise UnsupportedTaskError(f"Engine {self.engine_id} cannot run img2vid")
 
+    def vid2vid(self, request: "Vid2VidRequest", **kwargs: Any) -> Iterator["InferenceEvent"]:
+        raise UnsupportedTaskError(f"Engine {self.engine_id} cannot run vid2vid")
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -123,4 +127,4 @@ class BaseInferenceEngine(ABC):
 
 # Deferred type checking imports (avoid circular dependencies at runtime)
 if False:  # pragma: no cover
-    from .requests import Img2ImgRequest, Img2VidRequest, InferenceEvent, Txt2ImgRequest, Txt2VidRequest
+    from .requests import Img2ImgRequest, Img2VidRequest, InferenceEvent, Txt2ImgRequest, Txt2VidRequest, Vid2VidRequest

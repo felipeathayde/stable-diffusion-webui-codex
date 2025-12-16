@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
-from apps.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest, ProgressEvent, ResultEvent
+from apps.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest, Vid2VidRequest, ProgressEvent, ResultEvent
 from apps.backend.engines.common.base_video import BaseVideoEngine
 from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
 from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
+from apps.backend.use_cases.vid2vid import run_vid2vid as _run_v2v
 from apps.backend.core.exceptions import EngineLoadError
 
 import os
@@ -226,7 +227,7 @@ class Wan225BEngine(BaseVideoEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2VID, TaskType.IMG2VID),
+            tasks=(TaskType.TXT2VID, TaskType.IMG2VID, TaskType.VID2VID),
             model_types=("wan-2.2-5b",),
             precision=("fp16", "bf16", "fp32"),
             extras={"notes": "WAN 2.2 5B via Diffusers or GGUF"},
@@ -433,6 +434,14 @@ class Wan225BEngine(BaseVideoEngine):
                     raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
             self._logger.info('[wan22_5b] DEBUG: depois de função img2vid')
             return
+
+    def vid2vid(self, request: Vid2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
+        self._logger.info('[wan22_5b] DEBUG: antes de função vid2vid')
+        self.ensure_loaded()
+        assert self._comp is not None
+        yield from _run_v2v(engine=self, comp=self._comp, request=request)
+        self._logger.info('[wan22_5b] DEBUG: depois de função vid2vid')
+        return
 
     # ------------------------------ helpers
     # GGUF config assembly lives in `_build_wan22_gguf_run_config` so UI stage overrides

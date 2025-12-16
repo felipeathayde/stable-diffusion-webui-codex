@@ -41,6 +41,18 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T
 }
 
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(detail || `${res.status} ${res.statusText}`)
+  }
+  return (await res.json()) as T
+}
+
 export function fetchModels(): Promise<ModelsResponse> {
   return requestJson<ModelsResponse>('/models')
 }
@@ -110,6 +122,10 @@ export function startImg2Vid(payload: Record<string, unknown>): Promise<Txt2ImgS
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function startVid2Vid(form: FormData): Promise<Txt2ImgStartResponse> {
+  return requestForm<Txt2ImgStartResponse>('/vid2vid', form)
 }
 
 export function fetchTaskResult(taskId: string): Promise<TaskResult> {

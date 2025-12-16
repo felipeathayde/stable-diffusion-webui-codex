@@ -55,7 +55,7 @@ except Exception:
     # Never block startup because of tracing/logging issues
     pass
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from starlette.responses import FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -267,6 +267,7 @@ def build_app() -> FastAPI:
         Img2ImgRequest,
         Txt2VidRequest,
         Img2VidRequest,
+        Vid2VidRequest,
     )
     from apps.backend.services.media_service import MediaService
 
@@ -2255,13 +2256,36 @@ def build_app() -> FastAPI:
         cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
     
         extras: Dict[str, Any] = {}
-        # Video export options (pass-through; engines may consume)
-        video_opts_keys = [
-            'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
-        ]
-        video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
-        if video_opts:
-            extras['video'] = video_opts
+        # Video export options (structured in request.video_options; also kept in extras.video for debugging)
+        video_options = None
+        try:
+            from apps.backend.core.params.video import VideoExportOptions
+
+            video_options = VideoExportOptions(
+                filename_prefix=(str(payload.get("video_filename_prefix")).strip() if payload.get("video_filename_prefix") else None),
+                format=(str(payload.get("video_format")).strip() if payload.get("video_format") else None),
+                pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
+                crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
+                loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
+                pingpong=(bool(payload.get("video_pingpong")) if payload.get("video_pingpong") is not None else None),
+                save_metadata=(bool(payload.get("video_save_metadata")) if payload.get("video_save_metadata") is not None else None),
+                save_output=(bool(payload.get("video_save_output")) if payload.get("video_save_output") is not None else None),
+                trim_to_audio=(bool(payload.get("video_trim_to_audio")) if payload.get("video_trim_to_audio") is not None else None),
+            ).as_dict()
+        except Exception:
+            video_options = None
+        if video_options:
+            extras["video"] = {
+                "video_filename_prefix": payload.get("video_filename_prefix"),
+                "video_format": payload.get("video_format"),
+                "video_pix_fmt": payload.get("video_pix_fmt"),
+                "video_crf": payload.get("video_crf"),
+                "video_loop_count": payload.get("video_loop_count"),
+                "video_pingpong": payload.get("video_pingpong"),
+                "video_save_metadata": payload.get("video_save_metadata"),
+                "video_save_output": payload.get("video_save_output"),
+                "video_trim_to_audio": payload.get("video_trim_to_audio"),
+            }
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
         if isinstance(payload.get('wan_high'), dict):
@@ -2305,6 +2329,7 @@ def build_app() -> FastAPI:
             scheduler=scheduler_name,
             seed=seed_val,
             guidance_scale=cfg_val,
+            video_options=video_options,
             extras=extras,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
@@ -2355,12 +2380,35 @@ def build_app() -> FastAPI:
         init_image = media.decode_image(init_image_data) if init_image_data else None
     
         extras: Dict[str, Any] = {}
-        video_opts_keys = [
-            'video_filename_prefix','video_format','video_pix_fmt','video_crf','video_loop_count','video_pingpong','video_save_metadata','video_save_output','video_trim_to_audio'
-        ]
-        video_opts = {k: payload.get(k) for k in video_opts_keys if k in payload}
-        if video_opts:
-            extras['video'] = video_opts
+        video_options = None
+        try:
+            from apps.backend.core.params.video import VideoExportOptions
+
+            video_options = VideoExportOptions(
+                filename_prefix=(str(payload.get("video_filename_prefix")).strip() if payload.get("video_filename_prefix") else None),
+                format=(str(payload.get("video_format")).strip() if payload.get("video_format") else None),
+                pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
+                crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
+                loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
+                pingpong=(bool(payload.get("video_pingpong")) if payload.get("video_pingpong") is not None else None),
+                save_metadata=(bool(payload.get("video_save_metadata")) if payload.get("video_save_metadata") is not None else None),
+                save_output=(bool(payload.get("video_save_output")) if payload.get("video_save_output") is not None else None),
+                trim_to_audio=(bool(payload.get("video_trim_to_audio")) if payload.get("video_trim_to_audio") is not None else None),
+            ).as_dict()
+        except Exception:
+            video_options = None
+        if video_options:
+            extras["video"] = {
+                "video_filename_prefix": payload.get("video_filename_prefix"),
+                "video_format": payload.get("video_format"),
+                "video_pix_fmt": payload.get("video_pix_fmt"),
+                "video_crf": payload.get("video_crf"),
+                "video_loop_count": payload.get("video_loop_count"),
+                "video_pingpong": payload.get("video_pingpong"),
+                "video_save_metadata": payload.get("video_save_metadata"),
+                "video_save_output": payload.get("video_save_output"),
+                "video_trim_to_audio": payload.get("video_trim_to_audio"),
+            }
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
         if isinstance(payload.get('wan_high'), dict):
@@ -2405,6 +2453,7 @@ def build_app() -> FastAPI:
             scheduler=scheduler_name,
             seed=seed_val,
             guidance_scale=cfg_val,
+            video_options=video_options,
             extras=extras,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
@@ -2437,6 +2486,165 @@ def build_app() -> FastAPI:
             pass
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, str(engine_key), model_ref
+
+    def _resolve_vid2vid_input_path(raw: str) -> str:
+        """Resolve a user-supplied video path safely.
+
+        Policy: by default, only paths under the backend working directory are allowed.
+        Use upload (multipart) to avoid path permission issues.
+        """
+        v = str(raw or "").strip()
+        if not v:
+            raise RuntimeError("vid2vid_video_path is empty")
+        p = Path(os.path.expanduser(v))
+        if not p.is_absolute():
+            p = Path(os.getcwd()) / p
+        try:
+            resolved = p.resolve()
+        except Exception:
+            resolved = p
+        root = Path(os.getcwd()).resolve()
+        try:
+            if not resolved.is_relative_to(root):
+                raise RuntimeError(
+                    f"vid2vid_video_path must be under the backend working directory ({root}); "
+                    "use upload instead for external files."
+                )
+        except AttributeError:
+            if str(resolved).startswith(str(root)) is False:
+                raise RuntimeError(
+                    f"vid2vid_video_path must be under the backend working directory ({root}); "
+                    "use upload instead for external files."
+                )
+        if not resolved.is_file():
+            raise RuntimeError(f"vid2vid_video_path not found: {resolved}")
+        return str(resolved)
+
+    def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:
+        prompt = payload.get("vid2vid_prompt", "")
+        negative_prompt = payload.get("vid2vid_neg_prompt", "")
+        width_val = int(payload.get("vid2vid_width", 768))
+        height_val = int(payload.get("vid2vid_height", 432))
+        steps_val = int(payload.get("vid2vid_steps", 30))
+        fps_val = int(payload.get("vid2vid_fps", 24))
+        frames_val = int(payload.get("vid2vid_num_frames", 16))
+        sampler_name = str(payload.get("vid2vid_sampler", ""))
+        scheduler_name = str(payload.get("vid2vid_scheduler", ""))
+        seed_val = int(payload.get("vid2vid_seed", -1))
+        cfg_val = float(payload.get("vid2vid_cfg_scale", 7.0))
+        strength_val = payload.get("vid2vid_strength")
+        strength = float(strength_val) if strength_val is not None else None
+
+        video_path_raw = payload.get("vid2vid_video_path") or payload.get("vid2vid_video")
+        video_path = _resolve_vid2vid_input_path(video_path_raw)
+
+        extras: Dict[str, Any] = {}
+        video_options = None
+        try:
+            from apps.backend.core.params.video import VideoExportOptions
+
+            video_options = VideoExportOptions(
+                filename_prefix=(str(payload.get("video_filename_prefix")).strip() if payload.get("video_filename_prefix") else None),
+                format=(str(payload.get("video_format")).strip() if payload.get("video_format") else None),
+                pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
+                crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
+                loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
+                pingpong=(bool(payload.get("video_pingpong")) if payload.get("video_pingpong") is not None else None),
+                save_metadata=(bool(payload.get("video_save_metadata")) if payload.get("video_save_metadata") is not None else None),
+                save_output=(bool(payload.get("video_save_output")) if payload.get("video_save_output") is not None else None),
+                trim_to_audio=(bool(payload.get("video_trim_to_audio")) if payload.get("video_trim_to_audio") is not None else None),
+            ).as_dict()
+        except Exception:
+            video_options = None
+        if video_options:
+            extras["video"] = {
+                "video_filename_prefix": payload.get("video_filename_prefix"),
+                "video_format": payload.get("video_format"),
+                "video_pix_fmt": payload.get("video_pix_fmt"),
+                "video_crf": payload.get("video_crf"),
+                "video_loop_count": payload.get("video_loop_count"),
+                "video_pingpong": payload.get("video_pingpong"),
+                "video_save_metadata": payload.get("video_save_metadata"),
+                "video_save_output": payload.get("video_save_output"),
+                "video_trim_to_audio": payload.get("video_trim_to_audio"),
+            }
+        if isinstance(payload.get("video_interpolation"), dict):
+            extras["video_interpolation"] = payload.get("video_interpolation")
+        if isinstance(payload.get("wan_high"), dict):
+            extras["wan_high"] = payload.get("wan_high")
+        if isinstance(payload.get("wan_low"), dict):
+            extras["wan_low"] = payload.get("wan_low")
+        for key in (
+            "wan_format",
+            "wan_vae_path",
+            "wan_text_encoder_path",
+            "wan_text_encoder_dir",
+            "wan_metadata_dir",
+            "wan_tokenizer_dir",
+            "gguf_offload",
+            "gguf_offload_level",
+            "gguf_sdpa_policy",
+            "gguf_attn_chunk",
+            "gguf_cache_policy",
+            "gguf_cache_limit_mb",
+            "gguf_log_mem_interval",
+            "gguf_te_device",
+            "gguf_te_impl",
+            "gguf_te_kernel_required",
+        ):
+            if key in payload and payload.get(key) is not None:
+                extras[key] = payload.get(key)
+
+        extras["vid2vid"] = {
+            "method": str(payload.get("vid2vid_method") or "flow_chunks"),
+            "use_source_fps": bool(payload.get("vid2vid_use_source_fps", True)),
+            "use_source_frames": bool(payload.get("vid2vid_use_source_frames", True)),
+            "start_seconds": payload.get("vid2vid_start_seconds"),
+            "end_seconds": payload.get("vid2vid_end_seconds"),
+            "max_frames": payload.get("vid2vid_max_frames"),
+            "chunk_frames": payload.get("vid2vid_chunk_frames"),
+            "overlap_frames": payload.get("vid2vid_overlap_frames"),
+            "preview_frames": payload.get("vid2vid_preview_frames"),
+        }
+        extras["vid2vid_flow"] = {
+            "enabled": bool(payload.get("vid2vid_flow_enabled", True)),
+            "use_large": bool(payload.get("vid2vid_flow_use_large", False)),
+            "downscale": payload.get("vid2vid_flow_downscale", 2),
+            "device": payload.get("vid2vid_flow_device", None),
+        }
+
+        req = Vid2VidRequest(
+            task=TaskType.VID2VID,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            sampler=(sampler_name.strip() or None),
+            scheduler=(scheduler_name.strip() or None),
+            video_path=video_path,
+            width=width_val,
+            height=height_val,
+            steps=steps_val,
+            fps=fps_val,
+            num_frames=frames_val,
+            seed=seed_val,
+            guidance_scale=cfg_val,
+            strength=strength,
+            video_options=video_options,
+            extras=extras,
+            metadata={"mode": _opts_snapshot().codex_mode},
+        )
+
+        engine_key = "wan22_5b"
+        model_ref = _opts_snapshot().sd_model_checkpoint
+        try:
+            wh = extras.get("wan_high") or {}
+            wl = extras.get("wan_low") or {}
+            if isinstance(wh, dict) and wh.get("model_dir"):
+                model_ref = str(wh.get("model_dir"))
+            elif isinstance(wl, dict) and wl.get("model_dir"):
+                model_ref = str(wl.get("model_dir"))
+        except Exception:
+            pass
+        return req, engine_key, model_ref
     
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
         loop = entry.loop
@@ -2456,8 +2664,10 @@ def build_app() -> FastAPI:
             _require_explicit_device(payload)
             if task_type == TaskType.TXT2VID:
                 req, engine_key, model_ref = prepare_txt2vid(payload)
-            else:
+            elif task_type == TaskType.IMG2VID:
                 req, engine_key, model_ref = prepare_img2vid(payload)
+            else:
+                req, engine_key, model_ref = prepare_vid2vid(payload)
         except Exception as err:
             entry.error = str(err)
             push({"type": "error", "message": entry.error})
@@ -2473,9 +2683,8 @@ def build_app() -> FastAPI:
             try:
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
-                    orch = InferenceOrchestrator()
                     engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
-                    for ev in orch.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
+                    for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
                         if entry.cancel_requested and entry.cancel_mode == "immediate":
                             entry.error = "cancelled"
                             push({"type": "error", "message": "cancelled"})
@@ -2500,6 +2709,8 @@ def build_app() -> FastAPI:
                                 info_obj = info_raw
                             encoded = encode_images(payload_obj.get("images", []))
                             result = {"images": encoded, "info": info_obj}
+                            if isinstance(payload_obj.get("video"), dict):
+                                result["video"] = payload_obj.get("video")
                             entry.result = {"status": "completed", "result": result}
                             push({"type": "result", **result})
                 push({"type": "end"})
@@ -2515,8 +2726,30 @@ def build_app() -> FastAPI:
                 push({"type": "error", "message": entry.error})
                 push({"type": "end"})
                 mark_done(False)
+            finally:
+                if task_type == TaskType.VID2VID:
+                    try:
+                        uploaded = payload.get("__vid2vid_uploaded_path")
+                        if uploaded:
+                            up_root = (Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid").resolve()
+                            up_path = Path(str(uploaded))
+                            try:
+                                resolved = up_path.resolve()
+                            except Exception:
+                                resolved = up_path
+                            try:
+                                ok = resolved.is_relative_to(up_root)
+                            except AttributeError:
+                                ok = str(resolved).startswith(str(up_root))
+                            if ok:
+                                try:
+                                    resolved.unlink()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
     
-        label = 'txt2vid' if task_type == TaskType.TXT2VID else 'img2vid'
+        label = 'txt2vid' if task_type == TaskType.TXT2VID else ('img2vid' if task_type == TaskType.IMG2VID else 'vid2vid')
         thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)
         thread.start()
     
@@ -2569,6 +2802,68 @@ def build_app() -> FastAPI:
         logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
         run_video_task(task_id, payload, entry, TaskType.IMG2VID)
         return {"task_id": task_id}
+
+    @app.post('/api/vid2vid')
+    async def vid2vid(video: UploadFile | None = File(default=None), payload: str = Form(default="{}")) -> Dict[str, Any]:
+        """Video-to-video endpoint.
+
+        Accepts multipart form-data:
+          - video: file upload (preferred)
+          - payload: JSON string with vid2vid_* keys (and WAN extras)
+
+        For security, path-based inputs are restricted to the backend working directory.
+        """
+        try:
+            data = json.loads(payload) if payload else {}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"payload must be JSON: {exc}")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="payload must be JSON object")
+
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-vid2vid-{uuid4().hex})"
+        register_task(task_id, entry)
+
+        if video is not None:
+            try:
+                import shutil as _shutil
+
+                up_dir = Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid"
+                up_dir.mkdir(parents=True, exist_ok=True)
+                suffix = ""
+                try:
+                    name = str(video.filename or "")
+                    if "." in name:
+                        suffix = "." + name.rsplit(".", 1)[1].lower()
+                except Exception:
+                    suffix = ""
+                dst = up_dir / f"{uuid4().hex}{suffix or '.mp4'}"
+                with dst.open("wb") as f:
+                    _shutil.copyfileobj(video.file, f)
+                data["vid2vid_video_path"] = str(dst)
+                data["__vid2vid_uploaded_path"] = str(dst)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"failed to save uploaded video: {exc}")
+
+        run_video_task(task_id, data, entry, TaskType.VID2VID)
+        return {"task_id": task_id}
+
+    @app.get("/api/output/{rel_path:path}")
+    async def get_output_file(rel_path: str) -> FileResponse:
+        """Serve a file from CODEX_OUTPUT_ROOT / ./output (safe, root-scoped)."""
+        root = Path(os.getenv("CODEX_OUTPUT_ROOT") or (Path(os.getcwd()) / "output")).resolve()
+        raw = str(rel_path or "").lstrip("/").replace("\\", "/")
+        target = (root / raw).resolve()
+        try:
+            if not target.is_relative_to(root):
+                raise HTTPException(status_code=400, detail="invalid output path")
+        except AttributeError:
+            if str(target).startswith(str(root)) is False:
+                raise HTTPException(status_code=400, detail="invalid output path")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        return FileResponse(str(target))
     
     @app.get('/api/tasks/{task_id}')
     async def task_status(task_id: str) -> Dict[str, Any]:

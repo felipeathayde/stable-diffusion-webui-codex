@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Mapping, Optional, Sequence
+
+
+class VideoExportError(RuntimeError):
+    pass
+
+
+def _which(name: str) -> str:
+    path = shutil.which(name)
+    if not path:
+        raise VideoExportError(f"{name} not found on PATH. Install ffmpeg and try again.")
+    return path
+
+
+def _output_root() -> Path:
+    base = os.getenv("CODEX_OUTPUT_ROOT")
+    return Path(base) if base else Path.cwd() / "output"
+
+
+def _normalize_video_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
+    raw: dict[str, Any] = dict(options or {})
+    # Accept legacy API keys (video_*); normalize to VideoExportOptions-style keys.
+    aliases = {
+        "video_filename_prefix": "filename_prefix",
+        "video_format": "format",
+        "video_pix_fmt": "pix_fmt",
+        "video_crf": "crf",
+        "video_loop_count": "loop_count",
+        "video_pingpong": "pingpong",
+        "video_save_metadata": "save_metadata",
+        "video_save_output": "save_output",
+        "video_trim_to_audio": "trim_to_audio",
+    }
+    for src, dst in aliases.items():
+        if src in raw and dst not in raw:
+            raw[dst] = raw.get(src)
+    return raw
+
+
+def _format_to_container(fmt: str) -> tuple[str, str]:
+    v = (fmt or "").strip().lower()
+    if v in {"video/h264-mp4", "h264", "mp4", "video/mp4"}:
+        return "mp4", "h264"
+    if v in {"video/h265-mp4", "h265", "hevc", "video/hevc"}:
+        return "mp4", "h265"
+    if v in {"video/webm", "webm"}:
+        return "webm", "vp9"
+    if v in {"video/gif", "image/gif", "gif"}:
+        return "gif", "gif"
+    # Default to mp4/h264 for unknown values so the exporter behaves predictably.
+    return "mp4", "h264"
+
+
+def _audio_codec_for(container: str) -> str | None:
+    if container == "mp4":
+        return "aac"
+    if container == "webm":
+        return "libopus"
+    return None
+
+
+@dataclass(frozen=True)
+class VideoExportResult:
+    saved: bool
+    path: str | None = None
+    rel_path: str | None = None
+    mime: str | None = None
+    reason: str | None = None
+    fps: int | None = None
+    frame_count: int | None = None
+
+
+def export_video(
+    frames: Sequence[Any],
+    *,
+    fps: int,
+    options: Mapping[str, Any] | None,
+    task: str,
+    audio_source_path: str | None = None,
+    extra_metadata: Mapping[str, Any] | None = None,
+) -> VideoExportResult | None:
+    opts = _normalize_video_options(options)
+    save_output = bool(opts.get("save_output", False))
+    if not save_output:
+        return None
+
+    ffmpeg = _which("ffmpeg")
+
+    frames_list = list(frames or [])
+    if not frames_list:
+        return VideoExportResult(saved=False, reason="no-frames")
+
+    fps_i = int(fps) if int(fps) > 0 else 24
+    ext, codec_kind = _format_to_container(str(opts.get("format") or "video/h264-mp4"))
+
+    prefix = str(opts.get("filename_prefix") or task or "video").strip() or "video"
+    date_dir = datetime.now().strftime("%Y-%m-%d")
+    root = _output_root()
+    out_dir = root / f"{task}-videos" / date_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%H%M%S")
+    run_id = f"{int(time.time())}"
+    out_name = f"{prefix}_{ts}_{run_id}.{ext}"
+    out_path = out_dir / out_name
+
+    # Workspace-local temp dir (avoid /tmp surprises in sandboxed setups).
+    work = Path.cwd() / "tmp" / "video_export" / f"{task}_{run_id}"
+    frames_dir = work / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    # Optional ping-pong: append reverse frames (excluding endpoints to avoid duplicates).
+    if bool(opts.get("pingpong", False)) and len(frames_list) > 2:
+        frames_list = list(frames_list) + list(reversed(frames_list[1:-1]))
+
+    # Write frames as PNGs for ffmpeg.
+    try:
+        from PIL import Image  # type: ignore
+    except Exception as exc:
+        raise VideoExportError(f"Pillow is required for video export: {exc}") from exc
+
+    for idx, frame in enumerate(frames_list, start=1):
+        try:
+            if isinstance(frame, Image.Image):
+                img = frame
+            else:
+                raise TypeError(f"frame {idx} is not a PIL.Image")
+            img.save(frames_dir / f"frame_{idx:06d}.png", format="PNG")
+        except Exception as exc:
+            raise VideoExportError(f"Failed to write frame {idx}: {exc}") from exc
+
+    pix_fmt = str(opts.get("pix_fmt") or "yuv420p").strip() or "yuv420p"
+    crf = int(opts.get("crf", 23) or 23)
+    loop_count = int(opts.get("loop_count", 0) or 0)
+    trim_to_audio = bool(opts.get("trim_to_audio", False))
+
+    # Base encode command.
+    cmd: list[str] = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", str(fps_i), "-i", str(frames_dir / "frame_%06d.png")]
+
+    include_audio = bool(audio_source_path) and (ext in {"mp4", "webm"})
+    if include_audio:
+        cmd += ["-i", str(audio_source_path)]
+
+    if ext == "gif":
+        # High-quality GIF using palettegen/paletteuse.
+        palette = work / "palette.png"
+        cmd_palette = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-framerate",
+            str(fps_i),
+            "-i",
+            str(frames_dir / "frame_%06d.png"),
+            "-vf",
+            "palettegen",
+            str(palette),
+        ]
+        try:
+            subprocess.check_output(cmd_palette, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as exc:
+            msg = exc.output.decode("utf-8", errors="replace") if exc.output else str(exc)
+            raise VideoExportError(f"ffmpeg palettegen failed: {msg}") from exc
+
+        cmd = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-framerate",
+            str(fps_i),
+            "-i",
+            str(frames_dir / "frame_%06d.png"),
+            "-i",
+            str(palette),
+            "-lavfi",
+            "paletteuse",
+            "-loop",
+            str(loop_count),
+            str(out_path),
+        ]
+    else:
+        if codec_kind == "h265":
+            cmd += ["-c:v", "libx265", "-crf", str(crf), "-pix_fmt", pix_fmt]
+        elif codec_kind == "vp9":
+            cmd += ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", str(crf), "-pix_fmt", pix_fmt]
+        else:
+            cmd += ["-c:v", "libx264", "-crf", str(crf), "-pix_fmt", pix_fmt]
+
+        if include_audio:
+            ac = _audio_codec_for(ext)
+            if ac:
+                cmd += ["-map", "0:v:0", "-map", "1:a:0?", "-c:a", ac]
+            if trim_to_audio:
+                cmd += ["-shortest"]
+
+        # Faststart for mp4 helps browser playback.
+        if ext == "mp4":
+            cmd += ["-movflags", "+faststart"]
+        cmd += [str(out_path)]
+
+    try:
+        subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as exc:
+        msg = exc.output.decode("utf-8", errors="replace") if exc.output else str(exc)
+        raise VideoExportError(f"ffmpeg export failed: {msg}") from exc
+    finally:
+        # Best-effort cleanup of intermediate frames.
+        try:
+            shutil.rmtree(work)
+        except Exception:
+            pass
+
+    rel = os.path.relpath(out_path, root)
+    mime = "video/mp4" if ext == "mp4" else ("video/webm" if ext == "webm" else "image/gif")
+
+    if bool(opts.get("save_metadata", False)):
+        meta_path = out_path.with_suffix(out_path.suffix + ".json")
+        meta: dict[str, Any] = {
+            "task": task,
+            "fps": fps_i,
+            "frames": len(frames_list),
+            "format": str(opts.get("format") or ""),
+            "pix_fmt": pix_fmt,
+            "crf": crf,
+            "loop_count": loop_count,
+            "pingpong": bool(opts.get("pingpong", False)),
+            "trim_to_audio": trim_to_audio,
+        }
+        if extra_metadata:
+            meta.update(dict(extra_metadata))
+        try:
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    return VideoExportResult(
+        saved=True,
+        path=str(out_path),
+        rel_path=str(rel).replace(os.sep, "/"),
+        mime=mime,
+        fps=fps_i,
+        frame_count=len(frames_list),
+    )

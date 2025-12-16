@@ -1,14 +1,14 @@
 import { computed, ref } from 'vue'
 
-import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, subscribeTask } from '../api/client'
+import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, startVid2Vid, subscribeTask } from '../api/client'
 import { formatZodError } from '../api/payloads'
-import { buildWanImg2VidPayload, buildWanTxt2VidPayload } from '../api/payloads_video'
+import { buildWanImg2VidPayload, buildWanTxt2VidPayload, buildWanVid2VidPayload, type WanVid2VidInput } from '../api/payloads_video'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
-type VideoMode = 'txt2vid' | 'img2vid'
+type VideoMode = 'txt2vid' | 'img2vid' | 'vid2vid'
 type VideoRunStatus = 'completed' | 'error' | 'cancelled'
 
 export interface VideoRunHistoryItem {
@@ -30,6 +30,7 @@ export interface VideoQueuedRun {
   promptPreview: string
   paramsSnapshot: Record<string, unknown>
   payload: Record<string, unknown>
+  file?: File | null
 }
 
 export interface VideoProgressState {
@@ -45,6 +46,7 @@ export interface VideoGenerationState {
   progress: VideoProgressState
   frames: GeneratedImage[]
   info: unknown | null
+  video: { rel_path?: string | null; mime?: string | null } | null
   errorMessage: string
   taskId: string
   cancelRequested: boolean
@@ -62,6 +64,7 @@ const MAX_QUEUE = 3
 // Per-tab generation state (keyed by tab ID)
 const tabStates = new Map<string, VideoGenerationState>()
 const unsubscribers = new Map<string, () => void>()
+const initVideos = new Map<string, File | null>()
 
 function freshState(): VideoGenerationState {
   return {
@@ -69,6 +72,7 @@ function freshState(): VideoGenerationState {
     progress: { ...DEFAULT_PROGRESS },
     frames: [],
     info: null,
+    video: null,
     errorMessage: '',
     taskId: '',
     cancelRequested: false,
@@ -111,6 +115,19 @@ function defaultVideo(): WanVideoParams {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
+    useInitVideo: false,
+    initVideoPath: '',
+    initVideoName: '',
+    vid2vidStrength: 0.8,
+    vid2vidMethod: 'flow_chunks',
+    vid2vidUseSourceFps: true,
+    vid2vidUseSourceFrames: true,
+    vid2vidChunkFrames: 16,
+    vid2vidOverlapFrames: 4,
+    vid2vidPreviewFrames: 48,
+    vid2vidFlowEnabled: true,
+    vid2vidFlowUseLarge: false,
+    vid2vidFlowDownscale: 2,
     filenamePrefix: 'wan22',
     format: 'video/h264-mp4',
     pixFmt: 'yuv420p',
@@ -150,13 +167,21 @@ export function useVideoGeneration(tabId: string) {
   const low = computed<WanStageParams>(() => (params.value?.low as WanStageParams) || defaultStage())
   const wanFormat = computed<string>(() => String((params.value as any)?.modelFormat || 'auto'))
   const assets = computed<WanAssetsParams>(() => (params.value?.assets as WanAssetsParams) || defaultAssets())
-  const mode = computed<VideoMode>(() => (video.value.useInitImage ? 'img2vid' : 'txt2vid'))
+  const mode = computed<VideoMode>(() => {
+    if (video.value.useInitVideo) return 'vid2vid'
+    if (video.value.useInitImage) return 'img2vid'
+    return 'txt2vid'
+  })
 
-  function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): string {
+  function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, initVideo: File | null): string {
     const prompt = String(v.prompt || '').trim()
     if (!prompt) return 'Prompt must not be empty.'
     if (v.useInitImage && !v.initImageData) {
       return 'Image mode requires an initial image; select a file or switch to Text mode.'
+    }
+    if (v.useInitVideo) {
+      const path = String(v.initVideoPath || '').trim()
+      if (!initVideo && !path) return 'Video mode requires an input video; upload a file or provide a path.'
     }
     if (!hi.modelDir && !lo.modelDir) {
       return 'WAN model directory is empty. Set WAN High/Low model dirs in QuickSettings.'
@@ -166,7 +191,11 @@ export function useVideoGeneration(tabId: string) {
     return ''
   }
 
-  const blockedReason = computed(() => blockedReasonFor(video.value, high.value, low.value))
+  function currentInitVideo(): File | null {
+    return initVideos.get(tabId) ?? null
+  }
+
+  const blockedReason = computed(() => blockedReasonFor(video.value, high.value, low.value, currentInitVideo()))
   const canGenerate = computed(() => blockedReason.value.length === 0)
 
   function uuid(): string {
@@ -200,19 +229,34 @@ export function useVideoGeneration(tabId: string) {
     const fps = Number(v.fps) || 0
     const seconds = fps > 0 ? (frames / fps) : 0
     const format = (fmt === 'diffusers' || fmt === 'gguf') ? fmt : 'auto'
-    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale} · ${format}`
+    const strength = v.useInitVideo ? ` · strength ${Number(v.vid2vidStrength).toFixed(2)}` : ''
+    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${strength} · ${format}`
   }
 
   function buildParamsSnapshot(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, fmt: string): Record<string, unknown> {
     return {
-      mode: v.useInitImage ? 'img2vid' : 'txt2vid',
+      mode: v.useInitVideo ? 'vid2vid' : (v.useInitImage ? 'img2vid' : 'txt2vid'),
       initImageName: v.initImageName || '',
+      initVideoName: v.initVideoName || '',
+      initVideoPath: String(v.initVideoPath || ''),
       prompt: String(v.prompt || ''),
       negativePrompt: String(v.negativePrompt || ''),
       width: v.width,
       height: v.height,
       frames: v.frames,
       fps: v.fps,
+      vid2vid: {
+        strength: v.vid2vidStrength,
+        method: v.vid2vidMethod,
+        useSourceFps: v.vid2vidUseSourceFps,
+        useSourceFrames: v.vid2vidUseSourceFrames,
+        chunkFrames: v.vid2vidChunkFrames,
+        overlapFrames: v.vid2vidOverlapFrames,
+        previewFrames: v.vid2vidPreviewFrames,
+        flowEnabled: v.vid2vidFlowEnabled,
+        flowUseLarge: v.vid2vidFlowUseLarge,
+        flowDownscale: v.vid2vidFlowDownscale,
+      },
       format: fmt,
       assets: {
         metadata: String(assets.value.metadata || ''),
@@ -338,6 +382,24 @@ export function useVideoGeneration(tabId: string) {
 
     const common = buildCommonInput(v, hi, lo, fmt)
 
+    if (v.useInitVideo) {
+      const payload = buildWanVid2VidPayload({
+        ...(common as any),
+        strength: v.vid2vidStrength,
+        method: v.vid2vidMethod,
+        useSourceFps: v.vid2vidUseSourceFps,
+        useSourceFrames: v.vid2vidUseSourceFrames,
+        chunkFrames: v.vid2vidChunkFrames,
+        overlapFrames: v.vid2vidOverlapFrames,
+        previewFrames: v.vid2vidPreviewFrames,
+        flowEnabled: v.vid2vidFlowEnabled,
+        flowUseLarge: v.vid2vidFlowUseLarge,
+        flowDownscale: v.vid2vidFlowDownscale,
+        videoPath: v.initVideoPath,
+      } satisfies WanVid2VidInput) as unknown as Record<string, unknown>
+      return { mode: 'vid2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload, file: currentInitVideo() }
+    }
+
     if (v.useInitImage) {
       const payload = buildWanImg2VidPayload({ ...(common as any), initImageData: v.initImageData }) as unknown as Record<string, unknown>
       return { mode: 'img2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
@@ -347,11 +409,12 @@ export function useVideoGeneration(tabId: string) {
     return { mode: 'txt2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
   }
 
-  async function startPreparedRun(run: { mode: VideoMode; createdAtMs: number; summary: string; promptPreview: string; paramsSnapshot: Record<string, unknown>; payload: Record<string, unknown> }): Promise<void> {
+  async function startPreparedRun(run: { mode: VideoMode; createdAtMs: number; summary: string; promptPreview: string; paramsSnapshot: Record<string, unknown>; payload: Record<string, unknown>; file?: File | null }): Promise<void> {
     stopStream()
     state.value.errorMessage = ''
     state.value.frames = []
     state.value.info = null
+    state.value.video = null
     resetProgress()
     state.value.cancelRequested = false
     state.value.currentRun = null
@@ -359,7 +422,15 @@ export function useVideoGeneration(tabId: string) {
     state.value.status = 'running'
 
     try {
-      const res = run.mode === 'img2vid' ? await startImg2Vid(run.payload as any) : await startTxt2Vid(run.payload as any)
+      const res =
+        run.mode === 'vid2vid'
+          ? await (async () => {
+              const form = new FormData()
+              form.append('payload', JSON.stringify(run.payload || {}))
+              if (run.file) form.append('video', run.file)
+              return startVid2Vid(form)
+            })()
+          : (run.mode === 'img2vid' ? await startImg2Vid(run.payload as any) : await startTxt2Vid(run.payload as any))
       const task_id = (res as any).task_id as string
       state.value.taskId = task_id
       state.value.currentRun = {
@@ -396,7 +467,7 @@ export function useVideoGeneration(tabId: string) {
     const hi = high.value
     const lo = low.value
 
-    const blocked = blockedReasonFor(v, hi, lo)
+    const blocked = blockedReasonFor(v, hi, lo, currentInitVideo())
     if (blocked) {
       setError(blocked)
       return
@@ -427,6 +498,7 @@ export function useVideoGeneration(tabId: string) {
       case 'result':
         state.value.frames = event.images
         state.value.info = event.info ?? null
+        state.value.video = event.video ?? null
         state.value.status = 'done'
         if (state.value.currentRun && state.value.currentRun.taskId) {
           state.value.currentRun.status = 'completed'
@@ -481,7 +553,7 @@ export function useVideoGeneration(tabId: string) {
     const v = video.value
     const hi = high.value
     const lo = low.value
-    const blocked = blockedReasonFor(v, hi, lo)
+    const blocked = blockedReasonFor(v, hi, lo, currentInitVideo())
     if (blocked) throw new Error(blocked)
 
     const run = prepareRunFromValues(v, hi, lo)
@@ -504,6 +576,7 @@ export function useVideoGeneration(tabId: string) {
       if (result.status === 'completed' && result.result) {
         state.value.frames = result.result.images
         state.value.info = result.result.info ?? null
+        state.value.video = result.result.video ?? null
         state.value.status = 'done'
         state.value.selectedTaskId = taskId
         return
@@ -521,12 +594,35 @@ export function useVideoGeneration(tabId: string) {
     state.value.selectedTaskId = ''
   }
 
+  function setInitVideoFile(file: File): void {
+    initVideos.set(tabId, file)
+  }
+
+  function clearInitVideoFile(): void {
+    initVideos.delete(tabId)
+  }
+
+  function outputUrl(relPath: string): string {
+    const clean = String(relPath || '').replace(/\\+/g, '/').replace(/^\/+/, '')
+    const encoded = clean.split('/').map((p) => encodeURIComponent(p)).join('/')
+    return `/api/output/${encoded}`
+  }
+
+  const videoExport = computed(() => state.value.video)
+  const videoUrl = computed(() => {
+    const rel = state.value.video?.rel_path
+    if (!rel) return ''
+    return outputUrl(rel)
+  })
+
   return {
     // State
     status: computed(() => state.value.status),
     progress: computed(() => state.value.progress),
     frames: computed(() => state.value.frames),
     info: computed(() => state.value.info),
+    videoExport,
+    videoUrl,
     errorMessage: computed(() => state.value.errorMessage),
     taskId: computed(() => state.value.taskId),
     isRunning: computed(() => state.value.status === 'running'),
@@ -557,5 +653,7 @@ export function useVideoGeneration(tabId: string) {
     clearHistory,
     enqueue,
     clearQueue,
+    setInitVideoFile,
+    clearInitVideoFile,
   }
 }

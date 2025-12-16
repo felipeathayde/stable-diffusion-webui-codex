@@ -2505,17 +2505,12 @@ def build_app() -> FastAPI:
             resolved = p
         root = Path(os.getcwd()).resolve()
         try:
-            if not resolved.is_relative_to(root):
-                raise RuntimeError(
-                    f"vid2vid_video_path must be under the backend working directory ({root}); "
-                    "use upload instead for external files."
-                )
-        except AttributeError:
-            if str(resolved).startswith(str(root)) is False:
-                raise RuntimeError(
-                    f"vid2vid_video_path must be under the backend working directory ({root}); "
-                    "use upload instead for external files."
-                )
+            resolved.relative_to(root)
+        except ValueError:
+            raise RuntimeError(
+                f"vid2vid_video_path must be under the backend working directory ({root}); "
+                "use upload instead for external files."
+            ) from None
         if not resolved.is_file():
             raise RuntimeError(f"vid2vid_video_path not found: {resolved}")
         return str(resolved)
@@ -2738,9 +2733,11 @@ def build_app() -> FastAPI:
                             except Exception:
                                 resolved = up_path
                             try:
-                                ok = resolved.is_relative_to(up_root)
-                            except AttributeError:
-                                ok = str(resolved).startswith(str(up_root))
+                                resolved.relative_to(up_root)
+                            except ValueError:
+                                ok = False
+                            else:
+                                ok = True
                             if ok:
                                 try:
                                     resolved.unlink()
@@ -2856,11 +2853,9 @@ def build_app() -> FastAPI:
         raw = str(rel_path or "").lstrip("/").replace("\\", "/")
         target = (root / raw).resolve()
         try:
-            if not target.is_relative_to(root):
-                raise HTTPException(status_code=400, detail="invalid output path")
-        except AttributeError:
-            if str(target).startswith(str(root)) is False:
-                raise HTTPException(status_code=400, detail="invalid output path")
+            target.relative_to(root)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid output path") from None
         if not target.is_file():
             raise HTTPException(status_code=404, detail="file not found")
         return FileResponse(str(target))

@@ -212,11 +212,11 @@ def run_vid2vid(
         upload_root = (Path.cwd() / "tmp" / "uploads" / "vid2vid").resolve()
         resolved_src = src.resolve()
         try:
-            if resolved_src.is_relative_to(upload_root):
-                cleanup_src = resolved_src
-        except AttributeError:
-            if str(resolved_src).startswith(str(upload_root)):
-                cleanup_src = resolved_src
+            resolved_src.relative_to(upload_root)
+        except ValueError:
+            pass
+        else:
+            cleanup_src = resolved_src
     except Exception:
         cleanup_src = None
 

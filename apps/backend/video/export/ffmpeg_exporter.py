@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -25,6 +26,22 @@ def _which(name: str) -> str:
 def _output_root() -> Path:
     base = os.getenv("CODEX_OUTPUT_ROOT")
     return Path(base) if base else Path.cwd() / "output"
+
+
+_FILENAME_PREFIX_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _sanitize_filename_prefix(prefix: str) -> str:
+    raw = str(prefix or "").strip()
+    if not raw:
+        return "video"
+    raw = raw.replace("/", "_").replace("\\", "_")
+    cleaned = _FILENAME_PREFIX_RE.sub("_", raw).strip("._-")
+    if not cleaned:
+        return "video"
+    if len(cleaned) > 80:
+        cleaned = cleaned[:80].rstrip("._-") or "video"
+    return cleaned
 
 
 def _normalize_video_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -103,7 +120,7 @@ def export_video(
     fps_i = int(fps) if int(fps) > 0 else 24
     ext, codec_kind = _format_to_container(str(opts.get("format") or "video/h264-mp4"))
 
-    prefix = str(opts.get("filename_prefix") or task or "video").strip() or "video"
+    prefix = _sanitize_filename_prefix(str(opts.get("filename_prefix") or task or "video"))
     date_dir = datetime.now().strftime("%Y-%m-%d")
     root = _output_root()
     out_dir = root / f"{task}-videos" / date_dir

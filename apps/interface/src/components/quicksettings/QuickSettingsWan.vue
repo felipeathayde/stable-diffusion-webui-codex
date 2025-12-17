@@ -10,6 +10,17 @@
       </div>
     </div>
 
+    <div class="quicksettings-group qs-group-wan-format">
+      <label class="label-muted">Format</label>
+      <div class="qs-row">
+        <select class="select-md" :value="modelFormat" @change="$emit('update:modelFormat', ($event.target as HTMLSelectElement).value)">
+          <option value="auto">Auto</option>
+          <option value="diffusers">Diffusers</option>
+          <option value="gguf">GGUF</option>
+        </select>
+      </div>
+    </div>
+
     <div class="quicksettings-group qs-group-wan-high">
       <label class="label-muted">WAN High model</label>
       <div class="qs-row">
@@ -114,6 +125,7 @@ import QuickSettingsWanAssetsModal from '../modals/QuickSettingsWanAssetsModal.v
 
 const props = defineProps<{
   mode: string
+  modelFormat: string
   highModel: string
   highChoices: string[]
   lowModel: string

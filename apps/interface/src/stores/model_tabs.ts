@@ -155,7 +155,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       rifeTimes: 2,
     }
     const assets = { metadata: '', textEncoder: '', vae: '' }
-    return { high: stage(), low: stage(), video, assets, modelFormat: 'auto' }
+    return { high: stage(), low: stage(), video, assets, modelFormat: 'auto', lowFollowsHigh: false }
   }
 
   // Image tabs (SD15, SDXL, Flux)

@@ -22,14 +22,6 @@
     backdrop-filter: blur(0.75rem);
   }
 
-  .codex-guided-tooltip[data-placement="top"] {
-    transform: translate(-50%, -100%);
-  }
-
-  .codex-guided-tooltip[data-placement="bottom"] {
-    transform: translate(-50%, 0);
-  }
-
   .codex-guided-tooltip[data-placement="top"]::after,
   .codex-guided-tooltip[data-placement="bottom"]::after {
     content: '';

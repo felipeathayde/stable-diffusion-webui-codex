@@ -26,17 +26,13 @@
     gap: 0.4rem;
   }
 
-  .wan-results-sticky-bar {
-    border: 0.0625rem solid hsla(0, 0%, 100%, 0.06);
-    border-radius: 0.75rem;
+  .wan-results-panel {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .wan-results-summary {
     opacity: 0.85;
-  }
-
-  .codex-guided-generate-blocked {
-    opacity: 0.9;
   }
 
   .wan-progress {

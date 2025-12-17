@@ -11,7 +11,7 @@ Status: Active
 ## Key Files
 - `QuickSettingsBase.vue` — Generic quicksettings row for SD15/SDXL/Flux tabs (mode, checkpoint, VAE, optional text encoder, attention backend, overrides); groups are tagged with `.qs-group-*` classes so the header grid can lay them out in two rows.
 - `QuickSettingsPerf.vue` — Performance/runtime controls shared across engines (Diffusion in Low Bits, GPU VRAM limit, Smart Offload/Fallback/Cache switches), rendered on the second row via `.qs-group-perf-*` classes.
-- `QuickSettingsWan.vue` — WAN22-specific quicksettings (mode selector, high/low model dirs, WAN assets, guided gen entrypoint, precision, VRAM, attention backend, overrides).
+- `QuickSettingsWan.vue` — WAN22-specific quicksettings (mode + format selectors, high/low model dirs, WAN assets, guided gen entrypoint, precision, VRAM, attention backend, overrides).
 
 ## Notes
 - `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. Flux-only precision, WAN-only text encoders) live in `QuickSettingsBar.vue`. The bar uses the `.qs-group-*` hooks to place Mode/Checkpoint/VAE/Text Encoder on the first row and Attention/Overrides on the second.
@@ -22,4 +22,4 @@ Status: Active
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.
 - 2025-12-15: QuickSettings WAN groups now use `.qs-group-wan-*` sizing hooks so the header flex layout doesn’t collapse all controls to the left on wide screens.
 - 2025-12-15: WAN “Browse…” actions in `QuickSettingsWan.vue` are rendered as compact `+` icon buttons to match the header quicksettings affordance.
-- 2025-12-17: WAN quicksettings adds a dedicated Mode selector and “Guided gen” button; `QuickSettingsBar.vue` dispatches events consumed by `WANTab.vue` to keep the tab state in sync.
+- 2025-12-17: WAN quicksettings adds Mode/Format selectors and a “Guided gen” button; `QuickSettingsBar.vue` dispatches events consumed by `WANTab.vue` to keep the tab state in sync.

@@ -8,7 +8,7 @@
             <PromptFields v-model:prompt="videoPrompt" v-model:negative="videoNegative" />
           </div>
 
-          <div class="gen-card">
+          <div v-if="mode !== 'txt2vid'" class="gen-card">
             <div class="wan22-toggle-head">
               <span class="label-muted">Input</span>
               <span class="caption">Mode is set in QuickSettings.</span>
@@ -27,7 +27,7 @@
                 </template>
               </InitialImageCard>
             </div>
-            <div v-else-if="mode === 'vid2vid'" id="wan-guided-init-video" class="mt-2">
+            <div v-else id="wan-guided-init-video" class="mt-2">
               <InitialVideoCard
                 label="Video"
                 :disabled="isRunning"
@@ -51,7 +51,6 @@
                 </template>
               </InitialVideoCard>
             </div>
-            <p v-else class="caption">Text mode: no initial image.</p>
           </div>
 
           <div v-if="errorMessage" class="panel-error">{{ errorMessage }}</div>
@@ -61,46 +60,6 @@
       <div class="panel">
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
-          <div class="gen-card">
-            <div class="wan22-toggle-head">
-              <span class="label-muted">WAN Runtime & Assets</span>
-            </div>
-            <div class="wan22-grid">
-              <div>
-                <label class="label-muted">Model Format</label>
-                <select class="select-md" :disabled="isRunning" :value="wanFormat" @change="onFormatChange">
-                  <option value="auto">Auto</option>
-                  <option value="diffusers">Diffusers</option>
-                  <option value="gguf">GGUF</option>
-                </select>
-                <p class="caption mt-1">Assets are managed by QuickSettings (header).</p>
-              </div>
-              <div>
-                <label class="label-muted">High model dir</label>
-                <div class="caption break-words">{{ high.modelDir || 'Unset (set in QuickSettings)' }}</div>
-              </div>
-              <div>
-                <label class="label-muted">Low model dir</label>
-                <div class="caption break-words">{{ low.modelDir || 'Unset (set in QuickSettings)' }}</div>
-              </div>
-            </div>
-            <div class="wan22-grid">
-              <div>
-                <label class="label-muted">Text Encoder</label>
-                <div class="caption break-words">{{ assets.textEncoder || 'Built-in (default)' }}</div>
-              </div>
-              <div>
-                <label class="label-muted">VAE</label>
-                <div class="caption break-words">{{ assets.vae || 'Built-in (default)' }}</div>
-              </div>
-              <div>
-                <label class="label-muted">Metadata Dir</label>
-                <div class="caption break-words">{{ assets.metadata || 'Built-in (bundled metadata)' }}</div>
-              </div>
-            </div>
-            <p v-if="!high.modelDir && !low.modelDir" class="caption">Tip: set WAN High/Low model dirs in QuickSettings.</p>
-          </div>
-
           <div class="gen-card">
             <div class="wan22-toggle-head">
               <span class="label-muted">Video</span>
@@ -211,15 +170,19 @@
                   @update:stage="setHigh"
                 />
               </div>
-              <div class="wan-callout-actions">
-                <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="copyHighToLow">Copy High → Low</button>
-              </div>
             </div>
           </details>
 
           <details class="accordion">
             <summary>Low Noise</summary>
             <div class="accordion-body">
+              <div class="wan22-toggle-row">
+                <label class="wan22-toggle">
+                  <input type="checkbox" :disabled="isRunning" :checked="lowFollowsHigh" @change="onLowFollowsHighChange" />
+                  <span>Use High settings</span>
+                </label>
+                <span v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</span>
+              </div>
               <div id="wan-guided-low-stage">
                 <WanStagePanel
                   title="Low Noise"
@@ -227,7 +190,7 @@
                   :stage="low"
                   :samplers="samplers"
                   :schedulers="schedulers"
-                  :disabled="isRunning"
+                  :disabled="isRunning || lowFollowsHigh"
                   @update:stage="setLow"
                 />
               </div>
@@ -237,66 +200,48 @@
           <WanVideoOutputPanel :video="video" :disabled="isRunning" @update:video="setVideo" />
         </div>
       </div>
-
-      <div class="panel">
-        <div class="panel-header">Workflows</div>
-        <div class="panel-body">
-          <div class="gen-card">
-            <div class="grid grid-cols-2 items-center gap-3">
-              <div>
-                <RouterLink class="btn btn-secondary" to="/workflows">Open Workflows</RouterLink>
-              </div>
-              <div class="caption text-right">Snapshots are saved from Results.</div>
-            </div>
-            <div v-if="workflowOk" class="caption mt-1">{{ workflowOk }}</div>
-            <div v-if="workflowErr" class="panel-error mt-2">{{ workflowErr }}</div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Right column: Results -->
     <div class="panel-stack">
-      <div class="panel-header three-cols results-sticky wan-results-sticky-bar"><span>Results</span>
-        <div class="header-center">
-          <button
-            id="wan-guided-generate"
-            class="btn btn-md btn-primary results-generate"
-            :class="{ 'codex-guided-generate-blocked': !canGenerate }"
-            :disabled="isRunning"
-            :title="!canGenerate ? 'Guided gen: click to see what is missing.' : ''"
-            @click="onGenerateClick"
-          >
-            {{ isRunning ? 'Running…' : 'Generate' }}
-          </button>
-        </div>
-        <div class="header-right">
-          <div class="wan-header-actions">
+      <div class="panel wan-results-panel">
+        <div class="panel-header three-cols results-sticky"><span>Results</span>
+          <div class="header-center">
             <button
-              v-if="isRunning"
-              class="btn btn-sm btn-secondary"
-              type="button"
-              :disabled="queue.length >= queueMax || !canGenerate"
-              :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
-              @click="queueNext"
+              id="wan-guided-generate"
+              class="btn btn-md btn-primary results-generate"
+              :disabled="isRunning"
+              :title="!canGenerate ? 'Guided gen: click to see what is missing.' : ''"
+              @click="onGenerateClick"
             >
-              Queue ({{ queue.length }}/{{ queueMax }})
-            </button>
-            <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
-              Reuse last
-            </button>
-            <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
-              {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
-            </button>
-            <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
-            <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
-              {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
+              {{ isRunning ? 'Running…' : 'Generate' }}
             </button>
           </div>
+          <div class="header-right">
+            <div class="wan-header-actions">
+              <button
+                v-if="isRunning"
+                class="btn btn-sm btn-secondary"
+                type="button"
+                :disabled="queue.length >= queueMax || !canGenerate"
+                :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
+                @click="queueNext"
+              >
+                Queue ({{ queue.length }}/{{ queueMax }})
+              </button>
+              <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
+                Reuse last
+              </button>
+              <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
+                {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
+              </button>
+              <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
+              <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
+                {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-
-      <div class="panel">
         <div class="panel-body">
           <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
           <div class="caption wan-results-summary">
@@ -386,8 +331,9 @@
     <Teleport to="body">
       <div
         v-if="guidedActive && guidedRect"
+        ref="guidedTooltipEl"
         class="codex-guided-tooltip"
-        :data-placement="guidedPlacement"
+        :data-placement="guidedTooltipPlacement"
         :style="guidedTooltipStyle"
       >
         <div class="codex-guided-tooltip-title">Guided gen</div>
@@ -503,8 +449,10 @@ function setLow(patch: Partial<WanStageParams>): void {
   store.updateParams(props.tabId, { low: { ...current, ...patch } })
 }
 
-function copyHighToLow(): void {
-  setLow({
+const lowFollowsHigh = computed<boolean>(() => Boolean((tab.value?.params as any)?.lowFollowsHigh))
+
+function syncLowFromHighIfNeeded(): void {
+  const patch: Partial<WanStageParams> = {
     sampler: high.value.sampler,
     scheduler: high.value.scheduler,
     steps: high.value.steps,
@@ -514,8 +462,56 @@ function copyHighToLow(): void {
     loraEnabled: high.value.loraEnabled,
     loraPath: high.value.loraPath,
     loraWeight: high.value.loraWeight,
-  })
+  }
+  const needsUpdate = Object.entries(patch).some(([k, v]) => (low.value as any)[k] !== v)
+  if (!needsUpdate) return
+  setLow(patch)
 }
+
+function onLowFollowsHighChange(e: Event): void {
+  const enabled = (e.target as HTMLInputElement).checked
+  if (!tab.value) return
+  store.updateParams(props.tabId, { lowFollowsHigh: enabled } as any)
+  if (enabled) syncLowFromHighIfNeeded()
+}
+
+watch(
+  () => ([
+    lowFollowsHigh.value,
+    high.value.sampler,
+    high.value.scheduler,
+    high.value.steps,
+    high.value.cfgScale,
+    high.value.seed,
+    high.value.lightning,
+    high.value.loraEnabled,
+    high.value.loraPath,
+    high.value.loraWeight,
+  ] as const),
+  ([enabled]) => {
+    if (!enabled) return
+    syncLowFromHighIfNeeded()
+  },
+)
+
+watch(
+  () => ([
+    lowFollowsHigh.value,
+    low.value.sampler,
+    low.value.scheduler,
+    low.value.steps,
+    low.value.cfgScale,
+    low.value.seed,
+    low.value.lightning,
+    low.value.loraEnabled,
+    low.value.loraPath,
+    low.value.loraWeight,
+  ] as const),
+  ([enabled]) => {
+    if (!enabled) return
+    syncLowFromHighIfNeeded()
+  },
+)
 
 const videoPrompt = computed({
   get: () => video.value.prompt,
@@ -526,11 +522,6 @@ const videoNegative = computed({
   get: () => video.value.negativePrompt,
   set: (value: string) => setVideo({ negativePrompt: value }),
 })
-
-function onFormatChange(e: Event): void {
-  if (!tab.value) return
-  store.updateParams(props.tabId, { modelFormat: (e.target as HTMLSelectElement).value })
-}
 
 function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
 
@@ -614,19 +605,50 @@ const guidedRect = ref<DOMRect | null>(null)
 const guidedCurrentId = ref('')
 let guidedHighlightedEl: HTMLElement | null = null
 let guidedRaf: number | null = null
+let guidedSettleTimer: number | null = null
 
-const guidedPlacement = computed<'top' | 'bottom'>(() => {
+const guidedTooltipEl = ref<HTMLElement | null>(null)
+const guidedTooltipPos = ref<{ left: number; top: number; placement: 'top' | 'bottom' } | null>(null)
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function computeGuidedTooltipPosition(): void {
   const rect = guidedRect.value
-  if (!rect) return 'top'
-  return rect.top >= 120 ? 'top' : 'bottom'
-})
+  const el = guidedTooltipEl.value
+  if (!rect || !el) {
+    guidedTooltipPos.value = null
+    return
+  }
 
+  const tooltipW = el.offsetWidth || 0
+  const tooltipH = el.offsetHeight || 0
+  if (tooltipW <= 0 || tooltipH <= 0) {
+    guidedTooltipPos.value = null
+    return
+  }
+
+  const margin = 12
+  const spaceAbove = rect.top
+  const spaceBelow = window.innerHeight - rect.bottom
+  const placement: 'top' | 'bottom' = (spaceBelow >= tooltipH + margin || spaceBelow >= spaceAbove) ? 'bottom' : 'top'
+
+  const centerX = rect.left + rect.width / 2
+  const rawLeft = centerX - tooltipW / 2
+  const left = clampNumber(rawLeft, margin, window.innerWidth - margin - tooltipW)
+
+  const rawTop = placement === 'bottom' ? (rect.bottom + 10) : (rect.top - 10 - tooltipH)
+  const top = clampNumber(rawTop, margin, window.innerHeight - margin - tooltipH)
+
+  guidedTooltipPos.value = { left, top, placement }
+}
+
+const guidedTooltipPlacement = computed<'top' | 'bottom'>(() => guidedTooltipPos.value?.placement || 'bottom')
 const guidedTooltipStyle = computed<Record<string, string>>(() => {
-  const rect = guidedRect.value
-  if (!rect) return {}
-  const x = rect.left + rect.width / 2
-  const y = guidedPlacement.value === 'top' ? (rect.top - 10) : (rect.bottom + 10)
-  return { left: `${Math.round(x)}px`, top: `${Math.round(y)}px` }
+  const pos = guidedTooltipPos.value
+  if (!pos) return { left: '0px', top: '0px', opacity: '0' }
+  return { left: `${Math.round(pos.left)}px`, top: `${Math.round(pos.top)}px`, opacity: '1' }
 })
 
 function isFocusable(el: Element | null): el is HTMLElement {
@@ -665,15 +687,28 @@ function scheduleGuidedRectUpdate(): void {
   guidedRaf = window.requestAnimationFrame(() => {
     guidedRaf = null
     updateGuidedRect()
+    computeGuidedTooltipPosition()
   })
+}
+
+function scheduleGuidedSettleUpdate(): void {
+  if (guidedSettleTimer !== null) window.clearTimeout(guidedSettleTimer)
+  guidedSettleTimer = window.setTimeout(() => {
+    guidedSettleTimer = null
+    updateGuidedRect()
+    computeGuidedTooltipPosition()
+  }, 250)
 }
 
 function stopGuided(): void {
   guidedActive.value = false
   guidedMessage.value = ''
   guidedRect.value = null
+  guidedTooltipPos.value = null
   guidedCurrentId.value = ''
   clearGuidedHighlight()
+  if (guidedSettleTimer !== null) window.clearTimeout(guidedSettleTimer)
+  guidedSettleTimer = null
 }
 
 function focusGuided(step: GuidedStep): void {
@@ -694,6 +729,8 @@ function focusGuided(step: GuidedStep): void {
     try { guidedHighlightedEl.focus() } catch { /* ignore */ }
   }
   updateGuidedRect()
+  scheduleGuidedRectUpdate()
+  scheduleGuidedSettleUpdate()
 }
 
 function startGuided(): void {
@@ -1218,13 +1255,9 @@ function onHeightChange(e: Event): void {
 }
 
 const workflowBusy = ref(false)
-const workflowOk = ref('')
-const workflowErr = ref('')
 
 async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
-  workflowOk.value = ''
-  workflowErr.value = ''
   workflowBusy.value = true
   try {
     await workflows.createSnapshot({
@@ -1234,9 +1267,9 @@ async function sendToWorkflows(): Promise<void> {
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    workflowOk.value = 'Snapshot saved to Workflows.'
+    toast('Snapshot saved to Workflows.')
   } catch (e) {
-    workflowErr.value = e instanceof Error ? e.message : String(e)
+    toast(e instanceof Error ? e.message : String(e))
   } finally {
     workflowBusy.value = false
   }

@@ -33,7 +33,7 @@ import { useModelTabsStore } from '../stores/model_tabs'
 const router = useRouter()
 const tabs = useModelTabsStore()
 const workflows = useWorkflowsStore()
-const items = computed(() => workflows.items.value)
+const items = computed(() => workflows.items)
 
 onMounted(() => { void workflows.refresh() })
 

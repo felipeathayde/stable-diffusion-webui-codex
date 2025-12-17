@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-16
+Last Review: 2025-12-17
 Status: Active
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: Active
 - 2025-12-09: `quicksettings.ts` resolve SHA256 for path-prefixed text encoder labels (flux/zimage), keeps `forge_additional_modules` labels intact instead of truncating to basenames, and exposes `resolveTextEncoderSha` so composables/stores can attach `tenc_sha` to GGUF payloads; `zimage.ts` blocks generation when no text encoder SHA is available.
 - 2025-12-14: `model_tabs.ts` now treats tab `type` as a UI tab kind (`sd15|sdxl|flux|wan`) and normalizes legacy WAN types (`wan22_*` → `wan`); removed the legacy video Pinia store (`stores/video.ts`) now that WAN video runs exclusively via model tabs + typed payload builders.
 - 2025-12-16: `model_tabs.ts` WAN `video` params now include `vid2vid` controls (strength/method/chunk/flow toggles) plus optional `initVideoPath` for path-based inputs; uploaded video files are kept in-memory by `useVideoGeneration` (not persisted).
+- 2025-12-17: Added `workflows.ts` store to keep `/workflows` list reactive (refresh after snapshot save/delete) and to centralize workflow persistence calls.

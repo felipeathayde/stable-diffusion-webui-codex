@@ -5,15 +5,16 @@
         <h2 class="h3">Workflows</h2>
       </div>
       <div class="panel-body">
-        <div v-if="!items.length" class="muted">No workflows yet. Use “Send to Workflows” from a model tab.</div>
+        <div v-if="workflows.error" class="panel-error">{{ workflows.error }}</div>
+        <div v-else-if="!items.length" class="muted">No workflows yet. Use “Save snapshot” from a model tab.</div>
         <ul class="list" v-else>
           <li v-for="wf in items" :key="wf.id" class="list-row">
             <div class="list-col grow">
               <div class="strong">{{ wf.name }}</div>
-              <div class="muted small">Type: {{ wf.type.toUpperCase() }} • Created: {{ new Date(wf.createdAt).toLocaleString() }}</div>
+              <div class="muted small">Type: {{ wf.type.toUpperCase() }} • Created: {{ new Date(wf.created_at).toLocaleString() }}</div>
             </div>
             <div class="list-col">
-              <RouterLink class="btn btn-sm" :to="`/models/${wf.sourceTabId}`">Open Source Tab</RouterLink>
+              <RouterLink class="btn btn-sm" :to="`/models/${wf.source_tab_id}`">Open Source Tab</RouterLink>
               <button class="btn btn-sm btn-destructive" style="margin-left:.5rem" @click="remove(wf.id)">Delete</button>
             </div>
           </li>
@@ -24,25 +25,20 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchWorkflows, deleteWorkflow } from '../api/client'
+import { useWorkflowsStore } from '../stores/workflows'
 import { useModelTabsStore } from '../stores/model_tabs'
 
 const router = useRouter()
 const tabs = useModelTabsStore()
-const items = ref<Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>>([])
+const workflows = useWorkflowsStore()
+const items = computed(() => workflows.items.value)
 
-async function refresh(): Promise<void> {
-  const res = await fetchWorkflows()
-  items.value = res.workflows as any
-}
-
-onMounted(() => { void refresh() })
+onMounted(() => { void workflows.refresh() })
 
 async function remove(id: string): Promise<void> {
-  await deleteWorkflow(id)
-  await refresh()
+  await workflows.remove(id)
 }
 
 async function loadIntoBase(itemId: string): Promise<void> {

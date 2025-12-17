@@ -90,7 +90,7 @@
       <div class="panel-body">
         <div class="grid grid-2" style="align-items:center">
           <div>
-            <button class="btn btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">Send to Workflows</button>
+            <button class="btn btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">Save snapshot</button>
             <RouterLink class="btn btn-ghost" to="/workflows" style="margin-left:.5rem">Open</RouterLink>
           </div>
           <div style="text-align:right" class="caption">
@@ -133,7 +133,7 @@ import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import { useGeneration } from '../composables/useGeneration'
 import type { EngineType } from '../stores/engine_config'
-import { createWorkflow } from '../api/client'
+import { useWorkflowsStore } from '../stores/workflows'
 
 const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
@@ -163,6 +163,7 @@ onMounted(async () => {
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
 const images = computed(() => gallery.value)
 
+const workflows = useWorkflowsStore()
 const workflowBusy = ref(false)
 const workflowOk = ref('')
 const workflowErr = ref('')
@@ -173,14 +174,14 @@ async function sendToWorkflows(): Promise<void> {
   workflowErr.value = ''
   workflowBusy.value = true
   try {
-    await createWorkflow({
+    await workflows.createSnapshot({
       name: `${tab.value.title} — ${new Date().toLocaleString()}`,
       source_tab_id: tab.value.id,
       type: tab.value.type,
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    workflowOk.value = 'Workflow saved.'
+    workflowOk.value = 'Snapshot saved to Workflows.'
   } catch (e) {
     workflowErr.value = e instanceof Error ? e.message : String(e)
   } finally {

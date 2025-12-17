@@ -2,6 +2,7 @@
   /* WAN prefers a slightly wider results column. */
   .wan-panels {
     grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    align-items: stretch;
   }
 
   @media (max-width: 68.75rem) {
@@ -23,6 +24,19 @@
     align-items: center;
     justify-content: flex-end;
     gap: 0.4rem;
+  }
+
+  .wan-results-sticky-bar {
+    border: 0.0625rem solid hsla(0, 0%, 100%, 0.06);
+    border-radius: 0.75rem;
+  }
+
+  .wan-results-summary {
+    opacity: 0.85;
+  }
+
+  .codex-guided-generate-blocked {
+    opacity: 0.9;
   }
 
   .wan-progress {

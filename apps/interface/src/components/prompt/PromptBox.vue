@@ -4,7 +4,7 @@
       <span class="label-muted">{{ label }}</span>
     </div>
     <div class="prompt-editor-wrap">
-      <span class="ear-badge">{{ count }} chars</span>
+      <span v-if="count > 0" class="ear-badge">{{ count }} chars</span>
       <PromptEditor v-model="inner" />
     </div>
   </div>

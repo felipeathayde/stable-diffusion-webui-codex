@@ -2,7 +2,7 @@
 # apps/interface/src/components/prompt Overview
 Date: 2025-12-03
 Owner: Frontend Maintainers
-Last Review: 2025-12-03
+Last Review: 2025-12-17
 Status: Active
 
 ## Purpose
@@ -11,3 +11,4 @@ Status: Active
 ## Notes
 - PromptEditor is built on Tiptap StarterKit plus the custom `PromptToken` node.
 - Serialization supports both ProseMirror JSON and Node shapes; covered by `PromptToken.test.ts` via Vitest (`npm test`).
+- 2025-12-17: `PromptBox.vue` hides the char-count badge when empty (`0 chars`) to reduce visual noise in the WAN tab.

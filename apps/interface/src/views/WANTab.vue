@@ -4,18 +4,16 @@
       <div class="panel">
         <div class="panel-header"><span>Prompt</span></div>
         <div class="panel-body">
-          <PromptFields v-model:prompt="videoPrompt" v-model:negative="videoNegative" />
+          <div id="wan-guided-prompt">
+            <PromptFields v-model:prompt="videoPrompt" v-model:negative="videoNegative" />
+          </div>
 
           <div class="gen-card">
             <div class="wan22-toggle-head">
-              <span class="label-muted">Mode</span>
+              <span class="label-muted">Input</span>
+              <span class="caption">Mode is set in QuickSettings.</span>
             </div>
-            <div class="subtabs">
-              <button class="subtab" type="button" :disabled="isRunning" :class="{ active: mode === 'txt2vid' }" @click="setInputMode('txt2vid')">Text (txt2vid)</button>
-              <button class="subtab" type="button" :disabled="isRunning" :class="{ active: mode === 'img2vid' }" @click="setInputMode('img2vid')">Image (img2vid)</button>
-              <button class="subtab" type="button" :disabled="isRunning" :class="{ active: mode === 'vid2vid' }" @click="setInputMode('vid2vid')">Video (vid2vid)</button>
-            </div>
-            <div v-if="mode === 'img2vid'" class="mt-2">
+            <div v-if="mode === 'img2vid'" id="wan-guided-init-image" class="mt-2">
               <InitialImageCard
                 label="Image"
                 :disabled="isRunning"
@@ -29,7 +27,7 @@
                 </template>
               </InitialImageCard>
             </div>
-            <div v-else-if="mode === 'vid2vid'" class="mt-2">
+            <div v-else-if="mode === 'vid2vid'" id="wan-guided-init-video" class="mt-2">
               <InitialVideoCard
                 label="Video"
                 :disabled="isRunning"
@@ -202,15 +200,17 @@
           <details class="accordion" open>
             <summary>High Noise</summary>
             <div class="accordion-body">
-              <WanStagePanel
-                title="High Noise"
-                embedded
-                :stage="high"
-                :samplers="samplers"
-                :schedulers="schedulers"
-                :disabled="isRunning"
-                @update:stage="setHigh"
-              />
+              <div id="wan-guided-high-stage">
+                <WanStagePanel
+                  title="High Noise"
+                  embedded
+                  :stage="high"
+                  :samplers="samplers"
+                  :schedulers="schedulers"
+                  :disabled="isRunning"
+                  @update:stage="setHigh"
+                />
+              </div>
               <div class="wan-callout-actions">
                 <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="copyHighToLow">Copy High → Low</button>
               </div>
@@ -220,15 +220,17 @@
           <details class="accordion">
             <summary>Low Noise</summary>
             <div class="accordion-body">
-              <WanStagePanel
-                title="Low Noise"
-                embedded
-                :stage="low"
-                :samplers="samplers"
-                :schedulers="schedulers"
-                :disabled="isRunning"
-                @update:stage="setLow"
-              />
+              <div id="wan-guided-low-stage">
+                <WanStagePanel
+                  title="Low Noise"
+                  embedded
+                  :stage="low"
+                  :samplers="samplers"
+                  :schedulers="schedulers"
+                  :disabled="isRunning"
+                  @update:stage="setLow"
+                />
+              </div>
             </div>
           </details>
 
@@ -242,10 +244,9 @@
           <div class="gen-card">
             <div class="grid grid-cols-2 items-center gap-3">
               <div>
-                <button class="btn btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">Send to Workflows</button>
-                <RouterLink class="btn btn-ghost ml-2" to="/workflows">Open</RouterLink>
+                <RouterLink class="btn btn-secondary" to="/workflows">Open Workflows</RouterLink>
               </div>
-              <div class="caption text-right">Saves a snapshot of this tab’s params.</div>
+              <div class="caption text-right">Snapshots are saved from Results.</div>
             </div>
             <div v-if="workflowOk" class="caption mt-1">{{ workflowOk }}</div>
             <div v-if="workflowErr" class="panel-error mt-2">{{ workflowErr }}</div>
@@ -256,41 +257,51 @@
 
     <!-- Right column: Results -->
     <div class="panel-stack">
-      <div class="panel">
-        <div class="panel-header three-cols results-sticky"><span>Results</span>
-          <div class="header-center"><button class="btn btn-md btn-primary results-generate" :disabled="isRunning || !canGenerate" :title="!canGenerate ? blockedReason : ''" @click="generate">{{ isRunning ? 'Running…' : 'Generate' }}</button></div>
-          <div class="header-right">
-            <div class="wan-header-actions">
-              <button
-                v-if="isRunning"
-                class="btn btn-sm btn-secondary"
-                type="button"
-                :disabled="queue.length >= queueMax || !canGenerate"
-                :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
-                @click="queueNext"
-              >
-                Queue ({{ queue.length }}/{{ queueMax }})
-              </button>
-              <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
-                Reuse last
-              </button>
-              <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
-                {{ workflowBusy ? 'Saving…' : 'Snapshot' }}
-              </button>
-              <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
-                {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
-              </button>
-            </div>
+      <div class="panel-header three-cols results-sticky wan-results-sticky-bar"><span>Results</span>
+        <div class="header-center">
+          <button
+            id="wan-guided-generate"
+            class="btn btn-md btn-primary results-generate"
+            :class="{ 'codex-guided-generate-blocked': !canGenerate }"
+            :disabled="isRunning"
+            :title="!canGenerate ? 'Guided gen: click to see what is missing.' : ''"
+            @click="onGenerateClick"
+          >
+            {{ isRunning ? 'Running…' : 'Generate' }}
+          </button>
+        </div>
+        <div class="header-right">
+          <div class="wan-header-actions">
+            <button
+              v-if="isRunning"
+              class="btn btn-sm btn-secondary"
+              type="button"
+              :disabled="queue.length >= queueMax || !canGenerate"
+              :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
+              @click="queueNext"
+            >
+              Queue ({{ queue.length }}/{{ queueMax }})
+            </button>
+            <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
+              Reuse last
+            </button>
+            <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
+              {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
+            </button>
+            <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
+            <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
+              {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
+            </button>
           </div>
         </div>
+      </div>
+
+      <div class="panel">
         <div class="panel-body">
-          <div v-if="!isRunning && !canGenerate" class="panel-progress">
-            <div class="wan-callout-actions">
-              <span>{{ blockedReason }}</span>
-              <button v-if="needsWanModels" class="btn btn-sm btn-secondary" type="button" @click="focusWanModelsQuicksettings">Fix in QuickSettings</button>
-            </div>
-          </div>
           <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
+          <div class="caption wan-results-summary">
+            {{ mode }} · {{ video.width }}×{{ video.height }} px · {{ video.frames }} frames @ {{ video.fps }} fps (~ {{ durationLabel }}s) · High {{ high.steps }} steps · CFG {{ high.cfgScale }} · Low {{ low.steps }} steps · CFG {{ low.cfgScale }} · {{ wanFormat }}
+          </div>
           <div v-if="isRunning" class="panel-progress">
             <p><strong>Stage:</strong> {{ progress.stage }}</p>
             <p v-if="progress.percent !== null">Progress: {{ progress.percent.toFixed(1) }}%</p>
@@ -316,17 +327,7 @@
             <template #empty>
               <div class="wan-results-empty">
                 <div class="wan-empty-title">No results yet</div>
-                <ol class="wan-empty-steps">
-                  <li v-if="needsWanModels">Set WAN High/Low models in QuickSettings.</li>
-                  <li>Pick a mode (Text, Image, or Video) and write your prompt.</li>
-                  <li>Adjust resolution/stages as needed.</li>
-                  <li>Click Generate.</li>
-                </ol>
-                <div class="wan-callout-actions">
-                  <button v-if="needsWanModels" class="btn btn-sm btn-secondary" type="button" @click="focusWanModelsQuicksettings">Open QuickSettings</button>
-                  <button class="btn btn-sm btn-primary" type="button" :disabled="isRunning || !canGenerate" @click="generate">Generate</button>
-                </div>
-                <p v-if="!canGenerate" class="caption mt-2">{{ blockedReason }}</p>
+                <div class="caption">Need help? Click “Guided gen” in the header (or press Generate to see what’s missing).</div>
               </div>
             </template>
           </ResultViewer>
@@ -343,44 +344,6 @@
         </div>
         <div class="panel-body">
           <pre class="text-xs break-words">{{ asJson(info) }}</pre>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header three-cols"><span>Run Summary</span><div class="header-center"></div>
-          <div class="header-right">
-            <div class="wan-header-actions">
-              <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
-            </div>
-          </div>
-        </div>
-        <div class="panel-body">
-          <div class="wan-summary-grid">
-            <div>
-              <label class="label-muted">Mode</label>
-              <div class="caption">{{ mode }}</div>
-            </div>
-            <div>
-              <label class="label-muted">Resolution</label>
-              <div class="caption">{{ video.width }}×{{ video.height }} px</div>
-            </div>
-            <div>
-              <label class="label-muted">Timing</label>
-              <div class="caption">{{ video.frames }} frames @ {{ video.fps }} fps (~ {{ durationLabel }}s)</div>
-            </div>
-            <div>
-              <label class="label-muted">Format</label>
-              <div class="caption">{{ wanFormat }}</div>
-            </div>
-            <div>
-              <label class="label-muted">High</label>
-              <div class="caption">{{ high.steps }} steps · CFG {{ high.cfgScale }}</div>
-            </div>
-            <div>
-              <label class="label-muted">Low</label>
-              <div class="caption">{{ low.steps }} steps · CFG {{ low.cfgScale }}</div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -419,6 +382,21 @@
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="guidedActive && guidedRect"
+        class="codex-guided-tooltip"
+        :data-placement="guidedPlacement"
+        :style="guidedTooltipStyle"
+      >
+        <div class="codex-guided-tooltip-title">Guided gen</div>
+        <div class="codex-guided-tooltip-body">{{ guidedMessage }}</div>
+        <div class="codex-guided-tooltip-actions">
+          <button class="btn btn-sm btn-secondary" type="button" @click="stopGuided">Close</button>
+        </div>
+      </div>
+    </Teleport>
   </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab not found.</div></div>
@@ -426,7 +404,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, computed, ref } from 'vue'
+import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
 import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
@@ -438,10 +416,11 @@ import PromptFields from '../components/prompt/PromptFields.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
-import { createWorkflow } from '../api/client'
+import { useWorkflowsStore } from '../stores/workflows'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
+const workflows = useWorkflowsStore()
 
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
@@ -461,11 +440,40 @@ function defaultStage(): WanStageParams {
 }
 function defaultVideo(): WanVideoParams {
   return {
-    prompt: '', negativePrompt: '', width: 768, height: 432, fps: 24, frames: 16,
-    useInitImage: false, initImageData: '', initImageName: '',
-    filenamePrefix: 'wan22', format: 'video/h264-mp4', pixFmt: 'yuv420p', crf: 15,
-    loopCount: 0, pingpong: false, trimToAudio: false, saveMetadata: true, saveOutput: true,
-    rifeEnabled: false, rifeModel: '', rifeTimes: 2,
+    prompt: '',
+    negativePrompt: '',
+    width: 768,
+    height: 432,
+    fps: 24,
+    frames: 16,
+    useInitImage: false,
+    initImageData: '',
+    initImageName: '',
+    useInitVideo: false,
+    initVideoPath: '',
+    initVideoName: '',
+    vid2vidStrength: 0.8,
+    vid2vidMethod: 'flow_chunks',
+    vid2vidUseSourceFps: true,
+    vid2vidUseSourceFrames: true,
+    vid2vidChunkFrames: 16,
+    vid2vidOverlapFrames: 4,
+    vid2vidPreviewFrames: 48,
+    vid2vidFlowEnabled: true,
+    vid2vidFlowUseLarge: false,
+    vid2vidFlowDownscale: 2,
+    filenamePrefix: 'wan22',
+    format: 'video/h264-mp4',
+    pixFmt: 'yuv420p',
+    crf: 15,
+    loopCount: 0,
+    pingpong: false,
+    trimToAudio: false,
+    saveMetadata: true,
+    saveOutput: true,
+    rifeEnabled: true,
+    rifeModel: 'rife47.pth',
+    rifeTimes: 2,
   }
 }
 
@@ -560,6 +568,16 @@ const {
   clearInitVideoFile,
 } = useVideoGeneration(props.tabId)
 
+async function onGenerateClick(): Promise<void> {
+  if (isRunning.value) return
+  if (!canGenerate.value) {
+    startGuided()
+    return
+  }
+  stopGuided()
+  await generate()
+}
+
 const initVideoPreviewUrl = ref('')
 
 function onInitVideoFile(file: File): void {
@@ -586,9 +604,230 @@ onBeforeUnmount(() => {
   } catch { /* ignore */ }
 })
 
-const needsWanModels = computed(() => !high.value.modelDir && !low.value.modelDir)
 const copyNotice = ref('')
 let copyTimer: number | null = null
+
+type GuidedStep = { id: string; message: string; selector: string; focusSelector?: string }
+const guidedActive = ref(false)
+const guidedMessage = ref('')
+const guidedRect = ref<DOMRect | null>(null)
+const guidedCurrentId = ref('')
+let guidedHighlightedEl: HTMLElement | null = null
+let guidedRaf: number | null = null
+
+const guidedPlacement = computed<'top' | 'bottom'>(() => {
+  const rect = guidedRect.value
+  if (!rect) return 'top'
+  return rect.top >= 120 ? 'top' : 'bottom'
+})
+
+const guidedTooltipStyle = computed<Record<string, string>>(() => {
+  const rect = guidedRect.value
+  if (!rect) return {}
+  const x = rect.left + rect.width / 2
+  const y = guidedPlacement.value === 'top' ? (rect.top - 10) : (rect.bottom + 10)
+  return { left: `${Math.round(x)}px`, top: `${Math.round(y)}px` }
+})
+
+function isFocusable(el: Element | null): el is HTMLElement {
+  if (!(el instanceof HTMLElement)) return false
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button') return true
+  if (el.getAttribute('contenteditable') === 'true') return true
+  return typeof el.focus === 'function'
+}
+
+function findFocusTarget(root: HTMLElement, selector?: string): HTMLElement | null {
+  if (selector) {
+    const el = document.querySelector(selector)
+    return isFocusable(el) ? el : null
+  }
+  if (isFocusable(root)) return root
+  const inside = root.querySelector('input,select,textarea,button,[contenteditable=\"true\"]')
+  return isFocusable(inside) ? inside : null
+}
+
+function clearGuidedHighlight(): void {
+  if (guidedHighlightedEl) guidedHighlightedEl.classList.remove('codex-guided-attention')
+  guidedHighlightedEl = null
+}
+
+function updateGuidedRect(): void {
+  if (!guidedHighlightedEl) {
+    guidedRect.value = null
+    return
+  }
+  guidedRect.value = guidedHighlightedEl.getBoundingClientRect()
+}
+
+function scheduleGuidedRectUpdate(): void {
+  if (guidedRaf !== null) return
+  guidedRaf = window.requestAnimationFrame(() => {
+    guidedRaf = null
+    updateGuidedRect()
+  })
+}
+
+function stopGuided(): void {
+  guidedActive.value = false
+  guidedMessage.value = ''
+  guidedRect.value = null
+  guidedCurrentId.value = ''
+  clearGuidedHighlight()
+}
+
+function focusGuided(step: GuidedStep): void {
+  const target = document.querySelector(step.selector) as HTMLElement | null
+  if (!target) return
+
+  const focusEl = findFocusTarget(target, step.focusSelector) || target
+  clearGuidedHighlight()
+  guidedHighlightedEl = focusEl
+  guidedHighlightedEl.classList.add('codex-guided-attention')
+
+  guidedMessage.value = step.message
+  guidedCurrentId.value = step.id
+  guidedHighlightedEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  try {
+    guidedHighlightedEl.focus({ preventScroll: true } as any)
+  } catch {
+    try { guidedHighlightedEl.focus() } catch { /* ignore */ }
+  }
+  updateGuidedRect()
+}
+
+function startGuided(): void {
+  guidedActive.value = true
+}
+
+const guidedSteps = computed<GuidedStep[]>(() => {
+  const steps: GuidedStep[] = []
+
+  const prompt = String(video.value.prompt || '').trim()
+  if (!prompt) {
+    steps.push({
+      id: 'prompt',
+      message: 'Write a prompt to generate.',
+      selector: '#wan-guided-prompt',
+      focusSelector: '#wan-guided-prompt [contenteditable=\"true\"]',
+    })
+    return steps
+  }
+
+  if (!high.value.modelDir && !low.value.modelDir) {
+    steps.push({
+      id: 'wan_models',
+      message: 'Select WAN High/Low models in QuickSettings (header).',
+      selector: '#qs-wan-high',
+    })
+    return steps
+  }
+
+  if (mode.value === 'img2vid' && !video.value.initImageData) {
+    steps.push({
+      id: 'init_image',
+      message: 'Image mode needs an input image. Upload one (or switch to Text mode).',
+      selector: '#wan-guided-init-image',
+    })
+    return steps
+  }
+
+  if (mode.value === 'vid2vid') {
+    const path = String(video.value.initVideoPath || '').trim()
+    const hasFile = Boolean(initVideoPreviewUrl.value) || Boolean(video.value.initVideoName)
+    if (!hasFile && !path) {
+      steps.push({
+        id: 'init_video',
+        message: 'Video mode needs an input video. Upload a file (or provide a path).',
+        selector: '#wan-guided-init-video',
+      })
+      return steps
+    }
+  }
+
+  if (high.value.loraEnabled && !high.value.loraPath) {
+    steps.push({
+      id: 'high_lora',
+      message: 'High Noise: LoRA is enabled but the path is empty.',
+      selector: '#wan-guided-high-stage',
+      focusSelector: '#wan-guided-high-stage input.ui-input[type=\"text\"]',
+    })
+    return steps
+  }
+
+  if (low.value.loraEnabled && !low.value.loraPath) {
+    steps.push({
+      id: 'low_lora',
+      message: 'Low Noise: LoRA is enabled but the path is empty.',
+      selector: '#wan-guided-low-stage',
+      focusSelector: '#wan-guided-low-stage input.ui-input[type=\"text\"]',
+    })
+    return steps
+  }
+
+  return steps
+})
+
+watch(guidedActive, (active) => {
+  if (active) {
+    window.addEventListener('scroll', scheduleGuidedRectUpdate, true)
+    window.addEventListener('resize', scheduleGuidedRectUpdate)
+    scheduleGuidedRectUpdate()
+  } else {
+    window.removeEventListener('scroll', scheduleGuidedRectUpdate, true)
+    window.removeEventListener('resize', scheduleGuidedRectUpdate)
+    if (guidedRaf !== null) window.cancelAnimationFrame(guidedRaf)
+    guidedRaf = null
+  }
+})
+
+watch(isRunning, (running) => {
+  if (running) stopGuided()
+})
+
+watch([guidedActive, guidedSteps], async ([active, steps]) => {
+  if (!active) return
+  await nextTick()
+
+  if (!steps.length) {
+    focusGuided({
+      id: 'ready',
+      message: 'Ready. Click Generate.',
+      selector: '#wan-guided-generate',
+      focusSelector: '#wan-guided-generate',
+    })
+    return
+  }
+
+  const step = steps[0]!
+  if (step.id === guidedCurrentId.value && guidedRect.value) return
+  focusGuided(step)
+}, { deep: true })
+
+function onGuidedGenEvent(event: Event): void {
+  const e = event as CustomEvent<{ tabId?: string }>
+  if (e.detail?.tabId && e.detail.tabId !== props.tabId) return
+  startGuided()
+}
+
+function onWanModeChangeEvent(event: Event): void {
+  const e = event as CustomEvent<{ tabId?: string; mode?: string }>
+  if (e.detail?.tabId && e.detail.tabId !== props.tabId) return
+  const raw = String(e.detail?.mode || '').trim().toLowerCase()
+  const next: 'txt2vid' | 'img2vid' | 'vid2vid' = raw === 'vid2vid' ? 'vid2vid' : (raw === 'img2vid' ? 'img2vid' : 'txt2vid')
+  setInputMode(next)
+}
+
+onMounted(() => {
+  window.addEventListener('codex-wan-guided-gen', onGuidedGenEvent as EventListener)
+  window.addEventListener('codex-wan-mode-change', onWanModeChangeEvent as EventListener)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('codex-wan-guided-gen', onGuidedGenEvent as EventListener)
+  window.removeEventListener('codex-wan-mode-change', onWanModeChangeEvent as EventListener)
+  stopGuided()
+})
 
 function toast(message: string): void {
   copyNotice.value = message
@@ -599,12 +838,8 @@ function toast(message: string): void {
   }, 2000)
 }
 
-function focusWanModelsQuicksettings(): void {
-  const el = document.getElementById('qs-wan-high') as HTMLElement | null
-  el?.focus()
-}
-
 function setInputMode(next: 'txt2vid' | 'img2vid' | 'vid2vid'): void {
+  if (isRunning.value) return
   if (next === 'txt2vid') {
     clearInitVideo()
     setVideo({ useInitVideo: false, initVideoName: '', initVideoPath: '', useInitImage: false, initImageData: '', initImageName: '' })
@@ -992,14 +1227,14 @@ async function sendToWorkflows(): Promise<void> {
   workflowErr.value = ''
   workflowBusy.value = true
   try {
-    await createWorkflow({
+    await workflows.createSnapshot({
       name: `${tab.value.title} — ${new Date().toLocaleString()}`,
       source_tab_id: tab.value.id,
       type: tab.value.type,
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    workflowOk.value = 'Workflow saved.'
+    workflowOk.value = 'Snapshot saved to Workflows.'
   } catch (e) {
     workflowErr.value = e instanceof Error ? e.message : String(e)
   } finally {

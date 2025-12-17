@@ -1,4 +1,15 @@
 <template>
+    <div class="quicksettings-group qs-group-wan-mode">
+      <label class="label-muted">Mode</label>
+      <div class="qs-row">
+        <select id="qs-wan-mode" class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
+          <option value="txt2vid">Text (txt2vid)</option>
+          <option value="img2vid">Image (img2vid)</option>
+          <option value="vid2vid">Video (vid2vid)</option>
+        </select>
+      </div>
+    </div>
+
     <div class="quicksettings-group qs-group-wan-high">
       <label class="label-muted">WAN High model</label>
       <div class="qs-row">
@@ -29,6 +40,13 @@
       <label class="label-muted">WAN Assets</label>
       <div class="qs-row">
         <button class="btn btn-secondary qs-overrides-btn" type="button" :title="assetsSummary" @click="showAssetsModal = true">Assets…</button>
+      </div>
+    </div>
+
+    <div class="quicksettings-group qs-group-wan-guided">
+      <label class="label-muted">Guide</label>
+      <div class="qs-row">
+        <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('guidedGen')">Guided gen</button>
       </div>
     </div>
 
@@ -95,6 +113,7 @@ import { computed, ref } from 'vue'
 import QuickSettingsWanAssetsModal from '../modals/QuickSettingsWanAssetsModal.vue'
 
 const props = defineProps<{
+  mode: string
   highModel: string
   highChoices: string[]
   lowModel: string

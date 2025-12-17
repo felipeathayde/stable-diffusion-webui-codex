@@ -3,6 +3,7 @@
     <!-- WAN-specific quicksettings -->
     <template v-if="activeFamily === 'wan'">
       <QuickSettingsWan
+        :mode="wanMode"
         :high-model="wanHighModel"
         :high-choices="wanHighDirChoices"
         :low-model="wanLowModel"
@@ -19,6 +20,7 @@
         :gpu-total-mb="store.gpuTotalMb"
         :attention-backend="store.currentAttention"
         :attention-choices="store.attentionChoices"
+        @update:mode="onWanModeChange"
         @update:highModel="onWanHighModelChange"
         @update:lowModel="onWanLowModelChange"
         @update:metadataDir="onWanMetadataDirChange"
@@ -33,6 +35,7 @@
         @browseTe="onWanBrowseTe"
         @browseVae="onWanBrowseVae"
         @openOverrides="openOverrides"
+        @guidedGen="onWanGuidedGen"
       />
       <QuickSettingsOverridesModal v-model="showOverridesModal" />
     </template>
@@ -460,6 +463,15 @@ const wanLowDirChoices = computed(() => {
   return out
 })
 
+const wanMode = computed(() => {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return 'txt2vid'
+  const video = (tab.params as any).video as { useInitVideo?: boolean; useInitImage?: boolean } | undefined
+  if (video?.useInitVideo) return 'vid2vid'
+  if (video?.useInitImage) return 'img2vid'
+  return 'txt2vid'
+})
+
 const wanHighModel = computed(() => {
   const tab = tabsStore.activeTab
   if (!tab || tab.type !== 'wan') return ''
@@ -605,6 +617,14 @@ function onCoreStreamingChange(value: boolean): void {
   void store.setCoreStreaming(value)
 }
 
+function onWanModeChange(value: string): void {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  const raw = String(value || '').trim().toLowerCase()
+  const mode = raw === 'vid2vid' ? 'vid2vid' : (raw === 'img2vid' ? 'img2vid' : 'txt2vid')
+  window.dispatchEvent(new CustomEvent('codex-wan-mode-change', { detail: { tabId: tab.id, mode } }))
+}
+
 async function onWanHighModelChange(value: string): Promise<void> {
   const tab = tabsStore.activeTab
   if (!tab || tab.type !== 'wan') return
@@ -638,6 +658,12 @@ async function onWanVaeChange(value: string): Promise<void> {
   if (!tab || tab.type !== 'wan') return
   const current = currentWanAssets()
   await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
+}
+
+function onWanGuidedGen(): void {
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type !== 'wan') return
+  window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
 
 function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'): 'sd15' | 'sdxl' | 'flux' | 'wan22' | 'zimage' {

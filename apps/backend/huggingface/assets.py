@@ -1,17 +1,67 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import time
 from typing import Iterable
 
 
+def _expected_config_files_from_model_index(model_index_path: str) -> list[str]:
+    try:
+        with open(model_index_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    expected: list[str] = []
+    for key, value in data.items():
+        if key.startswith("_"):
+            continue
+        if key in {"boundary_ratio", "expand_timesteps"}:
+            continue
+        if not isinstance(value, list) or len(value) != 2:
+            continue
+        lib, cls = value[0], value[1]
+        if lib is None or cls is None:
+            continue
+
+        # Tokenizers and schedulers are validated separately; config coverage here is
+        # focused on component configs that live under <component>/config.json or
+        # <processor>/preprocessor_config.json.
+        if key in {"scheduler", "tokenizer", "tokenizer_2"}:
+            continue
+        if key.endswith("processor") or key in {"feature_extractor", "image_processor"}:
+            expected.append(f"{key}/preprocessor_config.json")
+            continue
+
+        expected.append(f"{key}/config.json")
+
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for rel in expected:
+        if rel not in seen:
+            uniq.append(rel)
+            seen.add(rel)
+    return uniq
+
+
 def _has_config(local_path: str) -> bool:
-    candidates = (
-        "model_index.json",
-        "configuration.json",
-        "config.json",
-    )
+    model_index = os.path.join(local_path, "model_index.json")
+    if os.path.isfile(model_index):
+        expected = _expected_config_files_from_model_index(model_index)
+        if expected:
+            for rel in expected:
+                full = os.path.join(local_path, rel)
+                if not os.path.isfile(full):
+                    return False
+            return True
+        # If we can't parse model_index.json, fall back to legacy checks.
+
+    candidates = ("configuration.json", "config.json")
     for name in candidates:
         if os.path.isfile(os.path.join(local_path, name)):
             return True
@@ -99,8 +149,12 @@ def ensure_repo_minimal_files(
             "vae/config.json",
             "text_encoder/config.json",
             "text_encoder_2/config.json",
+            "image_encoder/config.json",
+            "image_processor/preprocessor_config.json",
+            "feature_extractor/preprocessor_config.json",
             "unet/config.json",
             "transformer/config.json",
+            "transformer_2/config.json",
         })
     if "tokenizer" in need:
         # Tokenizers are small and required for text processing; restrict to JSON/TXT/MODEL files only.
@@ -120,6 +174,11 @@ def ensure_repo_minimal_files(
                 "tokenizer_2/*.json",
                 "tokenizer_2/*.txt",
                 "tokenizer_2/*.model",
+                # Some pipelines (e.g. WanAnimatePipeline) rely on CLIP-style tokenizer assets
+                # under image_processor/ instead of tokenizer/.
+                "image_processor/*.json",
+                "image_processor/*.txt",
+                "image_processor/*.model",
             }
         )
     # Optional: include VAE weights when explicitly requested by caller (e.g., GGUF runtime)

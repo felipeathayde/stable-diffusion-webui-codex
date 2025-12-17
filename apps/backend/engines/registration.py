@@ -56,8 +56,16 @@ def register_hunyuan_video(*, registry: EngineRegistry | None = None, replace: b
 def register_wan22_videos(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.wan22.wan22_14b import Wan2214BEngine
     from apps.backend.engines.wan22.wan22_5b import Wan225BEngine
+    from apps.backend.engines.wan22.wan22_animate_14b import Wan22Animate14BEngine
     _reg("wan22_14b", Wan2214BEngine, registry=registry, replace=replace, aliases=("wan22-14b",))
     _reg("wan22_5b", Wan225BEngine, registry=registry, replace=replace, aliases=("wan22-5b",))
+    _reg(
+        "wan22_animate_14b",
+        Wan22Animate14BEngine,
+        registry=registry,
+        replace=replace,
+        aliases=("wan22-animate-14b", "wan-animate"),
+    )
 
 
 def register_zimage(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:

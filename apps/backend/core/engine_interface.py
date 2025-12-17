@@ -127,4 +127,11 @@ class BaseInferenceEngine(ABC):
 
 # Deferred type checking imports (avoid circular dependencies at runtime)
 if False:  # pragma: no cover
-    from .requests import Img2ImgRequest, Img2VidRequest, InferenceEvent, Txt2ImgRequest, Txt2VidRequest, Vid2VidRequest
+    from .requests import (
+        Img2ImgRequest,
+        Img2VidRequest,
+        InferenceEvent,
+        Txt2ImgRequest,
+        Txt2VidRequest,
+        Vid2VidRequest,
+    )

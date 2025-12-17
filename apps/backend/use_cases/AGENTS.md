@@ -16,4 +16,4 @@ Status: Active
 ## Notes
 - Introduza novos use cases sempre que uma combinação de tarefa + modo precisar de orquestração própria; mantenha a lógica focalizada em preparar entradas, chamar engines e relatar progresso, delegando detalhes de modelo para `engines/` ou `runtime/`.
 - Quando adicionar um novo use case, espelhe o padrão existente e registre com o orquestrador e os contratos de API.
-- 2025-12-16: `vid2vid.py` implements WAN22 video-to-video orchestration (decode input video via ffmpeg, flow-guided chunking, optional VFI, export + metadata).
+- 2025-12-16: `vid2vid.py` implements WAN22 video-to-video orchestration (decode input video via ffmpeg, flow-guided chunking, optional VFI, export + metadata), plus a `vid2vid_method="wan_animate"` path that runs Diffusers `WanAnimatePipeline` from preprocessed pose/face videos + reference image.

@@ -18,9 +18,11 @@ Status: Active
 - 2025-12-13: caminho GGUF do engine 5B foi alinhado ao runtime WAN22 (`apps/backend/runtime/wan22/wan22.py`) e agora carrega o stage GGUF direto em `WanTransformer2DModel` (nn.Module), removendo dependência do runner `WanDiTGGUF`.
 - 2025-12-14: engine 5B GGUF agora consome overrides por stage via `extras.wan_high/wan_low` (steps/cfg/sampler/scheduler/model_dir) e valida text encoder `.safetensors` (file ou dir com 1 arquivo).
 - 2025-12-16: `wan22_5b` now supports `vid2vid` via `apps/backend/use_cases/vid2vid.py` (optical-flow-guided chunking built on `img2vid` + ffmpeg IO/export). Flow uses torchvision RAFT (lazy-loaded) and will fail fast if torch/torchvision are missing.
+- 2025-12-16: Added `wan22_animate_14b` engine as a `vid2vid` strategy (`vid2vid_method="wan_animate"`) using Diffusers `WanAnimatePipeline` (expects preprocessed pose/face videos + reference image; `replace` mode also needs bg/mask). Requires a diffusers version that includes `WanAnimatePipeline` (>=0.36).
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).
+- Diffusers (Animate): loads `WanAnimatePipeline` from the user weights dir, using vendored metadata under `apps/backend/huggingface/Wan-AI/**` when local configs are missing.
 - GGUF: strict assets via `resolve_user_supplied_assets`; text context produced by runtime `wan22.py` without fallbacks.
 - Codex runtime (experimental): quando `_runtime_spec` está ativo (`_bundle` + `codex_wan22_use_spec_runtime`/`use_codex_runtime`), `Wan2214BEngine` usa `WanEngineRuntime` (T5 + `WanTransformer2DModel` + VAE Codex) e o sampler `sample_txt2vid` para gerar vídeo em `txt2vid`/`img2vid`, com metadata anotando `runtime="wan22_spec"`; sem essa opção, engines permanecem em Diffusers/GGUF.
 

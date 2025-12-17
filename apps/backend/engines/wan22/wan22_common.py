@@ -72,6 +72,9 @@ WAN_DIFFUSERS_REPO_CANDIDATES = {
     "wan22_5b": (
         "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
     ),
+    "wan22_animate_14b": (
+        "Wan-AI/Wan2.2-Animate-14B-Diffusers",
+    ),
     "wan_t2v_14b": (
         "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
         "Wan-AI/Wan2.2-I2V-A14B-Diffusers",

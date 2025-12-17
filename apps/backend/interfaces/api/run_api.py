@@ -282,11 +282,16 @@ def build_app() -> FastAPI:
     # Defensive: ensure WAN22 engines are present even if registration import failed
     try:
         from apps.backend.core.registry import registry as _engine_registry
-        need = {"wan22_14b", "wan22_5b"} - set(_engine_registry.list())
+        need = {"wan22_14b", "wan22_5b", "wan22_animate_14b"} - set(_engine_registry.list())
         if need:
             from apps.backend.engines.wan22.wan22_14b import Wan2214BEngine  # type: ignore
             from apps.backend.engines.wan22.wan22_5b import Wan225BEngine  # type: ignore
-            for key, cls in (("wan22_14b", Wan2214BEngine), ("wan22_5b", Wan225BEngine)):
+            from apps.backend.engines.wan22.wan22_animate_14b import Wan22Animate14BEngine  # type: ignore
+            for key, cls in (
+                ("wan22_14b", Wan2214BEngine),
+                ("wan22_5b", Wan225BEngine),
+                ("wan22_animate_14b", Wan22Animate14BEngine),
+            ):
                 if key in need:
                     _engine_registry.register(key, cls, aliases=(key.replace('_', '-'),), replace=False)  # type: ignore
             print(color_cyan("[engines] ensured WAN22 engines are registered"))
@@ -2487,15 +2492,15 @@ def build_app() -> FastAPI:
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
         return req, str(engine_key), model_ref
 
-    def _resolve_vid2vid_input_path(raw: str) -> str:
-        """Resolve a user-supplied video path safely.
+    def _resolve_vid2vid_input_path(raw: str, *, field: str) -> str:
+        """Resolve a user-supplied input path safely (root-scoped).
 
         Policy: by default, only paths under the backend working directory are allowed.
         Use upload (multipart) to avoid path permission issues.
         """
         v = str(raw or "").strip()
         if not v:
-            raise RuntimeError("vid2vid_video_path is empty")
+            raise RuntimeError(f"vid2vid {field} path is empty")
         p = Path(os.path.expanduser(v))
         if not p.is_absolute():
             p = Path(os.getcwd()) / p
@@ -2508,11 +2513,11 @@ def build_app() -> FastAPI:
             resolved.relative_to(root)
         except ValueError:
             raise RuntimeError(
-                f"vid2vid_video_path must be under the backend working directory ({root}); "
+                f"vid2vid {field} must be under the backend working directory ({root}); "
                 "use upload instead for external files."
             ) from None
         if not resolved.is_file():
-            raise RuntimeError(f"vid2vid_video_path not found: {resolved}")
+            raise RuntimeError(f"vid2vid {field} not found: {resolved}")
         return str(resolved)
 
     def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:
@@ -2530,8 +2535,56 @@ def build_app() -> FastAPI:
         strength_val = payload.get("vid2vid_strength")
         strength = float(strength_val) if strength_val is not None else None
 
+        method_raw = str(payload.get("vid2vid_method") or "flow_chunks")
+        method = method_raw.strip().lower()
+
+        # Driving/original video is required for classic vid2vid methods; optional for wan_animate (used for audio copy).
+        video_path = ""
         video_path_raw = payload.get("vid2vid_video_path") or payload.get("vid2vid_video")
-        video_path = _resolve_vid2vid_input_path(video_path_raw)
+        if video_path_raw:
+            video_path = _resolve_vid2vid_input_path(video_path_raw, field="video_path")
+        elif method != "wan_animate":
+            raise RuntimeError("vid2vid_video_path is required (use upload)")
+
+        # WAN-Animate inputs (preprocessed pose/face, optional bg/mask, plus reference image).
+        ref_image = None
+        pose_path = ""
+        face_path = ""
+        bg_path = ""
+        mask_path = ""
+        animate_mode = str(payload.get("vid2vid_animate_mode") or "animate")
+        seg_val = int(payload.get("vid2vid_segment_frame_length", 77))
+        prev_val = int(payload.get("vid2vid_prev_segment_conditioning_frames", 1))
+        motion_bs_val = payload.get("vid2vid_motion_encode_batch_size")
+        motion_bs = int(motion_bs_val) if motion_bs_val is not None else None
+
+        if method == "wan_animate":
+            ref_b64 = payload.get("vid2vid_reference_image")
+            if ref_b64:
+                ref_image = media.decode_image(ref_b64)
+            else:
+                ref_path = payload.get("vid2vid_reference_image_path")
+                if ref_path:
+                    from PIL import Image  # type: ignore
+
+                    rp = _resolve_vid2vid_input_path(ref_path, field="reference_image")
+                    img = Image.open(Path(rp))
+                    ref_image = img.copy()
+                    img.close()
+            if ref_image is None:
+                raise RuntimeError("vid2vid wan_animate requires a reference image (upload or vid2vid_reference_image)")
+
+            pose_raw = payload.get("vid2vid_pose_video_path") or payload.get("vid2vid_pose_video")
+            face_raw = payload.get("vid2vid_face_video_path") or payload.get("vid2vid_face_video")
+            pose_path = _resolve_vid2vid_input_path(pose_raw, field="pose_video")
+            face_path = _resolve_vid2vid_input_path(face_raw, field="face_video")
+
+            mode_lc = animate_mode.strip().lower()
+            if mode_lc in {"replace", "replacement"}:
+                bg_raw = payload.get("vid2vid_background_video_path") or payload.get("vid2vid_background_video")
+                mask_raw = payload.get("vid2vid_mask_video_path") or payload.get("vid2vid_mask_video")
+                bg_path = _resolve_vid2vid_input_path(bg_raw, field="background_video")
+                mask_path = _resolve_vid2vid_input_path(mask_raw, field="mask_video")
 
         extras: Dict[str, Any] = {}
         video_options = None
@@ -2591,7 +2644,7 @@ def build_app() -> FastAPI:
                 extras[key] = payload.get(key)
 
         extras["vid2vid"] = {
-            "method": str(payload.get("vid2vid_method") or "flow_chunks"),
+            "method": method_raw,
             "use_source_fps": bool(payload.get("vid2vid_use_source_fps", True)),
             "use_source_frames": bool(payload.get("vid2vid_use_source_frames", True)),
             "start_seconds": payload.get("vid2vid_start_seconds"),
@@ -2615,6 +2668,15 @@ def build_app() -> FastAPI:
             sampler=(sampler_name.strip() or None),
             scheduler=(scheduler_name.strip() or None),
             video_path=video_path,
+            reference_image=ref_image,
+            pose_video_path=pose_path,
+            face_video_path=face_path,
+            background_video_path=bg_path,
+            mask_video_path=mask_path,
+            animate_mode=animate_mode,
+            segment_frame_length=seg_val,
+            prev_segment_conditioning_frames=prev_val,
+            motion_encode_batch_size=motion_bs,
             width=width_val,
             height=height_val,
             steps=steps_val,
@@ -2628,17 +2690,20 @@ def build_app() -> FastAPI:
             metadata={"mode": _opts_snapshot().codex_mode},
         )
 
-        engine_key = "wan22_5b"
-        model_ref = _opts_snapshot().sd_model_checkpoint
-        try:
-            wh = extras.get("wan_high") or {}
-            wl = extras.get("wan_low") or {}
-            if isinstance(wh, dict) and wh.get("model_dir"):
-                model_ref = str(wh.get("model_dir"))
-            elif isinstance(wl, dict) and wl.get("model_dir"):
-                model_ref = str(wl.get("model_dir"))
-        except Exception:
-            pass
+        engine_key = "wan22_animate_14b" if method == "wan_animate" else "wan22_5b"
+
+        model_ref = str(payload.get("vid2vid_model_dir") or _opts_snapshot().sd_model_checkpoint)
+        if engine_key != "wan22_animate_14b":
+            # Keep the existing WAN-stage model_dir override path for the flow-chunk engine.
+            try:
+                wh = extras.get("wan_high") or {}
+                wl = extras.get("wan_low") or {}
+                if isinstance(wh, dict) and wh.get("model_dir"):
+                    model_ref = str(wh.get("model_dir"))
+                elif isinstance(wl, dict) and wl.get("model_dir"):
+                    model_ref = str(wl.get("model_dir"))
+            except Exception:
+                pass
         return req, engine_key, model_ref
     
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
@@ -2661,8 +2726,10 @@ def build_app() -> FastAPI:
                 req, engine_key, model_ref = prepare_txt2vid(payload)
             elif task_type == TaskType.IMG2VID:
                 req, engine_key, model_ref = prepare_img2vid(payload)
-            else:
+            elif task_type == TaskType.VID2VID:
                 req, engine_key, model_ref = prepare_vid2vid(payload)
+            else:
+                raise RuntimeError(f"Unsupported video task: {task_type}")
         except Exception as err:
             entry.error = str(err)
             push({"type": "error", "message": entry.error})
@@ -2724,21 +2791,25 @@ def build_app() -> FastAPI:
             finally:
                 if task_type == TaskType.VID2VID:
                     try:
-                        uploaded = payload.get("__vid2vid_uploaded_path")
-                        if uploaded:
+                        uploaded_paths: list[str] = []
+                        if payload.get("__vid2vid_uploaded_paths"):
+                            if isinstance(payload.get("__vid2vid_uploaded_paths"), list):
+                                uploaded_paths = [str(x) for x in payload.get("__vid2vid_uploaded_paths") or []]
+                        elif payload.get("__vid2vid_uploaded_path"):
+                            uploaded_paths = [str(payload.get("__vid2vid_uploaded_path"))]
+
+                        if uploaded_paths:
                             up_root = (Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid").resolve()
-                            up_path = Path(str(uploaded))
-                            try:
-                                resolved = up_path.resolve()
-                            except Exception:
-                                resolved = up_path
-                            try:
-                                resolved.relative_to(up_root)
-                            except ValueError:
-                                ok = False
-                            else:
-                                ok = True
-                            if ok:
+                            for item in uploaded_paths:
+                                up_path = Path(str(item))
+                                try:
+                                    resolved = up_path.resolve()
+                                except Exception:
+                                    resolved = up_path
+                                try:
+                                    resolved.relative_to(up_root)
+                                except ValueError:
+                                    continue
                                 try:
                                     resolved.unlink()
                                 except Exception:
@@ -2746,7 +2817,7 @@ def build_app() -> FastAPI:
                     except Exception:
                         pass
     
-        label = 'txt2vid' if task_type == TaskType.TXT2VID else ('img2vid' if task_type == TaskType.IMG2VID else 'vid2vid')
+        label = "txt2vid" if task_type == TaskType.TXT2VID else ("img2vid" if task_type == TaskType.IMG2VID else "vid2vid")
         thread = threading.Thread(target=worker, name=f"{label}-task-{task_id}", daemon=True)
         thread.start()
     
@@ -2801,11 +2872,22 @@ def build_app() -> FastAPI:
         return {"task_id": task_id}
 
     @app.post('/api/vid2vid')
-    async def vid2vid(video: UploadFile | None = File(default=None), payload: str = Form(default="{}")) -> Dict[str, Any]:
+    async def vid2vid(
+        video: UploadFile | None = File(default=None),
+        reference_image: UploadFile | None = File(default=None),
+        pose_video: UploadFile | None = File(default=None),
+        face_video: UploadFile | None = File(default=None),
+        background_video: UploadFile | None = File(default=None),
+        mask_video: UploadFile | None = File(default=None),
+        payload: str = Form(default="{}"),
+    ) -> Dict[str, Any]:
         """Video-to-video endpoint.
 
         Accepts multipart form-data:
-          - video: file upload (preferred)
+          - video: driving/original video (required for flow_chunks/native; optional for wan_animate)
+          - reference_image: character image (wan_animate only)
+          - pose_video / face_video: preprocessed videos (wan_animate only)
+          - background_video / mask_video: replacement mode only (wan_animate)
           - payload: JSON string with vid2vid_* keys (and WAN extras)
 
         For security, path-based inputs are restricted to the backend working directory.
@@ -2822,26 +2904,44 @@ def build_app() -> FastAPI:
         task_id = f"task(api-vid2vid-{uuid4().hex})"
         register_task(task_id, entry)
 
-        if video is not None:
-            try:
-                import shutil as _shutil
+        uploaded_paths: list[str] = []
+        try:
+            import shutil as _shutil
 
-                up_dir = Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid"
-                up_dir.mkdir(parents=True, exist_ok=True)
-                suffix = ""
+            up_dir = Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid"
+            up_dir.mkdir(parents=True, exist_ok=True)
+
+            def _save(upload: UploadFile, *, default_suffix: str) -> str:
+                suffix = default_suffix
                 try:
-                    name = str(video.filename or "")
+                    name = str(upload.filename or "")
                     if "." in name:
                         suffix = "." + name.rsplit(".", 1)[1].lower()
                 except Exception:
-                    suffix = ""
-                dst = up_dir / f"{uuid4().hex}{suffix or '.mp4'}"
+                    suffix = default_suffix
+                dst = up_dir / f"{uuid4().hex}{suffix}"
                 with dst.open("wb") as f:
-                    _shutil.copyfileobj(video.file, f)
-                data["vid2vid_video_path"] = str(dst)
-                data["__vid2vid_uploaded_path"] = str(dst)
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"failed to save uploaded video: {exc}")
+                    _shutil.copyfileobj(upload.file, f)
+                uploaded_paths.append(str(dst))
+                return str(dst)
+
+            if video is not None:
+                data["vid2vid_video_path"] = _save(video, default_suffix=".mp4")
+            if reference_image is not None:
+                data["vid2vid_reference_image_path"] = _save(reference_image, default_suffix=".png")
+            if pose_video is not None:
+                data["vid2vid_pose_video_path"] = _save(pose_video, default_suffix=".mp4")
+            if face_video is not None:
+                data["vid2vid_face_video_path"] = _save(face_video, default_suffix=".mp4")
+            if background_video is not None:
+                data["vid2vid_background_video_path"] = _save(background_video, default_suffix=".mp4")
+            if mask_video is not None:
+                data["vid2vid_mask_video_path"] = _save(mask_video, default_suffix=".mp4")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"failed to save uploaded files: {exc}")
+
+        if uploaded_paths:
+            data["__vid2vid_uploaded_paths"] = uploaded_paths
 
         run_video_task(task_id, data, entry, TaskType.VID2VID)
         return {"task_id": task_id}

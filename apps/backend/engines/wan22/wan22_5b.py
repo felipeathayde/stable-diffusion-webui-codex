@@ -24,6 +24,7 @@ from apps.backend.engines.wan22.wan22_common import (
     resolve_user_supplied_assets,
     _first_existing_path_for,
 )
+from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
@@ -291,6 +292,24 @@ class Wan225BEngine(BaseVideoEngine):
             except Exception:
                 return False
 
+        def _looks_like_wan_diffusers_weights_dir(path: str) -> bool:
+            try:
+                tdir = os.path.join(path, "transformer")
+                if os.path.isdir(tdir):
+                    for name in os.listdir(tdir):
+                        n = name.lower()
+                        if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
+                            return True
+                vdir = os.path.join(path, "vae")
+                if os.path.isdir(vdir):
+                    for name in os.listdir(vdir):
+                        n = name.lower()
+                        if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
+                            return True
+            except Exception:
+                return False
+            return False
+
         comp.model_dir = p
         # Strict device policy: CPU only if explicitly chosen. Otherwise require CUDA.
         try:
@@ -307,38 +326,23 @@ class Wan225BEngine(BaseVideoEngine):
             comp.device = 'cuda'
         comp.dtype = dty
 
-        if _is_diffusers_dir(p):
-            from diffusers import AutoencoderKLWan  # type: ignore
-            from diffusers import WanPipeline  # type: ignore
-            import torch  # type: ignore
-            torch_dtype = {"fp16": torch.float16, "bf16": getattr(torch, "bfloat16", torch.float16), "fp32": torch.float32}[
-                dty.lower() if dty.lower() in ("fp16", "bf16", "fp32") else "fp16"
-            ]
-            vae = AutoencoderKLWan.from_pretrained(p, subfolder="vae", torch_dtype=torch_dtype, local_files_only=True)
-            pipe = WanPipeline.from_pretrained(p, torch_dtype=torch_dtype, vae=vae, local_files_only=True)
-            pipe = pipe.to(comp.device)
-            from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as apply_attn  # type: ignore
-            from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as apply_accel  # type: ignore
-            apply_attn(pipe, logger=self._logger)
-            apply_accel(pipe, logger=self._logger)
-            comp.pipeline = pipe
-            comp.vae = vae
+        if _is_diffusers_dir(p) or _looks_like_wan_diffusers_weights_dir(p):
             try:
-                self._logger.info(
-                    "WAN22 5B diffusers pipeline loaded: %s (device=%s dtype=%s)", p, comp.device, dty
+                vendor = Path(str(comp.hf_repo_dir or "")).resolve() if comp.hf_repo_dir else None
+                if vendor is None or not vendor.is_dir():
+                    raise EngineLoadError("WAN22 5B diffusers path requires vendored HF metadata (hf_repo_dir).")
+                pipe = load_wan_diffusers_pipeline(
+                    weights_dir=Path(p),
+                    vendor_dir=vendor,
+                    engine_id=self.engine_id,
+                    device=comp.device,
+                    dtype=dty,
+                    logger=self._logger,
                 )
-                # Best-effort: log main components
-                te = getattr(pipe, 'text_encoder', None)
-                unet = getattr(pipe, 'transformer', None)
-                vae_obj = getattr(pipe, 'vae', None)
-                self._logger.info(
-                    "[wan22.diffusers] components: TE=%s UNet=%s VAE=%s",
-                    te.__class__.__name__ if te is not None else None,
-                    unet.__class__.__name__ if unet is not None else None,
-                    vae_obj.__class__.__name__ if vae_obj is not None else None,
-                )
-            except Exception:
-                pass
+                comp.pipeline = pipe
+                comp.vae = getattr(pipe, "vae", None)
+            except Exception as exc:
+                raise EngineLoadError(f"WAN22 5B diffusers pipeline load failed: {exc}") from exc
         else:
             # GGUF path: tokenizer/config under backend/huggingface; all weights supplied by user.
             comp.pipeline = None

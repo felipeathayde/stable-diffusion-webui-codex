@@ -110,6 +110,17 @@ class Vid2VidRequest(BaseRequest):
     """Video-to-video request (source video + prompt → output video)."""
 
     video_path: str = ""
+    # Optional reference conditioning for WAN Animate / similar pipelines.
+    reference_image: Any = None
+    pose_video_path: str = ""
+    face_video_path: str = ""
+    background_video_path: str = ""
+    mask_video_path: str = ""
+    animate_mode: str = "animate"  # 'animate' or 'replace'
+    segment_frame_length: int = 77
+    prev_segment_conditioning_frames: int = 1
+    motion_encode_batch_size: Optional[int] = None
+
     width: int = 768
     height: int = 432
     steps: int = 30

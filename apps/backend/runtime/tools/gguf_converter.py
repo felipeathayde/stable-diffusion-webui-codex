@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -36,8 +37,18 @@ class QuantizationType(str, Enum):
     F16 = "F16"
     F32 = "F32"
     Q8_0 = "Q8_0"
+    Q5_K_M = "Q5_K_M"
+    Q6_K = "Q6_K"
     Q5_K = "Q5_K"
+    Q5_1 = "Q5_1"
+    Q5_0 = "Q5_0"
+    Q4_K_M = "Q4_K_M"
     Q4_K = "Q4_K"
+    Q4_1 = "Q4_1"
+    Q4_0 = "Q4_0"
+    Q3_K = "Q3_K"
+    Q2_K = "Q2_K"
+    IQ4_NL = "IQ4_NL"
 
 
 @dataclass(slots=True)
@@ -48,6 +59,7 @@ class ConversionConfig:
     safetensors_path: str  # Path to .safetensors file
     output_path: str  # Output .gguf path
     quantization: QuantizationType = QuantizationType.F16
+    tensor_type_overrides: Sequence[str] = ()
 
 
 @dataclass(slots=True)
@@ -135,11 +147,99 @@ def _requested_ggml_type(quant: QuantizationType) -> GGMLQuantizationType:
         return GGMLQuantizationType.F16
     if quant == QuantizationType.Q8_0:
         return GGMLQuantizationType.Q8_0
+    if quant == QuantizationType.Q5_K_M:
+        return GGMLQuantizationType.Q5_K
+    if quant == QuantizationType.Q6_K:
+        return GGMLQuantizationType.Q6_K
     if quant == QuantizationType.Q5_K:
         return GGMLQuantizationType.Q5_K
+    if quant == QuantizationType.Q5_1:
+        return GGMLQuantizationType.Q5_1
+    if quant == QuantizationType.Q5_0:
+        return GGMLQuantizationType.Q5_0
+    if quant == QuantizationType.Q4_K_M:
+        return GGMLQuantizationType.Q4_K
     if quant == QuantizationType.Q4_K:
         return GGMLQuantizationType.Q4_K
+    if quant == QuantizationType.Q4_1:
+        return GGMLQuantizationType.Q4_1
+    if quant == QuantizationType.Q4_0:
+        return GGMLQuantizationType.Q4_0
+    if quant == QuantizationType.Q3_K:
+        return GGMLQuantizationType.Q3_K
+    if quant == QuantizationType.Q2_K:
+        return GGMLQuantizationType.Q2_K
+    if quant == QuantizationType.IQ4_NL:
+        return GGMLQuantizationType.IQ4_NL
     raise ValueError(f"Unsupported quantization: {quant}")
+
+
+def _default_tensor_type_overrides(quant: QuantizationType) -> list[tuple[str, GGMLQuantizationType]]:
+    """Return built-in per-tensor overrides for mixed-precision presets.
+
+    Patterns are applied against both the source tensor name and the GGUF tensor name.
+    """
+    if quant == QuantizationType.Q5_K_M:
+        return [
+            # Embeddings / output: keep higher precision to preserve prompt semantics.
+            (r"(?:^|\.)token_embd\.weight$", GGMLQuantizationType.Q8_0),
+            (r"(?:^|\.)output\.weight$", GGMLQuantizationType.Q8_0),
+            (r"model\.embed_tokens\.weight$", GGMLQuantizationType.Q8_0),
+            (r"lm_head\.weight$", GGMLQuantizationType.Q8_0),
+            # Attention projections: bump to 6-bit.
+            (r"(?:^|\.)attn_(?:q|k|v|output)\.weight$", GGMLQuantizationType.Q6_K),
+            (r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)\.weight$", GGMLQuantizationType.Q6_K),
+        ]
+
+    if quant == QuantizationType.Q4_K_M:
+        return [
+            # Embeddings / output: bump to 6-bit (still much smaller than fp16).
+            (r"(?:^|\.)token_embd\.weight$", GGMLQuantizationType.Q6_K),
+            (r"(?:^|\.)output\.weight$", GGMLQuantizationType.Q6_K),
+            (r"model\.embed_tokens\.weight$", GGMLQuantizationType.Q6_K),
+            (r"lm_head\.weight$", GGMLQuantizationType.Q6_K),
+            # Attention projections: bump to 5-bit K.
+            (r"(?:^|\.)attn_(?:q|k|v|output)\.weight$", GGMLQuantizationType.Q5_K),
+            (r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)\.weight$", GGMLQuantizationType.Q5_K),
+        ]
+
+    return []
+
+
+def _compile_tensor_overrides(
+    quant: QuantizationType,
+    extra_overrides: Sequence[str],
+) -> list[tuple[re.Pattern[str], GGMLQuantizationType]]:
+    """Compile built-in + user-provided tensor quantization overrides.
+
+    `extra_overrides` entries use a llama.cpp-like format: `<regex>=<quant>`
+    where `<quant>` is any `QuantizationType` value (case-insensitive).
+    """
+    rules: list[tuple[re.Pattern[str], GGMLQuantizationType]] = []
+
+    for pattern, qtype in _default_tensor_type_overrides(quant):
+        rules.append((re.compile(pattern), qtype))
+
+    for entry in extra_overrides:
+        raw = str(entry or "").strip()
+        if not raw:
+            continue
+        if "=" not in raw:
+            raise ValueError(f"Invalid tensor override (expected '<regex>=<quant>'): {raw!r}")
+        pattern, qname = raw.split("=", 1)
+        pattern = pattern.strip()
+        qname = qname.strip()
+        if not pattern or not qname:
+            raise ValueError(f"Invalid tensor override (expected '<regex>=<quant>'): {raw!r}")
+
+        try:
+            q_enum = QuantizationType(qname.upper())
+        except ValueError as exc:
+            raise ValueError(f"Invalid quant type in override {raw!r}: {qname!r}") from exc
+
+        rules.append((re.compile(pattern), _requested_ggml_type(q_enum)))
+
+    return rules
 
 
 def _select_tensor_ggml_type(shape: Sequence[int], requested: GGMLQuantizationType) -> GGMLQuantizationType:
@@ -169,6 +269,7 @@ def _plan_tensors(
     safetensors_handle: Any,
     key_mapping: Dict[str, str],
     requested: GGMLQuantizationType,
+    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
 ) -> list[_TensorPlan]:
     plans: list[_TensorPlan] = []
 
@@ -177,7 +278,11 @@ def _plan_tensors(
         raw_shape = tuple(int(x) for x in sl.get_shape())
         gguf_name = key_mapping.get(src_name, src_name)
 
-        ggml_type = _select_tensor_ggml_type(raw_shape, requested)
+        desired = requested
+        for rx, qtype in overrides:
+            if rx.search(src_name) or rx.search(gguf_name):
+                desired = qtype
+        ggml_type = _select_tensor_ggml_type(raw_shape, desired)
 
         if ggml_type == GGMLQuantizationType.F16:
             stored_dtype = np.dtype(np.float16)
@@ -218,10 +323,26 @@ def _add_basic_metadata(writer: GGUFWriter, arch: str, config: dict, quant: Quan
         writer.add_file_type(int(LlamaFileType.ALL_F32))
     elif requested == GGMLQuantizationType.Q8_0:
         writer.add_file_type(int(LlamaFileType.MOSTLY_Q8_0))
+    elif requested == GGMLQuantizationType.Q6_K:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q6_K))
     elif requested == GGMLQuantizationType.Q5_K:
         writer.add_file_type(int(LlamaFileType.MOSTLY_Q5_K_M))
+    elif requested == GGMLQuantizationType.Q5_1:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q5_1))
+    elif requested == GGMLQuantizationType.Q5_0:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q5_0))
     elif requested == GGMLQuantizationType.Q4_K:
         writer.add_file_type(int(LlamaFileType.MOSTLY_Q4_K_M))
+    elif requested == GGMLQuantizationType.Q4_1:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q4_1))
+    elif requested == GGMLQuantizationType.Q4_0:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q4_0))
+    elif requested == GGMLQuantizationType.Q3_K:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q3_K_M))
+    elif requested == GGMLQuantizationType.Q2_K:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_Q2_K))
+    elif requested == GGMLQuantizationType.IQ4_NL:
+        writer.add_file_type(int(LlamaFileType.MOSTLY_IQ4_NL))
 
     # Minimal arch metadata; loaders in this repo generally key off tensor names and shapes.
     writer.add_uint32(f"{arch}.context_length", int(config.get("max_position_embeddings", 4096)))
@@ -265,6 +386,7 @@ def convert_safetensors_to_gguf(
     arch = str(model_config.get("model_type") or "llama")
     num_layers = int(model_config.get("num_hidden_layers", 32))
     requested_type = _requested_ggml_type(config.quantization)
+    overrides = _compile_tensor_overrides(config.quantization, config.tensor_type_overrides)
     
     # Build key mapping
     key_mapping = build_key_mapping(num_layers)
@@ -282,7 +404,7 @@ def convert_safetensors_to_gguf(
         tensor_names = list(sf.keys())
         progress.total_steps = len(tensor_names)
 
-        plans = _plan_tensors(tensor_names, sf, key_mapping, requested_type)
+        plans = _plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
 
         writer = GGUFWriter(path=str(output_path), arch=arch)
         _add_basic_metadata(writer, arch, model_config, config.quantization)
@@ -470,6 +592,15 @@ def _verify_gguf_file(
 
     logger.info("GGUF structure verification passed (%d tensors)", expected_count)
 
+    def _quant_spotcheck_tol(qtype: GGMLQuantizationType) -> tuple[float, float]:
+        # Spot-check tolerances are intentionally loose: goal is catching layout/packing bugs,
+        # not measuring perceptual quality.
+        if qtype == GGMLQuantizationType.Q2_K:
+            return (1.0, 1.0)
+        if qtype == GGMLQuantizationType.Q3_K:
+            return (0.8, 0.8)
+        return (0.6, 0.6)
+
     # 2) Spot-check a few tensors against source.
     reverse_mapping = {v: k for k, v in key_mapping.items()}
     with safe_open(source_safetensors, framework="pt", device="cpu") as source:
@@ -510,7 +641,8 @@ def _verify_gguf_file(
                 n = min(256, ref_chunk.shape[0])
                 if not np.all(np.isfinite(out[:n])):
                     raise GGUFVerificationError(f"Non-finite dequant output for {plan.gguf_name}")
-                if not np.allclose(out[:n], ref_chunk[:n], rtol=0.6, atol=0.6):
+                rtol, atol = _quant_spotcheck_tol(plan.ggml_type)
+                if not np.allclose(out[:n], ref_chunk[:n], rtol=rtol, atol=atol):
                     raise GGUFVerificationError(f"Quantized spot-check mismatch for {plan.gguf_name}")
 
     logger.info("GGUF spot-check passed")

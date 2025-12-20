@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, txt2img, sdxl -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-17
+Last Review: 2025-12-20
 Status: Active
 
 ## Purpose
@@ -20,7 +20,9 @@ Status: Active
 - 2025-12-15: `WANTab.vue` parameters UI was reshaped to mirror Txt2Img’s layout (Prompt + Generation Parameters with cards); prompt now uses `PromptFields`.
 - 2025-12-16: `WANTab.vue` adds a `vid2vid` mode (video upload + flow-chunks params) and shows exported video playback when the backend returns `video.rel_path` from `/api/vid2vid`.
 - 2025-12-17: `WANTab.vue` moves Mode/Format selection into QuickSettings, adds “Guided gen” (pulse + tooltip focus for missing prerequisites), makes the Results header sticky for the full scroll (Generate + Save snapshot), hides the Input card in txt2vid, removes “WAN Runtime & Assets” and the bottom Workflows panel, and adds a Low Noise “Use High settings” toggle. `WorkflowsList.vue` now uses a shared store and correctly renders workflow fields (`source_tab_id`, `created_at`).
+- 2025-12-20: `WANTab.vue` replaces WAN “Format” with a `LightX2V` quicksetting; when enabled, High/Low Noise show per-stage LoRA selects (from `wan22-loras`) and the UI relies on backend auto-detect for model format (no forced `wan_format`).
 - 2025-12-14: Removed the legacy standalone `Txt2Vid.vue` view; WAN video entry stays exclusively under model tabs (`/models/:tabId` with `type === 'wan'`).
 - 2025-12-14: `ModelTabView.vue` keys per-tab views by `tab.id` so switching `/models/:tabId` remounts the correct tab implementation (prevents composables binding a stale id).
 - 2025-12-15: Added `RedirectToModelTab.vue` and router aliases so legacy nav paths can redirect into `/models/:tabId` (WAN) without spamming Vue Router “No match found” warnings.
 - 2025-12-15: Model-tab actions (rename/enable/load/unload/duplicate/remove) were moved out of the per-tab view; `Home.vue` is now the canonical place to manage tabs, and the per-tab “Send to Workflows” action lives in a dedicated panel under Generation Parameters.
+- 2025-12-19: `ToolsTab.vue` GGUF Converter expanded with SoTA presets (`Q4_K_M/Q5_K_M`), additional quant types (`Q2_K/Q3_K/IQ4_NL/Q6_K` + legacy `Q4_0/Q4_1/Q5_0/Q5_1`), and an advanced per-tensor override textarea; default quantization is now `Q5_K_M`.

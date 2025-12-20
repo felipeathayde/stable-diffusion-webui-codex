@@ -18,8 +18,6 @@ export interface WanStageParams {
   steps: number
   cfgScale: number
   seed: number
-  lightning: boolean
-  loraEnabled: boolean
   loraPath: string
   loraWeight: number
 }
@@ -113,8 +111,6 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       steps: 30,
       cfgScale: 7,
       seed: -1,
-      lightning: false,
-      loraEnabled: false,
       loraPath: '',
       loraWeight: 1.0,
     })
@@ -155,7 +151,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       rifeTimes: 2,
     }
     const assets = { metadata: '', textEncoder: '', vae: '' }
-    return { high: stage(), low: stage(), video, assets, modelFormat: 'auto', lowFollowsHigh: false }
+    return { high: stage(), low: stage(), video, assets, lightx2v: false, lowFollowsHigh: false }
   }
 
   // Image tabs (SD15, SDXL, Flux)

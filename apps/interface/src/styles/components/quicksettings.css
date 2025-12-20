@@ -29,7 +29,7 @@
   .quicksettings .qs-group-text-encoder,
   .quicksettings .qs-group-flux-tenc { flex: 1 1 200px; max-width: 320px; }
   .quicksettings .qs-group-wan-mode { flex: 0 0 auto; min-width: 160px; }
-  .quicksettings .qs-group-wan-format { flex: 0 0 auto; min-width: 120px; }
+  .quicksettings .qs-group-wan-lightx2v { flex: 0 0 auto; min-width: 100px; }
   .quicksettings .qs-group-wan-high,
   .quicksettings .qs-group-wan-low { flex: 1 1 160px; max-width: 260px; }
   .quicksettings .qs-group-wan-assets { flex: 0 0 auto; min-width: 120px; }
@@ -127,4 +127,20 @@
     transform: translateX(3.50rem);
   }
   .qs-switch-label { opacity: 0.85; white-space: nowrap; font-size: 0.7rem; }
+
+  /* Compact variant (used outside perf toggles) */
+  .qs-switch--sm .qs-switch-track {
+    width: 2.4rem;
+    height: 1.25rem;
+    padding: 0 0.15rem;
+  }
+  .qs-switch--sm .qs-switch-thumb {
+    width: 0.9rem;
+    height: 0.9rem;
+    background: hsla(220,20%,12%,0.92);
+    box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.45);
+  }
+  .qs-switch--sm input:checked + .qs-switch-track .qs-switch-thumb {
+    transform: translateX(0.95rem);
+  }
 }

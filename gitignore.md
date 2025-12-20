@@ -16,6 +16,7 @@ Status: Active
 - **No caches or build outputs:** bytecode caches (`__pycache__/`), node modules (`node_modules/`), frontend bundles (`apps/interface/dist/`), and temporary directories (`tmp/`, `.pytest_cache/`) stay ignored.
 - **Docs and configs are tracked:** Markdown docs under `.sangoi/**`, configuration files (`*.json`, `*.toml`, `*.yaml`), and source code are always included.
 - **Tests are tracked:** repository test sources under `tests/` are kept in version control; only test caches/outputs are ignored.
+- **No binary office docs:** keep office exports like `*.docx` local; prefer Markdown under `.sangoi/**`.
 
 ## Extending the ignore set
 - Prefer directory-level ignores (e.g., `apps/interface/dist/`) over broad `*` patterns.

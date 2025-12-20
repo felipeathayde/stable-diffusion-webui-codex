@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2025-12-16
+Last Review: 2025-12-19
 Status: Active
 
 ## Purpose
@@ -32,3 +32,4 @@ Status: Active
 - 2025-12-14: `/api/txt2vid` e `/api/img2vid` populam `steps` em `Txt2VidRequest/Img2VidRequest` e o plano de vídeo (`build_video_plan`) lê `guidance_scale` (alinhamento de contrato com o runtime).
 - 2025-12-16: Added `/api/vid2vid` (multipart: `video` upload + JSON `payload`) and `/api/output/{rel_path}` for root-scoped serving of exported videos. Path-based vid2vid inputs are allowed but restricted to the backend working directory to avoid permission surprises; upload is recommended.
 - 2025-12-16: `/api/vid2vid` now supports `vid2vid_method="wan_animate"` with extra multipart inputs (`reference_image`, preprocessed `pose_video`/`face_video`, and optional `background_video`/`mask_video` for replacement mode).
+- 2025-12-19: `/api/tools/convert-gguf` expanded quantization menu and now accepts `tensor_type_overrides` (regex → quant per tensor) for mixed schemes and advanced tuning.

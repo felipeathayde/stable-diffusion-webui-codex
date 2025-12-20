@@ -3017,7 +3017,8 @@ def build_app() -> FastAPI:
             "config_path": "/path/to/text_encoder/config.json",
             "safetensors_path": "/path/to/model.safetensors",
             "output_path": "/path/to/output.gguf",
-            "quantization": "F16" | "Q8_0" | "Q5_K" | "Q4_K"
+            "quantization": "F16" | "Q8_0" | "Q6_K" | "Q5_K_M" | "Q5_K" | "Q5_1" | "Q5_0" | "Q4_K_M" | "Q4_K" | "Q4_1" | "Q4_0" | "Q3_K" | "Q2_K" | "IQ4_NL",
+            "tensor_type_overrides": ["<regex>=<quant>", ...]  // optional (advanced)
         }
         """
         import uuid
@@ -3034,6 +3035,7 @@ def build_app() -> FastAPI:
         safetensors_path = payload.get("safetensors_path", "")
         output_path = payload.get("output_path", "")
         quant_str = payload.get("quantization", "F16")
+        overrides_raw = payload.get("tensor_type_overrides", [])
         
         if not config_path or not safetensors_path or not output_path:
             raise HTTPException(status_code=400, detail="Missing required paths")
@@ -3048,6 +3050,12 @@ def build_app() -> FastAPI:
             quant = QuantizationType(quant_str)
         except ValueError:
             quant = QuantizationType.F16
+
+        tensor_type_overrides: list[str] = []
+        if isinstance(overrides_raw, str):
+            tensor_type_overrides = [ln.strip() for ln in overrides_raw.splitlines() if ln.strip()]
+        elif isinstance(overrides_raw, list):
+            tensor_type_overrides = [str(x).strip() for x in overrides_raw if str(x).strip()]
         
         # Create job entry
         _gguf_conversion_jobs[job_id] = {
@@ -3065,6 +3073,7 @@ def build_app() -> FastAPI:
                     safetensors_path=safetensors_path,
                     output_path=output_path,
                     quantization=quant,
+                    tensor_type_overrides=tensor_type_overrides,
                 )
                 
                 def progress_cb(prog):

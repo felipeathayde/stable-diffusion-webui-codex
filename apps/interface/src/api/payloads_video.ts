@@ -132,8 +132,6 @@ export interface WanStageInput {
   steps: number
   cfgScale: number
   seed: number
-  lightning?: boolean
-  loraEnabled?: boolean
   loraPath?: string
   loraWeight?: number
   flowShift?: number
@@ -218,10 +216,8 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
   if (sampler) payload.sampler = sampler
   const scheduler = String(stage.scheduler || '').trim()
   if (scheduler) payload.scheduler = scheduler
-  if (typeof stage.lightning === 'boolean') payload.lightning = stage.lightning
-
   const loraPath = String(stage.loraPath || '').trim()
-  if (stage.loraEnabled && loraPath) {
+  if (loraPath) {
     payload.lora_path = loraPath
     if (typeof stage.loraWeight === 'number') payload.lora_weight = stage.loraWeight
   }
@@ -310,7 +306,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
-  payload.wan_format = input.format
+  if (input.format !== 'auto') payload.wan_format = input.format
   addWanAssets(payload, input.assets)
 
   return WanTxt2VidPayloadSchema.parse(payload)
@@ -342,7 +338,7 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
-  payload.wan_format = input.format
+  if (input.format !== 'auto') payload.wan_format = input.format
   addWanAssets(payload, input.assets)
 
   return WanImg2VidPayloadSchema.parse(payload)
@@ -391,7 +387,7 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
 
   payload.wan_high = stageToPayload(input.high)
   payload.wan_low = stageToPayload(input.low)
-  payload.wan_format = input.format
+  if (input.format !== 'auto') payload.wan_format = input.format
   addWanAssets(payload, input.assets)
 
   return WanVid2VidPayloadSchema.parse(payload)

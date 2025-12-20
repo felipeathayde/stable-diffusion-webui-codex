@@ -88,6 +88,7 @@
               </div>
             </div>
             <VideoSettingsCard
+              embedded
               :frames="video.frames"
               :fps="video.fps"
               @update:frames="(v:number)=>setVideo({ frames: v })"
@@ -166,6 +167,8 @@
                   :stage="high"
                   :samplers="samplers"
                   :schedulers="schedulers"
+                  :lightx2v="lightx2v"
+                  :lora-choices="wanLoraChoices"
                   :disabled="isRunning"
                   @update:stage="setHigh"
                 />
@@ -190,6 +193,8 @@
                   :stage="low"
                   :samplers="samplers"
                   :schedulers="schedulers"
+                  :lightx2v="lightx2v"
+                  :lora-choices="wanLoraChoices"
                   :disabled="isRunning || lowFollowsHigh"
                   @update:stage="setLow"
                 />
@@ -245,7 +250,7 @@
         <div class="panel-body">
           <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
           <div class="caption wan-results-summary">
-            {{ mode }} · {{ video.width }}×{{ video.height }} px · {{ video.frames }} frames @ {{ video.fps }} fps (~ {{ durationLabel }}s) · High {{ high.steps }} steps · CFG {{ high.cfgScale }} · Low {{ low.steps }} steps · CFG {{ low.cfgScale }} · {{ wanFormat }}
+            {{ mode }} · {{ video.width }}×{{ video.height }} px · {{ video.frames }} frames @ {{ video.fps }} fps (~ {{ durationLabel }}s) · High {{ high.steps }} steps · CFG {{ high.cfgScale }} · Low {{ low.steps }} steps · CFG {{ low.cfgScale }}{{ lightx2v ? ' · lightx2v' : '' }}
           </div>
           <div v-if="isRunning" class="panel-progress">
             <p><strong>Stage:</strong> {{ progress.stage }}</p>
@@ -276,53 +281,50 @@
               </div>
             </template>
           </ResultViewer>
-        </div>
-      </div>
 
-      <div class="panel" v-if="info">
-        <div class="panel-header three-cols"><span>Generation Info</span><div class="header-center"></div>
-          <div class="header-right">
-            <div class="wan-header-actions">
-              <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
-            </div>
-          </div>
-        </div>
-        <div class="panel-body">
-          <pre class="text-xs break-words">{{ asJson(info) }}</pre>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header">History</div>
-        <div class="panel-body">
-          <div v-if="history.length" class="wan-history-list">
-            <div v-for="item in history" :key="item.taskId" :class="['wan-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
-              <div class="wan-history-meta">
-                <div class="wan-history-title">{{ formatHistoryTitle(item) }}</div>
-                <div class="wan-history-sub">{{ item.summary }}</div>
-                <div v-if="item.promptPreview" class="wan-history-sub">{{ item.promptPreview }}</div>
-                <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
-                <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
-              </div>
-              <div class="wan-history-actions">
-                <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
-                  {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'View' }}
-                </button>
-                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
-                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
+          <div v-if="info" class="gen-card mt-3">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">Generation Info</span>
+              <div class="wan-header-actions">
+                <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
               </div>
             </div>
+            <pre class="text-xs break-words">{{ asJson(info) }}</pre>
           </div>
-          <div v-else class="caption">No runs yet.</div>
 
-          <details v-if="diffText" class="accordion">
-            <summary>Diff vs previous run</summary>
-            <div class="accordion-body">
-              <pre class="text-xs break-words">{{ diffText }}</pre>
+          <div class="gen-card mt-3">
+            <div class="wan22-toggle-head">
+              <span class="label-muted">History</span>
             </div>
-          </details>
-          <div class="wan-callout-actions mt-2">
-            <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
+            <div v-if="history.length" class="wan-history-list">
+              <div v-for="item in history" :key="item.taskId" :class="['wan-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
+                <div class="wan-history-meta">
+                  <div class="wan-history-title">{{ formatHistoryTitle(item) }}</div>
+                  <div class="wan-history-sub">{{ item.summary }}</div>
+                  <div v-if="item.promptPreview" class="wan-history-sub">{{ item.promptPreview }}</div>
+                  <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
+                  <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
+                </div>
+                <div class="wan-history-actions">
+                  <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
+                    {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'View' }}
+                  </button>
+                  <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
+                  <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="caption">No runs yet.</div>
+
+            <details v-if="diffText" class="accordion">
+              <summary>Diff vs previous run</summary>
+              <div class="accordion-body">
+                <pre class="text-xs break-words">{{ diffText }}</pre>
+              </div>
+            </details>
+            <div class="wan-callout-actions mt-2">
+              <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
+            </div>
           </div>
         </div>
       </div>
@@ -353,7 +355,7 @@
 import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
 import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
-import { fetchSamplers, fetchSchedulers } from '../api/client'
+import { fetchSamplers, fetchSchedulers, fetchLoras, fetchPaths } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
@@ -371,18 +373,46 @@ const workflows = useWorkflowsStore()
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
+const wanLoras = ref<Array<{ name: string; path: string }>>([])
 
 onMounted(async () => {
   if (!store.tabs.length) store.load()
-  const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
+  const [samp, sched, pathsRes, lorasRes] = await Promise.all([
+    fetchSamplers(),
+    fetchSchedulers(),
+    fetchPaths().catch(() => ({ paths: {} as Record<string, string[]> })),
+    fetchLoras().catch(() => ({ loras: [] as Array<{ name: string; path: string }> })),
+  ])
   samplers.value = samp.samplers
   schedulers.value = sched.schedulers
+
+  const roots = Array.isArray((pathsRes as any)?.paths?.wan22_loras) ? ((pathsRes as any).paths.wan22_loras as string[]) : []
+  wanLoras.value = (lorasRes.loras || []).filter((l) => fileInRoots(l.path, roots))
 })
 
 const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
+const lightx2v = computed<boolean>(() => Boolean((tab.value?.params as any)?.lightx2v))
+const wanLoraChoices = computed(() => wanLoras.value)
+
+function normalizePath(path: string): string {
+  return String(path || '').replace(/\\+/g, '/').replace(/\/+$/, '')
+}
+
+function fileInRoots(file: string, roots: string[]): boolean {
+  const fNorm = normalizePath(file)
+  if (!fNorm) return false
+  for (const root of roots || []) {
+    const rNorm = normalizePath(root)
+    if (!rNorm) continue
+    if (fNorm === rNorm || fNorm.startsWith(rNorm + '/')) return true
+    const rel = rNorm.startsWith('/') ? rNorm.slice(1) : rNorm
+    if (fNorm.includes('/' + rel + '/') || fNorm.endsWith('/' + rel)) return true
+  }
+  return false
+}
 
 function defaultStage(): WanStageParams {
-  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, lightning: false, loraEnabled: false, loraPath: '', loraWeight: 1.0 }
+  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraPath: '', loraWeight: 1.0 }
 }
 function defaultVideo(): WanVideoParams {
   return {
@@ -426,7 +456,6 @@ function defaultVideo(): WanVideoParams {
 const video = computed<WanVideoParams>(() => ((tab.value?.params as any)?.video as WanVideoParams) || defaultVideo())
 const high = computed<WanStageParams>(() => ((tab.value?.params as any)?.high as WanStageParams) || defaultStage())
 const low = computed<WanStageParams>(() => ((tab.value?.params as any)?.low as WanStageParams) || defaultStage())
-const wanFormat = computed<string>(() => (tab.value?.params as any)?.modelFormat || 'auto')
 
 interface WanAssetsParams { metadata: string; textEncoder: string; vae: string }
 function defaultAssets(): WanAssetsParams { return { metadata: '', textEncoder: '', vae: '' } }
@@ -458,8 +487,6 @@ function syncLowFromHighIfNeeded(): void {
     steps: high.value.steps,
     cfgScale: high.value.cfgScale,
     seed: high.value.seed,
-    lightning: high.value.lightning,
-    loraEnabled: high.value.loraEnabled,
     loraPath: high.value.loraPath,
     loraWeight: high.value.loraWeight,
   }
@@ -483,8 +510,6 @@ watch(
     high.value.steps,
     high.value.cfgScale,
     high.value.seed,
-    high.value.lightning,
-    high.value.loraEnabled,
     high.value.loraPath,
     high.value.loraWeight,
   ] as const),
@@ -502,8 +527,6 @@ watch(
     low.value.steps,
     low.value.cfgScale,
     low.value.seed,
-    low.value.lightning,
-    low.value.loraEnabled,
     low.value.loraPath,
     low.value.loraWeight,
   ] as const),
@@ -782,26 +805,6 @@ const guidedSteps = computed<GuidedStep[]>(() => {
     }
   }
 
-  if (high.value.loraEnabled && !high.value.loraPath) {
-    steps.push({
-      id: 'high_lora',
-      message: 'High Noise: LoRA is enabled but the path is empty.',
-      selector: '#wan-guided-high-stage',
-      focusSelector: '#wan-guided-high-stage input.ui-input[type=\"text\"]',
-    })
-    return steps
-  }
-
-  if (low.value.loraEnabled && !low.value.loraPath) {
-    steps.push({
-      id: 'low_lora',
-      message: 'Low Noise: LoRA is enabled but the path is empty.',
-      selector: '#wan-guided-low-stage',
-      focusSelector: '#wan-guided-low-stage input.ui-input[type=\"text\"]',
-    })
-    return steps
-  }
-
   return steps
 })
 
@@ -922,7 +925,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
     height: video.value.height,
     frames: video.value.frames,
     fps: video.value.fps,
-    format: String(wanFormat.value || 'auto'),
+    lightx2v: lightx2v.value,
     assets: {
       metadata: String(assets.value.metadata || ''),
       textEncoder: String(assets.value.textEncoder || ''),
@@ -935,9 +938,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: high.value.steps,
       cfgScale: high.value.cfgScale,
       seed: high.value.seed,
-      lightning: high.value.lightning,
-      loraEnabled: high.value.loraEnabled,
-      loraPath: high.value.loraPath,
+      loraPath: lightx2v.value ? high.value.loraPath : '',
       loraWeight: high.value.loraWeight,
     },
     low: {
@@ -947,9 +948,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: low.value.steps,
       cfgScale: low.value.cfgScale,
       seed: low.value.seed,
-      lightning: low.value.lightning,
-      loraEnabled: low.value.loraEnabled,
-      loraPath: low.value.loraPath,
+      loraPath: lightx2v.value ? low.value.loraPath : '',
       loraWeight: low.value.loraWeight,
     },
     output: {
@@ -1066,15 +1065,19 @@ function applyHistory(item: VideoRunHistoryItem): void {
     rifeTimes: Number.isFinite(interpolation.times) ? Number(interpolation.times) : video.value.rifeTimes,
   })
 
-  const fmt = String(snap.format || 'auto')
-  if (fmt) store.updateParams(props.tabId, { modelFormat: fmt })
+  const hi = snap.high || {}
+  const lo = snap.low || {}
+  const snapLightx2v =
+    typeof snap.lightx2v === 'boolean'
+      ? Boolean(snap.lightx2v)
+      : Boolean((hi as any).loraEnabled || (lo as any).loraEnabled || (hi as any).loraPath || (lo as any).loraPath)
+  store.updateParams(props.tabId, { lightx2v: snapLightx2v } as any)
 
   const snapAssets = snap.assets || {}
   if (snapAssets && typeof snapAssets === 'object') {
     store.updateParams(props.tabId, { assets: { ...assets.value, ...snapAssets } })
   }
 
-  const hi = snap.high || {}
   setHigh({
     modelDir: String(hi.modelDir || ''),
     sampler: String(hi.sampler || ''),
@@ -1082,13 +1085,10 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(hi.steps) || high.value.steps,
     cfgScale: Number(hi.cfgScale) || high.value.cfgScale,
     seed: Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
-    lightning: Boolean(hi.lightning),
-    loraEnabled: Boolean(hi.loraEnabled),
-    loraPath: String(hi.loraPath || ''),
+    loraPath: snapLightx2v ? String(hi.loraPath || '') : '',
     loraWeight: Number.isFinite(hi.loraWeight) ? Number(hi.loraWeight) : high.value.loraWeight,
   })
 
-  const lo = snap.low || {}
   setLow({
     modelDir: String(lo.modelDir || ''),
     sampler: String(lo.sampler || ''),
@@ -1096,9 +1096,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(lo.steps) || low.value.steps,
     cfgScale: Number(lo.cfgScale) || low.value.cfgScale,
     seed: Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
-    lightning: Boolean(lo.lightning),
-    loraEnabled: Boolean(lo.loraEnabled),
-    loraPath: String(lo.loraPath || ''),
+    loraPath: snapLightx2v ? String(lo.loraPath || '') : '',
     loraWeight: Number.isFinite(lo.loraWeight) ? Number(lo.loraWeight) : low.value.loraWeight,
   })
 

@@ -4,7 +4,7 @@
     <template v-if="activeFamily === 'wan'">
       <QuickSettingsWan
         :mode="wanMode"
-        :model-format="wanModelFormat"
+        :lightx2v="wanLightx2v"
         :high-model="wanHighModel"
         :high-choices="wanHighDirChoices"
         :low-model="wanLowModel"
@@ -22,7 +22,7 @@
         :attention-backend="store.currentAttention"
         :attention-choices="store.attentionChoices"
         @update:mode="onWanModeChange"
-        @update:modelFormat="onWanModelFormatChange"
+        @update:lightx2v="onWanLightx2vChange"
         @update:highModel="onWanHighModelChange"
         @update:lowModel="onWanLowModelChange"
         @update:metadataDir="onWanMetadataDirChange"
@@ -474,12 +474,10 @@ const wanMode = computed(() => {
   return 'txt2vid'
 })
 
-const wanModelFormat = computed(() => {
+const wanLightx2v = computed(() => {
   const tab = tabsStore.activeTab
-  if (!tab || tab.type !== 'wan') return 'auto'
-  const raw = String((tab.params as any)?.modelFormat || 'auto').trim().toLowerCase()
-  if (raw === 'diffusers' || raw === 'gguf') return raw
-  return 'auto'
+  if (!tab || tab.type !== 'wan') return false
+  return Boolean((tab.params as any)?.lightx2v)
 })
 
 const wanHighModel = computed(() => {
@@ -635,12 +633,10 @@ function onWanModeChange(value: string): void {
   window.dispatchEvent(new CustomEvent('codex-wan-mode-change', { detail: { tabId: tab.id, mode } }))
 }
 
-async function onWanModelFormatChange(value: string): Promise<void> {
+async function onWanLightx2vChange(value: boolean): Promise<void> {
   const tab = tabsStore.activeTab
   if (!tab || tab.type !== 'wan') return
-  const raw = String(value || '').trim().toLowerCase()
-  const fmt = raw === 'diffusers' || raw === 'gguf' ? raw : 'auto'
-  await tabsStore.updateParams(tab.id, { modelFormat: fmt } as any)
+  await tabsStore.updateParams(tab.id, { lightx2v: Boolean(value) } as any)
 }
 
 async function onWanHighModelChange(value: string): Promise<void> {

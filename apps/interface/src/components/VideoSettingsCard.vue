@@ -1,5 +1,5 @@
 <template>
-  <div class="vid-card">
+  <div :class="['vid-card', { 'vid-card--embedded': embedded }]">
     <div class="vc-grid">
       <div class="field">
         <label class="label-muted">Frames</label>
@@ -38,11 +38,13 @@ import { computed } from 'vue'
 const props = withDefaults(defineProps<{
   frames: number
   fps: number
+  embedded?: boolean
   minFrames?: number
   maxFrames?: number
   minFps?: number
   maxFps?: number
 }>(), {
+  embedded: false,
   minFrames: 8,
   maxFrames: 64,
   minFps: 8,

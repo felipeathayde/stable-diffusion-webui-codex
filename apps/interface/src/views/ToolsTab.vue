@@ -54,10 +54,33 @@
           <label>Quantization</label>
           <select v-model="ggufForm.quantization" :disabled="isConverting">
             <option value="F16">F16 - No quantization (full precision)</option>
-            <option value="Q8_0">Q8_0 - 8-bit (recommended, ~50% size)</option>
+            <option value="Q8_0">Q8_0 - 8-bit (max quality, larger)</option>
+            <option value="Q6_K">Q6_K - 6-bit K-quant (high quality)</option>
+            <option value="Q5_K_M">Q5_K_M - 5-bit K-quant (mixed, recommended)</option>
             <option value="Q5_K">Q5_K - 5-bit (~35% size)</option>
+            <option value="Q5_1">Q5_1 - 5-bit legacy</option>
+            <option value="Q5_0">Q5_0 - 5-bit legacy</option>
+            <option value="Q4_K_M">Q4_K_M - 4-bit K-quant (mixed, safe default)</option>
             <option value="Q4_K">Q4_K - 4-bit (~25% size)</option>
+            <option value="Q4_1">Q4_1 - 4-bit legacy</option>
+            <option value="Q4_0">Q4_0 - 4-bit legacy</option>
+            <option value="Q3_K">Q3_K - 3-bit K-quant (last resort)</option>
+            <option value="Q2_K">Q2_K - 2-bit K-quant (extreme)</option>
+            <option value="IQ4_NL">IQ4_NL - 4-bit IQ (experimental)</option>
           </select>
+        </div>
+
+        <!-- Advanced: per-tensor overrides -->
+        <div class="form-group">
+          <label>Tensor Overrides (advanced)</label>
+          <textarea
+            v-model="ggufForm.tensorTypeOverrides"
+            class="tensor-overrides"
+            placeholder="One per line: <regex>=<quant>\nExample:\nattn_q\\.weight$=Q8_0"
+            :disabled="isConverting"
+            rows="5"
+          ></textarea>
+          <span class="help-text">Applied to both source and GGUF tensor names. Last match wins.</span>
         </div>
 
         <!-- Output Path -->
@@ -157,6 +180,7 @@ interface GGUFForm {
   safetensorsPath: string
   quantization: string
   outputPath: string
+  tensorTypeOverrides: string
 }
 
 interface ConversionStatus {
@@ -182,8 +206,9 @@ interface BrowserData {
 const ggufForm = ref<GGUFForm>({
   configPath: '',
   safetensorsPath: '',
-  quantization: 'Q8_0',
+  quantization: 'Q5_K_M',
   outputPath: '',
+  tensorTypeOverrides: '',
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -200,7 +225,8 @@ const selectedItem = ref<BrowserItem | null>(null)
 const isConverting = computed(() => {
   return conversionStatus.value?.status === 'loading_config' ||
          conversionStatus.value?.status === 'loading_weights' ||
-         conversionStatus.value?.status === 'converting'
+         conversionStatus.value?.status === 'converting' ||
+         conversionStatus.value?.status === 'verifying'
 })
 
 const canConvert = computed(() => {
@@ -211,6 +237,7 @@ const canConvert = computed(() => {
 
 async function startConversion() {
   try {
+    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
     const response = await fetch('/api/tools/convert-gguf', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -219,6 +246,7 @@ async function startConversion() {
         safetensors_path: ggufForm.value.safetensorsPath,
         output_path: ggufForm.value.outputPath,
         quantization: ggufForm.value.quantization,
+        tensor_type_overrides: tensorTypeOverrides,
       }),
     })
     
@@ -247,6 +275,13 @@ async function startConversion() {
       error: e.message,
     }
   }
+}
+
+function parseTensorTypeOverrides(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
 }
 
 async function pollStatus() {
@@ -477,6 +512,23 @@ select {
   border-radius: 8px;
   color: #fff;
   font-size: 0.875rem;
+}
+
+.tensor-overrides {
+  width: 100%;
+  padding: 10px 14px;
+  background: #0f0f1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  resize: vertical;
+}
+
+.tensor-overrides:focus {
+  outline: none;
+  border-color: #5865f2;
 }
 
 .form-actions {

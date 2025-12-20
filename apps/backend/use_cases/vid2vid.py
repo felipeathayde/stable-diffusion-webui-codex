@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 from apps.backend.core.engine_interface import TaskType
 from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent, Vid2VidRequest
+from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.video.export import export_video
 from apps.backend.video.flow import FlowGuidanceError, RaftFlowEstimator, warp_frame
 from apps.backend.video.interpolation import maybe_interpolate
@@ -75,6 +76,19 @@ def _run_native_pipeline(
     pipe = getattr(comp, "pipeline", None)
     if pipe is None:
         raise RuntimeError("vid2vid method 'native' requires a Diffusers WAN pipeline (comp.pipeline)")
+
+    # Optional: stage LoRA (WAN extras) for lightx2v-style adapters.
+    try:
+        extras = getattr(request, "extras", {}) or {}
+        wan_high_cfg = extras.get("wan_high") if isinstance(extras, dict) else None
+        wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
+        if wan_hi_opts and wan_hi_opts.lora_path and hasattr(pipe, "load_lora_weights"):
+            logger = getattr(engine, "_logger", None)
+            if logger:
+                logger.info("[wan] loading stage LoRA (vid2vid native): %s", wan_hi_opts.lora_path)
+            pipe.load_lora_weights(wan_hi_opts.lora_path)  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     strength = request.strength
     if strength is None:

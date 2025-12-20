@@ -91,5 +91,6 @@ apps/interface/.pnpm-debug.log
 # Local reference snapshots and scratch branches
 *.png
 *.txt
+*.docx
 .sangoi/reports/tooling/pyright/*
 models/

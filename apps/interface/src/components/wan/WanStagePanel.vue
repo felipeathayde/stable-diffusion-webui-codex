@@ -51,8 +51,8 @@
             :value="stage.seed"
             @change="updateStage({ seed: toInt($event, stage.seed) })"
           />
-          <button class="btn btn-sm btn-secondary" type="button" :disabled="disabled" @click="randomizeSeed">Random</button>
-          <button class="btn btn-sm btn-secondary" type="button" :disabled="disabled || lastSeed === null" @click="reuseSeed">Reuse</button>
+          <button class="btn-icon" type="button" :disabled="disabled" title="Random seed" @click="randomizeSeed">🎲</button>
+          <button class="btn-icon" type="button" :disabled="disabled || lastSeed === null" title="Reuse seed" @click="reuseSeed">↺</button>
         </div>
       </div>
       <div v-if="showModelDir">
@@ -66,32 +66,16 @@
           placeholder="/path/to/high-or-low"
         />
       </div>
-    </div>
 
-    <div class="wan22-toggle-row">
-      <label class="wan22-toggle">
-        <input type="checkbox" :disabled="disabled" :checked="stage.lightning" @change="onLightning" />
-        <span>Lightning</span>
-      </label>
-      <label class="wan22-toggle">
-        <input type="checkbox" :disabled="disabled" :checked="stage.loraEnabled" @change="onLoraEnabled" />
-        <span>Use LoRA</span>
-      </label>
-    </div>
-
-    <div v-if="stage.loraEnabled" class="wan22-grid">
-      <div>
-        <label class="label-muted">LoRA Path</label>
-        <input
-          class="ui-input"
-          type="text"
-          :disabled="disabled"
-          :value="stage.loraPath"
-          @change="updateStage({ loraPath: ($event.target as HTMLInputElement).value })"
-        />
+      <div v-if="lightx2v">
+        <label class="label-muted">LoRA (wan22-loras)</label>
+        <select class="select-md" :disabled="disabled" :value="stage.loraPath" @change="updateStage({ loraPath: ($event.target as HTMLSelectElement).value })">
+          <option value="">None</option>
+          <option v-for="opt in loraChoices" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+        </select>
       </div>
-      <div>
-        <label class="label-muted">Weight</label>
+      <div v-if="lightx2v && stage.loraPath">
+        <label class="label-muted">LoRA weight</label>
         <input
           class="ui-input"
           type="number"
@@ -104,7 +88,6 @@
     </div>
 
     <div v-if="showModelDir && !stage.modelDir" class="panel-error">{{ title }}: model directory is empty.</div>
-    <div v-if="stage.loraEnabled && !stage.loraPath" class="panel-error">{{ title }}: LoRA enabled but path is empty.</div>
   </div>
 </template>
 
@@ -122,15 +105,19 @@ const props = withDefaults(defineProps<{
   stage: WanStageParams
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
+  loraChoices?: Array<{ name: string; path: string }>
   showModelDir?: boolean
   embedded?: boolean
   disabled?: boolean
+  lightx2v?: boolean
   samplerLabel?: string
   schedulerLabel?: string
 }>(), {
+  loraChoices: () => [],
   showModelDir: false,
   embedded: false,
   disabled: false,
+  lightx2v: false,
   samplerLabel: 'Sampler',
   schedulerLabel: 'Scheduler',
 })
@@ -143,6 +130,8 @@ const lastSeed = ref<number | null>(null)
 
 const samplerLabel = computed(() => props.samplerLabel)
 const schedulerLabel = computed(() => props.schedulerLabel)
+const loraChoices = computed(() => props.loraChoices ?? [])
+const lightx2v = computed(() => Boolean(props.lightx2v))
 
 function updateStage(patch: Partial<WanStageParams>): void {
   emit('update:stage', patch)
@@ -165,13 +154,5 @@ function randomizeSeed(): void {
 
 function reuseSeed(): void {
   if (lastSeed.value !== null) updateStage({ seed: lastSeed.value })
-}
-
-function onLightning(e: Event): void {
-  updateStage({ lightning: (e.target as HTMLInputElement).checked })
-}
-
-function onLoraEnabled(e: Event): void {
-  updateStage({ loraEnabled: (e.target as HTMLInputElement).checked })
 }
 </script>

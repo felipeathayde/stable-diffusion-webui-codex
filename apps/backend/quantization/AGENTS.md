@@ -2,7 +2,7 @@
 # apps/backend/quantization Overview
 Date: 2025-12-15
 Owner: Runtime Maintainers
-Last Review: 2025-12-15
+Last Review: 2025-12-19
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 ## Notes
 - This package is the only place that should own GGUF quantization + IO. Do not reintroduce `apps/backend/gguf/` (deprecated and removed).
 - Quantized tensors are byte-packed; do not cast storage dtypes. Only `computation_dtype` controls dequant output dtype.
+- 2025-12-19: Tooling gained additional NumPy quant packers (`Q2_K/Q3_K/IQ4_NL` + `Q4_0/Q4_1/Q5_0/Q5_1/Q6_K`) so the GGUF Converter can emit more GGML types.

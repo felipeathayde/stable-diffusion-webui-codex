@@ -67,6 +67,14 @@ def run_img2vid(
     if active_pipe_hi is None:
         raise RuntimeError("img2vid requires a Diffusers pipeline (single or per-stage)")
 
+    extras = dict(plan.extras)
+    wan_high_cfg = extras.get("wan_high")
+    wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
+    if wan_hi_opts and wan_hi_opts.lora_path and hasattr(active_pipe_hi, "load_lora_weights"):
+        if logger:
+            logger.info("[wan] loading high-stage LoRA: %s", wan_hi_opts.lora_path)
+        active_pipe_hi.load_lora_weights(wan_hi_opts.lora_path)  # type: ignore[attr-defined]
+
     outcome_hi = configure_sampler(active_pipe_hi, plan, logger)
 
     yield ProgressEvent(stage="run_high", percent=5.0, message="Stage 1 (High Noise)")
@@ -81,12 +89,13 @@ def run_img2vid(
     active_pipe_lo = low_model or pipe
     outcome_lo = None
     frames = list(frames_hi)
-    extras = dict(plan.extras)
 
     if active_pipe_lo is not None and frames_hi:
         wan_low_cfg = extras.get("wan_low")
         wan_opts = WanStageOptions.from_mapping(wan_low_cfg) if isinstance(wan_low_cfg, dict) else None
         if wan_opts and wan_opts.lora_path and hasattr(active_pipe_lo, "load_lora_weights"):
+            if logger:
+                logger.info("[wan] loading low-stage LoRA: %s", wan_opts.lora_path)
             active_pipe_lo.load_lora_weights(wan_opts.lora_path)  # type: ignore[attr-defined]
 
         outcome_lo = configure_sampler(active_pipe_lo, plan, logger)

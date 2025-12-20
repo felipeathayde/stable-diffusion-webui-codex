@@ -11,6 +11,14 @@
     min-width: 0;
   }
 
+  .vid-card.vid-card--embedded {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+  }
+
   .vid-card .vc-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
@@ -87,4 +95,3 @@
     -moz-appearance: textfield;
   }
 }
-

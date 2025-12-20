@@ -10,14 +10,13 @@
       </div>
     </div>
 
-    <div class="quicksettings-group qs-group-wan-format">
-      <label class="label-muted">Format</label>
+    <div class="quicksettings-group qs-group-wan-lightx2v">
+      <label class="label-muted">LightX2V</label>
       <div class="qs-row">
-        <select class="select-md" :value="modelFormat" @change="$emit('update:modelFormat', ($event.target as HTMLSelectElement).value)">
-          <option value="auto">Auto</option>
-          <option value="diffusers">Diffusers</option>
-          <option value="gguf">GGUF</option>
-        </select>
+        <label class="qs-switch qs-switch--sm" title="Enable LightX2V mode (shows stage LoRA selectors)">
+          <input type="checkbox" :checked="lightx2v" @change="$emit('update:lightx2v', ($event.target as HTMLInputElement).checked)" />
+          <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
+        </label>
       </div>
     </div>
 
@@ -125,7 +124,7 @@ import QuickSettingsWanAssetsModal from '../modals/QuickSettingsWanAssetsModal.v
 
 const props = defineProps<{
   mode: string
-  modelFormat: string
+  lightx2v: boolean
   highModel: string
   highChoices: string[]
   lowModel: string

@@ -97,8 +97,6 @@ function defaultStage(): WanStageParams {
     steps: 30,
     cfgScale: 7,
     seed: -1,
-    lightning: false,
-    loraEnabled: false,
     loraPath: '',
     loraWeight: 1.0,
   }
@@ -165,7 +163,7 @@ export function useVideoGeneration(tabId: string) {
   const video = computed<WanVideoParams>(() => (params.value?.video as WanVideoParams) || defaultVideo())
   const high = computed<WanStageParams>(() => (params.value?.high as WanStageParams) || defaultStage())
   const low = computed<WanStageParams>(() => (params.value?.low as WanStageParams) || defaultStage())
-  const wanFormat = computed<string>(() => String((params.value as any)?.modelFormat || 'auto'))
+  const lightx2v = computed<boolean>(() => Boolean((params.value as any)?.lightx2v))
   const assets = computed<WanAssetsParams>(() => (params.value?.assets as WanAssetsParams) || defaultAssets())
   const mode = computed<VideoMode>(() => {
     if (video.value.useInitVideo) return 'vid2vid'
@@ -186,8 +184,6 @@ export function useVideoGeneration(tabId: string) {
     if (!hi.modelDir && !lo.modelDir) {
       return 'WAN model directory is empty. Set WAN High/Low model dirs in QuickSettings.'
     }
-    if (hi.loraEnabled && !hi.loraPath) return 'High stage: LoRA enabled but path is empty.'
-    if (lo.loraEnabled && !lo.loraPath) return 'Low stage: LoRA enabled but path is empty.'
     return ''
   }
 
@@ -222,18 +218,18 @@ export function useVideoGeneration(tabId: string) {
     state.value.errorMessage = message
   }
 
-  function buildRunSummary(v: WanVideoParams, hi: WanStageParams, fmt: string): string {
+  function buildRunSummary(v: WanVideoParams, hi: WanStageParams): string {
     const w = Number(v.width) || 0
     const h = Number(v.height) || 0
     const frames = Number(v.frames) || 0
     const fps = Number(v.fps) || 0
     const seconds = fps > 0 ? (frames / fps) : 0
-    const format = (fmt === 'diffusers' || fmt === 'gguf') ? fmt : 'auto'
     const strength = v.useInitVideo ? ` · strength ${Number(v.vid2vidStrength).toFixed(2)}` : ''
-    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${strength} · ${format}`
+    const loraTag = lightx2v.value && String(hi.loraPath || '').trim() ? ' · lightx2v' : ''
+    return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${strength}${loraTag}`
   }
 
-  function buildParamsSnapshot(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, fmt: string): Record<string, unknown> {
+  function buildParamsSnapshot(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Record<string, unknown> {
     return {
       mode: v.useInitVideo ? 'vid2vid' : (v.useInitImage ? 'img2vid' : 'txt2vid'),
       initImageName: v.initImageName || '',
@@ -257,7 +253,7 @@ export function useVideoGeneration(tabId: string) {
         flowUseLarge: v.vid2vidFlowUseLarge,
         flowDownscale: v.vid2vidFlowDownscale,
       },
-      format: fmt,
+      lightx2v: lightx2v.value,
       assets: {
         metadata: String(assets.value.metadata || ''),
         textEncoder: String(assets.value.textEncoder || ''),
@@ -270,9 +266,7 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        lightning: hi.lightning,
-        loraEnabled: hi.loraEnabled,
-        loraPath: hi.loraPath,
+        loraPath: lightx2v.value ? hi.loraPath : '',
         loraWeight: hi.loraWeight,
       },
       low: {
@@ -282,9 +276,7 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        lightning: lo.lightning,
-        loraEnabled: lo.loraEnabled,
-        loraPath: lo.loraPath,
+        loraPath: lightx2v.value ? lo.loraPath : '',
         loraWeight: lo.loraWeight,
       },
       output: {
@@ -311,7 +303,7 @@ export function useVideoGeneration(tabId: string) {
     if (state.value.history.length > MAX_HISTORY) state.value.history.length = MAX_HISTORY
   }
 
-  function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, fmt: 'auto' | 'diffusers' | 'gguf') {
+  function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams) {
     const metaDir = String(assets.value.metadata || '').trim()
     const tePath = String(assets.value.textEncoder || '').trim()
     const vaePath = String(assets.value.vae || '').trim()
@@ -331,9 +323,7 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        lightning: hi.lightning,
-        loraEnabled: hi.loraEnabled,
-        loraPath: hi.loraPath,
+        loraPath: lightx2v.value ? hi.loraPath : '',
         loraWeight: hi.loraWeight,
       },
       low: {
@@ -343,12 +333,10 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        lightning: lo.lightning,
-        loraEnabled: lo.loraEnabled,
-        loraPath: lo.loraPath,
+        loraPath: lightx2v.value ? lo.loraPath : '',
         loraWeight: lo.loraWeight,
       },
-      format: fmt,
+      format: 'auto' as const,
       assets: {
         metadataDir: metaDir,
         textEncoder: tePath,
@@ -374,13 +362,12 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function prepareRunFromValues(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Omit<VideoQueuedRun, 'id'> & { mode: VideoMode } {
-    const fmt = (wanFormat.value === 'diffusers' || wanFormat.value === 'gguf') ? wanFormat.value : 'auto'
     const promptPreview = String(v.prompt || '').trim().slice(0, 120)
     const createdAtMs = Date.now()
-    const summary = buildRunSummary(v, hi, fmt)
-    const paramsSnapshot = buildParamsSnapshot(v, hi, lo, fmt)
+    const summary = buildRunSummary(v, hi)
+    const paramsSnapshot = buildParamsSnapshot(v, hi, lo)
 
-    const common = buildCommonInput(v, hi, lo, fmt)
+    const common = buildCommonInput(v, hi, lo)
 
     if (v.useInitVideo) {
       const payload = buildWanVid2VidPayload({
@@ -639,7 +626,7 @@ export function useVideoGeneration(tabId: string) {
     video,
     high,
     low,
-    wanFormat,
+    lightx2v,
     assets,
     mode,
     blockedReason,

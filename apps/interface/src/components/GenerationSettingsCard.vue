@@ -103,11 +103,14 @@
         <div class="cfg-row">
           <div class="field cfg-field">
             <label class="label-muted">{{ cfgLabel }}</label>
-            <div class="number-with-controls">
-              <input class="ui-input ui-input-sm w-cfg pad-right" type="number" :min="0" :max="30" step="0.5" :value="cfgScale" @change="onCfgChange" />
-              <div class="stepper">
-                <button class="step-btn" type="button" title="Increase" @click="cfgInc">+</button>
-                <button class="step-btn" type="button" title="Decrease" @click="cfgDec">−</button>
+            <div class="row-inline">
+              <input class="slider slider-grow" type="range" min="0" max="30" step="0.5" :value="cfgScale" @input="onCfgRange" />
+              <div class="number-with-controls">
+                <input class="ui-input ui-input-sm w-cfg pad-right" type="number" :min="0" :max="30" step="0.5" :value="cfgScale" @change="onCfgChange" />
+                <div class="stepper">
+                  <button class="step-btn" type="button" title="Increase" @click="cfgInc">+</button>
+                  <button class="step-btn" type="button" title="Decrease" @click="cfgDec">−</button>
+                </div>
               </div>
             </div>
           </div>
@@ -119,10 +122,12 @@
     <div class="gc-seed">
       <div class="field seed-group">
         <label class="label-muted">Seed</label>
-        <div class="seed-row">
-          <input class="ui-input" type="number" :value="seed" @change="onSeedChange" />
-          <button class="btn-icon" type="button" @click="emit('random-seed')" title="Random seed">🎲</button>
-          <button class="btn-icon" type="button" @click="emit('reuse-seed')" title="Reuse seed">↺</button>
+        <div class="number-with-controls w-full">
+          <input class="ui-input pad-right" type="number" :value="seed" @change="onSeedChange" />
+          <div class="stepper">
+            <button class="step-btn" type="button" @click="emit('random-seed')" title="Random seed">🎲</button>
+            <button class="step-btn" type="button" @click="emit('reuse-seed')" title="Reuse seed">↺</button>
+          </div>
         </div>
       </div>
     </div>
@@ -242,6 +247,11 @@ function heightDec(): void {
   const step = 8
   const v = Math.max(minHeight.value, Number(props.height) - step)
   emit('update:height', v)
+}
+
+function onCfgRange(event: Event): void {
+  const v = Number((event.target as HTMLInputElement).value)
+  emit('update:cfgScale', Number.isNaN(v) ? props.cfgScale : v)
 }
 
 function onCfgChange(event: Event): void {

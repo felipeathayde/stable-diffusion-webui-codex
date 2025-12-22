@@ -4,7 +4,7 @@
       <span class="label-muted">{{ label }}</span>
     </div>
     <div class="prompt-editor-wrap">
-      <span v-if="count > 0" class="ear-badge">{{ count }} chars</span>
+      <span v-if="tokenCount > 0" class="ear-badge">{{ tokenCount }} tok</span>
       <PromptEditor v-model="inner" />
     </div>
   </div>
@@ -22,7 +22,13 @@ const inner = computed({
   set: (v: string) => emit('update:modelValue', v),
 })
 
-const count = computed(() => inner.value.length)
+function countTokens(text: string): number {
+  const raw = String(text || '').trim()
+  if (!raw) return 0
+  return raw.split(/\s+/).filter(Boolean).length
+}
+
+const tokenCount = computed(() => countTokens(inner.value))
 </script>
 
 <!-- styles moved to styles/components/prompt-box.css -->

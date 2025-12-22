@@ -27,6 +27,7 @@
           </div>
           <span class="caption vc-duration">~ {{ durationLabel }}</span>
         </div>
+        <input class="slider" type="range" :min="minFps" :max="maxFps" step="1" :value="fps" @input="onFpsRange" />
       </div>
     </div>
   </div>
@@ -86,6 +87,10 @@ function framesInc(): void {
 function framesDec(): void {
   const v = Math.max(minFrames.value, Number(props.frames) - 1)
   emit('update:frames', v)
+}
+
+function onFpsRange(e: Event): void {
+  emit('update:fps', Number((e.target as HTMLInputElement).value))
 }
 
 function onFpsNumber(e: Event): void {

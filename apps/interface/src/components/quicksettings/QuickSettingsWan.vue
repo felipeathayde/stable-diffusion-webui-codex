@@ -13,10 +13,10 @@
     <div class="quicksettings-group qs-group-wan-lightx2v">
       <label class="label-muted">LightX2V</label>
       <div class="qs-row">
-        <label class="qs-switch qs-switch--sm" title="Enable LightX2V mode (shows stage LoRA selectors)">
-          <input type="checkbox" :checked="lightx2v" @change="$emit('update:lightx2v', ($event.target as HTMLInputElement).checked)" />
-          <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        </label>
+        <select id="qs-wan-lightx2v" class="select-md" :value="lightx2v ? 'lightx2v' : 'normal'" @change="$emit('update:lightx2v', (($event.target as HTMLSelectElement).value === 'lightx2v'))">
+          <option value="normal">normal</option>
+          <option value="lightx2v">LightX2V</option>
+        </select>
       </div>
     </div>
 

@@ -2,7 +2,7 @@
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2025-12-20
+Last Review: 2025-12-22
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - 2025-12-15: WAN “Browse…” actions in `QuickSettingsWan.vue` are rendered as compact `+` icon buttons to match the header quicksettings affordance.
 - 2025-12-17: WAN quicksettings adds Mode/Format selectors and a “Guided gen” button; `QuickSettingsBar.vue` dispatches events consumed by `WANTab.vue` to keep the tab state in sync.
 - 2025-12-20: Replaced WAN “Format” with a `LightX2V` toggle; per-stage LoRA selection now lives in the WAN tab (High/Low Noise) when enabled.
+- 2025-12-22: WAN `LightX2V` control is now a select (`normal`/`LightX2V`) instead of a switch to better match the rest of the header UI.

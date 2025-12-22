@@ -27,6 +27,7 @@
   .gen-card .number-with-controls .pad-right { padding-right: 4.5rem; }
   .gen-card .number-with-controls .stepper { position: absolute; right: 0.375rem; display: inline-flex; align-items: center; gap: 0.375rem; }
   .gen-card .w-step { width: 8.5rem !important; }
+  .gen-card .w-cfg { width: 8.5rem !important; }
   .gen-card .step-btn { width: 1.75rem; height: 1.75rem; border-radius: 0.375rem; border: 0.0625rem solid hsla(0,0%,100%,0.18); background: hsla(0,0%,100%,0.08); font-weight: 700; }
   .gen-card .step-btn:hover { background: hsla(0,0%,100%,0.16); }
   .gen-card .field-right { display: contents; }

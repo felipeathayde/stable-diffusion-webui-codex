@@ -37,3 +37,58 @@
   justify-content: space-between;
   gap: var(--space-sm);
 }
+
+/* SDXL-style number controls (used by WAN stage + video cards) */
+.wan22-grid .ui-input-sm {
+  height: var(--control-h-sm);
+}
+
+.wan22-grid .number-with-controls {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.wan22-grid .w-step {
+  width: 8.5rem !important;
+}
+
+.wan22-grid .w-cfg {
+  width: 8.5rem !important;
+}
+
+.wan22-grid .number-with-controls .pad-right {
+  padding-right: 4.5rem;
+}
+
+.wan22-grid .number-with-controls .stepper {
+  position: absolute;
+  right: 0.375rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.wan22-grid .step-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.375rem;
+  border: 0.0625rem solid hsla(0,0%,100%,0.18);
+  background: hsla(0,0%,100%,0.08);
+  font-weight: 700;
+}
+
+.wan22-grid .step-btn:hover {
+  background: hsla(0,0%,100%,0.16);
+}
+
+/* Hide default number spinners inside WAN grids */
+.wan22-grid input[type='number']::-webkit-outer-spin-button,
+.wan22-grid input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.wan22-grid input[type='number'] {
+  -moz-appearance: textfield;
+}

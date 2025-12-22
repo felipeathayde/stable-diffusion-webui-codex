@@ -67,22 +67,28 @@
             <div class="wan22-grid">
               <div>
                 <label class="label-muted">Width (px)</label>
-                <div class="number-with-controls">
-                  <input class="ui-input ui-input-sm w-width pad-right" type="number" min="64" step="8" :disabled="isRunning" :value="video.width" @change="onWidthChange" />
-                  <div class="stepper">
-                    <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="widthInc">+</button>
-                    <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="widthDec">−</button>
+                <div class="row-inline">
+                  <div class="number-with-controls">
+                    <input class="ui-input ui-input-sm w-width pad-right" type="number" min="64" max="2048" step="8" :disabled="isRunning" :value="video.width" @change="onWidthChange" />
+                    <div class="stepper">
+                      <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="widthInc">+</button>
+                      <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="widthDec">−</button>
+                    </div>
                   </div>
+                  <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.width" @input="onWidthRange" />
                 </div>
               </div>
               <div>
                 <label class="label-muted">Height (px)</label>
-                <div class="number-with-controls">
-                  <input class="ui-input ui-input-sm w-height pad-right" type="number" min="64" step="8" :disabled="isRunning" :value="video.height" @change="onHeightChange" />
-                  <div class="stepper">
-                    <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="heightInc">+</button>
-                    <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="heightDec">−</button>
+                <div class="row-inline">
+                  <div class="number-with-controls">
+                    <input class="ui-input ui-input-sm w-height pad-right" type="number" min="64" max="2048" step="8" :disabled="isRunning" :value="video.height" @change="onHeightChange" />
+                    <div class="stepper">
+                      <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="heightInc">+</button>
+                      <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="heightDec">−</button>
+                    </div>
                   </div>
+                  <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.height" @input="onHeightRange" />
                 </div>
               </div>
               <div>
@@ -1209,8 +1215,9 @@ const aspectRatio = ref<number | null>(null)
 function snapDim(value: number): number {
   const step = 8
   const min = 64
+  const max = 2048
   const v = Number.isFinite(value) ? value : min
-  return Math.max(min, Math.round(v / step) * step)
+  return Math.min(max, Math.max(min, Math.round(v / step) * step))
 }
 
 function ratioForMode(mode: AspectMode): number | null {
@@ -1274,6 +1281,14 @@ function onWidthChange(e: Event): void {
 
 function onHeightChange(e: Event): void {
   applyHeight(toInt(e, video.value.height))
+}
+
+function onWidthRange(e: Event): void {
+  applyWidth(Number((e.target as HTMLInputElement).value))
+}
+
+function onHeightRange(e: Event): void {
+  applyHeight(Number((e.target as HTMLInputElement).value))
 }
 
 function widthInc(): void {

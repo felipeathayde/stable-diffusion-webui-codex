@@ -21,38 +21,44 @@
       />
       <div>
         <label class="label-muted">Steps</label>
-        <input
-          class="ui-input"
-          type="number"
-          min="1"
-          :disabled="disabled"
-          :value="stage.steps"
-          @change="updateStage({ steps: toInt($event, stage.steps) })"
-        />
+        <div class="flex items-center gap-2">
+          <input class="slider flex-1" type="range" min="1" max="150" step="1" :disabled="disabled" :value="stage.steps" @input="updateStage({ steps: toInt($event, stage.steps) })" />
+          <div class="number-with-controls">
+            <input class="ui-input ui-input-sm w-step pad-right" type="number" min="1" max="150" step="1" :disabled="disabled" :value="stage.steps" @change="updateStage({ steps: toInt($event, stage.steps) })" />
+            <div class="stepper">
+              <button class="step-btn" type="button" title="Increase" :disabled="disabled" @click="stepsInc">+</button>
+              <button class="step-btn" type="button" title="Decrease" :disabled="disabled" @click="stepsDec">−</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div>
         <label class="label-muted">CFG</label>
-        <input
-          class="ui-input"
-          type="number"
-          step="0.5"
-          :disabled="disabled"
-          :value="stage.cfgScale"
-          @change="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })"
-        />
+        <div class="flex items-center gap-2">
+          <input class="slider flex-1" type="range" min="0" max="30" step="0.5" :disabled="disabled" :value="stage.cfgScale" @input="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })" />
+          <div class="number-with-controls">
+            <input class="ui-input ui-input-sm w-cfg pad-right" type="number" min="0" max="30" step="0.5" :disabled="disabled" :value="stage.cfgScale" @change="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })" />
+            <div class="stepper">
+              <button class="step-btn" type="button" title="Increase" :disabled="disabled" @click="cfgInc">+</button>
+              <button class="step-btn" type="button" title="Decrease" :disabled="disabled" @click="cfgDec">−</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div>
         <label class="label-muted">Seed</label>
-        <div class="flex flex-wrap gap-2 items-center">
+        <div class="number-with-controls w-full">
           <input
-            class="ui-input"
+            class="ui-input ui-input-sm pad-right"
             type="number"
             :disabled="disabled"
             :value="stage.seed"
             @change="updateStage({ seed: toInt($event, stage.seed) })"
           />
-          <button class="btn-icon" type="button" :disabled="disabled" title="Random seed" @click="randomizeSeed">🎲</button>
-          <button class="btn-icon" type="button" :disabled="disabled || lastSeed === null" title="Reuse seed" @click="reuseSeed">↺</button>
+          <div class="stepper">
+            <button class="step-btn" type="button" :disabled="disabled" title="Random seed" @click="randomizeSeed">🎲</button>
+            <button class="step-btn" type="button" :disabled="disabled || lastSeed === null" title="Reuse seed" @click="reuseSeed">↺</button>
+          </div>
         </div>
       </div>
       <div v-if="showModelDir">
@@ -145,6 +151,28 @@ function toInt(e: Event, fallback: number): number {
 function toFloat(e: Event, fallback: number): number {
   const v = Number((e.target as HTMLInputElement).value)
   return Number.isFinite(v) ? v : fallback
+}
+
+function stepsInc(): void {
+  const v = Math.min(150, Math.max(1, Number(props.stage.steps) + 1))
+  updateStage({ steps: v })
+}
+
+function stepsDec(): void {
+  const v = Math.min(150, Math.max(1, Number(props.stage.steps) - 1))
+  updateStage({ steps: v })
+}
+
+function cfgInc(): void {
+  const step = 0.5
+  const v = Math.min(30, Math.max(0, Number(props.stage.cfgScale) + step))
+  updateStage({ cfgScale: Number(v.toFixed(2)) })
+}
+
+function cfgDec(): void {
+  const step = 0.5
+  const v = Math.min(30, Math.max(0, Number(props.stage.cfgScale) - step))
+  updateStage({ cfgScale: Number(v.toFixed(2)) })
 }
 
 function randomizeSeed(): void {

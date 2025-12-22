@@ -67,11 +67,23 @@
             <div class="wan22-grid">
               <div>
                 <label class="label-muted">Width (px)</label>
-                <input class="ui-input" type="number" min="64" step="8" :disabled="isRunning" :value="video.width" @change="onWidthChange" />
+                <div class="number-with-controls">
+                  <input class="ui-input ui-input-sm w-width pad-right" type="number" min="64" step="8" :disabled="isRunning" :value="video.width" @change="onWidthChange" />
+                  <div class="stepper">
+                    <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="widthInc">+</button>
+                    <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="widthDec">−</button>
+                  </div>
+                </div>
               </div>
               <div>
                 <label class="label-muted">Height (px)</label>
-                <input class="ui-input" type="number" min="64" step="8" :disabled="isRunning" :value="video.height" @change="onHeightChange" />
+                <div class="number-with-controls">
+                  <input class="ui-input ui-input-sm w-height pad-right" type="number" min="64" step="8" :disabled="isRunning" :value="video.height" @change="onHeightChange" />
+                  <div class="stepper">
+                    <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="heightInc">+</button>
+                    <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="heightDec">−</button>
+                  </div>
+                </div>
               </div>
               <div>
                 <label class="label-muted">Aspect</label>
@@ -123,16 +135,19 @@
               </div>
             </div>
             <div class="wan22-toggle-row">
-              <label class="wan22-toggle">
+              <label class="wan22-toggle qs-switch qs-switch--sm">
                 <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFps" @change="setVideo({ vid2vidUseSourceFps: ($event.target as HTMLInputElement).checked })" />
+                <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
                 <span>Use source FPS</span>
               </label>
-              <label class="wan22-toggle">
+              <label class="wan22-toggle qs-switch qs-switch--sm">
                 <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFrames" @change="setVideo({ vid2vidUseSourceFrames: ($event.target as HTMLInputElement).checked })" />
+                <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
                 <span>Use source length</span>
               </label>
-              <label class="wan22-toggle">
+              <label class="wan22-toggle qs-switch qs-switch--sm">
                 <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidFlowEnabled" @change="setVideo({ vid2vidFlowEnabled: ($event.target as HTMLInputElement).checked })" />
+                <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
                 <span>Optical flow</span>
               </label>
             </div>
@@ -180,8 +195,9 @@
             <summary>Low Noise</summary>
             <div class="accordion-body">
               <div class="wan22-toggle-row">
-                <label class="wan22-toggle">
+                <label class="wan22-toggle qs-switch qs-switch--sm">
                   <input type="checkbox" :disabled="isRunning" :checked="lowFollowsHigh" @change="onLowFollowsHighChange" />
+                  <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
                   <span>Use High settings</span>
                 </label>
                 <span v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</span>
@@ -1230,8 +1246,8 @@ function onAspectModeChange(e: Event): void {
   }
 }
 
-function onWidthChange(e: Event): void {
-  const nextW = snapDim(toInt(e, video.value.width))
+function applyWidth(value: number): void {
+  const nextW = snapDim(value)
   const r = aspectRatio.value
   if (r && r > 0) {
     const nextH = snapDim(nextW / r)
@@ -1241,8 +1257,8 @@ function onWidthChange(e: Event): void {
   setVideo({ width: nextW })
 }
 
-function onHeightChange(e: Event): void {
-  const nextH = snapDim(toInt(e, video.value.height))
+function applyHeight(value: number): void {
+  const nextH = snapDim(value)
   const r = aspectRatio.value
   if (r && r > 0) {
     const nextW = snapDim(nextH * r)
@@ -1250,6 +1266,30 @@ function onHeightChange(e: Event): void {
     return
   }
   setVideo({ height: nextH })
+}
+
+function onWidthChange(e: Event): void {
+  applyWidth(toInt(e, video.value.width))
+}
+
+function onHeightChange(e: Event): void {
+  applyHeight(toInt(e, video.value.height))
+}
+
+function widthInc(): void {
+  applyWidth((Number(video.value.width) || 64) + 8)
+}
+
+function widthDec(): void {
+  applyWidth((Number(video.value.width) || 64) - 8)
+}
+
+function heightInc(): void {
+  applyHeight((Number(video.value.height) || 64) + 8)
+}
+
+function heightDec(): void {
+  applyHeight((Number(video.value.height) || 64) - 8)
 }
 
 const workflowBusy = ref(false)

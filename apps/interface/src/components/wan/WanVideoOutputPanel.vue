@@ -61,28 +61,33 @@
     </div>
 
     <div class="wan22-toggle-row">
-      <label class="wan22-toggle">
+      <label class="wan22-toggle qs-switch qs-switch--sm">
         <input type="checkbox" :disabled="disabled" :checked="video.pingpong" @change="updateVideo({ pingpong: ($event.target as HTMLInputElement).checked })" />
+        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
         <span>Ping-pong</span>
       </label>
-      <label class="wan22-toggle">
+      <label class="wan22-toggle qs-switch qs-switch--sm">
         <input type="checkbox" :disabled="disabled" :checked="video.saveOutput" @change="updateVideo({ saveOutput: ($event.target as HTMLInputElement).checked })" />
+        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
         <span>Save output</span>
       </label>
-      <label class="wan22-toggle">
+      <label class="wan22-toggle qs-switch qs-switch--sm">
         <input type="checkbox" :disabled="disabled" :checked="video.saveMetadata" @change="updateVideo({ saveMetadata: ($event.target as HTMLInputElement).checked })" />
+        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
         <span>Save metadata</span>
       </label>
-      <label class="wan22-toggle">
+      <label class="wan22-toggle qs-switch qs-switch--sm">
         <input type="checkbox" :disabled="disabled" :checked="video.trimToAudio" @change="updateVideo({ trimToAudio: ($event.target as HTMLInputElement).checked })" />
+        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
         <span>Trim to audio</span>
       </label>
     </div>
 
     <div class="wan22-toggle-head">
       <span class="label-muted">Interpolation (RIFE)</span>
-      <label class="wan22-toggle">
+      <label class="wan22-toggle qs-switch qs-switch--sm">
         <input type="checkbox" :disabled="disabled" :checked="video.rifeEnabled" @change="updateVideo({ rifeEnabled: ($event.target as HTMLInputElement).checked })" />
+        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
         <span>Enable</span>
       </label>
     </div>

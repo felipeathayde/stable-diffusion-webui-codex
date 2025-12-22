@@ -7,9 +7,27 @@
 }
 
 .wan22-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  align-items: flex-start;
+}
+
+.wan22-grid > * {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.wan22-field--sm {
+  flex: 1 1 12rem;
+}
+
+.wan22-field--wide {
+  flex: 2 1 24rem;
+}
+
+.wan22-field--full {
+  flex: 1 1 100%;
 }
 
 .wan22-toggle-row {
@@ -65,6 +83,8 @@
 .wan22-grid .number-with-controls .stepper {
   position: absolute;
   right: 0.375rem;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;

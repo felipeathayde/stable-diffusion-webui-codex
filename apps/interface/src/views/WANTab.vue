@@ -65,7 +65,7 @@
               <span class="label-muted">Video</span>
             </div>
             <div class="wan22-grid">
-              <div>
+              <div class="wan22-field--wide">
                 <label class="label-muted">Width (px)</label>
                 <div class="row-inline">
                   <div class="number-with-controls">
@@ -78,7 +78,7 @@
                   <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.width" @input="onWidthRange" />
                 </div>
               </div>
-              <div>
+              <div class="wan22-field--wide">
                 <label class="label-muted">Height (px)</label>
                 <div class="row-inline">
                   <div class="number-with-controls">
@@ -91,7 +91,7 @@
                   <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.height" @input="onHeightRange" />
                 </div>
               </div>
-              <div>
+              <div class="wan22-field--sm">
                 <label class="label-muted">Aspect</label>
                 <select class="select-md" :disabled="isRunning" :value="aspectMode" @change="onAspectModeChange">
                   <option value="free">Free</option>

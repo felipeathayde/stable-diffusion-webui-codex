@@ -5,7 +5,7 @@
     </div>
 
     <div class="wan22-grid">
-      <div>
+      <div class="wan22-field--wide">
         <label class="label-muted">Filename Prefix</label>
         <input
           class="ui-input"
@@ -15,7 +15,7 @@
           @change="updateVideo({ filenamePrefix: ($event.target as HTMLInputElement).value })"
         />
       </div>
-      <div>
+      <div class="wan22-field--sm">
         <label class="label-muted">Format</label>
         <select class="select-md" :disabled="disabled" :value="video.format" @change="updateVideo({ format: ($event.target as HTMLSelectElement).value })">
           <option value="video/h264-mp4">H.264 MP4</option>
@@ -24,7 +24,7 @@
           <option value="image/gif">GIF</option>
         </select>
       </div>
-      <div>
+      <div class="wan22-field--sm">
         <label class="label-muted">CRF</label>
         <input
           class="ui-input"
@@ -39,7 +39,7 @@
     </div>
 
     <div class="wan22-grid">
-      <div>
+      <div class="wan22-field--sm">
         <label class="label-muted">Pixel Format</label>
         <select class="select-md" :disabled="disabled" :value="video.pixFmt" @change="updateVideo({ pixFmt: ($event.target as HTMLSelectElement).value })">
           <option value="yuv420p">yuv420p</option>
@@ -47,7 +47,7 @@
           <option value="yuv422p">yuv422p</option>
         </select>
       </div>
-      <div>
+      <div class="wan22-field--sm">
         <label class="label-muted">Loop Count</label>
         <input
           class="ui-input"

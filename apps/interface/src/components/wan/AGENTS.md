@@ -18,3 +18,4 @@ Status: Active
 - 2025-12-15: Panels were restyled to render as cards (`.gen-card`) inside WANTab’s “Generation Parameters” panel, using responsive `.wan22-grid` + `.wan22-toggle*` classes.
 - 2025-12-20: Removed stage-level “Lightning/Use LoRA” checkboxes; LoRA selection is now a per-stage `<select>` shown only in `LightX2V` mode (WAN QuickSettings).
 - 2025-12-22: `WanStagePanel.vue` now uses SDXL-style sliders + steppers for Steps/CFG and moves seed actions (🎲/↺) inside the seed input.
+- 2025-12-22: `wan22-settings.css` switches `.wan22-grid` to flex-wrap and adds `wan22-field--{sm,wide,full}` sizing helpers; WAN panels now use these helpers to keep sliders readable without hard grid columns.

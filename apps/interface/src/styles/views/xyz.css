@@ -7,7 +7,7 @@
   .xyz-results { display: flex; flex-direction: column; gap: var(--space-md); }
   .xyz-group { display: flex; flex-direction: column; gap: var(--space-sm); }
   .xyz-group-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-  .xyz-grid { display: grid; gap: var(--space-sm); }
+  .xyz-grid { display: grid; gap: var(--space-sm); grid-template-columns: repeat(auto-fit, minmax(11.25rem, 1fr)); }
   .xyz-cell { border: 1px solid hsla(0,0%,100%,0.12); border-radius: 0.75rem; background: hsla(0,0%,100%,0.03); padding: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; min-height: 9rem; }
   .xyz-cell[data-status="running"] { border-color: hsl(var(--accent)); box-shadow: 0 0 0 1px hsla(210,70%,65%,0.25); }
   .xyz-cell[data-status="error"] { border-color: hsl(var(--destructive)); }

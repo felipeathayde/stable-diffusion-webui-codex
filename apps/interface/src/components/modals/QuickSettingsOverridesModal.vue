@@ -1,63 +1,84 @@
 <template>
   <Modal v-model="open" title="Component overrides">
-    <p class="muted" style="margin-bottom:.75rem">
+    <p class="subtitle">
       Configure global device and per-component device/dtype overrides. Leave values as <code>auto</code> to let the memory manager choose.
     </p>
-    <div class="quicksettings-group" style="margin-bottom:.75rem">
-      <label class="label-muted">Global device</label>
-      <div class="qs-row">
-        <select class="select-md" :value="store.currentDevice" @change="onGlobalDeviceChange">
-          <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
+
+    <div class="gen-card">
+      <div class="field">
+        <label class="label-muted">Global device</label>
+        <div class="qs-row">
+          <select class="select-md" :value="store.currentDevice" @change="onGlobalDeviceChange">
+            <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
       </div>
     </div>
-    <div class="grid grid-3">
-      <div>
-        <h4 class="h5">Core</h4>
-        <label class="label-muted">Core dtype</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.coreDtype" @change="onCoreDtypeChange">
-            <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-          </select>
+
+    <div class="gen-card">
+      <div class="panel-section-title">Per-component overrides</div>
+      <div class="cdx-qs-overrides-grid">
+        <div class="cdx-qs-overrides-col">
+          <div class="panel-section-title">Core</div>
+          <div class="field">
+            <label class="label-muted">Core dtype</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.coreDtype" @change="onCoreDtypeChange">
+                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label-muted">Core device</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.coreDevice" @change="onCoreDeviceChange">
+                <option value="auto">auto</option>
+                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+            </div>
+          </div>
         </div>
-        <label class="label-muted" style="margin-top:.25rem">Core device</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.coreDevice" @change="onCoreDeviceChange">
-            <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-            <option value="auto">auto</option>
-          </select>
+
+        <div class="cdx-qs-overrides-col">
+          <div class="panel-section-title">Text Encoder</div>
+          <div class="field">
+            <label class="label-muted">TE dtype</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.teDtype" @change="onTeDtypeChange">
+                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label-muted">TE device</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.teDevice" @change="onTeDeviceChange">
+                <option value="auto">auto</option>
+                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+            </div>
+          </div>
         </div>
-      </div>
-      <div>
-        <h4 class="h5">Text Encoder</h4>
-        <label class="label-muted">TE dtype</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.teDtype" @change="onTeDtypeChange">
-            <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-          </select>
-        </div>
-        <label class="label-muted" style="margin-top:.25rem">TE device</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.teDevice" @change="onTeDeviceChange">
-            <option value="auto">auto</option>
-            <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-        </div>
-      </div>
-      <div>
-        <h4 class="h5">VAE</h4>
-        <label class="label-muted">VAE dtype</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.vaeDtype" @change="onVaeDtypeChange">
-            <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
-          </select>
-        </div>
-        <label class="label-muted" style="margin-top:.25rem">VAE device</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.vaeDevice" @change="onVaeDeviceChange">
-            <option value="auto">auto</option>
-            <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+
+        <div class="cdx-qs-overrides-col">
+          <div class="panel-section-title">VAE</div>
+          <div class="field">
+            <label class="label-muted">VAE dtype</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.vaeDtype" @change="onVaeDtypeChange">
+                <option v-for="opt in store.dtypeChoices" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label-muted">VAE device</label>
+            <div class="qs-row">
+              <select class="select-md" :value="store.vaeDevice" @change="onVaeDeviceChange">
+                <option value="auto">auto</option>
+                <option v-for="opt in store.deviceChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
     </div>

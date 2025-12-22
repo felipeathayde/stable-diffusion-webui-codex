@@ -1,42 +1,44 @@
 <template>
   <div class="gen-card">
-    <div class="gc-grid">
-      <!-- Row 1: left Sampler+Scheduler | right Steps -->
-      <div class="cell">
-        <div class="two-up">
-          <div class="field">
-            <label class="label-muted">Sampler</label>
-            <select class="select-md" :value="sampler" @change="onSamplerChange">
-              <option v-for="s in samplers" :key="s.name" :value="s.name">{{ s.name }}</option>
-            </select>
-          </div>
-          <div class="field">
-            <label class="label-muted">Scheduler</label>
-            <select class="select-md" :value="scheduler" @change="onSchedulerChange">
-              <option v-for="s in schedulers" :key="s.name" :value="s.name">{{ s.label }}</option>
-            </select>
+    <div class="gc-stack">
+      <!-- Row 1: Sampler/Scheduler + Steps -->
+      <div class="gc-row">
+        <div class="gc-col gc-col--wide">
+          <div class="two-up">
+            <div class="field">
+              <label class="label-muted">Sampler</label>
+              <select class="select-md" :value="sampler" @change="onSamplerChange">
+                <option v-for="s in samplers" :key="s.name" :value="s.name">{{ s.name }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label-muted">Scheduler</label>
+              <select class="select-md" :value="scheduler" @change="onSchedulerChange">
+                <option v-for="s in schedulers" :key="s.name" :value="s.name">{{ s.label }}</option>
+              </select>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="cell">
-        <div class="field">
-          <label class="label-muted">Sampling steps</label>
-          <div class="row-inline">
-            <input class="slider slider-grow" type="range" :min="minSteps" :max="maxSteps" :step="1" :value="steps" @input="onStepsChange" />
-            <div class="number-with-controls ml-steps">
-              <input class="ui-input ui-input-sm w-step" type="number" :min="minSteps" :max="maxSteps" step="1" :value="steps" @change="onStepsNumber" />
-              <div class="stepper">
-                <button class="step-btn" type="button" title="Increase" @click="stepsInc">+</button>
-                <button class="step-btn" type="button" title="Decrease" @click="stepsDec">−</button>
+        <div class="gc-col gc-col--wide">
+          <div class="field">
+            <label class="label-muted">Sampling steps</label>
+            <div class="row-inline">
+              <input class="slider slider-grow" type="range" :min="minSteps" :max="maxSteps" :step="1" :value="steps" @input="onStepsChange" />
+              <div class="number-with-controls ml-steps">
+                <input class="ui-input ui-input-sm w-step" type="number" :min="minSteps" :max="maxSteps" step="1" :value="steps" @change="onStepsNumber" />
+                <div class="stepper">
+                  <button class="step-btn" type="button" title="Increase" @click="stepsInc">+</button>
+                  <button class="step-btn" type="button" title="Decrease" @click="stepsDec">−</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Row 2: left Width | right Batches -->
-      <div class="cell">
-        <div class="field-wh-grid">
+      <!-- Row 2: Width + Batches -->
+      <div class="gc-row">
+        <div class="gc-col gc-col--wide">
           <div class="field">
             <label class="label-muted">Width</label>
             <div class="row-inline">
@@ -48,41 +50,39 @@
                 </div>
               </div>
               <input class="slider slider-grow" type="range" :min="minWidth" :max="maxWidth" step="64" :value="width" @input="onWidthRange" />
+              <button class="btn-swap" type="button" title="Swap width/height" @click="swapWH">⇵</button>
             </div>
-          </div>
-          <div class="swap-col">
-            <button class="btn-swap" type="button" title="Swap width/height" @click="swapWH">⇵</button>
           </div>
         </div>
-      </div>
-      <div class="cell">
-        <div class="right-row">
-          <div class="field compact">
-            <label class="label-muted">Batch count</label>
-            <div class="number-with-controls">
-              <input class="ui-input ui-input-sm w-batch pad-right" type="number" min="1" :value="batchCount" @change="onBatchCountChange" />
-              <div class="stepper">
-                <button class="step-btn" type="button" title="Increase" @click="batchCountInc">+</button>
-                <button class="step-btn" type="button" title="Decrease" @click="batchCountDec">−</button>
+        <div class="gc-col gc-col--compact">
+          <div class="right-row">
+            <div class="field compact">
+              <label class="label-muted">Batch count</label>
+              <div class="number-with-controls">
+                <input class="ui-input ui-input-sm w-batch pad-right" type="number" min="1" :value="batchCount" @change="onBatchCountChange" />
+                <div class="stepper">
+                  <button class="step-btn" type="button" title="Increase" @click="batchCountInc">+</button>
+                  <button class="step-btn" type="button" title="Decrease" @click="batchCountDec">−</button>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="field compact">
-            <label class="label-muted">Batch size</label>
-            <div class="number-with-controls">
-              <input class="ui-input ui-input-sm w-batch pad-right" type="number" min="1" :value="batchSize" @change="onBatchSizeChange" />
-              <div class="stepper">
-                <button class="step-btn" type="button" title="Increase" @click="batchSizeInc">+</button>
-                <button class="step-btn" type="button" title="Decrease" @click="batchSizeDec">−</button>
+            <div class="field compact">
+              <label class="label-muted">Batch size</label>
+              <div class="number-with-controls">
+                <input class="ui-input ui-input-sm w-batch pad-right" type="number" min="1" :value="batchSize" @change="onBatchSizeChange" />
+                <div class="stepper">
+                  <button class="step-btn" type="button" title="Increase" @click="batchSizeInc">+</button>
+                  <button class="step-btn" type="button" title="Decrease" @click="batchSizeDec">−</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Row 3: left Height | right CFG -->
-      <div class="cell">
-        <div class="field-wh-grid">
+      <!-- Row 3: Height -->
+      <div class="gc-row">
+        <div class="gc-col gc-col--wide">
           <div class="field">
             <label class="label-muted">Height</label>
             <div class="row-inline">
@@ -96,7 +96,6 @@
               <input class="slider slider-grow" type="range" :min="minHeight" :max="maxHeight" step="64" :value="height" @input="onHeightRange" />
             </div>
           </div>
-          <div class="swap-col"></div>
         </div>
       </div>
     </div>

@@ -281,13 +281,17 @@
   @import "./styles/components/prompt-fields.css";
   @import "./styles/components/video-settings-card.css";
   @import "./styles/components/quicksettings.css";
+  @import "./styles/components/quicksettings-overrides-modal.css";
   @import "./styles/components/views-shared.css";
   @import "./styles/components/guided-gen.css";
   @import "./styles/components/prompt-box.css";
   @import "./styles/components/prompt-chip.css";
   @import "./styles/components/settings-form.css";
+  @import "./styles/components/cdx-list.css";
+  @import "./styles/components/param-blocks.css";
   @import "./styles/views/settings.css";
   @import "./styles/views/test.css";
+  @import "./styles/views/tools.css";
   @import "./styles/views/xyz.css";
   @import "./styles/views/wan.css";
   @import "./styles/components/wan22-settings.css";

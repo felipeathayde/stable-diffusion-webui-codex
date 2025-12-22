@@ -2,37 +2,34 @@
   <section class="panels">
     <div class="panel">
       <div class="panel-header">
-        <h2 class="h3">Welcome</h2>
+        <span>Welcome</span>
       </div>
       <div class="panel-body">
-        <p class="muted">
+        <p class="subtitle">
           This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX, WAN 2.2)
           and to navigate to workflows or utilities. Generation happens in tabs and workflows, not here.
         </p>
-        <ul class="list" style="margin-top: .75rem">
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Model Tabs</strong>
-              <p class="muted">
+
+        <ul class="cdx-list">
+          <li class="cdx-list-item">
+            <div class="cdx-list-main">
+              <div class="cdx-list-title">Model Tabs</div>
+              <div class="cdx-list-meta">
                 Create one or more tabs per engine (e.g., several WAN 2.2 tabs for different model dirs) and open them under
                 <code>/models/:tabId</code>. Tabs persist their own parameters.
-              </p>
+              </div>
             </div>
           </li>
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Workflows</strong>
-              <p class="muted">
-                Use the Workflows view to inspect or run saved workflows built from tab snapshots.
-              </p>
+          <li class="cdx-list-item">
+            <div class="cdx-list-main">
+              <div class="cdx-list-title">Workflows</div>
+              <div class="cdx-list-meta">Use the Workflows view to inspect or run saved workflows built from tab snapshots.</div>
             </div>
           </li>
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>SDXL Workspace</strong>
-              <p class="muted">
-                The SDXL view remains available as a single canonical image workspace for quick runs, separate from tabs.
-              </p>
+          <li class="cdx-list-item">
+            <div class="cdx-list-main">
+              <div class="cdx-list-title">SDXL Workspace</div>
+              <div class="cdx-list-meta">The SDXL view remains available as a single canonical image workspace for quick runs, separate from tabs.</div>
             </div>
           </li>
         </ul>
@@ -41,183 +38,192 @@
 
     <div class="panel">
       <div class="panel-header">
-        <h2 class="h3">Create Model Tab</h2>
+        <span>Create Model Tab</span>
       </div>
       <div class="panel-body">
-        <p class="muted">
+        <p class="subtitle">
           Choose an engine type and an optional title. Tabs are identified by a generated id and can be duplicated or removed later.
         </p>
-        <form class="grid grid-3" style="margin-top:.75rem" @submit.prevent="onCreate">
-          <div>
-            <label class="label" for="engineType">Engine</label>
-            <select id="engineType" class="select-md" v-model="newType">
-              <option value="sd15">SD 1.5</option>
-              <option value="sdxl">SDXL</option>
-              <option value="flux">FLUX</option>
-              <option value="wan">WAN 2.2</option>
-            </select>
+
+        <form class="gen-card" @submit.prevent="onCreate">
+          <div class="two-up">
+            <div class="field">
+              <label class="label-muted" for="engineType">Engine</label>
+              <select id="engineType" class="select-md" v-model="newType">
+                <option value="sd15">SD 1.5</option>
+                <option value="sdxl">SDXL</option>
+                <option value="flux">FLUX</option>
+                <option value="wan">WAN 2.2</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label-muted" for="tabTitle">Title (optional)</label>
+              <input id="tabTitle" class="ui-input" type="text" v-model="newTitle" placeholder="e.g. WAN — main video rig" />
+            </div>
           </div>
-          <div>
-            <label class="label" for="tabTitle">Title (optional)</label>
-            <input id="tabTitle" class="ui-input" type="text" v-model="newTitle" placeholder="e.g. WAN — main video rig" />
-          </div>
-          <div class="grid grid-1" style="align-items:flex-end">
-            <button class="btn btn-primary" type="submit">Create Tab</button>
+          <div class="row-inline">
+            <button class="btn btn-md btn-primary" type="submit">Create Tab</button>
           </div>
         </form>
 
-        <div class="panel-sub" style="margin-top:1rem">
-          <h3 class="h5">Existing Tabs</h3>
-          <div v-if="!tabs.length" class="muted">No tabs yet. Create one above.</div>
-          <ul v-else class="list" style="margin-top:.5rem">
-            <li v-for="t in tabs" :key="t.id" class="list-row">
-              <div class="list-col grow">
-                <div class="grid grid-2" style="align-items:center">
-                  <div>
-                    <RouterLink class="link" :to="`/models/${t.id}`">{{ t.title }}</RouterLink>
-                    <span class="muted" style="margin-left:.5rem">{{ t.type.toUpperCase() }}</span>
-                  </div>
-                  <div style="text-align:right">
-                    <label class="switch-label" style="justify-content:flex-end">
-                      <input type="checkbox" :checked="t.enabled" @change="setEnabled(t.id, ($event.target as HTMLInputElement).checked)" />
-                      <span>Enabled</span>
-                    </label>
+        <div class="panel-section">
+          <div class="panel-section-title">Existing Tabs</div>
+          <p v-if="!tabs.length" class="caption">No tabs yet. Create one above.</p>
+          <div v-else class="panel-section">
+            <div v-for="t in tabs" :key="t.id" class="gen-card">
+              <div class="row-split">
+                <div class="row-inline">
+                  <div class="h3">{{ t.title }}</div>
+                  <span class="caption">{{ t.type.toUpperCase() }}</span>
+                </div>
+                <label class="qs-switch qs-switch--sm" :title="t.enabled ? 'Enabled' : 'Disabled'">
+                  <input type="checkbox" :disabled="tabBusy[t.id]" :checked="t.enabled" @change="setEnabled(t.id, ($event.target as HTMLInputElement).checked)" />
+                  <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
+                  <span class="qs-switch-label">Enabled</span>
+                </label>
+              </div>
+
+              <div class="two-up">
+                <div class="field">
+                  <label class="label-muted">Title</label>
+                  <input
+                    class="ui-input"
+                    type="text"
+                    :disabled="tabBusy[t.id]"
+                    :value="titleDraft[t.id] ?? t.title"
+                    @input="setTitleDraft(t.id, ($event.target as HTMLInputElement).value)"
+                    @change="commitTitle(t.id)"
+                    @blur="commitTitle(t.id)"
+                    placeholder="Tab title"
+                    aria-label="Tab title"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label-muted">Models</label>
+                  <div class="row-inline">
+                    <button class="btn btn-sm btn-secondary" type="button" :disabled="tabBusy[t.id]" @click="load(t.id)">Load</button>
+                    <button class="btn btn-sm btn-secondary" type="button" :disabled="tabBusy[t.id]" @click="unload(t.id)">Unload</button>
+                    <button class="btn btn-sm btn-outline" type="button" :disabled="tabBusy[t.id]" @click="void router.push(`/models/${t.id}`)">Open</button>
                   </div>
                 </div>
-                <div class="grid grid-2" style="margin-top:.5rem">
-                  <div>
-                    <label class="label">Title</label>
-                    <input
-                      class="ui-input"
-                      type="text"
-                      :value="titleDraft[t.id] ?? t.title"
-                      @input="setTitleDraft(t.id, ($event.target as HTMLInputElement).value)"
-                      @change="commitTitle(t.id)"
-                      @blur="commitTitle(t.id)"
-                      placeholder="Tab title"
-                      aria-label="Tab title"
-                    />
-                  </div>
-                  <div>
-                    <label class="label">Models</label>
-                    <div class="grid grid-3">
-                      <button class="btn btn-sm btn-secondary" type="button" :disabled="tabBusy[t.id]" @click="load(t.id)">Load</button>
-                      <button class="btn btn-sm" type="button" :disabled="tabBusy[t.id]" @click="unload(t.id)">Unload</button>
-                      <button class="btn btn-sm btn-ghost" type="button" @click="void router.push(`/models/${t.id}`)">Open</button>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="tabError[t.id]" class="panel-error" style="margin-top:.5rem">{{ tabError[t.id] }}</div>
               </div>
-              <div class="list-col">
-                <button class="btn btn-sm" type="button" :disabled="tabBusy[t.id]" @click="dup(t.id)">Duplicate</button>
-                <button class="btn btn-sm btn-destructive" type="button" style="margin-left:.5rem" :disabled="tabBusy[t.id]" @click="remove(t.id)">Remove</button>
+
+              <div v-if="tabError[t.id]" class="panel-error">{{ tabError[t.id] }}</div>
+
+              <div class="row-inline">
+                <button class="btn btn-sm btn-outline" type="button" :disabled="tabBusy[t.id]" @click="dup(t.id)">Duplicate</button>
+                <button class="btn btn-sm btn-destructive" type="button" :disabled="tabBusy[t.id]" @click="remove(t.id)">Remove</button>
               </div>
-            </li>
-          </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="panel">
       <div class="panel-header">
-        <h2 class="h3">Docs &amp; Help</h2>
+        <span>Docs &amp; Help</span>
       </div>
       <div class="panel-body">
-        <p class="muted">
+        <p class="subtitle">
           The paths below refer to files in this repository and act as the canonical documentation for the Codex UI.
           Open them in your editor when you need deeper guidance. A short Markdown help snippet is also loaded from
           <code>apps/interface/public/help/home-overview.md</code>.
         </p>
-        <h3 class="h5" style="margin-top:.75rem">Design &amp; Flows</h3>
-        <ul class="list" style="margin-top:.25rem">
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Model tabs &amp; workflows spec</strong>
-              <p class="muted"><code>.sangoi/design/flows/model-workflows.md</code></p>
-            </div>
-          </li>
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Frontend architecture guide</strong>
-              <p class="muted"><code>.sangoi/frontend/guidelines/frontend-architecture-guide.md</code></p>
-            </div>
-          </li>
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Frontend style guide</strong>
-              <p class="muted"><code>.sangoi/frontend/guidelines/frontend-style-guide.md</code></p>
-            </div>
-          </li>
-        </ul>
 
-        <h3 class="h5" style="margin-top:.75rem">Tabs &amp; Workflows Tasks</h3>
-        <ul class="list" style="margin-top:.25rem">
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>F1–F6 tasks</strong>
-              <p class="muted">
-                <code>.sangoi/tasks/F1-model-tabs-infra.md</code>,
-                <code>F2-wan-tab.md</code>,
-                <code>F3-image-tabs.md</code>,
-                <code>F4-tabs-workflows-backend.md</code>,
-                <code>F5-workflows-tab.md</code>,
-                <code>F6-refinements.md</code>
-              </p>
-            </div>
-          </li>
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Open tasks index</strong>
-              <p class="muted"><code>.sangoi/tasks/open-tasks-index.md</code></p>
-            </div>
-          </li>
-        </ul>
-
-        <h3 class="h5" style="margin-top:.75rem">Operational References</h3>
-        <ul class="list" style="margin-top:.25rem">
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Repository structure</strong>
-              <p class="muted"><code>.sangoi/architecture/repo-structure.md</code></p>
-            </div>
-          </li>
-          <li class="list-row">
-            <div class="list-col grow">
-              <strong>Frontend task logs</strong>
-              <p class="muted"><code>.sangoi/task-logs/2025-12-03-frontend-*.md</code>, <code>.sangoi/task-logs/2025-12-04-frontend-*.md</code></p>
-            </div>
-          </li>
-        </ul>
-
-        <h3 class="h5" style="margin-top:.75rem">Inline help (Markdown)</h3>
-        <div class="toolbar">
-          <button
-            class="btn btn-sm"
-            :class="helpTopic === 'home' ? 'btn-secondary' : 'btn-ghost'"
-            type="button"
-            @click="setHelpTopic('home')"
-          >
-            Home
-          </button>
-          <button
-            class="btn btn-sm"
-            :class="helpTopic === 'wan22' ? 'btn-secondary' : 'btn-ghost'"
-            type="button"
-            @click="setHelpTopic('wan22')"
-          >
-            WAN22 video
-          </button>
-          <button
-            class="btn btn-sm"
-            :class="helpTopic === 'workflows' ? 'btn-secondary' : 'btn-ghost'"
-            type="button"
-            @click="setHelpTopic('workflows')"
-          >
-            Workflows
-          </button>
+        <div class="panel-section">
+          <div class="panel-section-title">Design &amp; Flows</div>
+          <ul class="cdx-list">
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">Model tabs &amp; workflows spec</div>
+                <div class="cdx-list-meta"><code>.sangoi/design/flows/model-workflows.md</code></div>
+              </div>
+            </li>
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">Frontend architecture guide</div>
+                <div class="cdx-list-meta"><code>.sangoi/frontend/guidelines/frontend-architecture-guide.md</code></div>
+              </div>
+            </li>
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">Frontend style guide</div>
+                <div class="cdx-list-meta"><code>.sangoi/frontend/guidelines/frontend-style-guide.md</code></div>
+              </div>
+            </li>
+          </ul>
         </div>
-        <MarkdownHelp :src="helpSrc" />
+
+        <div class="panel-section">
+          <div class="panel-section-title">Tabs &amp; Workflows Tasks</div>
+          <ul class="cdx-list">
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">F1–F6 tasks</div>
+                <div class="cdx-list-meta">
+                  <code>.sangoi/tasks/F1-model-tabs-infra.md</code>, <code>F2-wan-tab.md</code>, <code>F3-image-tabs.md</code>, <code>F4-tabs-workflows-backend.md</code>,
+                  <code>F5-workflows-tab.md</code>, <code>F6-refinements.md</code>
+                </div>
+              </div>
+            </li>
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">Open tasks index</div>
+                <div class="cdx-list-meta"><code>.sangoi/tasks/open-tasks-index.md</code></div>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="panel-section">
+          <div class="panel-section-title">Operational References</div>
+          <ul class="cdx-list">
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">Repository structure</div>
+                <div class="cdx-list-meta"><code>.sangoi/architecture/repo-structure.md</code></div>
+              </div>
+            </li>
+            <li class="cdx-list-item">
+              <div class="cdx-list-main">
+                <div class="cdx-list-title">Frontend task logs</div>
+                <div class="cdx-list-meta"><code>.sangoi/task-logs/2025-12-03-frontend-*.md</code>, <code>.sangoi/task-logs/2025-12-04-frontend-*.md</code></div>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="panel-section">
+          <div class="panel-section-title">Inline help (Markdown)</div>
+          <div class="toolbar">
+            <button
+              class="btn btn-sm"
+              :class="helpTopic === 'home' ? 'btn-secondary' : 'btn-ghost'"
+              type="button"
+              @click="setHelpTopic('home')"
+            >
+              Home
+            </button>
+            <button
+              class="btn btn-sm"
+              :class="helpTopic === 'wan22' ? 'btn-secondary' : 'btn-ghost'"
+              type="button"
+              @click="setHelpTopic('wan22')"
+            >
+              WAN22 video
+            </button>
+            <button
+              class="btn btn-sm"
+              :class="helpTopic === 'workflows' ? 'btn-secondary' : 'btn-ghost'"
+              type="button"
+              @click="setHelpTopic('workflows')"
+            >
+              Workflows
+            </button>
+          </div>
+          <MarkdownHelp :src="helpSrc" />
+        </div>
       </div>
     </div>
   </section>

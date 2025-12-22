@@ -8,5 +8,6 @@
   .radio-item { display: inline-flex; align-items: center; gap: .35rem; }
   .form-actions { margin-top: .75rem; display: flex; gap: .5rem; align-items: center; }
   .ui-input.w-24{ width:6rem; }
+  .settings-form input[type='checkbox'],
+  .settings-form input[type='radio'] { accent-color: hsl(var(--accent)); }
 }
-

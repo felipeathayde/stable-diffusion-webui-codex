@@ -1,27 +1,27 @@
 <template>
   <div class="settings-form">
-    <div v-if="fields.length === 0" class="card text-xs opacity-70">No settings in this section.</div>
+    <div v-if="fields.length === 0" class="card caption">No settings in this section.</div>
     <div v-else class="grid-col">
       <div v-for="f in fields" :key="f.key" class="form-row">
         <label class="form-label">{{ f.label }}</label>
         <div class="form-control">
           <template v-if="f.type === 'checkbox'">
-            <input type="checkbox" class="ui-checkbox" :checked="asBool(model[f.key])" @change="onChange(f.key, ($event.target as HTMLInputElement).checked)" />
+            <input type="checkbox" :checked="asBool(model[f.key])" @change="onChange(f.key, ($event.target as HTMLInputElement).checked)" />
           </template>
           <template v-else-if="f.type === 'slider'">
-            <input type="range" class="ui-range" :min="f.min ?? 0" :max="f.max ?? 100" :step="f.step ?? 1" :value="asNumber(model[f.key], f.default)" @input="onChange(f.key, asNumber(($event.target as HTMLInputElement).value))" />
+            <input type="range" class="slider" :min="f.min ?? 0" :max="f.max ?? 100" :step="f.step ?? 1" :value="asNumber(model[f.key], f.default)" @input="onChange(f.key, asNumber(($event.target as HTMLInputElement).value))" />
             <input type="number" class="ui-input w-24" :min="f.min ?? undefined" :max="f.max ?? undefined" :step="f.step ?? 1" :value="asNumber(model[f.key], f.default)" @input="onChange(f.key, asNumber(($event.target as HTMLInputElement).value))" />
           </template>
           <template v-else-if="f.type === 'radio' && f.choices && f.choices.length">
             <div class="radio-group">
               <label v-for="opt in f.choices" :key="String(opt)" class="radio-item">
-                <input type="radio" :name="'rad-'+f.key" class="ui-radio" :checked="String(model[f.key])===String(opt)" @change="onChange(f.key, opt)" />
+                <input type="radio" :name="'rad-'+f.key" :checked="String(model[f.key])===String(opt)" @change="onChange(f.key, opt)" />
                 <span>{{ String(opt) }}</span>
               </label>
             </div>
           </template>
           <template v-else-if="f.type === 'dropdown'">
-            <select class="ui-select" :value="String(model[f.key] ?? '')" @change="onChange(f.key, ($event.target as HTMLSelectElement).value)">
+            <select class="select-md" :value="String(model[f.key] ?? '')" @change="onChange(f.key, ($event.target as HTMLSelectElement).value)">
               <option v-for="opt in (f.choices ?? [])" :key="String(opt)" :value="String(opt)">{{ String(opt) }}</option>
             </select>
           </template>
@@ -32,7 +32,7 @@
             <input type="color" class="ui-input" :value="String(model[f.key] ?? f.default ?? '#000000')" @input="onChange(f.key, ($event.target as HTMLInputElement).value)" />
           </template>
           <template v-else-if="f.type === 'html'">
-            <div class="card text-xs opacity-70" v-html="String(f.default ?? '')" />
+            <div class="card caption" v-html="String(f.default ?? '')" />
           </template>
           <template v-else>
             <input type="text" class="ui-input" :value="String(model[f.key] ?? f.default ?? '')" @input="onChange(f.key, ($event.target as HTMLInputElement).value)" />
@@ -41,7 +41,7 @@
       </div>
       <div class="form-actions">
         <button class="btn btn-sm btn-primary" :disabled="pending || changedCount===0" @click="applyChanges">Apply</button>
-        <span class="text-xs opacity-60" v-if="changedCount>0">{{ changedCount }} change(s) pending</span>
+        <span class="caption" v-if="changedCount>0">{{ changedCount }} change(s) pending</span>
       </div>
     </div>
   </div>
@@ -100,16 +100,3 @@ function asNumber(v: unknown, def?: unknown) {
   return 0
 }
 </script>
-
-<style scoped>
-.settings-form { display: block; }
-.grid-col { display: flex; flex-direction: column; gap: .75rem; }
-.form-row { display: grid; grid-template-columns: 1fr; gap: .35rem; }
-.form-label { font-size: .85rem; opacity: .85; }
-.form-control { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-.radio-group { display: flex; gap: .75rem; flex-wrap: wrap; }
-.radio-item { display: inline-flex; align-items: center; gap: .35rem; }
-.form-actions { margin-top: .75rem; display: flex; gap: .5rem; align-items: center; }
-.ui-input.w-24{ width:6rem; }
-.btn.sm{ padding: .3rem .6rem; font-size: .85rem; }
-</style>

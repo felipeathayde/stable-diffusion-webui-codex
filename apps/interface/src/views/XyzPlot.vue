@@ -43,7 +43,7 @@
 
           <div class="toolbar">
             <button class="btn btn-primary btn-md" type="button" :disabled="store.status === 'running'" @click="onRun">Run XYZ</button>
-            <div class="toolbar" style="gap:0.35rem; align-items:center;">
+            <div class="toolbar">
               <button class="btn btn-outline btn-sm" type="button" :disabled="store.status !== 'running'" @click="() => store.stop('after_current')">Stop after current</button>
               <button class="btn btn-destructive btn-sm" type="button" :disabled="store.status !== 'running'" @click="() => store.stop('immediate')">Stop now</button>
             </div>
@@ -63,7 +63,7 @@
               <span class="h3">Z: {{ group.label }}</span>
               <span class="caption">{{ group.rows.length }} cells</span>
             </div>
-            <div class="xyz-grid" :style="gridTemplate">
+            <div class="xyz-grid">
               <div v-for="cell in group.rows" :key="cellKey(cell)" class="xyz-cell" :data-status="cell.status">
                 <div class="xyz-cell-thumb">
                   <template v-if="cell.image">
@@ -92,17 +92,12 @@
 
 <script setup lang="ts">
 // tags: xyz, sweeps, grid
-import { computed } from 'vue'
 import { AXIS_OPTIONS, labelOf } from '../utils/xyz'
 import { useXyzStore } from '../stores/xyz'
 import type { GeneratedImage } from '../api/types'
 
 const store = useXyzStore()
 const axisOptions = AXIS_OPTIONS
-
-const gridTemplate = computed(() => ({
-  gridTemplateColumns: `repeat(${Math.max(1, store.xValues.length || 1)}, minmax(0, 1fr))`,
-}))
 
 function onRun(): void {
   void store.run()

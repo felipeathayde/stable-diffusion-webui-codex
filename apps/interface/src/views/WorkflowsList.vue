@@ -1,21 +1,21 @@
 <template>
-  <section>
+  <section class="panel-stack">
     <div class="panel">
       <div class="panel-header">
-        <h2 class="h3">Workflows</h2>
+        <span>Workflows</span>
       </div>
       <div class="panel-body">
         <div v-if="workflows.error" class="panel-error">{{ workflows.error }}</div>
-        <div v-else-if="!items.length" class="muted">No workflows yet. Use “Save snapshot” from a model tab.</div>
-        <ul class="list" v-else>
-          <li v-for="wf in items" :key="wf.id" class="list-row">
-            <div class="list-col grow">
-              <div class="strong">{{ wf.name }}</div>
-              <div class="muted small">Type: {{ wf.type.toUpperCase() }} • Created: {{ new Date(wf.created_at).toLocaleString() }}</div>
+        <p v-else-if="!items.length" class="caption">No workflows yet. Use “Save snapshot” from a model tab.</p>
+        <ul v-else class="cdx-list">
+          <li v-for="wf in items" :key="wf.id" class="cdx-list-item">
+            <div class="cdx-list-main">
+              <div class="cdx-list-title">{{ wf.name }}</div>
+              <div class="cdx-list-meta">Type: {{ wf.type.toUpperCase() }} · Created: {{ new Date(wf.created_at).toLocaleString() }}</div>
             </div>
-            <div class="list-col">
-              <RouterLink class="btn btn-sm" :to="`/models/${wf.source_tab_id}`">Open Source Tab</RouterLink>
-              <button class="btn btn-sm btn-destructive" style="margin-left:.5rem" @click="remove(wf.id)">Delete</button>
+            <div class="cdx-list-actions">
+              <RouterLink class="btn btn-sm btn-outline" :to="`/models/${wf.source_tab_id}`">Open source tab</RouterLink>
+              <button class="btn btn-sm btn-destructive" type="button" @click="remove(wf.id)">Delete</button>
             </div>
           </li>
         </ul>

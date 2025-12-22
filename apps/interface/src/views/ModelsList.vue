@@ -1,29 +1,30 @@
 <template>
-  <section>
+  <section class="panel-stack">
     <div class="panel">
       <div class="panel-header">
-        <h2 class="h3">Model Tabs</h2>
-        <div class="panel-actions">
+        <span>Model Tabs</span>
+        <div class="toolbar">
           <select class="select-md" v-model="newType" aria-label="New tab type">
             <option value="sd15">SD 1.5</option>
             <option value="sdxl">SDXL</option>
             <option value="flux">FLUX</option>
             <option value="wan">WAN 2.2</option>
           </select>
-          <button class="btn btn-primary" style="margin-left: .5rem" @click="createTab">New Tab</button>
+          <button class="btn btn-sm btn-primary" type="button" @click="createTab">New Tab</button>
         </div>
       </div>
       <div class="panel-body">
-        <div v-if="!tabs.length" class="muted">No tabs yet. Create one above.</div>
-        <ul class="list">
-          <li v-for="t in tabs" :key="t.id" class="list-row">
-            <div class="list-col grow">
-              <RouterLink class="link" :to="`/models/${t.id}`">{{ t.title }}</RouterLink>
-              <span class="muted" style="margin-left:.5rem">{{ t.type.toUpperCase() }}</span>
+        <p v-if="!tabs.length" class="caption">No tabs yet. Create one above.</p>
+        <ul v-else class="cdx-list">
+          <li v-for="t in tabs" :key="t.id" class="cdx-list-item">
+            <div class="cdx-list-main">
+              <div class="cdx-list-title">{{ t.title }}</div>
+              <div class="cdx-list-meta">{{ t.type.toUpperCase() }} · {{ t.id }}</div>
             </div>
-            <div class="list-col">
-              <button class="btn btn-sm" @click="dup(t.id)">Duplicate</button>
-              <button class="btn btn-sm btn-destructive" style="margin-left:.5rem" @click="remove(t.id)">Remove</button>
+            <div class="cdx-list-actions">
+              <RouterLink class="btn btn-sm btn-outline" :to="`/models/${t.id}`">Open</RouterLink>
+              <button class="btn btn-sm btn-secondary" type="button" @click="dup(t.id)">Duplicate</button>
+              <button class="btn btn-sm btn-destructive" type="button" @click="remove(t.id)">Remove</button>
             </div>
           </li>
         </ul>

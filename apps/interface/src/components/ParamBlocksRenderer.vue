@@ -1,7 +1,7 @@
 <template>
   <div class="param-blocks">
     <div v-for="blk in blocks" :key="blk.id" class="panel-section">
-      <div class="param-grid" :style="gridStyle(blk)">
+      <div class="param-grid" :data-cols="gridCols(blk)">
         <template v-for="field in blk.fields" :key="field.key">
           <div v-if="isVisible(field, blk)" class="field">
             <label class="label-muted">{{ field.label }}</label>
@@ -69,9 +69,10 @@ function onChangeSelect(e: Event, f: UiField): void {
   writeField(f, (e.target as HTMLSelectElement).value)
 }
 
-function gridStyle(blk: UiBlock): Record<string, string> {
-  const cols = Math.max(1, Number(blk.layout?.columns || 2))
-  return { display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(12rem, 1fr))`, gap: 'var(--space-sm)' }
+function gridCols(blk: UiBlock): number {
+  const raw = Math.trunc(Number(blk.layout?.columns || 2))
+  const cols = Number.isFinite(raw) ? raw : 2
+  return Math.min(4, Math.max(1, cols))
 }
 
 function isVisible(field: UiField, blk: UiBlock): boolean {
@@ -87,7 +88,3 @@ function isVisible(field: UiField, blk: UiBlock): boolean {
   return true
 }
 </script>
-
-<style>
-.param-blocks .toggle.inline { display: inline-flex; align-items: center; gap: .5rem; }
-</style>

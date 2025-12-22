@@ -21,4 +21,4 @@ Status: Active
 - 2025-12-14: QuickSettings WAN text encoder dropdown now prefers concrete `.safetensors` files under `wan22_tenc`, emitting `wan22/<abs_path>` values that the WAN payload builder normalizes before POSTing.
 - 2025-12-14: WAN tab UI panels live under `components/wan/` (`WanStagePanel.vue`, `WanVideoOutputPanel.vue`) to avoid duplicating High/Low/Output markup in the view.
 - 2025-12-15: `VideoSettingsCard.vue` gained a dedicated stylesheet (`styles/components/video-settings-card.css`) and the WAN tab’s parameter sections were restyled to use card layouts consistently.
-- 2025-12-22: `GenerationSettingsCard.vue` now exposes a CFG slider and moves seed actions (🎲/↺) inside the seed input; `VideoSettingsCard.vue` adds an FPS slider.
+- 2025-12-22: `GenerationSettingsCard.vue` now exposes a CFG slider (next to Seed via a flex footer) and moves seed actions (🎲/↺) inside the seed input; `VideoSettingsCard.vue` adds an FPS slider.

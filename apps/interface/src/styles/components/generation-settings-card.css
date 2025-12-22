@@ -6,6 +6,8 @@
   .gen-card .swap-col { grid-row: 1 / span 2; grid-column: 2; display: flex; align-items: center; justify-content: center; }
   .gen-card .right-row { display: flex; gap: 0.8rem; }
   .gen-card .gc-seed { margin-top: 0.6rem; }
+  .gen-card .gc-footer { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 1rem; }
+  .gen-card .gc-footer > .field { flex: 1 1 18rem; min-width: 0; }
   .gen-card .field { display: flex; flex-direction: column; width: 100%; gap: 0.4rem; }
   .gen-card .row-split { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
   .gen-card .row-inline { display: flex; align-items: center; gap: 0.6rem; }
@@ -25,14 +27,13 @@
   .gen-card .w-width { width: 8.50rem !important; }
   .gen-card .w-height { width: 8.5rem !important; }
   .gen-card .number-with-controls .pad-right { padding-right: 4.5rem; }
-  .gen-card .number-with-controls .stepper { position: absolute; right: 0.375rem; display: inline-flex; align-items: center; gap: 0.375rem; }
+  .gen-card .number-with-controls .stepper { position: absolute; right: 0.375rem; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 0.375rem; }
   .gen-card .w-step { width: 8.5rem !important; }
   .gen-card .w-cfg { width: 8.5rem !important; }
   .gen-card .step-btn { width: 1.75rem; height: 1.75rem; border-radius: 0.375rem; border: 0.0625rem solid hsla(0,0%,100%,0.18); background: hsla(0,0%,100%,0.08); font-weight: 700; }
   .gen-card .step-btn:hover { background: hsla(0,0%,100%,0.16); }
   .gen-card .field-right { display: contents; }
   .gen-card .compact .ui-input-sm { height: var(--control-h-sm); }
-  .gen-card .cfg-row { display: flex; }
   .gen-card .cfg-field { margin-left: auto; width: 100% }
 
   /* Hide default number spinners just inside this component */

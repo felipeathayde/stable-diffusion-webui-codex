@@ -1,6 +1,6 @@
 <template>
   <Modal v-model="open" title="WAN Assets">
-    <div class="wan22-grid">
+    <div class="cdx-form-grid">
       <div class="quicksettings-group">
         <label class="label-muted">WAN Metadata</label>
         <div class="qs-row">

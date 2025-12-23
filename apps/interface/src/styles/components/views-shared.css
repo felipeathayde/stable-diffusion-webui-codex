@@ -14,6 +14,21 @@
   /* Settings: Path list header */
   .pathlist-controls { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm); }
 
+  /* Generic form layout helpers */
+  .cdx-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: var(--space-sm);
+    align-items: start;
+  }
+
+  .cdx-form-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
   /* ImageModelTab results grid */
   .results-grid { display: grid; gap: var(--space-sm); grid-template-columns: repeat(auto-fit, minmax(11.25rem, 1fr)); }
   .results-grid img {

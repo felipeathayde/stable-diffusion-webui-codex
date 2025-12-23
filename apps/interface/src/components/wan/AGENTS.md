@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2025-12-22
+Last Review: 2025-12-23
 Status: Active
 
 ## Purpose
@@ -19,3 +19,4 @@ Status: Active
 - 2025-12-20: Removed stage-level “Lightning/Use LoRA” checkboxes; LoRA selection is now a per-stage `<select>` shown only in `LightX2V` mode (WAN QuickSettings).
 - 2025-12-22: `WanStagePanel.vue` now uses SDXL-style sliders + steppers for Steps/CFG and moves seed actions (🎲/↺) inside the seed input.
 - 2025-12-22: `wan22-settings.css` switches `.wan22-grid` to flex-wrap and adds `wan22-field--{sm,wide,full}` sizing helpers; WAN panels now use these helpers to keep sliders readable without hard grid columns.
+- 2025-12-23: WAN panels now use shared gen-card layout primitives (`gc-row`, `gc-col`, `row-split`, `cdx-form-row`) and the new `gen-card--embedded` variant, reducing `wan22-*` layout classes in the tab UI.

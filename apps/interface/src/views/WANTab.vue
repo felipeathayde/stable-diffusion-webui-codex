@@ -9,7 +9,7 @@
           </div>
 
           <div v-if="mode !== 'txt2vid'" class="gen-card">
-            <div class="wan22-toggle-head">
+            <div class="row-split">
               <span class="label-muted">Input</span>
               <span class="caption">Mode is set in QuickSettings.</span>
             </div>
@@ -37,7 +37,7 @@
                 @clear="clearInitVideo"
               >
                 <template #footer>
-                  <div class="wan22-grid mt-2">
+                  <div class="cdx-form-grid mt-2">
                     <div>
                       <label class="label-muted">Video path (optional)</label>
                       <input class="ui-input" type="text" :disabled="isRunning" :value="video.initVideoPath" placeholder="relative/path/to/video.mp4" @change="setVideo({ initVideoPath: ($event.target as HTMLInputElement).value })" />
@@ -61,11 +61,11 @@
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
           <div class="gen-card">
-            <div class="wan22-toggle-head">
+            <div class="row-split">
               <span class="label-muted">Video</span>
             </div>
-            <div class="wan22-grid">
-              <div class="wan22-field--wide">
+            <div class="gc-row">
+              <div class="gc-col gc-col--wide">
                 <label class="label-muted">Width (px)</label>
                 <div class="row-inline">
                   <div class="number-with-controls">
@@ -78,7 +78,7 @@
                   <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.width" @input="onWidthRange" />
                 </div>
               </div>
-              <div class="wan22-field--wide">
+              <div class="gc-col gc-col--wide">
                 <label class="label-muted">Height (px)</label>
                 <div class="row-inline">
                   <div class="number-with-controls">
@@ -91,7 +91,7 @@
                   <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.height" @input="onHeightRange" />
                 </div>
               </div>
-              <div class="wan22-field--sm">
+              <div class="gc-col">
                 <label class="label-muted">Aspect</label>
                 <select class="select-md" :disabled="isRunning" :value="aspectMode" @change="onAspectModeChange">
                   <option value="free">Free</option>
@@ -115,62 +115,62 @@
           </div>
 
           <div v-if="mode === 'vid2vid'" class="gen-card">
-            <div class="wan22-toggle-head">
+            <div class="row-split">
               <span class="label-muted">Video2Video</span>
             </div>
-            <div class="wan22-grid">
-              <div>
+            <div class="gc-row">
+              <div class="gc-col">
                 <label class="label-muted">Strength</label>
                 <input class="ui-input" type="number" min="0" max="1" step="0.05" :disabled="isRunning" :value="video.vid2vidStrength" @change="setVideo({ vid2vidStrength: Number(($event.target as HTMLInputElement).value) })" />
                 <p class="caption mt-1">Higher = more change. Lower = closer to source video.</p>
               </div>
-              <div>
+              <div class="gc-col">
                 <label class="label-muted">Method</label>
                 <select class="select-md" :disabled="isRunning" :value="video.vid2vidMethod" @change="setVideo({ vid2vidMethod: (($event.target as HTMLSelectElement).value === 'native' ? 'native' : 'flow_chunks') })">
                   <option value="flow_chunks">Flow chunks (GGUF-friendly)</option>
                   <option value="native">Native (Diffusers video input)</option>
                 </select>
               </div>
-              <div>
+              <div class="gc-col">
                 <label class="label-muted">Chunk Frames</label>
                 <input class="ui-input" type="number" min="2" max="128" :disabled="isRunning" :value="video.vid2vidChunkFrames" @change="setVideo({ vid2vidChunkFrames: toInt($event, video.vid2vidChunkFrames) })" />
               </div>
-              <div>
+              <div class="gc-col">
                 <label class="label-muted">Overlap</label>
                 <input class="ui-input" type="number" min="0" max="127" :disabled="isRunning" :value="video.vid2vidOverlapFrames" @change="setVideo({ vid2vidOverlapFrames: toInt($event, video.vid2vidOverlapFrames) })" />
               </div>
             </div>
-            <div class="wan22-toggle-row">
-              <label class="wan22-toggle qs-switch qs-switch--sm">
+            <div class="cdx-form-row">
+              <label class="qs-switch qs-switch--sm">
                 <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFps" @change="setVideo({ vid2vidUseSourceFps: ($event.target as HTMLInputElement).checked })" />
                 <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                <span>Use source FPS</span>
+                <span class="label-muted">Use source FPS</span>
               </label>
-              <label class="wan22-toggle qs-switch qs-switch--sm">
+              <label class="qs-switch qs-switch--sm">
                 <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFrames" @change="setVideo({ vid2vidUseSourceFrames: ($event.target as HTMLInputElement).checked })" />
                 <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                <span>Use source length</span>
+                <span class="label-muted">Use source length</span>
               </label>
-              <label class="wan22-toggle qs-switch qs-switch--sm">
+              <label class="qs-switch qs-switch--sm">
                 <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidFlowEnabled" @change="setVideo({ vid2vidFlowEnabled: ($event.target as HTMLInputElement).checked })" />
                 <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                <span>Optical flow</span>
+                <span class="label-muted">Optical flow</span>
               </label>
             </div>
-            <div v-if="video.vid2vidFlowEnabled" class="wan22-grid">
-              <div>
+            <div v-if="video.vid2vidFlowEnabled" class="gc-row">
+              <div class="gc-col">
                 <label class="label-muted">Flow downscale</label>
                 <input class="ui-input" type="number" min="1" max="8" :disabled="isRunning" :value="video.vid2vidFlowDownscale" @change="setVideo({ vid2vidFlowDownscale: toInt($event, video.vid2vidFlowDownscale) })" />
                 <p class="caption mt-1">Higher = faster/rougher. 2 is a good default.</p>
               </div>
-              <div>
+              <div class="gc-col">
                 <label class="label-muted">Model</label>
                 <select class="select-md" :disabled="isRunning" :value="video.vid2vidFlowUseLarge ? 'large' : 'small'" @change="setVideo({ vid2vidFlowUseLarge: (($event.target as HTMLSelectElement).value === 'large') })">
                   <option value="small">RAFT small</option>
                   <option value="large">RAFT large</option>
                 </select>
               </div>
-              <div>
+              <div class="gc-col">
                 <label class="label-muted">Preview frames</label>
                 <input class="ui-input" type="number" min="1" max="512" :disabled="isRunning" :value="video.vid2vidPreviewFrames" @change="setVideo({ vid2vidPreviewFrames: toInt($event, video.vid2vidPreviewFrames) })" />
                 <p class="caption mt-1">UI preview only; full video is exported to disk.</p>
@@ -200,11 +200,11 @@
           <details class="accordion">
             <summary>Low Noise</summary>
             <div class="accordion-body">
-              <div class="wan22-toggle-row">
-                <label class="wan22-toggle qs-switch qs-switch--sm">
+              <div class="cdx-form-row">
+                <label class="qs-switch qs-switch--sm">
                   <input type="checkbox" :disabled="isRunning" :checked="lowFollowsHigh" @change="onLowFollowsHighChange" />
                   <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                  <span>Use High settings</span>
+                  <span class="label-muted">Use High settings</span>
                 </label>
                 <span v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</span>
               </div>
@@ -288,7 +288,7 @@
             </div>
           </div>
           <div v-if="videoUrl" class="gen-card mb-3">
-            <div class="wan22-toggle-head">
+            <div class="row-split">
               <span class="label-muted">Exported Video</span>
               <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
             </div>
@@ -305,7 +305,7 @@
           </ResultViewer>
 
           <div v-if="info" class="gen-card mt-3">
-            <div class="wan22-toggle-head">
+            <div class="row-split">
               <span class="label-muted">Generation Info</span>
               <div class="wan-header-actions">
                 <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
@@ -315,7 +315,7 @@
           </div>
 
           <div class="gen-card mt-3">
-            <div class="wan22-toggle-head">
+            <div class="row-split">
               <span class="label-muted">History</span>
             </div>
             <div v-if="history.length" class="wan-history-list">

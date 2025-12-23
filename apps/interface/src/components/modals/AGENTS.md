@@ -2,7 +2,7 @@
 # apps/interface/src/components/modals Overview
 Date: 2025-12-04
 Owner: Frontend Maintainers
-Last Review: 2025-12-22
+Last Review: 2025-12-23
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - Avoid `style="..."` in templates; prefer shared primitives and CSS in `apps/interface/src/styles/**`.
 - `LoraModal.vue` inserts `<lora:name:weight>` tokens via buttons targeting the positive/negative prompt; views decide which field to update based on the `target` payload.
 - Keep modals presentational; stores and routing decisions live in views/stores.
+- 2025-12-23: `QuickSettingsWanAssetsModal.vue` now uses the shared `cdx-form-grid` helper for layout (no WAN-specific grid classes).

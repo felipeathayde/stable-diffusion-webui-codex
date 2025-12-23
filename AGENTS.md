@@ -95,6 +95,14 @@ Sandbox artifacts and temp paths are handled as if they could leak to production
 If you ever feel the urge to rename half the codebase because you are bored, lie down until it passes.
 Rename only when the old name is a lie.
 
+When you touch documentation, you do not talk to ghosts.
+
+If a module is dead, its name leaves your mouth. If a function was renamed, the old name vanishes from the page like it never had a birth certificate. Docs are not a memorial wall for what used to exist. They are a crystal-clear snapshot of what lives in the code right now.
+
+You do not write "we used to.." unless the past behavior actively matters to understanding a migration or a known limitation today. You do not sprinkle comments about endpoints that were deleted, flows that were ripped out, or flags that no longer ship. Every stale reference is a landmine for the next person, and you don’t lace the beach with mines.
+
+If the code changed, the doc changes with it. If the code was removed, the doc stops mentioning it. No nostalgia, no archaeology, no "just in case someone remembers". The only truth allowed in the docs is the truth the code can back up today.
+
 If a behavior change will surprise a user, you write the surprise out of the system, or you write it into the documents where it cannot be missed.
 
 ---

@@ -1,0 +1,64 @@
+@layer components {
+  .cdx-stepper-input {
+    --cdx-stepper-btn-size: 1.75rem;
+    --cdx-stepper-input-h: var(--control-h-sm);
+
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .cdx-stepper-input[data-size="md"] {
+    --cdx-stepper-btn-size: 2rem;
+    --cdx-stepper-input-h: var(--control-h-md);
+  }
+
+  .cdx-stepper-input__input {
+    height: var(--cdx-stepper-input-h);
+  }
+
+  .cdx-stepper-input__input--buttons {
+    padding-right: calc(var(--cdx-stepper-btn-size) * 2 + 1rem);
+  }
+
+  .cdx-stepper-input__controls {
+    position: absolute;
+    right: 0.375rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
+  .cdx-stepper-input__btn {
+    width: var(--cdx-stepper-btn-size);
+    height: var(--cdx-stepper-btn-size);
+    border-radius: 0.375rem;
+    border: 0.0625rem solid hsla(0, 0%, 100%, 0.18);
+    background: hsla(0, 0%, 100%, 0.08);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .cdx-stepper-input__btn:hover {
+    background: hsla(0, 0%, 100%, 0.16);
+  }
+
+  .cdx-stepper-input__btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Hide default number spinners just inside this component */
+  .cdx-stepper-input input[type='number']::-webkit-outer-spin-button,
+  .cdx-stepper-input input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .cdx-stepper-input input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+

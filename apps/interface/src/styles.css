@@ -283,6 +283,8 @@
   @import "./styles/components/quicksettings.css";
   @import "./styles/components/quicksettings-overrides-modal.css";
   @import "./styles/components/views-shared.css";
+  @import "./styles/components/cdx-stepper-input.css";
+  @import "./styles/components/cdx-slider-field.css";
   @import "./styles/components/guided-gen.css";
   @import "./styles/components/prompt-box.css";
   @import "./styles/components/prompt-chip.css";

@@ -76,3 +76,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 ## Recent updates
 - 2025-12-22: `styles/components/generation-settings-card.css` now uses flex rows (`gc-stack`/`gc-row`) so card internals aren’t bound to a single grid template.
 - 2025-12-23: Added shared layout helpers `cdx-form-grid`/`cdx-form-row` (in `styles/components/views-shared.css`) and a `gen-card--embedded` variant for cardless embedded layouts.
+- 2025-12-23: Added shared slider primitives styling (`styles/components/cdx-slider-field.css`, `styles/components/cdx-stepper-input.css`).

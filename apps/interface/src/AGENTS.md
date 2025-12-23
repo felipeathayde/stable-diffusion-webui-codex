@@ -2,7 +2,7 @@
 # apps/interface/src Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-17
+Last Review: 2025-12-23
 Status: Active
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: Active
 - 2025-12-03: Vitest is available (`npm test`) for unit coverage; prompt serialization tests live under `components/prompt/`.
 - 2025-12-04: Legacy `/txt2vid` and `/img2vid` SPA routes were removed; WAN22 video workflows now enter exclusively via model tabs (`/models/:tabId` with `type === 'wan'`) and backend video endpoints remain available for those tabs only.
 - 2025-12-17: Added a shared `stores/workflows.ts` and guided-gen UI primitives (`styles/components/guided-gen.css`) to support WAN guided generation and reactive snapshots under `/workflows`.
+- 2025-12-23: Added shared slider primitives under `components/ui/` (SliderField + NumberStepperInput) with matching styles under `styles/components/`.

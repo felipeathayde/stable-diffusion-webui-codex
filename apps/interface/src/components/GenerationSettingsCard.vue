@@ -21,7 +21,6 @@
         </div>
         <div class="gc-col gc-col--wide">
           <SliderField
-            class="field"
             label="Sampling steps"
             :modelValue="steps"
             :min="minSteps"
@@ -29,7 +28,7 @@
             :step="1"
             :inputStep="1"
             :nudgeStep="1"
-            inputClass="w-step"
+            inputClass="cdx-input-w-md"
             @update:modelValue="(v) => emit('update:steps', v)"
           />
         </div>
@@ -39,7 +38,6 @@
       <div class="gc-row">
         <div class="gc-col gc-col--wide">
           <SliderField
-            class="field"
             label="Width"
             :modelValue="width"
             :min="minWidth"
@@ -47,7 +45,7 @@
             :step="64"
             :inputStep="8"
             :nudgeStep="8"
-            inputClass="w-width"
+            inputClass="cdx-input-w-md"
             @update:modelValue="(v) => emit('update:width', v)"
           >
             <template #right>
@@ -57,7 +55,7 @@
                 :max="maxWidth"
                 :step="8"
                 :nudgeStep="8"
-                inputClass="w-width"
+                inputClass="cdx-input-w-md"
                 @update:modelValue="(v) => emit('update:width', v)"
               />
               <button class="btn-swap" type="button" title="Swap width/height" @click="swapWH">⇵</button>
@@ -69,7 +67,7 @@
             <div class="field compact">
               <label class="label-muted">Batch count</label>
               <div class="number-with-controls">
-                <input class="ui-input ui-input-sm w-batch pad-right" type="number" min="1" :value="batchCount" @change="onBatchCountChange" />
+                <input class="ui-input ui-input-sm cdx-input-w-sm pad-right" type="number" min="1" :value="batchCount" @change="onBatchCountChange" />
                 <div class="stepper">
                   <button class="step-btn" type="button" title="Increase" @click="batchCountInc">+</button>
                   <button class="step-btn" type="button" title="Decrease" @click="batchCountDec">−</button>
@@ -79,7 +77,7 @@
             <div class="field compact">
               <label class="label-muted">Batch size</label>
               <div class="number-with-controls">
-                <input class="ui-input ui-input-sm w-batch pad-right" type="number" min="1" :value="batchSize" @change="onBatchSizeChange" />
+                <input class="ui-input ui-input-sm cdx-input-w-sm pad-right" type="number" min="1" :value="batchSize" @change="onBatchSizeChange" />
                 <div class="stepper">
                   <button class="step-btn" type="button" title="Increase" @click="batchSizeInc">+</button>
                   <button class="step-btn" type="button" title="Decrease" @click="batchSizeDec">−</button>
@@ -94,7 +92,6 @@
       <div class="gc-row">
         <div class="gc-col gc-col--wide">
           <SliderField
-            class="field"
             label="Height"
             :modelValue="height"
             :min="minHeight"
@@ -102,7 +99,7 @@
             :step="64"
             :inputStep="8"
             :nudgeStep="8"
-            inputClass="w-height"
+            inputClass="cdx-input-w-md"
             @update:modelValue="(v) => emit('update:height', v)"
           />
         </div>
@@ -114,7 +111,7 @@
       <div class="gc-footer">
         <SliderField
           v-if="showCfg"
-          class="field cfg-field"
+          class="cfg-field"
           :label="cfgLabel"
           :modelValue="cfgScale"
           :min="0"
@@ -122,7 +119,7 @@
           :step="0.5"
           :inputStep="0.5"
           :nudgeStep="0.5"
-          inputClass="w-cfg"
+          inputClass="cdx-input-w-md"
           @update:modelValue="(v) => emit('update:cfgScale', v)"
         />
 

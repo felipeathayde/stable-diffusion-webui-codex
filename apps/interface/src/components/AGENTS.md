@@ -25,3 +25,4 @@ Status: Active
 - 2025-12-22: `GenerationSettingsCard.vue` internal layout now uses flex rows (`gc-stack`/`gc-row`) so sliders + buttons aren’t constrained by a single grid template.
 - 2025-12-22: Removed remaining Vue SFC `<style>` blocks from `SettingsForm.vue` and `ParamBlocksRenderer.vue`; both now rely on `apps/interface/src/styles/components/*` (including `param-blocks.css`) and avoid inline `:style` layout for grids.
 - 2025-12-23: Added shared slider primitives (`components/ui/SliderField.vue`, `components/ui/NumberStepperInput.vue`) and migrated sliders to the unified layout (label left + input right above slider).
+- 2025-12-23: Deprecated per-card width classes (`w-*`) were removed; use `cdx-input-w-{xs,sm,md}` for numeric sizing.

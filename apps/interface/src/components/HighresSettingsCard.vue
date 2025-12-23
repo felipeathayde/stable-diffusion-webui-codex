@@ -19,7 +19,7 @@
           :inputStep="0.1"
           :disabled="!enabled"
           :showButtons="false"
-          inputClass="hr-number"
+          inputClass="cdx-input-w-xs"
           @update:modelValue="(v) => emit('update:scale', v)"
         />
         <p class="hr-hint" v-if="targetWidth && targetHeight">Target ~ {{ targetWidth }}×{{ targetHeight }}</p>
@@ -34,7 +34,7 @@
           :inputStep="0.01"
           :disabled="!enabled"
           :showButtons="false"
-          inputClass="hr-number"
+          inputClass="cdx-input-w-xs"
           @update:modelValue="(v) => emit('update:denoise', v)"
         />
       </div>

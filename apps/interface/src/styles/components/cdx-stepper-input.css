@@ -60,5 +60,9 @@
   .cdx-stepper-input input[type='number'] {
     -moz-appearance: textfield;
   }
-}
 
+  /* Shared numeric input widths (avoid per-card `w-*` classes + `!important`) */
+  .ui-input.cdx-input-w-xs { width: 4.5rem; }
+  .ui-input.cdx-input-w-sm { width: 6.25rem; }
+  .ui-input.cdx-input-w-md { width: 8.5rem; }
+}

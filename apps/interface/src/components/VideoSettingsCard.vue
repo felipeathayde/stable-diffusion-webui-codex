@@ -2,7 +2,6 @@
   <div :class="['vid-card', { 'vid-card--embedded': embedded }]">
     <div class="vc-grid">
       <SliderField
-        class="field"
         label="Frames"
         :modelValue="frames"
         :min="minFrames"
@@ -10,7 +9,7 @@
         :step="1"
         :inputStep="1"
         :nudgeStep="1"
-        inputClass="w-batch"
+        inputClass="cdx-input-w-sm"
         @update:modelValue="(v) => emit('update:frames', v)"
       >
         <template #below>
@@ -18,7 +17,6 @@
         </template>
       </SliderField>
       <SliderField
-        class="field"
         label="FPS"
         :modelValue="fps"
         :min="minFps"
@@ -26,7 +24,7 @@
         :step="1"
         :inputStep="1"
         :nudgeStep="1"
-        inputClass="w-batch"
+        inputClass="cdx-input-w-sm"
         @update:modelValue="(v) => emit('update:fps', v)"
       >
         <template #below>

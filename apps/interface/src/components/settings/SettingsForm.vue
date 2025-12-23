@@ -14,7 +14,7 @@
             :numberUpdateOnInput="true"
             :numberSize="'md'"
             :showButtons="false"
-            inputClass="w-24"
+            inputClass="cdx-input-w-sm"
             @update:modelValue="(v) => onChange(f.key, v)"
           />
         </template>

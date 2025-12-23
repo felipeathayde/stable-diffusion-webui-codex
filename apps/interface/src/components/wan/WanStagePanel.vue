@@ -24,7 +24,7 @@
     </div>
     <div class="gc-row">
       <SliderField
-        class="gc-col gc-col--wide field"
+        class="gc-col gc-col--wide"
         label="Steps"
         :modelValue="stage.steps"
         :min="1"
@@ -32,12 +32,12 @@
         :step="1"
         :inputStep="1"
         :nudgeStep="1"
-        inputClass="w-step"
+        inputClass="cdx-input-w-md"
         :disabled="disabled"
         @update:modelValue="(v) => updateStage({ steps: Math.trunc(v) })"
       />
       <SliderField
-        class="gc-col gc-col--wide field"
+        class="gc-col gc-col--wide"
         label="CFG"
         :modelValue="stage.cfgScale"
         :min="0"
@@ -45,7 +45,7 @@
         :step="0.5"
         :inputStep="0.5"
         :nudgeStep="0.5"
-        inputClass="w-cfg"
+        inputClass="cdx-input-w-md"
         :disabled="disabled"
         @update:modelValue="(v) => updateStage({ cfgScale: v })"
       />

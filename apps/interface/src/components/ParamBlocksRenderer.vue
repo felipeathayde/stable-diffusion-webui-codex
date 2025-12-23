@@ -14,7 +14,7 @@
                 :inputStep="field.step ?? 1"
                 :showButtons="false"
                 :numberUpdateOnInput="true"
-                inputClass="w-24"
+                inputClass="cdx-input-w-sm"
                 @update:modelValue="(v) => writeField(field, v)"
               />
             </template>

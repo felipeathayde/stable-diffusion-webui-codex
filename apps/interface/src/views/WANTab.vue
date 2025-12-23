@@ -88,7 +88,7 @@
                 :inputStep="8"
                 :nudgeStep="8"
                 :disabled="isRunning"
-                inputClass="w-width"
+                inputClass="cdx-input-w-md"
                 @update:modelValue="applyWidth"
               />
               <SliderField
@@ -101,7 +101,7 @@
                 :inputStep="8"
                 :nudgeStep="8"
                 :disabled="isRunning"
-                inputClass="w-height"
+                inputClass="cdx-input-w-md"
                 @update:modelValue="applyHeight"
               />
               <div class="gc-col">

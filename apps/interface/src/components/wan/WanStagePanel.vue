@@ -23,11 +23,11 @@
       />
     </div>
     <div class="gc-row">
-      <div class="gc-col gc-col--wide">
+      <div class="gc-col gc-col--wide field">
         <label class="label-muted">Steps</label>
         <div class="row-inline">
           <input class="slider slider-grow" type="range" min="1" max="150" step="1" :disabled="disabled" :value="stage.steps" @input="updateStage({ steps: toInt($event, stage.steps) })" />
-          <div class="number-with-controls">
+          <div class="number-with-controls ml-steps">
             <input class="ui-input ui-input-sm w-step pad-right" type="number" min="1" max="150" step="1" :disabled="disabled" :value="stage.steps" @change="updateStage({ steps: toInt($event, stage.steps) })" />
             <div class="stepper">
               <button class="step-btn" type="button" title="Increase" :disabled="disabled" @click="stepsInc">+</button>
@@ -36,11 +36,11 @@
           </div>
         </div>
       </div>
-      <div class="gc-col gc-col--wide">
+      <div class="gc-col gc-col--wide field">
         <label class="label-muted">CFG</label>
         <div class="row-inline">
           <input class="slider slider-grow" type="range" min="0" max="30" step="0.5" :disabled="disabled" :value="stage.cfgScale" @input="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })" />
-          <div class="number-with-controls">
+          <div class="number-with-controls ml-steps">
             <input class="ui-input ui-input-sm w-cfg pad-right" type="number" min="0" max="30" step="0.5" :disabled="disabled" :value="stage.cfgScale" @change="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })" />
             <div class="stepper">
               <button class="step-btn" type="button" title="Increase" :disabled="disabled" @click="cfgInc">+</button>
@@ -51,7 +51,7 @@
       </div>
     </div>
     <div class="gc-row">
-      <div class="gc-col gc-col--wide">
+      <div class="gc-col gc-col--wide field">
         <label class="label-muted">Seed</label>
         <div class="number-with-controls w-full">
           <input class="ui-input ui-input-sm pad-right" type="number" :disabled="disabled" :value="stage.seed" @change="updateStage({ seed: toInt($event, stage.seed) })" />
@@ -63,21 +63,21 @@
       </div>
     </div>
     <div v-if="showModelDir" class="gc-row">
-      <div class="gc-col">
+      <div class="gc-col field">
         <label class="label-muted">Model Dir</label>
         <input class="ui-input" type="text" :disabled="disabled" :value="stage.modelDir" @change="updateStage({ modelDir: ($event.target as HTMLInputElement).value })" placeholder="/path/to/high-or-low" />
       </div>
     </div>
 
     <div v-if="lightx2v" class="gc-row">
-      <div class="gc-col gc-col--wide">
+      <div class="gc-col gc-col--wide field">
         <label class="label-muted">LoRA (wan22-loras)</label>
         <select class="select-md" :disabled="disabled" :value="stage.loraPath" @change="updateStage({ loraPath: ($event.target as HTMLSelectElement).value })">
           <option value="">None</option>
           <option v-for="opt in loraChoices" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
         </select>
       </div>
-      <div v-if="stage.loraPath" class="gc-col">
+      <div v-if="stage.loraPath" class="gc-col field">
         <label class="label-muted">LoRA weight</label>
         <input class="ui-input" type="number" step="0.05" :disabled="disabled" :value="stage.loraWeight" @change="updateStage({ loraWeight: toFloat($event, stage.loraWeight) })" />
       </div>

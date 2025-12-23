@@ -23,6 +23,7 @@ Status: Active
 - 2025-12-20: `WANTab.vue` replaces WAN “Format” with a `LightX2V` quicksetting; when enabled, High/Low Noise show per-stage LoRA selects (from `wan22-loras`) and the UI relies on backend auto-detect for model format (no forced `wan_format`).
 - 2025-12-22: `WANTab.vue` now uses sliders for core video params (width/height/frames/fps) and stage params (steps/CFG); seed actions (🎲/↺) are embedded inside the seed input.
 - 2025-12-23: `WANTab.vue` layout now relies on shared gen-card primitives (`gc-row`, `gc-col`, `row-split`, `cdx-form-grid`, `cdx-form-row`) instead of WAN-specific grid/toggle classes.
+- 2025-12-23: `WANTab.vue` prompt header now includes the same toolbar actions as SDXL (Checkpoints/TI/LoRA/Styles), and Low Noise uses a header switch + explicit collapse control (starts expanded).
 - 2025-12-14: Removed the legacy standalone `Txt2Vid.vue` view; WAN video entry stays exclusively under model tabs (`/models/:tabId` with `type === 'wan'`).
 - 2025-12-14: `ModelTabView.vue` keys per-tab views by `tab.id` so switching `/models/:tabId` remounts the correct tab implementation (prevents composables binding a stale id).
 - 2025-12-15: Added `RedirectToModelTab.vue` and router aliases so legacy nav paths can redirect into `/models/:tabId` (WAN) without spamming Vue Router “No match found” warnings.

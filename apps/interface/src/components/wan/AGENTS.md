@@ -20,3 +20,4 @@ Status: Active
 - 2025-12-22: `WanStagePanel.vue` now uses SDXL-style sliders + steppers for Steps/CFG and moves seed actions (🎲/↺) inside the seed input.
 - 2025-12-22: `wan22-settings.css` switches `.wan22-grid` to flex-wrap and adds `wan22-field--{sm,wide,full}` sizing helpers; WAN panels now use these helpers to keep sliders readable without hard grid columns.
 - 2025-12-23: WAN panels now use shared gen-card layout primitives (`gc-row`, `gc-col`, `row-split`, `cdx-form-row`) and the new `gen-card--embedded` variant, reducing `wan22-*` layout classes in the tab UI.
+- 2025-12-23: `WanStagePanel.vue` aligns slider rows with shared field structure (`field` + `ml-steps`) for consistent spacing with SDXL.

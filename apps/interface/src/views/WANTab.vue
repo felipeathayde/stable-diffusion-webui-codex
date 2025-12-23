@@ -2,7 +2,20 @@
   <section v-if="tab" class="panels wan-panels">
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header"><span>Prompt</span></div>
+        <div class="panel-header"><span>Prompt</span>
+          <div class="toolbar prompt-toolbar">
+            <button class="btn btn-sm btn-secondary" type="button" @click="showCkpt = true">Checkpoints</button>
+            <button class="btn btn-sm btn-secondary" type="button" @click="showTI = true">Textual Inversion</button>
+            <button class="btn btn-sm btn-secondary" type="button" @click="showLora = true">LoRA</button>
+            <label class="label-muted styles-label">Styles</label>
+            <input class="ui-input styles-input" list="style-list" v-model="styleName" placeholder="Filter styles" />
+            <datalist id="style-list">
+              <option v-for="s in styleNames" :key="s" :value="s" />
+            </datalist>
+            <button class="btn btn-sm btn-secondary" type="button" @click="showStyle = true">New</button>
+            <button class="btn btn-sm btn-outline" type="button" @click="applyStyle(styleName)">Apply</button>
+          </div>
+        </div>
         <div class="panel-body">
           <div id="wan-guided-prompt">
             <PromptFields v-model:prompt="videoPrompt" v-model:negative="videoNegative" />
@@ -197,32 +210,35 @@
             </div>
           </details>
 
-          <details class="accordion">
-            <summary>Low Noise</summary>
-            <div class="accordion-body">
-              <div class="cdx-form-row">
+          <div class="gen-card">
+            <div class="row-split">
+              <span class="label-muted">Low Noise</span>
+              <div class="row-inline">
                 <label class="qs-switch qs-switch--sm">
                   <input type="checkbox" :disabled="isRunning" :checked="lowFollowsHigh" @change="onLowFollowsHighChange" />
                   <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
                   <span class="label-muted">Use High settings</span>
                 </label>
-                <span v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</span>
-              </div>
-              <div id="wan-guided-low-stage">
-                <WanStagePanel
-                  title="Low Noise"
-                  embedded
-                  :stage="low"
-                  :samplers="samplers"
-                  :schedulers="schedulers"
-                  :lightx2v="lightx2v"
-                  :lora-choices="wanLoraChoices"
-                  :disabled="isRunning || lowFollowsHigh"
-                  @update:stage="setLow"
-                />
+                <button class="btn-icon" type="button" :aria-expanded="lowNoiseOpen ? 'true' : 'false'" :title="lowNoiseOpen ? 'Collapse' : 'Expand'" aria-label="Toggle Low Noise" @click="toggleLowNoise">
+                  <span aria-hidden="true">{{ lowNoiseOpen ? '▾' : '▸' }}</span>
+                </button>
               </div>
             </div>
-          </details>
+            <div v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</div>
+            <div v-if="lowNoiseOpen" class="mt-2" id="wan-guided-low-stage">
+              <WanStagePanel
+                title="Low Noise"
+                embedded
+                :stage="low"
+                :samplers="samplers"
+                :schedulers="schedulers"
+                :lightx2v="lightx2v"
+                :lora-choices="wanLoraChoices"
+                :disabled="isRunning || lowFollowsHigh"
+                @update:stage="setLow"
+              />
+            </div>
+          </div>
 
           <WanVideoOutputPanel :video="video" :disabled="isRunning" @update:video="setVideo" />
         </div>
@@ -352,6 +368,11 @@
       </div>
     </div>
 
+    <CheckpointModal v-model="showCkpt" />
+    <LoraModal v-model="showLora" @insert="onInsertToken" />
+    <TextualInversionModal v-model="showTI" @insert="onInsertToken" />
+    <StyleEditorModal v-model="showStyle" @saved="onStyleSaved" />
+
     <Teleport to="body">
       <div
         v-if="guidedActive && guidedRect"
@@ -383,14 +404,26 @@ import InitialImageCard from '../components/InitialImageCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
 import PromptFields from '../components/prompt/PromptFields.vue'
+import CheckpointModal from '../components/modals/CheckpointModal.vue'
+import LoraModal from '../components/modals/LoraModal.vue'
+import TextualInversionModal from '../components/modals/TextualInversionModal.vue'
+import StyleEditorModal from '../components/modals/StyleEditorModal.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
 import { useWorkflowsStore } from '../stores/workflows'
+import { useStylesStore } from '../stores/styles'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
 const workflows = useWorkflowsStore()
+const stylesStore = useStylesStore()
+
+const showCkpt = ref(false)
+const showLora = ref(false)
+const showTI = ref(false)
+const showStyle = ref(false)
+const styleName = ref('')
 
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
@@ -415,6 +448,7 @@ onMounted(async () => {
 const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
 const lightx2v = computed<boolean>(() => Boolean((tab.value?.params as any)?.lightx2v))
 const wanLoraChoices = computed(() => wanLoras.value)
+const styleNames = computed(() => stylesStore.names())
 
 function normalizePath(path: string): string {
   return String(path || '').replace(/\\+/g, '/').replace(/\/+$/, '')
@@ -501,6 +535,7 @@ function setLow(patch: Partial<WanStageParams>): void {
 }
 
 const lowFollowsHigh = computed<boolean>(() => Boolean((tab.value?.params as any)?.lowFollowsHigh))
+const lowNoiseOpen = ref(true)
 
 function syncLowFromHighIfNeeded(): void {
   const patch: Partial<WanStageParams> = {
@@ -522,6 +557,10 @@ function onLowFollowsHighChange(e: Event): void {
   if (!tab.value) return
   store.updateParams(props.tabId, { lowFollowsHigh: enabled } as any)
   if (enabled) syncLowFromHighIfNeeded()
+}
+
+function toggleLowNoise(): void {
+  lowNoiseOpen.value = !lowNoiseOpen.value
 }
 
 watch(
@@ -567,6 +606,29 @@ const videoNegative = computed({
   get: () => video.value.negativePrompt,
   set: (value: string) => setVideo({ negativePrompt: value }),
 })
+
+type PromptInsertPayload = string | { token: string; target?: 'positive' | 'negative' }
+
+function onInsertToken(payload: PromptInsertPayload): void {
+  const token = typeof payload === 'string' ? payload : payload.token
+  const target = typeof payload === 'string' ? 'positive' : (payload.target ?? 'positive')
+  if (!token) return
+
+  if (target === 'negative') {
+    setVideo({ negativePrompt: (video.value.negativePrompt ? video.value.negativePrompt + ' ' : '') + token })
+  } else {
+    setVideo({ prompt: (video.value.prompt ? video.value.prompt + ' ' : '') + token })
+  }
+}
+
+function applyStyle(name: string): void {
+  const d = stylesStore.get(name)
+  if (!d) return
+  if (d.prompt) setVideo({ prompt: (video.value.prompt ? video.value.prompt + ' ' : '') + d.prompt })
+  if (d.negative) setVideo({ negativePrompt: (video.value.negativePrompt ? video.value.negativePrompt + ' ' : '') + d.negative })
+}
+
+function onStyleSaved(): void { /* reactive */ }
 
 function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
 

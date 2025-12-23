@@ -4,24 +4,38 @@
       <div class="param-grid" :data-cols="gridCols(blk)">
         <template v-for="field in blk.fields" :key="field.key">
           <div v-if="isVisible(field, blk)" class="field">
-            <label class="label-muted">{{ field.label }}</label>
-            <!-- text -->
-            <input v-if="field.type==='text'" class="ui-input" type="text" :placeholder="String(field.default ?? '')" :value="readField(field)" @change="onChangeText($event, field)" />
-            <!-- number -->
-            <input v-else-if="field.type==='number'" class="ui-input" type="number" :min="field.min" :max="field.max" :step="field.step || 1" :value="readField(field)" @change="onChangeNumber($event, field)" />
-            <!-- checkbox -->
-            <label v-else-if="field.type==='checkbox'" class="toggle inline">
-              <input type="checkbox" :checked="Boolean(readField(field))" @change="onChangeCheckbox($event, field)" />
-              <span>{{ field.help || '' }}</span>
-            </label>
-            <!-- select -->
-            <select v-else-if="field.type==='select'" class="select-md" :value="readField(field)" @change="onChangeSelect($event, field)">
-              <option v-for="opt in (field.options||[])" :key="String(opt)" :value="String(opt)">{{ String(opt) }}</option>
-            </select>
-            <!-- slider -->
-            <input v-else-if="field.type==='slider'" class="slider" type="range" :min="field.min || 0" :max="field.max || 100" :step="field.step || 1" :value="Number(readField(field))" @input="onChangeNumber($event, field)" />
-            <!-- textarea -->
-            <textarea v-else-if="field.type==='textarea'" class="ui-textarea" rows="3" :value="readField(field)" @change="onChangeText($event, field)"></textarea>
+            <template v-if="field.type==='slider'">
+              <SliderField
+                :label="field.label"
+                :modelValue="Number(readField(field))"
+                :min="field.min ?? 0"
+                :max="field.max ?? 100"
+                :step="field.step ?? 1"
+                :inputStep="field.step ?? 1"
+                :showButtons="false"
+                :numberUpdateOnInput="true"
+                inputClass="w-24"
+                @update:modelValue="(v) => writeField(field, v)"
+              />
+            </template>
+            <template v-else>
+              <label class="label-muted">{{ field.label }}</label>
+              <!-- text -->
+              <input v-if="field.type==='text'" class="ui-input" type="text" :placeholder="String(field.default ?? '')" :value="readField(field)" @change="onChangeText($event, field)" />
+              <!-- number -->
+              <input v-else-if="field.type==='number'" class="ui-input" type="number" :min="field.min" :max="field.max" :step="field.step || 1" :value="readField(field)" @change="onChangeNumber($event, field)" />
+              <!-- checkbox -->
+              <label v-else-if="field.type==='checkbox'" class="toggle inline">
+                <input type="checkbox" :checked="Boolean(readField(field))" @change="onChangeCheckbox($event, field)" />
+                <span>{{ field.help || '' }}</span>
+              </label>
+              <!-- select -->
+              <select v-else-if="field.type==='select'" class="select-md" :value="readField(field)" @change="onChangeSelect($event, field)">
+                <option v-for="opt in (field.options||[])" :key="String(opt)" :value="String(opt)">{{ String(opt) }}</option>
+              </select>
+              <!-- textarea -->
+              <textarea v-else-if="field.type==='textarea'" class="ui-textarea" rows="3" :value="readField(field)" @change="onChangeText($event, field)"></textarea>
+            </template>
           </div>
         </template>
       </div>
@@ -31,6 +45,7 @@
 
 <script setup lang="ts">
 import type { UiBlock, UiField } from '../api/types'
+import SliderField from './ui/SliderField.vue'
 
 const props = defineProps<{ blocks: UiBlock[]; store: any; tab?: 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' }>()
 const store = props.store as Record<string, any>

@@ -23,32 +23,32 @@
       />
     </div>
     <div class="gc-row">
-      <div class="gc-col gc-col--wide field">
-        <label class="label-muted">Steps</label>
-        <div class="row-inline">
-          <input class="slider slider-grow" type="range" min="1" max="150" step="1" :disabled="disabled" :value="stage.steps" @input="updateStage({ steps: toInt($event, stage.steps) })" />
-          <div class="number-with-controls ml-steps">
-            <input class="ui-input ui-input-sm w-step pad-right" type="number" min="1" max="150" step="1" :disabled="disabled" :value="stage.steps" @change="updateStage({ steps: toInt($event, stage.steps) })" />
-            <div class="stepper">
-              <button class="step-btn" type="button" title="Increase" :disabled="disabled" @click="stepsInc">+</button>
-              <button class="step-btn" type="button" title="Decrease" :disabled="disabled" @click="stepsDec">−</button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="gc-col gc-col--wide field">
-        <label class="label-muted">CFG</label>
-        <div class="row-inline">
-          <input class="slider slider-grow" type="range" min="0" max="30" step="0.5" :disabled="disabled" :value="stage.cfgScale" @input="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })" />
-          <div class="number-with-controls ml-steps">
-            <input class="ui-input ui-input-sm w-cfg pad-right" type="number" min="0" max="30" step="0.5" :disabled="disabled" :value="stage.cfgScale" @change="updateStage({ cfgScale: toFloat($event, stage.cfgScale) })" />
-            <div class="stepper">
-              <button class="step-btn" type="button" title="Increase" :disabled="disabled" @click="cfgInc">+</button>
-              <button class="step-btn" type="button" title="Decrease" :disabled="disabled" @click="cfgDec">−</button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <SliderField
+        class="gc-col gc-col--wide field"
+        label="Steps"
+        :modelValue="stage.steps"
+        :min="1"
+        :max="150"
+        :step="1"
+        :inputStep="1"
+        :nudgeStep="1"
+        inputClass="w-step"
+        :disabled="disabled"
+        @update:modelValue="(v) => updateStage({ steps: Math.trunc(v) })"
+      />
+      <SliderField
+        class="gc-col gc-col--wide field"
+        label="CFG"
+        :modelValue="stage.cfgScale"
+        :min="0"
+        :max="30"
+        :step="0.5"
+        :inputStep="0.5"
+        :nudgeStep="0.5"
+        inputClass="w-cfg"
+        :disabled="disabled"
+        @update:modelValue="(v) => updateStage({ cfgScale: v })"
+      />
     </div>
     <div class="gc-row">
       <div class="gc-col gc-col--wide field">
@@ -95,6 +95,7 @@ import type { WanStageParams } from '../../stores/model_tabs'
 
 import SamplerSelector from '../SamplerSelector.vue'
 import SchedulerSelector from '../SchedulerSelector.vue'
+import SliderField from '../ui/SliderField.vue'
 
 const props = withDefaults(defineProps<{
   title: string
@@ -136,33 +137,6 @@ function updateStage(patch: Partial<WanStageParams>): void {
 function toInt(e: Event, fallback: number): number {
   const v = Number((e.target as HTMLInputElement).value)
   return Number.isFinite(v) ? Math.trunc(v) : fallback
-}
-
-function toFloat(e: Event, fallback: number): number {
-  const v = Number((e.target as HTMLInputElement).value)
-  return Number.isFinite(v) ? v : fallback
-}
-
-function stepsInc(): void {
-  const v = Math.min(150, Math.max(1, Number(props.stage.steps) + 1))
-  updateStage({ steps: v })
-}
-
-function stepsDec(): void {
-  const v = Math.min(150, Math.max(1, Number(props.stage.steps) - 1))
-  updateStage({ steps: v })
-}
-
-function cfgInc(): void {
-  const step = 0.5
-  const v = Math.min(30, Math.max(0, Number(props.stage.cfgScale) + step))
-  updateStage({ cfgScale: Number(v.toFixed(2)) })
-}
-
-function cfgDec(): void {
-  const step = 0.5
-  const v = Math.min(30, Math.max(0, Number(props.stage.cfgScale) - step))
-  updateStage({ cfgScale: Number(v.toFixed(2)) })
 }
 
 function randomizeSeed(): void {

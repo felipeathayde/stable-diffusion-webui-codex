@@ -78,32 +78,32 @@
               <span class="label-muted">Video</span>
             </div>
             <div class="gc-row">
-              <div class="gc-col gc-col--wide">
-                <label class="label-muted">Width (px)</label>
-                <div class="row-inline">
-                  <div class="number-with-controls">
-                    <input class="ui-input ui-input-sm w-width pad-right" type="number" min="64" max="2048" step="8" :disabled="isRunning" :value="video.width" @change="onWidthChange" />
-                    <div class="stepper">
-                      <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="widthInc">+</button>
-                      <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="widthDec">−</button>
-                    </div>
-                  </div>
-                  <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.width" @input="onWidthRange" />
-                </div>
-              </div>
-              <div class="gc-col gc-col--wide">
-                <label class="label-muted">Height (px)</label>
-                <div class="row-inline">
-                  <div class="number-with-controls">
-                    <input class="ui-input ui-input-sm w-height pad-right" type="number" min="64" max="2048" step="8" :disabled="isRunning" :value="video.height" @change="onHeightChange" />
-                    <div class="stepper">
-                      <button class="step-btn" type="button" title="Increase" :disabled="isRunning" @click="heightInc">+</button>
-                      <button class="step-btn" type="button" title="Decrease" :disabled="isRunning" @click="heightDec">−</button>
-                    </div>
-                  </div>
-                  <input class="slider slider-grow" type="range" min="64" max="2048" step="64" :disabled="isRunning" :value="video.height" @input="onHeightRange" />
-                </div>
-              </div>
+              <SliderField
+                class="gc-col gc-col--wide"
+                label="Width (px)"
+                :modelValue="video.width"
+                :min="64"
+                :max="2048"
+                :step="64"
+                :inputStep="8"
+                :nudgeStep="8"
+                :disabled="isRunning"
+                inputClass="w-width"
+                @update:modelValue="applyWidth"
+              />
+              <SliderField
+                class="gc-col gc-col--wide"
+                label="Height (px)"
+                :modelValue="video.height"
+                :min="64"
+                :max="2048"
+                :step="64"
+                :inputStep="8"
+                :nudgeStep="8"
+                :disabled="isRunning"
+                inputClass="w-height"
+                @update:modelValue="applyHeight"
+              />
               <div class="gc-col">
                 <label class="label-muted">Aspect</label>
                 <select class="select-md" :disabled="isRunning" :value="aspectMode" @change="onAspectModeChange">
@@ -403,6 +403,7 @@ import ResultViewer from '../components/ResultViewer.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
+import SliderField from '../components/ui/SliderField.vue'
 import PromptFields from '../components/prompt/PromptFields.vue'
 import CheckpointModal from '../components/modals/CheckpointModal.vue'
 import LoraModal from '../components/modals/LoraModal.vue'
@@ -1335,38 +1336,6 @@ function applyHeight(value: number): void {
     return
   }
   setVideo({ height: nextH })
-}
-
-function onWidthChange(e: Event): void {
-  applyWidth(toInt(e, video.value.width))
-}
-
-function onHeightChange(e: Event): void {
-  applyHeight(toInt(e, video.value.height))
-}
-
-function onWidthRange(e: Event): void {
-  applyWidth(Number((e.target as HTMLInputElement).value))
-}
-
-function onHeightRange(e: Event): void {
-  applyHeight(Number((e.target as HTMLInputElement).value))
-}
-
-function widthInc(): void {
-  applyWidth((Number(video.value.width) || 64) + 8)
-}
-
-function widthDec(): void {
-  applyWidth((Number(video.value.width) || 64) - 8)
-}
-
-function heightInc(): void {
-  applyHeight((Number(video.value.height) || 64) + 8)
-}
-
-function heightDec(): void {
-  applyHeight((Number(video.value.height) || 64) - 8)
 }
 
 const workflowBusy = ref(false)

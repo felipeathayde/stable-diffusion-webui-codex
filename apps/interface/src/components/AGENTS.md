@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2025-12-22
+Last Review: 2025-12-23
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - 2025-12-22: `GenerationSettingsCard.vue` now exposes a CFG slider (next to Seed via a flex footer) and moves seed actions (🎲/↺) inside the seed input; `VideoSettingsCard.vue` adds an FPS slider.
 - 2025-12-22: `GenerationSettingsCard.vue` internal layout now uses flex rows (`gc-stack`/`gc-row`) so sliders + buttons aren’t constrained by a single grid template.
 - 2025-12-22: Removed remaining Vue SFC `<style>` blocks from `SettingsForm.vue` and `ParamBlocksRenderer.vue`; both now rely on `apps/interface/src/styles/components/*` (including `param-blocks.css`) and avoid inline `:style` layout for grids.
+- 2025-12-23: Added shared slider primitives (`components/ui/SliderField.vue`, `components/ui/NumberStepperInput.vue`) and migrated sliders to the unified layout (label left + input right above slider).

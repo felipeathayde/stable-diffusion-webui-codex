@@ -10,55 +10,33 @@
     </div>
     <div v-if="enabled" class="hr-grid">
       <div class="hr-cell">
-        <label class="label-muted">Scale</label>
-        <div class="row-inline">
-          <input
-            class="slider slider-grow"
-            type="range"
-            min="1"
-            max="4"
-            step="0.1"
-            :value="scale"
-            :disabled="!enabled"
-            @input="onScaleRange"
-          />
-          <input
-            class="ui-input ui-input-sm hr-number"
-            type="number"
-            min="1"
-            max="4"
-            step="0.1"
-            :value="scale"
-            :disabled="!enabled"
-            @change="onScaleNumber"
-          />
-        </div>
+        <SliderField
+          label="Scale"
+          :modelValue="scale"
+          :min="1"
+          :max="4"
+          :step="0.1"
+          :inputStep="0.1"
+          :disabled="!enabled"
+          :showButtons="false"
+          inputClass="hr-number"
+          @update:modelValue="(v) => emit('update:scale', v)"
+        />
         <p class="hr-hint" v-if="targetWidth && targetHeight">Target ~ {{ targetWidth }}×{{ targetHeight }}</p>
       </div>
       <div class="hr-cell">
-        <label class="label-muted">Denoise</label>
-        <div class="row-inline">
-          <input
-            class="slider slider-grow"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            :value="denoise"
-            :disabled="!enabled"
-            @input="onDenoiseRange"
-          />
-          <input
-            class="ui-input ui-input-sm hr-number"
-            type="number"
-            min="0"
-            max="1"
-            step="0.01"
-            :value="denoise"
-            :disabled="!enabled"
-            @change="onDenoiseNumber"
-          />
-        </div>
+        <SliderField
+          label="Denoise"
+          :modelValue="denoise"
+          :min="0"
+          :max="1"
+          :step="0.01"
+          :inputStep="0.01"
+          :disabled="!enabled"
+          :showButtons="false"
+          inputClass="hr-number"
+          @update:modelValue="(v) => emit('update:denoise', v)"
+        />
       </div>
       <div class="hr-cell">
         <label class="label-muted">Hires steps</label>
@@ -99,6 +77,7 @@
 // tags: highres, settings, grid
 import { computed } from 'vue'
 import RefinerSettingsCard from './RefinerSettingsCard.vue'
+import SliderField from './ui/SliderField.vue'
 
 const props = defineProps<{
   enabled: boolean
@@ -170,32 +149,6 @@ const refinerVae = computed({
 
 function toggle(): void {
   emit('update:enabled', !props.enabled)
-}
-
-function clampScale(value: number): number {
-  if (Number.isNaN(value)) return 1
-  return Math.min(4, Math.max(1, value))
-}
-
-function onScaleRange(event: Event): void {
-  emit('update:scale', clampScale(Number((event.target as HTMLInputElement).value)))
-}
-
-function onScaleNumber(event: Event): void {
-  emit('update:scale', clampScale(Number((event.target as HTMLInputElement).value)))
-}
-
-function clampDenoise(value: number): number {
-  if (Number.isNaN(value)) return 0.4
-  return Math.min(1, Math.max(0, value))
-}
-
-function onDenoiseRange(event: Event): void {
-  emit('update:denoise', clampDenoise(Number((event.target as HTMLInputElement).value)))
-}
-
-function onDenoiseNumber(event: Event): void {
-  emit('update:denoise', clampDenoise(Number((event.target as HTMLInputElement).value)))
 }
 
 function onStepsChange(event: Event): void {

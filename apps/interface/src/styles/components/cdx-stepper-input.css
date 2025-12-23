@@ -6,6 +6,7 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+    flex: 0 0 auto;
     min-width: 0;
   }
 
@@ -16,6 +17,8 @@
 
   .cdx-stepper-input__input {
     height: var(--cdx-stepper-input-h);
+    width: auto;
+    flex: 0 0 auto;
   }
 
   .cdx-stepper-input__input--buttons {

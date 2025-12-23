@@ -221,7 +221,7 @@
   .subtab { padding: 0.35rem 0.7rem; border: 1px solid var(--color-border); border-radius: 8px; background: hsla(0,0%,100%,0.04); color: hsla(0,0%,100%,0.82); text-transform: none; font-weight: 600; }
   .subtab.active { background: var(--color-panel); color: var(--color-foreground); border-color: hsl(var(--accent)); }
 
-  .ui-input { height: var(--control-h-md); border-radius: 10px; border: 1px solid hsla(0,0%,100%,0.12); background: hsla(0,0%,100%,0.02); padding-inline: 0.75rem; transition: border-color 0.2s, box-shadow 0.2s; }
+  .ui-input { width: 100%; height: var(--control-h-md); border-radius: 10px; border: 1px solid hsla(0,0%,100%,0.12); background: hsla(0,0%,100%,0.02); padding-inline: 0.75rem; transition: border-color 0.2s, box-shadow 0.2s; }
   .ui-input:focus { border-color: hsl(var(--accent)); box-shadow: 0 0 0 2px hsla(210, 70%, 65%, 0.35); outline: none; }
   .ui-textarea { width: 100%; border-radius: 10px; border: 1px solid hsla(0,0%,100%,0.12); background: hsla(0,0%,100%,0.02); padding: 0.65rem 0.85rem; min-height: 6rem; transition: border-color 0.2s, box-shadow 0.2s; }
   .ui-textarea:focus { border-color: hsl(var(--accent)); box-shadow: 0 0 0 2px hsla(210, 70%, 65%, 0.35); outline: none; }

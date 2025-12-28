@@ -91,6 +91,7 @@ export const useXyzStore = defineStore('xyz', () => {
     const quick = useQuicksettingsStore()
     const activeTab = tabs.activeTab
     const params = activeTab?.params as ImageBaseParams | undefined
+    const checkpoint = String((params as any)?.checkpoint || '').trim()
     
     return {
       prompt: params?.prompt ?? '',
@@ -107,7 +108,7 @@ export const useXyzStore = defineStore('xyz', () => {
       styles: [],
       device: quick.currentDevice,
       engine: activeTab?.type || 'sdxl',
-      model: quick.currentModel,
+      model: checkpoint || quick.currentModel,
     }
   }
 

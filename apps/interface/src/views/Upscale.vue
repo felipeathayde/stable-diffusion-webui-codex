@@ -3,7 +3,7 @@
     <!-- Left column: basic controls (stub) -->
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header"><span>Upscale</span></div>
+        <div class="panel-header">Upscale</div>
         <div class="panel-body">
           <div class="panel-section">
             <label class="label-muted">Source Image</label>
@@ -32,7 +32,7 @@
     <!-- Right column: Results (sticky header like txt2img) -->
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header three-cols results-sticky"><span>Results</span>
+        <div class="panel-header three-cols results-sticky">Results
           <div class="header-center"><button class="btn btn-md btn-primary results-generate">Generate</button></div>
           <div class="header-right results-actions">
             <input class="ui-input" list="upscale-preset-list" v-model="presetName" placeholder="Preset" />

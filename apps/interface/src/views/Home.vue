@@ -1,12 +1,10 @@
 <template>
   <section class="panels">
     <div class="panel">
-      <div class="panel-header">
-        <span>Welcome</span>
-      </div>
+      <div class="panel-header">Welcome</div>
       <div class="panel-body">
         <p class="subtitle">
-          This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX, WAN 2.2)
+          This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX, Z Image, WAN 2.2)
           and to navigate to workflows or utilities. Generation happens in tabs and workflows, not here.
         </p>
 
@@ -37,9 +35,7 @@
     </div>
 
     <div class="panel">
-      <div class="panel-header">
-        <span>Create Model Tab</span>
-      </div>
+      <div class="panel-header">Create Model Tab</div>
       <div class="panel-body">
         <p class="subtitle">
           Choose an engine type and an optional title. Tabs are identified by a generated id and can be duplicated or removed later.
@@ -53,6 +49,7 @@
                 <option value="sd15">SD 1.5</option>
                 <option value="sdxl">SDXL</option>
                 <option value="flux">FLUX</option>
+                <option value="zimage">Z Image</option>
                 <option value="wan">WAN 2.2</option>
               </select>
             </div>
@@ -121,9 +118,7 @@
     </div>
 
     <div class="panel">
-      <div class="panel-header">
-        <span>Docs &amp; Help</span>
-      </div>
+      <div class="panel-header">Docs &amp; Help</div>
       <div class="panel-body">
         <p class="subtitle">
           The paths below refer to files in this repository and act as the canonical documentation for the Codex UI.

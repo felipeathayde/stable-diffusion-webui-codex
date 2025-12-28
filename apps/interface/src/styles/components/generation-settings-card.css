@@ -6,6 +6,8 @@
   .gen-card .gc-col { flex: 1 1 16rem; min-width: 0; }
   .gen-card .gc-col--wide { flex: 2 1 24rem; }
   .gen-card .gc-col--compact { flex: 1 1 16rem; }
+  .gen-card .gc-col--presets { flex: 0 0 auto; }
+  .gen-card .cdx-res-presets { display: grid; grid-template-columns: repeat(2, max-content); gap: 0.4rem; justify-content: end; }
   .gen-card .two-up { display: flex; flex-wrap: wrap; gap: 1rem; }
   .gen-card .two-up > .field { flex: 1 1 12rem; min-width: 0; }
   .gen-card .right-row { display: flex; gap: 0.8rem; flex-wrap: wrap; }

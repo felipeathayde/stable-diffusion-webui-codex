@@ -3262,6 +3262,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 "datefmt": "%m/%d/%y %H:%M:%S",
             },
             "access": {
+                "()": "uvicorn.logging.AccessFormatter",
                 "format": "[%(asctime)s] %(levelname)-8s %(client_addr)s - %(request_line)s %(status_code)s",
                 "datefmt": "%m/%d/%y %H:%M:%S",
             },

@@ -2,7 +2,7 @@
   <section class="panels xyz-panels">
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header"><span>XYZ sweep</span></div>
+        <div class="panel-header">XYZ sweep</div>
         <div class="panel-body xyz-body">
           <p class="caption">Run batched txt2img sweeps varying up to three parameters (X/Y/Z). Uses current SDXL settings as the base payload.</p>
 
@@ -56,7 +56,7 @@
 
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header"><span>Results</span></div>
+        <div class="panel-header">Results</div>
         <div class="panel-body xyz-results" v-if="store.cells.length">
           <div v-for="group in store.groupedByZ" :key="group.label" class="xyz-group">
             <div class="xyz-group-header">

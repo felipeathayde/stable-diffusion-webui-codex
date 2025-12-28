@@ -23,6 +23,8 @@
 
   .cdx-stepper-input__input--buttons {
     padding-right: calc(var(--cdx-stepper-btn-size) * 2 + 1rem);
+    /* Ensure enough room for digits once +/- controls are present. */
+    min-width: calc(var(--cdx-stepper-btn-size) * 2 + 4.25rem);
   }
 
   .cdx-stepper-input__controls {

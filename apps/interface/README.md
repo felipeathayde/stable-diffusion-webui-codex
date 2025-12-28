@@ -3,9 +3,11 @@
 Regra essencial: sem estilos inline. Use apenas utilitários Tailwind + tokens documentados em `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 
 ## Dev
-- `python tools/services_tui.py` – inicia TUI para subir/monitorar API e Vite juntos (setas ↑↓ ou números para interagir).
-- Ou manualmente: `cd apps/interface && npm i && npm run dev -- --host`.
-- Proxy `/api` aponta para `API_HOST:API_PORT` (configurado via TUI ou env vars).
+- WSL/Linux: `./run-webui.sh` (na raiz do repo) — sobe API + Vite juntos usando `~/.venv`.
+- Ou manualmente:
+  - API: `API_PORT_OVERRIDE=7850 ~/.venv/bin/python apps/backend/interfaces/api/run_api.py`
+  - UI: `cd apps/interface && npm install && npm run dev -- --host`
+- Proxy `/api` aponta para `API_HOST:API_PORT` (env vars).
 
 ## Estrutura
 - `src/styles.css`: tokens (dark-first) + utilitários semânticos.

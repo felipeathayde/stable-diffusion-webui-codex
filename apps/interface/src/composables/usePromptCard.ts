@@ -1,0 +1,87 @@
+import { computed, ref, type Ref } from 'vue'
+
+import { useStylesStore } from '../stores/styles'
+
+export type PromptInsertPayload = string | { token: string; target?: 'positive' | 'negative' }
+
+export function usePromptCard(options: {
+  prompt: Ref<string>
+  negative: Ref<string>
+  defaultShowNegative?: boolean
+  supportsNegative?: boolean
+}) {
+  const stylesStore = useStylesStore()
+
+  const supportsNegative = options.supportsNegative !== false
+  const showNegative = ref(Boolean(options.defaultShowNegative) && supportsNegative)
+  const hideNegative = computed(() => !showNegative.value)
+
+  const showLora = ref(false)
+  const showTI = ref(false)
+  const showStyle = ref(false)
+
+  const styleName = ref('')
+  const styleNames = computed(() => stylesStore.names())
+
+  function toggleNegative(): void {
+    if (!supportsNegative) return
+    showNegative.value = !showNegative.value
+  }
+
+  function appendToken(target: Ref<string>, token: string): void {
+    if (!token) return
+    target.value = (target.value ? target.value + ' ' : '') + token
+  }
+
+  function onInsertToken(payload: PromptInsertPayload): void {
+    const token = typeof payload === 'string' ? payload : payload.token
+    const target = typeof payload === 'string' ? 'positive' : (payload.target ?? 'positive')
+    if (!token) return
+
+    if (!supportsNegative) {
+      appendToken(options.prompt, token)
+      return
+    }
+
+    if (target === 'negative') {
+      showNegative.value = true
+      appendToken(options.negative, token)
+      return
+    }
+
+    appendToken(options.prompt, token)
+  }
+
+  function applyStyle(name: string): void {
+    const style = stylesStore.get(name)
+    if (!style) return
+
+    if (style.prompt) {
+      appendToken(options.prompt, style.prompt)
+    }
+    if (style.negative) {
+      if (supportsNegative) {
+        showNegative.value = true
+      }
+      appendToken(options.negative, style.negative)
+    }
+  }
+
+  function onStyleSaved(_name: string): void {
+    // styles list is reactive; nothing else to do here
+  }
+
+  return {
+    showNegative,
+    hideNegative,
+    toggleNegative,
+    showLora,
+    showTI,
+    showStyle,
+    styleName,
+    styleNames,
+    applyStyle,
+    onInsertToken,
+    onStyleSaved,
+  }
+}

@@ -2,7 +2,7 @@
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
 Owner: Codex WebUI Frontend  
-Last Review: 2025-12-23  
+Last Review: 2025-12-27  
 Status: Active
 
 ## Purpose
@@ -78,3 +78,9 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2025-12-23: Added shared layout helpers `cdx-form-grid`/`cdx-form-row` (in `styles/components/views-shared.css`) and a `gen-card--embedded` variant for cardless embedded layouts.
 - 2025-12-23: Added shared slider primitives styling (`styles/components/cdx-slider-field.css`, `styles/components/cdx-stepper-input.css`).
 - 2025-12-23: Removed legacy `w-*` width classes and `!important` sizing rules; numeric inputs should use `cdx-input-w-{xs,sm,md}`.
+- 2025-12-27: Added shared “Run header” layout helpers (`run-controls`, `run-control`, `run-sticky`) in `styles/components/views-shared.css` (Run is the single sticky header in generation views).
+- 2025-12-27: Added `run-batch-menu*` styles in `styles/components/views-shared.css` so Run batch count/size controls can live in a dropdown panel.
+- 2025-12-27: Added shared helpers for input-inline actions and chip rows (`cdx-input-with-actions`, `cdx-chips-row`) and a `cdx-res-presets` block for aligning size presets with Width/Height (2×2 grid).
+- 2025-12-27: Prompt toolbar Styles field now has a min width to prevent the inline actions from overlapping the input text.
+- 2025-12-26: Standardized `.panel-header` height to `4.25rem` (min height) and removed title-wrapper `<span>` patterns from panel headers.
+- 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height with consistent borders (no fixed `2rem` height).

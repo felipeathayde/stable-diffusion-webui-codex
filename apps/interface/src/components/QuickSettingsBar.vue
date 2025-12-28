@@ -45,7 +45,7 @@
     <!-- Flux-specific quicksettings -->
     <template v-else-if="activeFamily === 'flux'">
       <QuickSettingsFlux
-        :checkpoint="store.currentModel"
+        :checkpoint="effectiveCheckpoint"
         :checkpoints="filteredModelTitles"
         :vae="store.currentVae"
         :vae-choices="filteredVaeChoices"
@@ -70,7 +70,7 @@
       <div class="quicksettings-group qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
-          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
         </div>
       </div>
       <QuickSettingsPerf
@@ -95,7 +95,7 @@
     <!-- Z Image-specific quicksettings -->
     <template v-else-if="activeFamily === 'zimage'">
       <QuickSettingsZImage
-        :checkpoint="store.currentModel"
+        :checkpoint="effectiveCheckpoint"
         :checkpoints="filteredModelTitles"
         :vae="store.currentVae"
         :vae-choices="filteredVaeChoices"
@@ -118,7 +118,7 @@
       <div class="quicksettings-group qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
-          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
         </div>
       </div>
       <QuickSettingsPerf
@@ -145,9 +145,8 @@
       <QuickSettingsBase
         :mode="store.currentMode"
         :mode-choices="filteredModeChoices"
-        :checkpoint="store.currentModel"
+        :checkpoint="effectiveCheckpoint"
         :checkpoints="filteredModelTitles"
-        :hide-checkpoint="hideCheckpoint"
         :vae="store.currentVae"
         :vae-choices="filteredVaeChoices"
         :text-encoder="primaryTextEncoder"
@@ -168,7 +167,7 @@
       <div class="quicksettings-group qs-group-models">
         <label class="label-muted">Models</label>
         <div class="qs-row">
-          <button class="btn btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
         </div>
         <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
           <small class="label-muted">{{ currentPathsHint }}</small>
@@ -315,21 +314,25 @@ function fileInPaths(file: string, key: string): boolean {
   return false
 }
 
-function modelMatchesFamily(meta: Record<string, unknown> | undefined, title: string, file: string, family: string): boolean {
+function modelMatchesFamily(
+  meta: Record<string, unknown> | undefined,
+  title: string,
+  file: string,
+  family: 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage',
+): boolean {
+  const prefix = enginePrefixForFamily(family)
+  const key = `${prefix}_ckpt`
+  const roots = pathsConfig.value[key] || []
+  if (roots.length) return fileInPaths(file, key)
+
   const fam = String((meta?.['family'] as string) || (meta?.['model_family'] as string) || '').toLowerCase()
   const t = (title || '').toLowerCase(); const f = (file || '').toLowerCase()
   if (fam) return fam.includes(family)
   if (family === 'sdxl') return t.includes('sdxl') || f.includes('sdxl')
   if (family === 'sd15') return t.includes('1.5') || t.includes('sd15') || f.includes('sd15') || f.includes('v1-5')
-  if (family === 'flux') {
-    if (fileInPaths(file, 'flux_ckpt')) return true
-    return t.includes('flux') || f.includes('flux')
-  }
+  if (family === 'flux') return t.includes('flux') || f.includes('flux')
   if (family === 'wan') return t.includes('wan') || f.includes('wan')
-  if (family === 'zimage') {
-    if (fileInPaths(file, 'zimage_ckpt')) return true
-    return t.includes('zimage') || t.includes('z-image') || t.includes('z_image') || f.includes('zimage') || f.includes('z-image') || f.includes('z_image')
-  }
+  if (family === 'zimage') return t.includes('zimage') || t.includes('z-image') || t.includes('z_image') || f.includes('zimage') || f.includes('z-image') || f.includes('z_image')
   return true
 }
 
@@ -389,14 +392,56 @@ const filteredTextEncoderChoices = computed(() => {
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
 })
 
-const primaryTextEncoder = computed(() => store.currentTextEncoders[0] ?? '')
+const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(tabsStore.activeTab))
+const activeImageTab = computed(() => {
+  if (!isModelTabRoute.value) return null
+  const tab = tabsStore.activeTab
+  if (!tab || tab.type === 'wan') return null
+  return tab
+})
 
-const fluxTextEncoders = computed(() => store.currentTextEncoders.filter((label) => typeof label === 'string' && label.startsWith('flux/')))
+function normalizeTextEncoderLabels(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((it) => String(it || '').trim()).filter((it) => it.length > 0)
+}
+
+const effectiveTextEncoders = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return store.currentTextEncoders
+  return normalizeTextEncoderLabels((tab.params as any)?.textEncoders)
+})
+
+const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
+
+const fluxTextEncoders = computed(() => effectiveTextEncoders.value.filter((label) => typeof label === 'string' && label.startsWith('flux/')))
 const fluxTextEncoderPrimary = computed(() => fluxTextEncoders.value[0] ?? '')
 const fluxTextEncoderSecondary = computed(() => fluxTextEncoders.value[1] ?? '')
 
 const primaryTeAutomaticLabel = 'Built-in'
 const secondaryTeAutomaticLabel = 'Secondary (optional)'
+
+const effectiveCheckpoint = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return store.currentModel
+  const ckpt = String((tab.params as any)?.checkpoint || '').trim()
+  if (ckpt) return ckpt
+  return filteredModelTitles.value[0] ?? ''
+})
+
+watch(
+  () => [activeImageTab.value?.id ?? '', filteredModelTitles.value] as const,
+  ([tabId, models]) => {
+    if (!tabId) return
+    const tab = activeImageTab.value
+    if (!tab) return
+    const ckpt = String((tab.params as any)?.checkpoint || '').trim()
+    if (ckpt) return
+    const first = models[0]
+    if (!first) return
+    void tabsStore.updateParams(tab.id, { checkpoint: first } as any)
+  },
+  { immediate: true },
+)
 
 const currentPathsHint = computed(() => {
   const fam = activeFamily.value
@@ -410,13 +455,6 @@ const currentPathsHint = computed(() => {
     }
   }
   return parts.join(' | ')
-})
-const hideCheckpoint = computed(() => {
-  const p = route.path
-  // In model tabs (/models), the tab manages model dirs (e.g., WAN 2.2); hide checkpoint there.
-  if (p.startsWith('/models')) return true
-  const isVideo = p.startsWith('/txt2vid') || p.startsWith('/img2vid')
-  return isVideo && uiBlocks.semanticEngine === 'wan22'
 })
 
 async function initQuicksettings(options?: { forceInventoryRefresh?: boolean }): Promise<void> {
@@ -548,6 +586,11 @@ async function onModeChange(value: string): Promise<void> {
 }
 
 async function onModelChange(value: string): Promise<void> {
+  const tab = activeImageTab.value
+  if (tab) {
+    await tabsStore.updateParams(tab.id, { checkpoint: String(value || '') } as any)
+    return
+  }
   await store.setModel(value)
 }
 
@@ -565,13 +608,18 @@ function textEncoderLabel(raw: unknown): string {
 }
 
 async function updateFluxTextEncoders(primary: string, secondary: string): Promise<void> {
-  const all = store.currentTextEncoders.slice()
-  const other = all.filter((label) => !String(label).startsWith('flux/'))
+  const tab = activeImageTab.value
   const fluxLabels: string[] = []
   const p = primary.trim()
   const s = secondary.trim()
   if (p) fluxLabels.push(p)
   if (s && s !== p) fluxLabels.push(s)
+  if (tab) {
+    await tabsStore.updateParams(tab.id, { textEncoders: fluxLabels } as any)
+    return
+  }
+  const all = store.currentTextEncoders.slice()
+  const other = all.filter((label) => !String(label).startsWith('flux/'))
   const next = [...other, ...fluxLabels]
   await store.setTextEncoders(next)
 }
@@ -583,7 +631,12 @@ function onPrimaryTextEncoderChange(value: string): void {
     const secondary = fluxTextEncoderSecondary.value || ''
     void updateFluxTextEncoders(primary, secondary)
   } else {
+    const tab = activeImageTab.value
     const payload = value ? [value] : []
+    if (tab) {
+      void tabsStore.updateParams(tab.id, { textEncoders: payload } as any)
+      return
+    }
     void store.setTextEncoders(payload)
   }
 }

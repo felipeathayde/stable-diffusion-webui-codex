@@ -85,6 +85,8 @@ export interface ImageBaseParams {
   steps: number
   cfgScale: number
   seed: number
+  checkpoint: string
+  textEncoders: string[]
   useInitImage: boolean
   initImageData: string
   initImageName: string
@@ -157,6 +159,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
   // Image tabs (SD15, SDXL, Flux)
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
+  const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
   const imageDefaults: ImageBaseParams = {
     prompt: '',
     negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
@@ -165,18 +168,14 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     sampler: '',
     scheduler: '',
     steps: defaults.steps,
-    cfgScale: defaults.cfg,
+    cfgScale: guidance,
     seed: -1,
+    checkpoint: '',
+    textEncoders: [],
     useInitImage: false,
     initImageData: '',
     initImageName: '',
   }
-  
-  // Add distilledCfg for flow engines
-  if (config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined) {
-    return { ...imageDefaults, distilledCfgScale: defaults.distilledCfg }
-  }
-  
   return imageDefaults
 }
 
@@ -185,13 +184,30 @@ function normalizeTabType(type: unknown): BaseTabType {
   if (!raw) return 'sd15'
   const value = raw.toLowerCase()
   if (value === 'wan22' || value === 'wan22_14b' || value === 'wan22_5b') return 'wan'
-  if (value === 'sd15' || value === 'sdxl' || value === 'flux' || value === 'wan') return value as BaseTabType
+  if (value === 'sd15' || value === 'sdxl' || value === 'flux' || value === 'zimage' || value === 'wan') return value as BaseTabType
   // Fail closed: unknown tab types fall back to a safe image tab.
   return 'sd15'
 }
 
+function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string, unknown> {
+  const params = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {}
+  const defaults = defaultParams(type)
+  if (type === 'wan') {
+    const merged: Record<string, unknown> = { ...defaults, ...params }
+    const d = defaults as any
+    const p = params as any
+    merged.high = { ...(d.high || {}), ...(p.high || {}) }
+    merged.low = { ...(d.low || {}), ...(p.low || {}) }
+    merged.video = { ...(d.video || {}), ...(p.video || {}) }
+    merged.assets = { ...(d.assets || {}), ...(p.assets || {}) }
+    return merged
+  }
+  return { ...defaults, ...params }
+}
+
 function normalizeTab(tab: BaseTab): BaseTab {
-  return { ...tab, type: normalizeTabType((tab as any).type) }
+  const type = normalizeTabType((tab as any).type)
+  return { ...tab, type, params: normalizeParamsForType(type, (tab as any).params) }
 }
 
 export const useModelTabsStore = defineStore('modelTabs', () => {
@@ -233,7 +249,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   function bootstrap(): void {
     // Create minimal default tabs when backend persistence is unavailable.
     const createdAt = nowIso()
-    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'wan']
+    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'zimage', 'wan']
     tabs.value = types.map((type, idx) => ({
       id: uuid(),
       type,

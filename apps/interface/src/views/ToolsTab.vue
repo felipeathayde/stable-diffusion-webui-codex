@@ -1,7 +1,7 @@
 <template>
   <section class="panel-stack cdx-tools">
     <div class="panel">
-      <div class="panel-header"><span>Tools</span></div>
+      <div class="panel-header">Tools</div>
       <div class="panel-body">
         <p class="subtitle">Utilities for model conversion and management</p>
 

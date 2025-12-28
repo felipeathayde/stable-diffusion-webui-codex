@@ -13,11 +13,12 @@ Status: Active
 
 ## Key Files
 - `launcher/` — Package exposing launcher infrastructure (`checks`, `services`, `profiles`, `paths`).
-- `tui_bios.py` — Curses-based TUI entrypoint that drives the launcher package.
+- `tui_launcher.py` — Curses-based TUI entrypoint that drives the launcher package.
+- `codex_launcher.py` — Tk-based GUI launcher for managing API/UI services (Windows).
 - `__init__.py` — Marks `apps` as a Python package so relative imports resolve cleanly across backend modules.
 
 ## Notes
-- New code must target `apps/backend` and `apps/interface`. The launcher lives under `apps/launcher/` with the TUI at `apps/tui_bios.py`.
+- New code must target `apps/backend` and `apps/interface`. The launcher lives under `apps/launcher/` with the TUI at `apps/tui_launcher.py`.
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.
 - 2025-11-02: Launcher/TUI now surfaces global device/dtype envs (`CODEX_DIFFUSION_*`, `CODEX_TE_*`, `CODEX_VAE_*`). CPU selections force fp32 automatically; per-model WAN device flags were retired.
 - 2025-11-02: launcher services emit explicit CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) and persist the selections in `apps/settings_values.json`; backend startup fails if the devices are missing.

@@ -2,7 +2,7 @@
   <section v-if="tab">
     <!-- Prompt & Input -->
     <div class="panel">
-      <div class="panel-header"><h3 class="h4">Prompt & Input</h3></div>
+      <div class="panel-header">Prompt & Input</div>
       <div class="panel-body">
         <div class="grid grid-2">
           <div>
@@ -47,7 +47,7 @@
 
     <!-- Generation Parameters -->
     <div class="panel">
-      <div class="panel-header"><h3 class="h4">Generation Parameters</h3></div>
+      <div class="panel-header">Generation Parameters</div>
       <div class="panel-body">
         <div class="grid grid-3">
           <div>
@@ -84,42 +84,35 @@
       </div>
     </div>
 
-    <!-- Workflows -->
-    <div class="panel">
-      <div class="panel-header"><h3 class="h4">Workflows</h3></div>
-      <div class="panel-body">
-        <div class="grid grid-2" style="align-items:center">
-          <div>
-            <button class="btn btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">Save snapshot</button>
-            <RouterLink class="btn btn-ghost" to="/workflows" style="margin-left:.5rem">Open</RouterLink>
-          </div>
-          <div style="text-align:right" class="caption">
-            Saves a snapshot of this tab’s params.
-          </div>
-        </div>
-        <div v-if="workflowOk" class="caption mt-2">{{ workflowOk }}</div>
-        <div v-if="workflowErr" class="panel-error mt-2">{{ workflowErr }}</div>
-      </div>
-    </div>
-
     <!-- Results -->
-    <div class="panel">
-      <div class="panel-header sticky">
-        <div class="grid grid-2">
-          <h3 class="h4">Results</h3>
-          <div style="text-align:right">
-            <button class="btn btn-primary" type="button" :disabled="isRunning" @click="generate">{{ isRunning ? 'Running…' : 'Generate' }}</button>
-          </div>
-        </div>
+    <RunCard
+      :isRunning="isRunning"
+      :generateDisabled="isRunning"
+      :showBatchControls="false"
+      @generate="generate"
+    >
+      <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
+      <RunSummaryChips :text="runSummary" />
+    </RunCard>
+
+    <ResultsCard
+      :showGenerate="false"
+      headerClass="three-cols"
+      headerRightClass="results-header-actions"
+    >
+      <template #header-right>
+        <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
+          {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
+        </button>
+        <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
+      </template>
+
+      <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
+      <div v-if="images.length" class="results-grid">
+        <img v-for="(img, i) in images" :key="i" :src="toDataUrl(img)" :alt="`img-${i}`" />
       </div>
-      <div class="panel-body">
-        <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
-        <div v-if="images.length" class="results-grid">
-          <img v-for="(img, i) in images" :key="i" :src="toDataUrl(img)" :alt="`img-${i}`" />
-        </div>
-        <div v-else class="muted">No results yet.</div>
-      </div>
-    </div>
+      <div v-else class="muted">No results yet.</div>
+    </ResultsCard>
   </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab not found.</div></div>
@@ -134,6 +127,10 @@ import { fetchSamplers, fetchSchedulers } from '../api/client'
 import { useGeneration } from '../composables/useGeneration'
 import type { EngineType } from '../stores/engine_config'
 import { useWorkflowsStore } from '../stores/workflows'
+import ResultsCard from '../components/results/ResultsCard.vue'
+import RunCard from '../components/results/RunCard.vue'
+import RunSummaryChips from '../components/results/RunSummaryChips.vue'
+import { useResultsCard } from '../composables/useResultsCard'
 
 const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
@@ -162,16 +159,20 @@ onMounted(async () => {
 
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
 const images = computed(() => gallery.value)
+const runSummary = computed(() => {
+  const sampler = params.value.sampler || 'automatic'
+  const scheduler = params.value.scheduler || 'automatic'
+  const seedLabel = params.value.seed === -1 ? 'seed random' : `seed ${params.value.seed}`
+  return `${params.value.width}×${params.value.height} px · ${params.value.steps} steps · CFG ${params.value.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}`
+})
 
 const workflows = useWorkflowsStore()
 const workflowBusy = ref(false)
-const workflowOk = ref('')
-const workflowErr = ref('')
+
+const { notice: copyNotice, toast, copyJson } = useResultsCard()
 
 async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
-  workflowOk.value = ''
-  workflowErr.value = ''
   workflowBusy.value = true
   try {
     await workflows.createSnapshot({
@@ -181,12 +182,17 @@ async function sendToWorkflows(): Promise<void> {
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    workflowOk.value = 'Snapshot saved to Workflows.'
+    toast('Snapshot saved to Workflows.')
   } catch (e) {
-    workflowErr.value = e instanceof Error ? e.message : String(e)
+    toast(e instanceof Error ? e.message : String(e))
   } finally {
     workflowBusy.value = false
   }
+}
+
+async function copyCurrentParams(): Promise<void> {
+  if (!tab.value) return
+  await copyJson(tab.value.params, 'Copied params.')
 }
 
 function setParams(patch: Partial<ImageBaseParams>): void {

@@ -1,10 +1,10 @@
 """GUI Launcher for Codex services (tkinter).
 
 Touch-friendly interface for managing API/UI services and runtime configuration.
-Complements the TUI BIOS (tui_bios.py) for use via AnyDesk on mobile devices.
+Complements the curses TUI (`apps/tui_launcher.py`) for use via AnyDesk on mobile devices.
 
 Usage:
-    python apps/gui_launcher.py
+    python apps/codex_launcher.py  # requires CODEX_ROOT (e.g., run-webui.bat)
 """
 from __future__ import annotations
 

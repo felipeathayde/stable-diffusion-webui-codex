@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2025-12-23
+Last Review: 2025-12-26
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 
 ## Key Files
 - `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional per-stage LoRA when `LightX2V` is enabled).
+- `WanStageLoraField.vue` — Stage-level LoRA select + weight (wan22-loras), used by `WanStagePanel.vue`.
 - `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/crf/pix_fmt/loop/pingpong/save flags + RIFE).
 
 ## Notes
@@ -22,3 +23,4 @@ Status: Active
 - 2025-12-23: WAN panels now use shared gen-card layout primitives (`gc-row`, `gc-col`, `row-split`, `cdx-form-row`) and the new `gen-card--embedded` variant, reducing `wan22-*` layout classes in the tab UI.
 - 2025-12-23: `WanStagePanel.vue` renders Steps/CFG via `components/ui/SliderField.vue` (label+input header, slider below) for parity with the rest of the WebUI.
 - 2025-12-23: WAN sliders use `cdx-input-w-md` sizing (removes WAN-only `w-step/w-cfg` CSS).
+- 2025-12-26: `WanStagePanel.vue` now places Sampler/Scheduler/Steps on the first row and Seed/CFG on the second; LoRA UI was extracted into `WanStageLoraField.vue`.

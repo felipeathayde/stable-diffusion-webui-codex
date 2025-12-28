@@ -1,7 +1,7 @@
 <template>
   <div class="cdx-slider-field">
     <div class="cdx-slider-field__head">
-      <label class="label-muted cdx-slider-field__label">{{ label }}</label>
+      <label class="cdx-slider-field__label">{{ label }}</label>
       <div class="cdx-slider-field__right">
         <slot name="right">
           <NumberStepperInput
@@ -77,4 +77,3 @@ function onRangeInput(event: Event): void {
   emit('update:modelValue', raw)
 }
 </script>
-

@@ -1,13 +1,13 @@
 <template>
   <section class="panel-stack">
     <div class="panel">
-      <div class="panel-header">
-        <span>Model Tabs</span>
+      <div class="panel-header">Model Tabs
         <div class="toolbar">
           <select class="select-md" v-model="newType" aria-label="New tab type">
             <option value="sd15">SD 1.5</option>
             <option value="sdxl">SDXL</option>
             <option value="flux">FLUX</option>
+            <option value="zimage">Z Image</option>
             <option value="wan">WAN 2.2</option>
           </select>
           <button class="btn btn-sm btn-primary" type="button" @click="createTab">New Tab</button>

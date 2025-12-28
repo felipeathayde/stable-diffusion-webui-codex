@@ -1,7 +1,7 @@
 <template>
   <div class="form-field">
     <label class="label-muted">{{ labelText }}</label>
-    <select class="select-md" :value="modelValue" @change="onChange">
+    <select class="select-md" :disabled="disabled" :value="modelValue" @change="onChange">
       <option v-if="allowEmpty" value="">{{ emptyLabelText }}</option>
       <option v-for="s in schedulers" :key="s.name" :value="s.name">
         {{ s.label }}
@@ -20,6 +20,7 @@ const props = defineProps<{
   label?: string
   allowEmpty?: boolean
   emptyLabel?: string
+  disabled?: boolean
 }>()
 
 const emit = defineEmits({
@@ -29,6 +30,7 @@ const emit = defineEmits({
 const labelText = computed(() => props.label ?? 'Scheduler')
 const allowEmpty = computed(() => props.allowEmpty === true)
 const emptyLabelText = computed(() => props.emptyLabel ?? 'Automatic')
+const disabled = computed(() => props.disabled === true)
 
 function onChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value

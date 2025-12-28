@@ -6,11 +6,11 @@
       "type": "sd15",
       "title": "SD 1.5",
       "order": 0,
-      "enabled": true,
+      "enabled": false,
       "params": {},
       "meta": {
-        "createdAt": "2025-10-25T00:10:27.811372",
-        "updatedAt": "2025-10-25T00:10:27.811372"
+        "createdAt": "2025-12-26T04:31:11.780958",
+        "updatedAt": "2025-12-27T05:28:27.914709"
       }
     },
     {
@@ -18,11 +18,11 @@
       "type": "sdxl",
       "title": "SDXL",
       "order": 1,
-      "enabled": true,
+      "enabled": false,
       "params": {},
       "meta": {
-        "createdAt": "2025-10-25T00:10:27.811372",
-        "updatedAt": "2025-10-25T00:10:27.811372"
+        "createdAt": "2025-12-26T04:31:11.780958",
+        "updatedAt": "2025-12-27T05:28:29.761670"
       }
     },
     {
@@ -30,11 +30,11 @@
       "type": "flux",
       "title": "FLUX",
       "order": 2,
-      "enabled": true,
+      "enabled": false,
       "params": {},
       "meta": {
-        "createdAt": "2025-10-25T00:10:27.811372",
-        "updatedAt": "2025-10-25T00:10:27.811372"
+        "createdAt": "2025-12-26T04:31:11.780958",
+        "updatedAt": "2025-12-27T05:28:31.733095"
       }
     },
     {
@@ -43,97 +43,36 @@
       "title": "WAN 2.2",
       "order": 3,
       "enabled": true,
-      "params": {},
-      "meta": {
-        "createdAt": "2025-10-25T00:10:27.811372",
-        "updatedAt": "2025-10-25T00:10:27.811372"
-      }
-    },
-    {
-      "id": "tab-1764862753194",
-      "type": "sdxl",
-      "title": "SDXL",
-      "order": 4,
-      "enabled": true,
       "params": {
-        "prompt": "",
-        "negativePrompt": "",
-        "width": 1024,
-        "height": 1024,
-        "sampler": "",
-        "scheduler": "",
-        "steps": 30,
-        "cfgScale": 7,
-        "seed": -1,
-        "useInitImage": false,
-        "initImageData": "",
-        "initImageName": ""
+        "video": {
+          "prompt": "",
+          "frames": 64,
+          "fps": 53,
+          "height": 768,
+          "width": 832,
+          "pingpong": true,
+          "saveOutput": true,
+          "saveMetadata": true,
+          "trimToAudio": true
+        },
+        "lightx2v": true,
+        "high": {
+          "cfgScale": 6,
+          "steps": 150,
+          "sampler": "automatic",
+          "scheduler": "karras"
+        },
+        "lowFollowsHigh": false,
+        "low": {
+          "cfgScale": 6,
+          "sampler": "automatic",
+          "scheduler": "karras",
+          "steps": 150
+        }
       },
       "meta": {
-        "createdAt": "2025-12-04T15:39:13.194376",
-        "updatedAt": "2025-12-04T15:39:13.194376"
-      }
-    },
-    {
-      "id": "tab-chroma-5",
-      "type": "chroma",
-      "title": "Chroma",
-      "order": 5,
-      "enabled": true,
-      "params": {},
-      "meta": {
-        "createdAt": "2025-12-08T12:25:00.000000",
-        "updatedAt": "2025-12-08T12:25:00.000000"
-      }
-    },
-    {
-      "id": "tab-wan14b-6",
-      "type": "wan14b",
-      "title": "WAN22 14B",
-      "order": 6,
-      "enabled": true,
-      "params": {},
-      "meta": {
-        "createdAt": "2025-12-08T12:25:00.000000",
-        "updatedAt": "2025-12-08T12:25:00.000000"
-      }
-    },
-    {
-      "id": "tab-qwen-7",
-      "type": "qwen",
-      "title": "Qwen",
-      "order": 7,
-      "enabled": true,
-      "params": {},
-      "meta": {
-        "createdAt": "2025-12-08T12:25:00.000000",
-        "updatedAt": "2025-12-08T12:25:00.000000"
-      }
-    },
-    {
-      "id": "tab-1765302434570",
-      "type": "zimage",
-      "title": "Z Image",
-      "order": 8,
-      "enabled": true,
-      "params": {
-        "prompt": "",
-        "negativePrompt": "",
-        "width": 1024,
-        "height": 1024,
-        "sampler": "",
-        "scheduler": "",
-        "steps": 8,
-        "cfgScale": 1,
-        "seed": -1,
-        "useInitImage": false,
-        "initImageData": "",
-        "initImageName": "",
-        "distilledCfgScale": 1
-      },
-      "meta": {
-        "createdAt": "2025-12-09T17:47:14.570383",
-        "updatedAt": "2025-12-09T17:47:14.570383"
+        "createdAt": "2025-12-26T04:31:11.780958",
+        "updatedAt": "2025-12-27T05:40:51.674132"
       }
     }
   ]

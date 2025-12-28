@@ -1,25 +1,25 @@
 <template>
-    <div class="quicksettings-group qs-group-mode">
-      <label class="label-muted">Mode</label>
-      <div class="qs-row">
-        <select class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
-          <option v-for="m in modeChoices" :key="m" :value="m">{{ m }}</option>
-        </select>
-      </div>
-    </div>
-    <div class="quicksettings-group qs-group-checkpoint" v-if="!hideCheckpoint">
-      <label class="label-muted">Checkpoint</label>
-      <div class="qs-row">
-        <div class="qs-pair">
-          <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
-            <option v-for="model in checkpoints" :key="model" :value="model">
-              {{ model }}
-            </option>
-          </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
-        </div>
-      </div>
-    </div>
+	    <div class="quicksettings-group qs-group-mode">
+	      <label class="label-muted">Mode</label>
+	      <div class="qs-row">
+	        <select class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
+	          <option v-for="m in modeChoices" :key="m" :value="m">{{ m }}</option>
+	        </select>
+	      </div>
+	    </div>
+	    <div class="quicksettings-group qs-group-checkpoint">
+	      <label class="label-muted">Checkpoint</label>
+	      <div class="qs-row">
+	        <div class="qs-pair">
+	          <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+	            <option v-for="model in checkpoints" :key="model" :value="model">
+	              {{ model }}
+	            </option>
+	          </select>
+	          <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
+	        </div>
+	      </div>
+	    </div>
 
     <div class="quicksettings-group qs-group-vae">
       <label class="label-muted">VAE</label>
@@ -30,7 +30,7 @@
               {{ v === 'Automatic' ? 'Built-in' : v }}
             </option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
         </div>
       </div>
     </div>
@@ -57,7 +57,7 @@
     <div class="quicksettings-group qs-group-overrides">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
-        <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">
+        <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">
           Set overrides
         </button>
       </div>
@@ -65,16 +65,15 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{
-  mode: string
-  modeChoices: string[]
-  checkpoint: string
-  checkpoints: string[]
-  hideCheckpoint: boolean
-  vae: string
-  vaeChoices: string[]
-  textEncoder: string
-  textEncoderChoices: any
+	const props = defineProps<{
+	  mode: string
+	  modeChoices: string[]
+	  checkpoint: string
+	  checkpoints: string[]
+	  vae: string
+	  vaeChoices: string[]
+	  textEncoder: string
+	  textEncoderChoices: any
   attentionBackend: string
   attentionChoices: Array<{ value: string; label: string }>
   textEncoderAutomaticLabel?: string

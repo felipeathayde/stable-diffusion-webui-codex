@@ -11,6 +11,7 @@
         :modelValue="stage.sampler"
         :label="samplerLabel"
         :allow-empty="true"
+        :disabled="disabled"
         @update:modelValue="(v) => updateStage({ sampler: v })"
       />
       <SchedulerSelector
@@ -19,10 +20,9 @@
         :modelValue="stage.scheduler"
         :label="schedulerLabel"
         :allow-empty="true"
+        :disabled="disabled"
         @update:modelValue="(v) => updateStage({ scheduler: v })"
       />
-    </div>
-    <div class="gc-row">
       <SliderField
         class="gc-col gc-col--wide"
         label="Steps"
@@ -36,6 +36,18 @@
         :disabled="disabled"
         @update:modelValue="(v) => updateStage({ steps: Math.trunc(v) })"
       />
+    </div>
+    <div class="gc-row">
+      <div class="gc-col gc-col--wide field">
+        <label class="label-muted">Seed</label>
+        <div class="number-with-controls w-full">
+          <input class="ui-input ui-input-sm pad-right" type="number" :disabled="disabled" :value="stage.seed" @change="updateStage({ seed: toInt($event, stage.seed) })" />
+          <div class="stepper">
+            <button class="step-btn" type="button" :disabled="disabled" title="Random seed" @click="randomizeSeed">🎲</button>
+            <button class="step-btn" type="button" :disabled="disabled || lastSeed === null" title="Reuse seed" @click="reuseSeed">↺</button>
+          </div>
+        </div>
+      </div>
       <SliderField
         class="gc-col gc-col--wide"
         label="CFG"
@@ -50,18 +62,6 @@
         @update:modelValue="(v) => updateStage({ cfgScale: v })"
       />
     </div>
-    <div class="gc-row">
-      <div class="gc-col gc-col--wide field">
-        <label class="label-muted">Seed</label>
-        <div class="number-with-controls w-full">
-          <input class="ui-input ui-input-sm pad-right" type="number" :disabled="disabled" :value="stage.seed" @change="updateStage({ seed: toInt($event, stage.seed) })" />
-          <div class="stepper">
-            <button class="step-btn" type="button" :disabled="disabled" title="Random seed" @click="randomizeSeed">🎲</button>
-            <button class="step-btn" type="button" :disabled="disabled || lastSeed === null" title="Reuse seed" @click="reuseSeed">↺</button>
-          </div>
-        </div>
-      </div>
-    </div>
     <div v-if="showModelDir" class="gc-row">
       <div class="gc-col field">
         <label class="label-muted">Model Dir</label>
@@ -69,18 +69,15 @@
       </div>
     </div>
 
-    <div v-if="lightx2v" class="gc-row">
-      <div class="gc-col gc-col--wide field">
-        <label class="label-muted">LoRA (wan22-loras)</label>
-        <select class="select-md" :disabled="disabled" :value="stage.loraPath" @change="updateStage({ loraPath: ($event.target as HTMLSelectElement).value })">
-          <option value="">None</option>
-          <option v-for="opt in loraChoices" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
-        </select>
-      </div>
-      <div v-if="stage.loraPath" class="gc-col field">
-        <label class="label-muted">LoRA weight</label>
-        <input class="ui-input" type="number" step="0.05" :disabled="disabled" :value="stage.loraWeight" @change="updateStage({ loraWeight: toFloat($event, stage.loraWeight) })" />
-      </div>
+    <div v-if="lightx2v">
+      <WanStageLoraField
+        :loraPath="stage.loraPath"
+        :loraWeight="stage.loraWeight"
+        :choices="loraChoices"
+        :disabled="disabled"
+        @update:loraPath="(v) => updateStage({ loraPath: v })"
+        @update:loraWeight="(v) => updateStage({ loraWeight: v })"
+      />
     </div>
 
     <div v-if="showModelDir && !stage.modelDir" class="panel-error">{{ title }}: model directory is empty.</div>
@@ -96,6 +93,7 @@ import type { WanStageParams } from '../../stores/model_tabs'
 import SamplerSelector from '../SamplerSelector.vue'
 import SchedulerSelector from '../SchedulerSelector.vue'
 import SliderField from '../ui/SliderField.vue'
+import WanStageLoraField from './WanStageLoraField.vue'
 
 const props = withDefaults(defineProps<{
   title: string

@@ -1,9 +1,7 @@
 <template>
   <section class="panel-stack">
     <div class="panel">
-      <div class="panel-header">
-        <span>Workflows</span>
-      </div>
+      <div class="panel-header">Workflows</div>
       <div class="panel-body">
         <div v-if="workflows.error" class="panel-error">{{ workflows.error }}</div>
         <p v-else-if="!items.length" class="caption">No workflows yet. Use “Save snapshot” from a model tab.</p>

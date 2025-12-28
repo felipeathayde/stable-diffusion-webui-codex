@@ -28,7 +28,7 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in highChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseHigh')">+</button>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseHigh')">+</button>
         </div>
       </div>
     </div>
@@ -41,22 +41,54 @@
             <option value="">{{ builtInLabel }}</option>
             <option v-for="m in lowChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
           </select>
-          <button class="btn btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseLow')">+</button>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseLow')">+</button>
         </div>
       </div>
     </div>
 
-    <div class="quicksettings-group qs-group-wan-assets">
-      <label class="label-muted">WAN Assets</label>
+    <div class="quicksettings-group qs-group-wan-metadata">
+      <label class="label-muted">WAN Metadata</label>
       <div class="qs-row">
-        <button class="btn btn-secondary qs-overrides-btn" type="button" :title="assetsSummary" @click="showAssetsModal = true">Assets…</button>
+        <div class="qs-pair">
+          <select id="qs-wan-metadata" class="select-md" :value="metadataDir" @change="$emit('update:metadataDir', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="m in metadataChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
+          </select>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseMetadata')">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="quicksettings-group qs-group-wan-text-encoder">
+      <label class="label-muted">WAN Text Encoder</label>
+      <div class="qs-row">
+        <div class="qs-pair">
+          <select id="qs-wan-text-encoder" class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ encoderLabel(te) }}</option>
+          </select>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseTe')">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="quicksettings-group qs-group-wan-vae">
+      <label class="label-muted">WAN VAE</label>
+      <div class="qs-row">
+        <div class="qs-pair">
+          <select id="qs-wan-vae" class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
+            <option value="">{{ builtInLabel }}</option>
+            <option v-for="v in vaeChoices" :key="v" :value="v">{{ dirLabel(v) }}</option>
+          </select>
+          <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseVae')">+</button>
+        </div>
       </div>
     </div>
 
     <div class="quicksettings-group qs-group-wan-guided">
       <label class="label-muted">Guide</label>
       <div class="qs-row">
-        <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('guidedGen')">Guided gen</button>
+        <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="$emit('guidedGen')">Guided gen</button>
       </div>
     </div>
 
@@ -95,34 +127,15 @@
     <div class="quicksettings-group qs-group-overrides">
       <label class="label-muted">Overrides</label>
       <div class="qs-row">
-        <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">
+        <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">
           Set overrides
         </button>
       </div>
     </div>
-
-    <QuickSettingsWanAssetsModal
-      v-model="showAssetsModal"
-      :metadata-dir="metadataDir"
-      :metadata-choices="metadataChoices"
-      :text-encoder="textEncoder"
-      :text-encoder-choices="textEncoderChoices"
-      :vae="vae"
-      :vae-choices="vaeChoices"
-      @update:metadataDir="$emit('update:metadataDir', $event)"
-      @update:textEncoder="$emit('update:textEncoder', $event)"
-      @update:vae="$emit('update:vae', $event)"
-      @browseMetadata="$emit('browseMetadata')"
-      @browseTe="$emit('browseTe')"
-      @browseVae="$emit('browseVae')"
-    />
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import QuickSettingsWanAssetsModal from '../modals/QuickSettingsWanAssetsModal.vue'
-
-const props = defineProps<{
+defineProps<{
   mode: string
   lightx2v: boolean
   highModel: string
@@ -144,7 +157,6 @@ const props = defineProps<{
 }>()
 
 const builtInLabel = 'Built-in'
-const showAssetsModal = ref(false)
 
 function dirLabel(path: string): string {
   const norm = path.replace(/\\/g, '/')
@@ -163,11 +175,4 @@ function encoderLabel(value: string): string {
   // For file labels like wan22//abs/path/to/file.safetensors, show wan22/file.safetensors.
   return `${family}/${tail}`
 }
-
-const assetsSummary = computed(() => {
-  const meta = props.metadataDir ? dirLabel(props.metadataDir) : builtInLabel
-  const te = props.textEncoder ? encoderLabel(props.textEncoder) : builtInLabel
-  const v = props.vae ? dirLabel(props.vae) : builtInLabel
-  return `Metadata: ${meta} · TE: ${te} · VAE: ${v}`
-})
 </script>

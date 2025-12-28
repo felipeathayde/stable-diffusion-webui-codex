@@ -7,7 +7,7 @@ Status: Draft
 ## 1. Consolidate Launcher Tooling (COMPLETED — 2025-10-28)
 - Implemented namespace package `apps/launcher/` (`__init__.py`, `paths.py`, `log_buffer.py`, `checks.py`, `services.py`, `profiles.py`).
 - Added `LauncherProfileStore` with segmented persistence and common helpers for tools/TUI.
-- Updated TUI entrypoint to `apps/tui_bios.py` and refreshed run-webui scripts + guard messages.
+- Updated TUI entrypoint to `apps/tui_launcher.py` and refreshed run-webui scripts + guard messages.
 
 ## 2. Retire Transitional Modules
 - Audit `apps/backend/codex` and `apps/backend/runtime/modules/` for active code.

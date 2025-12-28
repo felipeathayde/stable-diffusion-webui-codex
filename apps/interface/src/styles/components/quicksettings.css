@@ -32,7 +32,6 @@
   .quicksettings .qs-group-wan-lightx2v { flex: 0 0 auto; min-width: 100px; }
   .quicksettings .qs-group-wan-high,
   .quicksettings .qs-group-wan-low { flex: 1 1 160px; max-width: 260px; }
-  .quicksettings .qs-group-wan-assets { flex: 0 0 auto; min-width: 120px; }
   .quicksettings .qs-group-wan-guided { flex: 0 0 auto; min-width: 110px; }
   .quicksettings .qs-group-wan-metadata { flex: 1 1 140px; max-width: 240px; }
   .quicksettings .qs-group-wan-text-encoder { flex: 1 1 200px; max-width: 320px; }
@@ -67,11 +66,27 @@
     min-width: 0;
     flex: 1;
   }
+
+  /* QuickSettings buttons use custom variants so they can fill the row height (no fixed 2rem height). */
+  .quicksettings .btn.qs-btn-secondary {
+    background: hsla(0,0%,100%,0.08);
+    color: var(--color-foreground);
+    border: 0.0625rem solid var(--color-border);
+    height: 100%;
+  }
+  .quicksettings .btn.qs-btn-secondary:hover { background: hsla(0,0%,100%,0.12); }
+
+  .quicksettings .btn.qs-btn-outline {
+    background: transparent;
+    color: var(--color-foreground);
+    border: 0.0625rem solid var(--color-border);
+    height: 100%;
+  }
+  .quicksettings .btn.qs-btn-outline:hover { background: hsla(0,0%,100%,0.06); }
   
   .quicksettings .qs-inline-btn { width: 2rem; padding-inline: 0.5rem; flex-shrink: 0; }
   .quicksettings .qs-refresh-btn { padding-inline: 0.6rem; font-size: 0.75rem; }
-  .quicksettings .qs-overrides-btn,
-  .quicksettings .btn-sm { padding: 0.3rem 0.5rem; font-size: 0.7rem; white-space: nowrap; }
+  .quicksettings .qs-overrides-btn { padding: 0.3rem 0.5rem; font-size: 0.7rem; white-space: nowrap; }
   
   .qs-actions { display: flex; align-items: center; gap: 0.4rem; }
   .qs-paths-hint { flex-direction: column; }

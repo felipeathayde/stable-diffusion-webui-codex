@@ -1,38 +1,27 @@
 <template>
   <section class="panels">
     <div class="panel-stack" ref="leftStack">
-      <div class="panel">
-        <div class="panel-header"><span>Prompt</span>
-          <div class="toolbar prompt-toolbar">
-            <button class="btn btn-sm btn-secondary" type="button" @click="showCkpt = true">Checkpoints</button>
-            <button class="btn btn-sm btn-secondary" type="button" @click="showTI = true">Textual Inversion</button>
-            <button class="btn btn-sm btn-secondary" type="button" @click="showLora = true">LoRA</button>
-            <label class="label-muted styles-label">Styles</label>
-            <input class="ui-input styles-input" list="style-list" v-model="styleName" placeholder="Filter styles" />
-            <datalist id="style-list">
-              <option v-for="s in styleNames" :key="s" :value="s" />
-            </datalist>
-            <button class="btn btn-sm btn-secondary" type="button" @click="showStyle = true">New</button>
-            <button class="btn btn-sm btn-outline" type="button" @click="applyStyle(styleName)">Apply</button>
-          </div>
+      <PromptCard v-model:prompt="store.prompt" v-model:negative="store.negativePrompt" :defaultShowNegative="true">
+        <div v-if="store.isRunning" class="panel-progress">
+          <p><strong>Stage:</strong> {{ store.progress.stage }}</p>
+          <p v-if="store.progress.percent !== null">Progress: {{ store.progress.percent?.toFixed(1) }}%</p>
+          <p v-if="store.progress.step !== null && store.progress.totalSteps !== null">
+            Step {{ store.progress.step }} / {{ store.progress.totalSteps }}
+          </p>
         </div>
-        <div class="panel-body">
-          <PromptFields v-model:prompt="store.prompt" v-model:negative="store.negativePrompt" />
-          <div v-if="store.isRunning" class="panel-progress">
-            <p><strong>Stage:</strong> {{ store.progress.stage }}</p>
-            <p v-if="store.progress.percent !== null">Progress: {{ store.progress.percent?.toFixed(1) }}%</p>
-            <p v-if="store.progress.step !== null && store.progress.totalSteps !== null">
-              Step {{ store.progress.step }} / {{ store.progress.totalSteps }}
-            </p>
-          </div>
-          <div v-if="store.status === 'error'" class="panel-error">
-            {{ store.errorMessage }}
-          </div>
+        <div v-if="store.status === 'error'" class="panel-error">
+          {{ store.errorMessage }}
         </div>
-      </div>
+      </PromptCard>
 
       <div class="panel">
-        <div class="panel-header">Generation Parameters</div>
+        <div class="panel-header">
+          Generation Parameters
+          <div class="toolbar">
+            <span v-if="store.profileMessage" class="caption">{{ store.profileMessage }}</span>
+            <button class="btn btn-sm btn-secondary" type="button" :disabled="store.isRunning" @click="store.saveProfile()">Save Profile</button>
+          </div>
+        </div>
         <div class="panel-body">
           <div class="form-field">
             <label class="ui-label">Model Checkpoint</label>
@@ -45,7 +34,7 @@
             />
             <p class="caption">SDXL uses the built-in VAE safetensor automatically.</p>
           </div>
-          <GenerationSettingsCard
+          <BasicParametersCard
             :samplers="store.samplers"
             :schedulers="store.schedulers"
             :sampler="store.selectedSampler"
@@ -55,8 +44,7 @@
             :height="store.height"
             :cfg-scale="store.cfgScale"
             :seed="store.seed"
-            :batch-size="store.batchSize"
-            :batch-count="store.batchCount"
+            :resolutionPresets="resolutionPresets"
             @update:sampler="store.setSampler"
             @update:scheduler="store.setScheduler"
             @update:steps="(v:number)=>store.steps=v"
@@ -64,8 +52,6 @@
             @update:height="(v:number)=>store.height=v"
             @update:cfgScale="(v:number)=>store.cfgScale=v"
             @update:seed="(v:number)=>store.seed=v"
-            @update:batchSize="(v:number)=>store.batchSize=v"
-            @update:batchCount="(v:number)=>store.batchCount=v"
             @random-seed="store.randomizeSeed"
             @reuse-seed="store.reuseSeed"
           />
@@ -94,95 +80,75 @@
             v-model:model="store.refiner.model"
             v-model:vae="store.refiner.vae"
           />
-          <div class="toolbar">
-            <div class="qs-actions">
-              <button class="btn btn-sm btn-outline" type="button" v-for="p in resolutionPresets" :key="p[0] + 'x' + p[1]" @click="applyResolutionPreset(p[0], p[1])">{{ p[0] }}×{{ p[1] }}</button>
-            </div>
-            <span class="caption">Aspect ratio: {{ aspectLabel }}</span>
-          </div>
-          <div class="toolbar">
-            <button class="btn btn-sm btn-secondary" type="button" :disabled="store.isRunning" @click="store.saveProfile()">Save Profile</button>
-            <span class="caption" v-if="store.profileMessage">{{ store.profileMessage }}</span>
-          </div>
         </div>
       </div>
     </div>
 
     <div class="panel-stack">
-      <div class="panel">
-        <div class="panel-header three-cols results-sticky"><span>Results</span>
-          <div class="header-center">
-            <button class="btn btn-md btn-primary results-generate" :disabled="store.isRunning" @click="onGenerate">
-              Generate
-            </button>
+      <RunCard
+        :generateDisabled="store.isRunning"
+        :isRunning="store.isRunning"
+        :batchCount="store.batchCount"
+        :batchSize="store.batchSize"
+        :disabled="store.isRunning"
+        @generate="onGenerate"
+        @update:batchCount="(v:number)=>store.batchCount=v"
+        @update:batchSize="(v:number)=>store.batchSize=v"
+      >
+        <RunSummaryChips :text="runSummary" />
+      </RunCard>
+
+      <ResultsCard :showGenerate="false" headerClass="three-cols" headerRightClass="results-actions">
+        <template #header-right>
+          <div class="gentime-display" v-if="gentimeSeconds !== null">
+            <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
           </div>
-          <div class="header-right results-actions">
-            <div class="gentime-display" v-if="gentimeSeconds !== null">
-              <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
-            </div>
-          </div>
-        </div>
-        <div class="panel-body">
-          <ResultViewer mode="image" :images="store.gallery" :width="store.width" :height="store.height" emptyText="No images yet. Generate to see results here." :style="previewStyle">
-            <template #image-actions="{ image, index }">
-              <button class="gallery-action" type="button" @click="sendToImg2Img(image)" title="Send to Img2Img">Send to Img2Img</button>
-              <button class="gallery-action" type="button" @click="sendToInpaint(image)" title="Send to Inpaint">Send to Inpaint</button>
-              <button class="gallery-action" type="button" @click="download(image, index)" title="Download Image">Download</button>
-            </template>
-          </ResultViewer>
-        </div>
-      </div>
+        </template>
+
+        <ResultViewer mode="image" :images="store.gallery" :width="store.width" :height="store.height" emptyText="No images yet. Generate to see results here." :style="previewStyle">
+          <template #image-actions="{ image, index }">
+            <button class="gallery-action" type="button" @click="sendToImg2Img(image)" title="Send to Img2Img">Send to Img2Img</button>
+            <button class="gallery-action" type="button" @click="sendToInpaint(image)" title="Send to Inpaint">Send to Inpaint</button>
+            <button class="gallery-action" type="button" @click="download(image, index)" title="Download Image">Download</button>
+          </template>
+        </ResultViewer>
+      </ResultsCard>
 
       <div class="panel" v-if="store.info">
         <div class="panel-header">Generation Info</div>
         <div class="panel-body">
-          <pre class="text-xs break-words">{{ asJson(store.info) }}</pre>
+          <pre class="text-xs break-words">{{ formatJson(store.info) }}</pre>
         </div>
       </div>
     </div>
 
-    <CheckpointModal v-model="showCkpt" />
-    <LoraModal v-model="showLora" @insert="onInsertToken" />
-    <TextualInversionModal v-model="showTI" @insert="onInsertToken" />
-    <StyleEditorModal v-model="showStyle" @saved="onStyleSaved" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
 import { useSdxlStore } from '../stores/sdxl'
-import { useImg2ImgStore } from '../stores/img2img'
-import { useInpaintStore } from '../stores/inpaint'
-import CheckpointModal from '../components/modals/CheckpointModal.vue'
-import LoraModal from '../components/modals/LoraModal.vue'
-import TextualInversionModal from '../components/modals/TextualInversionModal.vue'
-import PromptFields from '../components/prompt/PromptFields.vue'
-import GenerationSettingsCard from '../components/GenerationSettingsCard.vue'
+import PromptCard from '../components/prompt/PromptCard.vue'
+import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HighresSettingsCard from '../components/HighresSettingsCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
 import ResultViewer from '../components/ResultViewer.vue'
-import StyleEditorModal from '../components/modals/StyleEditorModal.vue'
+import ResultsCard from '../components/results/ResultsCard.vue'
+import RunCard from '../components/results/RunCard.vue'
+import RunSummaryChips from '../components/results/RunSummaryChips.vue'
+import { formatJson } from '../composables/useResultsCard'
+import { useModelTabNavigation } from '../composables/useModelTabNavigation'
 import { usePresetsStore } from '../stores/presets'
-import { useStylesStore } from '../stores/styles'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import type { GeneratedImage } from '../api/types'
 
 const store = useSdxlStore()
-const img2img = useImg2ImgStore()
-const inpaint = useInpaintStore()
-const router = useRouter()
 const presetsStore = usePresetsStore()
-const stylesStore = useStylesStore()
 const quicksettings = useQuicksettingsStore()
 const engineCaps = useEngineCapabilitiesStore()
+const { openModelTab } = useModelTabNavigation()
 
-const showCkpt = ref(false)
-const showLora = ref(false)
-const showTI = ref(false)
-const showStyle = ref(false)
-const styleName = ref('')
 const presetName = ref('')
 const leftStack = ref<HTMLElement | null>(null)
 const previewStyle = ref<Record<string, string>>({})
@@ -203,22 +169,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', syncPreviewHeight)
 })
 
-type PromptInsertPayload = string | { token: string; target?: 'positive' | 'negative' }
-
-function onInsertToken(payload: PromptInsertPayload): void {
-  const token = typeof payload === 'string' ? payload : payload.token
-  const target = typeof payload === 'string' ? 'positive' : (payload.target ?? 'positive')
-  if (!token) return
-
-  if (target === 'negative') {
-    store.negativePrompt = (store.negativePrompt ? store.negativePrompt + ' ' : '') + token
-  } else {
-    store.prompt = (store.prompt ? store.prompt + ' ' : '') + token
-  }
-}
-
-function onGenerate(event: Event): void {
-  event.preventDefault()
+function onGenerate(): void {
   void store.generate()
 }
 
@@ -240,34 +191,23 @@ function download(image: GeneratedImage, index: number): void {
   link.click()
 }
 
-function sendToImg2Img(image: GeneratedImage): void {
+async function sendToImg2Img(image: GeneratedImage): Promise<void> {
   try {
-    const bytes = atob(image.data)
-    const buf = new Uint8Array(bytes.length)
-    for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i)
-    const file = new File([buf], 'from_sdxl.png', { type: `image/${image.format}` })
-    void img2img.setInitImage(file)
-    router.push('/img2img')
+    await openModelTab('sdxl', { initImage: { dataUrl: toDataUrl(image), name: 'from_sdxl.png' } })
   } catch (e) {
-    console.error('Failed to send to Img2Img', e)
+    console.error('Failed to open Img2Img tab', e)
   }
 }
 
-function sendToInpaint(image: GeneratedImage): void {
+async function sendToInpaint(image: GeneratedImage): Promise<void> {
   try {
-    const bytes = atob(image.data)
-    const buf = new Uint8Array(bytes.length)
-    for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i)
-    const file = new File([buf], 'from_sdxl.png', { type: `image/${image.format}` })
-    void inpaint.setInitImage(file)
-    router.push({ path: '/img2img', query: { tab: 'inpaint' } })
+    await openModelTab('sdxl', { initImage: { dataUrl: toDataUrl(image), name: 'from_sdxl_inpaint.png' } })
   } catch (e) {
-    console.error('Failed to send to Inpaint', e)
+    console.error('Failed to open Inpaint tab', e)
   }
 }
 
 const presetNames = computed(() => presetsStore.names('sdxl'))
-const styleNames = computed(() => stylesStore.names())
 const semanticEngine = computed(() => quicksettings.currentEngine || 'sdxl')
 const engineSurface = computed(() => engineCaps.get(semanticEngine.value))
 const showHighres = computed(() => {
@@ -279,6 +219,12 @@ const showGlobalRefiner = computed(() => {
   const surf = engineSurface.value
   if (!surf) return true
   return surf.supports_refiner
+})
+const runSummary = computed(() => {
+  const sampler = store.selectedSampler || 'automatic'
+  const scheduler = store.selectedScheduler || 'automatic'
+  const seedLabel = store.seed === -1 ? 'seed random' : `seed ${store.seed}`
+  return `${store.width}×${store.height} px · ${store.steps} steps · CFG ${store.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel} · batch ${store.batchCount}×${store.batchSize}`
 })
 function snapshotParams(): Record<string, unknown> {
   return {
@@ -308,13 +254,6 @@ function applyParams(v: Record<string, unknown>): void {
 }
 function savePreset(name: string): void { presetsStore.upsert('sdxl', name, snapshotParams()) }
 function applyPreset(name: string): void { const v = presetsStore.get('sdxl', name); if (v) applyParams(v) }
-function applyStyle(name: string): void {
-  const d = stylesStore.get(name)
-  if (!d) return
-  if (d.prompt) store.prompt += (store.prompt ? ' ' : '') + d.prompt
-  if (d.negative) store.negativePrompt += (store.negativePrompt ? ' ' : '') + d.negative
-}
-function onStyleSaved(): void { /* reactive */ }
 
 function syncPreviewHeight(): void {
   const el = leftStack.value
@@ -323,25 +262,11 @@ function syncPreviewHeight(): void {
   previewStyle.value = { minHeight: `${Math.max(300, Math.floor(h))}px` }
 }
 
-function asJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch (error) {
-    return String(value)
-  }
-}
-
 const resolutionPresets = computed((): [number, number][] => [
   [1024, 1024],
   [1152, 896],
   [1216, 832],
   [1344, 768],
 ])
-const aspectLabel = computed(() => {
-  const g = (a: number, b: number): number => (b ? g(b, a % b) : a)
-  const d = g(store.width, store.height) || 1
-  return `${store.width / d}:${store.height / d}`
-})
-function applyResolutionPreset(w: number, h: number): void { store.width = w; store.height = h }
 
 </script>

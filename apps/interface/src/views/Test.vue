@@ -2,9 +2,7 @@
   <section class="panels test-view">
     <div class="panel-stack">
       <div class="panel test-view-panel">
-        <div class="panel-header">
-          <h3 class="h4">WAN GGUF Harness</h3>
-        </div>
+        <div class="panel-header">WAN GGUF Harness</div>
         <div class="panel-body">
           <div class="test-section">
             <h4 class="h5">Global Overrides</h4>
@@ -203,7 +201,7 @@
 
     <div class="panel-stack">
       <div class="panel test-results-panel">
-        <div class="panel-header"><span>Results</span></div>
+        <div class="panel-header">Results</div>
         <div class="panel-body">
           <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet." />
         </div>

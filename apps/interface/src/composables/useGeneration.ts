@@ -8,7 +8,7 @@ import { computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { getEngineConfig, type EngineType } from '../stores/engine_config'
-import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
+import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, type Txt2ImgRequest } from '../api/payloads'
 import { startTxt2Img, subscribeTask } from '../api/client'
 import type { TaskEvent, GeneratedImage } from '../api/types'
 
@@ -85,6 +85,21 @@ export function useGeneration(tabId: string) {
     
     const p = params.value
     const config = engineConfig.value!
+    const checkpoint = String((p as any).checkpoint || '').trim()
+    const modelOverride = checkpoint
+    if (!modelOverride) {
+      state.value.status = 'error'
+      state.value.errorMessage = 'Select a checkpoint to generate.'
+      return
+    }
+
+    const textEncoders = Array.isArray((p as any).textEncoders)
+      ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
+      : []
+
+    const teOverride = engineType.value === 'flux'
+      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
+      : undefined
     
     // Build extras based on engine capabilities
     const extras: Record<string, unknown> = {
@@ -92,18 +107,24 @@ export function useGeneration(tabId: string) {
       batch_count: 1,
     }
     
-    // Add tenc_sha for engines that require it (like Z Image GGUF)
-    if (config.capabilities.requiresTenc) {
-      // Get first text encoder and look up its SHA
-      const firstTenc = quicksettings.currentTextEncoders[0]
-      const sha = quicksettings.resolveTextEncoderSha(firstTenc)
-      if (sha) {
-        extras.tenc_sha = sha
-      } else {
+    const needsTencSha = config.capabilities.requiresTenc || modelOverride.toLowerCase().endsWith('.gguf')
+    if (needsTencSha) {
+      const shas: string[] = []
+      for (const label of textEncoders) {
+        const sha = quicksettings.resolveTextEncoderSha(label)
+        if (!sha) {
+          state.value.status = 'error'
+          state.value.errorMessage = `Text encoder SHA not found for '${label}'.`
+          return
+        }
+        shas.push(sha)
+      }
+      if (shas.length === 0) {
         state.value.status = 'error'
         state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
         return
       }
+      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
     }
     
     let payload: Txt2ImgRequest
@@ -123,10 +144,11 @@ export function useGeneration(tabId: string) {
         styles: [],
         device: (quicksettings.currentDevice || 'cpu') as any,
         engine: engineType.value,
-        model: quicksettings.currentModel,
+        model: modelOverride,
         smartOffload: quicksettings.smartOffload,
         smartFallback: quicksettings.smartFallback,
         smartCache: quicksettings.smartCache,
+        textEncoderOverride: teOverride,
         extras,
       })
     } catch (error) {

@@ -2,11 +2,43 @@
   /* Prompt header toolbar */
   .prompt-toolbar { margin-left: auto; display: flex; align-items: center; gap: var(--space-sm); }
   .prompt-toolbar .styles-label { margin-left: var(--space-sm); }
-  .prompt-toolbar .styles-input { width: clamp(12rem, 22vw, 16rem); }
+  .prompt-toolbar .cdx-input-with-actions { position: relative; display: inline-flex; align-items: center; flex: 0 0 auto; width: clamp(16rem, 22vw, 20rem); min-width: 16rem; }
+  .prompt-toolbar .cdx-input-with-actions .styles-input { width: 100%; min-width: 0; padding-right: 7.5rem; }
+  .prompt-toolbar .cdx-input-actions {
+    position: absolute;
+    right: 0.375rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
 
   /* Results header */
   .results-actions { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-sm); align-items: center; }
+  .results-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-sm); }
   .results-generate { width: 10rem; }
+  .cdx-chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
+
+  /* Run card header */
+  .panel-header.run-sticky { z-index: 5; }
+  .run-controls { display: flex; align-items: center; gap: var(--space-md); }
+  .run-control { display: inline-flex; align-items: center; gap: var(--space-xs); }
+  .run-batch-menu { position: relative; }
+  .run-batch-menu__toggle { white-space: nowrap; }
+  .run-batch-menu__panel {
+    z-index: 40;
+    padding: var(--space-sm);
+    min-width: 16rem;
+    background: linear-gradient(180deg, hsla(0,0%,100%,0.05), hsla(0,0%,100%,0.03));
+    box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+    backdrop-filter: blur(1rem);
+    -webkit-backdrop-filter: blur(1rem);
+    overflow: auto;
+  }
+  .run-batch-menu__rows { display: grid; gap: var(--space-sm); }
+  .run-batch-menu__row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-sm); align-items: center; }
+  .run-batch-menu__actions { display: flex; justify-content: flex-end; margin-top: var(--space-sm); }
 
   /* Settings: Paths */
   .settings-paths-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); }

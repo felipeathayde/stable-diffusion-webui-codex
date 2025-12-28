@@ -2,7 +2,7 @@
   <section class="panels">
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header"><span>PNG Info</span></div>
+        <div class="panel-header">PNG Info</div>
         <div class="panel-body">
           <div class="panel-section">
             <label class="label-muted">Upload Image</label>
@@ -18,7 +18,7 @@
 
     <div class="panel-stack">
       <div class="panel">
-        <div class="panel-header three-cols results-sticky"><span>Results</span>
+        <div class="panel-header three-cols results-sticky">Results
           <div class="header-center"><button class="btn btn-md btn-primary results-generate">Analyze</button></div>
           <div class="header-right results-actions">
             <input class="ui-input" list="pnginfo-preset-list" v-model="presetName" placeholder="Preset" />

@@ -1,74 +1,54 @@
 <template>
   <section v-if="tab" class="panels wan-panels">
     <div class="panel-stack">
-      <div class="panel">
-        <div class="panel-header"><span>Prompt</span>
-          <div class="toolbar prompt-toolbar">
-            <button class="btn btn-sm btn-secondary" type="button" @click="showCkpt = true">Checkpoints</button>
-            <button class="btn btn-sm btn-secondary" type="button" @click="showTI = true">Textual Inversion</button>
-            <button class="btn btn-sm btn-secondary" type="button" @click="showLora = true">LoRA</button>
-            <label class="label-muted styles-label">Styles</label>
-            <input class="ui-input styles-input" list="style-list" v-model="styleName" placeholder="Filter styles" />
-            <datalist id="style-list">
-              <option v-for="s in styleNames" :key="s" :value="s" />
-            </datalist>
-            <button class="btn btn-sm btn-secondary" type="button" @click="showStyle = true">New</button>
-            <button class="btn btn-sm btn-outline" type="button" @click="applyStyle(styleName)">Apply</button>
+      <PromptCard v-model:prompt="videoPrompt" v-model:negative="videoNegative" fieldsId="wan-guided-prompt">
+        <div v-if="mode !== 'txt2vid'" class="gen-card">
+          <div class="row-split">
+            <span class="label-muted">Input</span>
+            <span class="caption">Mode is set in QuickSettings.</span>
           </div>
-        </div>
-        <div class="panel-body">
-          <div id="wan-guided-prompt">
-            <PromptFields v-model:prompt="videoPrompt" v-model:negative="videoNegative" />
+          <div v-if="mode === 'img2vid'" id="wan-guided-init-image" class="mt-2">
+            <InitialImageCard
+              label="Image"
+              :disabled="isRunning"
+              :src="video.initImageData"
+              :hasImage="Boolean(video.initImageData)"
+              @set="onInitImageFile"
+              @clear="clearInit"
+            >
+              <template #footer>
+                <div v-if="video.initImageName" class="caption mt-1">{{ video.initImageName }}</div>
+              </template>
+            </InitialImageCard>
           </div>
-
-          <div v-if="mode !== 'txt2vid'" class="gen-card">
-            <div class="row-split">
-              <span class="label-muted">Input</span>
-              <span class="caption">Mode is set in QuickSettings.</span>
-            </div>
-            <div v-if="mode === 'img2vid'" id="wan-guided-init-image" class="mt-2">
-              <InitialImageCard
-                label="Image"
-                :disabled="isRunning"
-                :src="video.initImageData"
-                :hasImage="Boolean(video.initImageData)"
-                @set="onInitImageFile"
-                @clear="clearInit"
-              >
-                <template #footer>
-                  <div v-if="video.initImageName" class="caption mt-1">{{ video.initImageName }}</div>
-                </template>
-              </InitialImageCard>
-            </div>
-            <div v-else id="wan-guided-init-video" class="mt-2">
-              <InitialVideoCard
-                label="Video"
-                :disabled="isRunning"
-                :src="initVideoPreviewUrl"
-                :hasVideo="Boolean(initVideoPreviewUrl)"
-                @set="onInitVideoFile"
-                @clear="clearInitVideo"
-              >
-                <template #footer>
-                  <div class="cdx-form-grid mt-2">
-                    <div>
-                      <label class="label-muted">Video path (optional)</label>
-                      <input class="ui-input" type="text" :disabled="isRunning" :value="video.initVideoPath" placeholder="relative/path/to/video.mp4" @change="setVideo({ initVideoPath: ($event.target as HTMLInputElement).value })" />
-                      <p class="caption mt-1">Paths are restricted server-side; upload is recommended.</p>
-                    </div>
-                    <div>
-                      <label class="label-muted">Selected file</label>
-                      <div class="caption break-words">{{ video.initVideoName || 'None' }}</div>
-                    </div>
+          <div v-else id="wan-guided-init-video" class="mt-2">
+            <InitialVideoCard
+              label="Video"
+              :disabled="isRunning"
+              :src="initVideoPreviewUrl"
+              :hasVideo="Boolean(initVideoPreviewUrl)"
+              @set="onInitVideoFile"
+              @clear="clearInitVideo"
+            >
+              <template #footer>
+                <div class="cdx-form-grid mt-2">
+                  <div>
+                    <label class="label-muted">Video path (optional)</label>
+                    <input class="ui-input" type="text" :disabled="isRunning" :value="video.initVideoPath" placeholder="relative/path/to/video.mp4" @change="setVideo({ initVideoPath: ($event.target as HTMLInputElement).value })" />
+                    <p class="caption mt-1">Paths are restricted server-side; upload is recommended.</p>
                   </div>
-                </template>
-              </InitialVideoCard>
-            </div>
+                  <div>
+                    <label class="label-muted">Selected file</label>
+                    <div class="caption break-words">{{ video.initVideoName || 'None' }}</div>
+                  </div>
+                </div>
+              </template>
+            </InitialVideoCard>
           </div>
-
-          <div v-if="errorMessage" class="panel-error">{{ errorMessage }}</div>
         </div>
-      </div>
+
+        <div v-if="errorMessage" class="panel-error">{{ errorMessage }}</div>
+      </PromptCard>
 
       <div class="panel">
         <div class="panel-header">Generation Parameters</div>
@@ -247,131 +227,128 @@
 
     <!-- Right column: Results -->
     <div class="panel-stack">
-      <div class="panel wan-results-panel">
-        <div class="panel-header three-cols results-sticky"><span>Results</span>
-          <div class="header-center">
+      <RunCard
+        :isRunning="isRunning"
+        :generateDisabled="isRunning"
+        :generateTitle="!canGenerate ? 'Guided gen: click to see what is missing.' : ''"
+        generateId="wan-guided-generate"
+        :showBatchControls="false"
+        @generate="onGenerateClick"
+      >
+        <template #header-right>
+          <div class="wan-header-actions">
             <button
-              id="wan-guided-generate"
-              class="btn btn-md btn-primary results-generate"
-              :disabled="isRunning"
-              :title="!canGenerate ? 'Guided gen: click to see what is missing.' : ''"
-              @click="onGenerateClick"
+              v-if="isRunning"
+              class="btn btn-sm btn-secondary"
+              type="button"
+              :disabled="queue.length >= queueMax || !canGenerate"
+              :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
+              @click="queueNext"
             >
-              {{ isRunning ? 'Running…' : 'Generate' }}
+              Queue ({{ queue.length }}/{{ queueMax }})
+            </button>
+            <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
+              Reuse last
+            </button>
+            <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
+              {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
             </button>
           </div>
-          <div class="header-right">
+        </template>
+
+        <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
+        <RunSummaryChips class="wan-results-summary" :text="runSummary" />
+      </RunCard>
+
+      <ResultsCard
+        class="wan-results-panel"
+        headerClass="three-cols"
+        headerRightClass="wan-header-actions"
+        :showGenerate="false"
+      >
+        <template #header-right>
+          <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
+            {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
+          </button>
+          <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
+        </template>
+
+        <div v-if="isRunning" class="panel-progress">
+          <p><strong>Stage:</strong> {{ progress.stage }}</p>
+          <p v-if="progress.percent !== null">Progress: {{ progress.percent.toFixed(1) }}%</p>
+          <progress v-if="progress.percent !== null" class="wan-progress" :value="progress.percent" max="100"></progress>
+          <p v-if="progress.step !== null && progress.totalSteps !== null">
+            Step {{ progress.step }} / {{ progress.totalSteps }}
+          </p>
+          <p v-if="progress.etaSeconds !== null" class="caption">ETA ~ {{ progress.etaSeconds.toFixed(0) }}s</p>
+          <div v-if="queue.length" class="wan-callout-actions mt-2">
+            <span class="caption">Queued: {{ queue.length }} / {{ queueMax }}</span>
+            <button class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
+          </div>
+        </div>
+        <div v-if="videoUrl" class="gen-card mb-3">
+          <div class="row-split">
+            <span class="label-muted">Exported Video</span>
+            <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
+          </div>
+          <video class="w-full rounded" :src="videoUrl" controls />
+          <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_OUTPUT_ROOT is writable.</p>
+        </div>
+        <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
+          <template #empty>
+            <div class="wan-results-empty">
+              <div class="wan-empty-title">No results yet</div>
+              <div class="caption">Need help? Click “Guided gen” in the header (or press Generate to see what’s missing).</div>
+            </div>
+          </template>
+        </ResultViewer>
+
+        <div v-if="info" class="gen-card mt-3">
+          <div class="row-split">
+            <span class="label-muted">Generation Info</span>
             <div class="wan-header-actions">
-              <button
-                v-if="isRunning"
-                class="btn btn-sm btn-secondary"
-                type="button"
-                :disabled="queue.length >= queueMax || !canGenerate"
-                :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
-                @click="queueNext"
-              >
-                Queue ({{ queue.length }}/{{ queueMax }})
-              </button>
-              <button v-else-if="history.length" class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="reuseLast">
-                Reuse last
-              </button>
-              <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
-                {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
-              </button>
-              <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
-              <button v-if="isRunning" class="btn btn-sm btn-secondary" type="button" :disabled="cancelRequested" @click="cancel()">
-                {{ cancelRequested ? 'Cancelling…' : 'Cancel' }}
-              </button>
+              <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
             </div>
+          </div>
+          <pre class="text-xs break-words">{{ formatJson(info) }}</pre>
+        </div>
+
+        <div class="gen-card mt-3">
+          <div class="row-split">
+            <span class="label-muted">History</span>
+          </div>
+          <div v-if="history.length" class="wan-history-list">
+            <div v-for="item in history" :key="item.taskId" :class="['wan-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
+              <div class="wan-history-meta">
+                <div class="wan-history-title">{{ formatHistoryTitle(item) }}</div>
+                <div class="wan-history-sub">{{ item.summary }}</div>
+                <div v-if="item.promptPreview" class="wan-history-sub">{{ item.promptPreview }}</div>
+                <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
+                <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
+              </div>
+              <div class="wan-history-actions">
+                <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
+                  {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'View' }}
+                </button>
+                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
+                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="caption">No runs yet.</div>
+
+          <details v-if="diffText" class="accordion">
+            <summary>Diff vs previous run</summary>
+            <div class="accordion-body">
+              <pre class="text-xs break-words">{{ diffText }}</pre>
+            </div>
+          </details>
+          <div class="wan-callout-actions mt-2">
+            <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
           </div>
         </div>
-        <div class="panel-body">
-          <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
-          <div class="caption wan-results-summary">
-            {{ mode }} · {{ video.width }}×{{ video.height }} px · {{ video.frames }} frames @ {{ video.fps }} fps (~ {{ durationLabel }}s) · High {{ high.steps }} steps · CFG {{ high.cfgScale }} · Low {{ low.steps }} steps · CFG {{ low.cfgScale }}{{ lightx2v ? ' · lightx2v' : '' }}
-          </div>
-          <div v-if="isRunning" class="panel-progress">
-            <p><strong>Stage:</strong> {{ progress.stage }}</p>
-            <p v-if="progress.percent !== null">Progress: {{ progress.percent.toFixed(1) }}%</p>
-            <progress v-if="progress.percent !== null" class="wan-progress" :value="progress.percent" max="100"></progress>
-            <p v-if="progress.step !== null && progress.totalSteps !== null">
-              Step {{ progress.step }} / {{ progress.totalSteps }}
-            </p>
-            <p v-if="progress.etaSeconds !== null" class="caption">ETA ~ {{ progress.etaSeconds.toFixed(0) }}s</p>
-            <div v-if="queue.length" class="wan-callout-actions mt-2">
-              <span class="caption">Queued: {{ queue.length }} / {{ queueMax }}</span>
-              <button class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
-            </div>
-          </div>
-          <div v-if="videoUrl" class="gen-card mb-3">
-            <div class="row-split">
-              <span class="label-muted">Exported Video</span>
-              <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
-            </div>
-            <video class="w-full rounded" :src="videoUrl" controls />
-            <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_OUTPUT_ROOT is writable.</p>
-          </div>
-          <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
-            <template #empty>
-              <div class="wan-results-empty">
-                <div class="wan-empty-title">No results yet</div>
-                <div class="caption">Need help? Click “Guided gen” in the header (or press Generate to see what’s missing).</div>
-              </div>
-            </template>
-          </ResultViewer>
-
-          <div v-if="info" class="gen-card mt-3">
-            <div class="row-split">
-              <span class="label-muted">Generation Info</span>
-              <div class="wan-header-actions">
-                <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
-              </div>
-            </div>
-            <pre class="text-xs break-words">{{ asJson(info) }}</pre>
-          </div>
-
-          <div class="gen-card mt-3">
-            <div class="row-split">
-              <span class="label-muted">History</span>
-            </div>
-            <div v-if="history.length" class="wan-history-list">
-              <div v-for="item in history" :key="item.taskId" :class="['wan-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
-                <div class="wan-history-meta">
-                  <div class="wan-history-title">{{ formatHistoryTitle(item) }}</div>
-                  <div class="wan-history-sub">{{ item.summary }}</div>
-                  <div v-if="item.promptPreview" class="wan-history-sub">{{ item.promptPreview }}</div>
-                  <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
-                  <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
-                </div>
-                <div class="wan-history-actions">
-                  <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
-                    {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'View' }}
-                  </button>
-                  <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
-                  <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
-                </div>
-              </div>
-            </div>
-            <div v-else class="caption">No runs yet.</div>
-
-            <details v-if="diffText" class="accordion">
-              <summary>Diff vs previous run</summary>
-              <div class="accordion-body">
-                <pre class="text-xs break-words">{{ diffText }}</pre>
-              </div>
-            </details>
-            <div class="wan-callout-actions mt-2">
-              <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
-            </div>
-          </div>
-        </div>
-      </div>
+      </ResultsCard>
     </div>
-
-    <CheckpointModal v-model="showCkpt" />
-    <LoraModal v-model="showLora" @insert="onInsertToken" />
-    <TextualInversionModal v-model="showTI" @insert="onInsertToken" />
-    <StyleEditorModal v-model="showStyle" @saved="onStyleSaved" />
 
     <Teleport to="body">
       <div
@@ -403,28 +380,20 @@ import ResultViewer from '../components/ResultViewer.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
 import VideoSettingsCard from '../components/VideoSettingsCard.vue'
+import ResultsCard from '../components/results/ResultsCard.vue'
+import RunCard from '../components/results/RunCard.vue'
+import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import SliderField from '../components/ui/SliderField.vue'
-import PromptFields from '../components/prompt/PromptFields.vue'
-import CheckpointModal from '../components/modals/CheckpointModal.vue'
-import LoraModal from '../components/modals/LoraModal.vue'
-import TextualInversionModal from '../components/modals/TextualInversionModal.vue'
-import StyleEditorModal from '../components/modals/StyleEditorModal.vue'
+import PromptCard from '../components/prompt/PromptCard.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
+import { useResultsCard } from '../composables/useResultsCard'
 import { useWorkflowsStore } from '../stores/workflows'
-import { useStylesStore } from '../stores/styles'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
 const workflows = useWorkflowsStore()
-const stylesStore = useStylesStore()
-
-const showCkpt = ref(false)
-const showLora = ref(false)
-const showTI = ref(false)
-const showStyle = ref(false)
-const styleName = ref('')
 
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
@@ -449,7 +418,6 @@ onMounted(async () => {
 const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
 const lightx2v = computed<boolean>(() => Boolean((tab.value?.params as any)?.lightx2v))
 const wanLoraChoices = computed(() => wanLoras.value)
-const styleNames = computed(() => stylesStore.names())
 
 function normalizePath(path: string): string {
   return String(path || '').replace(/\\+/g, '/').replace(/\/+$/, '')
@@ -608,29 +576,6 @@ const videoNegative = computed({
   set: (value: string) => setVideo({ negativePrompt: value }),
 })
 
-type PromptInsertPayload = string | { token: string; target?: 'positive' | 'negative' }
-
-function onInsertToken(payload: PromptInsertPayload): void {
-  const token = typeof payload === 'string' ? payload : payload.token
-  const target = typeof payload === 'string' ? 'positive' : (payload.target ?? 'positive')
-  if (!token) return
-
-  if (target === 'negative') {
-    setVideo({ negativePrompt: (video.value.negativePrompt ? video.value.negativePrompt + ' ' : '') + token })
-  } else {
-    setVideo({ prompt: (video.value.prompt ? video.value.prompt + ' ' : '') + token })
-  }
-}
-
-function applyStyle(name: string): void {
-  const d = stylesStore.get(name)
-  if (!d) return
-  if (d.prompt) setVideo({ prompt: (video.value.prompt ? video.value.prompt + ' ' : '') + d.prompt })
-  if (d.negative) setVideo({ negativePrompt: (video.value.negativePrompt ? video.value.negativePrompt + ' ' : '') + d.negative })
-}
-
-function onStyleSaved(): void { /* reactive */ }
-
 function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
 
 async function onInitImageFile(file: File): Promise<void> {
@@ -703,8 +648,7 @@ onBeforeUnmount(() => {
   } catch { /* ignore */ }
 })
 
-const copyNotice = ref('')
-let copyTimer: number | null = null
+const { notice: copyNotice, toast, copyJson, formatJson } = useResultsCard()
 
 type GuidedStep = { id: string; message: string; selector: string; focusSelector?: string }
 const guidedActive = ref(false)
@@ -954,15 +898,6 @@ onBeforeUnmount(() => {
   stopGuided()
 })
 
-function toast(message: string): void {
-  copyNotice.value = message
-  if (copyTimer) window.clearTimeout(copyTimer)
-  copyTimer = window.setTimeout(() => {
-    copyNotice.value = ''
-    copyTimer = null
-  }, 2000)
-}
-
 function setInputMode(next: 'txt2vid' | 'img2vid' | 'vid2vid'): void {
   if (isRunning.value) return
   if (next === 'txt2vid') {
@@ -984,6 +919,14 @@ const durationLabel = computed(() => {
   const frames = Number(video.value.frames) || 0
   if (fps <= 0) return '0.00'
   return (frames / fps).toFixed(2)
+})
+
+const runSummary = computed(() => {
+  const v = video.value
+  const highStage = high.value
+  const lowStage = low.value
+  const base = `${mode.value} · ${v.width}×${v.height} px · ${v.frames} frames @ ${v.fps} fps (~ ${durationLabel.value}s) · High ${highStage.steps} steps · CFG ${highStage.cfgScale} · Low ${lowStage.steps} steps · CFG ${lowStage.cfgScale}`
+  return lightx2v.value ? `${base} · lightx2v` : base
 })
 
 function buildCurrentSnapshot(): Record<string, unknown> {
@@ -1055,46 +998,16 @@ function buildCurrentSnapshot(): Record<string, unknown> {
   }
 }
 
-async function copyToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  textarea.remove()
-}
-
 async function copyCurrentParams(): Promise<void> {
-  try {
-    await copyToClipboard(asJson(buildCurrentSnapshot()))
-    toast('Copied current params JSON.')
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err))
-  }
+  await copyJson(buildCurrentSnapshot(), 'Copied current params JSON.')
 }
 
 async function copyInfo(): Promise<void> {
-  try {
-    await copyToClipboard(asJson(info.value))
-    toast('Copied info JSON.')
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err))
-  }
+  await copyJson(info.value, 'Copied info JSON.')
 }
 
 async function copyHistoryParams(item: VideoRunHistoryItem): Promise<void> {
-  try {
-    await copyToClipboard(asJson(item.paramsSnapshot))
-    toast('Copied history params JSON.')
-  } catch (err) {
-    toast(err instanceof Error ? err.message : String(err))
-  }
+  await copyJson(item.paramsSnapshot, 'Copied history params JSON.')
 }
 
 async function queueNext(): Promise<void> {
@@ -1365,14 +1278,6 @@ function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: s
   const d = new Date(item.createdAtMs)
   const ts = Number.isFinite(item.createdAtMs) ? d.toLocaleString() : ''
   return `${item.mode} · ${ts} · ${item.taskId}`
-}
-
-function asJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch (error) {
-    return String(value)
-  }
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

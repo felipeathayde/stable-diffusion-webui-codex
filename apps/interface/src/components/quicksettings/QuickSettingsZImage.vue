@@ -7,7 +7,7 @@
         <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
           <option v-for="model in checkpoints" :key="model" :value="model">{{ truncatePath(model) }}</option>
         </select>
-        <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
+        <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
       </div>
     </div>
   </div>
@@ -19,7 +19,7 @@
         <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
           <option v-for="v in vaeChoices" :key="v" :value="v">{{ v === 'Automatic' ? 'Flux VAE' : truncatePath(v) }}</option>
         </select>
-        <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
+        <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
       </div>
     </div>
   </div>
@@ -32,7 +32,7 @@
           <option value="">Built-in</option>
           <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
-        <button class="btn btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
+        <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
       </div>
     </div>
   </div>
@@ -58,7 +58,7 @@
   <div class="quicksettings-group qs-group-overrides">
     <label class="label-muted">Overrides</label>
     <div class="qs-row">
-      <button class="btn btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">Set overrides</button>
+      <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">Set overrides</button>
     </div>
   </div>
 </template>

@@ -1,148 +1,51 @@
 <template>
-  <div class="gen-card">
-    <div class="gc-stack">
-      <!-- Row 1: Sampler/Scheduler + Steps -->
-      <div class="gc-row">
-        <div class="gc-col gc-col--wide">
-          <div class="two-up">
-            <div class="field">
-              <label class="label-muted">Sampler</label>
-              <select class="select-md" :value="sampler" @change="onSamplerChange">
-                <option v-for="s in samplers" :key="s.name" :value="s.name">{{ s.name }}</option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="label-muted">Scheduler</label>
-              <select class="select-md" :value="scheduler" @change="onSchedulerChange">
-                <option v-for="s in schedulers" :key="s.name" :value="s.name">{{ s.label }}</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <div class="gc-col gc-col--wide">
-          <SliderField
-            label="Sampling steps"
-            :modelValue="steps"
-            :min="minSteps"
-            :max="maxSteps"
-            :step="1"
-            :inputStep="1"
-            :nudgeStep="1"
-            inputClass="cdx-input-w-md"
-            @update:modelValue="(v) => emit('update:steps', v)"
-          />
-        </div>
-      </div>
+  <div class="cdx-stack">
+    <BasicParametersCard
+      :samplers="samplers"
+      :schedulers="schedulers"
+      :sampler="sampler"
+      :scheduler="scheduler"
+      :steps="steps"
+      :cfgScale="cfgScale"
+      :seed="seed"
+      :width="width"
+      :height="height"
+      :disabled="disabled"
+      :minSteps="minSteps"
+      :maxSteps="maxSteps"
+      :minWidth="minWidth"
+      :maxWidth="maxWidth"
+      :minHeight="minHeight"
+      :maxHeight="maxHeight"
+      :showCfg="showCfg"
+      :cfgLabel="cfgLabel"
+      @update:sampler="(v) => emit('update:sampler', v)"
+      @update:scheduler="(v) => emit('update:scheduler', v)"
+      @update:steps="(v) => emit('update:steps', v)"
+      @update:cfgScale="(v) => emit('update:cfgScale', v)"
+      @update:seed="(v) => emit('update:seed', v)"
+      @update:width="(v) => emit('update:width', v)"
+      @update:height="(v) => emit('update:height', v)"
+      @random-seed="() => emit('random-seed')"
+      @reuse-seed="() => emit('reuse-seed')"
+    />
 
-      <!-- Row 2: Width + Batches -->
-      <div class="gc-row">
-        <div class="gc-col gc-col--wide">
-          <SliderField
-            label="Width"
-            :modelValue="width"
-            :min="minWidth"
-            :max="maxWidth"
-            :step="64"
-            :inputStep="8"
-            :nudgeStep="8"
-            inputClass="cdx-input-w-md"
-            @update:modelValue="(v) => emit('update:width', v)"
-          >
-            <template #right>
-              <NumberStepperInput
-                :modelValue="width"
-                :min="minWidth"
-                :max="maxWidth"
-                :step="8"
-                :nudgeStep="8"
-                inputClass="cdx-input-w-md"
-                @update:modelValue="(v) => emit('update:width', v)"
-              />
-              <button class="btn-swap" type="button" title="Swap width/height" @click="swapWH">⇵</button>
-            </template>
-          </SliderField>
-        </div>
-        <div class="gc-col gc-col--compact">
-          <div class="right-row">
-            <div class="field compact">
-              <label class="label-muted">Batch count</label>
-              <div class="number-with-controls">
-                <input class="ui-input ui-input-sm cdx-input-w-sm pad-right" type="number" min="1" :value="batchCount" @change="onBatchCountChange" />
-                <div class="stepper">
-                  <button class="step-btn" type="button" title="Increase" @click="batchCountInc">+</button>
-                  <button class="step-btn" type="button" title="Decrease" @click="batchCountDec">−</button>
-                </div>
-              </div>
-            </div>
-            <div class="field compact">
-              <label class="label-muted">Batch size</label>
-              <div class="number-with-controls">
-                <input class="ui-input ui-input-sm cdx-input-w-sm pad-right" type="number" min="1" :value="batchSize" @change="onBatchSizeChange" />
-                <div class="stepper">
-                  <button class="step-btn" type="button" title="Increase" @click="batchSizeInc">+</button>
-                  <button class="step-btn" type="button" title="Decrease" @click="batchSizeDec">−</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Row 3: Height -->
-      <div class="gc-row">
-        <div class="gc-col gc-col--wide">
-          <SliderField
-            label="Height"
-            :modelValue="height"
-            :min="minHeight"
-            :max="maxHeight"
-            :step="64"
-            :inputStep="8"
-            :nudgeStep="8"
-            inputClass="cdx-input-w-md"
-            @update:modelValue="(v) => emit('update:height', v)"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- Seed full width at bottom -->
-    <div class="gc-seed">
-      <div class="gc-footer">
-        <SliderField
-          v-if="showCfg"
-          class="cfg-field"
-          :label="cfgLabel"
-          :modelValue="cfgScale"
-          :min="0"
-          :max="30"
-          :step="0.5"
-          :inputStep="0.5"
-          :nudgeStep="0.5"
-          inputClass="cdx-input-w-md"
-          @update:modelValue="(v) => emit('update:cfgScale', v)"
-        />
-
-        <div class="field seed-group">
-          <label class="label-muted">Seed</label>
-          <div class="number-with-controls w-full">
-            <input class="ui-input pad-right" type="number" :value="seed" @change="onSeedChange" />
-            <div class="stepper">
-              <button class="step-btn" type="button" @click="emit('random-seed')" title="Random seed">🎲</button>
-              <button class="step-btn" type="button" @click="emit('reuse-seed')" title="Reuse seed">↺</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <BatchSettingsCard
+      :batchCount="batchCount"
+      :batchSize="batchSize"
+      :disabled="disabled"
+      @update:batchCount="(v) => emit('update:batchCount', v)"
+      @update:batchSize="(v) => emit('update:batchSize', v)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { SamplerInfo, SchedulerInfo } from '../api/types'
-import NumberStepperInput from './ui/NumberStepperInput.vue'
-import SliderField from './ui/SliderField.vue'
+
+import BasicParametersCard from './BasicParametersCard.vue'
+import BatchSettingsCard from './BatchSettingsCard.vue'
 
 const props = defineProps<{
   sampler: string
@@ -165,10 +68,8 @@ const props = defineProps<{
   // Conditional visibility
   showCfg?: boolean
   cfgLabel?: string
+  disabled?: boolean
 }>()
-
-const showCfg = computed(() => props.showCfg ?? true)
-const cfgLabel = computed(() => props.cfgLabel ?? 'CFG Scale')
 
 const emit = defineEmits({
   'update:sampler': (value: string) => true,
@@ -184,6 +85,10 @@ const emit = defineEmits({
   'reuse-seed': () => true,
 })
 
+const showCfg = computed(() => props.showCfg ?? true)
+const cfgLabel = computed(() => props.cfgLabel ?? 'CFG Scale')
+const disabled = computed(() => props.disabled === true)
+
 const minSteps = computed(() => props.minSteps ?? 1)
 const maxSteps = computed(() => props.maxSteps ?? 150)
 const minWidth = computed(() => props.minWidth ?? 64)
@@ -191,43 +96,17 @@ const minHeight = computed(() => props.minHeight ?? 64)
 const maxWidth = computed(() => props.maxWidth ?? 2048)
 const maxHeight = computed(() => props.maxHeight ?? 2048)
 
-function onSamplerChange(event: Event): void {
-  emit('update:sampler', (event.target as HTMLSelectElement).value)
-}
-
-function onSchedulerChange(event: Event): void {
-  emit('update:scheduler', (event.target as HTMLSelectElement).value)
-}
-
-function swapWH(): void {
-  emit('update:width', props.height)
-  emit('update:height', props.width)
-}
-
-function onSeedChange(event: Event): void {
-  emit('update:seed', Number((event.target as HTMLInputElement).value))
-}
-
-function onBatchSizeChange(event: Event): void {
-  emit('update:batchSize', Math.max(1, Number((event.target as HTMLInputElement).value)))
-}
-
-function onBatchCountChange(event: Event): void {
-  emit('update:batchCount', Math.max(1, Number((event.target as HTMLInputElement).value)))
-}
-
-function batchCountInc(): void {
-  emit('update:batchCount', Math.max(1, Number(props.batchCount) + 1))
-}
-function batchCountDec(): void {
-  emit('update:batchCount', Math.max(1, Number(props.batchCount) - 1))
-}
-function batchSizeInc(): void {
-  emit('update:batchSize', Math.max(1, Number(props.batchSize) + 1))
-}
-function batchSizeDec(): void {
-  emit('update:batchSize', Math.max(1, Number(props.batchSize) - 1))
-}
+const {
+  sampler,
+  scheduler,
+  steps,
+  width,
+  height,
+  cfgScale,
+  seed,
+  batchSize,
+  batchCount,
+  samplers,
+  schedulers,
+} = props
 </script>
-
-<!-- styles moved to styles/components/generation-settings-card.css -->

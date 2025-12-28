@@ -16,22 +16,30 @@ export interface GenerationState {
   status: 'idle' | 'running' | 'done' | 'error'
   progress: {
     stage: string
-    step: number
-    totalSteps: number
+    percent: number | null
+    etaSeconds: number | null
+    step: number | null
+    totalSteps: number | null
   }
   gallery: GeneratedImage[]
+  info: unknown | null
   errorMessage: string
   taskId: string
   lastSeed: number | null
+  startedAtMs: number | null
+  finishedAtMs: number | null
 }
 
 const DEFAULT_STATE: GenerationState = {
   status: 'idle',
-  progress: { stage: 'none', step: 0, totalSteps: 0 },
+  progress: { stage: 'none', percent: null, etaSeconds: null, step: null, totalSteps: null },
   gallery: [],
+  info: null,
   errorMessage: '',
   taskId: '',
   lastSeed: null,
+  startedAtMs: null,
+  finishedAtMs: null,
 }
 
 // Per-tab generation state (keyed by tab ID)
@@ -67,7 +75,7 @@ export function useGeneration(tabId: string) {
   }
   
   function resetProgress(): void {
-    state.value.progress = { stage: 'none', step: 0, totalSteps: 0 }
+    state.value.progress = { stage: 'none', percent: null, etaSeconds: null, step: null, totalSteps: null }
   }
   
   async function generate(): Promise<void> {
@@ -81,7 +89,10 @@ export function useGeneration(tabId: string) {
     state.value.status = 'running'
     state.value.errorMessage = ''
     state.value.gallery = []
+    state.value.info = null
     resetProgress()
+    state.value.startedAtMs = performance.now()
+    state.value.finishedAtMs = null
     
 	    const p = params.value
 	    const config = engineConfig.value!
@@ -92,6 +103,9 @@ export function useGeneration(tabId: string) {
       state.value.errorMessage = 'Select a checkpoint to generate.'
 	      return
 	    }
+
+      const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
+      const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
 
 	    if (p.useInitImage) {
 	      if (!config.capabilities.tasks.includes('img2img')) {
@@ -155,8 +169,8 @@ export function useGeneration(tabId: string) {
 	          img2img_prompt: p.prompt,
 	          img2img_neg_prompt: config.capabilities.usesNegativePrompt ? p.negativePrompt : '',
 	          img2img_styles: [],
-	          img2img_batch_count: 1,
-	          img2img_batch_size: 1,
+	          img2img_batch_count: batchCount,
+	          img2img_batch_size: batchSize,
 	          img2img_steps: p.steps,
 	          img2img_cfg_scale: p.cfgScale,
 	          img2img_denoising_strength: p.denoiseStrength,
@@ -184,8 +198,8 @@ export function useGeneration(tabId: string) {
 	            sampler: p.sampler || 'automatic',
 	            scheduler: p.scheduler || 'automatic',
 	            seed: p.seed,
-	            batchSize: 1,
-	            batchCount: 1,
+	            batchSize,
+	            batchCount,
 	            styles: [],
 	            device,
 	            engine: engineType.value,
@@ -193,6 +207,8 @@ export function useGeneration(tabId: string) {
 	            smartOffload: quicksettings.smartOffload,
 	            smartFallback: quicksettings.smartFallback,
 	            smartCache: quicksettings.smartCache,
+	            highres: p.highres,
+	            refiner: p.refiner,
 	            textEncoderOverride: teOverride,
 	            extras,
 	          })
@@ -216,30 +232,46 @@ export function useGeneration(tabId: string) {
   
   function handleTaskEvent(event: TaskEvent): void {
     switch (event.type) {
+      case 'status':
+        state.value.progress.stage = event.stage
+        break
       case 'progress':
         state.value.progress = {
           stage: event.stage,
-          step: event.step ?? 0,
-          totalSteps: event.total_steps ?? 0,
+          percent: event.percent ?? null,
+          etaSeconds: event.eta_seconds ?? null,
+          step: event.step ?? null,
+          totalSteps: event.total_steps ?? null,
         }
         break
       case 'result':
-        if ((event as any).images) {
-          state.value.gallery = (event as any).images
+        state.value.gallery = event.images || []
+        state.value.info = event.info ?? null
+        try {
+          const infoObj = (typeof event.info === 'string' ? JSON.parse(event.info) : event.info) as any
+          const rawSeed = infoObj?.seed ?? infoObj?.all_seeds?.[0]
+          const resolvedSeed = typeof rawSeed === 'number' ? rawSeed : Number(rawSeed)
+          if (Number.isFinite(resolvedSeed)) {
+            state.value.lastSeed = resolvedSeed
+          }
+        } catch {
+          // ignore seed parsing; keep lastSeed as-is
         }
-        if ((event as any).info?.seed !== undefined) {
-          state.value.lastSeed = (event as any).info.seed
-        }
+        state.value.finishedAtMs = performance.now()
         state.value.status = 'done'
         break
       case 'error':
         state.value.status = 'error'
         state.value.errorMessage = event.message
+        state.value.finishedAtMs = performance.now()
         stopStream()
         break
       case 'end':
         if (state.value.status !== 'error') {
           state.value.status = 'done'
+        }
+        if (state.value.finishedAtMs === null) {
+          state.value.finishedAtMs = performance.now()
         }
         stopStream()
         break
@@ -252,9 +284,14 @@ export function useGeneration(tabId: string) {
     status: computed(() => state.value.status),
     progress: computed(() => state.value.progress),
     gallery: computed(() => state.value.gallery),
+    info: computed(() => state.value.info),
     errorMessage: computed(() => state.value.errorMessage),
     taskId: computed(() => state.value.taskId),
     lastSeed: computed(() => state.value.lastSeed),
+    gentimeMs: computed(() => {
+      if (state.value.startedAtMs === null || state.value.finishedAtMs === null) return null
+      return Math.max(0, state.value.finishedAtMs - state.value.startedAtMs)
+    }),
     isRunning: computed(() => state.value.status === 'running'),
     
     // Tab info

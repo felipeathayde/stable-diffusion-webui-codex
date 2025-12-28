@@ -43,10 +43,50 @@
       "title": "Z Image",
       "order": 3,
       "enabled": true,
-      "params": {},
+      "params": {
+        "prompt": "",
+        "negativePrompt": "",
+        "width": 1024,
+        "height": 1024,
+        "sampler": "",
+        "scheduler": "",
+        "steps": 8,
+        "cfgScale": 22,
+        "seed": -1,
+        "batchSize": 1,
+        "batchCount": 1,
+        "highres": {
+          "enabled": false,
+          "denoise": 0.4,
+          "scale": 1.5,
+          "resizeX": 0,
+          "resizeY": 0,
+          "steps": 0,
+          "upscaler": "Use same upscaler",
+          "modules": [],
+          "refiner": {
+            "enabled": false,
+            "steps": 0,
+            "cfg": 3.5,
+            "seed": -1
+          }
+        },
+        "refiner": {
+          "enabled": false,
+          "steps": 0,
+          "cfg": 3.5,
+          "seed": -1
+        },
+        "checkpoint": "",
+        "textEncoders": [],
+        "useInitImage": false,
+        "initImageData": "",
+        "initImageName": "",
+        "denoiseStrength": 0.75
+      },
       "meta": {
         "createdAt": "2025-12-26T04:31:11.780958",
-        "updatedAt": "2025-12-27T20:00:00.000000"
+        "updatedAt": "2025-12-28T16:22:22.193255"
       }
     },
     {

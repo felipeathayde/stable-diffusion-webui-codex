@@ -1,124 +1,200 @@
 <template>
-  <section v-if="tab">
-    <!-- Prompt & Input -->
-    <div class="panel">
-      <div class="panel-header">Prompt & Input</div>
-      <div class="panel-body">
-        <div class="grid grid-2">
-          <div>
-            <label class="label">Prompt</label>
-            <textarea class="ui-textarea" rows="3" :value="params.prompt" @input="setParams({ prompt: ($event.target as HTMLTextAreaElement).value })"></textarea>
-            <label class="label" style="margin-top:.5rem">Negative</label>
-            <textarea class="ui-textarea" rows="2" :value="params.negativePrompt" @input="setParams({ negativePrompt: ($event.target as HTMLTextAreaElement).value })"></textarea>
-          </div>
-          <div>
-            <div class="grid grid-2">
-              <div>
-                <label class="label">Width</label>
-                <input class="ui-input" type="number" min="64" step="8" :value="params.width" @change="setParams({ width: toInt($event, params.width) })" />
-              </div>
-              <div>
-                <label class="label">Height</label>
-                <input class="ui-input" type="number" min="64" step="8" :value="params.height" @change="setParams({ height: toInt($event, params.height) })" />
-              </div>
-            </div>
-	            <div class="panel-sub" style="margin-top:.5rem">
-	              <label class="switch-label">
-	                <input type="checkbox" :checked="params.useInitImage" @change="onInitToggle" />
-	                <span>Use Initial Image (img2img)</span>
-	              </label>
-	              <div v-if="params.useInitImage" class="grid grid-2" style="margin-top:.5rem">
-                <div>
-                  <label class="label">Image</label>
-                  <input class="ui-input" type="file" accept="image/*" @change="onFile" />
-                  <div v-if="params.initImageName" class="muted" style="margin-top:.25rem">{{ params.initImageName }}</div>
-                  <button v-if="params.initImageData" class="btn btn-sm" type="button" style="margin-top:.5rem" @click="clearInit">Clear</button>
-                </div>
-	                <div v-if="params.initImageData">
-	                  <label class="label">Preview</label>
-	                  <img :src="params.initImageData" alt="init" style="max-width:100%; border-radius:.25rem;" />
-	                </div>
-	              </div>
-	              <div v-if="params.useInitImage" class="grid grid-2" style="margin-top:.5rem">
-	                <div>
-	                  <label class="label">Denoise</label>
-	                  <input class="ui-input" type="number" min="0" max="1" step="0.05" :value="params.denoiseStrength" @change="setParams({ denoiseStrength: toFloat($event, params.denoiseStrength) })" />
-	                </div>
-	              </div>
-	            </div>
-	          </div>
-	        </div>
-	      </div>
-	    </div>
+  <section v-if="tab" class="panels">
+    <!-- Left column: Prompt + Parameters -->
+    <div class="panel-stack" ref="leftStack">
+      <PromptCard
+        v-model:prompt="promptText"
+        v-model:negative="negativeText"
+        :defaultShowNegative="defaultShowNegative"
+        :supportsNegative="supportsNegative"
+        :allowNegativeToggle="supportsNegative"
+        :enableAssets="enableAssets"
+        :enableStyles="enableStyles"
+        :toolbarLabel="toolbarLabel"
+        :fieldsId="`image-modeltab-prompt-${tabId}`"
+      >
+        <div v-if="isRunning" class="panel-progress">
+          <p><strong>Stage:</strong> {{ progress.stage }}</p>
+          <p v-if="progressPercent !== null">Progress: {{ progressPercent.toFixed(1) }}%</p>
+          <p v-if="progress.totalSteps && progress.step !== null">
+            Step {{ progress.step }} / {{ progress.totalSteps }}
+          </p>
+          <p v-if="progress.etaSeconds !== null" class="caption">ETA ~ {{ progress.etaSeconds.toFixed(0) }}s</p>
+        </div>
+        <div v-if="errorMessage" class="panel-error">
+          {{ errorMessage }}
+        </div>
 
-    <!-- Generation Parameters -->
-    <div class="panel">
-      <div class="panel-header">Generation Parameters</div>
-      <div class="panel-body">
-        <div class="grid grid-3">
-          <div>
-            <label class="label">Sampler</label>
-            <select class="select-md" :value="params.sampler" @change="setParams({ sampler: ($event.target as HTMLSelectElement).value })">
-              <option v-for="s in samplers" :key="s.name" :value="s.name">{{ s.name }}</option>
-            </select>
-          </div>
-          <div>
-            <label class="label">Scheduler</label>
-            <select class="select-md" :value="params.scheduler" @change="setParams({ scheduler: ($event.target as HTMLSelectElement).value })">
-              <option v-for="s in schedulers" :key="s.name" :value="s.name">{{ s.name }}</option>
-            </select>
-          </div>
-          <div>
-            <label class="label">Steps</label>
-            <input class="ui-input" type="number" min="1" :value="params.steps" @change="setParams({ steps: toInt($event, params.steps) })" />
+        <div v-if="supportsImg2Img" class="panel-section">
+          <label class="switch-label">
+            <input type="checkbox" :checked="params.useInitImage" :disabled="isRunning" @change="onInitToggle" />
+            <span>Use Initial Image (img2img)</span>
+          </label>
+
+          <div v-if="params.useInitImage">
+            <InitialImageCard
+              label="Initial Image"
+              :src="params.initImageData"
+              :has-image="Boolean(params.initImageData)"
+              :disabled="isRunning"
+              @set="onInitFileSet"
+              @clear="clearInit"
+            >
+              <template #footer>
+                <p v-if="params.initImageName" class="caption">{{ params.initImageName }}</p>
+              </template>
+            </InitialImageCard>
+
+            <SliderField
+              label="Denoise"
+              :modelValue="params.denoiseStrength"
+              :min="0"
+              :max="1"
+              :step="0.01"
+              :inputStep="0.05"
+              inputClass="cdx-input-w-xs"
+              :disabled="isRunning"
+              @update:modelValue="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
+            />
           </div>
         </div>
-        <div class="grid grid-3" style="margin-top:.5rem">
-          <div>
-            <label class="label">CFG</label>
-            <input class="ui-input" type="number" step="0.5" :value="params.cfgScale" @change="setParams({ cfgScale: toFloat($event, params.cfgScale) })" />
-          </div>
-          <div>
-            <label class="label">Seed</label>
-            <div class="grid grid-3">
-              <input class="ui-input" type="number" :value="params.seed" @change="setParams({ seed: toInt($event, params.seed) })" />
-              <button class="btn btn-sm" type="button" @click="randomizeSeed">Random</button>
-              <button class="btn btn-sm" type="button" @click="reuseSeed" :disabled="lastSeed === null">Reuse</button>
-            </div>
-          </div>
+      </PromptCard>
+
+      <div class="panel">
+        <div class="panel-header">Generation Parameters</div>
+        <div class="panel-body">
+          <BasicParametersCard
+            :samplers="filteredSamplers"
+            :schedulers="filteredSchedulers"
+            :sampler="params.sampler"
+            :scheduler="params.scheduler"
+            :steps="params.steps"
+            :width="params.width"
+            :height="params.height"
+            :cfg-scale="params.cfgScale"
+            :seed="params.seed"
+            :resolutionPresets="resolutionPresets"
+            :show-cfg="true"
+            :cfg-label="cfgLabel"
+            :disabled="isRunning"
+            @update:sampler="(v: string) => setParams({ sampler: v })"
+            @update:scheduler="(v: string) => setParams({ scheduler: v })"
+            @update:steps="(v: number) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
+            @update:width="(v: number) => setParams({ width: Math.max(64, Math.trunc(v)) })"
+            @update:height="(v: number) => setParams({ height: Math.max(64, Math.trunc(v)) })"
+            @update:cfgScale="(v: number) => setParams({ cfgScale: v })"
+            @update:seed="(v: number) => setParams({ seed: Math.trunc(v) })"
+            @random-seed="randomizeSeed"
+            @reuse-seed="reuseSeed"
+          />
+
+          <HighresSettingsCard
+            v-if="showHighres"
+            :enabled="params.highres.enabled"
+            :denoise="params.highres.denoise"
+            :scale="params.highres.scale"
+            :steps="params.highres.steps"
+            :upscaler="params.highres.upscaler"
+            :base-width="params.width"
+            :base-height="params.height"
+            :refinerEnabled="params.highres.refiner?.enabled"
+            :refinerSteps="params.highres.refiner?.steps"
+            :refinerCfg="params.highres.refiner?.cfg"
+            :refinerSeed="params.highres.refiner?.seed"
+            :refinerModel="params.highres.refiner?.model"
+            :refinerVae="params.highres.refiner?.vae"
+            @update:enabled="(v: boolean) => setHighres({ enabled: v })"
+            @update:denoise="(v: number) => setHighres({ denoise: clampFloat(v, 0, 1) })"
+            @update:scale="(v: number) => setHighres({ scale: v })"
+            @update:steps="(v: number) => setHighres({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:upscaler="(v: string) => setHighres({ upscaler: v })"
+            @update:refinerEnabled="(v: boolean) => setHighresRefiner({ enabled: v })"
+            @update:refinerSteps="(v: number) => setHighresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:refinerCfg="(v: number) => setHighresRefiner({ cfg: v })"
+            @update:refinerSeed="(v: number) => setHighresRefiner({ seed: Math.trunc(v) })"
+            @update:refinerModel="(v: string) => setHighresRefiner({ model: v })"
+            @update:refinerVae="(v: string) => setHighresRefiner({ vae: v })"
+          />
+
+          <RefinerSettingsCard
+            v-if="showGlobalRefiner"
+            :enabled="params.refiner.enabled"
+            :steps="params.refiner.steps"
+            :cfg="params.refiner.cfg"
+            :seed="params.refiner.seed"
+            :model="params.refiner.model"
+            :vae="params.refiner.vae"
+            @update:enabled="(v: boolean) => setRefiner({ enabled: v })"
+            @update:steps="(v: number) => setRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:cfg="(v: number) => setRefiner({ cfg: v })"
+            @update:seed="(v: number) => setRefiner({ seed: Math.trunc(v) })"
+            @update:model="(v: string) => setRefiner({ model: v })"
+            @update:vae="(v: string) => setRefiner({ vae: v })"
+          />
         </div>
       </div>
     </div>
 
-    <!-- Results -->
-    <RunCard
-      :isRunning="isRunning"
-      :generateDisabled="isRunning"
-      :showBatchControls="false"
-      @generate="generate"
-    >
-      <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
-      <RunSummaryChips :text="runSummary" />
-    </RunCard>
+    <!-- Right column: Run + Results -->
+    <div class="panel-stack">
+      <RunCard
+        :generateDisabled="isRunning"
+        :isRunning="isRunning"
+        :showBatchControls="true"
+        :batchCount="params.batchCount"
+        :batchSize="params.batchSize"
+        :disabled="isRunning"
+        @generate="generate"
+        @update:batchCount="(v: number) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
+        @update:batchSize="(v: number) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
+      >
+        <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
+        <RunSummaryChips :text="runSummary" />
+      </RunCard>
 
-    <ResultsCard
-      :showGenerate="false"
-      headerClass="three-cols"
-      headerRightClass="results-header-actions"
-    >
-      <template #header-right>
-        <button class="btn btn-sm btn-outline" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
-          {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
-        </button>
-        <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
-      </template>
+      <ResultsCard :showGenerate="false" headerClass="three-cols" headerRightClass="results-actions">
+        <template #header-right>
+          <div class="gentime-display" v-if="gentimeSeconds !== null">
+            <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
+          </div>
+          <button class="btn btn-sm btn-secondary" type="button" :disabled="workflowBusy" @click="sendToWorkflows">
+            {{ workflowBusy ? 'Saving…' : 'Save snapshot' }}
+          </button>
+          <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
+        </template>
 
-      <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
-      <div v-if="images.length" class="results-grid">
-        <img v-for="(img, i) in images" :key="i" :src="toDataUrl(img)" :alt="`img-${i}`" />
+        <ResultViewer
+          mode="image"
+          :images="images"
+          :width="params.width"
+          :height="params.height"
+          emptyText="No images yet. Generate to see results here."
+          :style="previewStyle"
+        >
+          <template #image-actions="{ image, index }">
+            <button
+              v-if="supportsImg2Img"
+              class="gallery-action"
+              type="button"
+              title="Send to Img2Img"
+              @click="sendToImg2Img(image)"
+            >
+              Send to Img2Img
+            </button>
+            <button class="gallery-action" type="button" title="Download Image" @click="download(image, index)">
+              Download
+            </button>
+          </template>
+        </ResultViewer>
+      </ResultsCard>
+
+      <div class="panel" v-if="info">
+        <div class="panel-header">Generation Info</div>
+        <div class="panel-body">
+          <pre class="text-xs break-words">{{ formatJson(info) }}</pre>
+        </div>
       </div>
-      <div v-else class="muted">No results yet.</div>
-    </ResultsCard>
+    </div>
   </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab not found.</div></div>
@@ -126,56 +202,174 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed, ref } from 'vue'
-import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
-import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
+import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
+import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { useGeneration } from '../composables/useGeneration'
-import type { EngineType } from '../stores/engine_config'
+import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
+import { getEngineConfig, type EngineType } from '../stores/engine_config'
+import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useWorkflowsStore } from '../stores/workflows'
+import BasicParametersCard from '../components/BasicParametersCard.vue'
+import HighresSettingsCard from '../components/HighresSettingsCard.vue'
+import InitialImageCard from '../components/InitialImageCard.vue'
+import PromptCard from '../components/prompt/PromptCard.vue'
+import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
+import ResultViewer from '../components/ResultViewer.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
-import { useResultsCard } from '../composables/useResultsCard'
+import SliderField from '../components/ui/SliderField.vue'
 
 const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
+const engineCaps = useEngineCapabilitiesStore()
+const workflows = useWorkflowsStore()
 
 // Use unified generation composable
 const {
   generate,
-  status,
+  stopStream,
   gallery,
+  progress,
   errorMessage,
   isRunning,
   lastSeed,
   tab,
-  params: genParams,
+  info,
+  gentimeMs,
 } = useGeneration(props.tabId)
 
+const leftStack = ref<HTMLElement | null>(null)
+const previewStyle = ref<Record<string, string>>({})
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 
 onMounted(async () => {
   if (!store.tabs.length) store.load()
+  void engineCaps.init()
   const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
   samplers.value = samp.samplers
   schedulers.value = sched.schedulers
+  syncPreviewHeight()
+  window.addEventListener('resize', syncPreviewHeight)
 })
 
+onBeforeUnmount(() => {
+  stopStream()
+  window.removeEventListener('resize', syncPreviewHeight)
+})
+
+const workflowBusy = ref(false)
+const { notice: copyNotice, toast, copyJson } = useResultsCard()
+
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
+const engineConfig = computed(() => getEngineConfig(props.type))
+const engineSurface = computed(() => engineCaps.get(props.type))
+
+const supportsNegative = computed(() => engineConfig.value.capabilities.usesNegativePrompt)
+const supportsImg2Img = computed(() => {
+  const surf = engineSurface.value
+  if (surf) return Boolean(surf.supports_img2img)
+  return engineConfig.value.capabilities.tasks.includes('img2img')
+})
+
+const enableAssets = computed(() => props.type !== 'zimage')
+const enableStyles = computed(() => props.type !== 'zimage')
+const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' : ''))
+
+const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
+const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
+
+const showHighres = computed(() => {
+  if (props.type === 'zimage') return false
+  const surf = engineSurface.value
+  if (!surf) return true
+  return surf.supports_highres
+})
+
+const showGlobalRefiner = computed(() => {
+  if (props.type === 'zimage') return false
+  const surf = engineSurface.value
+  if (!surf) return true
+  return surf.supports_refiner
+})
+
+const filteredSamplers = computed(() => {
+  const allowed = engineSurface.value?.samplers as string[] | null | undefined
+  if (!allowed || allowed.length === 0) return samplers.value
+  return samplers.value.filter(s => allowed.includes(s.name))
+})
+
+const filteredSchedulers = computed(() => {
+  const allowed = engineSurface.value?.schedulers as string[] | null | undefined
+  if (!allowed || allowed.length === 0) return schedulers.value
+  return schedulers.value.filter(s => allowed.includes(s.name))
+})
+
+const promptText = computed({
+  get: () => params.value.prompt,
+  set: (value: string) => setParams({ prompt: value }),
+})
+
+const negativeText = computed({
+  get: () => params.value.negativePrompt,
+  set: (value: string) => {
+    if (!supportsNegative.value) return
+    setParams({ negativePrompt: value })
+  },
+})
+
+watch(supportsImg2Img, (supported) => {
+  if (supported) return
+  if (!params.value.useInitImage) return
+  setParams({ useInitImage: false, initImageData: '', initImageName: '' })
+}, { immediate: true })
+
+watch(showHighres, (show) => {
+  if (show) return
+  if (!params.value.highres.enabled && !params.value.highres.refiner?.enabled) return
+  setHighres({
+    enabled: false,
+    refiner: { ...(params.value.highres.refiner || {}), enabled: false },
+  } as any)
+})
+
+watch(showGlobalRefiner, (show) => {
+  if (show) return
+  if (!params.value.refiner.enabled) return
+  setRefiner({ enabled: false })
+})
+
+watch([supportsImg2Img, showHighres, showGlobalRefiner, () => params.value.useInitImage], () => {
+  void nextTick(syncPreviewHeight)
+})
+
 const images = computed(() => gallery.value)
+
+const gentimeSeconds = computed(() => {
+  if (gentimeMs.value == null) return null
+  return gentimeMs.value / 1000
+})
+
+const progressPercent = computed(() => {
+  if (progress.value.percent !== null) return progress.value.percent
+  if (!progress.value.totalSteps || progress.value.step === null) return null
+  return (progress.value.step / progress.value.totalSteps) * 100
+})
+
+const resolutionPresets = computed((): [number, number][] => {
+  if (props.type === 'sd15') return [[512, 512], [512, 768], [768, 512]]
+  return [[1024, 1024], [1152, 896], [1216, 832], [1344, 768]]
+})
+
 const runSummary = computed(() => {
   const sampler = params.value.sampler || 'automatic'
   const scheduler = params.value.scheduler || 'automatic'
   const seedLabel = params.value.seed === -1 ? 'seed random' : `seed ${params.value.seed}`
-  return `${params.value.width}×${params.value.height} px · ${params.value.steps} steps · CFG ${params.value.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}`
+  return `${params.value.width}×${params.value.height} px · ${params.value.steps} steps · ${cfgLabel.value} ${params.value.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel} · batch ${params.value.batchCount}×${params.value.batchSize}`
 })
-
-const workflows = useWorkflowsStore()
-const workflowBusy = ref(false)
-
-const { notice: copyNotice, toast, copyJson } = useResultsCard()
 
 async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
@@ -203,32 +397,42 @@ async function copyCurrentParams(): Promise<void> {
 
 function setParams(patch: Partial<ImageBaseParams>): void {
   if (!tab.value) return
-  store.updateParams(props.tabId, { ...(tab.value.params as any), ...patch })
+  store.updateParams(props.tabId, patch as any)
 }
 
-function toInt(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? Math.trunc(v) : fallback }
-function toFloat(e: Event, fallback: number): number { const v = Number((e.target as HTMLInputElement).value); return Number.isFinite(v) ? v : fallback }
+function setHighres(patch: Record<string, unknown>): void {
+  setParams({ highres: { ...(params.value.highres as any), ...patch } as any })
+}
+
+function setHighresRefiner(patch: Record<string, unknown>): void {
+  const nextRefiner = { ...((params.value.highres as any).refiner || {}), ...patch }
+  setHighres({ refiner: nextRefiner })
+}
+
+function setRefiner(patch: Record<string, unknown>): void {
+  setParams({ refiner: { ...(params.value.refiner as any), ...patch } as any })
+}
+
+function clampFloat(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, value))
+}
 
 function onInitToggle(e: Event): void {
   setParams({ useInitImage: (e.target as HTMLInputElement).checked })
   if (!(e.target as HTMLInputElement).checked) setParams({ initImageData: '', initImageName: '' })
 }
 
-async function onFile(e: Event): Promise<void> {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
+async function onInitFileSet(file: File): Promise<void> {
   const dataUrl = await readFileAsDataURL(file)
   setParams({ initImageData: dataUrl, initImageName: file.name, useInitImage: true })
 }
 
 function clearInit(): void { setParams({ initImageData: '', initImageName: '' }) }
 
-function toDataUrl(img: GeneratedImage): string { return `data:image/${img.format};base64,${img.data}` }
+function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
 function randomizeSeed(): void {
-  if (params.value.seed !== -1 && lastSeed.value === null) {
-    // Store current seed before randomizing
-  }
   setParams({ seed: -1 })
 }
 
@@ -236,10 +440,29 @@ function reuseSeed(): void {
   if (lastSeed.value !== null) setParams({ seed: lastSeed.value })
 }
 
+function download(image: GeneratedImage, index: number): void {
+  const link = document.createElement('a')
+  link.href = toDataUrl(image)
+  link.download = `${props.type}_${index + 1}.png`
+  link.click()
+}
+
+async function sendToImg2Img(image: GeneratedImage): Promise<void> {
+  if (!supportsImg2Img.value) return
+  setParams({ useInitImage: true, initImageData: toDataUrl(image), initImageName: `from_${props.type}.png` })
+}
+
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file)
   })
+}
+
+function syncPreviewHeight(): void {
+  const el = leftStack.value
+  if (!el) return
+  const h = el.getBoundingClientRect().height
+  previewStyle.value = { minHeight: `${Math.max(300, Math.floor(h))}px` }
 }
 
 defineExpose({ generate })

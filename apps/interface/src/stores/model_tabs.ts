@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
 import type { ApiTab } from '../api/types'
+import type { HighresFormState, RefinerFormState } from '../api/payloads'
 import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
 
 export type BaseTabType = ApiTab['type']
@@ -85,6 +86,10 @@ export interface ImageBaseParams {
   steps: number
   cfgScale: number
   seed: number
+  batchSize: number
+  batchCount: number
+  highres: HighresFormState
+  refiner: RefinerFormState
   checkpoint: string
   textEncoders: string[]
   useInitImage: boolean
@@ -161,6 +166,32 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
+  const refinerDefaults: RefinerFormState = {
+    enabled: false,
+    steps: 0,
+    cfg: 3.5,
+    seed: -1,
+    model: undefined,
+    vae: undefined,
+  }
+  const highresDefaults: HighresFormState = {
+    enabled: false,
+    denoise: 0.4,
+    scale: 1.5,
+    resizeX: 0,
+    resizeY: 0,
+    steps: 0,
+    upscaler: 'Use same upscaler',
+    checkpoint: undefined,
+    modules: [],
+    sampler: undefined,
+    scheduler: undefined,
+    prompt: undefined,
+    negativePrompt: undefined,
+    cfg: undefined,
+    distilledCfg: undefined,
+    refiner: { ...refinerDefaults },
+  }
   const imageDefaults: ImageBaseParams = {
     prompt: '',
     negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
@@ -171,6 +202,10 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     steps: defaults.steps,
     cfgScale: guidance,
     seed: -1,
+    batchSize: 1,
+    batchCount: 1,
+    highres: { ...highresDefaults },
+    refiner: { ...refinerDefaults },
     checkpoint: '',
     textEncoders: [],
     useInitImage: false,
@@ -204,7 +239,20 @@ function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string,
     merged.assets = { ...(d.assets || {}), ...(p.assets || {}) }
     return merged
   }
-  return { ...defaults, ...params }
+
+  const merged: Record<string, unknown> = { ...defaults, ...params }
+  const d = defaults as any
+  const p = params as any
+  if (d.highres && typeof d.highres === 'object') {
+    merged.highres = { ...(d.highres || {}), ...(p.highres || {}) }
+    if ((d.highres as any).refiner && typeof (d.highres as any).refiner === 'object') {
+      ;(merged.highres as any).refiner = { ...((d.highres as any).refiner || {}), ...((p.highres as any)?.refiner || {}) }
+    }
+  }
+  if (d.refiner && typeof d.refiner === 'object') {
+    merged.refiner = { ...(d.refiner || {}), ...(p.refiner || {}) }
+  }
+  return merged
 }
 
 function normalizeTab(tab: BaseTab): BaseTab {

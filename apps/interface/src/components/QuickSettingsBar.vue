@@ -235,11 +235,6 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
 
 const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'>(() => {
   const p = route.path
-  // Dedicated inference surfaces override tab state
-  if (p.startsWith('/flux')) return 'flux'
-  if (p.startsWith('/sdxl')) return 'sdxl'
-  if (p.startsWith('/zimage')) return 'zimage'
-
   // Model tabs: derive from active tab type
   if (p.startsWith('/models')) {
     const tabType = tabsStore.activeTab?.type

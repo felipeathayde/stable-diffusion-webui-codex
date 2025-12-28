@@ -26,8 +26,8 @@
           </li>
           <li class="cdx-list-item">
             <div class="cdx-list-main">
-              <div class="cdx-list-title">SDXL Workspace</div>
-              <div class="cdx-list-meta">The SDXL view remains available as a single canonical image workspace for quick runs, separate from tabs.</div>
+              <div class="cdx-list-title">XYZ</div>
+              <div class="cdx-list-meta">Run frontend-driven XYZ sweeps (route <code>/xyz</code>) using the active model tab as the baseline.</div>
             </div>
           </li>
         </ul>

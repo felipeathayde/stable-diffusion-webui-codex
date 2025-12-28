@@ -90,6 +90,7 @@ export interface ImageBaseParams {
   useInitImage: boolean
   initImageData: string
   initImageName: string
+  denoiseStrength: number
 }
 
 const STORAGE_KEY = 'codex:model-tabs:v1'
@@ -175,6 +176,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
+    denoiseStrength: 0.75,
   }
   return imageDefaults
 }
@@ -214,9 +216,34 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
 
+  const requiredTypes: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'zimage', 'wan']
+
   function save(): void {
     const payload = { tabs: tabs.value, activeId: activeId.value }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+  }
+
+  async function ensureRequiredTabs(): Promise<void> {
+    const existing = new Set<BaseTabType>(tabs.value.map(t => t.type))
+    let nextOrder = tabs.value.length ? (Math.max(...tabs.value.map(t => t.order)) + 1) : 0
+    const createdAt = nowIso()
+    for (const type of requiredTypes) {
+      if (existing.has(type)) continue
+      const id = uuid()
+      const title = type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label
+      const params = defaultParams(type)
+      tabs.value.push({
+        id,
+        type,
+        title,
+        order: nextOrder++,
+        enabled: true,
+        params,
+        meta: { createdAt, updatedAt: createdAt },
+      })
+      existing.add(type)
+      try { await createTabApi({ id, type, title, params }) } catch { /* ignore */ }
+    }
   }
 
   async function load(): Promise<void> {
@@ -227,6 +254,8 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         tabs.value = (res.tabs as unknown as BaseTab[]).map(normalizeTab)
         tabs.value.sort((a, b) => a.order - b.order)
         activeId.value = tabs.value[0]?.id ?? ''
+        await ensureRequiredTabs()
+        tabs.value.sort((a, b) => a.order - b.order)
         save()
         return
       }
@@ -240,6 +269,9 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         tabs.value = (parsed.tabs || []).map(normalizeTab)
         activeId.value = parsed.activeId || (tabs.value[0]?.id ?? '')
         tabs.value.sort((a, b) => a.order - b.order)
+        await ensureRequiredTabs()
+        tabs.value.sort((a, b) => a.order - b.order)
+        save()
         return
       } catch { /* ignore */ }
     }
@@ -277,7 +309,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       params: defaultParams(type),
       meta: { createdAt, updatedAt: createdAt },
     })
-    try { await createTabApi({ type, title: title || defaultTitle, params: defaultParams(type) }) } catch { /* ignore */ }
+    try { await createTabApi({ id, type, title: title || defaultTitle, params: defaultParams(type) }) } catch { /* ignore */ }
     save()
     return id
   }
@@ -292,7 +324,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     copy.meta.createdAt = nowIso()
     copy.meta.updatedAt = copy.meta.createdAt
     tabs.value.push(copy)
-    try { await createTabApi({ type: copy.type as BaseTabType, title: copy.title, params: copy.params }) } catch { /* ignore */ }
+    try { await createTabApi({ id: copy.id, type: copy.type as BaseTabType, title: copy.title, params: copy.params }) } catch { /* ignore */ }
     save()
     return copy.id
   }

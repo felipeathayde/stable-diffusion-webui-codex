@@ -12,16 +12,14 @@
       <nav class="tabs-nav">
         <!-- Home workspace (agnostic) -->
         <RouterLink class="tab-link" to="/">home</RouterLink>
-        <!-- Single canonical image workspace -->
-        <RouterLink class="tab-link" to="/sdxl">sdxl</RouterLink>
-        <RouterLink class="tab-link" to="/flux">flux</RouterLink>
-        <RouterLink class="tab-link" to="/chroma">chroma</RouterLink>
-        <RouterLink class="tab-link" to="/wan14b">wan22 14b</RouterLink>
-        <RouterLink class="tab-link" to="/qwen">qwen</RouterLink>
-        <RouterLink class="tab-link" to="/zimage">zimage</RouterLink>
+        <!-- Model tabs (enabled only) -->
+        <RouterLink v-for="t in enabledTabs" :key="t.id" class="tab-link" :to="`/models/${t.id}`">
+          {{ t.title }}
+        </RouterLink>
         <!-- Model & workflow tools -->
         <RouterLink class="tab-link" to="/models">models</RouterLink>
         <RouterLink class="tab-link" to="/workflows">workflows</RouterLink>
+        <RouterLink class="tab-link" to="/xyz">xyz</RouterLink>
         <!-- Utilities on the right -->
         <RouterLink class="tab-link" to="/tools">🔧 tools</RouterLink>
         <RouterLink class="tab-link" to="/upscale">upscale</RouterLink>
@@ -41,7 +39,8 @@
 // tags: layout, navigation
 import QuickSettingsBar from './components/QuickSettingsBar.vue'
 import AppFooter from './components/AppFooter.vue'
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { useModelTabsStore } from './stores/model_tabs'
 
 const headerRef = ref<HTMLElement | null>(null)
 let headerRO: ResizeObserver | null = null
@@ -55,7 +54,11 @@ function setStickyOffset(): void {
   document.documentElement.style.setProperty('--sticky-offset', offset + 'px')
 }
 
+const tabs = useModelTabsStore()
+const enabledTabs = computed(() => tabs.orderedTabs.filter(t => t.enabled))
+
 onMounted(() => {
+  void tabs.load()
   setStickyOffset()
   headerRO = new ResizeObserver(setStickyOffset)
   if (headerRef.value) headerRO.observe(headerRef.value)

@@ -4,13 +4,13 @@
  * State is stored per-tab in model_tabs.
  */
 
-import { computed, ref } from 'vue'
-import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
-import { useQuicksettingsStore } from '../stores/quicksettings'
-import { getEngineConfig, type EngineType } from '../stores/engine_config'
-import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, type Txt2ImgRequest } from '../api/payloads'
-import { startTxt2Img, subscribeTask } from '../api/client'
-import type { TaskEvent, GeneratedImage } from '../api/types'
+	import { computed, ref } from 'vue'
+	import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
+	import { useQuicksettingsStore } from '../stores/quicksettings'
+	import { getEngineConfig, type EngineType } from '../stores/engine_config'
+	import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, type Txt2ImgRequest } from '../api/payloads'
+	import { startTxt2Img, startImg2Img, subscribeTask } from '../api/client'
+	import type { TaskEvent, GeneratedImage } from '../api/types'
 
 export interface GenerationState {
   status: 'idle' | 'running' | 'done' | 'error'
@@ -83,19 +83,37 @@ export function useGeneration(tabId: string) {
     state.value.gallery = []
     resetProgress()
     
-    const p = params.value
-    const config = engineConfig.value!
-    const checkpoint = String((p as any).checkpoint || '').trim()
-    const modelOverride = checkpoint
-    if (!modelOverride) {
+	    const p = params.value
+	    const config = engineConfig.value!
+	    const checkpoint = String((p as any).checkpoint || '').trim()
+	    const modelOverride = checkpoint
+	    if (!modelOverride) {
       state.value.status = 'error'
       state.value.errorMessage = 'Select a checkpoint to generate.'
-      return
-    }
+	      return
+	    }
 
-    const textEncoders = Array.isArray((p as any).textEncoders)
-      ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
-      : []
+	    if (p.useInitImage) {
+	      if (!config.capabilities.tasks.includes('img2img')) {
+	        state.value.status = 'error'
+	        state.value.errorMessage = 'This engine does not support img2img.'
+	        return
+	      }
+	      if (!p.initImageData) {
+	        state.value.status = 'error'
+	        state.value.errorMessage = 'Select an initial image for img2img.'
+	        return
+	      }
+	      if (modelOverride.toLowerCase().endsWith('.gguf')) {
+	        state.value.status = 'error'
+	        state.value.errorMessage = 'GGUF img2img is not supported yet.'
+	        return
+	      }
+	    }
+
+	    const textEncoders = Array.isArray((p as any).textEncoders)
+	      ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
+	      : []
 
     const teOverride = engineType.value === 'flux'
       ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
@@ -127,46 +145,72 @@ export function useGeneration(tabId: string) {
       extras.tenc_sha = shas.length === 1 ? shas[0] : shas
     }
     
-    let payload: Txt2ImgRequest
-    try {
-      payload = buildTxt2ImgPayload({
-        prompt: p.prompt,
-        negativePrompt: config.capabilities.usesNegativePrompt ? p.negativePrompt : '',
-        width: p.width,
-        height: p.height,
-        steps: p.steps,
-        guidanceScale: p.cfgScale,
-        sampler: p.sampler || 'automatic',
-        scheduler: p.scheduler || 'automatic',
-        seed: p.seed,
-        batchSize: 1,
-        batchCount: 1,
-        styles: [],
-        device: (quicksettings.currentDevice || 'cpu') as any,
-        engine: engineType.value,
-        model: modelOverride,
-        smartOffload: quicksettings.smartOffload,
-        smartFallback: quicksettings.smartFallback,
-        smartCache: quicksettings.smartCache,
-        textEncoderOverride: teOverride,
-        extras,
-      })
-    } catch (error) {
-      state.value.status = 'error'
-      state.value.errorMessage = error instanceof Error ? error.message : String(error)
-      return
-    }
-    
-    try {
-      const { task_id } = await startTxt2Img(payload)
-      state.value.taskId = task_id
-      state.value.progress.stage = 'submitted'
-      
-      const unsub = subscribeTask(task_id, handleTaskEvent)
-      unsubscribers.set(tabId, unsub)
-    } catch (error) {
-      state.value.status = 'error'
-      state.value.errorMessage = error instanceof Error ? error.message : String(error)
+	    const device = (quicksettings.currentDevice || 'cpu') as any
+	    
+	    try {
+	      if (p.useInitImage) {
+	        const payload: any = {
+	          img2img_init_image: p.initImageData,
+	          img2img_mask: '',
+	          img2img_prompt: p.prompt,
+	          img2img_neg_prompt: config.capabilities.usesNegativePrompt ? p.negativePrompt : '',
+	          img2img_styles: [],
+	          img2img_batch_count: 1,
+	          img2img_batch_size: 1,
+	          img2img_steps: p.steps,
+	          img2img_cfg_scale: p.cfgScale,
+	          img2img_denoising_strength: p.denoiseStrength,
+	          img2img_width: p.width,
+	          img2img_height: p.height,
+	          img2img_sampling: p.sampler || 'automatic',
+	          img2img_scheduler: p.scheduler || 'automatic',
+	          img2img_seed: p.seed,
+	          device,
+	          engine: engineType.value,
+	          model: modelOverride,
+	        }
+	        const { task_id } = await startImg2Img(payload)
+	        state.value.taskId = task_id
+	      } else {
+	        let payload: Txt2ImgRequest
+	        try {
+	          payload = buildTxt2ImgPayload({
+	            prompt: p.prompt,
+	            negativePrompt: config.capabilities.usesNegativePrompt ? p.negativePrompt : '',
+	            width: p.width,
+	            height: p.height,
+	            steps: p.steps,
+	            guidanceScale: p.cfgScale,
+	            sampler: p.sampler || 'automatic',
+	            scheduler: p.scheduler || 'automatic',
+	            seed: p.seed,
+	            batchSize: 1,
+	            batchCount: 1,
+	            styles: [],
+	            device,
+	            engine: engineType.value,
+	            model: modelOverride,
+	            smartOffload: quicksettings.smartOffload,
+	            smartFallback: quicksettings.smartFallback,
+	            smartCache: quicksettings.smartCache,
+	            textEncoderOverride: teOverride,
+	            extras,
+	          })
+	        } catch (error) {
+	          state.value.status = 'error'
+	          state.value.errorMessage = error instanceof Error ? error.message : String(error)
+	          return
+	        }
+	        const { task_id } = await startTxt2Img(payload)
+	        state.value.taskId = task_id
+	      }
+	      state.value.progress.stage = 'submitted'
+	      
+	      const unsub = subscribeTask(state.value.taskId, handleTaskEvent)
+	      unsubscribers.set(tabId, unsub)
+	    } catch (error) {
+	      state.value.status = 'error'
+	      state.value.errorMessage = error instanceof Error ? error.message : String(error)
     }
   }
   

@@ -22,28 +22,34 @@
                 <input class="ui-input" type="number" min="64" step="8" :value="params.height" @change="setParams({ height: toInt($event, params.height) })" />
               </div>
             </div>
-            <div class="panel-sub" style="margin-top:.5rem">
-              <label class="switch-label">
-                <input type="checkbox" :checked="params.useInitImage" @change="onInitToggle" />
-                <span>Use Initial Image (img2img)</span>
-              </label>
-              <div v-if="params.useInitImage" class="grid grid-2" style="margin-top:.5rem">
+	            <div class="panel-sub" style="margin-top:.5rem">
+	              <label class="switch-label">
+	                <input type="checkbox" :checked="params.useInitImage" @change="onInitToggle" />
+	                <span>Use Initial Image (img2img)</span>
+	              </label>
+	              <div v-if="params.useInitImage" class="grid grid-2" style="margin-top:.5rem">
                 <div>
                   <label class="label">Image</label>
                   <input class="ui-input" type="file" accept="image/*" @change="onFile" />
                   <div v-if="params.initImageName" class="muted" style="margin-top:.25rem">{{ params.initImageName }}</div>
                   <button v-if="params.initImageData" class="btn btn-sm" type="button" style="margin-top:.5rem" @click="clearInit">Clear</button>
                 </div>
-                <div v-if="params.initImageData">
-                  <label class="label">Preview</label>
-                  <img :src="params.initImageData" alt="init" style="max-width:100%; border-radius:.25rem;" />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+	                <div v-if="params.initImageData">
+	                  <label class="label">Preview</label>
+	                  <img :src="params.initImageData" alt="init" style="max-width:100%; border-radius:.25rem;" />
+	                </div>
+	              </div>
+	              <div v-if="params.useInitImage" class="grid grid-2" style="margin-top:.5rem">
+	                <div>
+	                  <label class="label">Denoise</label>
+	                  <input class="ui-input" type="number" min="0" max="1" step="0.05" :value="params.denoiseStrength" @change="setParams({ denoiseStrength: toFloat($event, params.denoiseStrength) })" />
+	                </div>
+	              </div>
+	            </div>
+	          </div>
+	        </div>
+	      </div>
+	    </div>
 
     <!-- Generation Parameters -->
     <div class="panel">

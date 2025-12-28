@@ -6,7 +6,7 @@
       "type": "sd15",
       "title": "SD 1.5",
       "order": 0,
-      "enabled": false,
+      "enabled": true,
       "params": {},
       "meta": {
         "createdAt": "2025-12-26T04:31:11.780958",
@@ -18,7 +18,7 @@
       "type": "sdxl",
       "title": "SDXL",
       "order": 1,
-      "enabled": false,
+      "enabled": true,
       "params": {},
       "meta": {
         "createdAt": "2025-12-26T04:31:11.780958",
@@ -30,7 +30,7 @@
       "type": "flux",
       "title": "FLUX",
       "order": 2,
-      "enabled": false,
+      "enabled": true,
       "params": {},
       "meta": {
         "createdAt": "2025-12-26T04:31:11.780958",
@@ -38,10 +38,22 @@
       }
     },
     {
+      "id": "tab-zimage-3",
+      "type": "zimage",
+      "title": "Z Image",
+      "order": 3,
+      "enabled": true,
+      "params": {},
+      "meta": {
+        "createdAt": "2025-12-26T04:31:11.780958",
+        "updatedAt": "2025-12-27T20:00:00.000000"
+      }
+    },
+    {
       "id": "tab-wan-3",
       "type": "wan",
       "title": "WAN 2.2",
-      "order": 3,
+      "order": 4,
       "enabled": true,
       "params": {
         "video": {

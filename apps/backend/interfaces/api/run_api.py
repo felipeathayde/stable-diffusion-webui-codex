@@ -735,7 +735,9 @@ def build_app() -> FastAPI:
         ttype = str(payload.get('type') or 'sd15')
         title = str(payload.get('title') or ttype.upper())
         params = payload.get('params') or {}
-        new_id = f"tab-{int(time.time()*1000)}"
+        new_id = str(payload.get('id') or '').strip() or f"tab-{int(time.time()*1000)}"
+        if any(str(t.get('id')) == new_id for t in tabs):
+            raise HTTPException(status_code=409, detail='tab id already exists')
         order = max([int(t.get('order', 0)) for t in tabs], default=-1) + 1
         now = datetime.utcnow().isoformat()
         tab = {'id': new_id, 'type': ttype, 'title': title, 'order': order, 'enabled': True, 'params': params, 'meta': {'createdAt': now, 'updatedAt': now}}

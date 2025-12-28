@@ -34,20 +34,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
+	import { ref, onMounted, computed } from 'vue'
+	import { useRouter } from 'vue-router'
+	import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 
-const router = useRouter()
-const store = useModelTabsStore()
-const newType = ref<BaseTabType>('wan')
+	const router = useRouter()
+	const store = useModelTabsStore()
+	const newType = ref<BaseTabType>('wan')
 
-onMounted(async () => {
-  await store.load()
-  // Auto-jump to first tab in the new UX
-  const first = store.orderedTabs[0]
-  if (first) void router.replace(`/models/${first.id}`)
-})
+	onMounted(async () => {
+	  await store.load()
+	})
 
 const tabs = computed(() => store.orderedTabs)
 

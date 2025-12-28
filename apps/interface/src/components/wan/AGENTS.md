@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2025-12-26
+Last Review: 2025-12-28
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 ## Key Files
 - `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional per-stage LoRA when `LightX2V` is enabled).
 - `WanStageLoraField.vue` — Stage-level LoRA select + weight (wan22-loras), used by `WanStagePanel.vue`.
+- `WanSubHeader.vue` — Small section sub-header used by `WANTab.vue` to keep “Video / High / Low” headers consistent.
 - `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/crf/pix_fmt/loop/pingpong/save flags + RIFE).
 
 ## Notes
@@ -24,3 +25,4 @@ Status: Active
 - 2025-12-23: `WanStagePanel.vue` renders Steps/CFG via `components/ui/SliderField.vue` (label+input header, slider below) for parity with the rest of the WebUI.
 - 2025-12-23: WAN sliders use `cdx-input-w-md` sizing (removes WAN-only `w-step/w-cfg` CSS).
 - 2025-12-26: `WanStagePanel.vue` now places Sampler/Scheduler/Steps on the first row and Seed/CFG on the second; LoRA UI was extracted into `WanStageLoraField.vue`.
+- 2025-12-28: Added `WanSubHeader.vue` and made `WanVideoOutputPanel.vue` embeddable (for a unified Video card); Interpolation (RIFE) is now a single toggle button.

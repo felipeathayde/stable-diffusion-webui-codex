@@ -2,7 +2,7 @@
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
 Owner: Codex WebUI Frontend  
-Last Review: 2025-12-27  
+Last Review: 2025-12-28  
 Status: Active
 
 ## Purpose
@@ -84,3 +84,5 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2025-12-27: Prompt toolbar Styles field now has a min width to prevent the inline actions from overlapping the input text.
 - 2025-12-26: Standardized `.panel-header` height to `4.25rem` (min height) and removed title-wrapper `<span>` patterns from panel headers.
 - 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height with consistent borders (no fixed `2rem` height).
+- 2025-12-28: QuickSettings toggles now use `qs-toggle-btn` (neon border states) and the legacy `qs-switch` styling was removed.
+- 2025-12-28: QuickSettings bar now stacks `quicksettings-row` blocks and uses an animated (rAF) collapsible Advanced row; WAN adds `wan-subheader` section headers in `styles/views/wan.css`.

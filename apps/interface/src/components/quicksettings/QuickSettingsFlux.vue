@@ -1,14 +1,5 @@
 <template>
   <!-- Flux-specific quicksettings row -->
-  <div class="quicksettings-group qs-group-unet-dtype">
-    <label class="label-muted">Core dtype</label>
-    <div class="qs-row">
-      <select class="select-md" :value="unetDtype" @change="$emit('update:unetDtype', ($event.target as HTMLSelectElement).value)">
-        <option v-for="dt in unetDtypeChoices" :key="dt" :value="dt">{{ dt }}</option>
-      </select>
-    </div>
-  </div>
-
   <div class="quicksettings-group qs-group-checkpoint">
     <label class="label-muted">Checkpoint</label>
     <div class="qs-row">
@@ -52,22 +43,6 @@
       </div>
     </div>
   </div>
-
-  <div class="quicksettings-group qs-group-attention">
-    <label class="label-muted">Attention</label>
-    <div class="qs-row">
-      <select class="select-md" :value="attentionBackend" @change="$emit('update:attentionBackend', ($event.target as HTMLSelectElement).value)">
-        <option v-for="opt in attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="quicksettings-group qs-group-overrides">
-    <label class="label-muted">&nbsp;</label>
-    <div class="qs-row">
-      <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="$emit('openOverrides')">Set overrides</button>
-    </div>
-  </div>
 </template>
 
 <script setup lang="ts">
@@ -79,10 +54,6 @@ defineProps<{
   textEncoderPrimary: string
   textEncoderSecondary: string
   textEncoderChoices: string[]
-  unetDtype: string
-  unetDtypeChoices: string[]
-  attentionBackend: string
-  attentionChoices: Array<{ value: string; label: string }>
 }>()
 
 defineEmits<{
@@ -90,12 +61,9 @@ defineEmits<{
   (e: 'update:vae', value: string): void
   (e: 'update:textEncoderPrimary', value: string): void
   (e: 'update:textEncoderSecondary', value: string): void
-  (e: 'update:unetDtype', value: string): void
-  (e: 'update:attentionBackend', value: string): void
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
   (e: 'addTencPath'): void
-  (e: 'openOverrides'): void
 }>()
 
 function truncatePath(path: string, maxLen = 40): string {

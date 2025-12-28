@@ -1,196 +1,191 @@
 <template>
   <section :class="['quicksettings', { 'quicksettings-loading': isLoadingQuicksettings }]">
-    <!-- WAN-specific quicksettings -->
-    <template v-if="activeFamily === 'wan'">
-      <QuickSettingsWan
-        :mode="wanMode"
-        :lightx2v="wanLightx2v"
-        :high-model="wanHighModel"
-        :high-choices="wanHighDirChoices"
-        :low-model="wanLowModel"
-        :low-choices="wanLowDirChoices"
-        :metadata-dir="wanMetadataDir"
-        :metadata-choices="wanMetadataChoices"
-        :text-encoder="wanTextEncoder"
-        :text-encoder-choices="wanTextEncoderChoices"
-        :vae="wanVae"
-        :vae-choices="wanVaeChoices"
-        :unet-dtype="store.currentUnetDtype"
-        :unet-dtype-choices="filteredUnetDtypeChoices"
-        :gpu-weights-mb="store.gpuWeightsMb"
-        :gpu-total-mb="store.gpuTotalMb"
-        :attention-backend="store.currentAttention"
-        :attention-choices="store.attentionChoices"
-        @update:mode="onWanModeChange"
-        @update:lightx2v="onWanLightx2vChange"
-        @update:highModel="onWanHighModelChange"
-        @update:lowModel="onWanLowModelChange"
-        @update:metadataDir="onWanMetadataDirChange"
-        @update:textEncoder="onWanTextEncoderChange"
-        @update:vae="onWanVaeChange"
-        @update:unetDtype="onUnetDtypeChange"
-        @update:gpuWeightsMb="onGpuWeightsChange"
-        @update:attentionBackend="onAttentionChange"
-        @browseHigh="onWanBrowseHigh"
-        @browseLow="onWanBrowseLow"
-        @browseMetadata="onWanBrowseMetadata"
-        @browseTe="onWanBrowseTe"
-        @browseVae="onWanBrowseVae"
-        @openOverrides="openOverrides"
-        @guidedGen="onWanGuidedGen"
-      />
-      <QuickSettingsOverridesModal v-model="showOverridesModal" />
-    </template>
-
-    <!-- Flux-specific quicksettings -->
-    <template v-else-if="activeFamily === 'flux'">
-      <QuickSettingsFlux
-        :checkpoint="effectiveCheckpoint"
-        :checkpoints="filteredModelTitles"
-        :vae="store.currentVae"
-        :vae-choices="filteredVaeChoices"
-        :text-encoder-primary="fluxTextEncoderPrimary"
-        :text-encoder-secondary="fluxTextEncoderSecondary"
-        :text-encoder-choices="filteredTextEncoderChoices"
-        :unet-dtype="store.currentUnetDtype"
-        :unet-dtype-choices="filteredUnetDtypeChoices"
-        :attention-backend="store.currentAttention"
-        :attention-choices="store.attentionChoices"
-        @update:checkpoint="onModelChange"
-        @update:vae="onVaeChange"
-        @update:textEncoderPrimary="onPrimaryTextEncoderChange"
-        @update:textEncoderSecondary="onSecondaryTextEncoderChange"
-        @update:unetDtype="onUnetDtypeChange"
-        @update:attentionBackend="onAttentionChange"
-        @addCheckpointPath="onAddCheckpointPath"
-        @addVaePath="onAddVaePath"
-        @addTencPath="onAddTencPath"
-        @openOverrides="openOverrides"
-      />
-      <div class="quicksettings-group qs-group-models">
-        <label class="label-muted">Models</label>
+    <div class="quicksettings-row quicksettings-row--main">
+      <div class="quicksettings-group qs-group-advanced-toggle">
         <div class="qs-row">
-          <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          <button
+            class="btn qs-btn-outline qs-advanced-handle"
+            type="button"
+            :aria-expanded="advancedOpen ? 'true' : 'false'"
+            :aria-label="advancedOpen ? 'Collapse options' : 'Expand options'"
+            :title="advancedOpen ? 'Collapse options' : 'Expand options'"
+            @click="toggleAdvancedRow"
+          >
+            <svg v-if="!advancedOpen" class="qs-advanced-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M6 10L12 16L18 10"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                transform="rotate(-90 12 12)"
+              />
+            </svg>
+            <svg v-else class="qs-advanced-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 10L12 16L18 10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
         </div>
       </div>
+      <!-- WAN-specific quicksettings -->
+      <template v-if="activeFamily === 'wan'">
+        <QuickSettingsWan
+          :mode="wanMode"
+          :lightx2v="wanLightx2v"
+          :high-model="wanHighModel"
+          :high-choices="wanHighDirChoices"
+          :low-model="wanLowModel"
+          :low-choices="wanLowDirChoices"
+          :metadata-dir="wanMetadataDir"
+          :metadata-choices="wanMetadataChoices"
+          :text-encoder="wanTextEncoder"
+          :text-encoder-choices="wanTextEncoderChoices"
+          :vae="wanVae"
+          :vae-choices="wanVaeChoices"
+          @update:mode="onWanModeChange"
+          @update:lightx2v="onWanLightx2vChange"
+          @update:highModel="onWanHighModelChange"
+          @update:lowModel="onWanLowModelChange"
+          @update:metadataDir="onWanMetadataDirChange"
+          @update:textEncoder="onWanTextEncoderChange"
+          @update:vae="onWanVaeChange"
+          @browseHigh="onWanBrowseHigh"
+          @browseLow="onWanBrowseLow"
+          @browseMetadata="onWanBrowseMetadata"
+          @browseTe="onWanBrowseTe"
+          @browseVae="onWanBrowseVae"
+        />
+      </template>
+
+      <!-- Flux-specific quicksettings -->
+      <template v-else-if="activeFamily === 'flux'">
+        <QuickSettingsFlux
+          :checkpoint="effectiveCheckpoint"
+          :checkpoints="filteredModelTitles"
+          :vae="store.currentVae"
+          :vae-choices="filteredVaeChoices"
+          :text-encoder-primary="fluxTextEncoderPrimary"
+          :text-encoder-secondary="fluxTextEncoderSecondary"
+          :text-encoder-choices="filteredTextEncoderChoices"
+          @update:checkpoint="onModelChange"
+          @update:vae="onVaeChange"
+          @update:textEncoderPrimary="onPrimaryTextEncoderChange"
+          @update:textEncoderSecondary="onSecondaryTextEncoderChange"
+          @addCheckpointPath="onAddCheckpointPath"
+          @addVaePath="onAddVaePath"
+          @addTencPath="onAddTencPath"
+        />
+        <div class="quicksettings-group qs-group-models">
+          <label class="label-muted">Models</label>
+          <div class="qs-row">
+            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Z Image-specific quicksettings -->
+      <template v-else-if="activeFamily === 'zimage'">
+        <QuickSettingsZImage
+          :checkpoint="effectiveCheckpoint"
+          :checkpoints="filteredModelTitles"
+          :vae="store.currentVae"
+          :vae-choices="filteredVaeChoices"
+          :text-encoder="primaryTextEncoder"
+          :text-encoder-choices="filteredTextEncoderChoices"
+          @update:checkpoint="onModelChange"
+          @update:vae="onVaeChange"
+          @update:textEncoder="onPrimaryTextEncoderChange"
+          @addCheckpointPath="onAddCheckpointPath"
+          @addVaePath="onAddVaePath"
+          @addTencPath="onAddTencPath"
+        />
+        <div class="quicksettings-group qs-group-models">
+          <label class="label-muted">Models</label>
+          <div class="qs-row">
+            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Default (SD15/SDXL) quicksettings -->
+      <template v-else>
+        <QuickSettingsBase
+          :mode="store.currentMode"
+          :mode-choices="filteredModeChoices"
+          :checkpoint="effectiveCheckpoint"
+          :checkpoints="filteredModelTitles"
+          :vae="store.currentVae"
+          :vae-choices="filteredVaeChoices"
+          :text-encoder="primaryTextEncoder"
+          :text-encoder-choices="filteredTextEncoderChoices"
+          text-encoder-automatic-label="Built-in"
+          :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
+          @update:mode="onModeChange"
+          @update:checkpoint="onModelChange"
+          @update:vae="onVaeChange"
+          @update:textEncoder="onPrimaryTextEncoderChange"
+          @addCheckpointPath="onAddCheckpointPath"
+          @addVaePath="onAddVaePath"
+        />
+        <div class="quicksettings-group qs-group-models">
+          <label class="label-muted">Models</label>
+          <div class="qs-row">
+            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          </div>
+          <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
+            <small class="label-muted">{{ currentPathsHint }}</small>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div ref="advancedRowEl" class="quicksettings-row quicksettings-row--advanced" :data-state="advancedOpen ? 'open' : 'closed'">
       <QuickSettingsPerf
-        :unet-dtype="store.currentUnetDtype"
-        :unet-dtype-choices="filteredUnetDtypeChoices"
-        :gpu-weights-mb="store.gpuWeightsMb"
-        :gpu-total-mb="store.gpuTotalMb"
         :smart-offload="store.smartOffload"
         :smart-fallback="store.smartFallback"
         :smart-cache="store.smartCache"
         :core-streaming="store.coreStreaming"
-        @update:unetDtype="onUnetDtypeChange"
-        @update:gpuWeightsMb="onGpuWeightsChange"
         @update:smartOffload="onSmartOffloadChange"
         @update:smartFallback="onSmartFallbackChange"
         @update:smartCache="onSmartCacheChange"
         @update:coreStreaming="onCoreStreamingChange"
       />
-      <QuickSettingsOverridesModal v-model="showOverridesModal" />
-    </template>
 
-    <!-- Z Image-specific quicksettings -->
-    <template v-else-if="activeFamily === 'zimage'">
-      <QuickSettingsZImage
-        :checkpoint="effectiveCheckpoint"
-        :checkpoints="filteredModelTitles"
-        :vae="store.currentVae"
-        :vae-choices="filteredVaeChoices"
-        :text-encoder="primaryTextEncoder"
-        :text-encoder-choices="filteredTextEncoderChoices"
-        :unet-dtype="store.currentUnetDtype"
-        :unet-dtype-choices="filteredUnetDtypeChoices"
-        :attention-backend="store.currentAttention"
-        :attention-choices="store.attentionChoices"
-        @update:checkpoint="onModelChange"
-        @update:vae="onVaeChange"
-        @update:textEncoder="onPrimaryTextEncoderChange"
-        @update:unetDtype="onUnetDtypeChange"
-        @update:attentionBackend="onAttentionChange"
-        @addCheckpointPath="onAddCheckpointPath"
-        @addVaePath="onAddVaePath"
-        @addTencPath="onAddTencPath"
-        @openOverrides="openOverrides"
-      />
-      <div class="quicksettings-group qs-group-models">
-        <label class="label-muted">Models</label>
+      <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
+        <label class="label-muted">GPU VRAM (MB)</label>
         <div class="qs-row">
-          <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          <input
+            class="ui-input"
+            type="number"
+            :min="0"
+            :max="store.gpuTotalMb"
+            :value="store.gpuWeightsMb"
+            @change="onGpuWeightsChange(Number(($event.target as HTMLInputElement).value))"
+          />
         </div>
       </div>
-      <QuickSettingsPerf
-        :unet-dtype="store.currentUnetDtype"
-        :unet-dtype-choices="filteredUnetDtypeChoices"
-        :gpu-weights-mb="store.gpuWeightsMb"
-        :gpu-total-mb="store.gpuTotalMb"
-        :smart-offload="store.smartOffload"
-        :smart-fallback="store.smartFallback"
-        :smart-cache="store.smartCache"
-        :core-streaming="store.coreStreaming"
-        @update:unetDtype="onUnetDtypeChange"
-        @update:gpuWeightsMb="onGpuWeightsChange"
-        @update:smartOffload="onSmartOffloadChange"
-        @update:smartFallback="onSmartFallbackChange"
-        @update:smartCache="onSmartCacheChange"
-        @update:coreStreaming="onCoreStreamingChange"
-      />
-      <QuickSettingsOverridesModal v-model="showOverridesModal" />
-    </template>
 
-    <!-- Default (SD15/SDXL) quicksettings -->
-    <template v-else>
-      <QuickSettingsBase
-        :mode="store.currentMode"
-        :mode-choices="filteredModeChoices"
-        :checkpoint="effectiveCheckpoint"
-        :checkpoints="filteredModelTitles"
-        :vae="store.currentVae"
-        :vae-choices="filteredVaeChoices"
-        :text-encoder="primaryTextEncoder"
-        :text-encoder-choices="filteredTextEncoderChoices"
-        :attention-backend="store.currentAttention"
-        :attention-choices="store.attentionChoices"
-        text-encoder-automatic-label="Built-in"
-        :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
-        @update:mode="onModeChange"
-        @update:checkpoint="onModelChange"
-        @update:vae="onVaeChange"
-        @update:textEncoder="onPrimaryTextEncoderChange"
-        @update:attentionBackend="onAttentionChange"
-        @addCheckpointPath="onAddCheckpointPath"
-        @addVaePath="onAddVaePath"
-        @openOverrides="openOverrides"
-      />
-      <div class="quicksettings-group qs-group-models">
-        <label class="label-muted">Models</label>
+      <div class="quicksettings-group qs-group-attention">
+        <label class="label-muted">Attention Backend</label>
         <div class="qs-row">
-          <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
-        </div>
-        <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
-          <small class="label-muted">{{ currentPathsHint }}</small>
+          <select class="select-md" :value="store.currentAttention" @change="onAttentionChange(($event.target as HTMLSelectElement).value)">
+            <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
         </div>
       </div>
-      <QuickSettingsPerf
-        :unet-dtype="store.currentUnetDtype"
-        :unet-dtype-choices="filteredUnetDtypeChoices"
-        :gpu-weights-mb="store.gpuWeightsMb"
-        :gpu-total-mb="store.gpuTotalMb"
-        :smart-offload="store.smartOffload"
-        :smart-fallback="store.smartFallback"
-        :smart-cache="store.smartCache"
-        :core-streaming="store.coreStreaming"
-        @update:unetDtype="onUnetDtypeChange"
-        @update:gpuWeightsMb="onGpuWeightsChange"
-        @update:smartOffload="onSmartOffloadChange"
-        @update:smartFallback="onSmartFallbackChange"
-        @update:smartCache="onSmartCacheChange"
-        @update:coreStreaming="onCoreStreamingChange"
-      />
-      <QuickSettingsOverridesModal v-model="showOverridesModal" />
-    </template>
+
+      <div class="quicksettings-group qs-group-overrides">
+        <label class="label-muted">Overrides</label>
+        <div class="qs-row">
+          <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="openOverrides">
+            Set overrides
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <QuickSettingsOverridesModal v-model="showOverridesModal" />
   </section>
 </template>
 
@@ -224,6 +219,93 @@ const inventoryMetadata = ref<Array<{ name: string; path: string }>>([])
 const engineCaps = useEngineCapabilitiesStore()
 const showOverridesModal = ref(false)
 const isLoadingQuicksettings = ref(false)
+const advancedOpen = ref(true)
+const advancedRowEl = ref<HTMLElement | null>(null)
+const advancedAnimating = ref(false)
+
+function toggleAdvancedRow(): void {
+  const el = advancedRowEl.value
+  if (!el) {
+    advancedOpen.value = !advancedOpen.value
+    return
+  }
+  if (advancedAnimating.value) return
+
+  const next = !advancedOpen.value
+  advancedOpen.value = next
+  advancedAnimating.value = true
+
+  if (next) {
+    expandAdvancedRow(el)
+  } else {
+    collapseAdvancedRow(el)
+  }
+}
+
+function collapseAdvancedRow(el: HTMLElement): void {
+  const startHeight = el.getBoundingClientRect().height
+  el.style.pointerEvents = 'none'
+  el.style.height = `${startHeight}px`
+  el.style.opacity = '1'
+  el.style.transform = 'translateY(0)'
+  void el.offsetHeight
+
+  requestAnimationFrame(() => {
+    el.style.transition = [
+      'height 260ms cubic-bezier(0.2, 1, 0.2, 1)',
+      'opacity 180ms ease',
+      'transform 260ms cubic-bezier(0.2, 1, 0.2, 1)',
+    ].join(', ')
+    el.style.height = '0px'
+    el.style.opacity = '0'
+    el.style.transform = 'translateY(-0.25rem)'
+  })
+
+  const onEnd = (ev: TransitionEvent) => {
+    if (ev.propertyName !== 'height') return
+    el.removeEventListener('transitionend', onEnd)
+    el.style.transition = ''
+    el.style.height = '0px'
+    el.style.opacity = '0'
+    el.style.transform = 'translateY(-0.25rem)'
+    advancedAnimating.value = false
+  }
+  el.addEventListener('transitionend', onEnd)
+}
+
+function expandAdvancedRow(el: HTMLElement): void {
+  el.style.pointerEvents = 'none'
+  el.style.transition = ''
+  el.style.height = '0px'
+  el.style.opacity = '0'
+  el.style.transform = 'translateY(-0.25rem)'
+
+  const targetHeight = el.scrollHeight
+  void el.offsetHeight
+
+  requestAnimationFrame(() => {
+    el.style.transition = [
+      'height 280ms cubic-bezier(0.2, 1, 0.2, 1)',
+      'opacity 200ms ease',
+      'transform 280ms cubic-bezier(0.2, 1, 0.2, 1)',
+    ].join(', ')
+    el.style.height = `${targetHeight}px`
+    el.style.opacity = '1'
+    el.style.transform = 'translateY(0)'
+  })
+
+  const onEnd = (ev: TransitionEvent) => {
+    if (ev.propertyName !== 'height') return
+    el.removeEventListener('transitionend', onEnd)
+    el.style.transition = ''
+    el.style.height = ''
+    el.style.opacity = ''
+    el.style.transform = ''
+    el.style.pointerEvents = ''
+    advancedAnimating.value = false
+  }
+  el.addEventListener('transitionend', onEnd)
+}
 
 function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   const p = route.path
@@ -440,6 +522,7 @@ watch(
 
 const currentPathsHint = computed(() => {
   const fam = activeFamily.value
+  if (fam === 'sd15' || fam === 'sdxl') return ''
   const prefix = enginePrefixForFamily(fam)
   const keys = [`${prefix}_ckpt`, `${prefix}_tenc`, `${prefix}_vae`]
   const parts: string[] = []

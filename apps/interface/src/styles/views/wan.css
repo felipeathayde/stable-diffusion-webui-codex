@@ -63,6 +63,39 @@
     gap: var(--space-sm);
   }
 
+  .wan-subheader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 0.0625rem solid hsla(0, 0%, 100%, 0.06);
+  }
+
+  .wan-subheader-left {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .wan-subheader-title {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+    opacity: 0.92;
+  }
+
+  .wan-subheader-right {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    flex-shrink: 0;
+  }
+
   .wan-history-list {
     display: flex;
     flex-direction: column;

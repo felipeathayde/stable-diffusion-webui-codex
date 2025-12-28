@@ -17,3 +17,5 @@ Status: Active
 - `Home.vue` is the engine-agnostic landing page and the canonical place to manage tabs (enable/disable, rename, duplicate, remove).
 - `WANTab.vue` uses typed WAN video payload builders and `useVideoGeneration(tabId)` for streaming progress.
 - `ImageModelTab.vue` mirrors the legacy engine-tab layout (same `panels` + `panel-stack` structure as WAN): PromptCard (progress/error + optional init-image controls), BasicParametersCard + optional Highres/Refiner, RunCard (batch dropdown), ResultsCard (gentime/actions), ResultViewer gallery, and an Info panel; generation/payload wiring lives in `useGeneration(tabId)` and capability gating uses `useEngineCapabilitiesStore()`.
+- 2025-12-28: Replaced the remaining small switch widgets (`qs-switch--sm`) in `Home.vue` and `WANTab.vue` with `qs-toggle-btn` buttons for consistent toggle styling across the UI.
+- 2025-12-28: `WANTab.vue` now uses `WanSubHeader` for consistent section headers and merges Video + Video Output into a single card above High/Low Noise.

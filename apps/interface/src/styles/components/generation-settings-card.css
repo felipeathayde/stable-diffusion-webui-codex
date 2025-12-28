@@ -23,6 +23,7 @@
   /* explicit widths by field */
   .gen-card .btn-swap { width: 2.25rem; height: 2rem; border-radius: 0.5rem; border: 0.0625rem solid hsla(0,0%,100%,0.18); background: hsla(0,0%,100%,0.08); }
   .gen-card .btn-swap:hover { background: hsla(0,0%,100%,0.16); }
+  .gen-card .btn-swap-icon { display: inline-block; transform: rotate(90deg); }
   .gen-card .seed-group { display: flex; flex-direction: column; gap: 0.35rem; }
   .gen-card .seed-row { display: flex; align-items: center; gap: 0.4rem; }
   /* use shared .btn-icon base */

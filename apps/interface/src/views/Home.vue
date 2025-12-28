@@ -73,11 +73,16 @@
                   <div class="h3">{{ t.title }}</div>
                   <span class="caption">{{ t.type.toUpperCase() }}</span>
                 </div>
-                <label class="qs-switch qs-switch--sm" :title="t.enabled ? 'Enabled' : 'Disabled'">
-                  <input type="checkbox" :disabled="tabBusy[t.id]" :checked="t.enabled" @change="setEnabled(t.id, ($event.target as HTMLInputElement).checked)" />
-                  <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                  <span class="qs-switch-label">Enabled</span>
-                </label>
+                <button
+                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', t.enabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                  type="button"
+                  :aria-pressed="t.enabled"
+                  :title="t.enabled ? 'Enabled' : 'Disabled'"
+                  :disabled="tabBusy[t.id]"
+                  @click="setEnabled(t.id, !t.enabled)"
+                >
+                  Enabled
+                </button>
               </div>
 
               <div class="two-up">

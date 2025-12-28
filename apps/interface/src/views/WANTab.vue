@@ -54,9 +54,7 @@
         <div class="panel-header">Generation Parameters</div>
         <div class="panel-body">
           <div class="gen-card">
-            <div class="row-split">
-              <span class="label-muted">Video</span>
-            </div>
+            <WanSubHeader title="Video" />
             <div class="gc-row">
               <SliderField
                 class="gc-col gc-col--wide"
@@ -105,12 +103,13 @@
               @update:frames="(v:number)=>setVideo({ frames: v })"
               @update:fps="(v:number)=>setVideo({ fps: v })"
             />
+
+            <WanSubHeader title="Video Output" />
+            <WanVideoOutputPanel embedded :video="video" :disabled="isRunning" @update:video="setVideo" />
           </div>
 
           <div v-if="mode === 'vid2vid'" class="gen-card">
-            <div class="row-split">
-              <span class="label-muted">Video2Video</span>
-            </div>
+            <WanSubHeader title="Video2Video" />
             <div class="gc-row">
               <div class="gc-col">
                 <label class="label-muted">Strength</label>
@@ -134,21 +133,33 @@
               </div>
             </div>
             <div class="cdx-form-row">
-              <label class="qs-switch qs-switch--sm">
-                <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFps" @change="setVideo({ vid2vidUseSourceFps: ($event.target as HTMLInputElement).checked })" />
-                <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                <span class="label-muted">Use source FPS</span>
-              </label>
-              <label class="qs-switch qs-switch--sm">
-                <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidUseSourceFrames" @change="setVideo({ vid2vidUseSourceFrames: ($event.target as HTMLInputElement).checked })" />
-                <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                <span class="label-muted">Use source length</span>
-              </label>
-              <label class="qs-switch qs-switch--sm">
-                <input type="checkbox" :disabled="isRunning" :checked="video.vid2vidFlowEnabled" @change="setVideo({ vid2vidFlowEnabled: ($event.target as HTMLInputElement).checked })" />
-                <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                <span class="label-muted">Optical flow</span>
-              </label>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.vid2vidUseSourceFps ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :disabled="isRunning"
+                :aria-pressed="video.vid2vidUseSourceFps"
+                @click="setVideo({ vid2vidUseSourceFps: !video.vid2vidUseSourceFps })"
+              >
+                Use source FPS
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.vid2vidUseSourceFrames ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :disabled="isRunning"
+                :aria-pressed="video.vid2vidUseSourceFrames"
+                @click="setVideo({ vid2vidUseSourceFrames: !video.vid2vidUseSourceFrames })"
+              >
+                Use source length
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.vid2vidFlowEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :disabled="isRunning"
+                :aria-pressed="video.vid2vidFlowEnabled"
+                @click="setVideo({ vid2vidFlowEnabled: !video.vid2vidFlowEnabled })"
+              >
+                Optical flow
+              </button>
             </div>
             <div v-if="video.vid2vidFlowEnabled" class="gc-row">
               <div class="gc-col">
@@ -171,39 +182,36 @@
             </div>
           </div>
 
-          <details class="accordion" open>
-            <summary>High Noise</summary>
-            <div class="accordion-body">
-              <div id="wan-guided-high-stage">
-                <WanStagePanel
-                  title="High Noise"
-                  embedded
-                  :stage="high"
-                  :samplers="samplers"
-                  :schedulers="schedulers"
-                  :lightx2v="lightx2v"
-                  :lora-choices="wanLoraChoices"
-                  :disabled="isRunning"
-                  @update:stage="setHigh"
-                />
-              </div>
-            </div>
-          </details>
+          <div id="wan-guided-high-stage" class="gen-card">
+            <WanSubHeader title="High Noise" />
+            <WanStagePanel
+              title="High Noise"
+              embedded
+              :stage="high"
+              :samplers="samplers"
+              :schedulers="schedulers"
+              :lightx2v="lightx2v"
+              :lora-choices="wanLoraChoices"
+              :disabled="isRunning"
+              @update:stage="setHigh"
+            />
+          </div>
 
           <div class="gen-card">
-            <div class="row-split">
-              <span class="label-muted">Low Noise</span>
-              <div class="row-inline">
-                <label class="qs-switch qs-switch--sm">
-                  <input type="checkbox" :disabled="isRunning" :checked="lowFollowsHigh" @change="onLowFollowsHighChange" />
-                  <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-                  <span class="label-muted">Use High settings</span>
-                </label>
-                <button class="btn-icon" type="button" :aria-expanded="lowNoiseOpen ? 'true' : 'false'" :title="lowNoiseOpen ? 'Collapse' : 'Expand'" aria-label="Toggle Low Noise" @click="toggleLowNoise">
-                  <span aria-hidden="true">{{ lowNoiseOpen ? '▾' : '▸' }}</span>
-                </button>
-              </div>
-            </div>
+            <WanSubHeader title="Low Noise">
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', lowFollowsHigh ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :disabled="isRunning"
+                :aria-pressed="lowFollowsHigh"
+                @click="onLowFollowsHighChange(!lowFollowsHigh)"
+              >
+                Use High settings
+              </button>
+              <button class="btn-icon" type="button" :aria-expanded="lowNoiseOpen ? 'true' : 'false'" :title="lowNoiseOpen ? 'Collapse' : 'Expand'" aria-label="Toggle Low Noise" @click="toggleLowNoise">
+                <span aria-hidden="true">{{ lowNoiseOpen ? '▾' : '▸' }}</span>
+              </button>
+            </WanSubHeader>
             <div v-if="lowFollowsHigh" class="caption">Low stage mirrors High (sampler/scheduler/steps/CFG/seed/LoRA).</div>
             <div v-if="lowNoiseOpen" class="mt-2" id="wan-guided-low-stage">
               <WanStagePanel
@@ -219,8 +227,6 @@
               />
             </div>
           </div>
-
-          <WanVideoOutputPanel :video="video" :disabled="isRunning" @update:video="setVideo" />
         </div>
       </div>
     </div>
@@ -298,7 +304,7 @@
           <template #empty>
             <div class="wan-results-empty">
               <div class="wan-empty-title">No results yet</div>
-              <div class="caption">Need help? Click “Guided gen” in the header (or press Generate to see what’s missing).</div>
+              <div class="caption">Need help? Press Generate to see what is missing.</div>
             </div>
           </template>
         </ResultViewer>
@@ -386,6 +392,7 @@ import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import SliderField from '../components/ui/SliderField.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import WanStagePanel from '../components/wan/WanStagePanel.vue'
+import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
@@ -521,8 +528,7 @@ function syncLowFromHighIfNeeded(): void {
   setLow(patch)
 }
 
-function onLowFollowsHighChange(e: Event): void {
-  const enabled = (e.target as HTMLInputElement).checked
+function onLowFollowsHighChange(enabled: boolean): void {
   if (!tab.value) return
   store.updateParams(props.tabId, { lowFollowsHigh: enabled } as any)
   if (enabled) syncLowFromHighIfNeeded()

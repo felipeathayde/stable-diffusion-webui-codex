@@ -61,7 +61,13 @@
       </PromptCard>
 
       <div class="panel">
-        <div class="panel-header">Generation Parameters</div>
+        <div class="panel-header">
+          Generation Parameters
+          <div class="toolbar">
+            <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning" @click="loadProfile">Load profile</button>
+            <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="saveProfile">Save profile</button>
+          </div>
+        </div>
         <div class="panel-body">
           <BasicParametersCard
             :samplers="filteredSamplers"
@@ -163,6 +169,35 @@
           <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
         </template>
 
+        <div class="gen-card mb-3">
+          <div class="row-split">
+            <span class="label-muted">History</span>
+          </div>
+          <div v-if="history.length" class="cdx-history-list">
+            <div v-for="item in history" :key="item.taskId" :class="['cdx-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
+              <div class="cdx-history-meta">
+                <div class="cdx-history-title">{{ formatHistoryTitle(item) }}</div>
+                <div class="cdx-history-sub">{{ item.summary }}</div>
+                <div v-if="item.promptPreview" class="cdx-history-sub">{{ item.promptPreview }}</div>
+                <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
+                <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
+              </div>
+              <div class="cdx-history-actions">
+                <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
+                  {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'Load' }}
+                </button>
+                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
+                <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="caption">No runs yet.</div>
+
+          <div class="cdx-history-actions mt-2">
+            <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
+          </div>
+        </div>
+
         <ResultViewer
           mode="image"
           :images="images"
@@ -206,7 +241,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
-import { useGeneration } from '../composables/useGeneration'
+import { useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
 import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
 import { getEngineConfig, type EngineType } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
@@ -236,9 +271,14 @@ const {
   errorMessage,
   isRunning,
   lastSeed,
+  history,
+  selectedTaskId,
+  historyLoadingTaskId,
   tab,
   info,
   gentimeMs,
+  loadHistory,
+  clearHistory,
 } = useGeneration(props.tabId)
 
 const leftStack = ref<HTMLElement | null>(null)
@@ -275,8 +315,8 @@ const supportsImg2Img = computed(() => {
   return engineConfig.value.capabilities.tasks.includes('img2img')
 })
 
-const enableAssets = computed(() => props.type !== 'zimage')
-const enableStyles = computed(() => props.type !== 'zimage')
+const enableAssets = computed(() => true)
+const enableStyles = computed(() => true)
 const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' : ''))
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
@@ -393,6 +433,102 @@ async function sendToWorkflows(): Promise<void> {
 async function copyCurrentParams(): Promise<void> {
   if (!tab.value) return
   await copyJson(tab.value.params, 'Copied params.')
+}
+
+async function copyHistoryParams(item: ImageRunHistoryItem): Promise<void> {
+  await copyJson(item.paramsSnapshot, 'Copied history params.')
+}
+
+function applyHistory(item: ImageRunHistoryItem): void {
+  const snap = item.paramsSnapshot as Partial<ImageBaseParams>
+  setParams({
+    ...(snap as any),
+    useInitImage: false,
+    initImageData: '',
+    initImageName: '',
+  })
+  toast('Applied history params.')
+}
+
+function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: string }): string {
+  const dt = new Date(item.createdAtMs || Date.now())
+  const hh = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const label = item.mode === 'img2img' ? 'Img2Img' : 'Txt2Img'
+  return `${label} · ${hh}`
+}
+
+function profileStorageKeyFor(type: EngineType): string {
+  if (type === 'flux') return 'codex.flux.profile'
+  if (type === 'sdxl') return 'codex.sdxl.profile.v1'
+  if (type === 'zimage') return 'codex.zimage.profile'
+  if (type === 'sd15') return 'codex.sd15.profile.v1'
+  return `codex.${type}.profile.v1`
+}
+
+function loadProfile(): void {
+  const key = profileStorageKeyFor(props.type)
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) {
+      toast('No saved profile found.')
+      return
+    }
+
+    const snapshot = JSON.parse(raw) as Record<string, unknown>
+    const next: Partial<ImageBaseParams> = {}
+
+    const numberOrNull = (value: unknown): number | null => {
+      const n = Number(value)
+      return Number.isFinite(n) ? n : null
+    }
+
+    if (typeof snapshot.prompt === 'string') next.prompt = snapshot.prompt
+    if (supportsNegative.value && typeof snapshot.negativePrompt === 'string') next.negativePrompt = snapshot.negativePrompt
+    const steps = numberOrNull(snapshot.steps); if (steps !== null) next.steps = Math.max(1, Math.trunc(steps))
+    const cfgScale = numberOrNull(snapshot.cfgScale); if (cfgScale !== null) next.cfgScale = cfgScale
+    const width = numberOrNull(snapshot.width); if (width !== null) next.width = Math.max(64, Math.trunc(width))
+    const height = numberOrNull(snapshot.height); if (height !== null) next.height = Math.max(64, Math.trunc(height))
+    const seed = numberOrNull(snapshot.seed); if (seed !== null) next.seed = Math.trunc(seed)
+    const batchSize = numberOrNull(snapshot.batchSize); if (batchSize !== null) next.batchSize = Math.max(1, Math.trunc(batchSize))
+    const batchCount = numberOrNull(snapshot.batchCount); if (batchCount !== null) next.batchCount = Math.max(1, Math.trunc(batchCount))
+
+    const selectedModel = typeof snapshot.selectedModel === 'string' ? snapshot.selectedModel : ''
+    const selectedSampler = typeof snapshot.selectedSampler === 'string' ? snapshot.selectedSampler : ''
+    const selectedScheduler = typeof snapshot.selectedScheduler === 'string' ? snapshot.selectedScheduler : ''
+
+    if (selectedModel) next.checkpoint = selectedModel
+    if (selectedSampler) next.sampler = selectedSampler
+    if (selectedScheduler) next.scheduler = selectedScheduler
+
+    setParams(next)
+    toast('Loaded saved profile.')
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error))
+  }
+}
+
+function saveProfile(): void {
+  const key = profileStorageKeyFor(props.type)
+  try {
+    const snapshot = {
+      prompt: params.value.prompt,
+      negativePrompt: supportsNegative.value ? params.value.negativePrompt : '',
+      steps: params.value.steps,
+      cfgScale: params.value.cfgScale,
+      width: params.value.width,
+      height: params.value.height,
+      seed: params.value.seed,
+      batchSize: params.value.batchSize,
+      batchCount: params.value.batchCount,
+      selectedModel: params.value.checkpoint,
+      selectedSampler: params.value.sampler,
+      selectedScheduler: params.value.scheduler,
+    }
+    localStorage.setItem(key, JSON.stringify(snapshot))
+    toast('Profile saved.')
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error))
+  }
 }
 
 function setParams(patch: Partial<ImageBaseParams>): void {

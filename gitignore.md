@@ -1,7 +1,7 @@
 # gitignore Policy — Stable Diffusion WebUI Codex
 Date: 2025-12-04
 Owner: Repository Maintainers
-Last Review: 2025-12-04
+Last Review: 2025-12-28
 Status: Active
 
 ## Purpose
@@ -14,9 +14,14 @@ Status: Active
 ## Principles
 - **No models in Git:** model weights, checkpoints, and large binary artefacts (e.g., `models/`, `*.ckpt`, `*.safetensors`) must remain untracked.
 - **No caches or build outputs:** bytecode caches (`__pycache__/`), node modules (`node_modules/`), frontend bundles (`apps/interface/dist/`), and temporary directories (`tmp/`, `.pytest_cache/`) stay ignored.
-- **Docs and configs are tracked:** Markdown docs under `.sangoi/**`, configuration files (`*.json`, `*.toml`, `*.yaml`), and source code are always included.
+- **Docs and configs are tracked:** Markdown docs under `.sangoi/**`, configuration files (`*.json`, `*.toml`, `*.yaml`), and source code are always included — except for runtime state JSON files that are created/overwritten locally (see below).
 - **Tests are tracked:** repository test sources under `tests/` are kept in version control; only test caches/outputs are ignored.
 - **No binary office docs:** keep office exports like `*.docx` local; prefer Markdown under `.sangoi/**`.
+
+## Runtime state (tracked? no)
+- `apps/interface/tabs.json` — backend-managed persisted tab state (created if missing).
+- `apps/interface/workflows.json` — backend-managed persisted workflows state (created if missing).
+- `apps/settings_values.json` — backend-managed persisted options snapshot (created/overwritten locally).
 
 ## Extending the ignore set
 - Prefer directory-level ignores (e.g., `apps/interface/dist/`) over broad `*` patterns.

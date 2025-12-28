@@ -1,6 +1,6 @@
 <template>
-  <div class="gen-card">
-    <div class="row-split">
+  <div :class="['gen-card', { 'gen-card--embedded': embedded }]">
+    <div v-if="!embedded" class="row-split">
       <span class="label-muted">Video Output</span>
     </div>
 
@@ -61,35 +61,54 @@
     </div>
 
     <div class="cdx-form-row">
-      <label class="qs-switch qs-switch--sm">
-        <input type="checkbox" :disabled="disabled" :checked="video.pingpong" @change="updateVideo({ pingpong: ($event.target as HTMLInputElement).checked })" />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="label-muted">Ping-pong</span>
-      </label>
-      <label class="qs-switch qs-switch--sm">
-        <input type="checkbox" :disabled="disabled" :checked="video.saveOutput" @change="updateVideo({ saveOutput: ($event.target as HTMLInputElement).checked })" />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="label-muted">Save output</span>
-      </label>
-      <label class="qs-switch qs-switch--sm">
-        <input type="checkbox" :disabled="disabled" :checked="video.saveMetadata" @change="updateVideo({ saveMetadata: ($event.target as HTMLInputElement).checked })" />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="label-muted">Save metadata</span>
-      </label>
-      <label class="qs-switch qs-switch--sm">
-        <input type="checkbox" :disabled="disabled" :checked="video.trimToAudio" @change="updateVideo({ trimToAudio: ($event.target as HTMLInputElement).checked })" />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="label-muted">Trim to audio</span>
-      </label>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.pingpong ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :disabled="disabled"
+        :aria-pressed="video.pingpong"
+        @click="updateVideo({ pingpong: !video.pingpong })"
+      >
+        Ping-pong
+      </button>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.saveOutput ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :disabled="disabled"
+        :aria-pressed="video.saveOutput"
+        @click="updateVideo({ saveOutput: !video.saveOutput })"
+      >
+        Save output
+      </button>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.saveMetadata ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :disabled="disabled"
+        :aria-pressed="video.saveMetadata"
+        @click="updateVideo({ saveMetadata: !video.saveMetadata })"
+      >
+        Save metadata
+      </button>
+      <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.trimToAudio ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :disabled="disabled"
+        :aria-pressed="video.trimToAudio"
+        @click="updateVideo({ trimToAudio: !video.trimToAudio })"
+      >
+        Trim to audio
+      </button>
     </div>
 
-    <div class="row-split">
-      <span class="label-muted">Interpolation (RIFE)</span>
-      <label class="qs-switch qs-switch--sm">
-        <input type="checkbox" :disabled="disabled" :checked="video.rifeEnabled" @change="updateVideo({ rifeEnabled: ($event.target as HTMLInputElement).checked })" />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-        <span class="label-muted">Enable</span>
-      </label>
+    <div class="cdx-form-row">
+      <button
+        :class="['btn', 'qs-toggle-btn', video.rifeEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :disabled="disabled"
+        :aria-pressed="video.rifeEnabled"
+        @click="updateVideo({ rifeEnabled: !video.rifeEnabled })"
+      >
+        Interpolation (RIFE)
+      </button>
     </div>
     <div v-if="video.rifeEnabled" class="gc-row">
       <div class="gc-col">
@@ -114,7 +133,6 @@
         />
       </div>
     </div>
-    <p v-else class="caption">Interpolation disabled.</p>
   </div>
 </template>
 
@@ -123,8 +141,10 @@ import type { WanVideoParams } from '../../stores/model_tabs'
 
 const props = withDefaults(defineProps<{
   video: WanVideoParams
+  embedded?: boolean
   disabled?: boolean
 }>(), {
+  embedded: false,
   disabled: false,
 })
 

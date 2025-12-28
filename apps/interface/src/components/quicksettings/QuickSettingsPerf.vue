@@ -1,86 +1,67 @@
 <template>
-  <!-- GPU VRAM -->
-  <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
-    <label class="label-muted">GPU VRAM (MB)</label>
-    <div class="qs-row">
-      <input
-        class="ui-input"
-        type="number"
-        :min="0"
-        :max="gpuTotalMb"
-        :value="gpuWeightsMb"
-        @change="$emit('update:gpuWeightsMb', Number(($event.target as HTMLInputElement).value))"
-      />
-    </div>
-  </div>
-
   <!-- Smart Offload -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-offload">
-    <label class="label-muted">Smart Offload</label>
     <div class="qs-row">
-      <label class="qs-switch" title="Unload TE/UNet/VAE between stages to save VRAM">
-        <input
-          type="checkbox"
-          :checked="smartOffload"
-          @change="$emit('update:smartOffload', ($event.target as HTMLInputElement).checked)"
-        />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-      </label>
+      <button
+        :class="['btn', 'qs-toggle-btn', { 'qs-toggle-btn--on': smartOffload, 'qs-toggle-btn--off': !smartOffload }]"
+        type="button"
+        :aria-pressed="smartOffload"
+        title="Unload TE/UNet/VAE between stages to save VRAM"
+        @click="$emit('update:smartOffload', !smartOffload)"
+      >
+        Smart Offload
+      </button>
     </div>
   </div>
 
   <!-- Smart Fallback -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-fallback">
-    <label class="label-muted">Smart Fallback</label>
     <div class="qs-row">
-      <label class="qs-switch" title="Fallback to CPU when GPU runs out of memory">
-        <input
-          type="checkbox"
-          :checked="smartFallback"
-          @change="$emit('update:smartFallback', ($event.target as HTMLInputElement).checked)"
-        />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-      </label>
+      <button
+        :class="['btn', 'qs-toggle-btn', { 'qs-toggle-btn--on': smartFallback, 'qs-toggle-btn--off': !smartFallback }]"
+        type="button"
+        :aria-pressed="smartFallback"
+        title="Fallback to CPU when GPU runs out of memory"
+        @click="$emit('update:smartFallback', !smartFallback)"
+      >
+        Smart Fallback
+      </button>
     </div>
   </div>
 
   <!-- Smart Cache -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-cache">
-    <label class="label-muted">Smart Cache</label>
     <div class="qs-row">
-      <label class="qs-switch" title="Cache text encoder embeddings for faster subsequent generations">
-        <input
-          type="checkbox"
-          :checked="smartCache"
-          @change="$emit('update:smartCache', ($event.target as HTMLInputElement).checked)"
-        />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-      </label>
+      <button
+        :class="['btn', 'qs-toggle-btn', { 'qs-toggle-btn--on': smartCache, 'qs-toggle-btn--off': !smartCache }]"
+        type="button"
+        :aria-pressed="smartCache"
+        title="Cache text encoder embeddings for faster subsequent generations"
+        @click="$emit('update:smartCache', !smartCache)"
+      >
+        Smart Cache
+      </button>
     </div>
   </div>
 
   <!-- Core Streaming -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-streaming">
-    <label class="label-muted">Core Streaming</label>
     <div class="qs-row">
-      <label class="qs-switch" title="Stream model blocks from RAM for large quantized models (GGUF)">
-        <input
-          type="checkbox"
-          :checked="coreStreaming"
-          @change="$emit('update:coreStreaming', ($event.target as HTMLInputElement).checked)"
-        />
-        <span class="qs-switch-track"><span class="qs-switch-thumb" /></span>
-      </label>
+      <button
+        :class="['btn', 'qs-toggle-btn', { 'qs-toggle-btn--on': coreStreaming, 'qs-toggle-btn--off': !coreStreaming }]"
+        type="button"
+        :aria-pressed="coreStreaming"
+        title="Stream model blocks from RAM for large quantized models (GGUF)"
+        @click="$emit('update:coreStreaming', !coreStreaming)"
+      >
+        Core Streaming
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{
-  unetDtype: string
-  unetDtypeChoices: string[]
-  gpuWeightsMb: number
-  gpuTotalMb: number
+defineProps<{
   smartOffload: boolean
   smartFallback: boolean
   smartCache: boolean
@@ -88,8 +69,6 @@ const props = defineProps<{
 }>()
 
 defineEmits<{
-  (e: 'update:unetDtype', value: string): void
-  (e: 'update:gpuWeightsMb', value: number): void
   (e: 'update:smartOffload', value: boolean): void
   (e: 'update:smartFallback', value: boolean): void
   (e: 'update:smartCache', value: boolean): void

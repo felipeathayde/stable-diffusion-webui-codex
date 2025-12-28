@@ -43,7 +43,7 @@ __pycache__
 notification.mp3
 /SwinIR
 /textual_inversion
-.vscode	
+.vscode
 /extensions
 /test/stdout.txt
 /test/stderr.txt
@@ -87,6 +87,11 @@ apps/interface/dist/
 apps/interface/.vite/
 apps/interface/.eslintcache
 apps/interface/.pnpm-debug.log
+
+# Local runtime state (do not commit)
+apps/interface/tabs.json
+apps/interface/workflows.json
+apps/settings_values.json
 
 # Local reference snapshots and scratch branches
 *.png

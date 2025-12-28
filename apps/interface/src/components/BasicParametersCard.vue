@@ -62,7 +62,9 @@
               :disabled="disabled"
               @update:modelValue="(v) => emit('update:width', clampInt(v, minWidth, maxWidth))"
             />
-            <button class="btn-swap" type="button" :disabled="disabled" title="Swap width/height" @click="swapWH">⇵</button>
+            <button class="btn-swap" type="button" :disabled="disabled" title="Swap width/height" @click="swapWH">
+              <span class="btn-swap-icon" aria-hidden="true">⇵</span>
+            </button>
           </template>
         </SliderField>
 
@@ -84,7 +86,7 @@
           <DimensionPresetsGrid :presets="resolutionPresets" :disabled="disabled" @apply="applyResolutionPreset" />
         </div>
       </div>
-			      <div class="gc-row">
+      <div class="gc-row">
         <div class="gc-col field">
           <label class="label-muted">{{ seedLabel }}</label>
           <div class="number-with-controls w-full">

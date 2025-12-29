@@ -4,6 +4,8 @@ setlocal
 set "ROOT=%~dp0"
 set "VENV=%ROOT%.venv"
 set "PY_BIN=%VENV%\Scripts\python.exe"
+set "TORCH_MODE=%CODEX_TORCH_MODE%"
+if "%TORCH_MODE%"=="" set "TORCH_MODE=auto"
 
 REM Prefer a specific interpreter if provided.
 set "BOOTSTRAP_PY="

@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-12-19
+Last Review: 2025-12-29
 Status: Active
 
 ## Purpose
@@ -37,3 +37,5 @@ Status: Active
 - 2025-11-25: SDXL CLIP converters now handle OpenCLIP BigG resblock layouts without the double-`transformer` prefix bug; CLIP-G keys under `transformer.resblocks.*` are normalized to `transformer.text_model.encoder.*` (preserving `logit_scale`) so validations no longer warn on missing `layer_norm1`.
 - 2025-12-15: `runtime/tools/gguf_converter.py` emits real quantized GGUF using the shared GGUF writer + quant kernels and streams tensor data instead of buffering entire checkpoints in memory.
 - 2025-12-19: GGUF converter quant menu expanded to include `Q2_K/Q3_K/IQ4_NL`, mixed schemes (`Q4_K_M/Q5_K_M`), per-tensor override rules, and legacy `Q4_0/Q4_1/Q5_0/Q5_1/Q6_K` (in addition to `Q8_0/Q5_K/Q4_K`).
+- 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
+- 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+from apps.backend.infra.config.repo_root import get_repo_root
+
 LOGGER = logging.getLogger("codex.launcher.checks")
 MIN_NODE_MAJOR = 18
 
@@ -100,7 +102,7 @@ def _vite_requirement_satisfied(actual: str, requirement: str) -> bool:
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return get_repo_root()
 
 
 def _check_vite(project_root: Path) -> CodexLaunchCheck:

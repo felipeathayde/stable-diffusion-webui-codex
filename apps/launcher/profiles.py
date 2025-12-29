@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
 from apps.backend.codex import options as codex_options
+from apps.backend.infra.config.repo_root import get_repo_root
 
 LOGGER = logging.getLogger("codex.launcher.profiles")
 
@@ -345,7 +346,7 @@ class LauncherProfileStore:
 
 
 def _default_root() -> Path:
-    return Path(__file__).resolve().parents[2] / ".sangoi" / "launcher"
+    return get_repo_root() / ".sangoi" / "launcher"
 
 
 def _ensure_tree(root: Path) -> None:

@@ -15,6 +15,7 @@ from typing import Dict, Iterator, List, Mapping, Optional
 
 
 from .log_buffer import CodexLogBuffer
+from apps.backend.infra.config.repo_root import get_repo_root
 
 LOGGER = logging.getLogger("codex.launcher.services")
 
@@ -188,7 +189,7 @@ class CodexServiceHandle:
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return get_repo_root()
 
 
 def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, CodexServiceHandle]:

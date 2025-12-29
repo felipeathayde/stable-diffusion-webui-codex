@@ -28,6 +28,8 @@ from typing import Any, Callable
 
 import torch
 
+from apps.backend.infra.config.repo_root import get_repo_root
+
 _ENABLED = False
 
 
@@ -78,7 +80,7 @@ def enable(log_fn: Callable[..., None] | None = None) -> None:
 
     log = log_fn or _log
 
-    legacy_root = Path(__file__).resolve().parents[4] / ".refs" / "Forge-A1111"
+    legacy_root = get_repo_root() / ".refs" / "Forge-A1111"
     if legacy_root.exists():
         sys.path.insert(0, str(legacy_root))
     else:

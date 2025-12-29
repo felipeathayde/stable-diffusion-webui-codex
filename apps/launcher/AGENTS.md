@@ -2,7 +2,7 @@
 Date: 2025-10-28
 Owner: Repository Maintainers
 Status: Active
-Last Review: 2025-11-03
+Last Review: 2025-12-29
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -22,3 +22,4 @@ Last Review: 2025-11-03
 - 2025-11-02: Windows “Services in new terminal” now wraps commands with `cmd.exe /K` and leaves stdin attached so the console stays open after exit for manual inspection.
 - 2025-11-02: Launcher profiles persist diffusion/TE/VAE device + dtype choices via the Codex options snapshot, and `services.py` now forwards them as CLI flags (`--core-device`, `--te-device`, `--vae-device`, etc.) when spawning the API instead of relying on env vars.
 - 2025-11-03: Launcher forwards conditioning diagnostics via `--debug-conditioning` when `CODEX_DEBUG_COND` is enabled in profiles/TUI.
+- 2025-12-29: Launcher now resolves the repo root via `CODEX_ROOT` (shared helper) instead of `Path(__file__).parents[...]`, so Windows/WSL launch methods stay consistent.

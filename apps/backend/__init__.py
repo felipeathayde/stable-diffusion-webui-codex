@@ -3,7 +3,6 @@
 
 from .core.engine_interface import BaseInferenceEngine, EngineCapabilities, TaskType
 from .core.exceptions import EngineExecutionError, EngineLoadError
-from .core.orchestrator import InferenceOrchestrator
 from .core.registry import EngineDescriptor, EngineRegistry, registry
 from .core.requests import (
     Img2ImgRequest,
@@ -120,6 +119,11 @@ def __getattr__(name: str):  # pragma: no cover - runtime dispatch
         value = getattr(_services, name)
         globals()[name] = value
         return value
+
+    if name == "InferenceOrchestrator":
+        from .core.orchestrator import InferenceOrchestrator as _InferenceOrchestrator
+        globals()[name] = _InferenceOrchestrator
+        return _InferenceOrchestrator
 
     if name == "ensure_repo_minimal_files":
         from .huggingface import ensure_repo_minimal_files as _ermf

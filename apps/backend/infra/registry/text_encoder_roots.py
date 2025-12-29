@@ -26,6 +26,7 @@ _FAMILY_KEYS: Dict[ModelFamily, str] = {
     ModelFamily.SD15: "sd15_tenc",
     ModelFamily.SDXL: "sdxl_tenc",
     ModelFamily.FLUX: "flux_tenc",
+    ModelFamily.ZIMAGE: "zimage_tenc",
     ModelFamily.WAN22: "wan22_tenc",
 }
 
@@ -72,4 +73,3 @@ def list_text_encoder_roots_by_family() -> Dict[str, List[TextEncoderRoot]]:
 
 
 __all__ = ["TextEncoderRoot", "list_text_encoder_roots", "list_text_encoder_roots_by_family"]
-

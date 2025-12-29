@@ -17,8 +17,10 @@ import logging
 
 from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 
-# Make sure our project is on sys.path before any heavy third-party imports
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+from apps.backend.infra.config.repo_root import get_repo_root
+
+# Repo root anchor for all on-disk paths. Must be set by the launcher.
+PROJECT_ROOT = get_repo_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -315,7 +317,7 @@ def build_app() -> FastAPI:
     )
     _embedding_db = None  # lazy init
     _settings_schema_cache: Optional[Dict[str, Any]] = None
-    _settings_values_path = os.path.join(os.getcwd(), 'apps', 'settings_values.json')
+    _settings_values_path = str(PROJECT_ROOT / 'apps' / 'settings_values.json')
     _ui_blocks_cache: Optional[Dict[str, Any]] = None
     _ui_blocks_mtime: Optional[float] = None
     _ui_presets_cache: Optional[Dict[str, Any]] = None
@@ -555,9 +557,9 @@ def build_app() -> FastAPI:
                     print(color_red(f"[settings] hardcoded schema failed: {e}"))
                     _settings_schema_cache = None
             if _settings_schema_cache is None:
-                schema_path = os.path.join(os.getcwd(), 'apps', 'backend', 'interfaces', 'schemas', 'settings_schema.json')
+                schema_path = str(PROJECT_ROOT / 'apps' / 'backend' / 'interfaces' / 'schemas' / 'settings_schema.json')
                 if not os.path.isfile(schema_path):
-                    schema_path = os.path.join(os.getcwd(), 'apps', 'server', 'settings_schema.json')
+                    schema_path = str(PROJECT_ROOT / 'apps' / 'server' / 'settings_schema.json')
                 _settings_schema_cache = _load_json(schema_path)
                 if not _settings_schema_cache:
                     raise HTTPException(status_code=500, detail='settings schema not found (registry and JSON)')
@@ -573,7 +575,7 @@ def build_app() -> FastAPI:
     # UI Blocks (server-driven parameter panels)
     def _load_ui_blocks() -> Dict[str, Any]:
         nonlocal _ui_blocks_cache, _ui_blocks_mtime
-        blocks_path = os.path.join(os.getcwd(), 'apps', 'interface', 'blocks.json')
+        blocks_path = str(PROJECT_ROOT / 'apps' / 'interface' / 'blocks.json')
         # Simple mtime-based cache
         try:
             stat = os.stat(blocks_path)
@@ -586,7 +588,7 @@ def build_app() -> FastAPI:
         if not data or 'blocks' not in data:
             raise HTTPException(status_code=500, detail='invalid ui blocks json')
         # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
-        overrides_root = os.path.join(os.getcwd(), 'apps', 'interface', 'blocks.d')
+        overrides_root = str(PROJECT_ROOT / 'apps' / 'interface' / 'blocks.d')
         merged = {b.get('id'): b for b in (data.get('blocks') or []) if isinstance(b, dict)}
         try:
             if os.path.isdir(overrides_root):
@@ -652,13 +654,13 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
     def _tabs_path() -> str:
-        return os.path.join(os.getcwd(), 'apps', 'interface', 'tabs.json')
+        return str(PROJECT_ROOT / 'apps' / 'interface' / 'tabs.json')
 
     def _workflows_path() -> str:
-        return os.path.join(os.getcwd(), 'apps', 'interface', 'workflows.json')
+        return str(PROJECT_ROOT / 'apps' / 'interface' / 'workflows.json')
 
     def _ensure_dirs() -> None:
-        root = os.path.join(os.getcwd(), 'apps', 'interface')
+        root = str(PROJECT_ROOT / 'apps' / 'interface')
         os.makedirs(root, exist_ok=True)
 
     def _default_tabs() -> Dict[str, Any]:
@@ -918,7 +920,7 @@ def build_app() -> FastAPI:
     # UI Presets (Model UI)
     def _load_ui_presets() -> Dict[str, Any]:
         nonlocal _ui_presets_cache, _ui_presets_mtime
-        presets_path = os.path.join(os.getcwd(), 'apps', 'ui', 'presets.json')
+        presets_path = str(PROJECT_ROOT / 'apps' / 'ui' / 'presets.json')
         try:
             stat = os.stat(presets_path)
             mtime = stat.st_mtime
@@ -1191,8 +1193,10 @@ def build_app() -> FastAPI:
         from apps.backend.infra.registry.vae import list_vaes as _list_vaes, describe_vaes as _describe_vaes
         current = _codex_opts.get_selected_vae('Automatic')
         try:
-            choices = _list_vaes()
-            info = _describe_vaes()
+            models_root = str(PROJECT_ROOT / "models")
+            hf_root = str(PROJECT_ROOT / "apps" / "backend" / "huggingface")
+            choices = _list_vaes(models_root=models_root, vendored_hf_root=hf_root)
+            info = _describe_vaes(models_root=models_root, vendored_hf_root=hf_root)
             return {"vaes": choices, "current": current, "vaes_info": info}
         except Exception:
             return {"vaes": ['Automatic', 'Built in', 'None'], "current": current, "vaes_info": []}
@@ -1304,7 +1308,7 @@ def build_app() -> FastAPI:
 
         This endpoint exposes only the engine-specific keys from apps/paths.json.
         """
-        cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
+        cfg_path = str(PROJECT_ROOT / 'apps' / 'paths.json')
         raw = _load_json(cfg_path) or {}
         if not isinstance(raw, dict):
             raw = {}
@@ -1328,7 +1332,7 @@ def build_app() -> FastAPI:
         if not isinstance(payload, dict) or 'paths' not in payload or not isinstance(payload['paths'], dict):
             raise HTTPException(status_code=400, detail='payload must be {"paths": {...}}')
 
-        cfg_path = os.path.join(os.getcwd(), 'apps', 'paths.json')
+        cfg_path = str(PROJECT_ROOT / 'apps' / 'paths.json')
         current = _load_json(cfg_path) or {}
         if not isinstance(current, dict):
             current = {}
@@ -2505,17 +2509,17 @@ def build_app() -> FastAPI:
             raise RuntimeError(f"vid2vid {field} path is empty")
         p = Path(os.path.expanduser(v))
         if not p.is_absolute():
-            p = Path(os.getcwd()) / p
+            p = PROJECT_ROOT / p
         try:
             resolved = p.resolve()
         except Exception:
             resolved = p
-        root = Path(os.getcwd()).resolve()
+        root = PROJECT_ROOT.resolve()
         try:
             resolved.relative_to(root)
         except ValueError:
             raise RuntimeError(
-                f"vid2vid {field} must be under the backend working directory ({root}); "
+                f"vid2vid {field} must be under the repo root ({root}); "
                 "use upload instead for external files."
             ) from None
         if not resolved.is_file():
@@ -2801,7 +2805,7 @@ def build_app() -> FastAPI:
                             uploaded_paths = [str(payload.get("__vid2vid_uploaded_path"))]
 
                         if uploaded_paths:
-                            up_root = (Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid").resolve()
+                            up_root = (PROJECT_ROOT / "tmp" / "uploads" / "vid2vid").resolve()
                             for item in uploaded_paths:
                                 up_path = Path(str(item))
                                 try:
@@ -2910,7 +2914,7 @@ def build_app() -> FastAPI:
         try:
             import shutil as _shutil
 
-            up_dir = Path(os.getcwd()) / "tmp" / "uploads" / "vid2vid"
+            up_dir = PROJECT_ROOT / "tmp" / "uploads" / "vid2vid"
             up_dir.mkdir(parents=True, exist_ok=True)
 
             def _save(upload: UploadFile, *, default_suffix: str) -> str:
@@ -2951,7 +2955,7 @@ def build_app() -> FastAPI:
     @app.get("/api/output/{rel_path:path}")
     async def get_output_file(rel_path: str) -> FileResponse:
         """Serve a file from CODEX_OUTPUT_ROOT / ./output (safe, root-scoped)."""
-        root = Path(os.getenv("CODEX_OUTPUT_ROOT") or (Path(os.getcwd()) / "output")).resolve()
+        root = Path(os.getenv("CODEX_OUTPUT_ROOT") or (PROJECT_ROOT / "output")).resolve()
         raw = str(rel_path or "").lstrip("/").replace("\\", "/")
         target = (root / raw).resolve()
         try:
@@ -3114,7 +3118,7 @@ def build_app() -> FastAPI:
         - extensions: Comma-separated list of extensions to filter (e.g., ".safetensors,.gguf")
         """
         if not path:
-            path = os.path.join(os.getcwd(), "models")
+            path = str(PROJECT_ROOT / "models")
         
         if not os.path.exists(path):
             return {"path": path, "exists": False, "items": []}

@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2025-12-16
+Last Review: 2025-12-29
 Status: Active
 
 ## Purpose
@@ -19,6 +19,7 @@ Status: Active
 - 2025-12-14: engine 5B GGUF agora consome overrides por stage via `extras.wan_high/wan_low` (steps/cfg/sampler/scheduler/model_dir) e valida text encoder `.safetensors` (file ou dir com 1 arquivo).
 - 2025-12-16: `wan22_5b` now supports `vid2vid` via `apps/backend/use_cases/vid2vid.py` (optical-flow-guided chunking built on `img2vid` + ffmpeg IO/export). Flow uses torchvision RAFT (lazy-loaded) and will fail fast if torch/torchvision are missing.
 - 2025-12-16: Added `wan22_animate_14b` engine as a `vid2vid` strategy (`vid2vid_method="wan_animate"`) using Diffusers `WanAnimatePipeline` (expects preprocessed pose/face videos + reference image; `replace` mode also needs bg/mask). Requires a diffusers version that includes `WanAnimatePipeline` (>=0.36).
+- 2025-12-29: WAN22 engines now anchor vendored HF paths under `CODEX_ROOT` (required) so they don’t depend on the backend process CWD.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

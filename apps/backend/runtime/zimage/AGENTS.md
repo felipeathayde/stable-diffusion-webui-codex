@@ -1,7 +1,7 @@
 # apps/backend/runtime/zimage
 Date: 2025-12-12
 Owner: Runtime Maintainers
-Last Review: 2025-12-14
+Last Review: 2025-12-29
 Status: Active
 
 ## Purpose
@@ -32,6 +32,7 @@ Status: Active
   Avoid applying `attention_norm2(attention_norm1(x))` as attention input (double-norm) or feeding `ffn_norm2(...)` into the MLP.
 - **VAE normalization:** Flow16 (Flux/Z-Image) scaling/shift is applied outside the runtime core via `vae.first_stage_model.process_in/out`.
 - **Tokenizer source of truth:** prefer the vendored HF tokenizer at `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/tokenizer` (no hub fetch). Override with `CODEX_ZIMAGE_TOKENIZER_PATH` when needed.
+- 2025-12-29: ZImage tokenizer fallback paths are now anchored to `CODEX_ROOT` (required) so tokenizers resolve correctly when the process CWD is not the repo root.
 - **Debugging:** enable extra logs with env flags:
   - `CODEX_ZIMAGE_DEBUG_PROMPT=1` (engine prompt string + distilled cfg scale)
   - `CODEX_ZIMAGE_DEBUG_TENC_TEXT=1`, `CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1`, `CODEX_ZIMAGE_DEBUG_TENC_DECODE=1`, `CODEX_ZIMAGE_DEBUG_TENC_RUN=1` (tokenization + embedding stats)

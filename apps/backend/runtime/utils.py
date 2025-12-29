@@ -10,7 +10,6 @@ import torch
 from safetensors.torch import safe_open
 
 from apps.backend.runtime.misc import checkpoint_pickle
-from apps.backend.quantization.tensor import CodexParameter
 
 _log = logging.getLogger("backend.runtime.utils")
 
@@ -552,6 +551,10 @@ def get_state_dict_after_quant(model, prefix=''):
 
 
 def beautiful_print_gguf_state_dict_statics(state_dict):
+    try:
+        from apps.backend.quantization.tensor import CodexParameter
+    except Exception:
+        return
     type_counts = {}
     for k, v in state_dict.items():
         if isinstance(v, CodexParameter) and v.qtype is not None:

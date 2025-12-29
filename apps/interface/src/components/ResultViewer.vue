@@ -34,27 +34,27 @@
         <slot name="empty" :mode="mode" :emptyText="emptyText">{{ emptyText }}</slot>
       </div>
     </template>
-  </div>
 
-  <!-- Zoom overlay -->
-  <div v-if="zoomedImage" class="image-zoom-overlay" @click.self="closeZoom">
-    <div class="image-zoom-main">
-      <img
-        :src="imageUrl(zoomedImage)"
-        :alt="'Zoomed result'"
-        :style="zoomStyle"
-        @mousedown.prevent="onPanStart"
-      />
-    </div>
-    <div class="image-zoom-toolbar">
-      <div class="toolbar-group">
-        <button class="btn btn-sm btn-outline" type="button" @click.stop="resetView">Fit</button>
-        <button class="btn btn-sm btn-outline" type="button" @click.stop="setZoom(1)">1:1</button>
-        <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomIn">+</button>
-        <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomOut">-</button>
-        <button class="btn btn-sm btn-secondary" type="button" @click.stop="closeZoom">Close</button>
+    <!-- Zoom overlay -->
+    <div v-if="zoomedImage" class="image-zoom-overlay" @click.self="closeZoom">
+      <div class="image-zoom-main">
+        <img
+          :src="imageUrl(zoomedImage)"
+          :alt="'Zoomed result'"
+          :style="zoomStyle"
+          @mousedown.prevent="onPanStart"
+        />
       </div>
-      <span class="caption">Drag to pan</span>
+      <div class="image-zoom-toolbar">
+        <div class="toolbar-group">
+          <button class="btn btn-sm btn-outline" type="button" @click.stop="resetView">Fit</button>
+          <button class="btn btn-sm btn-outline" type="button" @click.stop="setZoom(1)">1:1</button>
+          <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomIn">+</button>
+          <button class="btn btn-sm btn-outline" type="button" @click.stop="zoomOut">-</button>
+          <button class="btn btn-sm btn-secondary" type="button" @click.stop="closeZoom">Close</button>
+        </div>
+        <span class="caption">Drag to pan</span>
+      </div>
     </div>
   </div>
 </template>

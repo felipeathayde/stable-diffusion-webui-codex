@@ -52,7 +52,7 @@ def list_vaes(models_root: str = "models", vendored_hf_root: str = "apps/backend
     """Return an ordered list of VAE choices (names).
 
     Baselines always first; discovered entries are appended in stable order.
-    Includes VAEs from engine-specific paths in paths.json (flux_vae, sd15_vae, etc.).
+    Includes VAEs from engine-specific paths in paths.json (flux_vae, zimage_vae, sd15_vae, etc.).
     """
     entries: List[AssetEntry] = []
     entries.extend(_collect_from_models_root(models_root))
@@ -68,7 +68,7 @@ def list_vaes(models_root: str = "models", vendored_hf_root: str = "apps/backend
     try:
         from apps.backend.infra.config.paths import get_paths_for
         seen_paths = {e.path for e in entries}
-        for key in ("sd15_vae", "sdxl_vae", "flux_vae", "wan22_vae"):
+        for key in ("sd15_vae", "sdxl_vae", "flux_vae", "zimage_vae", "wan22_vae"):
             for root in get_paths_for(key):
                 if os.path.isdir(root):
                     for name in os.listdir(root):
@@ -134,7 +134,7 @@ def describe_vaes(models_root: str = "models", vendored_hf_root: str = "apps/bac
     # Collect VAEs from engine-specific paths in paths.json
     try:
         from apps.backend.infra.config.paths import get_paths_for
-        for key in ("sd15_vae", "sdxl_vae", "flux_vae", "wan22_vae"):
+        for key in ("sd15_vae", "sdxl_vae", "flux_vae", "zimage_vae", "wan22_vae"):
             for root in get_paths_for(key):
                 if os.path.isdir(root):
                     for name in os.listdir(root):

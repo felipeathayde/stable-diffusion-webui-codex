@@ -11,10 +11,11 @@ from apps.backend.engines.common.base_video import BaseVideoEngine
 from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
 from apps.backend.engines.wan22.wan22_common import EngineOpts, WanComponents, resolve_wan_repo_candidates
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
+from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.use_cases.vid2vid import run_vid2vid as _run_v2v
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = get_repo_root()
 HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
 
 

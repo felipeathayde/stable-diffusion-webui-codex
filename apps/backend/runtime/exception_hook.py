@@ -24,6 +24,8 @@ import time
 import traceback
 from typing import Any, Dict, Optional, Tuple
 
+from apps.backend.infra.config.repo_root import get_repo_root
+
 _installed = False
 _log_path: Optional[str] = None
 _orig_excepthook = sys.excepthook
@@ -37,25 +39,14 @@ def _ensure_log_path(log_dir: Optional[str] = None, file_path: Optional[str] = N
     if file_path:
         path = file_path
     else:
-        root = (
-            file_path
-            or log_dir
-            or os.environ.get("CODEX_ERROR_LOG_DIR")
-            or os.path.join(os.getcwd(), "logs")
-        )
+        root = log_dir or os.environ.get("CODEX_ERROR_LOG_DIR") or str(get_repo_root() / "logs")
         os.makedirs(root, exist_ok=True)
         ts = time.strftime("%Y%m%d")
         path = os.path.join(root, f"exceptions-{ts}-{os.getpid()}.log")
     # Touch the file to ensure it exists
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8"):
-            pass
-    except Exception:
-        # Fall back to CWD if something went wrong with the desired path
-        path = os.path.abspath(f"exceptions-{time.strftime('%Y%m%d')}-{os.getpid()}.log")
-        with open(path, "a", encoding="utf-8"):
-            pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8"):
+        pass
     _log_path = path
     return path
 

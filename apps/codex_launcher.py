@@ -21,7 +21,13 @@ from typing import Callable, Dict, List, Optional, Tuple
 _codex_root = os.environ.get("CODEX_ROOT")
 if not _codex_root:
     raise EnvironmentError("CODEX_ROOT not set. Use run-webui.bat to launch.")
-PROJECT_ROOT = Path(_codex_root)
+_root_path = Path(_codex_root)
+if str(_root_path) not in sys.path:
+    sys.path.insert(0, str(_root_path))
+
+from apps.backend.infra.config.repo_root import get_repo_root
+
+PROJECT_ROOT = get_repo_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

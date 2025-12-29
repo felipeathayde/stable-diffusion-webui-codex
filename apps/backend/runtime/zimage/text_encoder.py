@@ -14,6 +14,8 @@ from typing import List, Optional, Dict, Any
 import torch
 import torch.nn as nn
 
+from apps.backend.infra.config.repo_root import get_repo_root
+
 logger = logging.getLogger("backend.runtime.zimage.text_encoder")
 
 from .debug import env_flag, env_int, find_indices, summarize_ints, tensor_stats, truncate_text
@@ -198,7 +200,7 @@ class ZImageTextEncoder(nn.Module):
             raise
 
         # Prefer explicit config, then vendored HF assets, then ComfyUI tokenizer snapshot.
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = get_repo_root()
         runtime_root = Path(__file__).resolve().parents[1]
 
         candidates: list[str] = []
@@ -460,4 +462,3 @@ class ZImageTextProcessingEngine:
         """Tokenize without encoding."""
         tokens = self.text_encoder.tokenize(texts, self.max_length)
         return tokens["input_ids"].tolist()
-

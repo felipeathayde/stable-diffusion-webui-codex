@@ -25,8 +25,9 @@ from apps.backend.engines.wan22.wan22_common import (
     _first_existing_path_for,
 )
 from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
+from apps.backend.infra.config.repo_root import get_repo_root
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = get_repo_root()
 HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
 
 def _coerce_int(value: Any) -> Optional[int]:

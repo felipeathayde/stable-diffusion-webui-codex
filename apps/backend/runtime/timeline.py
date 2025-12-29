@@ -439,12 +439,9 @@ def enable_from_env() -> None:
 def get_logs_dir() -> "Path":
     """Get the logs/timeline directory, creating if needed."""
     from pathlib import Path
-    # Use CODEX_ROOT if available, else relative
-    codex_root = os.environ.get("CODEX_ROOT", "")
-    if codex_root:
-        base = Path(codex_root)
-    else:
-        base = Path(__file__).parent.parent.parent.parent  # up to project root
+    from apps.backend.infra.config.repo_root import get_repo_root
+
+    base = get_repo_root()
     
     timeline_dir = base / "logs" / "timeline"
     timeline_dir.mkdir(parents=True, exist_ok=True)
@@ -528,4 +525,3 @@ __all__ = [
     "auto_save_and_print",
     "get_logs_dir",
 ]
-

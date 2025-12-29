@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Dict, List
 import logging
 
+from .repo_root import get_repo_root
+
 _PATHS_CACHE: Dict[str, List[str]] | None = None
 _PATHS_MTIME: float | None = None
 _LOG = logging.getLogger("backend.infra.config.paths")
@@ -41,8 +43,7 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
 
 
 def _repo_root() -> Path:
-    # apps/backend/infra/config/paths.py -> repo_root = parents[4]
-    return Path(__file__).resolve().parents[4]
+    return get_repo_root()
 
 
 def _paths_json_path() -> Path:

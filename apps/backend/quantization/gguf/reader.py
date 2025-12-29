@@ -16,10 +16,18 @@ from .quant_shapes import quant_shape_to_byte_shape
 
 if __name__ == "__main__":
     import sys
+    import os
     from pathlib import Path
 
-    # Allow running file in package as a script.
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    codex_root = (os.environ.get("CODEX_ROOT") or "").strip()
+    if not codex_root:
+        raise EnvironmentError("CODEX_ROOT not set. Launch via run-webui.{bat,sh} or set CODEX_ROOT to the repo root.")
+    root_path = Path(codex_root)
+    if str(root_path) not in sys.path:
+        sys.path.insert(0, str(root_path))
+    from apps.backend.infra.config.repo_root import get_repo_root
+
+    sys.path.insert(0, str(get_repo_root()))
 
 from .constants import (
     GGML_QUANT_SIZES,

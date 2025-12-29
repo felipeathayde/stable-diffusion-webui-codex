@@ -11,10 +11,12 @@ from dataclasses import dataclass
 import os
 import json
 
+from apps.backend.infra.config.repo_root import get_repo_root
+
 from . import main as codex_main
 
 
-_VALUES_PATH = os.path.join(os.getcwd(), 'apps', 'settings_values.json')
+_VALUES_PATH = str(get_repo_root() / 'apps' / 'settings_values.json')
 
 
 def _load() -> Dict[str, Any]:

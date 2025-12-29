@@ -1,7 +1,7 @@
 # apps Overview
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2025-12-28
+Last Review: 2025-12-29
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2025-11-14: BIOS DEBUG tab mirrors backend defaults for `CODEX_TRACE_DEBUG_MAX_PER_FUNC` (10 by default) so the displayed values stay in sync with `apps.backend.infra.config.args`.
 - 2025-12-03: BIOS DEBUG tab now exposes a "Force Native Sampler" toggle bound to `CODEX_SAMPLER_FORCE_NATIVE`, allowing operators to disable k-diffusion routing for diagnostics.
 - 2025-12-28: `apps/settings_values.json` and `apps/interface/{tabs,workflows}.json` are backend-managed runtime state files; they are created/overwritten locally and are intentionally ignored by Git.
+- 2025-12-29: Repo-root resolution across backend + launchers is now strict and `CODEX_ROOT`-anchored (no `__file__`/CWD fallbacks); launch via `run-webui.{bat,sh}` or set `CODEX_ROOT` explicitly.

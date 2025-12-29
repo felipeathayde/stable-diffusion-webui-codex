@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.infra.config.repo_root import get_repo_root
 
 
 @dataclass(frozen=True)
@@ -21,8 +22,7 @@ _CACHE: Inventory | None = None
 
 
 def _repo_root() -> Path:
-    # apps/backend/inventory/cache.py -> repo_root = parents[3]
-    return Path(__file__).resolve().parents[3]
+    return get_repo_root()
 
 
 def _models_root() -> str:

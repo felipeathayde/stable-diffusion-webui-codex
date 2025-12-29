@@ -2,7 +2,7 @@
 # apps/backend/infra/registry Overview
 Date: 2025-12-05
 Owner: Backend Infra Maintainers
-Last Review: 2025-12-05
+Last Review: 2025-12-29
 Status: Active
 
 ## Purpose
@@ -22,4 +22,4 @@ Status: Active
 ## Notes
 - These registries must stay “thin”: no torch/transformers imports, no engine loading. They are intended for inventories, API listings, and future tooling.
 - 2025-12-05: Text encoder roots per engine (`*_tenc` in `apps/paths.json`) are now wired into the inventory layer (`apps/backend/inventory/cache.py`); future registry helpers for per-family TE overrides should live here, built on top of `get_paths_for("<engine>_tenc")`.
-
+- 2025-12-29: Added `zimage_tenc` to the text encoder roots registry and `zimage_vae` to VAE discovery so ZImage assets show up in `/api/*` selectors and QuickSettings.

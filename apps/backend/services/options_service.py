@@ -4,8 +4,9 @@ import json
 import os
 from typing import Any, Dict
 
+from apps.backend.infra.config.repo_root import get_repo_root
 
-SETTINGS_PATH = os.path.join(os.getcwd(), 'apps', 'settings_values.json')
+SETTINGS_PATH = str(get_repo_root() / 'apps' / 'settings_values.json')
 
 
 class OptionsService:

@@ -12,7 +12,6 @@ import logging
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime import utils
-from apps.backend.runtime.ops import cleanup_cache
 
 
 logger = logging.getLogger("backend.runtime.sampling")
@@ -503,5 +502,6 @@ def sampling_cleanup(unet):
         for model in models_to_unload:
             memory_management.unload_model(model)
         setattr(unet, "_codex_smart_offload_models", [])
+    from apps.backend.runtime.ops import cleanup_cache
     cleanup_cache()
     return

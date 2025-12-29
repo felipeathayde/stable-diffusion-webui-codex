@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List
 
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.infra.config.repo_root import get_repo_root
 
 
 @dataclass
@@ -143,7 +144,7 @@ def _first_existing_path_for(key: str) -> Optional[str]:
 
     # Built-in fallbacks quando não há override configurado.
     if not candidates:
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = get_repo_root()
         if key == "wan22_vae":
             candidates.append(str(repo_root / "models" / "wan22-vae"))
         elif key == "wan22_tenc":

@@ -21,6 +21,8 @@ Optional:
 install-webui.bat
 ```
 
+Note: the Windows installer delegates most logic to `tools/install_webui.py` (prints detailed detection + version info).
+
 2) Launch the GUI launcher:
 ```bat
 run-webui.bat

@@ -1,0 +1,7 @@
+# Ensure Windows batch scripts work reliably on Windows checkouts.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Shell scripts should keep LF.
+*.sh text eol=lf

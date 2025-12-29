@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 import base64
 import io
+import errno
 import json
 import os
 import socket
@@ -250,13 +251,47 @@ def _save_json(path: str, data: dict) -> None:
 
 
 def port_free(port: int, host: str = '0.0.0.0') -> bool:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    """Return True if a port looks free across common bind targets.
+
+    This check is intentionally conservative to avoid split-brain situations
+    where something is already bound on IPv6 loopback (::1) while we only test
+    IPv4 (0.0.0.0). That exact setup can make `localhost` resolve to the wrong
+    service with *no* obvious bind error.
+
+    We treat the port as "busy" if any of these binds fail with EADDRINUSE:
+    - IPv4 wildcard + loopback
+    - IPv6 wildcard + loopback (when supported)
+    """
+
+    def _can_bind(family: int, bind_host: str) -> bool:
         try:
-            s.bind((host, port))
-            return True
-        except OSError:
+            with closing(socket.socket(family, socket.SOCK_STREAM)) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6:
+                    addr = (bind_host, port, 0, 0)
+                else:
+                    addr = (bind_host, port)
+                s.bind(addr)
+                return True
+        except OSError as exc:
+            # Ignore unsupported address families on systems without IPv6.
+            if getattr(exc, "errno", None) in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL):
+                return True
             return False
+
+    bind_targets: list[tuple[int, str]] = []
+    host_norm = str(host or "").strip().lower()
+    if host_norm in {"", "0.0.0.0", "0", "*"}:
+        bind_targets.extend([(socket.AF_INET, "0.0.0.0"), (socket.AF_INET, "127.0.0.1")])
+    elif host_norm == "localhost":
+        bind_targets.append((socket.AF_INET, "127.0.0.1"))
+    else:
+        bind_targets.append((socket.AF_INET, host))
+
+    # Also check IPv6 loopback/wildcard (when available).
+    bind_targets.extend([(socket.AF_INET6, "::"), (socket.AF_INET6, "::1")])
+
+    return all(_can_bind(fam, h) for fam, h in bind_targets)
 
 
 def scan_range(r: Tuple[int, int], host: str = '0.0.0.0') -> Optional[int]:

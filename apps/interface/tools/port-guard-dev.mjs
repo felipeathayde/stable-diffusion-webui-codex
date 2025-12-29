@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import net from 'node:net'
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 const COLOR = {
@@ -9,20 +11,108 @@ const COLOR = {
   cyan: (s) => `\u001b[36m${s}\u001b[0m`,
 }
 
-function checkPort(port, host = '0.0.0.0') {
+const PORT_GUARD_HOSTS = [
+  // IPv4 wildcard + loopback
+  '0.0.0.0',
+  '127.0.0.1',
+  // IPv6 wildcard + loopback (covers the common “localhost → ::1” split-brain case)
+  '::',
+  '::1',
+]
+
+function isWsl() {
+  const env = process.env.WSL_DISTRO_NAME || ''
+  if (env) return true
+  const rel = os.release().toLowerCase()
+  return rel.includes('microsoft') || rel.includes('wsl')
+}
+
+function repoRootFromCwd() {
+  // Expected cwd is apps/interface. Be defensive in case someone runs it elsewhere.
+  const candidate = path.resolve(process.cwd(), '..', '..')
+  if (fs.existsSync(path.join(candidate, 'apps')) && fs.existsSync(path.join(candidate, '.gitignore'))) {
+    return candidate
+  }
+  return process.cwd()
+}
+
+function pidFilePath(port) {
+  const root = repoRootFromCwd()
+  const safePort = Number.isFinite(port) ? String(port) : 'unknown'
+  return path.join(root, `.webui-ui-${safePort}.pid`)
+}
+
+function writePidFile(port) {
+  const file = pidFilePath(port)
+  const payload = {
+    service: 'ui',
+    pid: process.pid,
+    port,
+    started_at: new Date().toISOString(),
+    platform: process.platform,
+    hostname: os.hostname(),
+    wsl: isWsl(),
+    cwd: process.cwd(),
+  }
+  try {
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf-8')
+  } catch (_) {
+    // best-effort only; never block dev server
+  }
+  return file
+}
+
+function installPidCleanup(file) {
+  const cleanup = () => {
+    try { fs.unlinkSync(file) } catch (_) {}
+  }
+  process.on('exit', cleanup)
+  process.on('SIGINT', () => { cleanup(); process.exit(130) })
+  process.on('SIGTERM', () => { cleanup(); process.exit(143) })
+}
+
+function checkPortOnHost(port, host) {
   return new Promise((resolve) => {
     const srv = net.createServer()
-    srv.once('error', () => resolve(false))
-    srv.once('listening', () => srv.close(() => resolve(true)))
+    srv.once('error', (err) => resolve({ ok: false, host, code: err?.code || 'UNKNOWN' }))
+    srv.once('listening', () => srv.close(() => resolve({ ok: true, host })))
     srv.listen(port, host)
   })
 }
 
-async function findPort(ranges) {
-  for (const [start, end] of ranges) {
-    for (let p = start; p <= end; p++) {
+async function checkPortEverywhere(port) {
+  for (const host of PORT_GUARD_HOSTS) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await checkPortOnHost(port, host)
+    if (res.ok) continue
+    // Ignore unsupported address families; still catch EADDRINUSE.
+    if (res.code === 'EAFNOSUPPORT' || res.code === 'EADDRNOTAVAIL') continue
+    return { ok: false, host: res.host, code: res.code }
+  }
+  return { ok: true }
+}
+
+async function probeCodex(port) {
+  const urls = [
+    `http://127.0.0.1:${port}/api/version`,
+    `http://[::1]:${port}/api/version`,
+  ]
+  for (const url of urls) {
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 800)
+      // Node 18+ has global fetch
       // eslint-disable-next-line no-await-in-loop
-      if (await checkPort(p)) return p
+      const res = await fetch(url, { signal: ctrl.signal })
+      clearTimeout(t)
+      if (!res.ok) continue
+      // eslint-disable-next-line no-await-in-loop
+      const data = await res.json().catch(() => null)
+      if (!data || typeof data !== 'object') continue
+      if (typeof data.app_version !== 'string') continue
+      return { url, data }
+    } catch (_) {
+      // ignore probes
     }
   }
   return null
@@ -32,26 +122,39 @@ const cliArgs = process.argv.slice(2)
 
 async function main() {
   const base = Number(process.env.WEB_PORT) || 7860
-  const c1 = await checkPort(base)
-  if (c1) return runVite(base, false, cliArgs)
+  const c1 = await checkPortEverywhere(base)
+  if (c1.ok) return runVite(base, false, cliArgs)
+
+  const existing = await probeCodex(base)
+  if (existing) {
+    const commit = existing.data?.git_commit || 'unknown'
+    console.log(COLOR.yellow(`[port-guard] Port ${base} already responds to /api/version (${existing.url}, git=${commit}). You may have another Codex UI/API running (WSL/Windows).`))
+  } else {
+    console.log(COLOR.yellow(`[port-guard] Port ${base} is busy. You may have another service (or another Codex instance) running.`))
+  }
   const f1 = base + 10000
-  const c2 = await checkPort(f1)
-  if (c2) {
+  const c2 = await checkPortEverywhere(f1)
+  if (c2.ok) {
     banner(f1, base)
     return runVite(f1, true, cliArgs)
   }
   const f2 = base + 20000
-  const c3 = await checkPort(f2)
-  if (c3) {
+  const c3 = await checkPortEverywhere(f2)
+  if (c3.ok) {
     banner(f2, base)
     return runVite(f2, true, cliArgs)
   }
   console.error(COLOR.red(`[port-guard] No free port for UI. Tried ${base}, ${f1}, ${f2}.`))
+  if (!c1.ok) console.error(COLOR.red(`[port-guard] ${base} blocked at host=${c1.host} code=${c1.code}`))
+  if (!c2.ok) console.error(COLOR.red(`[port-guard] ${f1} blocked at host=${c2.host} code=${c2.code}`))
+  if (!c3.ok) console.error(COLOR.red(`[port-guard] ${f2} blocked at host=${c3.host} code=${c3.code}`))
   process.exit(1)
 }
 
 function runVite(port, show, extraArgs = []) {
   process.env.WEB_PORT = String(port)
+  const pidFile = writePidFile(port)
+  installPidCleanup(pidFile)
   const viteBin = path.join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
   const useShell = process.platform === 'win32'
   const child = spawn(viteBin, extraArgs, { stdio: 'inherit', env: process.env, shell: useShell })

@@ -7,6 +7,9 @@ import subprocess
 import sys
 import threading
 import time
+import errno
+import socket
+from contextlib import closing
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -63,6 +66,19 @@ class CodexServiceHandle:
         env.update(overrides_map)
 
         command = list(self.spec.command)
+        if self.spec.name.upper() == "API":
+            port = _extract_cli_port(command)
+            if port is not None:
+                ok, blocked = _port_free_everywhere(port)
+                if not ok:
+                    hint = (
+                        f"API port {port} is busy ({blocked}). "
+                        "You may already have Codex running (WSL/Windows) or another service bound on IPv4/IPv6 localhost. "
+                        "Stop the other instance or set API_PORT_OVERRIDE/WEB_PORT to a free pair."
+                    )
+                    if self.log_buffer:
+                        self.log_buffer.append(f"[{_now()}] [launcher] {hint}")
+                    raise RuntimeError(hint)
         flags = 0
         startupinfo = None
         use_external = external_terminal and self.spec.allow_external_terminal
@@ -197,6 +213,7 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
     py_exe = Path(sys.executable)
     api_target = "apps.backend.interfaces.api.run_api:create_api_app"
     api_port = os.getenv("API_PORT_OVERRIDE", "7850")
+    web_port = os.getenv("WEB_PORT", "7860")
     api_host = os.getenv("API_HOST", "0.0.0.0")
     api_spec = CodexServiceSpec(
         name="API",
@@ -220,7 +237,13 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
         name="UI",
         command=[npm_cmd, "run", "dev", "--", "--host"],
         cwd=root / "apps" / "interface",
-        base_env={"FORCE_COLOR": "1", "API_HOST": "localhost", "SERVER_HOST": "localhost"},
+        base_env={
+            "FORCE_COLOR": "1",
+            "API_HOST": "localhost",
+            "API_PORT": str(api_port),
+            "WEB_PORT": str(web_port),
+            "SERVER_HOST": "localhost",
+        },
         allow_external_terminal=os.name == "nt",
     )
     return {
@@ -231,6 +254,49 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
 
 def _now() -> str:
     return time.strftime("%H:%M:%S")
+
+
+def _extract_cli_port(command: List[str]) -> int | None:
+    for idx, token in enumerate(command):
+        if token == "--port" and idx + 1 < len(command):
+            try:
+                return int(command[idx + 1])
+            except Exception:
+                return None
+        if token.startswith("--port="):
+            try:
+                return int(token.split("=", 1)[1])
+            except Exception:
+                return None
+    return None
+
+
+def _port_free_everywhere(port: int) -> tuple[bool, str]:
+    def _can_bind(family: int, host: str) -> tuple[bool, str]:
+        try:
+            with closing(socket.socket(family, socket.SOCK_STREAM)) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6:
+                    s.bind((host, port, 0, 0))
+                else:
+                    s.bind((host, port))
+                return True, ""
+        except OSError as exc:
+            if getattr(exc, "errno", None) in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL):
+                return True, ""
+            code = getattr(exc, "errno", None)
+            return False, f"host={host} errno={code}"
+
+    for family, host in (
+        (socket.AF_INET, "0.0.0.0"),
+        (socket.AF_INET, "127.0.0.1"),
+        (socket.AF_INET6, "::"),
+        (socket.AF_INET6, "::1"),
+    ):
+        ok, detail = _can_bind(family, host)
+        if not ok:
+            return False, detail
+    return True, ""
 
 
 def _windows_no_activate():

@@ -81,18 +81,34 @@ assert_port() {
 port_free() {
   local port="$1"
   "${PY_BIN}" - "$port" <<'PY'
+import errno
 import socket
 import sys
 
 port = int(sys.argv[1])
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-try:
-    s.bind(("0.0.0.0", port))
-except OSError:
-    raise SystemExit(1)
-finally:
-    s.close()
+targets = [
+    (socket.AF_INET, ("0.0.0.0", port)),
+    (socket.AF_INET, ("127.0.0.1", port)),
+    (socket.AF_INET6, ("::", port, 0, 0)),
+    (socket.AF_INET6, ("::1", port, 0, 0)),
+]
+for family, addr in targets:
+    try:
+        s = socket.socket(family, socket.SOCK_STREAM)
+    except OSError:
+        continue
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(addr)
+    except OSError as exc:
+        if getattr(exc, "errno", None) in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL):
+            continue
+        raise SystemExit(1)
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 raise SystemExit(0)
 PY
 }

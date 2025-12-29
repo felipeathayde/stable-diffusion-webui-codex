@@ -2,8 +2,11 @@
 setlocal
 
 set "ROOT=%~dp0"
+set "VENV_PY=%ROOT%.venv\\Scripts\\python.exe"
 if defined PYTHON (
     set "PY_BIN=%PYTHON%"
+) else if exist "%VENV_PY%" (
+    set "PY_BIN=%VENV_PY%"
 ) else (
     set "PY_BIN=python"
 )

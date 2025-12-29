@@ -3,7 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-VENV_DIR="${CODEX_VENV_DIR:-$HOME/.venv}"
+DEFAULT_VENV_DIR="${ROOT_DIR}/.venv"
+if [[ -d "${DEFAULT_VENV_DIR}" ]]; then
+  VENV_DIR="${CODEX_VENV_DIR:-$DEFAULT_VENV_DIR}"
+else
+  VENV_DIR="${CODEX_VENV_DIR:-$HOME/.venv}"
+fi
 PY_BIN="${PYTHON:-$VENV_DIR/bin/python}"
 API_ENTRYPOINT="${ROOT_DIR}/apps/backend/interfaces/api/run_api.py"
 UI_DIR="${ROOT_DIR}/apps/interface"

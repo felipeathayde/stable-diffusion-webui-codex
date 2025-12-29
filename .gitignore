@@ -97,6 +97,7 @@ apps/settings_values.json
 # Local reference snapshots and scratch branches
 *.png
 *.txt
+!requirements*.txt
 *.docx
 .sangoi/reports/tooling/pyright/*
 models/

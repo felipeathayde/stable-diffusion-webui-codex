@@ -79,34 +79,21 @@ if /I "%TORCH_MODE%"=="cpu" (
     where nvidia-smi
     echo [install] nvidia-smi GPU query (name, driver, cuda):
     nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>nul
-    set "CUDA_LINE="
-    for /f "delims=" %%L in ('nvidia-smi ^| findstr /C:"CUDA Version"') do set "CUDA_LINE=%%L"
-    set "CUDA_VER="
-    if not "!CUDA_LINE!"=="" (
-      set "CUDA_VER_RAW=!CUDA_LINE:*CUDA Version:=!"
-      for /f "tokens=1 delims= " %%A in ("!CUDA_VER_RAW!") do set "CUDA_VER=%%A"
-    )
-    if not "%CUDA_VER%"=="" (
-      echo [install] Detected NVIDIA driver CUDA version: %CUDA_VER%
-      for /f "tokens=1,2 delims=." %%A in ("%CUDA_VER%") do (
-        set "CUDA_MAJ=%%A"
-        set "CUDA_MIN=%%B"
-      )
-      if "%CUDA_MIN%"=="" set "CUDA_MIN=0"
 
-      set "TORCH_VARIANTS=cpu"
-      if %CUDA_MAJ% GEQ 12 (
-        if %CUDA_MIN% GEQ 6 set "TORCH_VARIANTS=cu126 cu124 cu121"
-        if %CUDA_MIN% GEQ 4 if "%TORCH_VARIANTS%"=="cpu" set "TORCH_VARIANTS=cu124 cu121"
-        if %CUDA_MIN% GEQ 1 if "%TORCH_VARIANTS%"=="cpu" set "TORCH_VARIANTS=cu121"
-        if "%TORCH_VARIANTS%"=="cpu" set "TORCH_VARIANTS=cu118"
-      ) else if %CUDA_MAJ% EQU 11 (
-        if %CUDA_MIN% GEQ 8 set "TORCH_VARIANTS=cu118"
-      )
-    ) else (
-      set "TORCH_VARIANTS=cpu"
+    set "CUDA_VER="
+    for /f "tokens=2 delims=:" %%A in ('nvidia-smi 2^>nul ^| findstr /C:"CUDA Version"') do (
+      for /f "tokens=1 delims= " %%B in ("%%A") do set "CUDA_VER=%%B"
     )
+    if not "!CUDA_VER!"=="" (
+      echo [install] Detected NVIDIA driver CUDA version: !CUDA_VER!
+    ) else (
+      echo [install] Warning: could not parse CUDA version from nvidia-smi output.
+    )
+
+    echo [install] Selecting CUDA wheels first (nvidia-smi present) then CPU fallback.
+    set "TORCH_VARIANTS=cu126 cu124 cu121 cu118 cpu"
   ) else (
+    echo [install] nvidia-smi not found; selecting CPU wheels.
     set "TORCH_VARIANTS=cpu"
   )
 )

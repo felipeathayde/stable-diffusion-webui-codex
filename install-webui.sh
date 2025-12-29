@@ -76,42 +76,27 @@ install_torch() {
     return 0
   fi
 
-  local cuda_ver=""
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    log "nvidia-smi detected at: $(command -v nvidia-smi)"
-    local smi_q=""
-    smi_q="$(nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null || true)"
-    if [[ -n "${smi_q}" ]]; then
-      log "nvidia-smi GPUs (name, driver, cuda): ${smi_q//$'\n'/ | }"
-    else
-      log "nvidia-smi present but GPU query failed (continuing with best-effort parse)."
-    fi
-    cuda_ver="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \\([0-9][0-9]*\\.[0-9][0-9]*\\).*/\\1/p' | head -n 1 || true)"
-  fi
-
   local candidates=()
   if [[ "${TORCH_MODE}" == "cpu" ]]; then
     candidates=(cpu)
   elif [[ "${TORCH_MODE}" == "cuda" ]]; then
     # Force CUDA wheels (fallback chain), even if nvidia-smi is missing.
     candidates=(cu126 cu124 cu121 cu118)
-  elif [[ -n "${cuda_ver}" ]]; then
-    local major="${cuda_ver%%.*}"
-    local minor="${cuda_ver#*.}"
-    minor="${minor%%.*}"
-    log "Detected NVIDIA driver CUDA version: ${cuda_ver}"
-    if [[ "${major}" -ge 12 ]]; then
-      if [[ "${minor}" -ge 6 ]]; then candidates=(cu126 cu124 cu121); fi
-      if [[ "${minor}" -ge 4 && ${#candidates[@]} -eq 0 ]]; then candidates=(cu124 cu121); fi
-      if [[ "${minor}" -ge 1 && ${#candidates[@]} -eq 0 ]]; then candidates=(cu121); fi
-      if [[ ${#candidates[@]} -eq 0 ]]; then candidates=(cu118); fi
-    elif [[ "${major}" -eq 11 && "${minor}" -ge 8 ]]; then
-      candidates=(cu118)
+  else
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      log "nvidia-smi detected at: $(command -v nvidia-smi)"
+      local smi_q=""
+      smi_q="$(nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null || true)"
+      if [[ -n "${smi_q}" ]]; then
+        log "nvidia-smi GPUs (name, driver, cuda): ${smi_q//$'\n'/ | }"
+      else
+        log "nvidia-smi present but GPU query failed."
+      fi
+      log "Selecting CUDA wheels first (nvidia-smi present) then CPU fallback."
+      candidates=(cu126 cu124 cu121 cu118 cpu)
     else
       candidates=(cpu)
     fi
-  else
-    candidates=(cpu)
   fi
 
   log "Torch wheel candidates: ${candidates[*]}"

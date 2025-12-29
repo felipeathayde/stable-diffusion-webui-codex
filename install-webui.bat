@@ -6,6 +6,13 @@ set "VENV=%ROOT%.venv"
 set "PY_BIN=%VENV%\\Scripts\\python.exe"
 set "TORCH_MODE=%CODEX_TORCH_MODE%"
 if "%TORCH_MODE%"=="" set "TORCH_MODE=auto"
+set "TRACE=%CODEX_INSTALL_TRACE%"
+if "%TRACE%"=="" set "TRACE=0"
+
+if "%TRACE%"=="1" (
+  echo [install] Trace enabled (CODEX_INSTALL_TRACE=1)
+  @echo on
+)
 
 REM Prefer a specific interpreter if provided.
 set "BOOTSTRAP_PY="
@@ -14,9 +21,9 @@ if defined PYTHON (
 ) else (
   REM Prefer the Windows launcher with an explicit version if available.
   where py >nul 2>&1
-  if %errorlevel%==0 (
+  if not errorlevel 1 (
     py -3.12 -c "import sys" >nul 2>&1
-    if %errorlevel%==0 (
+    if not errorlevel 1 (
       set "BOOTSTRAP_PY=py -3.12"
     ) else (
       set "BOOTSTRAP_PY=py"
@@ -48,18 +55,20 @@ echo [install] Venv Python: %PY_BIN%
 echo [install] Upgrading pip tooling ...
 "%PY_BIN%" -m pip install -U pip wheel setuptools
 "%PY_BIN%" -m pip --version
+echo [install] Pip tooling upgraded; continuing...
 
 REM ---------------------------------------------------------------------------
 REM Torch install (auto-detect)
 REM CODEX_TORCH_MODE=auto|cpu|cuda|skip
 REM ---------------------------------------------------------------------------
+echo [install] Torch stage: begin
 if /I "%TORCH_MODE%"=="skip" (
   echo [install] Skipping torch install (CODEX_TORCH_MODE=skip).
   goto :after_torch
 )
 
 "%PY_BIN%" -c "import torch; print(torch.__version__)" >nul 2>&1
-if %errorlevel%==0 (
+if not errorlevel 1 (
   echo [install] torch already installed; skipping.
   goto :after_torch
 )
@@ -74,7 +83,7 @@ if /I "%TORCH_MODE%"=="cpu" (
   set "TORCH_VARIANTS=cu126 cu124 cu121 cu118"
 ) else (
   where nvidia-smi >nul 2>&1
-  if %errorlevel%==0 (
+  if not errorlevel 1 (
     echo [install] nvidia-smi detected:
     where nvidia-smi
     echo [install] nvidia-smi GPU query (name, driver, cuda):
@@ -120,6 +129,7 @@ if "%TORCH_OK%"=="0" (
 :after_torch
 echo [install] torch:
 "%PY_BIN%" -c "import torch; print('torch', torch.__version__); print('cuda available?', torch.cuda.is_available())" 2>nul
+echo [install] Torch stage: end
 
 echo [install] Installing Python requirements ...
 "%PY_BIN%" -m pip install -r "%ROOT%requirements.txt"
@@ -132,13 +142,13 @@ echo [install] Key package versions:
 
 echo [install] Installing frontend dependencies (npm) ...
 where node >nul 2>&1
-if %errorlevel% neq 0 (
+if errorlevel 1 (
   echo Warning: missing node on PATH; skipping frontend install.>&2
   echo Install Node.js (>=18), then run: (cd apps\\interface ^&^& npm install).>&2
   exit /b 0
 )
 where npm >nul 2>&1
-if %errorlevel% neq 0 (
+if errorlevel 1 (
   echo Warning: missing npm on PATH; skipping frontend install.>&2
   echo Install Node.js (>=18), then run: (cd apps\\interface ^&^& npm install).>&2
   exit /b 0

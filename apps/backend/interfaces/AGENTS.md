@@ -35,3 +35,4 @@ Status: Active
 - 2025-12-19: `/api/tools/convert-gguf` expanded quantization menu and now accepts `tensor_type_overrides` (regex → quant per tensor) for mixed schemes and advanced tuning.
 - 2025-12-29: `/api/paths` now resolves `apps/paths.json` via `CODEX_ROOT` (required), keeping QuickSettings path-based filtering stable across launchers and CWD changes.
 - 2025-12-29: `run_api.py` no longer uses `os.getcwd()` for repo files (settings/blocks/tabs/workflows/presets/tmp); it uses the resolved project root so the backend behaves the same no matter where it’s launched from.
+- 2025-12-29: `/api/models/inventory` and `/api/text-encoders` now return repo-relative `path` values (when under `CODEX_ROOT`) to avoid leaking absolute host paths to the UI; WAN video APIs resolve repo-relative `wan_*` paths back to absolute under `CODEX_ROOT` so runtime never depends on CWD.

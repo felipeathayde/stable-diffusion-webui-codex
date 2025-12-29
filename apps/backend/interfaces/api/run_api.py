@@ -25,6 +25,79 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _path_for_api(raw: object) -> str:
+    """Return a stable, repo-relative path for API responses when possible.
+
+    - Paths under PROJECT_ROOT are returned relative (POSIX separators).
+    - External absolute paths are returned as-is (POSIX separators).
+    """
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    try:
+        p = Path(os.path.expanduser(value))
+    except Exception:
+        return value.replace("\\", "/")
+
+    # Keep relative paths relative (normalize slashes).
+    if not p.is_absolute():
+        return p.as_posix()
+
+    try:
+        root = PROJECT_ROOT.resolve()
+    except Exception:
+        root = PROJECT_ROOT
+    try:
+        resolved = p.resolve(strict=False)
+    except Exception:
+        resolved = p
+    try:
+        rel = resolved.relative_to(root)
+    except Exception:
+        return resolved.as_posix()
+    return rel.as_posix()
+
+
+def _normalize_inventory_for_api(items: object) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    out: list[dict[str, object]] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        entry: dict[str, object] = dict(it)
+        if "path" in entry:
+            entry["path"] = _path_for_api(entry.get("path"))
+        out.append(entry)
+    return out
+
+
+def _path_from_api(raw: object) -> str:
+    """Resolve a user-supplied path relative to PROJECT_ROOT when not absolute."""
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    try:
+        p = Path(os.path.expanduser(value))
+    except Exception:
+        return value
+    if p.is_absolute():
+        return str(p)
+    return str(PROJECT_ROOT / p)
+
+
+def _normalize_wan_stage_payload(raw: object) -> object:
+    """Normalize WAN stage override payloads (model_dir, lora_path) to absolute paths."""
+    if not isinstance(raw, dict):
+        return raw
+    out: dict[str, object] = dict(raw)
+    if isinstance(out.get("model_dir"), str):
+        out["model_dir"] = _path_from_api(out.get("model_dir"))
+    if isinstance(out.get("lora_path"), str):
+        out["lora_path"] = _path_from_api(out.get("lora_path"))
+    return out
+
+
 def _cli_arg_value(argv: Sequence[str], flag: str) -> Optional[str]:
     for idx, token in enumerate(argv):
         if token.startswith(flag + "="):
@@ -1115,11 +1188,11 @@ def build_app() -> FastAPI:
         else:
             inv = _inv_cache.get()
         return {
-            "vaes": inv.get("vaes", []),
-            "text_encoders": inv.get("text_encoders", []),
-            "loras": inv.get("loras", []),
-            "wan22": {"gguf": inv.get("wan22", [])},
-            "metadata": inv.get("metadata", []),
+            "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
+            "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),
+            "loras": _normalize_inventory_for_api(inv.get("loras", [])),
+            "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
+            "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
         }
 
     @app.post('/api/models/inventory/refresh')
@@ -1136,11 +1209,11 @@ def build_app() -> FastAPI:
                 len(inv.get("vaes", [])), len(inv.get("text_encoders", [])), len(inv.get("loras", [])), len(inv.get("wan22", [])), len(inv.get("metadata", []))
             )
             return {
-                "vaes": inv.get("vaes", []),
-                "text_encoders": inv.get("text_encoders", []),
-                "loras": inv.get("loras", []),
-                "wan22": {"gguf": inv.get("wan22", [])},
-                "metadata": inv.get("metadata", []),
+                "vaes": _normalize_inventory_for_api(inv.get("vaes", [])),
+                "text_encoders": _normalize_inventory_for_api(inv.get("text_encoders", [])),
+                "loras": _normalize_inventory_for_api(inv.get("loras", [])),
+                "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
+                "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"inventory refresh failed: {e}")
@@ -1223,12 +1296,13 @@ def build_app() -> FastAPI:
                 for root in roots:
                     # For now, expose roots themselves as selectable labels; loaders
                     # will map labels to concrete paths when overrides are implemented.
-                    label = root.name
+                    label_path = _path_for_api(root.path)
+                    label = f"{family}/{label_path}" if label_path else root.name
                     labels.append(label)
                     entries.append(
                         {
                             "name": label,
-                            "path": root.path,
+                            "path": _path_for_api(root.path),
                             "family": family,
                             "kind": root.kind,
                             "tags": list(root.tags),
@@ -1237,7 +1311,18 @@ def build_app() -> FastAPI:
                     )
             labels_sorted = sorted(set(labels))
             selected = _codex_opts.get_additional_modules()
-            return {"text_encoders": labels_sorted, "current": selected, "text_encoders_info": entries}
+            selected_norm: list[str] = []
+            for raw in selected:
+                s = str(raw or "").strip()
+                if not s:
+                    continue
+                if "/" in s:
+                    fam, rest = s.split("/", 1)
+                    if fam and rest:
+                        selected_norm.append(f"{fam}/{_path_for_api(rest)}")
+                        continue
+                selected_norm.append(s)
+            return {"text_encoders": labels_sorted, "current": selected_norm, "text_encoders_info": entries}
         except Exception:
             return {"text_encoders": {}, "current": [], "text_encoders_info": {}}
 
@@ -2300,9 +2385,9 @@ def build_app() -> FastAPI:
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
         if isinstance(payload.get('wan_high'), dict):
-            extras['wan_high'] = payload.get('wan_high')
+            extras['wan_high'] = _normalize_wan_stage_payload(payload.get('wan_high'))
         if isinstance(payload.get('wan_low'), dict):
-            extras['wan_low'] = payload.get('wan_low')
+            extras['wan_low'] = _normalize_wan_stage_payload(payload.get('wan_low'))
         # Pass-through of explicit WAN GGUF complements (no guessing)
         for key in (
             'wan_format',
@@ -2325,7 +2410,10 @@ def build_app() -> FastAPI:
             'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
-                extras[key] = payload.get(key)
+                if key in ('wan_vae_path', 'wan_text_encoder_path', 'wan_text_encoder_dir', 'wan_metadata_dir', 'wan_tokenizer_dir'):
+                    extras[key] = _path_from_api(payload.get(key))
+                else:
+                    extras[key] = payload.get(key)
     
         req = Txt2VidRequest(
             task=TaskType.TXT2VID,
@@ -2423,9 +2511,9 @@ def build_app() -> FastAPI:
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
         if isinstance(payload.get('wan_high'), dict):
-            extras['wan_high'] = payload.get('wan_high')
+            extras['wan_high'] = _normalize_wan_stage_payload(payload.get('wan_high'))
         if isinstance(payload.get('wan_low'), dict):
-            extras['wan_low'] = payload.get('wan_low')
+            extras['wan_low'] = _normalize_wan_stage_payload(payload.get('wan_low'))
         # Pass-through of explicit WAN GGUF complements (no guessing)
         for key in (
             'wan_format',
@@ -2448,7 +2536,10 @@ def build_app() -> FastAPI:
             'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
-                extras[key] = payload.get(key)
+                if key in ('wan_vae_path', 'wan_text_encoder_path', 'wan_text_encoder_dir', 'wan_metadata_dir', 'wan_tokenizer_dir'):
+                    extras[key] = _path_from_api(payload.get(key))
+                else:
+                    extras[key] = payload.get(key)
     
         req = Img2VidRequest(
             task=TaskType.IMG2VID,
@@ -2625,9 +2716,9 @@ def build_app() -> FastAPI:
         if isinstance(payload.get("video_interpolation"), dict):
             extras["video_interpolation"] = payload.get("video_interpolation")
         if isinstance(payload.get("wan_high"), dict):
-            extras["wan_high"] = payload.get("wan_high")
+            extras["wan_high"] = _normalize_wan_stage_payload(payload.get("wan_high"))
         if isinstance(payload.get("wan_low"), dict):
-            extras["wan_low"] = payload.get("wan_low")
+            extras["wan_low"] = _normalize_wan_stage_payload(payload.get("wan_low"))
         for key in (
             "wan_format",
             "wan_vae_path",
@@ -2647,7 +2738,10 @@ def build_app() -> FastAPI:
             "gguf_te_kernel_required",
         ):
             if key in payload and payload.get(key) is not None:
-                extras[key] = payload.get(key)
+                if key in ("wan_vae_path", "wan_text_encoder_path", "wan_text_encoder_dir", "wan_metadata_dir", "wan_tokenizer_dir"):
+                    extras[key] = _path_from_api(payload.get(key))
+                else:
+                    extras[key] = payload.get(key)
 
         extras["vid2vid"] = {
             "method": method_raw,

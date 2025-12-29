@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from apps.backend.infra.config.repo_root import get_repo_root
+
 
 def _torch_dtype(dtype: str):
     import torch  # type: ignore
@@ -84,7 +86,7 @@ def prepare_wan_diffusers_dir(*, weights_dir: Path, vendor_dir: Path, engine_id:
     if not vendor_dir.is_dir():
         raise RuntimeError(f"vendor_dir does not exist: {vendor_dir}")
 
-    overlay_root = Path.cwd() / "tmp" / "hf_overlays" / engine_id
+    overlay_root = get_repo_root() / "tmp" / "hf_overlays" / engine_id
     overlay_root.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha1(str(weights_dir).encode("utf-8")).hexdigest()[:12]
     out = overlay_root / key

@@ -8,7 +8,7 @@ import logging
 
 import torch
 
-from . import sampling_function_inner, sampling_prepare, sampling_cleanup
+from .inner_loop import sampling_function_inner, sampling_prepare, sampling_cleanup
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
 from .registry import get_sampler_spec

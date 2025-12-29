@@ -27,9 +27,9 @@ if str(_root_path) not in sys.path:
 
 from apps.backend.infra.config.repo_root import get_repo_root
 
-PROJECT_ROOT = get_repo_root()
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+CODEX_ROOT = get_repo_root()
+if str(CODEX_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODEX_ROOT))
 
 from apps.launcher import (
     CodexLogBuffer,
@@ -681,7 +681,7 @@ class CodexGUILauncher(tk.Tk):
         
         if self._var_log_file.get():
             if not env.get("CODEX_LOG_FILE"):
-                logs_dir = PROJECT_ROOT / "logs"
+                logs_dir = CODEX_ROOT / "logs"
                 logs_dir.mkdir(parents=True, exist_ok=True)
                 stamp = time.strftime("%Y%m%d-%H%M%S")
                 env["CODEX_LOG_FILE"] = str(logs_dir / f"codex-{stamp}.log")

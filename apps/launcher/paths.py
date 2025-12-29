@@ -24,7 +24,7 @@ def _normalize_path(value: str | os.PathLike[str] | None, *, fallback: Path) -> 
 class CodexPaths:
     """Resolved canonical paths for the runtime."""
 
-    project_root: Path
+    codex_root: Path
     data_dir: Path
     models_dir: Path
     extensions_dir: Path
@@ -37,30 +37,30 @@ class CodexPaths:
 
 def resolve_paths(
     *,
-    project_root: Path,
+    codex_root: Path,
     data_dir: str | os.PathLike[str] | None = None,
     models_dir: str | os.PathLike[str] | None = None,
 ) -> CodexPaths:
     """Resolve launcher paths with strict normalisation."""
-    data = _normalize_path(data_dir, fallback=project_root / "data")
-    models = _normalize_path(models_dir, fallback=data / "models")
-    extensions = data / "extensions"
-    extensions_builtin = project_root / "extensions-builtin"
-    outputs = data / "outputs"
-    configs = project_root / "configs"
+    data = _normalize_path(data_dir, fallback=codex_root / "data")
+    models = _normalize_path(models_dir, fallback=codex_root / "models")
+    extensions = codex_root / "extensions"
+    extensions_builtin = codex_root / "extensions-builtin"
+    outputs = codex_root / "output"
+    configs = codex_root / "configs"
     default_cfg = configs / "v1-inference.yaml"
-    default_ckpt = project_root / "model.ckpt"
+    default_ckpt = codex_root / "model.ckpt"
 
     LOGGER.debug(
         "Resolved runtime paths",
         extra={
-            "project_root": str(project_root),
+            "codex_root": str(codex_root),
             "data": str(data),
             "models": str(models),
         },
     )
     return CodexPaths(
-        project_root=project_root,
+        codex_root=codex_root,
         data_dir=data,
         models_dir=models,
         extensions_dir=extensions,

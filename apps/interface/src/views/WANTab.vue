@@ -355,7 +355,7 @@
             <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
           </div>
           <video class="w-full rounded" :src="videoUrl" controls />
-          <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_OUTPUT_ROOT is writable.</p>
+          <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_ROOT/output is writable.</p>
         </div>
         <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
           <template #empty>

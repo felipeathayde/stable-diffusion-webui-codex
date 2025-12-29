@@ -7,6 +7,7 @@ import logging
 import json
 from pathlib import Path
 
+from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime.models.state_dict import try_filter_state_dict
 from apps.backend.runtime.trace import event as trace_event
 
@@ -15,14 +16,18 @@ from .specs import ComponentState, ParserContext, ParserPlan
 
 
 _log = logging.getLogger("backend.model_parser")
-_KEYMAP_DIR = Path("logs")
-_KEYMAP_PATH = _KEYMAP_DIR / "parser_keymap.log"
+
+
+def _keymap_paths() -> tuple[Path, Path]:
+    root = get_repo_root() / "logs"
+    return root, root / "parser_keymap.log"
 
 
 def _append_keymap_record(record: dict[str, Any]) -> None:
     try:
-        _KEYMAP_DIR.mkdir(parents=True, exist_ok=True)
-        with _KEYMAP_PATH.open("a", encoding="utf-8") as handle:
+        keymap_dir, keymap_path = _keymap_paths()
+        keymap_dir.mkdir(parents=True, exist_ok=True)
+        with keymap_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, indent=2))
             handle.write("\n")
     except Exception:

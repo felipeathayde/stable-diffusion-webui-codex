@@ -30,6 +30,7 @@ from apps.backend.runtime.sampling.catalog import (
 )
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
+from apps.backend.infra.config.repo_root import get_repo_root
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def _maybe_dump_latents(
     if path_hint:
         target = Path(path_hint).expanduser()
     else:
-        target = Path("logs") / "diagnostics"
+        target = get_repo_root() / "logs" / "diagnostics"
     if not target.suffix:
         timestamp = _dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
         target = target / f"latents-{timestamp}.pt"

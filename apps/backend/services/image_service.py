@@ -6,13 +6,13 @@ import io
 import base64
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 
 from apps.backend.core.engine_interface import TaskType
 from apps.backend.core.orchestrator import InferenceOrchestrator
 from apps.backend.core.requests import ProgressEvent, ResultEvent, Txt2ImgRequest, Img2ImgRequest
+from apps.backend.infra.config.repo_root import get_repo_root
 
 
 _LOGGER = logging.getLogger("backend.services.image_service")
@@ -35,8 +35,7 @@ def _save_images_to_disk(
 ) -> None:
     """Persist generated images under outputs/<mode>/<YYYY-MM-DD>/... for debugging.
 
-    - Base directory defaults to `./outputs` relative to the working directory.
-      Operators can override via CODEX_OUTPUT_ROOT to match an external layout.
+    - Base directory is `CODEX_ROOT/output` (repo-local, predictable).
     - This helper must never break the request flow; errors are logged and ignored.
     """
 
@@ -45,9 +44,7 @@ def _save_images_to_disk(
         if not images:
             return
 
-        base = os.getenv("CODEX_OUTPUT_ROOT")
-        # Fallback: workspace-root /output (single) to keep paths predictable
-        root = Path(base) if base else Path.cwd() / "output"
+        root = get_repo_root() / "output"
 
         if task is TaskType.IMG2IMG:
             mode_dir = "img2img-images"

@@ -11,7 +11,7 @@ Status: Active
 - `interpolation/` — Video frame interpolation utilities (e.g., RIFE wrappers).
 - `io/` — Input video probing/decoding (ffprobe/ffmpeg wrappers).
 - `flow/` — Optical flow estimation + frame warping (torchvision RAFT).
-- `export/` — Frame → video encoding (ffmpeg exporter; CODEX_OUTPUT_ROOT).
+- `export/` — Frame → video encoding (ffmpeg exporter; writes under `CODEX_ROOT/output`).
 
 ## Notes
 - Keep video utilities generic so multiple engines/use cases can reuse them.

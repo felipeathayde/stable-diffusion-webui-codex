@@ -82,6 +82,7 @@ snapshotLegacy.py
 .webui-*.log
 .webui-*.pid
 *.har
+analise-codigo-deepresearch.json
 
 # Vite/Vue interface app artifacts
 apps/interface/node_modules/

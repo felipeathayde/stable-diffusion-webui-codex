@@ -21,15 +21,15 @@ from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPT
 from apps.backend.infra.config.repo_root import get_repo_root
 
 # Repo root anchor for all on-disk paths. Must be set by the launcher.
-PROJECT_ROOT = get_repo_root()
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+CODEX_ROOT = get_repo_root()
+if str(CODEX_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODEX_ROOT))
 
 
 def _path_for_api(raw: object) -> str:
     """Return a stable, repo-relative path for API responses when possible.
 
-    - Paths under PROJECT_ROOT are returned relative (POSIX separators).
+    - Paths under CODEX_ROOT are returned relative (POSIX separators).
     - External absolute paths are returned as-is (POSIX separators).
     """
     value = str(raw or "").strip()
@@ -45,9 +45,9 @@ def _path_for_api(raw: object) -> str:
         return p.as_posix()
 
     try:
-        root = PROJECT_ROOT.resolve()
+        root = CODEX_ROOT.resolve()
     except Exception:
-        root = PROJECT_ROOT
+        root = CODEX_ROOT
     try:
         resolved = p.resolve(strict=False)
     except Exception:
@@ -74,7 +74,7 @@ def _normalize_inventory_for_api(items: object) -> list[dict[str, object]]:
 
 
 def _path_from_api(raw: object) -> str:
-    """Resolve a user-supplied path relative to PROJECT_ROOT when not absolute."""
+    """Resolve a user-supplied path relative to CODEX_ROOT when not absolute."""
     value = str(raw or "").strip()
     if not value:
         return ""
@@ -84,7 +84,7 @@ def _path_from_api(raw: object) -> str:
         return value
     if p.is_absolute():
         return str(p)
-    return str(PROJECT_ROOT / p)
+    return str(CODEX_ROOT / p)
 
 
 def _normalize_wan_stage_payload(raw: object) -> object:
@@ -159,7 +159,7 @@ except Exception:  # pragma: no cover - optional dependency missing
 # Install global exception hooks as early as possible so any startup errors are dumped
 try:
     from apps.backend.runtime.exception_hook import install_exception_hooks as _install_exc_hooks
-    _EXC_LOG_PATH = _install_exc_hooks(log_dir=str(PROJECT_ROOT / 'logs'))
+    _EXC_LOG_PATH = _install_exc_hooks(log_dir=str(CODEX_ROOT / 'logs'))
 except Exception:
     _EXC_LOG_PATH = None
 
@@ -425,7 +425,7 @@ def build_app() -> FastAPI:
     )
     _embedding_db = None  # lazy init
     _settings_schema_cache: Optional[Dict[str, Any]] = None
-    _settings_values_path = str(PROJECT_ROOT / 'apps' / 'settings_values.json')
+    _settings_values_path = str(CODEX_ROOT / 'apps' / 'settings_values.json')
     _ui_blocks_cache: Optional[Dict[str, Any]] = None
     _ui_blocks_mtime: Optional[float] = None
     _ui_presets_cache: Optional[Dict[str, Any]] = None
@@ -434,7 +434,7 @@ def build_app() -> FastAPI:
     _tabs_mtime: Optional[float] = None
     _workflows_cache: Optional[Dict[str, Any]] = None
     _workflows_mtime: Optional[float] = None
-    _ui_dist_dir = os.path.join(PROJECT_ROOT, 'apps', 'interface', 'dist')
+    _ui_dist_dir = str(CODEX_ROOT / 'apps' / 'interface' / 'dist')
 
     # Exception hooks for asyncio + HTTP middleware to dump unhandled route exceptions
     try:
@@ -665,9 +665,9 @@ def build_app() -> FastAPI:
                     print(color_red(f"[settings] hardcoded schema failed: {e}"))
                     _settings_schema_cache = None
             if _settings_schema_cache is None:
-                schema_path = str(PROJECT_ROOT / 'apps' / 'backend' / 'interfaces' / 'schemas' / 'settings_schema.json')
+                schema_path = str(CODEX_ROOT / 'apps' / 'backend' / 'interfaces' / 'schemas' / 'settings_schema.json')
                 if not os.path.isfile(schema_path):
-                    schema_path = str(PROJECT_ROOT / 'apps' / 'server' / 'settings_schema.json')
+                    schema_path = str(CODEX_ROOT / 'apps' / 'server' / 'settings_schema.json')
                 _settings_schema_cache = _load_json(schema_path)
                 if not _settings_schema_cache:
                     raise HTTPException(status_code=500, detail='settings schema not found (registry and JSON)')
@@ -683,7 +683,7 @@ def build_app() -> FastAPI:
     # UI Blocks (server-driven parameter panels)
     def _load_ui_blocks() -> Dict[str, Any]:
         nonlocal _ui_blocks_cache, _ui_blocks_mtime
-        blocks_path = str(PROJECT_ROOT / 'apps' / 'interface' / 'blocks.json')
+        blocks_path = str(CODEX_ROOT / 'apps' / 'interface' / 'blocks.json')
         # Simple mtime-based cache
         try:
             stat = os.stat(blocks_path)
@@ -696,7 +696,7 @@ def build_app() -> FastAPI:
         if not data or 'blocks' not in data:
             raise HTTPException(status_code=500, detail='invalid ui blocks json')
         # Optional overrides in apps/interface/blocks.d/*.json (merged by id)
-        overrides_root = str(PROJECT_ROOT / 'apps' / 'interface' / 'blocks.d')
+        overrides_root = str(CODEX_ROOT / 'apps' / 'interface' / 'blocks.d')
         merged = {b.get('id'): b for b in (data.get('blocks') or []) if isinstance(b, dict)}
         try:
             if os.path.isdir(overrides_root):
@@ -762,13 +762,13 @@ def build_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
     def _tabs_path() -> str:
-        return str(PROJECT_ROOT / 'apps' / 'interface' / 'tabs.json')
+        return str(CODEX_ROOT / 'apps' / 'interface' / 'tabs.json')
 
     def _workflows_path() -> str:
-        return str(PROJECT_ROOT / 'apps' / 'interface' / 'workflows.json')
+        return str(CODEX_ROOT / 'apps' / 'interface' / 'workflows.json')
 
     def _ensure_dirs() -> None:
-        root = str(PROJECT_ROOT / 'apps' / 'interface')
+        root = str(CODEX_ROOT / 'apps' / 'interface')
         os.makedirs(root, exist_ok=True)
 
     def _default_tabs() -> Dict[str, Any]:
@@ -1028,7 +1028,7 @@ def build_app() -> FastAPI:
     # UI Presets (Model UI)
     def _load_ui_presets() -> Dict[str, Any]:
         nonlocal _ui_presets_cache, _ui_presets_mtime
-        presets_path = str(PROJECT_ROOT / 'apps' / 'ui' / 'presets.json')
+        presets_path = str(CODEX_ROOT / 'apps' / 'ui' / 'presets.json')
         try:
             stat = os.stat(presets_path)
             mtime = stat.st_mtime
@@ -1301,8 +1301,8 @@ def build_app() -> FastAPI:
         from apps.backend.infra.registry.vae import list_vaes as _list_vaes, describe_vaes as _describe_vaes
         current = _codex_opts.get_selected_vae('Automatic')
         try:
-            models_root = str(PROJECT_ROOT / "models")
-            hf_root = str(PROJECT_ROOT / "apps" / "backend" / "huggingface")
+            models_root = str(CODEX_ROOT / "models")
+            hf_root = str(CODEX_ROOT / "apps" / "backend" / "huggingface")
             choices = _list_vaes(models_root=models_root, vendored_hf_root=hf_root)
             info = _describe_vaes(models_root=models_root, vendored_hf_root=hf_root)
             return {"vaes": choices, "current": current, "vaes_info": info}
@@ -1428,7 +1428,7 @@ def build_app() -> FastAPI:
 
         This endpoint exposes only the engine-specific keys from apps/paths.json.
         """
-        cfg_path = str(PROJECT_ROOT / 'apps' / 'paths.json')
+        cfg_path = str(CODEX_ROOT / 'apps' / 'paths.json')
         raw = _load_json(cfg_path) or {}
         if not isinstance(raw, dict):
             raw = {}
@@ -1452,7 +1452,7 @@ def build_app() -> FastAPI:
         if not isinstance(payload, dict) or 'paths' not in payload or not isinstance(payload['paths'], dict):
             raise HTTPException(status_code=400, detail='payload must be {"paths": {...}}')
 
-        cfg_path = str(PROJECT_ROOT / 'apps' / 'paths.json')
+        cfg_path = str(CODEX_ROOT / 'apps' / 'paths.json')
         current = _load_json(cfg_path) or {}
         if not isinstance(current, dict):
             current = {}
@@ -2635,12 +2635,12 @@ def build_app() -> FastAPI:
             raise RuntimeError(f"vid2vid {field} path is empty")
         p = Path(os.path.expanduser(v))
         if not p.is_absolute():
-            p = PROJECT_ROOT / p
+            p = CODEX_ROOT / p
         try:
             resolved = p.resolve()
         except Exception:
             resolved = p
-        root = PROJECT_ROOT.resolve()
+        root = CODEX_ROOT.resolve()
         try:
             resolved.relative_to(root)
         except ValueError:
@@ -2934,7 +2934,7 @@ def build_app() -> FastAPI:
                             uploaded_paths = [str(payload.get("__vid2vid_uploaded_path"))]
 
                         if uploaded_paths:
-                            up_root = (PROJECT_ROOT / "tmp" / "uploads" / "vid2vid").resolve()
+                            up_root = (CODEX_ROOT / "tmp" / "uploads" / "vid2vid").resolve()
                             for item in uploaded_paths:
                                 up_path = Path(str(item))
                                 try:
@@ -3043,7 +3043,7 @@ def build_app() -> FastAPI:
         try:
             import shutil as _shutil
 
-            up_dir = PROJECT_ROOT / "tmp" / "uploads" / "vid2vid"
+            up_dir = CODEX_ROOT / "tmp" / "uploads" / "vid2vid"
             up_dir.mkdir(parents=True, exist_ok=True)
 
             def _save(upload: UploadFile, *, default_suffix: str) -> str:
@@ -3083,8 +3083,8 @@ def build_app() -> FastAPI:
 
     @app.get("/api/output/{rel_path:path}")
     async def get_output_file(rel_path: str) -> FileResponse:
-        """Serve a file from CODEX_OUTPUT_ROOT / ./output (safe, root-scoped)."""
-        root = Path(os.getenv("CODEX_OUTPUT_ROOT") or (PROJECT_ROOT / "output")).resolve()
+        """Serve a file from CODEX_ROOT/output (safe, root-scoped)."""
+        root = (CODEX_ROOT / "output").resolve()
         raw = str(rel_path or "").lstrip("/").replace("\\", "/")
         target = (root / raw).resolve()
         try:
@@ -3247,7 +3247,7 @@ def build_app() -> FastAPI:
         - extensions: Comma-separated list of extensions to filter (e.g., ".safetensors,.gguf")
         """
         if not path:
-            path = str(PROJECT_ROOT / "models")
+            path = str(CODEX_ROOT / "models")
         
         if not os.path.exists(path):
             return {"path": path, "exists": False, "items": []}

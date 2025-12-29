@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -10,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
+
+from apps.backend.infra.config.repo_root import get_repo_root
 
 
 class VideoExportError(RuntimeError):
@@ -24,8 +25,7 @@ def _which(name: str) -> str:
 
 
 def _output_root() -> Path:
-    base = os.getenv("CODEX_OUTPUT_ROOT")
-    return Path(base) if base else Path.cwd() / "output"
+    return get_repo_root() / "output"
 
 
 _FILENAME_PREFIX_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -131,8 +131,8 @@ def export_video(
     out_name = f"{prefix}_{ts}_{run_id}.{ext}"
     out_path = out_dir / out_name
 
-    # Workspace-local temp dir (avoid /tmp surprises in sandboxed setups).
-    work = Path.cwd() / "tmp" / "video_export" / f"{task}_{run_id}"
+    # Workspace-local temp dir (avoid /tmp surprises).
+    work = get_repo_root() / "tmp" / "video_export" / f"{task}_{run_id}"
     frames_dir = work / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 

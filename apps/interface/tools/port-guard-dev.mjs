@@ -4,12 +4,15 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const COLOR = {
   red: (s) => `\u001b[31m${s}\u001b[0m`,
   yellow: (s) => `\u001b[33m${s}\u001b[0m`,
   cyan: (s) => `\u001b[36m${s}\u001b[0m`,
 }
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const PORT_GUARD_HOSTS = [
   // IPv4 wildcard + loopback
@@ -27,17 +30,28 @@ function isWsl() {
   return rel.includes('microsoft') || rel.includes('wsl')
 }
 
-function repoRootFromCwd() {
-  // Expected cwd is apps/interface. Be defensive in case someone runs it elsewhere.
-  const candidate = path.resolve(process.cwd(), '..', '..')
+function repoRoot() {
+  const env = String(process.env.CODEX_ROOT || '').trim()
+  if (env && fs.existsSync(path.join(env, 'apps')) && fs.existsSync(path.join(env, '.gitignore'))) {
+    return env
+  }
+  const candidate = path.resolve(SCRIPT_DIR, '..', '..', '..')
   if (fs.existsSync(path.join(candidate, 'apps')) && fs.existsSync(path.join(candidate, '.gitignore'))) {
     return candidate
   }
+  // Last resort: preserve old behaviour for ad-hoc invocations.
+  return process.cwd()
+}
+
+function interfaceRoot() {
+  const root = repoRoot()
+  const iface = path.join(root, 'apps', 'interface')
+  if (fs.existsSync(path.join(iface, 'package.json'))) return iface
   return process.cwd()
 }
 
 function pidFilePath(port) {
-  const root = repoRootFromCwd()
+  const root = repoRoot()
   const safePort = Number.isFinite(port) ? String(port) : 'unknown'
   return path.join(root, `.webui-ui-${safePort}.pid`)
 }
@@ -155,9 +169,10 @@ function runVite(port, show, extraArgs = []) {
   process.env.WEB_PORT = String(port)
   const pidFile = writePidFile(port)
   installPidCleanup(pidFile)
-  const viteBin = path.join(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
+  const cwd = interfaceRoot()
+  const viteBin = path.join(cwd, 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
   const useShell = process.platform === 'win32'
-  const child = spawn(viteBin, extraArgs, { stdio: 'inherit', env: process.env, shell: useShell })
+  const child = spawn(viteBin, extraArgs, { stdio: 'inherit', env: process.env, shell: useShell, cwd })
   child.on('exit', (code) => process.exit(code ?? 0))
 }
 

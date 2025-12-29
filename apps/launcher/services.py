@@ -204,12 +204,12 @@ class CodexServiceHandle:
         self.started_at = None
 
 
-def _project_root() -> Path:
+def _codex_root() -> Path:
     return get_repo_root()
 
 
 def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, CodexServiceHandle]:
-    root = _project_root()
+    root = _codex_root()
     py_exe = Path(sys.executable)
     api_target = "apps.backend.interfaces.api.run_api:create_api_app"
     api_port = os.getenv("API_PORT_OVERRIDE", "7850")

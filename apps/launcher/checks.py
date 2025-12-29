@@ -101,12 +101,12 @@ def _vite_requirement_satisfied(actual: str, requirement: str) -> bool:
     return actual.startswith(req)
 
 
-def _project_root() -> Path:
+def _codex_root() -> Path:
     return get_repo_root()
 
 
-def _check_vite(project_root: Path) -> CodexLaunchCheck:
-    interface_dir = project_root / "apps" / "interface"
+def _check_vite(codex_root: Path) -> CodexLaunchCheck:
+    interface_dir = codex_root / "apps" / "interface"
     package_json = interface_dir / "package.json"
     if not package_json.exists():
         return CodexLaunchCheck(
@@ -157,7 +157,7 @@ def _check_vite(project_root: Path) -> CodexLaunchCheck:
 
 def run_launch_checks() -> List[CodexLaunchCheck]:
     """Execute all launcher environment checks."""
-    root = _project_root()
+    root = _codex_root()
     checks = [_check_python_version(), _check_node(), _check_vite(root)]
     for check in checks:
         LOGGER.debug("Launch check %s ok=%s detail=%s", check.name, check.ok, check.detail)

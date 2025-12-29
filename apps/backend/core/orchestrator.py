@@ -8,7 +8,6 @@ import time
 from typing import Dict, Iterable, Iterator, Mapping, MutableMapping, Optional
 
 from .engine_interface import BaseInferenceEngine, TaskType
-from apps.backend.runtime.memory import memory_management as _mem
 from .exceptions import EngineExecutionError, EngineNotFoundError, EngineLoadError, UnsupportedTaskError
 from .registry import EngineRegistry, registry as global_registry
 from .requests import InferenceEvent, ProgressEvent
@@ -71,6 +70,7 @@ class InferenceOrchestrator:
                     needs_load = True
                 # Reload if the primary device changed since last load
                 try:
+                    from apps.backend.runtime.memory import memory_management as _mem
                     desired = _mem.get_torch_device()
                     unet = getattr(engine, 'codex_objects', None)
                     dcur = None

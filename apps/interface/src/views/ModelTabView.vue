@@ -10,7 +10,7 @@
 
 <script setup lang="ts">
 import { onMounted, computed, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import WANTab from './WANTab.vue'
 import ImageModelTab from './ImageModelTab.vue'
 import { useModelTabsStore } from '../stores/model_tabs'
@@ -21,12 +21,11 @@ const store = useModelTabsStore()
 const id = computed(() => String(route.params.tabId || ''))
 const tab = computed(() => store.tabs.find(t => t.id === id.value) || null)
 
-onMounted(async () => {
-  await store.load()
-  if (id.value) store.setActive(id.value)
-})
-
 watch(id, (nextId) => {
   if (nextId) store.setActive(nextId)
+}, { immediate: true })
+
+onMounted(() => {
+  void store.load()
 })
 </script>

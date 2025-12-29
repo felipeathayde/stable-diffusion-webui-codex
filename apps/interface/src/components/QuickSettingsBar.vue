@@ -140,47 +140,49 @@
       </template>
     </div>
 
-    <div ref="advancedRowEl" class="quicksettings-row quicksettings-row--advanced" :data-state="advancedOpen ? 'open' : 'closed'">
-      <QuickSettingsPerf
-        :smart-offload="store.smartOffload"
-        :smart-fallback="store.smartFallback"
-        :smart-cache="store.smartCache"
-        :core-streaming="store.coreStreaming"
-        @update:smartOffload="onSmartOffloadChange"
-        @update:smartFallback="onSmartFallbackChange"
-        @update:smartCache="onSmartCacheChange"
-        @update:coreStreaming="onCoreStreamingChange"
-      />
-
-      <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
-        <label class="label-muted">GPU VRAM (MB)</label>
-        <div class="qs-row">
-          <input
-            class="ui-input"
-            type="number"
-            :min="0"
-            :max="store.gpuTotalMb"
-            :value="store.gpuWeightsMb"
-            @change="onGpuWeightsChange(Number(($event.target as HTMLInputElement).value))"
-          />
+    <div ref="advancedRowEl" class="quicksettings-advanced-collapse" :data-state="advancedOpen ? 'open' : 'closed'">
+      <div ref="advancedRowInnerEl" class="quicksettings-row quicksettings-row--advanced-inner">
+        <div class="quicksettings-group qs-group-attention">
+          <label class="label-muted">Attention Backend</label>
+          <div class="qs-row">
+            <select class="select-md" :value="store.currentAttention" @change="onAttentionChange(($event.target as HTMLSelectElement).value)">
+              <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
         </div>
-      </div>
 
-      <div class="quicksettings-group qs-group-attention">
-        <label class="label-muted">Attention Backend</label>
-        <div class="qs-row">
-          <select class="select-md" :value="store.currentAttention" @change="onAttentionChange(($event.target as HTMLSelectElement).value)">
-            <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+        <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
+          <label class="label-muted">GPU VRAM (MB)</label>
+          <div class="qs-row">
+            <input
+              class="ui-input"
+              type="number"
+              :min="0"
+              :max="store.gpuTotalMb"
+              :value="store.gpuWeightsMb"
+              @change="onGpuWeightsChange(Number(($event.target as HTMLInputElement).value))"
+            />
+          </div>
         </div>
-      </div>
 
-      <div class="quicksettings-group qs-group-overrides">
-        <label class="label-muted">Overrides</label>
-        <div class="qs-row">
-          <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="openOverrides">
-            Set overrides
-          </button>
+        <QuickSettingsPerf
+          :smart-offload="store.smartOffload"
+          :smart-fallback="store.smartFallback"
+          :smart-cache="store.smartCache"
+          :core-streaming="store.coreStreaming"
+          @update:smartOffload="onSmartOffloadChange"
+          @update:smartFallback="onSmartFallbackChange"
+          @update:smartCache="onSmartCacheChange"
+          @update:coreStreaming="onCoreStreamingChange"
+        />
+
+        <div class="quicksettings-group qs-group-overrides">
+          <label class="label-muted">Overrides</label>
+          <div class="qs-row">
+            <button class="btn qs-btn-secondary qs-overrides-btn" type="button" @click="openOverrides">
+              Set overrides
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -191,12 +193,12 @@
 
 
 <script setup lang="ts">
-import { onMounted, computed, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
-import { useModelTabsStore } from '../stores/model_tabs'
+import { MODEL_TABS_STORAGE_KEY, useModelTabsStore } from '../stores/model_tabs'
 import { fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
@@ -221,7 +223,29 @@ const showOverridesModal = ref(false)
 const isLoadingQuicksettings = ref(false)
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
+const advancedRowInnerEl = ref<HTMLElement | null>(null)
 const advancedAnimating = ref(false)
+let advancedRafId: number | null = null
+
+function cancelAdvancedAnimation(): void {
+  if (advancedRafId !== null) cancelAnimationFrame(advancedRafId)
+  advancedRafId = null
+}
+
+function easeOutCubic(t: number): number {
+  const clamped = Math.min(1, Math.max(0, t))
+  return 1 - Math.pow(1 - clamped, 3)
+}
+
+function syncAdvancedHeight(): void {
+  if (!advancedOpen.value) return
+  if (advancedAnimating.value) return
+  const el = advancedRowEl.value
+  const inner = advancedRowInnerEl.value
+  if (!el || !inner) return
+  const nextHeight = inner.getBoundingClientRect().height
+  if (nextHeight > 0) el.style.height = `${nextHeight}px`
+}
 
 function toggleAdvancedRow(): void {
   const el = advancedRowEl.value
@@ -231,80 +255,47 @@ function toggleAdvancedRow(): void {
   }
   if (advancedAnimating.value) return
 
+  cancelAdvancedAnimation()
+
+  const startHeight = el.getBoundingClientRect().height
+
   const next = !advancedOpen.value
   advancedOpen.value = next
   advancedAnimating.value = true
 
-  if (next) {
-    expandAdvancedRow(el)
-  } else {
-    collapseAdvancedRow(el)
-  }
-}
-
-function collapseAdvancedRow(el: HTMLElement): void {
-  const startHeight = el.getBoundingClientRect().height
   el.style.pointerEvents = 'none'
+
+  const inner = advancedRowInnerEl.value
+  const targetHeight = next ? (inner?.getBoundingClientRect().height ?? el.scrollHeight) : 0
+  const durationMs = next ? 280 : 260
+  const fromOpacity = next ? 0 : 1
+  const toOpacity = next ? 1 : 0
+
   el.style.height = `${startHeight}px`
-  el.style.opacity = '1'
-  el.style.transform = 'translateY(0)'
-  void el.offsetHeight
+  el.style.opacity = `${fromOpacity}`
 
-  requestAnimationFrame(() => {
-    el.style.transition = [
-      'height 260ms cubic-bezier(0.2, 1, 0.2, 1)',
-      'opacity 180ms ease',
-      'transform 260ms cubic-bezier(0.2, 1, 0.2, 1)',
-    ].join(', ')
-    el.style.height = '0px'
-    el.style.opacity = '0'
-    el.style.transform = 'translateY(-0.25rem)'
-  })
+  const startMs = performance.now()
+  const tick = (nowMs: number) => {
+    const t = (nowMs - startMs) / durationMs
+    const eased = easeOutCubic(t)
+    const currentHeight = startHeight + (targetHeight - startHeight) * eased
+    const currentOpacity = fromOpacity + (toOpacity - fromOpacity) * eased
+    el.style.height = `${currentHeight}px`
+    el.style.opacity = `${currentOpacity}`
 
-  const onEnd = (ev: TransitionEvent) => {
-    if (ev.propertyName !== 'height') return
-    el.removeEventListener('transitionend', onEnd)
-    el.style.transition = ''
-    el.style.height = '0px'
-    el.style.opacity = '0'
-    el.style.transform = 'translateY(-0.25rem)'
-    advancedAnimating.value = false
-  }
-  el.addEventListener('transitionend', onEnd)
-}
+    if (t < 1) {
+      advancedRafId = requestAnimationFrame(tick)
+      return
+    }
 
-function expandAdvancedRow(el: HTMLElement): void {
-  el.style.pointerEvents = 'none'
-  el.style.transition = ''
-  el.style.height = '0px'
-  el.style.opacity = '0'
-  el.style.transform = 'translateY(-0.25rem)'
-
-  const targetHeight = el.scrollHeight
-  void el.offsetHeight
-
-  requestAnimationFrame(() => {
-    el.style.transition = [
-      'height 280ms cubic-bezier(0.2, 1, 0.2, 1)',
-      'opacity 200ms ease',
-      'transform 280ms cubic-bezier(0.2, 1, 0.2, 1)',
-    ].join(', ')
+    advancedRafId = null
     el.style.height = `${targetHeight}px`
-    el.style.opacity = '1'
-    el.style.transform = 'translateY(0)'
-  })
-
-  const onEnd = (ev: TransitionEvent) => {
-    if (ev.propertyName !== 'height') return
-    el.removeEventListener('transitionend', onEnd)
-    el.style.transition = ''
-    el.style.height = ''
-    el.style.opacity = ''
-    el.style.transform = ''
+    el.style.opacity = next ? '' : '0'
     el.style.pointerEvents = ''
     advancedAnimating.value = false
   }
-  el.addEventListener('transitionend', onEnd)
+
+  advancedRafId = requestAnimationFrame(tick)
 }
 
 function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
@@ -315,14 +306,60 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-const activeFamily = computed<'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'>(() => {
-  const p = route.path
-  // Model tabs: derive from active tab type
-  if (p.startsWith('/models')) {
-    const tabType = tabsStore.activeTab?.type
-    if (tabType === 'sd15' || tabType === 'sdxl' || tabType === 'flux' || tabType === 'wan' || tabType === 'zimage') {
-      return tabType as 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'
+type TabFamily = 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'
+
+function normalizeTabFamily(value: unknown): TabFamily | null {
+  const raw = String(value || '').trim().toLowerCase()
+  if (raw === 'wan22' || raw === 'wan22_14b' || raw === 'wan22_5b') return 'wan'
+  if (raw === 'sd15' || raw === 'sdxl' || raw === 'flux' || raw === 'wan' || raw === 'zimage') return raw as TabFamily
+  return null
+}
+
+const routeTabId = computed(() => String(route.params.tabId || ''))
+const activeModelTab = computed(() => {
+  if (!route.path.startsWith('/models/')) return null
+  const id = routeTabId.value
+  if (!id) return null
+  const fromList = tabsStore.tabs.find(t => t.id === id) || null
+  if (fromList) return fromList
+  const active = tabsStore.activeTab
+  if (active && active.id === id) return active
+  return null
+})
+
+function tabFamilyFromStorage(tabId: string): TabFamily | null {
+  if (!tabId) return null
+  try {
+    const raw = localStorage.getItem(MODEL_TABS_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { tabs?: unknown[] }
+    const list = Array.isArray(parsed.tabs) ? parsed.tabs : []
+    const match = list.find((t) => String((t as any)?.id || '') === tabId) as any
+    return normalizeTabFamily(match?.type)
+  } catch {
+    return null
+  }
+}
+
+let routeActiveSyncToken = 0
+watch(routeTabId, async (tabId) => {
+  const token = ++routeActiveSyncToken
+  if (!tabId) return
+  if (!tabsStore.tabs.length) {
+    try {
+      await tabsStore.load()
+    } catch {
+      // ignore; store handles bootstrap fallback
     }
+  }
+  if (token !== routeActiveSyncToken) return
+  tabsStore.setActive(tabId)
+}, { immediate: true })
+
+const activeFamily = computed<TabFamily>(() => {
+  if (route.path.startsWith('/models/') && routeTabId.value) {
+    const type = normalizeTabFamily(activeModelTab.value?.type) || tabFamilyFromStorage(routeTabId.value)
+    if (type) return type
   }
 
   // Fallback to global engine selection
@@ -469,10 +506,10 @@ const filteredTextEncoderChoices = computed(() => {
   return store.textEncoderChoices.filter((name) => typeof name === 'string' && typeof prefix === 'string' && name.startsWith(prefix))
 })
 
-const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(tabsStore.activeTab))
+const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(routeTabId.value))
 const activeImageTab = computed(() => {
   if (!isModelTabRoute.value) return null
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type === 'wan') return null
   return tab
 })
@@ -582,7 +619,7 @@ const wanLowDirChoices = computed(() => {
 })
 
 const wanMode = computed(() => {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return 'txt2vid'
   const video = (tab.params as any).video as { useInitVideo?: boolean; useInitImage?: boolean } | undefined
   if (video?.useInitVideo) return 'vid2vid'
@@ -591,20 +628,20 @@ const wanMode = computed(() => {
 })
 
 const wanLightx2v = computed(() => {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return false
   return Boolean((tab.params as any)?.lightx2v)
 })
 
 const wanHighModel = computed(() => {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return ''
   const high = (tab.params as any).high as { modelDir?: string } | undefined
   return high?.modelDir || ''
 })
 
 const wanLowModel = computed(() => {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return ''
   const low = (tab.params as any).low as { modelDir?: string } | undefined
   return low?.modelDir || ''
@@ -614,7 +651,7 @@ type WanAssetsParams = { metadata: string; textEncoder: string; vae: string }
 
 function currentWanAssets(): WanAssetsParams {
   const base: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return base
   const raw = (tab.params as any).assets as WanAssetsParams | undefined
   return raw ? { ...base, ...raw } : base
@@ -757,7 +794,7 @@ function onCoreStreamingChange(value: boolean): void {
 }
 
 function onWanModeChange(value: string): void {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   const raw = String(value || '').trim().toLowerCase()
   const mode = raw === 'vid2vid' ? 'vid2vid' : (raw === 'img2vid' ? 'img2vid' : 'txt2vid')
@@ -765,48 +802,48 @@ function onWanModeChange(value: string): void {
 }
 
 async function onWanLightx2vChange(value: boolean): Promise<void> {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   await tabsStore.updateParams(tab.id, { lightx2v: Boolean(value) } as any)
 }
 
 async function onWanHighModelChange(value: string): Promise<void> {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   const current = (tab.params as any).high || {}
   await tabsStore.updateParams(tab.id, { high: { ...current, modelDir: value } })
 }
 
 async function onWanLowModelChange(value: string): Promise<void> {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   const current = (tab.params as any).low || {}
   await tabsStore.updateParams(tab.id, { low: { ...current, modelDir: value } })
 }
 
 async function onWanMetadataDirChange(value: string): Promise<void> {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   const current = currentWanAssets()
   await tabsStore.updateParams(tab.id, { assets: { ...current, metadata: value } })
 }
 
 async function onWanTextEncoderChange(value: string): Promise<void> {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   const current = currentWanAssets()
   await tabsStore.updateParams(tab.id, { assets: { ...current, textEncoder: value } })
 }
 
 async function onWanVaeChange(value: string): Promise<void> {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   const current = currentWanAssets()
   await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
 }
 
 function onWanGuidedGen(): void {
-  const tab = tabsStore.activeTab
+  const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
@@ -950,6 +987,13 @@ onMounted(() => {
   void initQuicksettings()
   void presets.init(currentTab())
   void engineCaps.init()
+  window.addEventListener('resize', syncAdvancedHeight)
+  requestAnimationFrame(syncAdvancedHeight)
+})
+
+onBeforeUnmount(() => {
+  cancelAdvancedAnimation()
+  window.removeEventListener('resize', syncAdvancedHeight)
 })
 
 watch(() => route.path, async () => {

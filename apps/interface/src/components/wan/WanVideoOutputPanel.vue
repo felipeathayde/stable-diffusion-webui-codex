@@ -97,11 +97,8 @@
       >
         Trim to audio
       </button>
-    </div>
-
-    <div class="cdx-form-row">
       <button
-        :class="['btn', 'qs-toggle-btn', video.rifeEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.rifeEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :disabled="disabled"
         :aria-pressed="video.rifeEnabled"

@@ -80,6 +80,7 @@ snapshotLegacy.py
 /.mplconfig/
 .webui-*.log
 .webui-*.pid
+*.har
 
 # Vite/Vue interface app artifacts
 apps/interface/node_modules/

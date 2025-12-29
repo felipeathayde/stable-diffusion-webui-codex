@@ -66,6 +66,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true
         }
       },
+      // Avoid full-page reloads triggered by backend runtime state writes under apps/interface/*.json.
+      // These are not frontend source modules (they are persisted by the backend).
+      watch: {
+        ignored: ['**/tabs.json', '**/workflows.json'],
+      },
       hmr: {
         host: HMR_HOST,
         port: WEB_PORT,

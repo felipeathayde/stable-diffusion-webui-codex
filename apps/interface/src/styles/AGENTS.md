@@ -2,7 +2,7 @@
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
 Owner: Codex WebUI Frontend  
-Last Review: 2025-12-28  
+Last Review: 2025-12-29  
 Status: Active
 
 ## Purpose
@@ -86,3 +86,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height with consistent borders (no fixed `2rem` height).
 - 2025-12-28: QuickSettings toggles now use `qs-toggle-btn` (neon border states) and the legacy `qs-switch` styling was removed.
 - 2025-12-28: QuickSettings bar now stacks `quicksettings-row` blocks and uses an animated (rAF) collapsible Advanced row; WAN adds `wan-subheader` section headers in `styles/views/wan.css`.
+- 2025-12-29: Sticky header offset (`--sticky-offset`) is derived from the `.main-header` height and used by `RunCard` (`.panel-header.results-sticky`).

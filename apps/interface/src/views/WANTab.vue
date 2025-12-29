@@ -68,7 +68,39 @@
                 :disabled="isRunning"
                 inputClass="cdx-input-w-md"
                 @update:modelValue="applyWidth"
-              />
+              >
+                <template #right>
+                  <NumberStepperInput
+                    :modelValue="video.width"
+                    :min="64"
+                    :max="2048"
+                    :step="8"
+                    :nudgeStep="8"
+                    inputClass="cdx-input-w-md"
+                    :disabled="isRunning"
+                    @update:modelValue="applyWidth"
+                  />
+                  <select
+                    class="ui-input ui-input-sm select-md cdx-input-w-sm"
+                    :disabled="isRunning"
+                    :value="aspectMode"
+                    aria-label="Aspect ratio"
+                    title="Aspect ratio"
+                    @change="onAspectModeChange"
+                  >
+                    <option value="free">Free</option>
+                    <option value="current">Lock</option>
+                    <option value="16:9">16:9</option>
+                    <option value="1:1">1:1</option>
+                    <option value="9:16">9:16</option>
+                    <option value="4:3">4:3</option>
+                    <option value="3:4">3:4</option>
+                  </select>
+                </template>
+                <template #below>
+                  <span v-if="aspectMode !== 'free'" class="caption">Keeps ratio while editing width/height.</span>
+                </template>
+              </SliderField>
               <SliderField
                 class="gc-col gc-col--wide"
                 label="Height (px)"
@@ -82,19 +114,6 @@
                 inputClass="cdx-input-w-md"
                 @update:modelValue="applyHeight"
               />
-              <div class="gc-col">
-                <label class="label-muted">Aspect</label>
-                <select class="select-md" :disabled="isRunning" :value="aspectMode" @change="onAspectModeChange">
-                  <option value="free">Free</option>
-                  <option value="current">Lock current</option>
-                  <option value="16:9">16:9</option>
-                  <option value="1:1">1:1</option>
-                  <option value="9:16">9:16</option>
-                  <option value="4:3">4:3</option>
-                  <option value="3:4">3:4</option>
-                </select>
-                <p v-if="aspectMode !== 'free'" class="caption mt-1">Keeps ratio while editing width/height.</p>
-              </div>
             </div>
             <VideoSettingsCard
               embedded
@@ -103,7 +122,9 @@
               @update:frames="(v:number)=>setVideo({ frames: v })"
               @update:fps="(v:number)=>setVideo({ fps: v })"
             />
+          </div>
 
+          <div class="gen-card">
             <WanSubHeader title="Video Output" />
             <WanVideoOutputPanel embedded :video="video" :disabled="isRunning" @update:video="setVideo" />
           </div>
@@ -292,34 +313,8 @@
             <button class="btn btn-sm btn-ghost" type="button" @click="clearQueue">Clear queue</button>
           </div>
         </div>
-        <div v-if="videoUrl" class="gen-card mb-3">
-          <div class="row-split">
-            <span class="label-muted">Exported Video</span>
-            <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
-          </div>
-          <video class="w-full rounded" :src="videoUrl" controls />
-          <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_OUTPUT_ROOT is writable.</p>
-        </div>
-        <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
-          <template #empty>
-            <div class="wan-results-empty">
-              <div class="wan-empty-title">No results yet</div>
-              <div class="caption">Need help? Press Generate to see what is missing.</div>
-            </div>
-          </template>
-        </ResultViewer>
 
-        <div v-if="info" class="gen-card mt-3">
-          <div class="row-split">
-            <span class="label-muted">Generation Info</span>
-            <div class="wan-header-actions">
-              <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
-            </div>
-          </div>
-          <pre class="text-xs break-words">{{ formatJson(info) }}</pre>
-        </div>
-
-        <div class="gen-card mt-3">
+        <div class="gen-card mb-3">
           <div class="row-split">
             <span class="label-muted">History</span>
           </div>
@@ -352,6 +347,33 @@
           <div class="wan-callout-actions mt-2">
             <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
           </div>
+        </div>
+
+        <div v-if="videoUrl" class="gen-card mb-3">
+          <div class="row-split">
+            <span class="label-muted">Exported Video</span>
+            <a class="btn btn-sm btn-outline" :href="videoUrl" target="_blank" rel="noreferrer">Open</a>
+          </div>
+          <video class="w-full rounded" :src="videoUrl" controls />
+          <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_OUTPUT_ROOT is writable.</p>
+        </div>
+        <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
+          <template #empty>
+            <div class="wan-results-empty">
+              <div class="wan-empty-title">No results yet</div>
+              <div class="caption">Need help? Press Generate to see what is missing.</div>
+            </div>
+          </template>
+        </ResultViewer>
+
+        <div v-if="info" class="gen-card mt-3">
+          <div class="row-split">
+            <span class="label-muted">Generation Info</span>
+            <div class="wan-header-actions">
+              <button class="btn btn-sm btn-outline" type="button" @click="copyInfo">Copy info</button>
+            </div>
+          </div>
+          <pre class="text-xs break-words">{{ formatJson(info) }}</pre>
         </div>
       </ResultsCard>
     </div>
@@ -397,6 +419,7 @@ import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import { useWorkflowsStore } from '../stores/workflows'
+import NumberStepperInput from '../components/ui/NumberStepperInput.vue'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
@@ -530,8 +553,21 @@ function syncLowFromHighIfNeeded(): void {
 
 function onLowFollowsHighChange(enabled: boolean): void {
   if (!tab.value) return
-  store.updateParams(props.tabId, { lowFollowsHigh: enabled } as any)
-  if (enabled) syncLowFromHighIfNeeded()
+  if (!enabled) {
+    store.updateParams(props.tabId, { lowFollowsHigh: false } as any)
+    return
+  }
+
+  const nextLow: Partial<WanStageParams> = {
+    sampler: high.value.sampler,
+    scheduler: high.value.scheduler,
+    steps: high.value.steps,
+    cfgScale: high.value.cfgScale,
+    seed: high.value.seed,
+    loraPath: high.value.loraPath,
+    loraWeight: high.value.loraWeight,
+  }
+  store.updateParams(props.tabId, { lowFollowsHigh: true, low: { ...(low.value as any), ...nextLow } } as any)
 }
 
 function toggleLowNoise(): void {

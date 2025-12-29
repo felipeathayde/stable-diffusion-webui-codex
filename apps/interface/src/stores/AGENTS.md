@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-28
+Last Review: 2025-12-29
 Status: Active
 
 ## Purpose
@@ -24,3 +24,5 @@ Status: Active
 - 2025-12-16: `model_tabs.ts` WAN `video` params now include `vid2vid` controls (strength/method/chunk/flow toggles) plus optional `initVideoPath` for path-based inputs; uploaded video files are kept in-memory by `useVideoGeneration` (not persisted).
 - 2025-12-17: Added `workflows.ts` store to keep `/workflows` list reactive (refresh after snapshot save/delete) and to centralize workflow persistence calls; WAN tabs also default `lowFollowsHigh=false` in `model_tabs.ts` for the Low Noise “Use High settings” toggle.
 - 2025-12-28: Model-tab image params now persist `batchCount`/`batchSize` and `highres`/`refiner` in `tab.params` (defaults + normalization), enabling the legacy-style RunCard batch dropdown and Highres/Refiner controls for `/models/:tabId` image tabs.
+- 2025-12-29: `model_tabs.load()` preserves the route-selected `activeId` when reloading tabs (reduces QuickSettings flicker on Vite reloads).
+- 2025-12-29: `model_tabs.updateParams()` mutates the params object in-place (instead of replacing it) to reduce whole-view rerenders on small boolean toggles (e.g. LightX2V / Low “Use High settings”).

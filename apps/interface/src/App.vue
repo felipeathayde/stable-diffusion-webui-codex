@@ -44,14 +44,21 @@ import { useModelTabsStore } from './stores/model_tabs'
 
 const headerRef = ref<HTMLElement | null>(null)
 let headerRO: ResizeObserver | null = null
+let stickyOffsetRAF: number | null = null
+
 function setStickyOffset(): void {
-  const h = headerRef.value?.offsetHeight ?? 0
-  const mc = document.querySelector('.main-content') as HTMLElement | null
-  const pt = mc ? parseFloat(getComputedStyle(mc).paddingTop || '0') : 0
+  const h = headerRef.value?.getBoundingClientRect().height ?? 0
   // Tabs não são sticky: o offset deve ser exatamente a altura do header.
   // Não subtrair padding do conteúdo para evitar subposição.
-  const offset = Math.max(0, h)
-  document.documentElement.style.setProperty('--sticky-offset', offset + 'px')
+  document.documentElement.style.setProperty('--sticky-offset', `${Math.max(0, h)}px`)
+}
+
+function requestStickyOffsetRecalc(): void {
+  if (stickyOffsetRAF !== null) return
+  stickyOffsetRAF = window.requestAnimationFrame(() => {
+    stickyOffsetRAF = null
+    setStickyOffset()
+  })
 }
 
 const tabs = useModelTabsStore()
@@ -59,14 +66,19 @@ const enabledTabs = computed(() => tabs.orderedTabs.filter(t => t.enabled))
 
 onMounted(() => {
   void tabs.load()
-  setStickyOffset()
-  headerRO = new ResizeObserver(setStickyOffset)
-  if (headerRef.value) headerRO.observe(headerRef.value)
-  window.addEventListener('resize', setStickyOffset)
+  requestStickyOffsetRecalc()
+  if (typeof ResizeObserver !== 'undefined') {
+    headerRO = new ResizeObserver(requestStickyOffsetRecalc)
+    if (headerRef.value) headerRO.observe(headerRef.value)
+  }
+  window.addEventListener('resize', requestStickyOffsetRecalc)
 })
 
 onBeforeUnmount(() => {
-  if (headerRO && headerRef.value) headerRO.unobserve(headerRef.value)
-  window.removeEventListener('resize', setStickyOffset)
+  if (headerRO) headerRO.disconnect()
+  headerRO = null
+  window.removeEventListener('resize', requestStickyOffsetRecalc)
+  if (stickyOffsetRAF !== null) window.cancelAnimationFrame(stickyOffsetRAF)
+  stickyOffsetRAF = null
 })
 </script>

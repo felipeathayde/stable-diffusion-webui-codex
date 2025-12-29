@@ -98,7 +98,8 @@ export interface ImageBaseParams {
   denoiseStrength: number
 }
 
-const STORAGE_KEY = 'codex:model-tabs:v1'
+export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v1'
+const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -295,15 +296,27 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   async function load(): Promise<void> {
+    const preferredActiveId = activeId.value || (() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (!raw) return ''
+        const parsed = JSON.parse(raw) as { activeId?: unknown }
+        return typeof parsed.activeId === 'string' ? parsed.activeId : ''
+      } catch {
+        return ''
+      }
+    })()
+
     // Try backend first
     try {
       const res = await fetchTabs()
       if (res && Array.isArray(res.tabs)) {
         tabs.value = (res.tabs as unknown as BaseTab[]).map(normalizeTab)
         tabs.value.sort((a, b) => a.order - b.order)
-        activeId.value = tabs.value[0]?.id ?? ''
+        activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
         await ensureRequiredTabs()
         tabs.value.sort((a, b) => a.order - b.order)
+        if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
         save()
         return
       }
@@ -315,10 +328,13 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       try {
         const parsed = JSON.parse(raw) as { tabs: BaseTab[]; activeId: string }
         tabs.value = (parsed.tabs || []).map(normalizeTab)
-        activeId.value = parsed.activeId || (tabs.value[0]?.id ?? '')
+        const stored = typeof parsed.activeId === 'string' ? parsed.activeId : ''
+        const nextActive = activeId.value || stored
+        activeId.value = (nextActive && tabs.value.some(t => t.id === nextActive)) ? nextActive : (tabs.value[0]?.id ?? '')
         tabs.value.sort((a, b) => a.order - b.order)
         await ensureRequiredTabs()
         tabs.value.sort((a, b) => a.order - b.order)
+        if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
         save()
         return
       } catch { /* ignore */ }
@@ -417,7 +433,9 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   async function updateParams<T extends Record<string, unknown>>(id: string, patch: Partial<T>): Promise<void> {
     const t = tabs.value.find(x => x.id === id)
     if (!t) return
-    t.params = { ...(t.params as T), ...patch }
+    const current = (t.params && typeof t.params === 'object' && !Array.isArray(t.params)) ? (t.params as T) : ({} as T)
+    if (current !== t.params) t.params = current
+    Object.assign(current, patch)
     t.meta.updatedAt = nowIso()
     try { await updateTabApi(id, { params: t.params }) } catch { /* ignore */ }
     save()

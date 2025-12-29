@@ -2,7 +2,7 @@
 setlocal
 
 set "ROOT=%~dp0"
-set "VENV_PY=%ROOT%.venv\\Scripts\\python.exe"
+set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
 if defined PYTHON (
     set "PY_BIN=%PYTHON%"
 ) else if exist "%VENV_PY%" (
@@ -11,10 +11,13 @@ if defined PYTHON (
     set "PY_BIN=python"
 )
 
-where "%PY_BIN%" >nul 2>&1
-if errorlevel 1 (
-    echo Error: unable to locate a Python interpreter. Set PYTHON environment variable to a valid executable.>&2
-    exit /b 1
+REM If PY_BIN is a full path, `where` will fail; prefer a direct existence check first.
+if not exist "%PY_BIN%" (
+    where "%PY_BIN%" >nul 2>&1
+    if errorlevel 1 (
+        echo Error: unable to locate a Python interpreter. Set PYTHON environment variable to a valid executable.>&2
+        exit /b 1
+    )
 )
 
 if defined PYTHONPATH (

@@ -55,8 +55,8 @@ set "SHOW_MENU="
 
 set "UV_VERSION=%CODEX_UV_VERSION%"
 if "%UV_VERSION%"=="" set "UV_VERSION=0.9.17"
-set "UV_DIR=%ROOT%.uv\\bin"
-set "UV_BIN=%UV_DIR%\\uv.exe"
+set "UV_DIR=%ROOT%.uv\bin"
+set "UV_BIN=%UV_DIR%\uv.exe"
 
 set "PYTHON_VERSION=%CODEX_PYTHON_VERSION%"
 if "%PYTHON_VERSION%"=="" set "PYTHON_VERSION=3.12.10"
@@ -91,7 +91,7 @@ if not exist "%UV_BIN%" (
   exit /b 1
 )
 
-set "UV_PYTHON_INSTALL_DIR=%ROOT%.uv\\python"
+set "UV_PYTHON_INSTALL_DIR=%ROOT%.uv\python"
 set "UV_PYTHON_INSTALL_BIN=0"
 set "UV_PYTHON_INSTALL_REGISTRY=0"
 set "UV_PYTHON_PREFERENCE=only-managed"
@@ -366,7 +366,7 @@ set "TORCH_EXTRA=cu128"
 exit /b 0
 
 :install_uv
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
 REM Prefer downloading the prebuilt zip from GitHub Releases to avoid PowerShell module issues
 REM (some environments cannot load Microsoft.PowerShell.Security, breaking the installer script).
@@ -378,55 +378,68 @@ if /i "%ARCH%"=="AMD64" set "UV_ASSET=uv-x86_64-pc-windows-msvc.zip"
 if /i "%ARCH%"=="ARM64" set "UV_ASSET=uv-aarch64-pc-windows-msvc.zip"
 if /i "%ARCH%"=="x86" set "UV_ASSET=uv-i686-pc-windows-msvc.zip"
 
-if "%UV_ASSET%"=="" (
-  echo Error: unsupported Windows architecture '%ARCH%'.>&2
-  exit /b 1
-)
+if "%UV_ASSET%"=="" goto :install_uv_unsupported_arch
 
 set "UV_URL=https://github.com/astral-sh/uv/releases/download/%UV_VERSION%/%UV_ASSET%"
-set "UV_ZIP=%UV_DIR%\\%UV_ASSET%"
+set "UV_ZIP=%UV_DIR%\%UV_ASSET%"
 
 if exist "%UV_ZIP%" del /f /q "%UV_ZIP%" >nul 2>&1
 
 where curl >nul 2>&1
-if not errorlevel 1 (
-  echo [install] Downloading: %UV_URL%
-  curl -L --fail --retry 3 --retry-delay 2 -o "%UV_ZIP%" "%UV_URL%"
-) else (
-  where certutil >nul 2>&1
-  if not errorlevel 1 (
-    echo [install] Downloading (certutil): %UV_URL%
-    certutil -urlcache -split -f "%UV_URL%" "%UV_ZIP%" >nul
-  ) else (
-    echo Error: neither curl nor certutil is available to download uv.>&2
-    exit /b 1
-  )
-)
+if not errorlevel 1 goto :install_uv_download_curl
 
-if errorlevel 1 (
-  echo Error: failed to download uv zip.>&2
-  exit /b 1
-)
+where certutil >nul 2>&1
+if not errorlevel 1 goto :install_uv_download_certutil
 
+echo Error: neither curl nor certutil is available to download uv.>&2
+endlocal & exit /b 1
+
+:install_uv_download_curl
+echo [install] Downloading: %UV_URL%
+curl -L --fail --retry 3 --retry-delay 2 -o "%UV_ZIP%" "%UV_URL%"
+if errorlevel 1 goto :install_uv_download_failed
+goto :install_uv_extract
+
+:install_uv_download_certutil
+echo [install] Downloading via certutil: %UV_URL%
+certutil -urlcache -split -f "%UV_URL%" "%UV_ZIP%" >nul
+if errorlevel 1 goto :install_uv_download_failed
+
+:install_uv_extract
 where tar >nul 2>&1
-if not errorlevel 1 (
-  echo [install] Extracting uv (tar) ...
-  tar -xf "%UV_ZIP%" -C "%UV_DIR%"
-) else (
-  echo [install] Extracting uv (PowerShell ZipFile) ...
-  powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%UV_ZIP%','%UV_DIR%', $true)"
-)
+if not errorlevel 1 goto :install_uv_extract_tar
+goto :install_uv_extract_ps
 
-if errorlevel 1 (
-  echo Error: failed to extract uv zip.>&2
-  exit /b 1
-)
+:install_uv_extract_tar
+echo [install] Extracting uv via tar ...
+tar -xf "%UV_ZIP%" -C "%UV_DIR%"
+if errorlevel 1 goto :install_uv_extract_failed
+goto :install_uv_post_extract
 
+:install_uv_extract_ps
+echo [install] Extracting uv via PowerShell ZipFile ...
+powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%UV_ZIP%','%UV_DIR%', $true)"
+if errorlevel 1 goto :install_uv_extract_failed
+
+:install_uv_post_extract
 del /f /q "%UV_ZIP%" >nul 2>&1
 
-if not exist "%UV_BIN%" (
-  echo Error: uv extracted but '%UV_BIN%' is missing.>&2
-  exit /b 1
-)
+if not exist "%UV_BIN%" goto :install_uv_missing_bin
 
 endlocal & exit /b 0
+
+:install_uv_unsupported_arch
+echo Error: unsupported Windows architecture '%ARCH%'.>&2
+endlocal & exit /b 1
+
+:install_uv_download_failed
+echo Error: failed to download uv zip.>&2
+endlocal & exit /b 1
+
+:install_uv_extract_failed
+echo Error: failed to extract uv zip.>&2
+endlocal & exit /b 1
+
+:install_uv_missing_bin
+echo Error: uv extracted but '%UV_BIN%' is missing.>&2
+endlocal & exit /b 1

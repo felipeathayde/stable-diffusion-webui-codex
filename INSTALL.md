@@ -20,6 +20,11 @@ Optional:
 install-webui.bat
 ```
 
+If you prefer an interactive installer that prompts for CUDA options (no env vars):
+```bat
+install-webui-menu.bat
+```
+
 2) Launch the GUI launcher:
 ```bat
 run-webui.bat
@@ -40,18 +45,23 @@ bash install-webui.sh
 This repo uses `uv.lock` to pin and lock dependency versions (including PyTorch variants). The installers choose **one** PyTorch backend via `uv` extras.
 
 Default behavior:
-- `CODEX_TORCH_MODE=auto` (default): if `nvidia-smi` exists, install the CUDA 12.6 wheels (`--extra cu126`), otherwise CPU (`--extra cpu`).
+- `CODEX_TORCH_MODE=auto` (default):
+  - If AMD/ROCm is detected (Linux), use ROCm 6.4 wheels (`--extra rocm64`).
+  - Else if `nvidia-smi` exists, prefer CUDA 12.8 wheels (`--extra cu128`), with fallback to `cu126` if the driver advertises CUDA 12.6 and `cu130` if CUDA 13 is advertised and the driver is new enough.
+  - Otherwise CPU (`--extra cpu`).
 - On macOS, the installers always use `cpu`.
 
 Override:
 - `CODEX_TORCH_MODE=cpu` (force CPU: `--extra cpu`)
 - `CODEX_TORCH_MODE=cuda` (force CUDA: defaults to `--extra cu128`)
+- `CODEX_TORCH_MODE=rocm` (Linux only: force ROCm 6.4 wheels: `--extra rocm64`)
 - `CODEX_TORCH_MODE=skip` (skip torch/torchvision entirely; the WebUI will not run without PyTorch)
-- `CODEX_TORCH_BACKEND=cpu|cu118|cu126|cu128|cu130` (explicitly pick the PyTorch backend extra)
+- `CODEX_TORCH_BACKEND=cpu|cu126|cu128|cu130|rocm64` (explicitly pick the PyTorch backend extra)
+- `CODEX_CUDA_VARIANT=12.6|12.8|13` (choose CUDA wheels when using `auto`/`cuda`; maps to `cu126|cu128|cu130`)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
 
 If CUDA install fails, try a different backend:
-- Example: `CODEX_TORCH_BACKEND=cu118 bash install-webui.sh`
+- Example: `CODEX_TORCH_BACKEND=cu126 bash install-webui.sh`
 
 ## Troubleshooting
 

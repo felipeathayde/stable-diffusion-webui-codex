@@ -9,8 +9,9 @@ UV_BIN="${UV_DIR}/uv"
 PYTHON_VERSION="${CODEX_PYTHON_VERSION:-3.12.10}"
 VENV_DIR="${ROOT_DIR}/.venv"
 
-TORCH_MODE="${CODEX_TORCH_MODE:-auto}" # auto|cpu|cuda|skip
-TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu118|cu126|cu128|cu130 (optional override)
+TORCH_MODE="${CODEX_TORCH_MODE:-auto}" # auto|cpu|cuda|rocm|skip
+TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu126|cu128|cu130|rocm64 (optional override)
+CUDA_VARIANT="${CODEX_CUDA_VARIANT:-}" # 12.6|12.8|13|cu126|cu128|cu130 (optional override)
 TRACE="${CODEX_INSTALL_TRACE:-0}"
 
 log() { echo "[install] $*"; }
@@ -26,9 +27,12 @@ log "Repo: ${ROOT_DIR}"
 log "uv: ${UV_BIN} (version pin: ${UV_VERSION})"
 log "Python: ${PYTHON_VERSION} (managed by uv)"
 log "Venv: ${VENV_DIR} (created by uv; uses the managed Python)"
-log "Torch mode: ${TORCH_MODE} (override via CODEX_TORCH_MODE=auto|cpu|cuda|skip)"
+log "Torch mode: ${TORCH_MODE} (override via CODEX_TORCH_MODE=auto|cpu|cuda|rocm|skip)"
 if [[ -n "${TORCH_BACKEND}" ]]; then
   log "Torch backend override: ${TORCH_BACKEND} (CODEX_TORCH_BACKEND)"
+fi
+if [[ -n "${CUDA_VARIANT}" ]]; then
+  log "CUDA variant override: ${CUDA_VARIANT} (CODEX_CUDA_VARIANT)"
 fi
 log "Host: $(uname -a)"
 
@@ -65,8 +69,8 @@ install_python() {
 pick_torch_extra() {
   if [[ -n "${TORCH_BACKEND}" ]]; then
     case "${TORCH_BACKEND}" in
-      cpu|cu118|cu126|cu128|cu130) echo "${TORCH_BACKEND}"; return 0 ;;
-      *) die "invalid CODEX_TORCH_BACKEND='${TORCH_BACKEND}' (expected: cpu|cu118|cu126|cu128|cu130)";;
+      cpu|cu126|cu128|cu130|rocm64) echo "${TORCH_BACKEND}"; return 0 ;;
+      *) die "invalid CODEX_TORCH_BACKEND='${TORCH_BACKEND}' (expected: cpu|cu126|cu128|cu130|rocm64)";;
     esac
   fi
 
@@ -88,11 +92,46 @@ pick_torch_extra() {
   fi
 
   if [[ "${TORCH_MODE}" == "cuda" ]]; then
+    if [[ -n "${CUDA_VARIANT}" ]]; then
+      case "${CUDA_VARIANT}" in
+        12.6|cu126) echo "cu126"; return 0 ;;
+        12.8|cu128) echo "cu128"; return 0 ;;
+        13|cu130) echo "cu130"; return 0 ;;
+        *) die "invalid CODEX_CUDA_VARIANT='${CUDA_VARIANT}' (expected: 12.6|12.8|13|cu126|cu128|cu130)";;
+      esac
+    fi
     echo "cu128"
     return 0
   fi
 
+  if [[ "${TORCH_MODE}" == "rocm" ]]; then
+    echo "rocm64"
+    return 0
+  fi
+
+  # auto: try to detect AMD ROCm first (Linux-only).
+  if [[ "${platform}" == "linux" ]]; then
+    if command -v rocminfo >/dev/null 2>&1 || command -v rocm-smi >/dev/null 2>&1 || [[ -d "/opt/rocm" ]]; then
+      echo "rocm64"
+      return 0
+    fi
+    if command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | rg -qi 'vga|3d|display' && lspci 2>/dev/null | rg -qi 'amd/ati|advanced micro devices'; then
+      # If the machine looks like AMD GPU, prefer ROCm wheels when available.
+      echo "rocm64"
+      return 0
+    fi
+  fi
+
   if command -v nvidia-smi >/dev/null 2>&1; then
+    if [[ -n "${CUDA_VARIANT}" ]]; then
+      case "${CUDA_VARIANT}" in
+        12.6|cu126) echo "cu126"; return 0 ;;
+        12.8|cu128) echo "cu128"; return 0 ;;
+        13|cu130) echo "cu130"; return 0 ;;
+        *) die "invalid CODEX_CUDA_VARIANT='${CUDA_VARIANT}' (expected: 12.6|12.8|13|cu126|cu128|cu130)";;
+      esac
+    fi
+
     local smi_line=""
     smi_line="$(nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null | head -n 1 || true)"
     if [[ -n "${smi_line}" ]]; then
@@ -113,9 +152,9 @@ pick_torch_extra() {
       # Heuristics:
       # - Prefer CUDA 12.8+ wheels by default when NVIDIA is detected.
       # - If the driver advertises CUDA 13.x and the driver major is new enough, prefer cu130.
-      # - If the driver is too old for CUDA 12.x (major < 525), fall back to cu118.
+      # - If the driver is too old for CUDA 12.x (major < 525), fall back to CPU.
       if [[ "${driver_major}" =~ ^[0-9]+$ ]] && (( driver_major < 525 )); then
-        echo "cu118"
+        echo "cpu"
         return 0
       fi
 
@@ -127,10 +166,6 @@ pick_torch_extra() {
           fi
           # Driver likely too old for CUDA 13 wheels.
           echo "cu128"
-          return 0
-        fi
-        if (( cuda_major == 11 )); then
-          echo "cu118"
           return 0
         fi
         if (( cuda_major == 12 && cuda_minor >= 8 )); then

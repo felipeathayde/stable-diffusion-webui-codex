@@ -15,13 +15,15 @@ set "VENV=%ROOT%.venv"
 set "TORCH_MODE=%CODEX_TORCH_MODE%"
 if "%TORCH_MODE%"=="" set "TORCH_MODE=auto"
 set "TORCH_BACKEND=%CODEX_TORCH_BACKEND%"
+set "CUDA_VARIANT=%CODEX_CUDA_VARIANT%"
 
 echo [install] Repo: %ROOT%
 echo [install] uv: %UV_BIN% (version pin: %UV_VERSION%)
 echo [install] Python: %PYTHON_VERSION% (managed by uv)
 echo [install] Venv: %VENV% (created by uv; uses the managed Python)
-echo [install] Torch mode: %TORCH_MODE% (CODEX_TORCH_MODE=auto^|cpu^|cuda^|skip)
+echo [install] Torch mode: %TORCH_MODE% (CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip)
 if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND% (CODEX_TORCH_BACKEND)
+if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT% (CODEX_CUDA_VARIANT)
 
 if not exist "%UV_BIN%" (
   if not exist "%UV_DIR%" mkdir "%UV_DIR%"
@@ -61,12 +63,25 @@ if not "%TORCH_BACKEND%"=="" (
 ) else if /i "%TORCH_MODE%"=="cpu" (
   set "TORCH_EXTRA=cpu"
 ) else if /i "%TORCH_MODE%"=="cuda" (
-  set "TORCH_EXTRA=cu128"
+  if /i "%CUDA_VARIANT%"=="12.6" set "TORCH_EXTRA=cu126"
+  if /i "%CUDA_VARIANT%"=="cu126" set "TORCH_EXTRA=cu126"
+  if /i "%CUDA_VARIANT%"=="12.8" set "TORCH_EXTRA=cu128"
+  if /i "%CUDA_VARIANT%"=="cu128" set "TORCH_EXTRA=cu128"
+  if /i "%CUDA_VARIANT%"=="13" set "TORCH_EXTRA=cu130"
+  if /i "%CUDA_VARIANT%"=="cu130" set "TORCH_EXTRA=cu130"
+  if "%TORCH_EXTRA%"=="" set "TORCH_EXTRA=cu128"
 ) else (
   where nvidia-smi >nul 2>&1
   if errorlevel 1 (
     set "TORCH_EXTRA=cpu"
   ) else (
+    if /i "%CUDA_VARIANT%"=="12.6" (set "TORCH_EXTRA=cu126" & goto :picked_torch)
+    if /i "%CUDA_VARIANT%"=="cu126" (set "TORCH_EXTRA=cu126" & goto :picked_torch)
+    if /i "%CUDA_VARIANT%"=="12.8" (set "TORCH_EXTRA=cu128" & goto :picked_torch)
+    if /i "%CUDA_VARIANT%"=="cu128" (set "TORCH_EXTRA=cu128" & goto :picked_torch)
+    if /i "%CUDA_VARIANT%"=="13" (set "TORCH_EXTRA=cu130" & goto :picked_torch)
+    if /i "%CUDA_VARIANT%"=="cu130" (set "TORCH_EXTRA=cu130" & goto :picked_torch)
+
     set "CUDA_VER="
     for /f "delims=" %%i in ('nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2^>nul') do (
       set "CUDA_VER=%%i"
@@ -93,12 +108,12 @@ if not "%TORCH_BACKEND%"=="" (
     )
     if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
 
-    REM Driver major < 525: likely too old for CUDA 12.x wheels; fall back to cu118.
+    REM Driver major < 525: likely too old for CUDA 12.x wheels; fall back to cpu.
     if not "%DRIVER_MAJOR%"=="" (
       set /a _DRV=%DRIVER_MAJOR% 2>nul
       if not errorlevel 1 (
         if %_DRV% LSS 525 (
-          set "TORCH_EXTRA=cu118"
+          set "TORCH_EXTRA=cpu"
           goto :picked_torch
         )
       )
@@ -140,11 +155,6 @@ if not "%TORCH_BACKEND%"=="" (
         set "TORCH_EXTRA=cu126"
         goto :picked_torch
       )
-    )
-
-    if "%CUDA_MAJOR%"=="11" (
-      set "TORCH_EXTRA=cu118"
-      goto :picked_torch
     )
 
     set "TORCH_EXTRA=cu128"

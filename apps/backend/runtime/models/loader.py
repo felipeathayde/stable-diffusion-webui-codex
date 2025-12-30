@@ -382,7 +382,7 @@ def resolve_text_encoder_override_paths(
             % (override.family.value, model_family.value)
         )
 
-    allowed_exts = (".safetensors", ".bin", ".pt")
+    allowed_exts = (".safetensors", ".gguf", ".bin", ".pt")
 
     text_map = dict(getattr(estimated_config, "text_encoder_map", {}) or {})
 

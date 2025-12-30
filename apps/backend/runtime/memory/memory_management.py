@@ -229,11 +229,33 @@ def dtype_size(dtype: torch.dtype) -> int:
     return torch.empty((), dtype=dtype).element_size()
 
 
-def state_dict_dtype(state_dict) -> torch.dtype:
-    for tensor in state_dict.values():
-        if isinstance(tensor, torch.Tensor):
-            return tensor.dtype
-    return torch.float32
+def state_dict_dtype(state_dict) -> torch.dtype | str:
+    """Best-effort dtype / quantization hint for a state dict.
+
+    - Returns ``"gguf"`` when the mapping contains CodexParameter packed weights.
+    - Otherwise returns the first encountered torch dtype (defaults to fp32).
+    """
+
+    # Avoid scanning large lazy safetensors dicts: keep the old "first tensor" behavior.
+    materialize = getattr(state_dict, "materialize", None)
+    if callable(materialize):
+        for tensor in state_dict.values():
+            if isinstance(tensor, torch.Tensor):
+                return tensor.dtype
+        return torch.float32
+
+    from apps.backend.quantization.tensor import CodexParameter
+
+    first_dtype: torch.dtype | None = None
+    for idx, tensor in enumerate(state_dict.values()):
+        if isinstance(tensor, CodexParameter) and tensor.qtype is not None:
+            return "gguf"
+        if first_dtype is None and isinstance(tensor, torch.Tensor):
+            first_dtype = tensor.dtype
+        # Defensive cap: most GGUF state dicts will reveal themselves quickly.
+        if idx >= 4096 and first_dtype is not None:
+            break
+    return first_dtype or torch.float32
 
 
 def bake_gguf_model(model):

@@ -197,6 +197,74 @@ tasks: Dict[str, 'TaskEntry'] = {}
 tasks_lock = threading.Lock()
 
 
+_UVICORN_ACCESS_NOISE_PREFIXES = ("/api/tools/convert-gguf/",)
+_UVICORN_ACCESS_NOISE_FILTER_INSTALLED = False
+
+
+class _SuppressUvicornAccessNoiseFilter(logging.Filter):
+    def __init__(self, suppress_path_prefixes: Optional[List[str]] = None) -> None:
+        super().__init__()
+        self._prefixes = tuple(suppress_path_prefixes or [])
+
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - depends on uvicorn internals
+        if not self._prefixes:
+            return True
+
+        try:
+            path: Optional[str] = None
+            args = getattr(record, "args", None)
+            if isinstance(args, tuple) and len(args) >= 3:
+                path = str(args[2])
+            elif isinstance(args, dict):
+                raw = args.get("path") or args.get("raw_path")
+                if raw is not None:
+                    path = str(raw)
+
+            if path is None:
+                request_line = getattr(record, "request_line", None)
+                if isinstance(request_line, str):
+                    parts = request_line.split(" ")
+                    if len(parts) >= 2:
+                        path = parts[1]
+
+            if path is None:
+                msg = record.getMessage()
+                for prefix in self._prefixes:
+                    if prefix in msg:
+                        return False
+                return True
+
+            path_only = path.split("?", 1)[0]
+            return not path_only.startswith(self._prefixes)
+        except Exception:
+            return True
+
+
+def _install_uvicorn_access_noise_filter() -> None:
+    """Suppress noisy uvicorn access logs for high-frequency polling endpoints.
+
+    The UI polls some tool endpoints (e.g. GGUF conversion progress). Uvicorn logs
+    every request at INFO, flooding the console during long conversions.
+    """
+    global _UVICORN_ACCESS_NOISE_FILTER_INSTALLED
+    if _UVICORN_ACCESS_NOISE_FILTER_INSTALLED:
+        return
+
+    allow_tools = os.getenv("CODEX_UVICORN_ACCESS_LOG_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
+    if allow_tools:
+        return
+
+    logger = logging.getLogger("uvicorn.access")
+    logger.addFilter(_SuppressUvicornAccessNoiseFilter(list(_UVICORN_ACCESS_NOISE_PREFIXES)))
+    _UVICORN_ACCESS_NOISE_FILTER_INSTALLED = True
+
+
+# This module is commonly loaded via `python -m uvicorn --factory ...:create_api_app`.
+# Install the access-log filter at import time so it applies even when uvicorn is launched
+# via CLI (no custom log_config passed).
+_install_uvicorn_access_noise_filter()
+
+
 class TaskEntry:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -3150,7 +3218,7 @@ def build_app() -> FastAPI:
         Request body:
         {
             "config_path": "/path/to/text_encoder/config.json",
-            "safetensors_path": "/path/to/model.safetensors",
+            "safetensors_path": "/path/to/model.safetensors" | "/path/to/model.safetensors.index.json" | "/path/to/weights_dir",
             "output_path": "/path/to/output.gguf",
             "quantization": "F16" | "Q8_0" | "Q6_K" | "Q5_K_M" | "Q5_K" | "Q5_1" | "Q5_0" | "Q4_K_M" | "Q4_K" | "Q4_1" | "Q4_0" | "Q3_K" | "Q2_K" | "IQ4_NL",
             "tensor_type_overrides": ["<regex>=<quant>", ...]  // optional (advanced)
@@ -3388,9 +3456,17 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit(1) from exc
 
     # Configure Uvicorn logging to match our unified format
+    suppress_access_prefixes = list(_UVICORN_ACCESS_NOISE_PREFIXES)
+
     log_config = {
         "version": 1,
         "disable_existing_loggers": True,
+        "filters": {
+            "codex_access_noise": {
+                "()": "apps.backend.interfaces.api.run_api._SuppressUvicornAccessNoiseFilter",
+                "suppress_path_prefixes": suppress_access_prefixes,
+            }
+        },
         "formatters": {
             "default": {
                 "format": "[%(asctime)s] %(levelname)-8s %(message)s",
@@ -3410,6 +3486,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             },
             "access": {
                 "formatter": "access",
+                "filters": ["codex_access_noise"],
                 "class": "logging.StreamHandler",
                 "stream": "ext://sys.stderr",
             },

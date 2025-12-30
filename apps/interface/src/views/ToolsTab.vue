@@ -21,11 +21,12 @@
           </div>
 
           <div class="field">
-            <label class="label-muted">Safetensors File</label>
+            <label class="label-muted">Safetensors File or Folder</label>
             <div class="row-inline">
-              <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.safetensorsPath" placeholder="Path to .safetensors file" :disabled="isConverting" />
+              <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.safetensorsPath" placeholder="Path to .safetensors file, index.json, or folder" :disabled="isConverting" />
               <button class="btn-icon" type="button" @click="browseForSafetensors" :disabled="isConverting" aria-label="Browse for safetensors file">…</button>
             </div>
+            <p class="caption">For sharded weights, select the folder that contains <code>*.safetensors.index.json</code>.</p>
           </div>
 
           <div class="field">

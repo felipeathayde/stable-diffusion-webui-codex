@@ -6,6 +6,7 @@ This is used primarily for text encoders (e.g. Z Image Qwen3 variants).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -138,6 +139,147 @@ def _resolve_config_json_path(config_path: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"config.json not found at: {path}")
     return path
+
+
+@dataclass(frozen=True, slots=True)
+class _ShardedSafetensorsIndex:
+    index_path: Path
+    tensor_to_shard: dict[str, Path]
+
+
+def _load_sharded_safetensors_index(index_path: Path) -> _ShardedSafetensorsIndex:
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+    weight_map = data.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise ValueError(f"Invalid safetensors index (missing weight_map): {index_path}")
+
+    base = index_path.parent
+    out: dict[str, Path] = {}
+    for k, v in weight_map.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise ValueError(f"Invalid safetensors index (non-string weight_map entry): {index_path}")
+        shard = (base / v).resolve()
+        if shard.suffix.lower() != ".safetensors":
+            raise ValueError(f"Unsupported shard type in {index_path}: {v!r} (expected .safetensors)")
+        if not shard.is_file():
+            raise FileNotFoundError(f"Shard referenced by {index_path} is missing: {shard}")
+        out[k] = shard
+
+    return _ShardedSafetensorsIndex(index_path=index_path.resolve(), tensor_to_shard=out)
+
+
+def _pick_safetensors_index_path(weights_dir: Path) -> Path | None:
+    preferred = weights_dir / "model.safetensors.index.json"
+    if preferred.is_file():
+        return preferred
+
+    candidates = sorted(weights_dir.glob("*.safetensors.index.json"))
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        return None
+
+    # Common HF naming conventions; prefer the most specific.
+    for fname in (
+        "diffusion_pytorch_model.safetensors.index.json",
+        "pytorch_model.safetensors.index.json",
+    ):
+        p = weights_dir / fname
+        if p.is_file():
+            return p
+
+    names = ", ".join(p.name for p in candidates[:6])
+    more = "" if len(candidates) <= 6 else f" (+{len(candidates) - 6} more)"
+    raise ValueError(
+        f"Multiple safetensors index files found under {weights_dir}: {names}{more}. "
+        "Pass the desired '*.safetensors.index.json' path explicitly."
+    )
+
+
+class _ShardedSafetensors:
+    def __init__(self, index: _ShardedSafetensorsIndex) -> None:
+        self._index = index
+        self._handles: dict[Path, Any] = {}
+        self._stack: contextlib.ExitStack | None = None
+
+    def __enter__(self) -> "_ShardedSafetensors":
+        self._stack = contextlib.ExitStack()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._stack is not None:
+            self._stack.close()
+        self._stack = None
+        self._handles.clear()
+
+    def keys(self):
+        return self._index.tensor_to_shard.keys()
+
+    def _handle_for(self, shard: Path):
+        if shard in self._handles:
+            return self._handles[shard]
+        if self._stack is None:
+            raise RuntimeError("Sharded safetensors handle is not open (missing context manager).")
+        handle = self._stack.enter_context(safe_open(str(shard), framework="pt", device="cpu"))
+        self._handles[shard] = handle
+        return handle
+
+    def get_slice(self, name: str):
+        shard = self._index.tensor_to_shard.get(name)
+        if shard is None:
+            raise KeyError(f"Tensor not found in sharded safetensors index: {name}")
+        return self._handle_for(shard).get_slice(name)
+
+    def get_tensor(self, name: str):
+        shard = self._index.tensor_to_shard.get(name)
+        if shard is None:
+            raise KeyError(f"Tensor not found in sharded safetensors index: {name}")
+        return self._handle_for(shard).get_tensor(name)
+
+
+@contextlib.contextmanager
+def _open_safetensors_source(path: str):
+    """Open a safetensors source from either:
+    - a single `.safetensors` file,
+    - a `.safetensors.index.json` file (sharded),
+    - or a directory containing either a single `.safetensors` or an index file.
+    """
+    p = Path(path).expanduser()
+    if p.is_dir():
+        index_path = _pick_safetensors_index_path(p)
+        if index_path is not None:
+            index = _load_sharded_safetensors_index(index_path)
+            with _ShardedSafetensors(index) as source:
+                yield source
+            return
+
+        candidates = sorted(p.glob("*.safetensors"))
+        if len(candidates) == 1:
+            with safe_open(str(candidates[0]), framework="pt", device="cpu") as source:
+                yield source
+            return
+        if not candidates:
+            raise FileNotFoundError(f"No .safetensors files found under: {p}")
+        names = ", ".join(c.name for c in candidates[:6])
+        more = "" if len(candidates) <= 6 else f" (+{len(candidates) - 6} more)"
+        raise ValueError(
+            f"Multiple .safetensors files found under {p}: {names}{more}. "
+            "Pass a single file path or the '*.safetensors.index.json' path explicitly."
+        )
+
+    # Explicit index file path.
+    if p.is_file() and p.name.endswith(".safetensors.index.json"):
+        index = _load_sharded_safetensors_index(p)
+        with _ShardedSafetensors(index) as source:
+            yield source
+        return
+
+    if p.suffix.lower() != ".safetensors":
+        raise ValueError(f"Expected a .safetensors file/dir/index.json, got: {p}")
+    if not p.is_file():
+        raise FileNotFoundError(f"Safetensors file not found: {p}")
+    with safe_open(str(p), framework="pt", device="cpu") as source:
+        yield source
 
 
 def _requested_ggml_type(quant: QuantizationType) -> GGMLQuantizationType:
@@ -400,7 +542,7 @@ def convert_safetensors_to_gguf(
     output_path = Path(config.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with safe_open(config.safetensors_path, framework="pt", device="cpu") as sf:
+    with _open_safetensors_source(config.safetensors_path) as sf:
         tensor_names = list(sf.keys())
         progress.total_steps = len(tensor_names)
 
@@ -603,7 +745,7 @@ def _verify_gguf_file(
 
     # 2) Spot-check a few tensors against source.
     reverse_mapping = {v: k for k, v in key_mapping.items()}
-    with safe_open(source_safetensors, framework="pt", device="cpu") as source:
+    with _open_safetensors_source(source_safetensors) as source:
         for plan in tensor_plans[:3]:
             src_name = reverse_mapping.get(plan.gguf_name, plan.gguf_name)
             if src_name not in source.keys():

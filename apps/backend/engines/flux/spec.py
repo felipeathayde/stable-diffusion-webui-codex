@@ -86,7 +86,15 @@ def _maybe_enable_streaming_core(
     """
     if spec.name != "flux":
         return transformer
-    if not isinstance(transformer, FluxTransformer2DModel):
+
+    streamed: StreamedFluxCore | None = None
+    base_core: FluxTransformer2DModel | None = None
+    if isinstance(transformer, StreamedFluxCore):
+        streamed = transformer
+        base_core = transformer.base_core
+    elif isinstance(transformer, FluxTransformer2DModel):
+        base_core = transformer
+    else:
         return transformer
 
     options = dict(engine_options or {})
@@ -95,23 +103,44 @@ def _maybe_enable_streaming_core(
     from apps.backend.runtime.memory import memory_management
 
     core_device = memory_management.get_torch_device()
+    free_mb: int | None = None
     try:
         free_bytes = memory_management.get_free_memory(core_device)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Flux streaming: failed to probe free memory (%s); disabling streaming", exc)
-        return transformer
-
-    try:
         free_mb = int(free_bytes // (1024 * 1024))
-    except Exception:
-        free_mb = 0
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Flux streaming: failed to probe free memory (%s)", exc)
 
-    if not streaming_config.should_enable(free_mb):
-        logger.debug("Flux streaming disabled (enabled=%s, free_vram_mb=%d)", streaming_config.enabled, free_mb)
+    should_stream = bool(streaming_config.enabled)
+    if not should_stream and streaming_config.auto_enable_threshold_mb > 0:
+        if free_mb is not None:
+            should_stream = streaming_config.should_enable(free_mb)
+
+    if not should_stream:
+        if free_mb is None:
+            logger.debug("Flux streaming disabled (enabled=%s)", streaming_config.enabled)
+        else:
+            logger.debug("Flux streaming disabled (enabled=%s, free_vram_mb=%d)", streaming_config.enabled, free_mb)
+        if streamed is not None:
+            try:
+                streamed.controller.compute_device = core_device
+                streamed.move_all_to_compute()
+                streamed.controller.reset()
+                logger.info("Flux streaming disabled; reverted StreamedFluxCore -> FluxTransformer2DModel")
+                return streamed.base_core
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Flux streaming: failed to disable streamed core; keeping StreamedFluxCore active: %s",
+                    exc,
+                    exc_info=True,
+                )
         return transformer
 
+    # Streaming is desired; if already wrapped, keep the existing wrapper.
+    if streamed is not None:
+        return streamed
+
     try:
-        plan = trace_execution_plan(transformer, blocks_per_segment=streaming_config.blocks_per_segment)
+        plan = trace_execution_plan(base_core, blocks_per_segment=streaming_config.blocks_per_segment)
         storage_device = memory_management.core_offload_device()
 
         controller = CoreController(
@@ -121,7 +150,7 @@ def _maybe_enable_streaming_core(
             window_size=streaming_config.window_size,
         )
 
-        streamed = StreamedFluxCore(transformer, plan, controller)
+        streamed = StreamedFluxCore(base_core, plan, controller)
 
         # Preserve loader metadata expected by KModel / patchers.
         for attr in (
@@ -132,17 +161,17 @@ def _maybe_enable_streaming_core(
             "offload_device",
             "architecture",
         ):
-            if hasattr(transformer, attr):
-                setattr(streamed, attr, getattr(transformer, attr))
-        if hasattr(transformer, "codex_config"):
-            streamed.codex_config = transformer.codex_config
+            if hasattr(base_core, attr):
+                setattr(streamed, attr, getattr(base_core, attr))
+        if hasattr(base_core, "codex_config"):
+            streamed.codex_config = base_core.codex_config
 
         logger.info(
             "Flux streaming enabled (policy=%s, blocks_per_segment=%d, window_size=%d, free_vram_mb=%d)",
             streaming_config.policy,
             streaming_config.blocks_per_segment,
             streaming_config.window_size,
-            free_mb,
+            free_mb or 0,
         )
         return streamed
     except Exception as exc:  # noqa: BLE001

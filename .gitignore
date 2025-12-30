@@ -102,4 +102,5 @@ apps/settings_values.json
 !requirements*.txt
 *.docx
 .sangoi/reports/tooling/pyright/*
+# Model weights at repo root (do not ignore */models/ code folders).
 /models/

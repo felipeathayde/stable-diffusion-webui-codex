@@ -10,7 +10,7 @@ PYTHON_VERSION="${CODEX_PYTHON_VERSION:-3.12.10}"
 VENV_DIR="${ROOT_DIR}/.venv"
 
 TORCH_MODE="${CODEX_TORCH_MODE:-auto}" # auto|cpu|cuda|skip
-TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu118|cu126|cu128 (optional override)
+TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu118|cu126|cu128|cu130 (optional override)
 TRACE="${CODEX_INSTALL_TRACE:-0}"
 
 log() { echo "[install] $*"; }
@@ -65,8 +65,8 @@ install_python() {
 pick_torch_extra() {
   if [[ -n "${TORCH_BACKEND}" ]]; then
     case "${TORCH_BACKEND}" in
-      cpu|cu118|cu126|cu128) echo "${TORCH_BACKEND}"; return 0 ;;
-      *) die "invalid CODEX_TORCH_BACKEND='${TORCH_BACKEND}' (expected: cpu|cu118|cu126|cu128)";;
+      cpu|cu118|cu126|cu128|cu130) echo "${TORCH_BACKEND}"; return 0 ;;
+      *) die "invalid CODEX_TORCH_BACKEND='${TORCH_BACKEND}' (expected: cpu|cu118|cu126|cu128|cu130)";;
     esac
   fi
 
@@ -88,12 +88,74 @@ pick_torch_extra() {
   fi
 
   if [[ "${TORCH_MODE}" == "cuda" ]]; then
-    echo "cu126"
+    echo "cu128"
     return 0
   fi
 
   if command -v nvidia-smi >/dev/null 2>&1; then
-    echo "cu126"
+    local smi_line=""
+    smi_line="$(nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${smi_line}" ]]; then
+      local gpu_name="" driver_version="" cuda_version=""
+      IFS=',' read -r gpu_name driver_version cuda_version <<<"${smi_line}"
+      gpu_name="$(echo "${gpu_name}" | xargs)"
+      driver_version="$(echo "${driver_version}" | xargs)"
+      cuda_version="$(echo "${cuda_version}" | xargs)"
+
+      local driver_major="${driver_version%%.*}"
+      local cuda_major="${cuda_version%%.*}"
+      local cuda_minor="0"
+      if [[ "${cuda_version}" == *.* ]]; then
+        cuda_minor="${cuda_version#*.}"
+        cuda_minor="${cuda_minor%%.*}"
+      fi
+
+      # Heuristics:
+      # - Prefer CUDA 12.8+ wheels by default when NVIDIA is detected.
+      # - If the driver advertises CUDA 13.x and the driver major is new enough, prefer cu130.
+      # - If the driver is too old for CUDA 12.x (major < 525), fall back to cu118.
+      if [[ "${driver_major}" =~ ^[0-9]+$ ]] && (( driver_major < 525 )); then
+        echo "cu118"
+        return 0
+      fi
+
+      if [[ "${cuda_major}" =~ ^[0-9]+$ ]] && [[ "${cuda_minor}" =~ ^[0-9]+$ ]]; then
+        if (( cuda_major >= 13 )); then
+          if [[ "${driver_major}" =~ ^[0-9]+$ ]] && (( driver_major >= 580 )); then
+            echo "cu130"
+            return 0
+          fi
+          # Driver likely too old for CUDA 13 wheels.
+          echo "cu128"
+          return 0
+        fi
+        if (( cuda_major == 11 )); then
+          echo "cu118"
+          return 0
+        fi
+        if (( cuda_major == 12 && cuda_minor >= 8 )); then
+          echo "cu128"
+          return 0
+        fi
+        if (( cuda_major == 12 && cuda_minor >= 6 )); then
+          echo "cu126"
+          return 0
+        fi
+        if (( cuda_major == 12 )); then
+          # Still a CUDA 12 driver, but not 12.6+. Prefer cu126 wheels as a safe default.
+          echo "cu126"
+          return 0
+        fi
+      fi
+
+      # RTX 50-series is known to benefit from newer CUDA wheels; prefer cu128.
+      if echo "${gpu_name}" | rg -qi 'rtx[[:space:]]*50|rtx[[:space:]]*5[0-9]{3}'; then
+        echo "cu128"
+        return 0
+      fi
+    fi
+
+    echo "cu128"
     return 0
   fi
 

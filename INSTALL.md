@@ -45,9 +45,9 @@ Default behavior:
 
 Override:
 - `CODEX_TORCH_MODE=cpu` (force CPU: `--extra cpu`)
-- `CODEX_TORCH_MODE=cuda` (force CUDA: defaults to `--extra cu126`)
+- `CODEX_TORCH_MODE=cuda` (force CUDA: defaults to `--extra cu128`)
 - `CODEX_TORCH_MODE=skip` (skip torch/torchvision entirely; the WebUI will not run without PyTorch)
-- `CODEX_TORCH_BACKEND=cpu|cu118|cu126|cu128` (explicitly pick the PyTorch backend extra)
+- `CODEX_TORCH_BACKEND=cpu|cu118|cu126|cu128|cu130` (explicitly pick the PyTorch backend extra)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
 
 If CUDA install fails, try a different backend:

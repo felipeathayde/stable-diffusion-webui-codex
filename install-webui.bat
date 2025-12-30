@@ -61,13 +61,94 @@ if not "%TORCH_BACKEND%"=="" (
 ) else if /i "%TORCH_MODE%"=="cpu" (
   set "TORCH_EXTRA=cpu"
 ) else if /i "%TORCH_MODE%"=="cuda" (
-  set "TORCH_EXTRA=cu126"
+  set "TORCH_EXTRA=cu128"
 ) else (
   where nvidia-smi >nul 2>&1
   if errorlevel 1 (
     set "TORCH_EXTRA=cpu"
   ) else (
-    set "TORCH_EXTRA=cu126"
+    set "CUDA_VER="
+    for /f "delims=" %%i in ('nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2^>nul') do (
+      set "CUDA_VER=%%i"
+      goto :got_cuda
+    )
+    :got_cuda
+    set "DRIVER_VER="
+    for /f "delims=" %%i in ('nvidia-smi --query-gpu=driver_version --format=csv,noheader 2^>nul') do (
+      set "DRIVER_VER=%%i"
+      goto :got_driver
+    )
+    :got_driver
+    set "GPU_NAME="
+    for /f "delims=" %%i in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do (
+      set "GPU_NAME=%%i"
+      goto :got_name
+    )
+    :got_name
+
+    for /f "tokens=1 delims=." %%a in ("%DRIVER_VER%") do set "DRIVER_MAJOR=%%a"
+    for /f "tokens=1,2 delims=." %%a in ("%CUDA_VER%") do (
+      set "CUDA_MAJOR=%%a"
+      set "CUDA_MINOR=%%b"
+    )
+    if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
+
+    REM Driver major < 525: likely too old for CUDA 12.x wheels; fall back to cu118.
+    if not "%DRIVER_MAJOR%"=="" (
+      set /a _DRV=%DRIVER_MAJOR% 2>nul
+      if not errorlevel 1 (
+        if %_DRV% LSS 525 (
+          set "TORCH_EXTRA=cu118"
+          goto :picked_torch
+        )
+      )
+    )
+
+    REM Prefer CUDA 13 wheels when driver advertises CUDA 13.x and driver major is new enough.
+    if "%CUDA_MAJOR%"=="13" (
+      if not "%DRIVER_MAJOR%"=="" (
+        set /a _DRV2=%DRIVER_MAJOR% 2>nul
+        if not errorlevel 1 (
+          if %_DRV2% GEQ 580 (
+            set "TORCH_EXTRA=cu130"
+            goto :picked_torch
+          )
+        )
+      )
+      set "TORCH_EXTRA=cu128"
+      goto :picked_torch
+    )
+
+    REM Prefer cu128 for CUDA 12.8+ (or RTX 50-series by name heuristic).
+    echo %GPU_NAME% | findstr /i /r "RTX[ ]*50 RTX[ ]*5[0-9][0-9][0-9]" >nul 2>&1
+    if not errorlevel 1 (
+      set "TORCH_EXTRA=cu128"
+      goto :picked_torch
+    )
+
+    if "%CUDA_MAJOR%"=="12" (
+      set /a _MIN=%CUDA_MINOR% 2>nul
+      if not errorlevel 1 (
+        if %_MIN% GEQ 8 (
+          set "TORCH_EXTRA=cu128"
+          goto :picked_torch
+        )
+        if %_MIN% GEQ 6 (
+          set "TORCH_EXTRA=cu126"
+          goto :picked_torch
+        )
+        set "TORCH_EXTRA=cu126"
+        goto :picked_torch
+      )
+    )
+
+    if "%CUDA_MAJOR%"=="11" (
+      set "TORCH_EXTRA=cu118"
+      goto :picked_torch
+    )
+
+    set "TORCH_EXTRA=cu128"
+    :picked_torch
   )
 )
 

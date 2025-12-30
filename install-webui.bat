@@ -106,111 +106,94 @@ if errorlevel 1 (
 )
 
 set "TORCH_EXTRA="
-if not "%TORCH_BACKEND%"=="" (
-  set "TORCH_EXTRA=%TORCH_BACKEND%"
-) else if /i "%TORCH_MODE%"=="skip" (
-  set "TORCH_EXTRA="
-) else if /i "%TORCH_MODE%"=="cpu" (
+if not "%TORCH_BACKEND%"=="" set "TORCH_EXTRA=%TORCH_BACKEND%"
+if not "%TORCH_EXTRA%"=="" goto :torch_extra_done
+
+if /i "%TORCH_MODE%"=="skip" goto :torch_extra_done
+if /i "%TORCH_MODE%"=="cpu" set "TORCH_EXTRA=cpu" & goto :torch_extra_done
+if /i "%TORCH_MODE%"=="rocm" (
+  echo [install] Warning: ROCm is Linux-only; falling back to CPU. 1>&2
   set "TORCH_EXTRA=cpu"
-) else if /i "%TORCH_MODE%"=="cuda" (
-  if /i "%CUDA_VARIANT%"=="12.6" set "TORCH_EXTRA=cu126"
-  if /i "%CUDA_VARIANT%"=="cu126" set "TORCH_EXTRA=cu126"
-  if /i "%CUDA_VARIANT%"=="12.8" set "TORCH_EXTRA=cu128"
-  if /i "%CUDA_VARIANT%"=="cu128" set "TORCH_EXTRA=cu128"
-  if /i "%CUDA_VARIANT%"=="13" set "TORCH_EXTRA=cu130"
-  if /i "%CUDA_VARIANT%"=="cu130" set "TORCH_EXTRA=cu130"
-  if "%TORCH_EXTRA%"=="" set "TORCH_EXTRA=cu128"
-) else (
-  where nvidia-smi >nul 2>&1
-  if errorlevel 1 (
-    set "TORCH_EXTRA=cpu"
-  ) else (
-    if /i "%CUDA_VARIANT%"=="12.6" (set "TORCH_EXTRA=cu126" & goto :picked_torch)
-    if /i "%CUDA_VARIANT%"=="cu126" (set "TORCH_EXTRA=cu126" & goto :picked_torch)
-    if /i "%CUDA_VARIANT%"=="12.8" (set "TORCH_EXTRA=cu128" & goto :picked_torch)
-    if /i "%CUDA_VARIANT%"=="cu128" (set "TORCH_EXTRA=cu128" & goto :picked_torch)
-    if /i "%CUDA_VARIANT%"=="13" (set "TORCH_EXTRA=cu130" & goto :picked_torch)
-    if /i "%CUDA_VARIANT%"=="cu130" (set "TORCH_EXTRA=cu130" & goto :picked_torch)
+  goto :torch_extra_done
+)
 
-    set "CUDA_VER="
-    for /f "delims=" %%i in ('nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2^>nul') do (
-      set "CUDA_VER=%%i"
-      goto :got_cuda
-    )
-    :got_cuda
-    set "DRIVER_VER="
-    for /f "delims=" %%i in ('nvidia-smi --query-gpu=driver_version --format=csv,noheader 2^>nul') do (
-      set "DRIVER_VER=%%i"
-      goto :got_driver
-    )
-    :got_driver
-    set "GPU_NAME="
-    for /f "delims=" %%i in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do (
-      set "GPU_NAME=%%i"
-      goto :got_name
-    )
-    :got_name
+if /i "%TORCH_MODE%"=="cuda" (
+  call :pick_cuda_variant
+  goto :torch_extra_done
+)
 
-    for /f "tokens=1 delims=." %%a in ("%DRIVER_VER%") do set "DRIVER_MAJOR=%%a"
-    for /f "tokens=1,2 delims=." %%a in ("%CUDA_VER%") do (
-      set "CUDA_MAJOR=%%a"
-      set "CUDA_MINOR=%%b"
-    )
-    if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
+REM auto
+where nvidia-smi >nul 2>&1
+if errorlevel 1 (
+  set "TORCH_EXTRA=cpu"
+  goto :torch_extra_done
+)
 
-    REM Driver major < 525: likely too old for CUDA 12.x wheels; fall back to cpu.
-    if not "%DRIVER_MAJOR%"=="" (
-      set /a _DRV=%DRIVER_MAJOR% 2>nul
-      if not errorlevel 1 (
-        if %_DRV% LSS 525 (
-          set "TORCH_EXTRA=cpu"
-          goto :picked_torch
-        )
-      )
-    )
+if not "%CUDA_VARIANT%"=="" (
+  call :pick_cuda_variant
+  goto :torch_extra_done
+)
 
-    REM Prefer CUDA 13 wheels when driver advertises CUDA 13.x and driver major is new enough.
-    if "%CUDA_MAJOR%"=="13" (
-      if not "%DRIVER_MAJOR%"=="" (
-        set /a _DRV2=%DRIVER_MAJOR% 2>nul
-        if not errorlevel 1 (
-          if %_DRV2% GEQ 580 (
-            set "TORCH_EXTRA=cu130"
-            goto :picked_torch
-          )
-        )
-      )
-      set "TORCH_EXTRA=cu128"
-      goto :picked_torch
-    )
+set "CUDA_VER="
+for /f "delims=" %%i in ('nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2^>nul') do if not defined CUDA_VER set "CUDA_VER=%%i"
+set "DRIVER_VER="
+for /f "delims=" %%i in ('nvidia-smi --query-gpu=driver_version --format=csv,noheader 2^>nul') do if not defined DRIVER_VER set "DRIVER_VER=%%i"
+set "GPU_NAME="
+for /f "delims=" %%i in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do if not defined GPU_NAME set "GPU_NAME=%%i"
 
-    REM Prefer cu128 for CUDA 12.8+ (or RTX 50-series by name heuristic).
-    echo %GPU_NAME% | findstr /i /r "RTX[ ]*50 RTX[ ]*5[0-9][0-9][0-9]" >nul 2>&1
-    if not errorlevel 1 (
-      set "TORCH_EXTRA=cu128"
-      goto :picked_torch
-    )
+set "DRIVER_MAJOR="
+for /f "tokens=1 delims=." %%a in ("%DRIVER_VER%") do set "DRIVER_MAJOR=%%a"
+set "CUDA_MAJOR="
+set "CUDA_MINOR=0"
+for /f "tokens=1,2 delims=." %%a in ("%CUDA_VER%") do (
+  set "CUDA_MAJOR=%%a"
+  set "CUDA_MINOR=%%b"
+)
+if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
 
-    if "%CUDA_MAJOR%"=="12" (
-      set /a _MIN=%CUDA_MINOR% 2>nul
-      if not errorlevel 1 (
-        if %_MIN% GEQ 8 (
-          set "TORCH_EXTRA=cu128"
-          goto :picked_torch
-        )
-        if %_MIN% GEQ 6 (
-          set "TORCH_EXTRA=cu126"
-          goto :picked_torch
-        )
-        set "TORCH_EXTRA=cu126"
-        goto :picked_torch
-      )
-    )
+REM Defaults / heuristics
+set "TORCH_EXTRA=cu128"
 
-    set "TORCH_EXTRA=cu128"
-    :picked_torch
+if not "%DRIVER_MAJOR%"=="" (
+  set /a _DRV=%DRIVER_MAJOR% 2>nul
+  if not errorlevel 1 (
+    if %_DRV% LSS 525 (
+      set "TORCH_EXTRA=cpu"
+      goto :torch_extra_done
+    )
   )
 )
+
+if "%CUDA_MAJOR%"=="13" (
+  if not "%DRIVER_MAJOR%"=="" (
+    set /a _DRV2=%DRIVER_MAJOR% 2>nul
+    if not errorlevel 1 (
+      if %_DRV2% GEQ 580 (
+        set "TORCH_EXTRA=cu130"
+        goto :torch_extra_done
+      )
+    )
+  )
+  set "TORCH_EXTRA=cu128"
+  goto :torch_extra_done
+)
+
+echo %GPU_NAME% | findstr /i /r "RTX[ ]*50 RTX[ ]*5[0-9][0-9][0-9]" >nul 2>&1
+if not errorlevel 1 (
+  set "TORCH_EXTRA=cu128"
+  goto :torch_extra_done
+)
+
+if "%CUDA_MAJOR%"=="12" (
+  set /a _MIN=%CUDA_MINOR% 2>nul
+  if not errorlevel 1 (
+    if %_MIN% GEQ 8 set "TORCH_EXTRA=cu128" & goto :torch_extra_done
+    if %_MIN% GEQ 6 set "TORCH_EXTRA=cu126" & goto :torch_extra_done
+    set "TORCH_EXTRA=cu126"
+  )
+)
+
+:torch_extra_done
 
 if "%TORCH_EXTRA%"=="" (
   echo [install] Warning: skipping torch/torchvision install (CODEX_TORCH_MODE=skip). The WebUI will not run without PyTorch. 1>&2
@@ -229,13 +212,13 @@ echo [install] Installing frontend dependencies (npm) ...
 where node >nul 2>&1
 if errorlevel 1 (
   echo [install] Warning: missing 'node' on PATH; skipping frontend install. 1>&2
-  echo [install] Install Node.js (^>=18^), then run: cd apps\\interface ^&^& npm install 1>&2
+  echo [install] Install Node.js >=18, then run: cd apps\\interface ^&^& npm install 1>&2
   goto :done
 )
 where npm >nul 2>&1
 if errorlevel 1 (
   echo [install] Warning: missing 'npm' on PATH; skipping frontend install. 1>&2
-  echo [install] Install Node.js (^>=18^), then run: cd apps\\interface ^&^& npm install 1>&2
+  echo [install] Install Node.js >=18, then run: cd apps\\interface ^&^& npm install 1>&2
   goto :done
 )
 
@@ -370,6 +353,16 @@ echo.
 set "PCHOICE="
 set /p "PCHOICE=Select an option (1-2): "
 if "%PCHOICE%"=="1" set "CODEX_MENU_RERUN=1"
+exit /b 0
+
+:pick_cuda_variant
+if /i "%CUDA_VARIANT%"=="12.6" set "TORCH_EXTRA=cu126" & exit /b 0
+if /i "%CUDA_VARIANT%"=="cu126" set "TORCH_EXTRA=cu126" & exit /b 0
+if /i "%CUDA_VARIANT%"=="12.8" set "TORCH_EXTRA=cu128" & exit /b 0
+if /i "%CUDA_VARIANT%"=="cu128" set "TORCH_EXTRA=cu128" & exit /b 0
+if /i "%CUDA_VARIANT%"=="13" set "TORCH_EXTRA=cu130" & exit /b 0
+if /i "%CUDA_VARIANT%"=="cu130" set "TORCH_EXTRA=cu130" & exit /b 0
+set "TORCH_EXTRA=cu128"
 exit /b 0
 
 :install_uv

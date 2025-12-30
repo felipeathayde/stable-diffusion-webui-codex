@@ -2,6 +2,57 @@
 setlocal
 
 set "ROOT=%~dp0"
+
+REM --------------------------------------------------
+REM Interactive menu (Windows)
+REM --------------------------------------------------
+REM By default, show a Simple vs Advanced menu so users don't need to set env vars manually.
+REM For automation / CI, pass --no-menu (or pre-set CODEX_* env vars).
+
+:restart
+set "CODEX_MENU_USED="
+set "CODEX_MENU_CANCEL="
+set "CODEX_MENU_RERUN="
+
+set "SHOW_MENU=1"
+set "FORCE_MENU="
+
+REM Args:
+REM   --no-menu   Skip prompts
+REM   --menu      Force prompts even if env vars are set
+REM   --simple    Equivalent to AUTO (no prompts)
+if /i "%~1"=="--no-menu" set "SHOW_MENU="
+if /i "%~1"=="--simple" (
+  set "SHOW_MENU="
+  set "CODEX_TORCH_MODE=auto"
+  set "CODEX_TORCH_BACKEND="
+  set "CODEX_CUDA_VARIANT="
+)
+if /i "%~1"=="--menu" (
+  set "SHOW_MENU=1"
+  set "FORCE_MENU=1"
+)
+
+if defined CODEX_NO_MENU set "SHOW_MENU="
+if defined CI set "SHOW_MENU="
+if defined GITHUB_ACTIONS set "SHOW_MENU="
+
+if not defined FORCE_MENU (
+  if defined CODEX_TORCH_MODE set "SHOW_MENU="
+  if defined CODEX_TORCH_BACKEND set "SHOW_MENU="
+  if defined CODEX_CUDA_VARIANT set "SHOW_MENU="
+  if defined CODEX_PYTHON_VERSION set "SHOW_MENU="
+  if defined CODEX_UV_VERSION set "SHOW_MENU="
+)
+set "FORCE_MENU="
+
+if defined SHOW_MENU (
+  call :ui_menu
+  if errorlevel 1 exit /b 1
+  if defined CODEX_MENU_CANCEL exit /b 0
+)
+set "SHOW_MENU="
+
 set "UV_VERSION=%CODEX_UV_VERSION%"
 if "%UV_VERSION%"=="" set "UV_VERSION=0.9.17"
 set "UV_DIR=%ROOT%.uv\\bin"
@@ -206,6 +257,119 @@ echo.
 echo [install] Done.
 echo [install] Run: run-webui.bat
 
+if defined CODEX_MENU_USED (
+  call :ui_menu_post
+  if defined CODEX_MENU_RERUN goto :restart
+)
+
+exit /b 0
+
+:ui_menu
+set "CODEX_MENU_USED=1"
+
+:ui_menu_loop
+cls
+echo ==================================================
+echo  Codex WebUI Installer (Windows)
+echo ==================================================
+echo.
+echo  [1] Simple install (AUTO)
+echo  [2] Advanced (choose backend / CUDA)
+echo  [3] Exit
+echo.
+set "CHOICE="
+set /p "CHOICE=Select an option (1-3): "
+
+if "%CHOICE%"=="1" goto :ui_menu_set_simple
+if "%CHOICE%"=="2" goto :ui_menu_advanced
+if "%CHOICE%"=="3" goto :ui_menu_cancel
+goto :ui_menu_loop
+
+:ui_menu_set_simple
+set "CODEX_TORCH_MODE=auto"
+set "CODEX_TORCH_BACKEND="
+set "CODEX_CUDA_VARIANT="
+exit /b 0
+
+:ui_menu_cancel
+set "CODEX_MENU_CANCEL=1"
+exit /b 0
+
+:ui_menu_advanced
+cls
+echo ==================================================
+echo  Advanced Install Options
+echo ==================================================
+echo.
+echo  Choose a backend:
+echo   [1] AUTO (default)
+echo   [2] CPU
+echo   [3] CUDA (pick 12.6/12.8/13)
+echo   [4] SKIP torch install (not recommended)
+echo   [5] Back
+echo.
+set "BCHOICE="
+set /p "BCHOICE=Select backend (1-5): "
+
+if "%BCHOICE%"=="5" goto :ui_menu_loop
+
+REM Reset only what this UI owns.
+set "CODEX_TORCH_MODE="
+set "CODEX_TORCH_BACKEND="
+set "CODEX_CUDA_VARIANT="
+
+if "%BCHOICE%"=="1" (
+  set "CODEX_TORCH_MODE=auto"
+  exit /b 0
+)
+if "%BCHOICE%"=="2" (
+  set "CODEX_TORCH_MODE=cpu"
+  exit /b 0
+)
+if "%BCHOICE%"=="3" goto :ui_menu_cuda
+if "%BCHOICE%"=="4" (
+  set "CODEX_TORCH_MODE=skip"
+  exit /b 0
+)
+goto :ui_menu_advanced
+
+:ui_menu_cuda
+cls
+echo ==================================================
+echo  CUDA Variant
+echo ==================================================
+echo.
+echo  Pick a CUDA wheel family (PyTorch):
+echo   [1] CUDA 12.6  (cu126)
+echo   [2] CUDA 12.8  (cu128)  [recommended]
+echo   [3] CUDA 13    (cu130)
+echo   [4] Back
+echo.
+set "CCHOICE="
+set /p "CCHOICE=Select CUDA (1-4): "
+
+if "%CCHOICE%"=="4" goto :ui_menu_advanced
+
+set "CODEX_TORCH_MODE=cuda"
+if "%CCHOICE%"=="1" set "CODEX_CUDA_VARIANT=12.6"
+if "%CCHOICE%"=="2" set "CODEX_CUDA_VARIANT=12.8"
+if "%CCHOICE%"=="3" set "CODEX_CUDA_VARIANT=13"
+
+if "%CODEX_CUDA_VARIANT%"=="" goto :ui_menu_cuda
+exit /b 0
+
+:ui_menu_post
+echo.
+echo ==================================================
+echo  Installer finished.
+echo ==================================================
+echo.
+echo  [1] Back to menu
+echo  [2] Exit
+echo.
+set "PCHOICE="
+set /p "PCHOICE=Select an option (1-2): "
+if "%PCHOICE%"=="1" set "CODEX_MENU_RERUN=1"
 exit /b 0
 
 :install_uv

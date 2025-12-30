@@ -20,10 +20,8 @@ Optional:
 install-webui.bat
 ```
 
-If you prefer an interactive installer that prompts for CUDA options (no env vars):
-```bat
-install-webui-menu.bat
-```
+On Windows, `install-webui.bat` prompts for **Simple vs Advanced** (CUDA 12.6/12.8/13) by default.
+For automation, pass `--no-menu`.
 
 2) Launch the GUI launcher:
 ```bat

@@ -198,14 +198,18 @@ if "%CUDA_MAJOR%"=="12" (
 
 :torch_extra_done
 
-if "%TORCH_EXTRA%"=="" (
-  echo [install] Warning: skipping torch/torchvision install. CODEX_TORCH_MODE=skip. The WebUI will not run without PyTorch. 1>&2
-  echo [install] Syncing Python dependencies [locked] ...
-  "%UV_BIN%" sync --locked
-) else (
-  echo [install] Syncing Python dependencies [locked] with torch extra: %TORCH_EXTRA% ...
-  "%UV_BIN%" sync --locked --extra "%TORCH_EXTRA%"
-)
+if "%TORCH_EXTRA%"=="" goto :uv_sync_no_torch
+
+echo [install] Syncing Python dependencies [locked] with torch extra: %TORCH_EXTRA% ...
+"%UV_BIN%" sync --locked --extra "%TORCH_EXTRA%"
+goto :uv_sync_done
+
+:uv_sync_no_torch
+echo [install] Warning: skipping torch/torchvision install. CODEX_TORCH_MODE=skip. WebUI requires PyTorch. 1>&2
+echo [install] Syncing Python dependencies [locked] ...
+"%UV_BIN%" sync --locked
+
+:uv_sync_done
 if errorlevel 1 (
   echo Error: uv sync failed.>&2
   exit /b 1
@@ -213,17 +217,9 @@ if errorlevel 1 (
 
 echo [install] Installing frontend dependencies (npm) ...
 where node >nul 2>&1
-if errorlevel 1 (
-  echo [install] Warning: missing 'node' on PATH; skipping frontend install. 1>&2
-  echo [install] Install Node.js >=18, then run: cd apps\\interface ^&^& npm install 1>&2
-  goto :done
-)
+if errorlevel 1 goto :frontend_missing_node
 where npm >nul 2>&1
-if errorlevel 1 (
-  echo [install] Warning: missing 'npm' on PATH; skipping frontend install. 1>&2
-  echo [install] Install Node.js >=18, then run: cd apps\\interface ^&^& npm install 1>&2
-  goto :done
-)
+if errorlevel 1 goto :frontend_missing_npm
 
 echo [install] node: 
 node -v
@@ -237,6 +233,21 @@ if errorlevel 1 (
   exit /b 1
 )
 popd
+goto :done
+
+:frontend_missing_node
+echo [install] Warning: missing 'node' on PATH; skipping frontend install. 1>&2
+echo [install] Install Node.js 18+ and then run:
+echo [install]   cd apps\\interface
+echo [install]   npm install
+goto :done
+
+:frontend_missing_npm
+echo [install] Warning: missing 'npm' on PATH; skipping frontend install. 1>&2
+echo [install] Install Node.js 18+ and then run:
+echo [install]   cd apps\\interface
+echo [install]   npm install
+goto :done
 
 :done
 echo.

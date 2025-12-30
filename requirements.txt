@@ -1,8 +1,8 @@
-# Codex WebUI (backend) Python requirements (pinned, torch excluded)
+# Codex WebUI (backend) Python requirements (legacy; pinned, torch excluded)
 #
 # Important:
-# - This file intentionally does NOT pin/install PyTorch. Use `install-webui.(bat|sh)` to auto-install
-#   torch/torchvision (CPU/CUDA auto-detect), or install torch manually if you prefer.
+# - This repo now uses `uv.lock` + `pyproject.toml` as the source of truth for dependency versions.
+# - This file is kept for reference only and is no longer used by the installers.
 # - Keep "extra" research/devenv packages (e.g. pyiqa/datasets/numba/opencv) in a separate venv.
 #
 # This file is meant to be a "known good" baseline for community installs.

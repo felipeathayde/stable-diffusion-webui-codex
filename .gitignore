@@ -104,3 +104,6 @@ apps/settings_values.json
 .sangoi/reports/tooling/pyright/*
 # Model weights at repo root (do not ignore */models/ code folders).
 /models/
+
+# uv (repo-local installer + managed CPython installs)
+/.uv/

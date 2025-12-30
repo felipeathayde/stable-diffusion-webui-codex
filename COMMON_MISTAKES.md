@@ -79,6 +79,10 @@
 **Cause + fix:** `Typo in the search term; the code exposes "_BNB_AVAILABLE" (double 'l').`
 **Correct command:** `rg -n "_BNB_AVAILABLE" apps/backend/runtime/ops`
 
+**Wrong command:** `uv sync --locked --frozen --extra cpu`
+**Cause + fix:** `uv treats --locked and --frozen as mutually exclusive for sync. Use --locked (preferred for installs: errors if the lock would change) or --frozen (use the lock without updating it).`
+**Correct command:** `uv sync --locked --extra cpu`
+
 **Wrong command:** `~/.venv/bin/python -c "from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`
 **Cause + fix:** `Backend config auto-initializes with AUTO devices and aborts when CUDA is unavailable; set explicit CPU devices before importing.`
 **Correct command:** `CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python -c "from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`

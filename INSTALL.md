@@ -6,9 +6,8 @@ This repo ships:
 
 ## Prerequisites
 - Git
-- Python 3.12+ (recommended)
 - Node.js 18+ (for the Vue UI)
-- **PyTorch** (the installer will try to auto-install; see “PyTorch” below)
+- Internet access (first install: downloads `uv`, CPython 3.12.10, and wheels)
 
 Optional:
 - `ffmpeg` + `ffprobe` on `PATH` (video export / vid2vid workflows)
@@ -16,25 +15,18 @@ Optional:
 ## Quick install (recommended)
 
 ### Windows (PowerShell or CMD)
-1) Run the installer (creates `.venv`, installs Python deps, runs `npm install`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`):
 ```bat
 install-webui.bat
 ```
-
-Note: the Windows installer delegates most logic to `tools/install_webui.py` (prints detailed detection + version info).
 
 2) Launch the GUI launcher:
 ```bat
 run-webui.bat
 ```
 
-If you prefer an interactive shell with the venv activated:
-```bat
-activate-venv.bat
-```
-
 ### Linux / WSL
-1) Run the installer (creates `.venv`, installs Python deps, runs `npm install`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`):
 ```bash
 bash install-webui.sh
 ```
@@ -45,26 +37,28 @@ bash install-webui.sh
 ```
 
 ## PyTorch
-`requirements.txt` intentionally **does not** install `torch` / `torchvision`.
+This repo uses `uv.lock` to pin and lock dependency versions (including PyTorch variants). The installers choose **one** PyTorch backend via `uv` extras.
 
-The installers try to auto-install `torch` + `torchvision`:
-- Detect NVIDIA via `nvidia-smi` and pick CUDA wheels (fallback chain).
-- Otherwise install CPU wheels.
+Default behavior:
+- `CODEX_TORCH_MODE=auto` (default): if `nvidia-smi` exists, install the CUDA 12.6 wheels (`--extra cu126`), otherwise CPU (`--extra cpu`).
+- On macOS, the installers always use `cpu`.
 
 Override:
-- `CODEX_TORCH_MODE=cpu` (force CPU)
-- `CODEX_TORCH_MODE=cuda` (force CUDA wheel attempt)
-- `CODEX_TORCH_MODE=skip` (don’t install torch)
+- `CODEX_TORCH_MODE=cpu` (force CPU: `--extra cpu`)
+- `CODEX_TORCH_MODE=cuda` (force CUDA: defaults to `--extra cu126`)
+- `CODEX_TORCH_MODE=skip` (skip torch/torchvision entirely; the WebUI will not run without PyTorch)
+- `CODEX_TORCH_BACKEND=cpu|cu118|cu126|cu128` (explicitly pick the PyTorch backend extra)
 - `CODEX_INSTALL_TRACE=1` (Linux/WSL installer: enable shell trace for debugging)
 
-If auto-install fails, install PyTorch for your platform (CPU/CUDA) using the official PyTorch instructions, then re-run the installer.
+If CUDA install fails, try a different backend:
+- Example: `CODEX_TORCH_BACKEND=cu118 bash install-webui.sh`
 
 ## Troubleshooting
 
 ### `ImportError: cannot import name 'EncoderDecoderCache' from 'transformers'`
 Your `peft` and `transformers` are out of sync (common when extra packages pull older pins).
 
-Fix: remove the venv and re-install with this repo’s pinned requirements:
+Fix: remove the venv and re-install with this repo’s locked dependencies:
 - Delete `.venv`
 - Re-run `install-webui.(bat|sh)`
 

@@ -2,10 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UV_VERSION="${CODEX_UV_VERSION:-0.9.17}"
+UV_DIR="${ROOT_DIR}/.uv/bin"
+UV_BIN="${UV_DIR}/uv"
+
+PYTHON_VERSION="${CODEX_PYTHON_VERSION:-3.12.10}"
 VENV_DIR="${ROOT_DIR}/.venv"
-PY_BIN="${VENV_DIR}/bin/python"
 
 TORCH_MODE="${CODEX_TORCH_MODE:-auto}" # auto|cpu|cuda|skip
+TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu118|cu126|cu128 (optional override)
 TRACE="${CODEX_INSTALL_TRACE:-0}"
 
 log() { echo "[install] $*"; }
@@ -18,153 +23,102 @@ if [[ "${TRACE}" == "1" ]]; then
 fi
 
 log "Repo: ${ROOT_DIR}"
-log "Venv: ${VENV_DIR}"
+log "uv: ${UV_BIN} (version pin: ${UV_VERSION})"
+log "Python: ${PYTHON_VERSION} (managed by uv)"
+log "Venv: ${VENV_DIR} (created by uv; uses the managed Python)"
 log "Torch mode: ${TORCH_MODE} (override via CODEX_TORCH_MODE=auto|cpu|cuda|skip)"
+if [[ -n "${TORCH_BACKEND}" ]]; then
+  log "Torch backend override: ${TORCH_BACKEND} (CODEX_TORCH_BACKEND)"
+fi
 log "Host: $(uname -a)"
 
-if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
-  die "missing python3/python on PATH."
-fi
-
-BOOTSTRAP_PY="python"
-if command -v python3 >/dev/null 2>&1; then
-  BOOTSTRAP_PY="python3"
-fi
-
-log "Bootstrap Python: $(command -v "${BOOTSTRAP_PY}")"
-"${BOOTSTRAP_PY}" -V
-
-if [[ ! -d "${VENV_DIR}" ]]; then
-  log "Creating venv at ${VENV_DIR} ..."
-  "${BOOTSTRAP_PY}" -m venv "${VENV_DIR}"
-else
-  log "Venv already exists; reusing."
-fi
-
-if [[ ! -x "${PY_BIN}" ]]; then
-  die "expected venv python at '${PY_BIN}'."
-fi
-
-log "Venv Python: ${PY_BIN}"
-"${PY_BIN}" -V
-"${PY_BIN}" -m pip --version
-
-log "Upgrading pip tooling ..."
-"${PY_BIN}" -m pip install -U pip wheel setuptools
-"${PY_BIN}" -m pip --version
-
-install_torch() {
-  if [[ "${TORCH_MODE}" == "skip" ]]; then
-    log "Skipping torch install (CODEX_TORCH_MODE=skip)."
+bootstrap_uv() {
+  if [[ -x "${UV_BIN}" ]]; then
     return 0
   fi
 
-  if "${PY_BIN}" -c "import torch; print(torch.__version__)" >/dev/null 2>&1; then
-    log "torch already installed; skipping."
+  if ! command -v curl >/dev/null 2>&1; then
+    die "missing 'curl' on PATH; required to download uv."
+  fi
+
+  mkdir -p "${UV_DIR}"
+
+  log "Installing uv ${UV_VERSION} into ${UV_DIR} ..."
+  curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | \
+    env UV_NO_MODIFY_PATH=1 UV_UNMANAGED_INSTALL="${UV_DIR}" sh
+
+  if [[ ! -x "${UV_BIN}" ]]; then
+    die "uv install succeeded but '${UV_BIN}' is missing or not executable."
+  fi
+}
+
+install_python() {
+  export UV_PYTHON_INSTALL_DIR="${ROOT_DIR}/.uv/python"
+  export UV_PYTHON_INSTALL_BIN=0
+  export UV_PYTHON_PREFERENCE="only-managed"
+  export UV_PYTHON_DOWNLOADS="manual"
+
+  log "Installing managed Python ${PYTHON_VERSION} ..."
+  "${UV_BIN}" python install "${PYTHON_VERSION}"
+}
+
+pick_torch_extra() {
+  if [[ -n "${TORCH_BACKEND}" ]]; then
+    case "${TORCH_BACKEND}" in
+      cpu|cu118|cu126|cu128) echo "${TORCH_BACKEND}"; return 0 ;;
+      *) die "invalid CODEX_TORCH_BACKEND='${TORCH_BACKEND}' (expected: cpu|cu118|cu126|cu128)";;
+    esac
+  fi
+
+  if [[ "${TORCH_MODE}" == "skip" ]]; then
+    echo ""
     return 0
   fi
 
   local platform
   platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  local arch
-  arch="$(uname -m | tr '[:upper:]' '[:lower:]')"
-  log "Torch install: platform=${platform} arch=${arch}"
-
   if [[ "${platform}" == "darwin" ]]; then
-    log "Installing torch/torchvision (macOS default wheels) ..."
-    "${PY_BIN}" -m pip install torch torchvision || return 1
+    echo "cpu"
     return 0
   fi
 
-  local candidates=()
   if [[ "${TORCH_MODE}" == "cpu" ]]; then
-    candidates=(cpu)
-  elif [[ "${TORCH_MODE}" == "cuda" ]]; then
-    # Force CUDA wheels (fallback chain), even if nvidia-smi is missing.
-    candidates=(cu126 cu124 cu121 cu118)
-  else
-    if command -v nvidia-smi >/dev/null 2>&1; then
-      log "nvidia-smi detected at: $(command -v nvidia-smi)"
-      local smi_q=""
-      smi_q="$(nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader 2>/dev/null || true)"
-      if [[ -n "${smi_q}" ]]; then
-        log "nvidia-smi GPUs (name, driver, cuda): ${smi_q//$'\n'/ | }"
-      else
-        log "nvidia-smi present but GPU query failed."
-      fi
-      log "Selecting CUDA wheels first (nvidia-smi present) then CPU fallback."
-      candidates=(cu126 cu124 cu121 cu118 cpu)
-    else
-      candidates=(cpu)
-    fi
+    echo "cpu"
+    return 0
   fi
 
-  log "Torch wheel candidates: ${candidates[*]}"
-
-  local ok=1
-  for variant in "${candidates[@]}"; do
-    log "Installing torch/torchvision (${variant}) via PyTorch index ..."
-    if "${PY_BIN}" -m pip install \
-      --index-url "https://download.pytorch.org/whl/${variant}" \
-      --extra-index-url "https://pypi.org/simple" \
-      torch torchvision; then
-      ok=0
-      break
-    fi
-  done
-
-  if [[ "${ok}" -ne 0 ]]; then
-    warn "failed to install torch automatically."
-    warn "Tip: set CODEX_TORCH_MODE=cpu to force CPU wheels, CODEX_TORCH_MODE=cuda to force CUDA attempts, or CODEX_TORCH_MODE=skip to skip."
-    return 1
+  if [[ "${TORCH_MODE}" == "cuda" ]]; then
+    echo "cu126"
+    return 0
   fi
+
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "cu126"
+    return 0
+  fi
+
+  echo "cpu"
 }
 
-install_torch
+sync_python_deps() {
+  export UV_PROJECT_ENVIRONMENT="${VENV_DIR}"
 
-log "Installing Python requirements ..."
-"${PY_BIN}" -m pip install -r "${ROOT_DIR}/requirements.txt"
+  local extra
+  extra="$(pick_torch_extra)"
+  if [[ -z "${extra}" ]]; then
+    warn "Skipping torch/torchvision install (CODEX_TORCH_MODE=skip). The WebUI will not run without PyTorch."
+    log "Syncing Python dependencies (locked) ..."
+    "${UV_BIN}" sync --locked
+    return 0
+  fi
 
-log "Installed versions (sanity):"
-"${PY_BIN}" - <<'PY' || true
-import platform
-import sys
-import importlib.metadata as m
+  log "Syncing Python dependencies (locked) with torch extra: ${extra} ..."
+  "${UV_BIN}" sync --locked --extra "${extra}"
+}
 
-def v(dist: str) -> str:
-    try:
-        return m.version(dist)
-    except Exception:
-        return "missing"
-
-print("python", sys.version.split()[0], "exe", sys.executable)
-print("platform", platform.platform())
-for dist in [
-    "torch",
-    "torchvision",
-    "diffusers",
-    "transformers",
-    "peft",
-    "accelerate",
-    "huggingface-hub",
-    "tokenizers",
-    "safetensors",
-    "fastapi",
-    "uvicorn",
-    "pydantic",
-    "numpy",
-    "pillow",
-]:
-    print(f"{dist} {v(dist)}")
-try:
-    import torch
-    print("torch.cuda.is_available", torch.cuda.is_available())
-except Exception as e:
-    print("torch import failed:", repr(e))
-PY
-
-log "pip check:"
-"${PY_BIN}" -m pip check || true
+bootstrap_uv
+install_python
+sync_python_deps
 
 log "Installing frontend dependencies (npm) ..."
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then

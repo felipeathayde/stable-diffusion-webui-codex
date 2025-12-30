@@ -3,13 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-DEFAULT_VENV_DIR="${ROOT_DIR}/.venv"
-if [[ -d "${DEFAULT_VENV_DIR}" ]]; then
-  VENV_DIR="${CODEX_VENV_DIR:-$DEFAULT_VENV_DIR}"
-else
-  VENV_DIR="${CODEX_VENV_DIR:-$HOME/.venv}"
-fi
-PY_BIN="${PYTHON:-$VENV_DIR/bin/python}"
+UV_BIN="${ROOT_DIR}/.uv/bin/uv"
+VENV_DIR="${CODEX_VENV_DIR:-${ROOT_DIR}/.venv}"
+PY_BIN="${PYTHON:-${VENV_DIR}/bin/python}"
 API_ENTRYPOINT="${ROOT_DIR}/apps/backend/interfaces/api/run_api.py"
 UI_DIR="${ROOT_DIR}/apps/interface"
 
@@ -22,7 +18,7 @@ Starts:
   - Frontend UI (Vite) from ${UI_DIR}
 
 Environment overrides:
-  - CODEX_VENV_DIR   (default: \$HOME/.venv)
+  - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
   - PYTHON           (default: \$CODEX_VENV_DIR/bin/python)
   - API_PORT_OVERRIDE / API_PORT / WEB_PORT (advanced; ports are auto-paired when unset)
 EOF
@@ -31,7 +27,12 @@ fi
 
 if [[ ! -x "${PY_BIN}" ]]; then
   echo "Error: expected Python at '${PY_BIN}'." >&2
-  echo "Set PYTHON to an executable or create the venv at '${VENV_DIR}'." >&2
+  echo "Run: ./install-webui.sh" >&2
+  if [[ -x "${UV_BIN}" ]]; then
+    echo "Found uv at '${UV_BIN}', but the project environment is missing." >&2
+  else
+    echo "uv is missing at '${UV_BIN}'." >&2
+  fi
   exit 1
 fi
 

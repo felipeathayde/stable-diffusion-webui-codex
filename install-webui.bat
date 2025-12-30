@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions DisableDelayedExpansion
 
 set "ROOT=%~dp0"
 
@@ -69,21 +69,20 @@ set "TORCH_BACKEND=%CODEX_TORCH_BACKEND%"
 set "CUDA_VARIANT=%CODEX_CUDA_VARIANT%"
 
 echo [install] Repo: %ROOT%
-echo [install] uv: %UV_BIN% (version pin: %UV_VERSION%)
-echo [install] Python: %PYTHON_VERSION% (managed by uv)
-echo [install] Venv: %VENV% (created by uv; uses the managed Python)
-echo [install] Torch mode: %TORCH_MODE% (CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip)
-if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND% (CODEX_TORCH_BACKEND)
-if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT% (CODEX_CUDA_VARIANT)
+echo [install] uv: %UV_BIN%  version pin: %UV_VERSION%
+echo [install] Python: %PYTHON_VERSION%  managed by uv
+echo [install] Venv: %VENV%  created by uv; uses the managed Python
+echo [install] Torch mode: %TORCH_MODE%  CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip
+if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND%  CODEX_TORCH_BACKEND
+if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT%  CODEX_CUDA_VARIANT
 
 if exist "%UV_BIN%" goto :uv_ok
 if not exist "%UV_DIR%" mkdir "%UV_DIR%"
 echo [install] Installing uv %UV_VERSION% into %UV_DIR% ...
 call :install_uv
-if errorlevel 1 (
-  echo Error: failed to install uv.>&2
-  exit /b 1
-)
+if not errorlevel 1 goto :uv_ok
+echo Error: failed to install uv.>&2
+exit /b 1
 :uv_ok
 
 if not exist "%UV_BIN%" (
@@ -100,39 +99,48 @@ set "UV_PROJECT_ENVIRONMENT=%VENV%"
 
 echo [install] Installing managed Python %PYTHON_VERSION% ...
 "%UV_BIN%" python install "%PYTHON_VERSION%"
-if errorlevel 1 (
-  echo Error: failed to install Python %PYTHON_VERSION% via uv.>&2
-  exit /b 1
-)
+if not errorlevel 1 goto :python_ok
+echo Error: failed to install Python %PYTHON_VERSION% via uv.>&2
+exit /b 1
+:python_ok
 
 set "TORCH_EXTRA="
-if not "%TORCH_BACKEND%"=="" set "TORCH_EXTRA=%TORCH_BACKEND%"
-if not "%TORCH_EXTRA%"=="" goto :torch_extra_done
+if "%TORCH_BACKEND%"=="" goto :torch_mode_start
+set "TORCH_EXTRA=%TORCH_BACKEND%"
+goto :torch_extra_done
 
+:torch_mode_start
 if /i "%TORCH_MODE%"=="skip" goto :torch_extra_done
-if /i "%TORCH_MODE%"=="cpu" set "TORCH_EXTRA=cpu" & goto :torch_extra_done
-if /i "%TORCH_MODE%"=="rocm" (
-  echo [install] Warning: ROCm is Linux-only; falling back to CPU. 1>&2
-  set "TORCH_EXTRA=cpu"
-  goto :torch_extra_done
-)
+if /i "%TORCH_MODE%"=="cpu" goto :torch_mode_cpu
+if /i "%TORCH_MODE%"=="rocm" goto :torch_mode_rocm
+if /i "%TORCH_MODE%"=="cuda" goto :torch_mode_cuda
+goto :torch_mode_auto
 
-if /i "%TORCH_MODE%"=="cuda" (
-  call :pick_cuda_variant
-  goto :torch_extra_done
-)
+:torch_mode_cpu
+set "TORCH_EXTRA=cpu"
+goto :torch_extra_done
 
-REM auto
+:torch_mode_rocm
+echo [install] Warning: ROCm is Linux-only; falling back to CPU. 1>&2
+set "TORCH_EXTRA=cpu"
+goto :torch_extra_done
+
+:torch_mode_cuda
+call :pick_cuda_variant
+goto :torch_extra_done
+
+:torch_mode_auto
 where nvidia-smi >nul 2>&1
-if errorlevel 1 (
-  set "TORCH_EXTRA=cpu"
-  goto :torch_extra_done
-)
+if not errorlevel 1 goto :torch_auto_have_nvidia
+set "TORCH_EXTRA=cpu"
+goto :torch_extra_done
 
-if not "%CUDA_VARIANT%"=="" (
-  call :pick_cuda_variant
-  goto :torch_extra_done
-)
+:torch_auto_have_nvidia
+if "%CUDA_VARIANT%"=="" goto :torch_auto_detect_cuda
+call :pick_cuda_variant
+goto :torch_extra_done
+
+:torch_auto_detect_cuda
 
 set "CUDA_VER="
 for /f "delims=" %%i in ('nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2^>nul') do if not defined CUDA_VER set "CUDA_VER=%%i"
@@ -145,10 +153,8 @@ set "DRIVER_MAJOR="
 for /f "tokens=1 delims=." %%a in ("%DRIVER_VER%") do set "DRIVER_MAJOR=%%a"
 set "CUDA_MAJOR="
 set "CUDA_MINOR=0"
-for /f "tokens=1,2 delims=." %%a in ("%CUDA_VER%") do (
-  set "CUDA_MAJOR=%%a"
-  set "CUDA_MINOR=%%b"
-)
+for /f "tokens=1 delims=." %%a in ("%CUDA_VER%") do set "CUDA_MAJOR=%%a"
+for /f "tokens=2 delims=." %%a in ("%CUDA_VER%") do set "CUDA_MINOR=%%a"
 if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
 
 REM Defaults / heuristics
@@ -166,35 +172,44 @@ if errorlevel 1 set "DRIVER_MAJOR_NUM="
 :driver_major_num_done
 
 REM Old NVIDIA drivers cannot run modern CUDA wheels; fall back to CPU (< 525).
-if "%DRIVER_MAJOR_NUM%"=="" goto :driver_min_done
-if %DRIVER_MAJOR_NUM% LSS 525 (
-  set "TORCH_EXTRA=cpu"
-  goto :torch_extra_done
-)
-:driver_min_done
+if "%DRIVER_MAJOR_NUM%"=="" goto :torch_auto_cuda13
+if %DRIVER_MAJOR_NUM% LSS 525 goto :torch_driver_too_old
 
 REM CUDA 13 wheels require very new drivers; otherwise use CUDA 12.8 wheels.
-if not "%CUDA_MAJOR%"=="13" goto :cuda13_done
+:torch_auto_cuda13
+if not "%CUDA_MAJOR%"=="13" goto :torch_auto_gpu_name
 set "TORCH_EXTRA=cu128"
 if "%DRIVER_MAJOR_NUM%"=="" goto :torch_extra_done
 if %DRIVER_MAJOR_NUM% GEQ 580 set "TORCH_EXTRA=cu130"
 goto :torch_extra_done
-:cuda13_done
 
+:torch_auto_gpu_name
 echo %GPU_NAME% | findstr /i /r "RTX[ ]*50 RTX[ ]*5[0-9][0-9][0-9]" >nul 2>&1
-if not errorlevel 1 (
-  set "TORCH_EXTRA=cu128"
-  goto :torch_extra_done
-)
+if errorlevel 1 goto :torch_auto_cuda12
+set "TORCH_EXTRA=cu128"
+goto :torch_extra_done
 
-if "%CUDA_MAJOR%"=="12" (
-  set /a __tmp=%CUDA_MINOR% 2>nul
-  if not errorlevel 1 (
-    if %CUDA_MINOR% GEQ 8 set "TORCH_EXTRA=cu128" & goto :torch_extra_done
-    if %CUDA_MINOR% GEQ 6 set "TORCH_EXTRA=cu126" & goto :torch_extra_done
-    set "TORCH_EXTRA=cu126"
-  )
-)
+:torch_auto_cuda12
+
+if not "%CUDA_MAJOR%"=="12" goto :torch_extra_done
+set /a __tmp=%CUDA_MINOR% 2>nul
+if errorlevel 1 goto :torch_extra_done
+if %CUDA_MINOR% GEQ 8 goto :torch_cuda12_cu128
+if %CUDA_MINOR% GEQ 6 goto :torch_cuda12_cu126
+set "TORCH_EXTRA=cu126"
+goto :torch_extra_done
+
+:torch_cuda12_cu128
+set "TORCH_EXTRA=cu128"
+goto :torch_extra_done
+
+:torch_cuda12_cu126
+set "TORCH_EXTRA=cu126"
+goto :torch_extra_done
+
+:torch_driver_too_old
+set "TORCH_EXTRA=cpu"
+goto :torch_extra_done
 
 :torch_extra_done
 
@@ -210,12 +225,12 @@ echo [install] Syncing Python dependencies [locked] ...
 "%UV_BIN%" sync --locked
 
 :uv_sync_done
-if errorlevel 1 (
-  echo Error: uv sync failed.>&2
-  exit /b 1
-)
+if not errorlevel 1 goto :uv_sync_ok
+echo Error: uv sync failed.>&2
+exit /b 1
+:uv_sync_ok
 
-echo [install] Installing frontend dependencies (npm) ...
+echo [install] Installing frontend dependencies ...
 where node >nul 2>&1
 if errorlevel 1 goto :frontend_missing_node
 where npm >nul 2>&1
@@ -227,24 +242,25 @@ echo [install] npm:
 npm -v
 pushd "%ROOT%apps\\interface"
 npm install
-if errorlevel 1 (
-  popd
-  echo Error: npm install failed.>&2
-  exit /b 1
-)
+if not errorlevel 1 goto :frontend_install_ok
+popd
+echo Error: npm install failed.>&2
+exit /b 1
+
+:frontend_install_ok
 popd
 goto :done
 
 :frontend_missing_node
 echo [install] Warning: missing 'node' on PATH; skipping frontend install. 1>&2
-echo [install] Install Node.js 18+ and then run:
+echo [install] Install Node.js 18+ then execute:
 echo [install]   cd apps\\interface
 echo [install]   npm install
 goto :done
 
 :frontend_missing_npm
 echo [install] Warning: missing 'npm' on PATH; skipping frontend install. 1>&2
-echo [install] Install Node.js 18+ and then run:
+echo [install] Install Node.js 18+ then execute:
 echo [install]   cd apps\\interface
 echo [install]   npm install
 goto :done
@@ -252,7 +268,7 @@ goto :done
 :done
 echo.
 echo [install] Done.
-echo [install] Run: run-webui.bat
+echo [install] Next: run-webui.bat
 
 if defined CODEX_MENU_USED (
   call :ui_menu_post
@@ -370,13 +386,25 @@ if "%PCHOICE%"=="1" set "CODEX_MENU_RERUN=1"
 exit /b 0
 
 :pick_cuda_variant
-if /i "%CUDA_VARIANT%"=="12.6" set "TORCH_EXTRA=cu126" & exit /b 0
-if /i "%CUDA_VARIANT%"=="cu126" set "TORCH_EXTRA=cu126" & exit /b 0
-if /i "%CUDA_VARIANT%"=="12.8" set "TORCH_EXTRA=cu128" & exit /b 0
-if /i "%CUDA_VARIANT%"=="cu128" set "TORCH_EXTRA=cu128" & exit /b 0
-if /i "%CUDA_VARIANT%"=="13" set "TORCH_EXTRA=cu130" & exit /b 0
-if /i "%CUDA_VARIANT%"=="cu130" set "TORCH_EXTRA=cu130" & exit /b 0
+if /i "%CUDA_VARIANT%"=="12.6" goto :pick_cuda_cu126
+if /i "%CUDA_VARIANT%"=="cu126" goto :pick_cuda_cu126
+if /i "%CUDA_VARIANT%"=="12.8" goto :pick_cuda_cu128
+if /i "%CUDA_VARIANT%"=="cu128" goto :pick_cuda_cu128
+if /i "%CUDA_VARIANT%"=="13" goto :pick_cuda_cu130
+if /i "%CUDA_VARIANT%"=="cu130" goto :pick_cuda_cu130
 set "TORCH_EXTRA=cu128"
+exit /b 0
+
+:pick_cuda_cu126
+set "TORCH_EXTRA=cu126"
+exit /b 0
+
+:pick_cuda_cu128
+set "TORCH_EXTRA=cu128"
+exit /b 0
+
+:pick_cuda_cu130
+set "TORCH_EXTRA=cu130"
 exit /b 0
 
 :install_uv
@@ -406,7 +434,8 @@ where certutil >nul 2>&1
 if not errorlevel 1 goto :install_uv_download_certutil
 
 echo Error: neither curl nor certutil is available to download uv.>&2
-endlocal & exit /b 1
+endlocal
+exit /b 1
 
 :install_uv_download_curl
 echo [install] Downloading: %UV_URL%
@@ -440,20 +469,25 @@ del /f /q "%UV_ZIP%" >nul 2>&1
 
 if not exist "%UV_BIN%" goto :install_uv_missing_bin
 
-endlocal & exit /b 0
+endlocal
+exit /b 0
 
 :install_uv_unsupported_arch
 echo Error: unsupported Windows architecture '%ARCH%'.>&2
-endlocal & exit /b 1
+endlocal
+exit /b 1
 
 :install_uv_download_failed
 echo Error: failed to download uv zip.>&2
-endlocal & exit /b 1
+endlocal
+exit /b 1
 
 :install_uv_extract_failed
 echo Error: failed to extract uv zip.>&2
-endlocal & exit /b 1
+endlocal
+exit /b 1
 
 :install_uv_missing_bin
 echo Error: uv extracted but '%UV_BIN%' is missing.>&2
-endlocal & exit /b 1
+endlocal
+exit /b 1

@@ -487,7 +487,7 @@ def convert_safetensors_to_gguf(
                     if len(shape) == 2:
                         rows = shape[0]
                         for start in range(0, rows, chunk_rows):
-                            chunk = sl[start : min(rows, start + chunk_rows)].contiguous()
+                            chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()
                             arr = chunk.numpy()
                             try:
                                 q = quantize_numpy(arr, plan.ggml_type)
@@ -498,7 +498,7 @@ def convert_safetensors_to_gguf(
                             out.write(q.tobytes(order="C"))
                             bytes_written += q.nbytes
                     else:
-                        t = sf.get_tensor(plan.src_name).contiguous()
+                        t = sf.get_tensor(plan.src_name).to(torch.float32).contiguous()
                         arr = t.numpy()
                         try:
                             q = quantize_numpy(arr, plan.ggml_type)

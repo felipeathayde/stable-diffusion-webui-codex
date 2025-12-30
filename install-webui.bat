@@ -154,29 +154,32 @@ if "%CUDA_MINOR%"=="" set "CUDA_MINOR=0"
 REM Defaults / heuristics
 set "TORCH_EXTRA=cu128"
 
-if not "%DRIVER_MAJOR%"=="" (
-  set /a _DRV=%DRIVER_MAJOR% 2>nul
-  if not errorlevel 1 (
-    if %_DRV% LSS 525 (
-      set "TORCH_EXTRA=cpu"
-      goto :torch_extra_done
-    )
-  )
-)
+REM NOTE: cmd.exe pre-parses multi-line (...) blocks. If a line expands to
+REM "if  LSS 525 (...)" (missing left operand), cmd can crash with:
+REM "525 was unexpected at this time." even if the outer IF condition would be false.
+REM Keep numeric comparisons off nested blocks and guard empties before comparing.
 
-if "%CUDA_MAJOR%"=="13" (
-  if not "%DRIVER_MAJOR%"=="" (
-    set /a _DRV2=%DRIVER_MAJOR% 2>nul
-    if not errorlevel 1 (
-      if %_DRV2% GEQ 580 (
-        set "TORCH_EXTRA=cu130"
-        goto :torch_extra_done
-      )
-    )
-  )
-  set "TORCH_EXTRA=cu128"
+set "DRIVER_MAJOR_NUM="
+if "%DRIVER_MAJOR%"=="" goto :driver_major_num_done
+set /a DRIVER_MAJOR_NUM=%DRIVER_MAJOR% 2>nul
+if errorlevel 1 set "DRIVER_MAJOR_NUM="
+:driver_major_num_done
+
+REM Old NVIDIA drivers cannot run modern CUDA wheels; fall back to CPU (< 525).
+if "%DRIVER_MAJOR_NUM%"=="" goto :driver_min_done
+if %DRIVER_MAJOR_NUM% LSS 525 (
+  set "TORCH_EXTRA=cpu"
   goto :torch_extra_done
 )
+:driver_min_done
+
+REM CUDA 13 wheels require very new drivers; otherwise use CUDA 12.8 wheels.
+if not "%CUDA_MAJOR%"=="13" goto :cuda13_done
+set "TORCH_EXTRA=cu128"
+if "%DRIVER_MAJOR_NUM%"=="" goto :torch_extra_done
+if %DRIVER_MAJOR_NUM% GEQ 580 set "TORCH_EXTRA=cu130"
+goto :torch_extra_done
+:cuda13_done
 
 echo %GPU_NAME% | findstr /i /r "RTX[ ]*50 RTX[ ]*5[0-9][0-9][0-9]" >nul 2>&1
 if not errorlevel 1 (
@@ -185,10 +188,10 @@ if not errorlevel 1 (
 )
 
 if "%CUDA_MAJOR%"=="12" (
-  set /a _MIN=%CUDA_MINOR% 2>nul
+  set /a __tmp=%CUDA_MINOR% 2>nul
   if not errorlevel 1 (
-    if %_MIN% GEQ 8 set "TORCH_EXTRA=cu128" & goto :torch_extra_done
-    if %_MIN% GEQ 6 set "TORCH_EXTRA=cu126" & goto :torch_extra_done
+    if %CUDA_MINOR% GEQ 8 set "TORCH_EXTRA=cu128" & goto :torch_extra_done
+    if %CUDA_MINOR% GEQ 6 set "TORCH_EXTRA=cu126" & goto :torch_extra_done
     set "TORCH_EXTRA=cu126"
   )
 )

@@ -63,6 +63,16 @@ If CUDA install fails, try a different backend:
 
 ## Troubleshooting
 
+### Windows: `: was unexpected at this time` (cmd.exe parsing)
+This is a **cmd.exe batch parsing** error (not a `uv`/Python error). It typically happens when a `.bat` script uses multi-line `(...)` blocks and cmd gets confused by special characters, causing labels like `:install_uv` to become “unexpected”.
+
+Fix:
+- `git pull` (the Windows installer routine was hardened to avoid this class of cmd parsing failure)
+- Re-run `install-webui.bat`
+
+If it still happens, see the deep dive runbook:
+- `.sangoi/runbooks/windows-cmd-bat-unexpected-at-this-time.md`
+
 ### `ImportError: cannot import name 'EncoderDecoderCache' from 'transformers'`
 Your `peft` and `transformers` are out of sync (common when extra packages pull older pins).
 

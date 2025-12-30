@@ -76,15 +76,15 @@ echo [install] Torch mode: %TORCH_MODE% (CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^
 if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND% (CODEX_TORCH_BACKEND)
 if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT% (CODEX_CUDA_VARIANT)
 
-if not exist "%UV_BIN%" (
-  if not exist "%UV_DIR%" mkdir "%UV_DIR%"
-  echo [install] Installing uv %UV_VERSION% into %UV_DIR% ...
-  call :install_uv
-  if errorlevel 1 (
-    echo Error: failed to install uv.>&2
-    exit /b 1
-  )
+if exist "%UV_BIN%" goto :uv_ok
+if not exist "%UV_DIR%" mkdir "%UV_DIR%"
+echo [install] Installing uv %UV_VERSION% into %UV_DIR% ...
+call :install_uv
+if errorlevel 1 (
+  echo Error: failed to install uv.>&2
+  exit /b 1
 )
+:uv_ok
 
 if not exist "%UV_BIN%" (
   echo Error: uv install succeeded but '%UV_BIN%' is missing.>&2

@@ -102,4 +102,4 @@ apps/settings_values.json
 !requirements*.txt
 *.docx
 .sangoi/reports/tooling/pyright/*
-models/
+/models/

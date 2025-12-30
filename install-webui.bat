@@ -199,11 +199,11 @@ if "%CUDA_MAJOR%"=="12" (
 :torch_extra_done
 
 if "%TORCH_EXTRA%"=="" (
-  echo [install] Warning: skipping torch/torchvision install (CODEX_TORCH_MODE=skip). The WebUI will not run without PyTorch. 1>&2
-  echo [install] Syncing Python dependencies (locked) ...
+  echo [install] Warning: skipping torch/torchvision install. CODEX_TORCH_MODE=skip. The WebUI will not run without PyTorch. 1>&2
+  echo [install] Syncing Python dependencies [locked] ...
   "%UV_BIN%" sync --locked
 ) else (
-  echo [install] Syncing Python dependencies (locked) with torch extra: %TORCH_EXTRA% ...
+  echo [install] Syncing Python dependencies [locked] with torch extra: %TORCH_EXTRA% ...
   "%UV_BIN%" sync --locked --extra "%TORCH_EXTRA%"
 )
 if errorlevel 1 (

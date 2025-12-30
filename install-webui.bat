@@ -28,8 +28,7 @@ if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT%
 if not exist "%UV_BIN%" (
   if not exist "%UV_DIR%" mkdir "%UV_DIR%"
   echo [install] Installing uv %UV_VERSION% into %UV_DIR% ...
-  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$env:UV_NO_MODIFY_PATH='1'; $env:UV_UNMANAGED_INSTALL='%UV_DIR%'; irm 'https://astral.sh/uv/%UV_VERSION%/install.ps1' | iex"
+  call :install_uv
   if errorlevel 1 (
     echo Error: failed to install uv.>&2
     exit /b 1
@@ -206,3 +205,71 @@ popd
 echo.
 echo [install] Done.
 echo [install] Run: run-webui.bat
+
+exit /b 0
+
+:install_uv
+setlocal EnableExtensions EnableDelayedExpansion
+
+REM Prefer downloading the prebuilt zip from GitHub Releases to avoid PowerShell module issues
+REM (some environments cannot load Microsoft.PowerShell.Security, breaking the installer script).
+
+set "ARCH=%PROCESSOR_ARCHITECTURE%"
+if defined PROCESSOR_ARCHITEW6432 set "ARCH=%PROCESSOR_ARCHITEW6432%"
+set "UV_ASSET="
+if /i "%ARCH%"=="AMD64" set "UV_ASSET=uv-x86_64-pc-windows-msvc.zip"
+if /i "%ARCH%"=="ARM64" set "UV_ASSET=uv-aarch64-pc-windows-msvc.zip"
+if /i "%ARCH%"=="x86" set "UV_ASSET=uv-i686-pc-windows-msvc.zip"
+
+if "%UV_ASSET%"=="" (
+  echo Error: unsupported Windows architecture '%ARCH%'.>&2
+  exit /b 1
+)
+
+set "UV_URL=https://github.com/astral-sh/uv/releases/download/%UV_VERSION%/%UV_ASSET%"
+set "UV_ZIP=%UV_DIR%\\%UV_ASSET%"
+
+if exist "%UV_ZIP%" del /f /q "%UV_ZIP%" >nul 2>&1
+
+where curl >nul 2>&1
+if not errorlevel 1 (
+  echo [install] Downloading: %UV_URL%
+  curl -L --fail --retry 3 --retry-delay 2 -o "%UV_ZIP%" "%UV_URL%"
+) else (
+  where certutil >nul 2>&1
+  if not errorlevel 1 (
+    echo [install] Downloading (certutil): %UV_URL%
+    certutil -urlcache -split -f "%UV_URL%" "%UV_ZIP%" >nul
+  ) else (
+    echo Error: neither curl nor certutil is available to download uv.>&2
+    exit /b 1
+  )
+)
+
+if errorlevel 1 (
+  echo Error: failed to download uv zip.>&2
+  exit /b 1
+)
+
+where tar >nul 2>&1
+if not errorlevel 1 (
+  echo [install] Extracting uv (tar) ...
+  tar -xf "%UV_ZIP%" -C "%UV_DIR%"
+) else (
+  echo [install] Extracting uv (PowerShell ZipFile) ...
+  powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%UV_ZIP%','%UV_DIR%', $true)"
+)
+
+if errorlevel 1 (
+  echo Error: failed to extract uv zip.>&2
+  exit /b 1
+)
+
+del /f /q "%UV_ZIP%" >nul 2>&1
+
+if not exist "%UV_BIN%" (
+  echo Error: uv extracted but '%UV_BIN%' is missing.>&2
+  exit /b 1
+)
+
+endlocal & exit /b 0

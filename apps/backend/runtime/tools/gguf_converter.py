@@ -7,6 +7,8 @@ This is used primarily for text encoders (e.g. Z Image Qwen3 variants).
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
+import hashlib
 import json
 import logging
 import re
@@ -30,6 +32,9 @@ from apps.backend.quantization.gguf import (
 from apps.backend.quantization.gguf.quant_shapes import quant_shape_to_byte_shape
 
 logger = logging.getLogger("backend.runtime.tools.gguf_converter")
+
+_CODEX_GGUF_AUTHOR = "stable-diffusion-webui-codex"
+_CODEX_GGUF_REPO_URL = "https://github.com/sangoi-exe/stable-diffusion-webui-codex"
 
 
 class QuantizationType(str, Enum):
@@ -454,9 +459,122 @@ def _plan_tensors(
     return plans
 
 
-def _add_basic_metadata(writer: GGUFWriter, arch: str, config: dict, quant: QuantizationType) -> None:
+def _hash_file(path: Path, *, chunk_size: int = 8 * 1024 * 1024) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _is_hf_repo_id(value: str) -> bool:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return False
+    if candidate.startswith((".", "/", "\\")):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", candidate))
+
+
+def _best_effort_git_commit(repo_root: Path) -> str | None:
+    head = repo_root / ".git" / "HEAD"
+    if not head.is_file():
+        return None
+    try:
+        raw = head.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    if raw.startswith("ref:"):
+        ref = raw.split(":", 1)[1].strip()
+        ref_path = repo_root / ".git" / ref
+        if ref_path.is_file():
+            try:
+                commit = ref_path.read_text(encoding="utf-8").strip()
+            except Exception:
+                commit = ""
+            return commit or None
+        packed = repo_root / ".git" / "packed-refs"
+        if packed.is_file():
+            try:
+                for line in packed.read_text(encoding="utf-8").splitlines():
+                    if not line or line.startswith("#") or line.startswith("^"):
+                        continue
+                    commit, name = line.split(" ", 1)
+                    if name.strip() == ref:
+                        return commit.strip() or None
+            except Exception:
+                return None
+        return None
+    # Detached head case: HEAD contains the commit sha directly.
+    if re.fullmatch(r"[0-9a-fA-F]{40}", raw):
+        return raw.lower()
+    return None
+
+
+def _add_basic_metadata(
+    writer: GGUFWriter,
+    arch: str,
+    config: dict,
+    quant: QuantizationType,
+    *,
+    config_path: Path,
+    safetensors_path: str,
+) -> None:
     name = str(config.get("_name_or_path") or config.get("name") or "model")
     writer.add_name(name)
+    writer.add_architecture()
+    writer.add_author(_CODEX_GGUF_AUTHOR)
+    writer.add_quantized_by(_CODEX_GGUF_AUTHOR)
+    writer.add_repo_url(_CODEX_GGUF_REPO_URL)
+
+    repo_root = Path(__file__).resolve().parents[4]
+    commit = _best_effort_git_commit(repo_root)
+    if commit:
+        writer.add_version(commit)
+        writer.add_string("codex.repo_commit", commit)
+    writer.add_string("codex.repo_url", _CODEX_GGUF_REPO_URL)
+    writer.add_string("codex.converted_at_utc", _dt.datetime.now(tz=_dt.timezone.utc).isoformat())
+    writer.add_string("codex.quantization", str(quant.value))
+
+    if config_path.is_file():
+        writer.add_string("codex.source_config", config_path.name)
+        try:
+            writer.add_uint64("codex.source_config_bytes", int(config_path.stat().st_size))
+        except Exception:
+            pass
+        try:
+            writer.add_string("codex.source_config_sha256", _hash_file(config_path))
+        except Exception:
+            pass
+
+    source_ref = str(safetensors_path or "").strip()
+    if source_ref:
+        sp = Path(source_ref).expanduser()
+        writer.add_string("codex.source_weights", sp.name)
+        kind = "unknown"
+        if sp.is_dir():
+            kind = "dir"
+        elif sp.name.endswith(".safetensors.index.json"):
+            kind = "index"
+        elif sp.suffix.lower() == ".safetensors":
+            kind = "safetensors"
+        writer.add_string("codex.source_weights_kind", kind)
+        if sp.is_file():
+            try:
+                writer.add_uint64("codex.source_weights_bytes", int(sp.stat().st_size))
+            except Exception:
+                pass
+
+    # Best-effort: mark the upstream repo when the config includes a Hugging Face id.
+    upstream = str(config.get("_name_or_path") or "").strip()
+    if _is_hf_repo_id(upstream):
+        writer.add_source_repo_url(f"https://huggingface.co/{upstream}")
+        writer.add_source_url(f"https://huggingface.co/{upstream}")
 
     requested = _requested_ggml_type(quant)
     if requested == GGMLQuantizationType.F16:
@@ -549,7 +667,14 @@ def convert_safetensors_to_gguf(
         plans = _plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
 
         writer = GGUFWriter(path=str(output_path), arch=arch)
-        _add_basic_metadata(writer, arch, model_config, config.quantization)
+        _add_basic_metadata(
+            writer,
+            arch,
+            model_config,
+            config.quantization,
+            config_path=config_path,
+            safetensors_path=config.safetensors_path,
+        )
 
         for plan in plans:
             raw_dtype = None if plan.ggml_type in {GGMLQuantizationType.F16, GGMLQuantizationType.F32} else plan.ggml_type

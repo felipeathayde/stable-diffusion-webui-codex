@@ -19,9 +19,12 @@ import logging
 from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.infra.config.provenance import generation_provenance as _generation_provenance
+from apps.backend.services.output_service import save_generated_images as _save_generated_images
 
 # Repo root anchor for all on-disk paths. Must be set by the launcher.
 CODEX_ROOT = get_repo_root()
+_GENERATION_PROVENANCE = _generation_provenance(CODEX_ROOT)
 if str(CODEX_ROOT) not in sys.path:
     sys.path.insert(0, str(CODEX_ROOT))
 
@@ -2088,11 +2091,40 @@ def build_app() -> FastAPI:
         model_ref = model_override or snap.sd_model_checkpoint
         return req, str(engine_key), model_ref
 
-    def encode_images(images: Any) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
+    def encode_images(images: Any, *, metadata: Optional[Mapping[str, str]] = None) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
         encoded: list[Dict[str, str]] = []
         for img in images or []:
+            if img is None:
+                continue
             buf = io.BytesIO()
-            img.save(buf, format='PNG')
+            pnginfo = None
+            use_metadata = False
+            try:
+                from PIL import PngImagePlugin  # type: ignore
+
+                def _add_text(key: object, value: object) -> None:
+                    nonlocal pnginfo, use_metadata
+                    if not isinstance(key, str) or not isinstance(value, str):
+                        return
+                    if not value:
+                        return
+                    if pnginfo is None:
+                        pnginfo = PngImagePlugin.PngInfo()
+                    pnginfo.add_text(key, value)
+                    use_metadata = True
+
+                info_items = getattr(img, "info", None)
+                if isinstance(info_items, dict):
+                    for key, value in info_items.items():
+                        _add_text(key, value)
+                if metadata:
+                    for key, value in metadata.items():
+                        _add_text(key, value)
+            except Exception:
+                pnginfo = None
+                use_metadata = False
+
+            img.save(buf, format="PNG", pnginfo=(pnginfo if use_metadata else None))
             encoded.append({
                 "format": "png",
                 "data": base64.b64encode(buf.getvalue()).decode('ascii'),
@@ -2251,7 +2283,18 @@ def build_app() -> FastAPI:
                                 info_obj = json.loads(info_raw)
                             except Exception:
                                 info_obj = info_raw
-                            encoded = encode_images(payload_obj.get("images", []))
+                            info_dict = info_obj if isinstance(info_obj, dict) else None
+                            if isinstance(info_obj, dict):
+                                for key, value in _GENERATION_PROVENANCE.items():
+                                    info_obj.setdefault(key, value)
+                            if bool(codex_options.get_value("samples_save", True)):
+                                _save_generated_images(
+                                    payload_obj.get("images", []),
+                                    task=TaskType.TXT2IMG,
+                                    info=info_dict,
+                                    metadata=_GENERATION_PROVENANCE,
+                                )
+                            encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
                             result = {
                                 "images": encoded,
                                 "info": info_obj,
@@ -2421,7 +2464,18 @@ def build_app() -> FastAPI:
                                 info_obj = json.loads(info_raw)
                             except Exception:
                                 info_obj = info_raw
-                            encoded = encode_images(payload_obj.get("images", []))
+                            info_dict = info_obj if isinstance(info_obj, dict) else None
+                            if isinstance(info_obj, dict):
+                                for key, value in _GENERATION_PROVENANCE.items():
+                                    info_obj.setdefault(key, value)
+                            if bool(codex_options.get_value("samples_save", True)):
+                                _save_generated_images(
+                                    payload_obj.get("images", []),
+                                    task=TaskType.IMG2IMG,
+                                    info=info_dict,
+                                    metadata=_GENERATION_PROVENANCE,
+                                )
+                            encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
                             result = {"images": encoded, "info": info_obj}
                             entry.result = {"status": "completed", "result": result}
                             push({"type": "result", **result})

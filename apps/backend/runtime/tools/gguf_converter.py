@@ -30,11 +30,12 @@ from apps.backend.quantization.gguf import (
     LlamaFileType,
 )
 from apps.backend.quantization.gguf.quant_shapes import quant_shape_to_byte_shape
+from apps.backend.infra.config.provenance import CODEX_GENERATED_BY, CODEX_REPO_URL, best_effort_git_commit
 
 logger = logging.getLogger("backend.runtime.tools.gguf_converter")
 
-_CODEX_GGUF_AUTHOR = "stable-diffusion-webui-codex"
-_CODEX_GGUF_REPO_URL = "https://github.com/sangoi-exe/stable-diffusion-webui-codex"
+_CODEX_GGUF_AUTHOR = CODEX_GENERATED_BY
+_CODEX_GGUF_REPO_URL = CODEX_REPO_URL
 
 
 class QuantizationType(str, Enum):
@@ -479,43 +480,6 @@ def _is_hf_repo_id(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", candidate))
 
 
-def _best_effort_git_commit(repo_root: Path) -> str | None:
-    head = repo_root / ".git" / "HEAD"
-    if not head.is_file():
-        return None
-    try:
-        raw = head.read_text(encoding="utf-8").strip()
-    except Exception:
-        return None
-    if not raw:
-        return None
-    if raw.startswith("ref:"):
-        ref = raw.split(":", 1)[1].strip()
-        ref_path = repo_root / ".git" / ref
-        if ref_path.is_file():
-            try:
-                commit = ref_path.read_text(encoding="utf-8").strip()
-            except Exception:
-                commit = ""
-            return commit or None
-        packed = repo_root / ".git" / "packed-refs"
-        if packed.is_file():
-            try:
-                for line in packed.read_text(encoding="utf-8").splitlines():
-                    if not line or line.startswith("#") or line.startswith("^"):
-                        continue
-                    commit, name = line.split(" ", 1)
-                    if name.strip() == ref:
-                        return commit.strip() or None
-            except Exception:
-                return None
-        return None
-    # Detached head case: HEAD contains the commit sha directly.
-    if re.fullmatch(r"[0-9a-fA-F]{40}", raw):
-        return raw.lower()
-    return None
-
-
 def _add_basic_metadata(
     writer: GGUFWriter,
     arch: str,
@@ -527,13 +491,12 @@ def _add_basic_metadata(
 ) -> None:
     name = str(config.get("_name_or_path") or config.get("name") or "model")
     writer.add_name(name)
-    writer.add_architecture()
     writer.add_author(_CODEX_GGUF_AUTHOR)
     writer.add_quantized_by(_CODEX_GGUF_AUTHOR)
     writer.add_repo_url(_CODEX_GGUF_REPO_URL)
 
     repo_root = Path(__file__).resolve().parents[4]
-    commit = _best_effort_git_commit(repo_root)
+    commit = best_effort_git_commit(repo_root)
     if commit:
         writer.add_version(commit)
         writer.add_string("codex.repo_commit", commit)

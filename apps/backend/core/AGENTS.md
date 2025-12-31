@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2025-12-16
+Last Review: 2025-12-30
 Status: Active
 
 ## Purpose
@@ -26,3 +26,4 @@ Status: Active
 - Keep RNG and device logic centralized here—avoid duplicating random seeding in downstream modules.
 - 2025-12-14: Video requests (`Txt2VidRequest`/`Img2VidRequest`) include `steps` explicitly (defaulting to 30 to match `/api/{txt2vid,img2vid}`) so API parsing and `build_video_plan()` stay aligned.
 - 2025-12-16: Added `TaskType.VID2VID` + `Vid2VidRequest` for WAN video-to-video orchestration; video requests also carry optional `video_options` for export settings.
+- 2025-12-30: `InferenceOrchestrator` now reloads an already-loaded engine when load-affecting `engine_options` change (e.g. `text_encoder_override`, VAE override, core streaming), so overrides actually apply and caches don’t go stale across requests.

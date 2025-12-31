@@ -33,6 +33,47 @@ class InferenceOrchestrator:
         self._registry = registry or global_registry
         self._enable_cache = enable_cache
         self._engine_cache: MutableMapping[str, BaseInferenceEngine] = {}
+        self._engine_options_fingerprint: MutableMapping[str, object] = {}
+
+    @staticmethod
+    def _freeze_engine_options(value: object) -> object:
+        """Return a comparable, stable structure for engine option fingerprints."""
+        if isinstance(value, dict):
+            return tuple((str(k), InferenceOrchestrator._freeze_engine_options(v)) for k, v in sorted(value.items()))
+        if isinstance(value, (list, tuple)):
+            return tuple(InferenceOrchestrator._freeze_engine_options(v) for v in value)
+        if isinstance(value, set):
+            return tuple(sorted((InferenceOrchestrator._freeze_engine_options(v) for v in value), key=repr))
+        return value
+
+    @staticmethod
+    def _reload_fingerprint(engine_options: Mapping[str, object]) -> object:
+        """Fingerprint options that change loaded weights/runtime wiring.
+
+        The orchestrator caches engine instances, so changing options like
+        text encoder overrides or VAE overrides must trigger a reload even when
+        model_ref is unchanged.
+        """
+
+        te_override = engine_options.get("text_encoder_override")
+        vae_path = engine_options.get("vae_path")
+        tenc_path = engine_options.get("tenc_path")
+
+        # Normalize streaming option key to a single boolean or None.
+        streaming_val: object | None
+        if "codex_core_streaming" in engine_options:
+            streaming_val = bool(engine_options.get("codex_core_streaming"))
+        else:
+            streaming_val = engine_options.get("core_streaming_enabled")
+            streaming_val = None if streaming_val is None else bool(streaming_val)
+
+        relevant = {
+            "text_encoder_override": te_override,
+            "vae_path": vae_path,
+            "tenc_path": tenc_path,
+            "core_streaming_enabled": streaming_val,
+        }
+        return InferenceOrchestrator._freeze_engine_options(relevant)
 
     # ------------------------------------------------------------------
     def run(
@@ -45,7 +86,9 @@ class InferenceOrchestrator:
         engine_options: Optional[Mapping[str, object]] = None,
     ) -> Iterator[InferenceEvent]:
         start = time.perf_counter()
-        engine = self._resolve_engine(engine_key, engine_options or {})
+        normalized_key = engine_key.strip().lower()
+        engine_opts = engine_options or {}
+        engine = self._resolve_engine(engine_key, engine_opts)
 
         logger.info(
             "Orchestrator dispatch: task=%s engine=%s model=%s", task.value, engine_key, model_ref or "default"
@@ -68,6 +111,15 @@ class InferenceOrchestrator:
                     needs_load = cur_model != model_ref
                 except Exception:
                     needs_load = True
+                # Reload when load-affecting engine options changed.
+                try:
+                    fp = self._reload_fingerprint(engine_opts)
+                    prev = self._engine_options_fingerprint.get(normalized_key)
+                    if prev is not None and prev != fp:
+                        needs_load = True
+                except Exception:
+                    # Fingerprinting is best-effort; never block inference due to introspection.
+                    pass
                 # Reload if the primary device changed since last load
                 try:
                     from apps.backend.runtime.memory import memory_management as _mem
@@ -93,8 +145,12 @@ class InferenceOrchestrator:
                             engine.unload()
                         except Exception:
                             pass
-                    engine.load(model_ref, **(engine_options or {}))
+                    engine.load(model_ref, **engine_opts)
                     engine.mark_loaded()
+                    try:
+                        self._engine_options_fingerprint[normalized_key] = self._reload_fingerprint(engine_opts)
+                    except Exception:
+                        self._engine_options_fingerprint.pop(normalized_key, None)
                 except Exception as exc:  # noqa: BLE001
                     raise EngineLoadError(
                         f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}"
@@ -140,6 +196,7 @@ class InferenceOrchestrator:
     def evict(self, engine_key: str) -> None:
         normalized_key = engine_key.strip().lower()
         engine = self._engine_cache.pop(normalized_key, None)
+        self._engine_options_fingerprint.pop(normalized_key, None)
         if engine is None:
             return
         with contextlib.suppress(Exception):

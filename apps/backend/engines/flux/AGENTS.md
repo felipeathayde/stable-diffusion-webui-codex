@@ -1,7 +1,7 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2025-12-29
+Last Review: 2025-12-30
 Status: Active
 
 ## Purpose
@@ -14,3 +14,4 @@ Status: Active
 - Streaming is currently gated to the Flux engine (`spec.name == "flux"`) and uses devices from the memory manager (`get_torch_device` / `core_offload_device`); when disabled, the runtime is identical to the previous non-streaming path.
 - `_maybe_enable_streaming_core` also unwraps an already-streamed core when streaming is disabled, so turning streaming off does not keep a stale `StreamedFluxCore` wrapper alive across reloads.
 - Flux-family engines expose `EngineCapabilities` and set distilled-CFG behaviour during `load()`; keep bundle assembly side-effect free.
+- 2025-12-30: Flux now wraps prompts with per-job metadata (`distilled_cfg_scale`, `smart_cache`) and the conditioning cache respects `smart_cache` and includes `distilled_cfg_scale` in its key (avoids stale embeddings when toggling cache or changing distilled CFG).

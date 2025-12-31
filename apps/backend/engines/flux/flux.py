@@ -9,9 +9,29 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime, assemble_flux_runtime
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import (
+    record_smart_cache_hit,
+    record_smart_cache_miss,
+    smart_cache_enabled,
+)
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.flux")
+
+
+class _FluxPromptList(list[str]):
+    def __init__(
+        self,
+        items: Iterable[str],
+        *,
+        distilled_cfg_scale: float,
+        is_negative_prompt: bool,
+        smart_cache: bool | None,
+    ) -> None:
+        super().__init__(items)
+        self.distilled_cfg_scale = float(distilled_cfg_scale)
+        self.is_negative_prompt = bool(is_negative_prompt)
+        self.smart_cache = smart_cache
 
 
 class Flux(CodexDiffusionEngine):
@@ -76,6 +96,29 @@ class Flux(CodexDiffusionEngine):
             raise RuntimeError("Flux runtime is not initialised; call load() first.")
         return self._runtime
 
+    def _prepare_prompt_wrappers(
+        self,
+        texts: list[str],
+        proc: Any,
+        *,
+        is_negative: bool,
+    ) -> _FluxPromptList:
+        distilled = getattr(proc, "distilled_guidance_scale", None)
+        if distilled is None:
+            distilled = getattr(proc, "distilled_cfg", None)
+        try:
+            distilled_value = float(distilled) if distilled is not None else float(self._guidance_default)
+        except Exception:
+            distilled_value = float(self._guidance_default)
+        smart_flag = getattr(proc, "smart_cache", None)
+        smart_value = None if smart_flag is None else bool(smart_flag)
+        return _FluxPromptList(
+            [str(t or "") for t in texts],
+            distilled_cfg_scale=distilled_value,
+            is_negative_prompt=is_negative,
+            smart_cache=smart_value,
+        )
+
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
         runtime.set_clip_skip(clip_skip)
@@ -87,23 +130,33 @@ class Flux(CodexDiffusionEngine):
         memory_management.load_model_gpu(self.codex_objects.text_encoders["clip"].patcher)
         unload_clip = self.smart_offload_enabled
         try:
-            # Check cache first if smart cache is enabled
             texts = tuple(str(x or "") for x in prompt)
-            is_negative = bool(getattr(prompt, "is_negative_prompt", False) if hasattr(prompt, "is_negative_prompt") else False)
-            cache_key = (texts, is_negative)
-            
-            cached = self._get_cached_cond(cache_key, "flux.conditioning")
-            if cached is not None:
-                # Restore cached tensors to device
-                target_device = memory_management.text_encoder_device()
-                cond = {}
-                for k, v in cached.items():
-                    if isinstance(v, torch.Tensor):
-                        cond[k] = v.to(target_device)
-                    else:
-                        cond[k] = v
-                logger.debug("[flux] conditioning cache hit for %d prompts", len(prompt))
-                return cond
+            is_negative = bool(getattr(prompt, "is_negative_prompt", False))
+            smart_flag = getattr(prompt, "smart_cache", None)
+            use_cache = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
+            distilled_cfg_scale = getattr(prompt, "distilled_cfg_scale", self._guidance_default)
+            try:
+                distilled_cfg_scale = float(distilled_cfg_scale)
+            except Exception:
+                distilled_cfg_scale = float(self._guidance_default)
+            cache_key = (texts, is_negative, distilled_cfg_scale)
+
+            cached = None
+            if use_cache:
+                cached = self._cond_cache.get(cache_key)
+                if cached is not None:
+                    record_smart_cache_hit("flux.conditioning")
+                    # Restore cached tensors to device
+                    target_device = memory_management.text_encoder_device()
+                    cond = {}
+                    for k, v in cached.items():
+                        if isinstance(v, torch.Tensor):
+                            cond[k] = v.to(target_device)
+                        else:
+                            cond[k] = v
+                    logger.debug("[flux] conditioning cache hit for %d prompts", len(prompt))
+                    return cond
+                record_smart_cache_miss("flux.conditioning")
             
             # Cache miss - compute conditioning
             clip_branch = runtime.text.clip_text
@@ -115,7 +168,6 @@ class Flux(CodexDiffusionEngine):
                 cond["vector"] = pooled_l
 
             if self.use_distilled_cfg_scale:
-                distilled_cfg_scale = getattr(prompt, "distilled_cfg_scale", self._guidance_default) or self._guidance_default
                 cond["guidance"] = torch.full((len(prompt),), float(distilled_cfg_scale), dtype=torch.float32)
                 logger.info("[flux] guidance enabled: scale=%.2f shape=%s", distilled_cfg_scale, tuple(cond["guidance"].shape))
             else:
@@ -126,13 +178,16 @@ class Flux(CodexDiffusionEngine):
             logger.info("[flux] conditioning dict: %s", cond_info)
 
             # Store in cache (tensors on CPU to avoid pinning VRAM)
-            cache_entry = {}
-            for k, v in cond.items():
-                if isinstance(v, torch.Tensor):
-                    cache_entry[k] = v.detach().to("cpu")
-                else:
-                    cache_entry[k] = v
-            self._set_cached_cond(cache_key, cache_entry)
+            if use_cache:
+                cache_entry = {}
+                for k, v in cond.items():
+                    if isinstance(v, torch.Tensor):
+                        cache_entry[k] = v.detach().to("cpu")
+                    else:
+                        cache_entry[k] = v
+                # Keep cache bounded: store only the most recent entry
+                self._cond_cache.clear()
+                self._cond_cache[cache_key] = cache_entry
 
             return cond
         finally:

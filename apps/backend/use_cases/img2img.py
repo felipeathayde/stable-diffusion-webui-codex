@@ -235,6 +235,30 @@ def generate_img2img(
 
     run_process_scripts(processing)
 
+    # Compute conditioning when not provided by a higher-level pipeline.
+    sd_model = getattr(processing, "sd_model", None)
+    if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
+        raise RuntimeError("img2img requires processing.sd_model with get_learned_conditioning")
+
+    if conditioning is None:
+        texts = list(prompt_context.prompts or [getattr(processing, "prompt", "")])
+        if hasattr(sd_model, "_prepare_prompt_wrappers"):
+            wrapped = sd_model._prepare_prompt_wrappers(texts, processing, is_negative=False)
+            conditioning = sd_model.get_learned_conditioning(wrapped)
+        else:
+            conditioning = sd_model.get_learned_conditioning(texts)
+        if conditioning is None:
+            raise RuntimeError("Failed to build conditioning for img2img; get_learned_conditioning returned None.")
+
+    uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
+    if unconditional_conditioning is None and not uses_distilled_cfg:
+        negatives = list(prompt_context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+        if hasattr(sd_model, "_prepare_prompt_wrappers"):
+            wrapped = sd_model._prepare_prompt_wrappers(negatives, processing, is_negative=True)
+            unconditional_conditioning = sd_model.get_learned_conditioning(wrapped)
+        else:
+            unconditional_conditioning = sd_model.get_learned_conditioning(negatives)
+
     payload = ConditioningPayload(conditioning=conditioning, unconditional=unconditional_conditioning)
 
     bundle = prepare_init_bundle(processing)

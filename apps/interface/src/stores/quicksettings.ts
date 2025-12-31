@@ -62,7 +62,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const coreStreaming = ref<boolean>(false)
 
   // Basic engine/mode options (sync with legacy fallback)
-  const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'svd', 'hunyuan_video', 'wan22'])
+  const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'kontext', 'svd', 'hunyuan_video', 'wan22'])
   const modeChoices = ref<string[]>(['Normal', 'LCM', 'Turbo', 'Lightning'])
 
   async function init(): Promise<void> {

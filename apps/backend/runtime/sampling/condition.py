@@ -142,6 +142,15 @@ def compile_conditions(cond):
     if 'guidance' in cond:
         result['model_conds']['guidance'] = Condition(cond['guidance'])
 
+    if 'image_latents' in cond and cond['image_latents'] is not None:
+        image_latents = cond['image_latents']
+        if not isinstance(image_latents, torch.Tensor) or image_latents.ndim != 4:
+            raise ValueError(
+                f"'image_latents' must be a 4D tensor (B,C,H,W); got {type(image_latents).__name__} "
+                f"shape={getattr(image_latents,'shape',None)}"
+            )
+        result['model_conds']['image_latents'] = Condition(image_latents)
+
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
             "compiled conditions: cross_attn=%s pooled=%s",

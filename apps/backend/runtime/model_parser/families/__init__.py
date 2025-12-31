@@ -17,6 +17,7 @@ _BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
     ModelFamily.SD3: sd3.build_plan,
     ModelFamily.SD35: sd3.build_plan,
     ModelFamily.FLUX: flux.build_plan,
+    ModelFamily.FLUX_KONTEXT: flux.build_plan,
     ModelFamily.CHROMA: chroma.build_plan,
     ModelFamily.WAN22: wan22.build_plan,
     ModelFamily.ZIMAGE: zimage.build_plan,

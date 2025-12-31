@@ -75,6 +75,15 @@ CAPABILITIES_FLOW_NO_CFG = FamilyCapabilities(
     shows_guidance_scale=False,  # Flux uses distilled guidance
 )
 
+CAPABILITIES_KONTEXT = FamilyCapabilities(
+    supports_negative_prompt=False,
+    supports_cfg=False,
+    shows_clip_skip=False,
+    shows_guidance_scale=False,
+    # Kontext checkpoints are trained on sizes divisible by 16; allow the UI to hit preferred sizes.
+    resolution_step=16,
+)
+
 CAPABILITIES_FLOW_WITH_CFG = FamilyCapabilities(
     supports_negative_prompt=True,
     supports_cfg=True,
@@ -289,6 +298,27 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         is_xl_variant=True,
         patch_size=2,
         capabilities=CAPABILITIES_FLOW_NO_CFG,
+    ),
+    ModelFamily.FLUX_KONTEXT: FamilyRuntimeSpec(
+        family=ModelFamily.FLUX_KONTEXT,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=0.3611,
+        vae_shift_factor=0.1159,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=True,
+        default_cfg=1.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=20,
+        flow_shift=1.15,
+        scheduler_default="simple",
+        t5_min_length=256,
+        uses_t5=True,
+        is_xl_variant=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_KONTEXT,
     ),
     ModelFamily.CHROMA: FamilyRuntimeSpec(
         family=ModelFamily.CHROMA,

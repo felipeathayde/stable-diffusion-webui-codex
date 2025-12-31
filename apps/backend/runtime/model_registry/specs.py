@@ -13,6 +13,7 @@ class ModelFamily(Enum):
     SD3 = "sd3"
     SD35 = "sd35"
     FLUX = "flux"
+    FLUX_KONTEXT = "flux_kontext"
     STABLE_CASCADE = "stable_cascade"
     CHROMA = "chroma"
     KOALA = "koala"

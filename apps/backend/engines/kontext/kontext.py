@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import logging
+from typing import Any, Iterable
+
+import torch
+
+from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.engines.flux.flux import Flux
+
+logger = logging.getLogger("backend.engines.kontext")
+
+
+class Kontext(Flux):
+    """Flux Kontext engine (Flux-derived, image-conditioned)."""
+
+    engine_id = "kontext"
+
+    def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
+        return EngineCapabilities(
+            engine_id=self.engine_id,
+            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            model_types=("flux_kontext", "kontext"),
+            devices=("cpu", "cuda"),
+            precision=("fp16", "bf16", "fp32"),
+            extras={
+                "samplers": ("euler", "euler_a", "ddim", "dpmpp_2m"),
+                "schedulers": ("simple", "beta", "normal"),
+            },
+        )
+
+    def img2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:  # type: ignore[override]
+        import json
+        import secrets
+        import threading
+        import time
+
+        from apps.backend.core.requests import Img2ImgRequest, ProgressEvent, ResultEvent
+        from apps.backend.core.state import state as backend_state
+        from apps.backend.engines.util.adapters import build_img2img_processing
+        from apps.backend.use_cases.kontext_img2img import generate_kontext_img2img as _generate_kontext_img2img
+        from apps.backend.runtime.processing.conditioners import decode_latent_batch
+        from apps.backend.runtime.workflows.common import latents_to_pil
+        from apps.backend.runtime.text_processing import last_extra_generation_params
+
+        self.ensure_loaded()
+
+        if not isinstance(request, Img2ImgRequest):
+            raise TypeError(f"{self.__class__.__name__}.img2img expects Img2ImgRequest")
+
+        raw_seed = int(getattr(request, "seed", -1) or -1)
+        if raw_seed < 0:
+            raw_seed = secrets.randbits(32) & 0x7FFFFFFF
+
+        proc = build_img2img_processing(request)
+        proc.sd_model = self
+        proc.seed = raw_seed
+        proc.seeds = [raw_seed]
+        proc.subseed = -1
+        proc.subseeds = [-1]
+
+        prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
+        prompts = prompt_texts
+
+        result: dict[str, Any] = {"latents": None, "error": None}
+        sampling_times: dict[str, float | None] = {"start": None, "end": None}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                sampling_times["start"] = time.perf_counter()
+                result["latents"] = _generate_kontext_img2img(
+                    processing=proc,
+                    conditioning=None,
+                    unconditional_conditioning=None,
+                    prompts=prompts,
+                )
+            except Exception as _exc:
+                result["error"] = _exc
+            finally:
+                sampling_times["end"] = time.perf_counter()
+                done.set()
+
+        threading.Thread(target=_worker, name=f"{self.engine_id}-img2img-worker", daemon=True).start()
+
+        t0 = time.perf_counter()
+        last_step = -1
+        while not done.is_set():
+            try:
+                step = int(getattr(backend_state, "sampling_step", 0) or 0)
+                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
+            except Exception:
+                step, total = 0, 0
+            if total > 0 and step != last_step:
+                elapsed = time.perf_counter() - t0
+                eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
+                pct = max(5.0, min(99.0, (step / total) * 100.0))
+                yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+                last_step = step
+            time.sleep(0.12)
+
+        if result["error"] is not None:
+            raise result["error"]
+        latents = result["latents"]
+
+        if not isinstance(latents, torch.Tensor):
+            raise RuntimeError(
+                f"kontext img2img returned {type(latents).__name__}, expected torch.Tensor (latents)"
+            )
+
+        decode_start = time.perf_counter()
+        decoded = decode_latent_batch(self, latents)
+        images = latents_to_pil(decoded)
+        decode_end = time.perf_counter()
+
+        extra_params: dict[str, object] = {}
+        try:
+            extra_params.update(last_extra_generation_params)
+            extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
+        except Exception:
+            extra_params = getattr(proc, "extra_generation_params", {}) or {}
+
+        info: dict[str, object] = {
+            "engine": self.engine_id,
+            "task": "img2img",
+            "width": int(proc.width),
+            "height": int(proc.height),
+            "steps": int(proc.steps),
+            "guidance_scale": float(proc.guidance_scale),
+            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
+            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+        }
+        if getattr(proc, "prompt", None):
+            info["prompt"] = str(getattr(proc, "prompt", ""))
+        if getattr(proc, "negative_prompt", None):
+            info["negative_prompt"] = str(getattr(proc, "negative_prompt", ""))
+        info["seed"] = int(raw_seed)
+        if extra_params:
+            info["extra"] = extra_params
+
+        timings: dict[str, float] = {}
+        try:
+            if sampling_times["start"] is not None and sampling_times["end"] is not None:
+                timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
+            timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
+            info["timings_ms"] = timings
+        except Exception:
+            pass
+
+        self._post_txt2img_cleanup()
+
+        yield ResultEvent(payload={"images": images, "info": json.dumps(info)})

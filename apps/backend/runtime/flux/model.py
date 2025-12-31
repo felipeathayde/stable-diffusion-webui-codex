@@ -33,11 +33,16 @@ class FluxTransformer2DModel(nn.Module):
             if depth is None or single_depth is None:
                 raise ValueError("FluxTransformer requires depth (or num_layers) and depth_single_blocks (or num_single_layers)")
             
-            # Handle axes_dim with default for GGUF models that may not have it
-            axes_dim = raw_config.pop("axes_dim", [16, 56, 56])
+            # Handle axes_dim with default for GGUF models that may not have it.
+            # Diffusers main also uses "axes_dims_rope" for Flux/FluxKontext configs.
+            axes_dim = raw_config.pop("axes_dim", None)
+            if axes_dim is None:
+                axes_dim = raw_config.pop("axes_dims_rope", [16, 56, 56])
+            else:
+                raw_config.pop("axes_dims_rope", None)
             if isinstance(axes_dim, list):
                 axes_dim = tuple(axes_dim)
-            
+
             theta = raw_config.pop("theta", 10000)
             positional = FluxPositionalConfig(patch_size=2, axes_dim=axes_dim, theta=theta)
             guidance_enabled = raw_config.pop("guidance_embed", None) or raw_config.pop("guidance_embeds", False)
@@ -73,9 +78,10 @@ class FluxTransformer2DModel(nn.Module):
                 # Diffusers-style: 64 = 16 * 2 * 2 (VAE channels * patch_size^2)
                 raw_config["in_channels"] = 16
                 logger.debug("Normalized in_channels from 64 (diffusers) to 16 (Codex internal patchification)")
-            
+
             # Remove keys that don't belong to FluxArchitectureConfig
             raw_config.pop("patch_size", None)  # We handle this in positional config
+            raw_config.pop("out_channels", None)  # Diffusers sometimes includes out_channels=null
             raw_config.pop("_class_name", None)
             raw_config.pop("_diffusers_version", None)
             raw_config.pop("_name_or_path", None)
@@ -142,11 +148,12 @@ class FluxTransformer2DModel(nn.Module):
         y: torch.Tensor,
         guidance: Optional[torch.Tensor] = None,
         *,
+        image_latents: Optional[torch.Tensor] = None,
         control=None,
         transformer_options=None,
         **_: object,
     ) -> torch.Tensor:
-        self._validate_inputs(x, timestep, context, y, guidance)
+        self._validate_inputs(x, timestep, context, y, guidance, image_latents=image_latents)
 
         batch, _, height, width = x.shape
         if logger.isEnabledFor(logging.DEBUG):
@@ -165,10 +172,44 @@ class FluxTransformer2DModel(nn.Module):
         pad_w = (-width) % patch
         if pad_h or pad_w:
             x = torch.nn.functional.pad(x, (0, pad_w, 0, pad_h), mode="circular")
-        img = rearrange(x, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=patch, pw=patch)
+        img_target = rearrange(x, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=patch, pw=patch)
+        target_tokens = img_target.shape[1]
 
-        img_ids = self._build_spatial_ids(batch, height=height + pad_h, width=width + pad_w, device=x.device, dtype=x.dtype)
+        img_ids = self._build_spatial_ids(
+            batch,
+            height=height + pad_h,
+            width=width + pad_w,
+            device=x.device,
+            dtype=x.dtype,
+        )
         txt_ids = torch.zeros((batch, context.shape[1], 3), device=x.device, dtype=x.dtype)
+
+        img = img_target
+        if image_latents is not None:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "FluxKontext conditioning enabled: image_latents=%s",
+                    tuple(image_latents.shape),
+                )
+            if image_latents.shape[2] != height or image_latents.shape[3] != width:
+                raise ValueError(
+                    "FluxKontext requires image_latents spatial dims to match the denoised latents. "
+                    f"Got image_latents={tuple(image_latents.shape)} vs expected x=(B,C,{height},{width})."
+                )
+            img_cond = image_latents
+            if pad_h or pad_w:
+                img_cond = torch.nn.functional.pad(img_cond, (0, pad_w, 0, pad_h), mode="circular")
+            img_cond = rearrange(img_cond, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=patch, pw=patch)
+            cond_ids = self._build_spatial_ids(
+                batch,
+                height=height + pad_h,
+                width=width + pad_w,
+                device=x.device,
+                dtype=x.dtype,
+            )
+            cond_ids[..., 0] = 1
+            img = torch.cat((img, img_cond), dim=1)
+            img_ids = torch.cat((img_ids, cond_ids), dim=1)
 
         img = self.img_in(img)
         vec = self.time_in(timestep_embedding(timestep, 256).to(img.dtype)) + self.vector_in(y)
@@ -193,6 +234,8 @@ class FluxTransformer2DModel(nn.Module):
             tokens = block(tokens, vec=vec, rotary_freqs=rotary)
 
         tokens = tokens[:, txt.shape[1]:]
+        if image_latents is not None:
+            tokens = tokens[:, :target_tokens]
         out = self.final_layer(tokens, vec)
 
         out = rearrange(out, "b (h w) (c ph pw) -> b c (h ph) (w pw)", ph=patch, pw=patch,
@@ -220,6 +263,8 @@ class FluxTransformer2DModel(nn.Module):
         context: torch.Tensor,
         y: torch.Tensor,
         guidance: Optional[torch.Tensor],
+        *,
+        image_latents: Optional[torch.Tensor],
     ) -> None:
         if x.ndim != 4:
             raise ValueError(f"expected input latent (B, C, H, W), got {tuple(x.shape)}")
@@ -235,3 +280,18 @@ class FluxTransformer2DModel(nn.Module):
             raise ValueError("timestep must be 1D with batch length")
         if guidance is not None and guidance.size(0) != x.size(0):
             raise ValueError("guidance embedding batch mismatch")
+        if image_latents is not None:
+            if not torch.is_tensor(image_latents) or image_latents.ndim != 4:
+                raise ValueError(
+                    "image_latents must be a 4D tensor (B, C, H, W) when provided."
+                )
+            if image_latents.size(0) != x.size(0):
+                raise ValueError(
+                    "image_latents batch mismatch: "
+                    f"got {int(image_latents.size(0))}, expected {int(x.size(0))}."
+                )
+            if image_latents.size(1) != x.size(1):
+                raise ValueError(
+                    "image_latents channel mismatch: "
+                    f"got {int(image_latents.size(1))}, expected {int(x.size(1))}."
+                )

@@ -29,6 +29,7 @@ _FAMILY_KEYS: Dict[ModelFamily, str] = {
     ModelFamily.SD15: "sd15_tenc",
     ModelFamily.SDXL: "sdxl_tenc",
     ModelFamily.FLUX: "flux_tenc",
+    ModelFamily.FLUX_KONTEXT: "flux_tenc",
     ModelFamily.ZIMAGE: "zimage_tenc",
     ModelFamily.WAN22: "wan22_tenc",
 }

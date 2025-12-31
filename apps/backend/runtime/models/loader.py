@@ -298,6 +298,7 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 SUPPORTED_INFERENCE_DTYPES: Dict[ModelFamily, tuple[torch.dtype, ...]] = {
     ModelFamily.FLUX: (torch.bfloat16, torch.float16, torch.float32),
+    ModelFamily.FLUX_KONTEXT: (torch.bfloat16, torch.float16, torch.float32),
     ModelFamily.CHROMA: (torch.bfloat16, torch.float16, torch.float32),
 }
 DEFAULT_SUPPORTED_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
@@ -523,6 +524,7 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "sdxl": ModelFamily.SDXL,
     "sdxl_refiner": ModelFamily.SDXL_REFINER,
     "flux": ModelFamily.FLUX,
+    "kontext": ModelFamily.FLUX_KONTEXT,
     "sd35": ModelFamily.SD35,
     "sd3": ModelFamily.SD3,
     "chroma": ModelFamily.CHROMA,
@@ -536,6 +538,7 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.SDXL_REFINER: "sdxl_refiner",
     ModelFamily.SDXL: "sdxl",
     ModelFamily.FLUX: "flux",
+    ModelFamily.FLUX_KONTEXT: "kontext",
     ModelFamily.SD35: "sd35",
     ModelFamily.SD3: "sd35",
     ModelFamily.CHROMA: "chroma",
@@ -740,7 +743,7 @@ def _maybe_convert_sdxl_vae_state_dict(
 
     family = getattr(signature, "family", None) if signature is not None else None
     # Support SDXL, FLUX and ZIMAGE families (all share the same VAE key layout)
-    if family not in (ModelFamily.SDXL, ModelFamily.FLUX, ModelFamily.ZIMAGE):
+    if family not in (ModelFamily.SDXL, ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT, ModelFamily.ZIMAGE):
         return state_dict
 
     keys = list(state_dict.keys())
@@ -947,7 +950,7 @@ def _load_huggingface_component(
             extras = getattr(signature, "extras", {}) or {}
             is_flux_core_gguf = (
                 isinstance(signature, ModelSignature)
-                and signature.family is ModelFamily.FLUX
+                and signature.family in (ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT)
                 and getattr(quant, "kind", None) is QuantizationKind.GGUF
                 and bool(extras.get("gguf_core_only"))
             )
@@ -1805,6 +1808,9 @@ class _SimpleEstimated:
 
 
 def _detect_engine_from_config(config: dict) -> str:
+    pipeline_cls = str(config.get("_class_name") or "").strip().lower()
+    if pipeline_cls == "fluxkontextpipeline":
+        return "kontext"
     comps = {k: v for k, v in config.items() if isinstance(v, list) and len(v) == 2}
     cls_by_name = {k: v[1] for k, v in comps.items()}
     if "text_encoder_2" in comps and "unet" in comps:
@@ -1829,6 +1835,14 @@ def load_engine_from_diffusers(repo_dir: str) -> DiffusionModelBundle:
     for name, (lib_name, cls_name) in (
         (k, v) for k, v in config.items() if isinstance(v, list) and len(v) == 2
     ):
+        # Optional components are represented as [null, null] in model_index.json
+        if lib_name is None and cls_name is None:
+            continue
+        if not isinstance(lib_name, str) or not isinstance(cls_name, str):
+            raise TypeError(
+                f"Invalid diffusers component spec for '{name}': expected [str, str] or [null, null], "
+                f"got [{type(lib_name).__name__}, {type(cls_name).__name__}]"
+            )
         cls = getattr(importlib.import_module(lib_name), cls_name)
         comps[name] = cls.from_pretrained(os.path.join(repo_dir, name), local_files_only=True)
 

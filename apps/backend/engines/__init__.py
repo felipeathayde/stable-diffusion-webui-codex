@@ -17,6 +17,7 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     registration.register_sd15(registry=registry, replace=replace)
     registration.register_sdxl(registry=registry, replace=replace)
     registration.register_flux(registry=registry, replace=replace)
+    registration.register_kontext(registry=registry, replace=replace)
     registration.register_sd20(registry=registry, replace=replace)
     registration.register_sd35(registry=registry, replace=replace)
     registration.register_zimage(registry=registry, replace=replace)

@@ -170,6 +170,9 @@ class _ComponentTracker:
             raise RuntimeError("LoRA-applied engine components are unavailable.")
         return self._after_lora
 
+    def peek_active(self) -> CodexObjects | None:
+        return self._active
+
 
 class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     """Common foundation for Codex diffusion engines."""
@@ -295,6 +298,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     # ------------------------------------------------------------------ Lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
+        if self._is_loaded:
+            self.unload()
         raw_options: dict[str, Any] = dict(options)
         te_override_raw = raw_options.pop("text_encoder_override", None)
         bundle_obj = raw_options.pop("_bundle", None)
@@ -435,6 +440,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             return
         self._logger.info("[engine] Unloading %s", self.engine_id)
         try:
+            self._unload_bound_models_from_memory_manager()
+        except Exception:
+            self._logger.debug("Failed to unload bound models from memory manager", exc_info=True)
+        try:
             self._on_unload()
         finally:
             self._reset_state()
@@ -445,6 +454,48 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             self._current_model_ref = None
             self._load_options = {}
             self.mark_unloaded()
+
+    def _unload_bound_models_from_memory_manager(self) -> None:
+        """Best-effort unload of currently bound heavy components.
+
+        The orchestrator caches engine instances, and engines may be reloaded
+        when model refs or load-affecting options change. When that happens we
+        must drop references held by the memory manager (loaded-model records),
+        otherwise repeated reloads can accumulate duplicate model instances.
+        """
+
+        from apps.backend.runtime.memory import memory_management
+
+        components = self._component_tracker.peek_active()
+        if components is None:
+            return
+
+        targets: list[object] = []
+        # These wrappers are passed directly into memory_management.load_model_gpu(...)
+        targets.append(getattr(components, "unet", None))
+        targets.append(getattr(components, "vae", None))
+        targets.append(getattr(components, "clipvision", None))
+
+        # Text encoders vary by engine; prefer `.patcher` when present.
+        try:
+            for obj in (getattr(components, "text_encoders", {}) or {}).values():
+                if obj is None:
+                    continue
+                targets.append(getattr(obj, "patcher", obj))
+        except Exception:
+            pass
+
+        for target in targets:
+            if target is None:
+                continue
+            try:
+                memory_management.unload_model_clones(target)
+            except Exception:
+                pass
+            try:
+                memory_management.unload_model(target)
+            except Exception:
+                pass
 
     def _reset_state(self) -> None:
         self._component_tracker = _ComponentTracker(logger=self._logger)

@@ -29,3 +29,4 @@ Status: Active
 - 2025-12-26: Removed the WAN Assets modal; metadata/text encoder/VAE selectors are now inline in the header quicksettings bar.
 - 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height and keep a visible border (no fixed `2rem` height from `.btn-*` variants).
 - 2025-12-28: Removed the obsolete “Diffusion in Low Bits” selectors and moved Smart toggles + GPU VRAM / Attention Backend / Overrides into a collapsible Advanced nested area (open by default, left-side handle); WAN `LightX2V` is a toggle button and the Guided gen header button is hidden for now.
+- 2025-12-31: `QuickSettingsWan.vue` now declares `defineEmits(...)` for `browse*` + `update:*` events to avoid Vue “extraneous non-emits listeners” warnings with a fragment root template.

@@ -106,6 +106,21 @@ defineProps<{
   vaeChoices: string[]
 }>()
 
+defineEmits<{
+  (e: 'update:mode', value: string): void
+  (e: 'update:lightx2v', value: boolean): void
+  (e: 'update:highModel', value: string): void
+  (e: 'update:lowModel', value: string): void
+  (e: 'update:metadataDir', value: string): void
+  (e: 'update:textEncoder', value: string): void
+  (e: 'update:vae', value: string): void
+  (e: 'browseHigh'): void
+  (e: 'browseLow'): void
+  (e: 'browseMetadata'): void
+  (e: 'browseTe'): void
+  (e: 'browseVae'): void
+}>()
+
 const builtInLabel = 'Built-in'
 
 function dirLabel(path: string): string {

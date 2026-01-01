@@ -278,8 +278,10 @@ def load_torch_file(ckpt, safe_load=True, device=None):
 
 def _load_gguf_state_dict(path):
     from apps.backend.quantization.gguf_loader import load_gguf_state_dict
+    from apps.backend.infra.config.args import args as runtime_args
 
-    return load_gguf_state_dict(path, dequantize=False)
+    dequantize_upfront = bool(getattr(runtime_args, "gguf_dequantize_upfront", False))
+    return load_gguf_state_dict(path, dequantize=dequantize_upfront)
 
 
 class LazySafetensorsDict(MutableMapping):

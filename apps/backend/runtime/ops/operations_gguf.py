@@ -13,7 +13,6 @@ import threading
 
 import torch
 
-from apps.backend.quantization.api import bake as codex_bake
 from apps.backend.quantization.api import dequantize as codex_dequantize
 from apps.backend.quantization.tensor import CodexParameter
 
@@ -115,14 +114,16 @@ def dequantize_tensor(tensor):
     if not isinstance(tensor, CodexParameter) or tensor.qtype is None:
         return tensor
 
-    if not tensor.baked:
-        codex_bake(tensor)
+    # CPU cache stores CPU float tensors only; don't accidentally turn GPU execution
+    # into CPU->GPU transfers by returning cached CPU weights for GPU-resident params.
+    use_cache = tensor.device.type == "cpu"
 
     tid = id(tensor)
-    cached = _cache_get(tid)
+    cached = _cache_get(tid) if use_cache else None
     if cached is not None:
         return cached
 
     out = codex_dequantize(tensor)
-    _cache_put(tid, out)
+    if use_cache:
+        _cache_put(tid, out)
     return out

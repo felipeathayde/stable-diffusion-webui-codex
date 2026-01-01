@@ -58,7 +58,9 @@ class CodexParameter(torch.nn.Parameter):
                 data = np.array(data, copy=True)
             tensor = torch.from_numpy(data)
         elif isinstance(data, torch.Tensor):
-            tensor = data.detach().clone()
+            # Avoid eager clones here: `to()` already materializes a new tensor when needed,
+            # and cloning on every call creates significant overhead for packed GGUF weights.
+            tensor = data.detach()
         else:
             # Try to convert via numpy
             try:
@@ -175,6 +177,18 @@ class CodexParameter(torch.nn.Parameter):
             if memory_format is not None:
                 move_kwargs["memory_format"] = memory_format
 
+            # Fast path: no-op move (avoid allocating a new CodexParameter wrapper and
+            # cloning packed bytes) — only adjust computation_dtype when requested.
+            if (
+                not copy
+                and memory_format is None
+                and (device is None or torch.device(device) == self.data.device)
+                and (len(move_kwargs) == 1 or (len(move_kwargs) == 2 and "device" in move_kwargs))
+            ):
+                if isinstance(dtype, torch.dtype):
+                    self.computation_dtype = dtype
+                return self
+
             new = self.copy_with_data(self.data.to(**move_kwargs))
             if isinstance(dtype, torch.dtype):
                 new.computation_dtype = dtype
@@ -210,4 +224,3 @@ class CodexParameter(torch.nn.Parameter):
             f"dtype={self.computation_dtype}, "
             f"baked={self.baked})"
         )
-

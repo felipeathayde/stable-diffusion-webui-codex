@@ -17,6 +17,9 @@ Starts:
   - Backend API (FastAPI) from ${API_ENTRYPOINT}
   - Frontend UI (Vite) from ${UI_DIR}
 
+Backend args:
+  - Any extra args are forwarded to the backend entrypoint (e.g. `--gguf-dequantize-upfront`).
+
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
   - PYTHON           (default: \$CODEX_VENV_DIR/bin/python)
@@ -250,7 +253,7 @@ trap 'cleanup 143' TERM
 
 (
   cd "${ROOT_DIR}"
-  "${PY_BIN}" "${API_ENTRYPOINT}"
+  "${PY_BIN}" "${API_ENTRYPOINT}" "$@"
 ) &
 api_pid="$!"
 

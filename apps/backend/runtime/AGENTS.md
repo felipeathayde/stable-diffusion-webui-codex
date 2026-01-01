@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-12-30
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -40,3 +40,4 @@ Status: Active
 - 2025-12-30: GGUF converter now supports sharded SafeTensors inputs via `*.safetensors.index.json` (or by pointing at a directory containing the index); no manual shard merge required.
 - 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
+- 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).

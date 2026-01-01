@@ -86,6 +86,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-online-tokenizer", action="store_true")
 
     parser.add_argument(
+        "--gguf-dequantize-upfront",
+        action="store_true",
+        help="Dequantize GGUF tensors to float at load time (uses more RAM/VRAM, can improve runtime speed).",
+    )
+
+    parser.add_argument(
         "--debug-conditioning",
         action="store_true",
         help="Emit verbose conditioning diagnostics during diffusion runs.",

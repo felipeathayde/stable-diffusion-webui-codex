@@ -2258,6 +2258,9 @@ def build_app() -> FastAPI:
                 except Exception:
                     preview_period = 0
                 preview_interval = preview_period if (preview_enabled and preview_period > 0) else 0
+                debug_preview_factors = os.getenv("CODEX_DEBUG_PREVIEW_FACTORS", "").strip().lower() in {"1", "true", "yes", "on"}
+                if debug_preview_factors and preview_interval <= 0:
+                    preview_interval = 10
                 preview_method = str(_opts_get("show_progress_type", "Approx cheap") or "Approx cheap")
                 os.environ["CODEX_PREVIEW_INTERVAL"] = str(preview_interval)
                 os.environ["CODEX_LIVE_PREVIEW_METHOD"] = preview_method
@@ -2640,6 +2643,9 @@ def build_app() -> FastAPI:
                 except Exception:
                     preview_period = 0
                 preview_interval = preview_period if (preview_enabled and preview_period > 0) else 0
+                debug_preview_factors = os.getenv("CODEX_DEBUG_PREVIEW_FACTORS", "").strip().lower() in {"1", "true", "yes", "on"}
+                if debug_preview_factors and preview_interval <= 0:
+                    preview_interval = 10
                 preview_method = str(_opts_get("show_progress_type", "Approx cheap") or "Approx cheap")
                 os.environ["CODEX_PREVIEW_INTERVAL"] = str(preview_interval)
                 os.environ["CODEX_LIVE_PREVIEW_METHOD"] = preview_method
@@ -3703,6 +3709,12 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         settings=settings,
         strict=True,
     )
+    # Expose CLI debug flags as env vars for runtime modules that rely on os.getenv.
+    try:
+        if getattr(ns, "debug_preview_factors", False):
+            os.environ["CODEX_DEBUG_PREVIEW_FACTORS"] = "1"
+    except Exception:
+        pass
     mem_management.reinitialize(runtime_config)
     # Pre-warm model inventory at process bootstrap so `/api/models/inventory`
     # is already hot when the UI first loads quicksettings. This avoids paying

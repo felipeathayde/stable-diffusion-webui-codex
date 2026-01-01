@@ -98,6 +98,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--debug-preview-factors",
+        action="store_true",
+        help="Emit a best-fit latent→RGB preview matrix (for building Approx-cheap live previews).",
+    )
+
+    parser.add_argument(
         "--trace-debug",
         action="store_true",
         help="Enable global function-call trace (logger.debug for every Python call).",
@@ -236,6 +242,9 @@ def _apply_source_overrides(
 
     if getattr(ns, "debug_conditioning", False):
         env_map["CODEX_DEBUG_COND"] = "1"
+
+    if getattr(ns, "debug_preview_factors", False):
+        env_map["CODEX_DEBUG_PREVIEW_FACTORS"] = "1"
 
     if getattr(ns, "pin_shared_memory", False):
         env_map["CODEX_PIN_SHARED_MEMORY"] = "1"
@@ -460,6 +469,9 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
     if _truthy(env.get("CODEX_DEBUG_COND")):
         ns.debug_conditioning = True
+
+    if _truthy(env.get("CODEX_DEBUG_PREVIEW_FACTORS")):
+        ns.debug_preview_factors = True
 
     if _truthy(env.get("CODEX_PIN_SHARED_MEMORY")):
         ns.pin_shared_memory = True

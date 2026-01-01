@@ -42,3 +42,4 @@ Status: Active
 - 2025-12-31: `/api/img2img` now infers missing `img2img_width/img2img_height` from the init image (snapped to multiples of 8) and provides Kontext defaults when `img2img_steps/img2img_cfg_scale/img2img_distilled_cfg_scale` are omitted (`28/1.0/2.5`).
 - 2026-01-01: `/api/txt2img` now accepts `clip_skip`, and `/api/img2img` accepts `img2img_clip_skip` (wired into prompt controls before conditioning is computed).
 - 2026-01-01: `/api/{txt2img,img2img}` now supports live preview streaming: backend reads UI settings (`show_progress_every_n_steps`, `show_progress_type`, `live_previews_image_format`) and attaches `preview_image`/`preview_step` to task `progress` SSE events when a new preview is available.
+- 2026-01-01: Added `--debug-preview-factors` (launcher arg) so the runtime can log best-fit latent→RGB preview factors (`[preview-factors]`) for deriving new `Approx cheap` mappings.

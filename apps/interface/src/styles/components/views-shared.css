@@ -21,14 +21,31 @@
   .cdx-chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 
   /* History cards (shared layout) */
-  .cdx-history-list { display: flex; flex-direction: column; gap: var(--space-sm); }
+  .cdx-history-list {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: var(--space-sm);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
   .cdx-history-item {
     position: relative;
+    flex: 0 0 clamp(16rem, 34vw, 22rem);
     padding: 0.65rem 0.75rem;
     border-radius: 0.75rem;
     border: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
     background: hsla(0, 0%, 100%, 0.03);
     box-shadow: inset 0 0.0625rem 0 hsla(0, 0%, 100%, 0.05);
+    transition: border-color 0.16s ease, background 0.16s ease;
+    scroll-snap-align: start;
+  }
+  .cdx-history-item:hover {
+    border-color: hsla(0, 0%, 100%, 0.18);
+    background: hsla(0, 0%, 100%, 0.045);
   }
   .cdx-history-item.is-selected { border-color: hsla(210, 70%, 65%, 0.65); }
   .cdx-history-meta { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
@@ -58,6 +75,11 @@
   }
   .cdx-history-item:hover .cdx-history-actions,
   .cdx-history-item:focus-within .cdx-history-actions {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .cdx-history-item.is-selected .cdx-history-actions {
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;

@@ -318,18 +318,18 @@
           <WanSubHeader title="History">
             <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!history.length || isRunning" @click="clearHistory">Clear</button>
           </WanSubHeader>
-          <div v-if="history.length" class="wan-history-list">
-            <div v-for="item in history" :key="item.taskId" :class="['wan-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
-              <div class="wan-history-meta">
-                <div class="wan-history-title">{{ formatHistoryTitle(item) }}</div>
-                <div class="wan-history-sub">{{ item.summary }}</div>
-                <div v-if="item.promptPreview" class="wan-history-sub">{{ item.promptPreview }}</div>
+          <div v-if="history.length" class="cdx-history-list">
+            <div v-for="item in history" :key="item.taskId" :class="['cdx-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
+              <div class="cdx-history-meta">
+                <div class="cdx-history-title">{{ formatHistoryTitle(item) }}</div>
+                <div class="cdx-history-sub">{{ item.summary }}</div>
+                <div v-if="item.promptPreview" class="cdx-history-sub">{{ item.promptPreview }}</div>
                 <div v-if="item.status !== 'completed'" class="caption">Status: {{ item.status }}</div>
                 <div v-if="item.errorMessage" class="caption">Error: {{ item.errorMessage }}</div>
               </div>
-              <div class="wan-history-actions">
+              <div class="cdx-history-actions">
                 <button class="btn btn-sm btn-secondary" type="button" :disabled="isRunning || historyLoadingTaskId === item.taskId" @click="loadHistory(item.taskId)">
-                  {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'View' }}
+                  {{ historyLoadingTaskId === item.taskId ? 'Loading…' : 'Load' }}
                 </button>
                 <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="applyHistory(item)">Apply</button>
                 <button class="btn btn-sm btn-outline" type="button" :disabled="isRunning" @click="copyHistoryParams(item)">Copy</button>
@@ -1313,10 +1313,13 @@ async function sendToWorkflows(): Promise<void> {
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
-function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: string }): string {
-  const d = new Date(item.createdAtMs)
-  const ts = Number.isFinite(item.createdAtMs) ? d.toLocaleString() : ''
-  return `${item.mode} · ${ts} · ${item.taskId}`
+function formatHistoryTitle(item: VideoRunHistoryItem): string {
+  const dt = new Date(item.createdAtMs || Date.now())
+  const hh = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const label = item.mode === 'vid2vid'
+    ? 'Vid2Vid'
+    : (item.mode === 'img2vid' ? 'Img2Vid' : 'Txt2Vid')
+  return `${label} · ${hh}`
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

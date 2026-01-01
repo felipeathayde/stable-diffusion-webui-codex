@@ -37,6 +37,8 @@ bash install-webui.sh
 2) Start API + UI:
 ```bash
 ./run-webui.sh
+# Advanced (forwarded to backend):
+./run-webui.sh --gguf-dequantize-upfront
 ```
 
 ## PyTorch

@@ -2,7 +2,7 @@
 # apps/interface Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: Active
 - 2025-11-14: API requests are built via `src/api/payloads.ts` (Zod schemas) — payload builders trim prompts and always attach the per-tab engine/model metadata (even for img2img).
 - 2025-12-03: Txt2Img prompt schema now rejects empty prompts at the frontend (`PromptSchema`), surfacing a validation error instead of silently sending `prompt=""` to the backend.
 - 2025-12-03: Vitest added for frontend unit tests (`npm test`) to cover prompt serialization and future UI logic.
+- 2026-01-01: Updated `apps/interface/README.md` to reflect the repo-local `.venv` (and `run-webui.sh` as the recommended dev entrypoint).

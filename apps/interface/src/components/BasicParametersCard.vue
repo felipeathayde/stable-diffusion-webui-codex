@@ -49,7 +49,7 @@
           :nudgeStep="widthInputStep"
           inputClass="cdx-input-w-md"
           :disabled="disabled"
-          @update:modelValue="(v) => emit('update:width', clampInt(v, minWidth, maxWidth))"
+          @update:modelValue="(v) => emit('update:width', clampIntToStep(v, minWidth, maxWidth, widthInputStep))"
         >
           <template #right>
             <NumberStepperInput
@@ -60,10 +60,20 @@
               :nudgeStep="widthInputStep"
               inputClass="cdx-input-w-md"
               :disabled="disabled"
-              @update:modelValue="(v) => emit('update:width', clampInt(v, minWidth, maxWidth))"
+              @update:modelValue="(v) => emit('update:width', clampIntToStep(v, minWidth, maxWidth, widthInputStep))"
             />
             <button class="btn-swap" type="button" :disabled="disabled" title="Swap width/height" @click="swapWH">
               <span class="btn-swap-icon" aria-hidden="true">⇵</span>
+            </button>
+            <button
+              v-if="showInitImageDims"
+              class="btn-swap"
+              type="button"
+              :disabled="disabled"
+              title="Use init image dimensions"
+              @click="emit('sync-init-image-dims')"
+            >
+              <span aria-hidden="true">🖼</span>
             </button>
           </template>
         </SliderField>
@@ -79,7 +89,7 @@
           :nudgeStep="heightInputStep"
           inputClass="cdx-input-w-md"
           :disabled="disabled"
-          @update:modelValue="(v) => emit('update:height', clampInt(v, minHeight, maxHeight))"
+          @update:modelValue="(v) => emit('update:height', clampIntToStep(v, minHeight, maxHeight, heightInputStep))"
         />
 
         <div v-if="resolutionPresets.length" class="gc-col gc-col--presets">
@@ -170,6 +180,7 @@ const props = withDefaults(defineProps<{
   heightInputStep?: number
 
   resolutionPresets?: [number, number][]
+  showInitImageDims?: boolean
 }>(), {
   disabled: false,
   samplerLabel: 'Sampler',
@@ -189,14 +200,15 @@ const props = withDefaults(defineProps<{
   maxCfg: 30,
   cfgStep: 0.5,
   minWidth: 64,
-  maxWidth: 2048,
+  maxWidth: 8192,
   minHeight: 64,
-  maxHeight: 2048,
+  maxHeight: 8192,
   widthStep: 64,
   widthInputStep: 8,
   heightStep: 64,
   heightInputStep: 8,
   resolutionPresets: () => [],
+  showInitImageDims: false,
 })
 
 const emit = defineEmits<{
@@ -209,6 +221,7 @@ const emit = defineEmits<{
   (e: 'update:height', value: number): void
   (e: 'random-seed'): void
   (e: 'reuse-seed'): void
+  (e: 'sync-init-image-dims'): void
 }>()
 
 const showCfg = computed(() => props.showCfg !== false)
@@ -221,9 +234,9 @@ const maxCfg = computed(() => Number.isFinite(props.maxCfg) ? Number(props.maxCf
 const cfgStep = computed(() => Number.isFinite(props.cfgStep) ? Number(props.cfgStep) : 0.5)
 
 const minWidth = computed(() => Number.isFinite(props.minWidth) ? Math.trunc(Number(props.minWidth)) : 64)
-const maxWidth = computed(() => Number.isFinite(props.maxWidth) ? Math.trunc(Number(props.maxWidth)) : 2048)
+const maxWidth = computed(() => Number.isFinite(props.maxWidth) ? Math.trunc(Number(props.maxWidth)) : 8192)
 const minHeight = computed(() => Number.isFinite(props.minHeight) ? Math.trunc(Number(props.minHeight)) : 64)
-const maxHeight = computed(() => Number.isFinite(props.maxHeight) ? Math.trunc(Number(props.maxHeight)) : 2048)
+const maxHeight = computed(() => Number.isFinite(props.maxHeight) ? Math.trunc(Number(props.maxHeight)) : 8192)
 
 const widthStep = computed(() => Number.isFinite(props.widthStep) ? Math.trunc(Number(props.widthStep)) : 64)
 const widthInputStep = computed(() => Number.isFinite(props.widthInputStep) ? Math.trunc(Number(props.widthInputStep)) : 8)
@@ -242,6 +255,13 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n))
 }
 
+function clampIntToStep(value: number, min: number, max: number, step: number): number {
+  const clamped = clampInt(value, min, max)
+  if (!Number.isFinite(step) || step <= 0) return clamped
+  const snapped = Math.round(clamped / step) * step
+  return Math.min(max, Math.max(min, snapped))
+}
+
 function onSeedChange(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value)
   if (!Number.isFinite(raw)) return
@@ -249,13 +269,13 @@ function onSeedChange(event: Event): void {
 }
 
 function swapWH(): void {
-  emit('update:width', clampInt(props.height, minWidth.value, maxWidth.value))
-  emit('update:height', clampInt(props.width, minHeight.value, maxHeight.value))
+  emit('update:width', clampIntToStep(props.height, minWidth.value, maxWidth.value, widthInputStep.value))
+  emit('update:height', clampIntToStep(props.width, minHeight.value, maxHeight.value, heightInputStep.value))
 }
 
 function applyResolutionPreset(pair: [number, number]): void {
-  const w = clampInt(pair[0], minWidth.value, maxWidth.value)
-  const h = clampInt(pair[1], minHeight.value, maxHeight.value)
+  const w = clampIntToStep(pair[0], minWidth.value, maxWidth.value, widthInputStep.value)
+  const h = clampIntToStep(pair[1], minHeight.value, maxHeight.value, heightInputStep.value)
   emit('update:width', w)
   emit('update:height', h)
 }

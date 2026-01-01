@@ -20,3 +20,4 @@ Status: Active
 - 2025-12-28: Replaced the remaining small switch widgets (`qs-switch--sm`) in `Home.vue` and `WANTab.vue` with `qs-toggle-btn` buttons for consistent toggle styling across the UI.
 - 2025-12-29: `WANTab.vue` uses `WanSubHeader` for consistent section headers and keeps “Video” + “Video Output” as sequential (separate) cards; Video exposes a compact Aspect selector inline with the Width slider.
 - 2025-12-29: `WANTab.vue` renders the History card above the results viewer for parity with `ImageModelTab.vue`.
+- 2025-12-31: `ImageModelTab.vue` now syncs Width/Height from the init image (auto on upload and “Send to Img2Img”, plus a manual re-sync action) and applies Kontext-friendly defaults on Flux init-image runs without overriding custom values.

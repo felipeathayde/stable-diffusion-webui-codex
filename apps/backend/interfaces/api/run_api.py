@@ -2323,21 +2323,64 @@ def build_app() -> FastAPI:
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
         init_image_data = _p.require(payload, 'img2img_init_image')
         init_image = media.decode_image(init_image_data)
+        init_w, init_h = 0, 0
+        try:
+            init_w, init_h = init_image.size  # type: ignore[attr-defined]
+        except Exception:
+            init_w, init_h = 0, 0
         mask_data = payload.get('img2img_mask')
         mask_image = media.decode_image(mask_data) if mask_data else None
-    
+
+        engine_override = payload.get('engine') or payload.get('codex_engine')
+        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+        snap = _opts_snapshot()
+        engine_key = engine_override or snap.codex_engine
+        model_ref = model_override or snap.sd_model_checkpoint
+        is_kontext = str(engine_key) == "kontext"
+
         prompt = _p.require(payload, 'img2img_prompt') or ''
         negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
         styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
         batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
         batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
-        steps_val = _p.as_int(payload, 'img2img_steps')
-        cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+        if 'img2img_steps' in payload:
+            steps_val = _p.as_int(payload, 'img2img_steps')
+        elif is_kontext:
+            steps_val = 28
+        else:
+            raise HTTPException(status_code=400, detail="'img2img_steps' is required")
+
+        if 'img2img_cfg_scale' in payload:
+            cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+        elif is_kontext:
+            cfg_scale = 1.0
+        else:
+            raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
+
         distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+        if distilled_cfg_scale is None and is_kontext:
+            distilled_cfg_scale = 2.5
         image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
         denoise = _p.as_float(payload, 'img2img_denoising_strength')
-        width_val = _p.as_int(payload, 'img2img_width')
-        height_val = _p.as_int(payload, 'img2img_height')
+        def _snap_dim(value: int) -> int:
+            if not value:
+                return 0
+            value = max(8, min(8192, int(value)))
+            return int(((value + 4) // 8) * 8)
+
+        if 'img2img_width' in payload:
+            width_val = _p.as_int(payload, 'img2img_width')
+        else:
+            width_val = _snap_dim(int(init_w) if init_w else 0)
+            if not width_val:
+                raise HTTPException(status_code=400, detail="'img2img_width' is required")
+
+        if 'img2img_height' in payload:
+            height_val = _p.as_int(payload, 'img2img_height')
+        else:
+            height_val = _snap_dim(int(init_h) if init_h else 0)
+            if not height_val:
+                raise HTTPException(status_code=400, detail="'img2img_height' is required")
         sampler_name = _p.require(payload, 'img2img_sampling')
         scheduler_name = _p.require(payload, 'img2img_scheduler')
         seed_val = _p.as_int(payload, 'img2img_seed')
@@ -2469,16 +2512,10 @@ def build_app() -> FastAPI:
             smart_cache=bool(payload.get("smart_cache")) if payload.get("smart_cache") is not None else bool(getattr(_opts_snapshot(), "codex_smart_cache", False)),
         )
     
-        engine_override = payload.get('engine') or payload.get('codex_engine')
-        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
-
         # GGUF models require text encoder
         if model_override and str(model_override).lower().endswith('.gguf') and not tenc_sha:
             raise HTTPException(status_code=400, detail="GGUF models require tenc_sha in img2img_extras")
-    
-        snap = _opts_snapshot()
-        engine_key = engine_override or snap.codex_engine
-        model_ref = model_override or snap.sd_model_checkpoint
+
         return req, str(engine_key), model_ref
     
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:

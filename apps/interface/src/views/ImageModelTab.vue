@@ -82,6 +82,7 @@
             :resolutionPresets="resolutionPresets"
             :show-cfg="true"
             :cfg-label="cfgLabel"
+            :show-init-image-dims="params.useInitImage && Boolean(params.initImageData)"
             :disabled="isRunning"
             @update:sampler="(v: string) => setParams({ sampler: v })"
             @update:scheduler="(v: string) => setParams({ scheduler: v })"
@@ -92,6 +93,7 @@
             @update:seed="(v: number) => setParams({ seed: Math.trunc(v) })"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
+            @sync-init-image-dims="syncInitImageDims"
           />
 
           <HighresSettingsCard
@@ -243,7 +245,7 @@ import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
 import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
-import { getEngineConfig, type EngineType } from '../stores/engine_config'
+import { getEngineConfig, getEngineDefaults, type EngineType } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useWorkflowsStore } from '../stores/workflows'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
@@ -554,14 +556,42 @@ function clampFloat(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+const _KONTEXT_DEFAULT_STEPS = 28
+const _KONTEXT_DEFAULT_DISTILLED_CFG = 2.5
+const _INIT_IMAGE_DIM_MIN = 64
+const _INIT_IMAGE_DIM_MAX = 8192
+const _INIT_IMAGE_DIM_STEP = 8
+
+function snapInitImageDim(value: number): number {
+  const clamped = Math.max(_INIT_IMAGE_DIM_MIN, Math.min(_INIT_IMAGE_DIM_MAX, Math.trunc(value)))
+  const snapped = Math.round(clamped / _INIT_IMAGE_DIM_STEP) * _INIT_IMAGE_DIM_STEP
+  return Math.max(_INIT_IMAGE_DIM_MIN, Math.min(_INIT_IMAGE_DIM_MAX, snapped))
+}
+
 function onInitToggle(e: Event): void {
-  setParams({ useInitImage: (e.target as HTMLInputElement).checked })
-  if (!(e.target as HTMLInputElement).checked) setParams({ initImageData: '', initImageName: '' })
+  const checked = (e.target as HTMLInputElement).checked
+  const wasEnabled = Boolean(params.value.useInitImage)
+  setParams({ useInitImage: checked })
+  if (!checked) {
+    setParams({ initImageData: '', initImageName: '' })
+    return
+  }
+  if (!wasEnabled) maybeApplyKontextDefaults()
 }
 
 async function onInitFileSet(file: File): Promise<void> {
+  const wasEnabled = Boolean(params.value.useInitImage)
   const dataUrl = await readFileAsDataURL(file)
-  setParams({ initImageData: dataUrl, initImageName: file.name, useInitImage: true })
+  const patch: Partial<ImageBaseParams> = { initImageData: dataUrl, initImageName: file.name, useInitImage: true }
+  try {
+    const { width, height } = await readImageDimensions(dataUrl)
+    patch.width = snapInitImageDim(width)
+    patch.height = snapInitImageDim(height)
+  } catch {
+    // ignore: keep current dims
+  }
+  setParams(patch)
+  if (!wasEnabled) maybeApplyKontextDefaults()
 }
 
 function clearInit(): void { setParams({ initImageData: '', initImageName: '' }) }
@@ -585,13 +615,53 @@ function download(image: GeneratedImage, index: number): void {
 
 async function sendToImg2Img(image: GeneratedImage): Promise<void> {
   if (!supportsImg2Img.value) return
-  setParams({ useInitImage: true, initImageData: toDataUrl(image), initImageName: `from_${props.type}.png` })
+  const wasEnabled = Boolean(params.value.useInitImage)
+  const dataUrl = toDataUrl(image)
+  const patch: Partial<ImageBaseParams> = { useInitImage: true, initImageData: dataUrl, initImageName: `from_${props.type}.png` }
+  try {
+    const { width, height } = await readImageDimensions(dataUrl)
+    patch.width = snapInitImageDim(width)
+    patch.height = snapInitImageDim(height)
+  } catch {
+    // ignore
+  }
+  setParams(patch)
+  if (!wasEnabled) maybeApplyKontextDefaults()
 }
 
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file)
   })
+}
+
+function readImageDimensions(src: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
+    img.onerror = () => reject(new Error('Failed to load image'))
+    img.src = src
+  })
+}
+
+async function syncInitImageDims(): Promise<void> {
+  const src = String(params.value.initImageData || '')
+  if (!src) return
+  try {
+    const { width, height } = await readImageDimensions(src)
+    setParams({ width: snapInitImageDim(width), height: snapInitImageDim(height) })
+  } catch {
+    // ignore
+  }
+}
+
+function maybeApplyKontextDefaults(): void {
+  if (props.type !== 'flux') return
+  const defaults = getEngineDefaults('flux')
+  const defaultCfg = defaults.distilledCfg ?? defaults.cfg
+  // Only apply when user hasn't customized away from the Flux defaults.
+  if (params.value.steps === defaults.steps) setParams({ steps: _KONTEXT_DEFAULT_STEPS })
+  if (params.value.cfgScale === defaultCfg) setParams({ cfgScale: _KONTEXT_DEFAULT_DISTILLED_CFG })
 }
 
 function syncPreviewHeight(): void {

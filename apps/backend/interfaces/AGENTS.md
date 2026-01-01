@@ -39,3 +39,4 @@ Status: Active
 - 2025-12-29: API port-guard (`port_free`) now checks IPv4 + IPv6 loopback/wildcard (0.0.0.0/127.0.0.1/::/::1) to avoid “localhost” split-brain where an IPv6-only listener exists but the guard only tested IPv4.
 - 2025-12-30: Suppressed uvicorn access-log spam for `/api/tools/convert-gguf/{job_id}` polling; opt out via `CODEX_UVICORN_ACCESS_LOG_TOOLS=1`.
 - 2025-12-31: `/api/img2img` now accepts `img2img_extras` (incl. `text_encoder_override` + `tenc_sha`), enforces `tenc_sha` for `.gguf`, and forwards request-level `engine_options` into the orchestrator (parity with `/api/txt2img`, needed for Flux/Kontext GGUF runs).
+- 2025-12-31: `/api/img2img` now infers missing `img2img_width/img2img_height` from the init image (snapped to multiples of 8) and provides Kontext defaults when `img2img_steps/img2img_cfg_scale/img2img_distilled_cfg_scale` are omitted (`28/1.0/2.5`).

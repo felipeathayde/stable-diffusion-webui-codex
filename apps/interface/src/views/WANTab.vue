@@ -315,9 +315,9 @@
         </div>
 
         <div class="gen-card mb-3">
-          <div class="row-split">
-            <span class="label-muted">History</span>
-          </div>
+          <WanSubHeader title="History">
+            <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!history.length || isRunning" @click="clearHistory">Clear</button>
+          </WanSubHeader>
           <div v-if="history.length" class="wan-history-list">
             <div v-for="item in history" :key="item.taskId" :class="['wan-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
               <div class="wan-history-meta">
@@ -344,9 +344,6 @@
               <pre class="text-xs break-words">{{ diffText }}</pre>
             </div>
           </details>
-          <div class="wan-callout-actions mt-2">
-            <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
-          </div>
         </div>
 
         <div v-if="videoUrl" class="gen-card mb-3">

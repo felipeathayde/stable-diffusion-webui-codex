@@ -80,6 +80,7 @@
             :cfg-scale="params.cfgScale"
             :seed="params.seed"
             :clip-skip="params.clipSkip"
+            section-title="Basic Parameters"
             :resolutionPresets="resolutionPresets"
             :show-cfg="true"
             :cfg-label="cfgLabel"
@@ -177,9 +178,9 @@
         </template>
 
         <div class="gen-card mb-3">
-          <div class="row-split">
-            <span class="label-muted">History</span>
-          </div>
+          <WanSubHeader title="History">
+            <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!history.length || isRunning" @click="clearHistory">Clear</button>
+          </WanSubHeader>
           <div v-if="history.length" class="cdx-history-list">
             <div v-for="item in history" :key="item.taskId" :class="['cdx-history-item', { 'is-selected': item.taskId === selectedTaskId }]">
               <div class="cdx-history-meta">
@@ -199,10 +200,6 @@
             </div>
           </div>
           <div v-else class="caption">No runs yet.</div>
-
-          <div class="cdx-history-actions mt-2">
-            <button class="btn btn-sm btn-ghost" type="button" :disabled="!history.length || isRunning" @click="clearHistory">Clear history</button>
-          </div>
         </div>
 
         <ResultViewer
@@ -258,6 +255,7 @@ import HighresSettingsCard from '../components/HighresSettingsCard.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
+import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import RunCard from '../components/results/RunCard.vue'

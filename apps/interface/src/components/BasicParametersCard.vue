@@ -1,5 +1,6 @@
 <template>
   <div class="gen-card">
+    <WanSubHeader v-if="sectionTitle" :title="sectionTitle" />
     <div class="gc-stack">
       <div class="gc-row">
         <SamplerSelector
@@ -150,6 +151,7 @@ import DimensionPresetsGrid from './ui/DimensionPresetsGrid.vue'
 import SliderField from './ui/SliderField.vue'
 import SamplerSelector from './SamplerSelector.vue'
 import SchedulerSelector from './SchedulerSelector.vue'
+import WanSubHeader from './wan/WanSubHeader.vue'
 
 const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
@@ -162,6 +164,7 @@ const props = withDefaults(defineProps<{
   width: number
   height: number
   disabled?: boolean
+  sectionTitle?: string
 
   // Labels
   samplerLabel?: string
@@ -231,6 +234,7 @@ const props = withDefaults(defineProps<{
   clipSkip: 1,
   minClipSkip: 1,
   maxClipSkip: 12,
+  sectionTitle: '',
   resolutionPresets: () => [],
   showInitImageDims: false,
 })

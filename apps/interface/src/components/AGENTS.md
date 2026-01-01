@@ -39,3 +39,4 @@ Status: Active
 - 2025-12-26: Added `BatchSettingsCard.vue` to keep batch count/size controls as a separate card, and refactored `GenerationSettingsCard.vue` to compose `BasicParametersCard` + `BatchSettingsCard` (backwards-compatible wrapper).
 - 2025-12-31: `BasicParametersCard.vue` now supports syncing Width/Height from the init image (`showInitImageDims` + `sync-init-image-dims` event), snaps dimension updates to the input step (default 8; matches backend multiple-of-8 constraint), and raises default max dims to 8192 to accommodate tall portrait inputs.
 - 2026-01-01: `BasicParametersCard.vue` can optionally render a `CLIP Skip` control (`showClipSkip`, `clipSkip`, `minClipSkip/maxClipSkip`) so model tabs can expose clip-skip without prompt tags.
+- 2026-01-01: `BasicParametersCard.vue` can optionally render a `WanSubHeader` title (`sectionTitle`) so model tabs can label the card like WAN sections.

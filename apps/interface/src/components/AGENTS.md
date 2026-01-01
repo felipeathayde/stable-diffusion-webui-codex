@@ -21,6 +21,7 @@ Status: Active
 - 2025-12-26: QuickSettings header buttons now use `qs-btn-secondary`/`qs-btn-outline` (fill the `qs-row` height, with consistent borders; no fixed `2rem` height).
 - `ResultViewer.vue` exibe um overlay full-screen para zoom de imagens (sem modal encaixotado): o preview da galeria continua grande no card, enquanto o overlay usa o viewport inteiro com ferramenta lateral para pan/zoom (drag para pan, botões de Fit/1:1/+/−/Close na barra à direita).
 - 2025-12-29: `ResultViewer.vue` now renders the zoom overlay inside the `.viewer-card` root so fallthrough attrs like `:style`/`class` can be applied without Vue fragment-root warnings.
+- 2026-01-01: `ResultViewer.vue` can optionally show a single `previewImage` (with `previewCaption`) while a task is running, before final results are available.
 - 2025-12-16: Added `InitialVideoCard.vue` to mirror `InitialImageCard.vue` for WAN `vid2vid` uploads (file picker + preview + remove).
 - 2025-12-17: `QuickSettingsWan.vue` added WAN Mode/Format selectors + Guided gen; `QuickSettingsBar.vue` dispatches WAN events (`codex-wan-mode-change`, `codex-wan-guided-gen`) consumed by `WANTab.vue`.
 - 2025-12-28: QuickSettings now groups GPU VRAM / Attention Backend / Overrides into a collapsible Advanced row; the obsolete low-bits dtype selectors were removed and Guided gen entrypoint is hidden for now.

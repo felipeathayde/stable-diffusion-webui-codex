@@ -205,9 +205,12 @@
         <ResultViewer
           mode="image"
           :images="images"
+          :previewImage="previewImage"
+          :previewCaption="previewCaption"
+          :isRunning="isRunning"
           :width="params.width"
           :height="params.height"
-          emptyText="No images yet. Generate to see results here."
+          :emptyText="resultsEmptyText"
           :style="previewStyle"
         >
           <template #image-actions="{ image, index }">
@@ -273,6 +276,8 @@ const {
   stopStream,
   gallery,
   progress,
+  previewImage,
+  previewStep,
   errorMessage,
   isRunning,
   lastSeed,
@@ -404,6 +409,21 @@ const progressPercent = computed(() => {
   if (progress.value.percent !== null) return progress.value.percent
   if (!progress.value.totalSteps || progress.value.step === null) return null
   return (progress.value.step / progress.value.totalSteps) * 100
+})
+
+const resultsEmptyText = computed(() => {
+  if (!isRunning.value) return 'No images yet. Generate to see results here.'
+  const stage = String(progress.value.stage || 'starting')
+  if (stage === 'starting' || stage === 'submitted' || stage === 'queued') return 'Starting inference…'
+  if (progressPercent.value !== null) return `Generating… (${progressPercent.value.toFixed(1)}%)`
+  return `Generating… (${stage})`
+})
+
+const previewCaption = computed(() => {
+  const step = previewStep.value
+  if (step !== null && progress.value.totalSteps) return `Live preview · step ${step}/${progress.value.totalSteps}`
+  if (step !== null) return `Live preview · step ${step}`
+  return 'Live preview'
 })
 
 const resolutionPresets = computed((): [number, number][] => {

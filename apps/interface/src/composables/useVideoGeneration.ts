@@ -403,6 +403,7 @@ export function useVideoGeneration(tabId: string) {
     state.value.info = null
     state.value.video = null
     resetProgress()
+    state.value.progress.stage = 'starting'
     state.value.cancelRequested = false
     state.value.currentRun = null
 

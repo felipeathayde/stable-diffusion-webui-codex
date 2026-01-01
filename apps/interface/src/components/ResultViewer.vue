@@ -16,6 +16,15 @@
           </figure>
         </div>
       </template>
+      <template v-else-if="previewImage">
+        <div class="gallery-grid">
+          <figure class="gallery-figure">
+            <img :src="imageUrl(previewImage)" alt="Live preview" @click="openZoom(previewImage)" />
+            <div class="badge-ar" v-if="width && height">{{ width }}×{{ height }}</div>
+            <figcaption class="gallery-caption">{{ previewCaption || 'Live preview' }}</figcaption>
+          </figure>
+        </div>
+      </template>
       <div v-else class="viewer-empty">
         <slot name="empty" :mode="mode" :emptyText="emptyText">{{ emptyText }}</slot>
       </div>
@@ -66,6 +75,9 @@ import type { GeneratedImage } from '../api/types'
 const props = defineProps<{
   mode: 'image' | 'video'
   images?: GeneratedImage[]
+  previewImage?: GeneratedImage | null
+  previewCaption?: string
+  isRunning?: boolean
   frames?: unknown[]
   toDataUrl?: (frame: unknown) => string
   emptyText?: string

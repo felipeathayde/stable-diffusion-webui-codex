@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from apps.backend.codex import lora as codex_lora
@@ -35,6 +36,45 @@ from apps.backend.infra.config.repo_root import get_repo_root
 logger = logging.getLogger(__name__)
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+_LATENT_RGB_FACTORS_SD15 = (
+    (0.3512, 0.2297, 0.3227),
+    (0.3250, 0.4974, 0.2350),
+    (-0.2829, 0.1762, 0.2721),
+    (-0.2120, -0.2616, -0.7177),
+)
+
+_LATENT_RGB_FACTORS_SDXL = (
+    (0.3920, 0.4054, 0.4549),
+    (-0.2634, -0.0196, 0.0653),
+    (0.0568, 0.1687, -0.0755),
+    (-0.3112, -0.2359, -0.2076),
+)
+
+
+def _decode_preview_image(processing: Any, denoised_latent: torch.Tensor, *, method: str) -> Image.Image | None:
+    method_norm = str(method or "").strip().lower()
+    if method_norm in {"approx cheap", "approx_cheap", "cheap"}:
+        if denoised_latent.ndim != 4 or denoised_latent.shape[1] != 4:
+            logger.warning("Live preview method '%s' requires 4-channel latents; falling back to VAE decode.", method)
+            method_norm = "full"
+        else:
+            factors = _LATENT_RGB_FACTORS_SDXL if bool(getattr(processing.sd_model, "is_sdxl", False)) else _LATENT_RGB_FACTORS_SD15
+            mat = torch.tensor(factors, device=denoised_latent.device, dtype=denoised_latent.dtype)
+            rgb_small = torch.einsum("blhw,lr->brhw", denoised_latent, mat)
+            rgb = F.interpolate(rgb_small, scale_factor=8, mode="bilinear", align_corners=False)
+            arr = rgb[0].detach().float().cpu().clamp(-1, 1)
+            arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
+            return Image.fromarray(arr, mode="RGB")
+
+    if method_norm in {"full", "vae", ""}:
+        img = decode_latent_batch(processing.sd_model, denoised_latent)
+        arr = img[0].detach().float().cpu().clamp(-1, 1)
+        arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
+        return Image.fromarray(arr, mode="RGB")
+
+    logger.warning("Unknown live preview method '%s'; skipping preview.", method)
+    return None
 
 
 def _truthy(value: str | None) -> bool:
@@ -465,10 +505,11 @@ def execute_sampling(
         except Exception:
             # If step/total are malformed, fall back to best-effort preview.
             pass
-        img = decode_latent_batch(processing.sd_model, denoised_latent)
-        arr = img[0].detach().float().cpu().clamp(-1, 1)
-        arr = ((arr + 1.0) * 0.5).mul(255.0).byte().movedim(0, -1).numpy()
-        backend_state.set_current_image(Image.fromarray(arr, mode="RGB"))
+        method = os.getenv("CODEX_LIVE_PREVIEW_METHOD", "full")
+        preview = _decode_preview_image(processing, denoised_latent, method=method)
+        if preview is None:
+            return
+        backend_state.set_current_image(preview, sampling_step=int(step))
 
     if image_conditioning is None:
         image_conditioning = txt2img_conditioning(

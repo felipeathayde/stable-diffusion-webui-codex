@@ -64,7 +64,16 @@ export interface GeneratedImage {
 
 export type TaskEvent =
   | { type: 'status'; stage: string }
-  | { type: 'progress'; stage: string; percent?: number | null; step?: number | null; total_steps?: number | null; eta_seconds?: number | null }
+  | {
+      type: 'progress'
+      stage: string
+      percent?: number | null
+      step?: number | null
+      total_steps?: number | null
+      eta_seconds?: number | null
+      preview_image?: GeneratedImage
+      preview_step?: number | null
+    }
   | { type: 'result'; images: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
   | { type: 'error'; message: string }
   | { type: 'end' }

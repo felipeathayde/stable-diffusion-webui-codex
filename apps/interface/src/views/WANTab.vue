@@ -357,8 +357,12 @@
         <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
           <template #empty>
             <div class="wan-results-empty">
-              <div class="wan-empty-title">No results yet</div>
-              <div class="caption">Need help? Press Generate to see what is missing.</div>
+              <div class="wan-empty-title">{{ isRunning ? 'Generating…' : 'No results yet' }}</div>
+              <div v-if="isRunning" class="caption">
+                Stage: {{ progress.stage }}
+                <template v-if="progress.percent !== null"> · {{ progress.percent.toFixed(1) }}%</template>
+              </div>
+              <div v-else class="caption">Need help? Press Generate to see what is missing.</div>
             </div>
           </template>
         </ResultViewer>

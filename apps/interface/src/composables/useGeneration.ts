@@ -32,6 +32,8 @@ export interface GenerationState {
     step: number | null
     totalSteps: number | null
   }
+  previewImage: GeneratedImage | null
+  previewStep: number | null
   gallery: GeneratedImage[]
   info: unknown | null
   errorMessage: string
@@ -51,6 +53,8 @@ function defaultState(): GenerationState {
   return {
     status: 'idle',
     progress: { stage: 'none', percent: null, etaSeconds: null, step: null, totalSteps: null },
+    previewImage: null,
+    previewStep: null,
     gallery: [],
     info: null,
     errorMessage: '',
@@ -155,7 +159,10 @@ export function useGeneration(tabId: string) {
     state.value.errorMessage = ''
     state.value.gallery = []
     state.value.info = null
+    state.value.previewImage = null
+    state.value.previewStep = null
     resetProgress()
+    state.value.progress.stage = 'starting'
     state.value.startedAtMs = performance.now()
     state.value.finishedAtMs = null
     
@@ -337,10 +344,16 @@ export function useGeneration(tabId: string) {
           step: event.step ?? null,
           totalSteps: event.total_steps ?? null,
         }
+        if (event.preview_image) {
+          state.value.previewImage = event.preview_image
+          state.value.previewStep = event.preview_step ?? null
+        }
         break
       case 'result':
         state.value.gallery = event.images || []
         state.value.info = event.info ?? null
+        state.value.previewImage = null
+        state.value.previewStep = null
         if (state.value.currentRun?.taskId) {
           state.value.currentRun.status = 'completed'
           pushHistory(state.value.currentRun)
@@ -364,6 +377,8 @@ export function useGeneration(tabId: string) {
         state.value.status = 'error'
         state.value.errorMessage = event.message
         state.value.finishedAtMs = performance.now()
+        state.value.previewImage = null
+        state.value.previewStep = null
         if (state.value.currentRun?.taskId) {
           state.value.currentRun.status = 'error'
           state.value.currentRun.errorMessage = event.message
@@ -380,6 +395,8 @@ export function useGeneration(tabId: string) {
         if (state.value.finishedAtMs === null) {
           state.value.finishedAtMs = performance.now()
         }
+        state.value.previewImage = null
+        state.value.previewStep = null
         stopStream()
         break
     }
@@ -423,6 +440,8 @@ export function useGeneration(tabId: string) {
     // State
     status: computed(() => state.value.status),
     progress: computed(() => state.value.progress),
+    previewImage: computed(() => state.value.previewImage),
+    previewStep: computed(() => state.value.previewStep),
     gallery: computed(() => state.value.gallery),
     info: computed(() => state.value.info),
     errorMessage: computed(() => state.value.errorMessage),

@@ -1956,6 +1956,33 @@
       "choices_source": null
     },
     {
+      "key": "show_progress_every_n_steps",
+      "label": "Live preview display period",
+      "type": "slider",
+      "section": "ui",
+      "default": 10,
+      "min": -1,
+      "max": 32,
+      "step": 1,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "show_progress_type",
+      "label": "Live preview method",
+      "type": "radio",
+      "section": "ui",
+      "default": "Approx cheap",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "Full",
+        "Approx cheap"
+      ],
+      "choices_source": null
+    },
+    {
       "key": "show_progress_grid",
       "label": "Show previews of all images generated in a batch as a grid",
       "type": "checkbox",

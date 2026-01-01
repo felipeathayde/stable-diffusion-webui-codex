@@ -1246,7 +1246,7 @@ def build_app() -> FastAPI:
     _apply_pipeline_debug_flag()
 
     @app.get('/api/models')
-    def list_models() -> Dict[str, Any]:
+    def list_models(refresh: bool = Query(False, description="If true, re-scan checkpoint roots before returning.")) -> Dict[str, Any]:
         """List checkpoints discovered by the native registry.
 
         Response shape remains compatible: fields include title/name/filename/metadata.
@@ -1263,9 +1263,9 @@ def build_app() -> FastAPI:
                 "metadata": entry.metadata,
             }
 
-        entries = _model_api.list_checkpoints()
+        entries = _model_api.list_checkpoints(refresh=bool(refresh))
         models = [_serialize(e) for e in entries]
-        models_info = _model_api.list_checkpoints_as_dict()
+        models_info = [e.as_dict() for e in entries]
         # Current selection: track via codex options when available
         try:
             from apps.backend.codex import main as _codex

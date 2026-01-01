@@ -572,10 +572,13 @@ const currentPathsHint = computed(() => {
   return parts.join(' | ')
 })
 
-async function initQuicksettings(options?: { forceInventoryRefresh?: boolean }): Promise<void> {
+async function initQuicksettings(options?: { forceInventoryRefresh?: boolean; forceModelsRefresh?: boolean }): Promise<void> {
   isLoadingQuicksettings.value = true
   try {
     await store.init()
+    if (options?.forceModelsRefresh === true) {
+      await store.refreshModelsList()
+    }
     await Promise.all([
       loadPaths(),
       loadInventory({ forceRefresh: options?.forceInventoryRefresh === true }),
@@ -586,7 +589,7 @@ async function initQuicksettings(options?: { forceInventoryRefresh?: boolean }):
 }
 
 async function refreshAll(): Promise<void> {
-  await initQuicksettings({ forceInventoryRefresh: true })
+  await initQuicksettings({ forceInventoryRefresh: true, forceModelsRefresh: true })
 }
 
 // WAN-specific helpers (directories derived from inventory)

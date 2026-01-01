@@ -57,6 +57,10 @@ export function fetchModels(): Promise<ModelsResponse> {
   return requestJson<ModelsResponse>('/models')
 }
 
+export function refreshModels(): Promise<ModelsResponse> {
+  return requestJson<ModelsResponse>('/models?refresh=1')
+}
+
 export function fetchModelInventory(): Promise<InventoryResponse> {
   return requestJson<InventoryResponse>('/models/inventory')
 }

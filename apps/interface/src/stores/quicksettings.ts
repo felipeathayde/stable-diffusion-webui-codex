@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo } from '../api/types'
-import { fetchModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchVaes, fetchTextEncoders, fetchMemory, fetchModelInventory } from '../api/client'
+import { fetchModels, refreshModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchVaes, fetchTextEncoders, fetchMemory, fetchModelInventory } from '../api/client'
 
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
@@ -79,6 +79,14 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function loadModels(): Promise<void> {
     const res = await fetchModels()
+    models.value = res.models
+    if (!currentModel.value && res.current) {
+      currentModel.value = res.current
+    }
+  }
+
+  async function refreshModelsList(): Promise<void> {
+    const res = await refreshModels()
     models.value = res.models
     if (!currentModel.value && res.current) {
       currentModel.value = res.current
@@ -402,6 +410,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     deviceChoices,
     currentDevice,
     init,
+    refreshModelsList,
     setModel,
     setSampler,
     setScheduler,

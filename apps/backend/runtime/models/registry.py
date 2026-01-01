@@ -10,23 +10,22 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.runtime import trace as _trace
 
 from .types import (
     CheckpointFormat,
-    CheckpointPrediction,
     CheckpointRecord,
     VAERecord,
 )
 
 _LOGGER = logging.getLogger("backend.registry")
 
-_ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensors", ".pt", ".bin", ".gguf"}
-_CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensors", ".vae.pt"}
-_VAE_EXTS = {".safetensors", ".ckpt", ".pt"}
+_ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensor", ".safetensors", ".pt", ".bin", ".gguf"}
+_CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt"}
+_VAE_EXTS = {".safetensor", ".safetensors", ".ckpt", ".pt"}
 
 
 def _repo_root() -> Path:
@@ -34,7 +33,6 @@ def _repo_root() -> Path:
     
     Raises EnvironmentError if CODEX_ROOT is not set.
     """
-    import os
     env_root = os.environ.get("CODEX_ROOT")
     if not env_root:
         raise EnvironmentError(
@@ -58,14 +56,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _read_json(path: Path) -> Mapping[str, object]:
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception:
-        return {}
 
 
 @dataclass
@@ -228,10 +218,6 @@ class ModelRegistry:
             )
             yield record
 
-        if self._hf_root.is_dir():
-            for record in self._scan_diffusers():
-                yield record
-
     def _scan_vaes(self) -> Iterable[VAERecord]:
         vae_root = self._models_root / "VAE"
         candidates: List[Path] = []
@@ -308,71 +294,6 @@ class ModelRegistry:
                 if any(lower.endswith(suf) for suf in _CHECKPOINT_BLACKLIST_SUFFIXES):
                     continue
                 yield entry
-
-    def _scan_diffusers(self) -> Iterable[CheckpointRecord]:
-        try:
-            orgs = [d for d in self._hf_root.iterdir() if d.is_dir()]
-        except FileNotFoundError:
-            return []
-        output: List[CheckpointRecord] = []
-        for org in orgs:
-            for repo in org.iterdir():
-                if not repo.is_dir():
-                    continue
-                model_index = repo / "model_index.json"
-                unet_dir = repo / "unet"
-                transformer_dir = repo / "transformer"
-                if not (model_index.is_file() or unet_dir.is_dir() or transformer_dir.is_dir()):
-                    continue
-                name = f"{org.name}/{repo.name}"
-                metadata: Dict[str, object] = {"format": CheckpointFormat.DIFFUSERS.value}
-                components: List[str] = []
-                for sub in ("unet", "transformer", "vae", "text_encoder", "text_encoder_2", "tokenizer", "tokenizer_2", "scheduler"):
-                    if (repo / sub).is_dir():
-                        components.append(sub)
-                default_dtype = None
-                base_resolution = None
-                prediction = CheckpointPrediction.UNKNOWN
-                if model_index.is_file():
-                    cfg = _read_json(model_index)
-                    if isinstance(cfg.get("torch_dtype"), str):
-                        default_dtype = str(cfg["torch_dtype"])
-                unet_cfg = repo / "unet" / "config.json"
-                if unet_cfg.is_file():
-                    cfg = _read_json(unet_cfg)
-                    sample_size = cfg.get("sample_size")
-                    if isinstance(sample_size, int):
-                        base_resolution = int(sample_size)
-                scheduler_cfg = repo / "scheduler" / "config.json"
-                if scheduler_cfg.is_file():
-                    cfg = _read_json(scheduler_cfg)
-                    pt = cfg.get("prediction_type")
-                    if isinstance(pt, str):
-                        pt_lower = pt.lower()
-                        if pt_lower == "epsilon":
-                            prediction = CheckpointPrediction.EPSILON
-                        elif pt_lower == "v_prediction" or pt_lower == "vprediction":
-                            prediction = CheckpointPrediction.V_PREDICTION
-                        elif pt_lower == "edm":
-                            prediction = CheckpointPrediction.EDM
-                stat = model_index.stat() if model_index.is_file() else repo.stat()
-                output.append(
-                    CheckpointRecord(
-                        name=name,
-                        title=name,
-                        filename=str(model_index if model_index.is_file() else repo),
-                        path=str(repo),
-                        model_name=repo.name,
-                        format=CheckpointFormat.DIFFUSERS,
-                        default_dtype=default_dtype,
-                        base_resolution=base_resolution,
-                        prediction_type=prediction,
-                        components=tuple(components),
-                        metadata=metadata,
-                        updated_at=stat.st_mtime,
-                    )
-                )
-        return output
 
     def _hash_for(self, path: Path) -> Tuple[str | None, str | None]:
         try:

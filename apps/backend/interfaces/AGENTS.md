@@ -44,3 +44,4 @@ Status: Active
 - 2026-01-01: `/api/{txt2img,img2img}` now supports live preview streaming: backend reads UI settings (`show_progress_every_n_steps`, `show_progress_type`, `live_previews_image_format`) and attaches `preview_image`/`preview_step` to task `progress` SSE events when a new preview is available.
 - 2026-01-01: Live preview config parsing + payload encoding/attachment now live in `apps/backend/services/live_preview_service.py` so `api/run_api.py` doesn’t duplicate preview logic.
 - 2026-01-01: Added `--debug-preview-factors` (launcher arg) so the runtime can log best-fit latent→RGB preview factors (`[preview-factors]`) for deriving new `Approx cheap` mappings.
+- 2026-01-01: `/api/models` now accepts `?refresh=1` to re-scan checkpoint roots so the UI can pick up newly copied weights without restarting the backend.

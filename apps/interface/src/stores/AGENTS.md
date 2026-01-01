@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -26,3 +26,4 @@ Status: Active
 - 2025-12-28: Model-tab image params now persist `batchCount`/`batchSize` and `highres`/`refiner` in `tab.params` (defaults + normalization), enabling the legacy-style RunCard batch dropdown and Highres/Refiner controls for `/models/:tabId` image tabs.
 - 2025-12-29: `model_tabs.load()` preserves the route-selected `activeId` when reloading tabs (reduces QuickSettings flicker on Vite reloads).
 - 2025-12-29: `model_tabs.updateParams()` mutates the params object in-place (instead of replacing it) to reduce whole-view rerenders on small boolean toggles (e.g. LightX2V / Low “Use High settings”).
+- 2026-01-01: `quicksettings.ts` now exposes a `refreshModelsList()` helper that calls `/api/models?refresh=1` so the UI can pick up new checkpoint files after changing `apps/paths.json` or copying weights into `*_ckpt` folders.

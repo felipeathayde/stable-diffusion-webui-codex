@@ -3,6 +3,7 @@ from __future__ import annotations
 # tags: sampling, diagnostics
 
 from typing import Any, Optional, Callable, List
+import math
 import os
 import logging
 
@@ -496,8 +497,9 @@ class CodexSampler:
                         head,
                     )
 
-                eps_prev: Optional[torch.Tensor] = None
-                sigma_prev: Optional[float] = None
+                old_denoised: Optional[torch.Tensor] = None
+                t_prev: float | None = None
+                h_prev: float | None = None
                 eps_history: List[torch.Tensor] = []
 
                 for i in range(start_idx, steps):
@@ -560,67 +562,53 @@ class CodexSampler:
                             noise = torch.randn_like(x)
                             x = x + sigma_up * noise
                     elif sampler_kind is SamplerKind.DPM2M:
-                        h = float(sigma_next) - float(sigma)
-                        if eps_prev is None or sigma_prev is None:
-                            x_euler = denoised + float(sigma_next) * eps
-                            sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
-                            denoised_next = sampling_function_inner(
-                                model,
-                                x_euler,
-                                sigma_next_batch,
-                                compiled_uncond,
-                                compiled_cond,
-                                cfg_scale,
-                                unet.model_options,
-                                seed=None,
-                                return_full=False,
-                            )
-                            eps_next = (x_euler - denoised_next) / max(float(sigma_next), 1e-8)
-                            f_n = -eps
-                            f_next = -eps_next
-                            x = x + h * 0.5 * (f_n + f_next)
+                        # DPM-Solver++(2M) in log-sigma time (matches k-diffusion sample_dpmpp_2m).
+                        sigma_f = float(sigma)
+                        sigma_next_f = float(sigma_next)
+                        if sigma_next_f <= 0.0:
+                            x = denoised
+                            old_denoised = denoised.detach()
+                            t_prev = None
                         else:
-                            h_prev = float(sigma) - float(sigma_prev)
-                            r = h / (h_prev if abs(h_prev) > 1e-12 else h)
-                            f_n = -eps
-                            f_prev = -eps_prev
-                            x = x + h * (((1.0 + r) * 0.5) * f_n - (r * 0.5) * f_prev)
-                        eps_prev = eps.detach()
-                        sigma_prev = float(sigma)
+                            t = -math.log(max(sigma_f, 1e-12))
+                            t_next = -math.log(max(sigma_next_f, 1e-12))
+                            h = t_next - t
+                            if old_denoised is None or t_prev is None:
+                                x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised
+                            else:
+                                h_last = t - t_prev
+                                r = h_last / h if abs(h) > 1e-12 else 1.0
+                                denoised_d = (1.0 + 1.0 / (2.0 * r)) * denoised - (1.0 / (2.0 * r)) * old_denoised
+                                x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised_d
+                            old_denoised = denoised.detach()
+                            t_prev = t
                     elif sampler_kind is SamplerKind.DPM2M_SDE:
-                        h = float(sigma_next) - float(sigma)
-                        if eps_prev is None or sigma_prev is None:
-                            x_euler = denoised + float(sigma_next) * eps
-                            sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
-                            denoised_next = sampling_function_inner(
-                                model,
-                                x_euler,
-                                sigma_next_batch,
-                                compiled_uncond,
-                                compiled_cond,
-                                cfg_scale,
-                                unet.model_options,
-                                seed=None,
-                                return_full=False,
-                            )
-                            eps_next = (x_euler - denoised_next) / max(float(sigma_next), 1e-8)
-                            f_n = -eps
-                            f_next = -eps_next
-                            x = x + h * 0.5 * (f_n + f_next)
+                        # DPM-Solver++(2M) SDE (midpoint) in log-sigma time.
+                        # This is a conservative native approximation (no BrownianTree),
+                        # but matches the core update form used by k-diffusion.
+                        sigma_f = float(sigma)
+                        sigma_next_f = float(sigma_next)
+                        if sigma_next_f <= 0.0:
+                            x = denoised
+                            old_denoised = denoised.detach()
+                            h_prev = None
                         else:
-                            h_prev = float(sigma) - float(sigma_prev)
-                            r = h / (h_prev if abs(h_prev) > 1e-12 else h)
-                            f_n = -eps
-                            f_prev = -eps_prev
-                            x = x + h * (((1.0 + r) * 0.5) * f_n - (r * 0.5) * f_prev)
-                        s = float(sigma)
-                        s_next = float(sigma_next)
-                        if s_next > 0.0:
-                            sigma_up_sq = max(s_next**2 * (s**2 - s_next**2) / max(s**2, 1e-8), 0.0)
-                            sigma_up = sigma_up_sq ** 0.5
-                            x = x + sigma_up * torch.randn_like(x)
-                        eps_prev = eps.detach()
-                        sigma_prev = float(sigma)
+                            t = -math.log(max(sigma_f, 1e-12))
+                            s = -math.log(max(sigma_next_f, 1e-12))
+                            h = s - t
+                            eta = 1.0
+                            s_noise = 1.0
+                            eta_h = eta * h
+                            phi = -math.expm1(-h - eta_h)  # 1 - exp(-h-eta*h)
+                            x = (sigma_next_f / sigma_f) * math.exp(-eta_h) * x + phi * denoised
+                            if old_denoised is not None and h_prev is not None:
+                                r = h_prev / h if abs(h) > 1e-12 else 1.0
+                                x = x + 0.5 * phi * (1.0 / r) * (denoised - old_denoised)
+                            if eta != 0.0:
+                                noise_scale = sigma_next_f * math.sqrt(max(-math.expm1(-2.0 * eta_h), 0.0)) * s_noise
+                                x = x + torch.randn_like(x) * noise_scale
+                            old_denoised = denoised.detach()
+                            h_prev = h
                     elif sampler_kind is SamplerKind.DDIM:
                         x = denoised + float(sigma_next) * eps
                     elif sampler_kind in (SamplerKind.PLMS, SamplerKind.PNDM):
@@ -668,10 +656,6 @@ class CodexSampler:
                         x = x - delta * 0.5 * (eps + eps_next)
                     else:
                         raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
-
-                    if sampler_kind not in (SamplerKind.DPM2M, SamplerKind.DPM2M_SDE):
-                        sigma_prev = float(sigma)
-                        eps_prev = eps.detach()
 
                     if preview_callback is not None and (preview_interval > 0 and ((i + 1) % preview_interval == 0) or (i + 1) == steps):
                         try:

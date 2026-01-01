@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import logging
+import threading
 import time
 from typing import Dict, Iterable, Iterator, Mapping, MutableMapping, Optional
 
@@ -34,6 +36,8 @@ class InferenceOrchestrator:
         self._enable_cache = enable_cache
         self._engine_cache: MutableMapping[str, BaseInferenceEngine] = {}
         self._engine_options_fingerprint: MutableMapping[str, object] = {}
+        self._last_generation_signature: object | None = None
+        self._run_lock = threading.Lock()
 
     @staticmethod
     def _freeze_engine_options(value: object) -> object:
@@ -75,6 +79,66 @@ class InferenceOrchestrator:
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)
 
+    def _generation_signature(
+        self,
+        engine_key: str,
+        model_ref: str,
+        engine_options: Mapping[str, object],
+    ) -> object:
+        relevant = {
+            "engine_key": engine_key,
+            "model_ref": model_ref,
+            "tenc_path": engine_options.get("tenc_path"),
+            "text_encoder_override": engine_options.get("text_encoder_override"),
+        }
+        return InferenceOrchestrator._freeze_engine_options(relevant)
+
+    def _purge_vram(self, *, reason: str) -> None:
+        for cached_engine in list(self._engine_cache.values()):
+            if not getattr(cached_engine, "_is_loaded", False):
+                continue
+            try:
+                cached_engine.unload()
+                cached_engine.mark_unloaded()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to unload cached engine during VRAM purge: %s", exc, exc_info=True)
+
+        self._engine_options_fingerprint.clear()
+
+        try:
+            from apps.backend.runtime.memory import memory_management as _mem
+
+            _mem.unload_all_models()
+            _mem.soft_empty_cache(force=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("VRAM purge via memory manager failed: %s", exc, exc_info=True)
+
+        try:
+            gc.collect()
+        except Exception:  # pragma: no cover
+            pass
+
+        logger.info("VRAM purge complete (%s).", reason)
+
+    def _maybe_purge_vram_for_generation(
+        self,
+        *,
+        engine_key: str,
+        model_ref: str,
+        engine_options: Mapping[str, object],
+    ) -> None:
+        signature = self._generation_signature(engine_key, model_ref, engine_options)
+        with self._run_lock:
+            prev = self._last_generation_signature
+            if prev is not None and prev != signature:
+                logger.info(
+                    "Generation signature changed; purging VRAM before load. engine=%s model=%s",
+                    engine_key,
+                    model_ref,
+                )
+                self._purge_vram(reason="checkpoint/text-encoder selection changed")
+            self._last_generation_signature = signature
+
     # ------------------------------------------------------------------
     def run(
         self,
@@ -88,6 +152,12 @@ class InferenceOrchestrator:
         start = time.perf_counter()
         normalized_key = engine_key.strip().lower()
         engine_opts = engine_options or {}
+        if model_ref is not None:
+            self._maybe_purge_vram_for_generation(
+                engine_key=normalized_key,
+                model_ref=str(model_ref),
+                engine_options=engine_opts,
+            )
         engine = self._resolve_engine(engine_key, engine_opts)
 
         logger.info(

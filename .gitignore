@@ -98,6 +98,7 @@ apps/settings_values.json
 
 # Local reference snapshots and scratch branches
 *.png
+!logo.png
 *.txt
 !requirements*.txt
 *.docx

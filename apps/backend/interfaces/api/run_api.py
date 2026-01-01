@@ -2363,6 +2363,42 @@ def build_app() -> FastAPI:
             hr_data = {"enable": False}
     
         extras: Dict[str, Any] = {}
+        raw_extras = payload.get("img2img_extras")
+        if raw_extras is not None:
+            if not isinstance(raw_extras, dict):
+                raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
+
+            te_override = raw_extras.get("text_encoder_override")
+            if te_override is not None:
+                if not isinstance(te_override, dict):
+                    raise HTTPException(status_code=400, detail="'img2img_extras.text_encoder_override' must be an object")
+                _reject_unknown_keys(te_override, {"family", "label", "components"}, "img2img_extras.text_encoder_override")
+                family_raw = te_override.get("family")
+                label_raw = te_override.get("label")
+                if not isinstance(family_raw, str) or not family_raw.strip():
+                    raise HTTPException(status_code=400, detail="'img2img_extras.text_encoder_override.family' must be a non-empty string")
+                if not isinstance(label_raw, str) or not label_raw.strip():
+                    raise HTTPException(status_code=400, detail="'img2img_extras.text_encoder_override.label' must be a non-empty string")
+                family = family_raw.strip()
+                label = label_raw.strip()
+                if "/" in label and not label.startswith(f"{family}/"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="img2img_extras.text_encoder_override.label must start with '<family>/'",
+                    )
+                components_val = te_override.get("components")
+                components: list[str] | None = None
+                if components_val is not None:
+                    if not isinstance(components_val, list) or any(not isinstance(c, str) for c in components_val):
+                        raise HTTPException(status_code=400, detail="'img2img_extras.text_encoder_override.components' must be an array of strings")
+                    components = [c.strip() for c in components_val if isinstance(c, str) and c.strip()]
+                te_cfg: Dict[str, Any] = {"family": family, "label": label}
+                if components:
+                    te_cfg["components"] = components
+                raw_extras = dict(raw_extras)
+                raw_extras["text_encoder_override"] = te_cfg
+
+            extras.update(raw_extras)
         if noise_source:
             extras['randn_source'] = str(noise_source)
         if ensd_raw is not None:
@@ -2370,6 +2406,34 @@ def build_app() -> FastAPI:
                 extras['eta_noise_seed_delta'] = int(float(ensd_raw))
             except Exception:
                 raise HTTPException(status_code=400, detail="img2img_eta_noise_seed_delta must be numeric")
+
+        # Resolve SHA-based assets (if provided in img2img_extras)
+        from apps.backend.inventory.cache import resolve_asset_by_sha
+        model_sha = extras.get("model_sha")
+        vae_sha = extras.get("vae_sha")
+        tenc_sha = extras.get("tenc_sha")
+
+        if model_sha:
+            model_path = resolve_asset_by_sha(model_sha)
+            if model_path:
+                extras["model_path"] = model_path
+        if vae_sha:
+            vae_path = resolve_asset_by_sha(vae_sha)
+            if vae_path:
+                extras["vae_path"] = vae_path
+        if tenc_sha:
+            if isinstance(tenc_sha, list):
+                tenc_paths = []
+                for sha in tenc_sha:
+                    path = resolve_asset_by_sha(sha)
+                    if path:
+                        tenc_paths.append(path)
+                if tenc_paths:
+                    extras["tenc_path"] = tenc_paths
+            else:
+                tenc_path = resolve_asset_by_sha(tenc_sha)
+                if tenc_path:
+                    extras["tenc_path"] = tenc_path
     
         metadata = {
             "styles": styles,
@@ -2400,10 +2464,17 @@ def build_app() -> FastAPI:
             steps=steps_val,
             extras=extras,
             highres_fix=hr_data if hr_data.get("enable") else None,
+            smart_offload=bool(payload.get("smart_offload")) if payload.get("smart_offload") is not None else bool(getattr(_opts_snapshot(), "codex_smart_offload", False)),
+            smart_fallback=bool(payload.get("smart_fallback")) if payload.get("smart_fallback") is not None else bool(getattr(_opts_snapshot(), "codex_smart_fallback", False)),
+            smart_cache=bool(payload.get("smart_cache")) if payload.get("smart_cache") is not None else bool(getattr(_opts_snapshot(), "codex_smart_cache", False)),
         )
     
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+
+        # GGUF models require text encoder
+        if model_override and str(model_override).lower().endswith('.gguf') and not tenc_sha:
+            raise HTTPException(status_code=400, detail="GGUF models require tenc_sha in img2img_extras")
     
         snap = _opts_snapshot()
         engine_key = engine_override or snap.codex_engine
@@ -2440,8 +2511,80 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
+                engine_options: Dict[str, object] = {}
+                try:
+                    extras = getattr(req, "extras", {}) or {}
+                    te_override = extras.get("text_encoder_override")
+                    if isinstance(te_override, dict):
+                        engine_options["text_encoder_override"] = dict(te_override)
+
+                    vae_path_from_extras = extras.get("vae_path")
+                    if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
+                        engine_options["vae_path"] = vae_path_from_extras.strip()
+
+                    tenc_sha_from_payload = extras.get("tenc_sha")
+                    if tenc_sha_from_payload:
+                        from apps.backend.inventory.cache import resolve_asset_by_sha
+                        if isinstance(tenc_sha_from_payload, list):
+                            tenc_paths = []
+                            for sha in tenc_sha_from_payload:
+                                path = resolve_asset_by_sha(sha)
+                                if path:
+                                    tenc_paths.append(path)
+                            if tenc_paths:
+                                engine_options["tenc_path"] = tenc_paths
+                        elif isinstance(tenc_sha_from_payload, str):
+                            resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
+                            if resolved_path:
+                                engine_options["tenc_path"] = resolved_path
+                except Exception:
+                    pass
+
+                # Pass streaming option and legacy VAE/TE overrides from settings snapshot.
+                try:
+                    snap = _opts_snapshot()
+                    if getattr(snap, "codex_core_streaming", False):
+                        engine_options["codex_core_streaming"] = True
+
+                    vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
+                    vae_label = getattr(snap, "forge_selected_vae", None) or ""
+                    if vae_sha:
+                        from apps.backend.inventory.cache import resolve_asset_by_sha
+                        resolved_path = resolve_asset_by_sha(vae_sha)
+                        if resolved_path:
+                            engine_options["vae_path"] = resolved_path
+                    elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
+                        engine_options["vae_path"] = vae_label
+
+                    tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
+                    tenc_modules = getattr(snap, "forge_additional_modules", None) or []
+                    if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
+                        first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
+                        if first_sha:
+                            from apps.backend.inventory.cache import resolve_asset_by_sha
+                            resolved_path = resolve_asset_by_sha(first_sha)
+                            if resolved_path:
+                                engine_options["tenc_path"] = resolved_path
+                    elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
+                        first_tenc = str(tenc_modules[0]) if tenc_modules else ""
+                        if first_tenc:
+                            if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
+                                from apps.backend.inventory.cache import resolve_asset_by_sha
+                                resolved_path = resolve_asset_by_sha(first_tenc)
+                                if resolved_path:
+                                    engine_options["tenc_path"] = resolved_path
+                            elif os.path.isfile(first_tenc):
+                                engine_options["tenc_path"] = first_tenc
+                except Exception:
+                    pass
                 with tasks_lock:
-                    for ev in _ORCH.run(TaskType.IMG2IMG, engine_key, req, model_ref=model_ref):
+                    for ev in _ORCH.run(
+                        TaskType.IMG2IMG,
+                        engine_key,
+                        req,
+                        model_ref=model_ref,
+                        engine_options=engine_options,
+                    ):
                         if entry.cancel_requested and entry.cancel_mode == "immediate":
                             entry.error = "cancelled"
                             push({"type": "error", "message": "cancelled"})

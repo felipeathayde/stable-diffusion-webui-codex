@@ -202,13 +202,34 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         except Exception:
             pass
 
+    metadata = dict(req.metadata or {})
+    smart_offload = bool(getattr(req, "smart_offload", False))
+    smart_fallback = bool(getattr(req, "smart_fallback", False))
+    smart_cache = bool(getattr(req, "smart_cache", False))
+
+    distilled_cfg = 3.5
+    try:
+        meta_distilled = metadata.get("distilled_cfg_scale")
+        if meta_distilled is not None:
+            distilled_cfg = float(meta_distilled)
+    except Exception:
+        distilled_cfg = 3.5
+
+    image_cfg_scale = None
+    try:
+        meta_img_cfg = metadata.get("image_cfg_scale")
+        if meta_img_cfg is not None:
+            image_cfg_scale = float(meta_img_cfg)
+    except Exception:
+        image_cfg_scale = None
+
     processing = CodexProcessingImg2Img(
         prompt=req.prompt,
         negative_prompt=req.negative_prompt,
         batch_size=req.batch_size or 1,
         iterations=1,
         guidance_scale=req.guidance_scale or 7.0,
-        distilled_guidance_scale=3.5,
+        distilled_guidance_scale=distilled_cfg,
         width=width,
         height=height,
         steps=req.steps or 20,
@@ -218,7 +239,11 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         init_image=req.init_image,
         mask=req.mask,
         denoising_strength=float(req.denoise_strength),
-        metadata=dict(req.metadata or {}),
+        image_cfg_scale=image_cfg_scale,
+        metadata=metadata,
+        smart_offload=smart_offload,
+        smart_fallback=smart_fallback,
+        smart_cache=smart_cache,
     )
     if req.highres_fix:
         hires_cfg = _build_hires_config(

@@ -186,11 +186,6 @@ export function useGeneration(tabId: string) {
         state.value.errorMessage = 'Select an initial image for img2img.'
         return
       }
-      if (modelOverride.toLowerCase().endsWith('.gguf')) {
-        state.value.status = 'error'
-        state.value.errorMessage = 'GGUF img2img is not supported yet.'
-        return
-      }
     }
 
     const textEncoders = Array.isArray((p as any).textEncoders)
@@ -228,10 +223,19 @@ export function useGeneration(tabId: string) {
     }
     
     const device = (quicksettings.currentDevice || 'cpu') as any
+    let engineOverrideForRequest = String(engineType.value)
+    // Flux img2img should run via the Kontext workflow engine.
+    if (p.useInitImage && engineOverrideForRequest === 'flux') {
+      engineOverrideForRequest = 'kontext'
+    }
 
     try {
       let taskId = ''
       if (p.useInitImage) {
+        const isFlowModel = Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg
+        const img2imgExtras: Record<string, unknown> = { ...extras }
+        if (teOverride) img2imgExtras.text_encoder_override = teOverride
+
         const payload: any = {
           img2img_init_image: p.initImageData,
           img2img_mask: '',
@@ -241,7 +245,8 @@ export function useGeneration(tabId: string) {
           img2img_batch_count: batchCount,
           img2img_batch_size: batchSize,
           img2img_steps: p.steps,
-          img2img_cfg_scale: p.cfgScale,
+          img2img_cfg_scale: isFlowModel ? 1.0 : p.cfgScale,
+          img2img_distilled_cfg_scale: isFlowModel ? p.cfgScale : undefined,
           img2img_denoising_strength: p.denoiseStrength,
           img2img_width: p.width,
           img2img_height: p.height,
@@ -249,8 +254,12 @@ export function useGeneration(tabId: string) {
           img2img_scheduler: p.scheduler || 'automatic',
           img2img_seed: p.seed,
           device,
-          engine: engineType.value,
+          engine: engineOverrideForRequest,
           model: modelOverride,
+          smart_offload: quicksettings.smartOffload,
+          smart_fallback: quicksettings.smartFallback,
+          smart_cache: quicksettings.smartCache,
+          img2img_extras: img2imgExtras,
         }
         const { task_id } = await startImg2Img(payload)
         taskId = task_id
@@ -271,7 +280,7 @@ export function useGeneration(tabId: string) {
             batchCount,
             styles: [],
             device,
-            engine: engineType.value,
+            engine: engineOverrideForRequest,
             model: modelOverride,
             smartOffload: quicksettings.smartOffload,
             smartFallback: quicksettings.smartFallback,

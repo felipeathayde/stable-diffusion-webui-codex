@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - 2025-12-29: `WANTab.vue` uses `WanSubHeader` for consistent section headers and keeps “Video” + “Video Output” as sequential (separate) cards; Video exposes a compact Aspect selector inline with the Width slider.
 - 2025-12-29: `WANTab.vue` renders the History card above the results viewer for parity with `ImageModelTab.vue`.
 - 2025-12-31: `ImageModelTab.vue` now syncs Width/Height from the init image (auto on upload and “Send to Img2Img”, plus a manual re-sync action) and applies Kontext-friendly defaults on Flux init-image runs without overriding custom values.
+- 2026-01-01: `ImageModelTab.vue` now exposes per-tab `CLIP Skip` (SD15/SDXL/Flux) and persists it in saved profiles; requests send `clip_skip`/`img2img_clip_skip` to the backend.

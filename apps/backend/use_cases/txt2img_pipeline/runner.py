@@ -143,6 +143,7 @@ class Txt2ImgPipelineRunner:
                 target_height = int(getattr(processing, "hr_upscale_to_y", height) or height)
                 crop_left = int(getattr(processing, "sdxl_crop_left", 0) or 0)
                 crop_top = int(getattr(processing, "sdxl_crop_top", 0) or 0)
+                clip_skip = int(context.controls.get("clip_skip")) if "clip_skip" in context.controls else None
                 key = (
                     engine_id,
                     tuple(str(p or "") for p in prompts),
@@ -153,6 +154,7 @@ class Txt2ImgPipelineRunner:
                     target_height,
                     crop_left,
                     crop_top,
+                    clip_skip,
                 )
             except Exception:
                 key = None

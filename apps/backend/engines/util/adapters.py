@@ -130,6 +130,8 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         bool(req.highres_fix),
     )
     metadata = dict(req.metadata or {})
+    if getattr(req, "clip_skip", None) is not None:
+        metadata["clip_skip"] = int(req.clip_skip)
     smart_offload = bool(getattr(req, "smart_offload", False))
     smart_fallback = bool(getattr(req, "smart_fallback", False))
     smart_cache = bool(getattr(req, "smart_cache", False))
@@ -203,6 +205,8 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
             pass
 
     metadata = dict(req.metadata or {})
+    if getattr(req, "clip_skip", None) is not None:
+        metadata["clip_skip"] = int(req.clip_skip)
     smart_offload = bool(getattr(req, "smart_offload", False))
     smart_fallback = bool(getattr(req, "smart_fallback", False))
     smart_cache = bool(getattr(req, "smart_cache", False))

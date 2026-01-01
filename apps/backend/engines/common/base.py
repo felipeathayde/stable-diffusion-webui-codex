@@ -605,7 +605,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         Subclasses can override for custom behavior.
         
         Required engine methods:
-        - get_learned_conditioning(prompts) -> conditioning dict
+        - get_learned_conditioning(prompts) -> conditioning dict or cross-attn tensor
         - decode_first_stage(latents) -> decoded tensor
         """
         import json

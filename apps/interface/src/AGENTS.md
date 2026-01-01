@@ -2,7 +2,7 @@
 # apps/interface/src Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -29,3 +29,4 @@ Status: Active
 - 2025-12-17: Added a shared `stores/workflows.ts` and guided-gen UI primitives (`styles/components/guided-gen.css`) to support WAN guided generation and reactive snapshots under `/workflows`.
 - 2025-12-23: Added shared slider primitives under `components/ui/` (SliderField + NumberStepperInput) with matching styles under `styles/components/`.
 - 2025-12-29: `App.vue` derives `--sticky-offset` from the `.main-header` height (via `ResizeObserver`) so `RunCard` can stay sticky below the header.
+- 2026-01-01: Image model tabs now include `clipSkip` in their per-tab params and send `clip_skip`/`img2img_clip_skip` to the backend (no prompt-tag injection needed).

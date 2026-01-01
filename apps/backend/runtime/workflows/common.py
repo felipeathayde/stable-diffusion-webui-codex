@@ -101,6 +101,14 @@ def _normalize_scheduler_name(sampler: str | None, scheduler: str | None) -> str
 def build_prompt_context(processing: Any, prompts: Sequence[str]) -> PromptContext:
     """Parse prompts, negative prompts, and extra network descriptors."""
     cleaned_prompts, prompt_loras, prompt_controls = parse_prompts_with_extras(list(prompts))
+    controls = dict(prompt_controls)
+    if "clip_skip" not in controls:
+        meta = getattr(processing, "metadata", None)
+        if isinstance(meta, dict) and meta.get("clip_skip") is not None:
+            try:
+                controls["clip_skip"] = max(1, int(meta.get("clip_skip")))
+            except Exception:
+                pass
     negative_prompts = list(
         getattr(processing, "negative_prompts", [getattr(processing, "negative_prompt", "")])
     )
@@ -108,7 +116,7 @@ def build_prompt_context(processing: Any, prompts: Sequence[str]) -> PromptConte
         prompts=cleaned_prompts,
         negative_prompts=negative_prompts,
         loras=prompt_loras,
-        controls=dict(prompt_controls),
+        controls=controls,
     )
 
 
@@ -117,6 +125,17 @@ def apply_prompt_context(processing: Any, context: PromptContext) -> None:
     processing.prompts = context.prompts
     processing.negative_prompts = context.negative_prompts
     processing.cfg_scale = getattr(processing, "guidance_scale", 7.0)
+
+    if "clip_skip" in context.controls:
+        try:
+            clip_skip = int(context.controls["clip_skip"])
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("Invalid clip_skip: must be an integer") from exc
+        if clip_skip < 1:
+            raise ValueError("Invalid clip_skip: must be >= 1")
+        model = getattr(processing, "sd_model", None)
+        if model is not None and hasattr(model, "set_clip_skip"):
+            model.set_clip_skip(clip_skip)
 
 
 def apply_dimension_overrides(processing: Any, controls: Mapping[str, Any]) -> None:
@@ -410,10 +429,6 @@ def execute_sampling(
         stats = apply_loras_to_engine(model, merged)
         logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
     model.codex_objects = model.codex_objects_after_applying_lora.shallow_copy()
-
-    clip_skip = int(prompt_controls.get("clip_skip")) if "clip_skip" in prompt_controls else None
-    if clip_skip is not None and hasattr(processing.sd_model, "set_clip_skip"):
-        processing.sd_model.set_clip_skip(clip_skip)
 
     strategy = prompt_controls.get("token_merge_strategy") or getattr(
         processing,

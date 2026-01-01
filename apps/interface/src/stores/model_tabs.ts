@@ -86,6 +86,7 @@ export interface ImageBaseParams {
   steps: number
   cfgScale: number
   seed: number
+  clipSkip: number
   batchSize: number
   batchCount: number
   highres: HighresFormState
@@ -203,6 +204,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     steps: defaults.steps,
     cfgScale: guidance,
     seed: -1,
+    clipSkip: type === 'sdxl' ? 2 : 1,
     batchSize: 1,
     batchCount: 1,
     highres: { ...highresDefaults },

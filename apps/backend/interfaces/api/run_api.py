@@ -2000,6 +2000,7 @@ def build_app() -> FastAPI:
         sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
         scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
         seed_val = _require_int_field(payload, 'seed')
+        clip_skip = _require_int_field(payload, 'clip_skip', minimum=1) if 'clip_skip' in payload else None
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, highres_cfg = _parse_txt2img_extras(payload)
@@ -2079,6 +2080,7 @@ def build_app() -> FastAPI:
             scheduler=str(scheduler_name),
             seed=seed_val,
             batch_size=batch_size,
+            clip_skip=clip_skip,
             metadata=metadata,
             highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
             extras=extras,
@@ -2384,6 +2386,7 @@ def build_app() -> FastAPI:
         sampler_name = _p.require(payload, 'img2img_sampling')
         scheduler_name = _p.require(payload, 'img2img_scheduler')
         seed_val = _p.as_int(payload, 'img2img_seed')
+        clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
         noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
         ensd_raw = payload.get('img2img_eta_noise_seed_delta')
     
@@ -2498,6 +2501,7 @@ def build_app() -> FastAPI:
             seed=seed_val,
             guidance_scale=cfg_scale,
             batch_size=batch_size,
+            clip_skip=clip_skip,
             metadata=metadata,
             init_image=init_image,
             mask=mask_image,

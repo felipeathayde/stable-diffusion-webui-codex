@@ -79,9 +79,13 @@
             :height="params.height"
             :cfg-scale="params.cfgScale"
             :seed="params.seed"
+            :clip-skip="params.clipSkip"
             :resolutionPresets="resolutionPresets"
             :show-cfg="true"
             :cfg-label="cfgLabel"
+            :show-clip-skip="showClipSkip"
+            :min-clip-skip="minClipSkip"
+            :max-clip-skip="12"
             :show-init-image-dims="params.useInitImage && Boolean(params.initImageData)"
             :disabled="isRunning"
             @update:sampler="(v: string) => setParams({ sampler: v })"
@@ -91,6 +95,7 @@
             @update:height="(v: number) => setParams({ height: Math.max(64, Math.trunc(v)) })"
             @update:cfgScale="(v: number) => setParams({ cfgScale: v })"
             @update:seed="(v: number) => setParams({ seed: Math.trunc(v) })"
+            @update:clipSkip="(v: number) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
             @sync-init-image-dims="syncInitImageDims"
@@ -322,6 +327,8 @@ const enableStyles = computed(() => true)
 const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' : ''))
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
+const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux')
+const minClipSkip = computed(() => (props.type === 'sdxl' ? 2 : 1))
 const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
 
 const showHighres = computed(() => {
@@ -491,6 +498,7 @@ function loadProfile(): void {
     const width = numberOrNull(snapshot.width); if (width !== null) next.width = Math.max(64, Math.trunc(width))
     const height = numberOrNull(snapshot.height); if (height !== null) next.height = Math.max(64, Math.trunc(height))
     const seed = numberOrNull(snapshot.seed); if (seed !== null) next.seed = Math.trunc(seed)
+    const clipSkip = numberOrNull(snapshot.clipSkip); if (clipSkip !== null) next.clipSkip = Math.max(minClipSkip.value, Math.trunc(clipSkip))
     const batchSize = numberOrNull(snapshot.batchSize); if (batchSize !== null) next.batchSize = Math.max(1, Math.trunc(batchSize))
     const batchCount = numberOrNull(snapshot.batchCount); if (batchCount !== null) next.batchCount = Math.max(1, Math.trunc(batchCount))
 
@@ -520,6 +528,7 @@ function saveProfile(): void {
       width: params.value.width,
       height: params.value.height,
       seed: params.value.seed,
+      clipSkip: params.value.clipSkip,
       batchSize: params.value.batchSize,
       batchCount: params.value.batchCount,
       selectedModel: params.value.checkpoint,

@@ -93,7 +93,8 @@ export function useGeneration(tabId: string) {
     const sampler = p.sampler || 'automatic'
     const scheduler = p.scheduler || 'automatic'
     const seedLabel = p.seed === -1 ? 'seed random' : `seed ${p.seed}`
-    return `${p.width}×${p.height} px · ${p.steps} steps · cfg ${p.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel} · batch ${p.batchCount}×${p.batchSize}`
+    const clipSkipLabel = Number.isFinite(p.clipSkip) && p.clipSkip > 0 && p.clipSkip !== 1 ? ` · clip-skip ${p.clipSkip}` : ''
+    return `${p.width}×${p.height} px · ${p.steps} steps · cfg ${p.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}${clipSkipLabel} · batch ${p.batchCount}×${p.batchSize}`
   }
 
   function buildParamsSnapshot(p: ImageBaseParams): Record<string, unknown> {
@@ -111,6 +112,7 @@ export function useGeneration(tabId: string) {
       steps: p.steps,
       cfgScale: p.cfgScale,
       seed: p.seed,
+      clipSkip: p.clipSkip,
 
       batchSize: p.batchSize,
       batchCount: p.batchCount,
@@ -253,6 +255,7 @@ export function useGeneration(tabId: string) {
           img2img_sampling: p.sampler || 'automatic',
           img2img_scheduler: p.scheduler || 'automatic',
           img2img_seed: p.seed,
+          img2img_clip_skip: p.clipSkip,
           device,
           engine: engineOverrideForRequest,
           model: modelOverride,
@@ -276,6 +279,7 @@ export function useGeneration(tabId: string) {
             sampler: p.sampler || 'automatic',
             scheduler: p.scheduler || 'automatic',
             seed: p.seed,
+            clipSkip: p.clipSkip,
             batchSize,
             batchCount,
             styles: [],

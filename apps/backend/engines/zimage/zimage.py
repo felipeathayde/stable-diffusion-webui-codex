@@ -13,6 +13,11 @@ import torch
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import (
+    record_smart_cache_hit,
+    record_smart_cache_miss,
+    smart_cache_enabled,
+)
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.timeline import timeline_node
 from apps.backend.runtime.zimage.debug import env_flag, env_int, truncate_text
@@ -25,10 +30,18 @@ logger = logging.getLogger("backend.engines.zimage.zimage")
 class _ZImagePromptList(list[str]):
     """List-like prompt wrapper used to carry per-run metadata."""
 
-    def __init__(self, items: list[str], *, distilled_cfg_scale: float, is_negative_prompt: bool) -> None:
+    def __init__(
+        self,
+        items: list[str],
+        *,
+        distilled_cfg_scale: float,
+        is_negative_prompt: bool,
+        smart_cache: bool | None,
+    ) -> None:
         super().__init__(items)
         self.distilled_cfg_scale = float(distilled_cfg_scale)
         self.is_negative_prompt = bool(is_negative_prompt)
+        self.smart_cache = smart_cache
 
 
 class ZImageEngine(CodexDiffusionEngine):
@@ -120,14 +133,36 @@ class ZImageEngine(CodexDiffusionEngine):
             distilled_value = float(distilled) if distilled is not None else float(ZIMAGE_SPEC.default_cfg_scale)
         except Exception:
             distilled_value = float(ZIMAGE_SPEC.default_cfg_scale)
-        return _ZImagePromptList([str(t or "") for t in texts], distilled_cfg_scale=distilled_value, is_negative_prompt=is_negative)
+        smart_flag = getattr(proc, "smart_cache", None)
+        smart_value = None if smart_flag is None else bool(smart_flag)
+        return _ZImagePromptList(
+            [str(t or "") for t in texts],
+            distilled_cfg_scale=distilled_value,
+            is_negative_prompt=is_negative,
+            smart_cache=smart_value,
+        )
 
     @timeline_node("text_encoding", "get_learned_conditioning")
     @torch.inference_mode()
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
         runtime = self._require_runtime()
-        
+
+        texts = tuple(str(x or "") for x in prompts)
+        is_negative = bool(getattr(prompts, "is_negative_prompt", False))
+        smart_flag = getattr(prompts, "smart_cache", None)
+        use_cache = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
+        max_length = getattr(runtime.text.qwen3_text, "max_length", None)
+        cache_key = (texts, is_negative, max_length)
+
+        if use_cache:
+            cached = self._cond_cache.get(cache_key)
+            if isinstance(cached, torch.Tensor):
+                record_smart_cache_hit("zimage.conditioning")
+                target_device = memory_management.text_encoder_device()
+                return cached.to(target_device)
+            record_smart_cache_miss("zimage.conditioning")
+
         # Load text encoder to GPU using memory management (same pattern as Flux)
         memory_management.load_model_gpu(runtime.clip.patcher)
         unload_clip = self.smart_offload_enabled
@@ -143,29 +178,20 @@ class ZImageEngine(CodexDiffusionEngine):
         
         try:
             cond = runtime.text.qwen3_text(prompts)
+            if use_cache:
+                # Keep cache bounded: store only the most recent entry (tensors on CPU).
+                self._cond_cache.clear()
+                self._cond_cache[cache_key] = cond.detach().to("cpu")
         finally:
             if unload_clip:
                 memory_management.unload_model(runtime.clip.patcher)
-        
-        # Z Image uses Qwen3 which doesn't have pooled output like CLIP.
-        # Provide a zeros placeholder for 'vector' to satisfy compile_conditions.
-        batch_size = len(prompts)
-        # Use a small vector dimension - this is just a placeholder
-        vector = torch.zeros(batch_size, 768, dtype=cond.dtype, device=cond.device)
-        
-        # Distilled CFG guidance - Z Image Turbo uses guidance=0.0 (no CFG)
-        # NOTE: Can't use `or` here because 0.0 is valid but falsy in Python
+
         raw_cfg = getattr(prompts, "distilled_cfg_scale", None)
         distilled_cfg = float(raw_cfg) if raw_cfg is not None else float(ZIMAGE_SPEC.default_cfg_scale)
-        guidance = torch.full((batch_size,), distilled_cfg, dtype=torch.float32)
         if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False):
             logger.info("[zimage-debug] distilled_cfg_scale=%.3f", distilled_cfg)
-        
-        return {
-            "crossattn": cond,
-            "vector": vector,
-            "guidance": guidance,
-        }
+
+        return cond
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
@@ -247,7 +273,7 @@ class ZImageEngine(CodexDiffusionEngine):
         # This already works correctly and handles all the Qwen3 specifics
         prompts_list = [prompt] if isinstance(prompt, str) else list(prompt)
         cond = self.get_learned_conditioning(prompts_list)
-        text_embeddings = cond["crossattn"]  # [B, seq, hidden]
+        text_embeddings = cond["crossattn"] if isinstance(cond, dict) else cond  # [B, seq, hidden]
         
         logger.info("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
         
@@ -302,4 +328,3 @@ class ZImageEngine(CodexDiffusionEngine):
         finally:
             if self.smart_offload_enabled:
                 memory_management.unload_model(self.codex_objects.vae)
-

@@ -108,6 +108,20 @@
           </div>
         </div>
 
+        <div v-if="showClipSkip" class="gc-col field">
+          <label class="label-muted">{{ clipSkipLabel }}</label>
+          <NumberStepperInput
+            :modelValue="clipSkip"
+            :min="minClipSkip"
+            :max="maxClipSkip"
+            :step="1"
+            :nudgeStep="1"
+            inputClass="cdx-input-w-xs"
+            :disabled="disabled"
+            @update:modelValue="(v) => emit('update:clipSkip', clampInt(v, minClipSkip, maxClipSkip))"
+          />
+        </div>
+
         <SliderField
           v-if="showCfg"
           class="gc-col gc-col--wide"
@@ -156,6 +170,7 @@ const props = withDefaults(defineProps<{
   cfgLabel?: string
   widthLabel?: string
   heightLabel?: string
+  clipSkipLabel?: string
 
   // Options
   allowEmptySampler?: boolean
@@ -178,6 +193,10 @@ const props = withDefaults(defineProps<{
   widthInputStep?: number
   heightStep?: number
   heightInputStep?: number
+  showClipSkip?: boolean
+  clipSkip?: number
+  minClipSkip?: number
+  maxClipSkip?: number
 
   resolutionPresets?: [number, number][]
   showInitImageDims?: boolean
@@ -189,6 +208,7 @@ const props = withDefaults(defineProps<{
   cfgLabel: 'CFG',
   widthLabel: 'Width',
   heightLabel: 'Height',
+  clipSkipLabel: 'CLIP Skip',
   allowEmptySampler: true,
   allowEmptyScheduler: true,
   samplerEmptyLabel: 'Automatic',
@@ -207,6 +227,10 @@ const props = withDefaults(defineProps<{
   widthInputStep: 8,
   heightStep: 64,
   heightInputStep: 8,
+  showClipSkip: false,
+  clipSkip: 1,
+  minClipSkip: 1,
+  maxClipSkip: 12,
   resolutionPresets: () => [],
   showInitImageDims: false,
 })
@@ -219,12 +243,14 @@ const emit = defineEmits<{
   (e: 'update:seed', value: number): void
   (e: 'update:width', value: number): void
   (e: 'update:height', value: number): void
+  (e: 'update:clipSkip', value: number): void
   (e: 'random-seed'): void
   (e: 'reuse-seed'): void
   (e: 'sync-init-image-dims'): void
 }>()
 
 const showCfg = computed(() => props.showCfg !== false)
+const showClipSkip = computed(() => props.showClipSkip === true)
 
 const minSteps = computed(() => Number.isFinite(props.minSteps) ? Math.trunc(Number(props.minSteps)) : 1)
 const maxSteps = computed(() => Number.isFinite(props.maxSteps) ? Math.trunc(Number(props.maxSteps)) : 150)
@@ -242,6 +268,9 @@ const widthStep = computed(() => Number.isFinite(props.widthStep) ? Math.trunc(N
 const widthInputStep = computed(() => Number.isFinite(props.widthInputStep) ? Math.trunc(Number(props.widthInputStep)) : 8)
 const heightStep = computed(() => Number.isFinite(props.heightStep) ? Math.trunc(Number(props.heightStep)) : 64)
 const heightInputStep = computed(() => Number.isFinite(props.heightInputStep) ? Math.trunc(Number(props.heightInputStep)) : 8)
+
+const minClipSkip = computed(() => Number.isFinite(props.minClipSkip) ? Math.trunc(Number(props.minClipSkip)) : 1)
+const maxClipSkip = computed(() => Number.isFinite(props.maxClipSkip) ? Math.trunc(Number(props.maxClipSkip)) : 12)
 
 const resolutionPresets = computed(() => (Array.isArray(props.resolutionPresets) ? props.resolutionPresets : []))
 

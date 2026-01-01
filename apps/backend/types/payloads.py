@@ -36,6 +36,7 @@ class Txt2ImgKeys:
         "sampler",
         "scheduler",
         "seed",
+        "clip_skip",
         "styles",
         "metadata",
     })

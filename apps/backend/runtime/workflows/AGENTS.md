@@ -1,7 +1,7 @@
 # apps/backend/runtime/workflows Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2025-12-14
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - Helper functions should raise explicit errors; avoid silent fallbacks or catching broad exceptions.
 - 2025-12-14: `build_video_plan()` reads `steps` + `guidance_scale` directly from the request; LoRA application uses a lazy import to keep the module dependency-light for non-LoRA users.
 - 2025-12-14: Video plan defaults `steps` to 30 when an ad-hoc caller omits it (matching `/api/{txt2vid,img2vid}` defaults) to avoid drifting configs.
+- 2026-01-01: `clip_skip` is now treated as a prompt control applied in `apply_prompt_context(...)` (before conditioning is computed); request-level `clip_skip` is merged into `PromptContext.controls` when no `<clip_skip:…>` tag is present.

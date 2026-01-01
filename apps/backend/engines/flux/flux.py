@@ -122,6 +122,8 @@ class Flux(CodexDiffusionEngine):
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
         runtime.set_clip_skip(clip_skip)
+        # Cached conditioning depends on clip_skip (pooled CLIP output changes).
+        self._cond_cache.clear()
         logger.debug("Flux clip skip set to %d", clip_skip)
 
     @torch.inference_mode()

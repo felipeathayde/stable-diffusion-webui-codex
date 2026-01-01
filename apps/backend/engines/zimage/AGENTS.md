@@ -1,7 +1,7 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
 Owner: Engine Maintainers
-Last Review: 2025-12-14
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -22,3 +22,4 @@ Status: Active
 - **Prompt wrappers:** `ZImageEngine._prepare_prompt_wrappers(...)` attaches `distilled_cfg_scale` to the prompt list from `processing.distilled_guidance_scale` so the UI “guidance” slider can be propagated into conditioning logs (and any future guidance embedding usage).
 - **Diffusers-math sampler:** `standalone_sampler.sample_zimage_diffusers_math(...)` mirrors diffusers scheduler behavior (`shift=3.0`, `sigma_min=0.0`) and avoids double-negating the model output (core already returns `noise_pred=-v`).
 - **Debugging:** set `CODEX_ZIMAGE_DEBUG_PROMPT=1` to log the formatted prompt string and `distilled_cfg_scale` used for the run.
+- 2026-01-01: ZImage prompt conditioning now participates in `smart_cache` (`zimage.conditioning`) so repeated prompts don’t re-encode Qwen3 each time; `get_learned_conditioning(...)` returns the cross-attn tensor directly (no placeholder `vector/guidance` allocations).

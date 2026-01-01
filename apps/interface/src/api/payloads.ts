@@ -55,6 +55,7 @@ export const Txt2ImgRequestSchema = z
     sampler: z.string().min(1),
     scheduler: z.string().min(1),
     seed: z.number().int(),
+    clip_skip: z.number().int().min(1).max(12).optional(),
     styles: z.array(z.string().min(1)).optional(),
     metadata: z.record(z.any()).optional(),
     engine: z.string().min(1).optional(),
@@ -127,6 +128,7 @@ export interface Txt2ImgFormState {
   sampler: string
   scheduler: string
   seed: number
+  clipSkip: number
   batchSize: number
   batchCount: number
   styles?: string[]
@@ -166,6 +168,10 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
     sampler: state.sampler,
     scheduler: state.scheduler,
     seed: state.seed,
+  }
+
+  if (Number.isFinite(state.clipSkip) && state.clipSkip >= 1) {
+    payload.clip_skip = Math.trunc(state.clipSkip)
   }
   
   // Flow models: use distilled_cfg, no negative prompt

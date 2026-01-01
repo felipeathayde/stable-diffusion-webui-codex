@@ -84,7 +84,7 @@ class ZImageEngineSpec:
     def flow_shift(self) -> float:
         """Flow-match shift, delegating to FamilyRuntimeSpec if not overridden.
         
-        Z Image Turbo uses shift=1.0 (linear schedule for distilled models).
+        Z Image Turbo uses shift=3.0 (matches HF `scheduler_config.json` for Z-Image-Turbo).
         """
         if self._flow_shift_override is not None:
             return self._flow_shift_override

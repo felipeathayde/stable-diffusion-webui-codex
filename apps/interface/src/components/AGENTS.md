@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-01
 Status: Active
 
 ## Purpose
@@ -38,3 +38,4 @@ Status: Active
 - 2025-12-28: QuickSettings perf toggles and other small toggles were unified as `qs-toggle-btn` buttons (replacing the old `.qs-switch` widgets); the Width/Height swap glyph was rotated for legacy parity via `.btn-swap-icon`.
 - 2025-12-26: Added `BatchSettingsCard.vue` to keep batch count/size controls as a separate card, and refactored `GenerationSettingsCard.vue` to compose `BasicParametersCard` + `BatchSettingsCard` (backwards-compatible wrapper).
 - 2025-12-31: `BasicParametersCard.vue` now supports syncing Width/Height from the init image (`showInitImageDims` + `sync-init-image-dims` event), snaps dimension updates to the input step (default 8; matches backend multiple-of-8 constraint), and raises default max dims to 8192 to accommodate tall portrait inputs.
+- 2026-01-01: `BasicParametersCard.vue` can optionally render a `CLIP Skip` control (`showClipSkip`, `clipSkip`, `minClipSkip/maxClipSkip`) so model tabs can expose clip-skip without prompt tags.

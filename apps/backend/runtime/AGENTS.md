@@ -41,3 +41,4 @@ Status: Active
 - 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).
+- 2026-01-01: Live preview utilities now live in `runtime/live_preview.py` (method enum, preview decode helper, and debug preview-factor fitting/logging) so workflows and API layers don’t duplicate preview logic.

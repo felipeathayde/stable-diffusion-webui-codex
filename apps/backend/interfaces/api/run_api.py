@@ -452,6 +452,7 @@ def build_app() -> FastAPI:
         Vid2VidRequest,
     )
     from apps.backend.services.media_service import MediaService
+    from apps.backend.services.live_preview_service import LivePreviewService
 
     app = FastAPI(title='SD WebUI Codex API', version='0.2.0')
     # Ensure engines are registered (sd15/sdxl/flux + video engines incl. WAN)
@@ -487,6 +488,7 @@ def build_app() -> FastAPI:
     )
 
     media = MediaService()
+    live_preview = LivePreviewService()
     # Native options facade (JSON-backed). Import early so helpers are available
     # to any route or startup function defined below.
     from apps.backend.codex.options import (
@@ -2134,68 +2136,6 @@ def build_app() -> FastAPI:
             })
         return encoded
 
-    def encode_preview_image(image: object, *, fmt: str, max_dim: int = 512) -> Optional[Dict[str, str]]:
-        try:
-            from PIL import Image  # type: ignore
-        except Exception:
-            return None
-
-        if not isinstance(image, Image.Image):
-            return None
-
-        fmt_norm = str(fmt or "").strip().lower()
-        if fmt_norm in {"jpg", "jpeg"}:
-            fmt_norm = "jpeg"
-        elif fmt_norm not in {"png", "webp"}:
-            fmt_norm = "jpeg"
-
-        img = image
-        try:
-            w, h = img.size
-            max_side = max(int(w), int(h))
-            if max_side > int(max_dim) > 0:
-                scale = float(max_dim) / float(max_side)
-                new_w = max(1, int(round(w * scale)))
-                new_h = max(1, int(round(h * scale)))
-                resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
-                img = img.resize((new_w, new_h), resample=resample)
-        except Exception:
-            img = image
-
-        buf = io.BytesIO()
-        if fmt_norm == "png":
-            img.save(buf, format="PNG")
-        elif fmt_norm == "webp":
-            img.save(buf, format="WEBP", quality=80)
-        else:
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.save(buf, format="JPEG", quality=80)
-
-        return {"format": fmt_norm, "data": base64.b64encode(buf.getvalue()).decode("ascii")}
-
-    def maybe_attach_live_preview(event: Dict[str, Any], entry: TaskEntry, *, enabled: bool, fmt: str) -> None:
-        if not enabled:
-            return
-        try:
-            preview_id = int(getattr(backend_state, "id_live_preview", 0) or 0)
-        except Exception:
-            preview_id = 0
-        if preview_id <= 0 or preview_id == entry.last_preview_id_sent:
-            return
-        image = getattr(backend_state, "current_image", None)
-        encoded = encode_preview_image(image, fmt=fmt)
-        if not encoded:
-            return
-        entry.last_preview_id_sent = preview_id
-        event["preview_image"] = encoded
-        try:
-            preview_step = int(getattr(backend_state, "current_image_sampling_step", 0) or 0)
-        except Exception:
-            preview_step = 0
-        if preview_step > 0:
-            event["preview_step"] = preview_step
-
 
     def _require_explicit_device(payload: Dict[str, Any]) -> str:
         # Accept explicit aliases from payload only (no options fallback)
@@ -2249,21 +2189,8 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                # Live preview configuration (global settings).
-                preview_enabled = bool(_opts_get("live_previews_enable", True))
-                preview_format = str(_opts_get("live_previews_image_format", "png") or "png")
-                preview_period_raw = _opts_get("show_progress_every_n_steps", 10)
-                try:
-                    preview_period = int(preview_period_raw)
-                except Exception:
-                    preview_period = 0
-                preview_interval = preview_period if (preview_enabled and preview_period > 0) else 0
-                debug_preview_factors = os.getenv("CODEX_DEBUG_PREVIEW_FACTORS", "").strip().lower() in {"1", "true", "yes", "on"}
-                if debug_preview_factors and preview_interval <= 0:
-                    preview_interval = 10
-                preview_method = str(_opts_get("show_progress_type", "Approx cheap") or "Approx cheap")
-                os.environ["CODEX_PREVIEW_INTERVAL"] = str(preview_interval)
-                os.environ["CODEX_LIVE_PREVIEW_METHOD"] = preview_method
+                preview_cfg = live_preview.build_task_config(_opts_get)
+                preview_cfg.apply_runtime_env()
                 entry.last_preview_id_sent = 0
 
                 engine_options: Dict[str, object] = {}
@@ -2358,7 +2285,7 @@ def build_app() -> FastAPI:
                                 "total_steps": ev.total_steps,
                                 "eta_seconds": ev.eta_seconds,
                             }
-                            maybe_attach_live_preview(evt, entry, enabled=(preview_enabled and preview_interval > 0), fmt=preview_format)
+                            live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
                             push(evt)
                         elif isinstance(ev, ResultEvent):
                             payload_obj = ev.payload or {}
@@ -2634,21 +2561,8 @@ def build_app() -> FastAPI:
         def worker() -> None:
             try:
                 push({"type": "status", "stage": "running"})
-                # Live preview configuration (global settings).
-                preview_enabled = bool(_opts_get("live_previews_enable", True))
-                preview_format = str(_opts_get("live_previews_image_format", "png") or "png")
-                preview_period_raw = _opts_get("show_progress_every_n_steps", 10)
-                try:
-                    preview_period = int(preview_period_raw)
-                except Exception:
-                    preview_period = 0
-                preview_interval = preview_period if (preview_enabled and preview_period > 0) else 0
-                debug_preview_factors = os.getenv("CODEX_DEBUG_PREVIEW_FACTORS", "").strip().lower() in {"1", "true", "yes", "on"}
-                if debug_preview_factors and preview_interval <= 0:
-                    preview_interval = 10
-                preview_method = str(_opts_get("show_progress_type", "Approx cheap") or "Approx cheap")
-                os.environ["CODEX_PREVIEW_INTERVAL"] = str(preview_interval)
-                os.environ["CODEX_LIVE_PREVIEW_METHOD"] = preview_method
+                preview_cfg = live_preview.build_task_config(_opts_get)
+                preview_cfg.apply_runtime_env()
                 entry.last_preview_id_sent = 0
 
                 engine_options: Dict[str, object] = {}
@@ -2740,7 +2654,7 @@ def build_app() -> FastAPI:
                                 "total_steps": ev.total_steps,
                                 "eta_seconds": ev.eta_seconds,
                             }
-                            maybe_attach_live_preview(evt, entry, enabled=(preview_enabled and preview_interval > 0), fmt=preview_format)
+                            live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
                             push(evt)
                         elif isinstance(ev, ResultEvent):
                             payload_obj = ev.payload or {}

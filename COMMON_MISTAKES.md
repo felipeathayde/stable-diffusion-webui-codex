@@ -577,3 +577,7 @@ Correct command: rg -n "2025-12-12|2026-01-01: Native DPM\\+\\+ 2M" apps/backend
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && pytest -q
 Cause and fix: Running pytest without the project venv/PYTHONPATH breaks imports like `apps.*` during test collection (`ModuleNotFoundError: No module named 'apps'`). Use the repo venv and set `PYTHONPATH` (and `CODEX_ROOT` for tests that need it).
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/pytest -q
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -لا .refs/diffusers | sed -n '1,120p'
+Cause and fix: The `-l` flag was typed with a non-ASCII character (likely a locale/encoding artifact), so `ls` interpreted it as an invalid option. Use plain ASCII flags (`-la`) or run `ls --help` to confirm supported options.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la .refs/diffusers | sed -n '1,120p'

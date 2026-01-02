@@ -116,6 +116,23 @@ def build_prompt_context(processing: Any, prompts: Sequence[str]) -> PromptConte
                 controls["clip_skip"] = max(1, int(meta.get("clip_skip")))
             except Exception:
                 pass
+
+    # SDXL uses CLIP skip locked to 2; clamp request/prompt tags to avoid
+    # caching or conditioning mismatches when users attempt to set other values.
+    try:
+        sd_model = getattr(processing, "sd_model", None)
+        engine_id = getattr(sd_model, "engine_id", None)
+        if engine_id in ("sdxl", "sdxl_refiner"):
+            raw = controls.get("clip_skip")
+            if raw is not None:
+                try:
+                    requested = int(raw)
+                except Exception:
+                    requested = None
+                if requested != 2:
+                    controls["clip_skip"] = 2
+    except Exception:
+        pass
     negative_prompts = list(
         getattr(processing, "negative_prompts", [getattr(processing, "negative_prompt", "")])
     )

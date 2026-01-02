@@ -201,9 +201,6 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._current_bundle: DiffusionModelBundle | None = None
         self._current_model_ref: str | None = None
         self._load_options: dict[str, Any] = {}
-        self._smart_offload_enabled = smart_offload_enabled()
-        self._smart_fallback_enabled = smart_fallback_enabled()
-        self._smart_cache_enabled = smart_cache_enabled()
         # Conditioning cache: keyed by (prompt_tuple, is_negative) -> dict of tensors
         # Subclasses can use this for caching CLIP/T5/etc outputs.
         # Tensors are stored on CPU to avoid pinning VRAM between jobs.
@@ -258,20 +255,21 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     @property
     def smart_offload_enabled(self) -> bool:
-        return self._smart_offload_enabled
+        # Resolve dynamically so UI toggles and per-request overrides take effect.
+        return smart_offload_enabled()
 
     @property
     def smart_fallback_enabled(self) -> bool:
-        return self._smart_fallback_enabled
+        return smart_fallback_enabled()
 
     @property
     def smart_cache_enabled(self) -> bool:
-        return self._smart_cache_enabled
+        return smart_cache_enabled()
 
     # ------------------------------------------------------------------ Conditioning Cache
     def _get_cached_cond(self, cache_key: tuple, bucket_name: str) -> Optional[dict[str, Any]]:
         """Retrieve cached conditioning if smart cache is enabled and key exists."""
-        if not self._smart_cache_enabled:
+        if not self.smart_cache_enabled:
             return None
         cached = self._cond_cache.get(cache_key)
         if cached is not None:
@@ -282,7 +280,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     def _set_cached_cond(self, cache_key: tuple, cond_dict: dict[str, Any]) -> None:
         """Store conditioning in cache (tensors should be on CPU to avoid pinning VRAM)."""
-        if not self._smart_cache_enabled:
+        if not self.smart_cache_enabled:
             return
         # Clear old entries to keep cache bounded
         self._cond_cache.clear()
@@ -655,15 +653,22 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         def _worker() -> None:
             try:
                 sampling_times["start"] = time.perf_counter()
-                result["latents"] = _generate_txt2img(
-                    processing=proc,
-                    conditioning=cond,
-                    unconditional_conditioning=uncond,
-                    seeds=seeds,
-                    subseeds=subseeds,
-                    subseed_strength=subseed_strength,
-                    prompts=prompts,
-                )
+                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+
+                with smart_runtime_overrides(
+                    smart_offload=bool(getattr(proc, "smart_offload", False)),
+                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
+                    smart_cache=bool(getattr(proc, "smart_cache", False)),
+                ):
+                    result["latents"] = _generate_txt2img(
+                        processing=proc,
+                        conditioning=cond,
+                        unconditional_conditioning=uncond,
+                        seeds=seeds,
+                        subseeds=subseeds,
+                        subseed_strength=subseed_strength,
+                        prompts=prompts,
+                    )
             except Exception as _exc:
                 result["error"] = _exc
             finally:
@@ -820,12 +825,19 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         def _worker() -> None:
             try:
                 sampling_times["start"] = time.perf_counter()
-                result["latents"] = _generate_img2img(
-                    processing=proc,
-                    conditioning=None,
-                    unconditional_conditioning=None,
-                    prompts=prompts,
-                )
+                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+
+                with smart_runtime_overrides(
+                    smart_offload=bool(getattr(proc, "smart_offload", False)),
+                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
+                    smart_cache=bool(getattr(proc, "smart_cache", False)),
+                ):
+                    result["latents"] = _generate_img2img(
+                        processing=proc,
+                        conditioning=None,
+                        unconditional_conditioning=None,
+                        prompts=prompts,
+                    )
             except Exception as _exc:
                 result["error"] = _exc
             finally:

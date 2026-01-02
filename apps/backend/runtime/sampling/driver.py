@@ -367,10 +367,11 @@ class CodexSampler:
                     pred_type = getattr(model.predictor, "prediction_type", None)
                     sigma_data = getattr(model.predictor, "sigma_data", None)
                     self._logger.info(
-                        "sampler algorithm=%s scheduler=%s steps=%d prediction=%s sigma_max=%.6g sigma_min=%.6g sigma_data=%s head=%s",
+                        "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g prediction=%s sigma_max=%.6g sigma_min=%.6g sigma_data=%s head=%s",
                         self.algorithm,
                         active_context.scheduler_name,
                         steps,
+                        float(cfg_scale),
                         pred_type or getattr(active_context, "prediction_type", None) or "<unknown>",
                         smax,
                         smin,
@@ -380,6 +381,21 @@ class CodexSampler:
 
                 compiled_cond = compile_conditions(cond)
                 compiled_uncond = compile_conditions(uncond) if uncond is not None else None
+                log_cfg_delta = False
+                cfg_delta_steps = 0
+                if self._log_enabled:
+                    log_cfg_delta = str(os.getenv("CODEX_LOG_CFG_DELTA", "0")).lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    )
+                    if log_cfg_delta:
+                        try:
+                            cfg_delta_steps = int(os.getenv("CODEX_LOG_CFG_DELTA_N", "2"))
+                        except Exception:
+                            cfg_delta_steps = 2
+                        cfg_delta_steps = max(0, cfg_delta_steps)
 
                 if isinstance(image_conditioning, torch.Tensor):
                     if (
@@ -445,10 +461,11 @@ class CodexSampler:
                         except Exception:
                             head = []
                         self._logger.info(
-                            "sampler algorithm=%s scheduler=%s steps=%d head=%s",
+                            "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g head=%s",
                             sampler_kind.value,
                             active_context.scheduler_name,
                             len(sigmas_run) - 1,
+                            float(cfg_scale),
                             head,
                         )
 
@@ -490,10 +507,11 @@ class CodexSampler:
                     except Exception:
                         head = []
                     self._logger.info(
-                        "sampler algorithm=%s scheduler=%s steps=%d head=%s",
+                        "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g head=%s",
                         sampler_kind.value,
                         active_context.scheduler_name,
                         len(sigmas_run) - 1,
+                        float(cfg_scale),
                         head,
                     )
 
@@ -509,17 +527,55 @@ class CodexSampler:
                     sigma_next = sigmas[i + 1]
                     sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=x.dtype)
 
-                    denoised = sampling_function_inner(
-                        model,
-                        x,
-                        sigma_batch,
-                        compiled_uncond,
-                        compiled_cond,
-                        cfg_scale,
-                        unet.model_options,
-                        seed=None,
-                        return_full=False,
-                    )
+                    if log_cfg_delta and (i - start_idx) < cfg_delta_steps:
+                        denoised, cond_pred, uncond_pred = sampling_function_inner(
+                            model,
+                            x,
+                            sigma_batch,
+                            compiled_uncond,
+                            compiled_cond,
+                            cfg_scale,
+                            unet.model_options,
+                            seed=None,
+                            return_full=True,
+                        )
+                        cfg1_optimization = math.isclose(cfg_scale, 1.0) and not unet.model_options.get(
+                            "disable_cfg1_optimization", False
+                        )
+                        if compiled_uncond is None or cfg1_optimization:
+                            self._logger.info(
+                                "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g uncond_used=%s",
+                                i + 1,
+                                steps,
+                                float(sigma),
+                                float(cfg_scale),
+                                False,
+                            )
+                        else:
+                            try:
+                                delta_abs_mean = float((cond_pred - uncond_pred).detach().float().abs().mean().item())
+                            except Exception:
+                                delta_abs_mean = float("nan")
+                            self._logger.info(
+                                "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g delta_abs_mean=%.6g",
+                                i + 1,
+                                steps,
+                                float(sigma),
+                                float(cfg_scale),
+                                delta_abs_mean,
+                            )
+                    else:
+                        denoised = sampling_function_inner(
+                            model,
+                            x,
+                            sigma_batch,
+                            compiled_uncond,
+                            compiled_cond,
+                            cfg_scale,
+                            unet.model_options,
+                            seed=None,
+                            return_full=False,
+                        )
 
                     eps = (x - denoised) / max(float(sigma), 1e-8)
                     if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):

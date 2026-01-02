@@ -261,8 +261,21 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        runtime.set_clip_skip(clip_skip)
-        logger.debug("Clip skip set to %d for SDXL.", clip_skip)
+        try:
+            requested = int(clip_skip)
+        except Exception as exc:  # noqa: BLE001
+            raise TypeError("clip_skip must be an integer") from exc
+
+        # SDXL is locked to clip_skip=2 (Forge/A1111 parity).
+        if requested != 2:
+            logger.info("SDXL clip_skip is locked to 2 (requested %s); overriding.", requested)
+        runtime.set_clip_skip(2)
+        # Any cached text embeddings depend on clip-skip; avoid stale reuse.
+        try:
+            self._cond_cache.clear()
+        except Exception:
+            pass
+        logger.debug("Clip skip set to 2 for SDXL.")
 
     def _post_job_cleanup(self) -> None:
         """Post-job cleanup when smart offload is enabled.
@@ -323,15 +336,22 @@ class StableDiffusionXL(CodexDiffusionEngine):
         def _worker() -> None:
             try:
                 sampling_times["start"] = time.perf_counter()
-                result["latents"] = _generate_txt2img(
-                    processing=proc,
-                    conditioning=cond,
-                    unconditional_conditioning=uncond,
-                    seeds=seeds,
-                    subseeds=subseeds,
-                    subseed_strength=subseed_strength,
-                    prompts=prompts,
-                )
+                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+
+                with smart_runtime_overrides(
+                    smart_offload=bool(getattr(proc, "smart_offload", False)),
+                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
+                    smart_cache=bool(getattr(proc, "smart_cache", False)),
+                ):
+                    result["latents"] = _generate_txt2img(
+                        processing=proc,
+                        conditioning=cond,
+                        unconditional_conditioning=uncond,
+                        seeds=seeds,
+                        subseeds=subseeds,
+                        subseed_strength=subseed_strength,
+                        prompts=prompts,
+                    )
             except Exception as _exc:  # noqa: BLE001
                 result["error"] = _exc
             finally:
@@ -704,8 +724,20 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        runtime.set_clip_skip(clip_skip)
-        logger.debug("Clip skip set to %d for SDXL refiner.", clip_skip)
+        try:
+            requested = int(clip_skip)
+        except Exception as exc:  # noqa: BLE001
+            raise TypeError("clip_skip must be an integer") from exc
+
+        # SDXL refiner uses only CLIP-G; keep parity with base and lock to 2.
+        if requested != 2:
+            logger.info("SDXL refiner clip_skip is locked to 2 (requested %s); overriding.", requested)
+        runtime.set_clip_skip(2)
+        try:
+            self._cond_cache.clear()
+        except Exception:
+            pass
+        logger.debug("Clip skip set to 2 for SDXL refiner.")
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

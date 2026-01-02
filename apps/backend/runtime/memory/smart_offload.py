@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from contextlib import contextmanager
+import threading
+from typing import Dict, Iterator
 
 
 def _snapshot():
@@ -11,8 +13,45 @@ def _snapshot():
     return codex_options.get_snapshot()
 
 
+_THREAD_OVERRIDES = threading.local()
+
+
+def _get_override(name: str) -> bool | None:
+    return getattr(_THREAD_OVERRIDES, name, None)
+
+
+@contextmanager
+def smart_runtime_overrides(
+    *,
+    smart_offload: bool | None = None,
+    smart_fallback: bool | None = None,
+    smart_cache: bool | None = None,
+) -> Iterator[None]:
+    """Temporarily override smart flags for the current thread.
+
+    This is intended for per-request overrides inside worker threads, so runtime
+    code that consults these helpers (sampling, memory manager, patchers) can
+    honor request-level flags without relying on persisted `/api/options`.
+    """
+    prev_offload = _get_override("smart_offload")
+    prev_fallback = _get_override("smart_fallback")
+    prev_cache = _get_override("smart_cache")
+    _THREAD_OVERRIDES.smart_offload = smart_offload
+    _THREAD_OVERRIDES.smart_fallback = smart_fallback
+    _THREAD_OVERRIDES.smart_cache = smart_cache
+    try:
+        yield
+    finally:
+        _THREAD_OVERRIDES.smart_offload = prev_offload
+        _THREAD_OVERRIDES.smart_fallback = prev_fallback
+        _THREAD_OVERRIDES.smart_cache = prev_cache
+
+
 def smart_offload_enabled() -> bool:
     """Return True when smart offload is enabled (Codex options only)."""
+    override = _get_override("smart_offload")
+    if override is not None:
+        return bool(override)
     try:
         snap = _snapshot()
         return bool(getattr(snap, "codex_smart_offload", False))
@@ -22,6 +61,9 @@ def smart_offload_enabled() -> bool:
 
 def smart_fallback_enabled() -> bool:
     """Return True when smart CPU fallback on OOM is enabled (Codex options only)."""
+    override = _get_override("smart_fallback")
+    if override is not None:
+        return bool(override)
     try:
         snap = _snapshot()
         return bool(getattr(snap, "codex_smart_fallback", False))
@@ -31,6 +73,9 @@ def smart_fallback_enabled() -> bool:
 
 def smart_cache_enabled() -> bool:
     """Return True when SDXL smart caching (TE + embed_values) is enabled."""
+    override = _get_override("smart_cache")
+    if override is not None:
+        return bool(override)
     try:
         snap = _snapshot()
         return bool(getattr(snap, "codex_smart_cache", False))
@@ -78,6 +123,7 @@ __all__ = [
     "smart_offload_enabled",
     "smart_fallback_enabled",
     "smart_cache_enabled",
+    "smart_runtime_overrides",
     "record_smart_cache_hit",
     "record_smart_cache_miss",
     "get_smart_cache_stats",

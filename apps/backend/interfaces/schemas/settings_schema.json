@@ -2204,6 +2204,221 @@
       "step": 256,
       "choices": null,
       "choices_source": null
+    },
+    {
+      "key": "codex_engine",
+      "label": "(Codex) Engine",
+      "type": "text",
+      "section": "system",
+      "default": "sd15",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_mode",
+      "label": "(Codex) Mode",
+      "type": "text",
+      "section": "system",
+      "default": "Normal",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_attention_backend",
+      "label": "(Codex) Attention backend",
+      "type": "dropdown",
+      "section": "system",
+      "default": "torch-sdpa",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "torch-sdpa",
+        "xformers",
+        "sage"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_diffusion_device",
+      "label": "(Codex) Diffusion device",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "cuda",
+        "cpu",
+        "mps",
+        "xpu",
+        "directml"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_core_device",
+      "label": "(Codex) Core device",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "cuda",
+        "cpu",
+        "mps",
+        "xpu",
+        "directml"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_te_device",
+      "label": "(Codex) Text encoder device",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "cuda",
+        "cpu",
+        "mps",
+        "xpu",
+        "directml"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_vae_device",
+      "label": "(Codex) VAE device",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "cuda",
+        "cpu",
+        "mps",
+        "xpu",
+        "directml"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_core_dtype",
+      "label": "(Codex) Core dtype",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "fp16",
+        "bf16",
+        "fp32"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_te_dtype",
+      "label": "(Codex) Text encoder dtype",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "fp16",
+        "bf16",
+        "fp32"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_vae_dtype",
+      "label": "(Codex) VAE dtype",
+      "type": "dropdown",
+      "section": "system",
+      "default": "auto",
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": [
+        "auto",
+        "fp16",
+        "bf16",
+        "fp32"
+      ],
+      "choices_source": null
+    },
+    {
+      "key": "codex_smart_offload",
+      "label": "(Codex) Smart offload (TE/VAE unload between stages)",
+      "type": "checkbox",
+      "section": "system",
+      "default": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_smart_fallback",
+      "label": "(Codex) Smart fallback (CPU on OOM)",
+      "type": "checkbox",
+      "section": "system",
+      "default": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_smart_cache",
+      "label": "(Codex) Smart cache (SDXL conditioning cache)",
+      "type": "checkbox",
+      "section": "system",
+      "default": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
+    },
+    {
+      "key": "codex_core_streaming",
+      "label": "(Codex) Core streaming (experimental)",
+      "type": "checkbox",
+      "section": "system",
+      "default": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "choices": null,
+      "choices_source": null
     }
   ],
   "source": "legacy/modules/shared_options.py",

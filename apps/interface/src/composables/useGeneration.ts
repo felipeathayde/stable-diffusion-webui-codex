@@ -165,11 +165,13 @@ export function useGeneration(tabId: string) {
     state.value.progress.stage = 'starting'
     state.value.startedAtMs = performance.now()
     state.value.finishedAtMs = null
-    
+
     const p = params.value
     const config = engineConfig.value!
     const checkpoint = String((p as any).checkpoint || '').trim()
-    const modelOverride = checkpoint
+    const modelIsGguf = quicksettings.isModelGguf(checkpoint)
+    const resolvedModelSha = quicksettings.resolveModelSha(checkpoint)
+    const modelOverride = resolvedModelSha || checkpoint
     if (!modelOverride) {
       state.value.status = 'error'
       state.value.errorMessage = 'Select a checkpoint to generate.'
@@ -205,13 +207,10 @@ export function useGeneration(tabId: string) {
       ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
       : undefined
     
-    // Build extras based on engine capabilities
-    const extras: Record<string, unknown> = {
-      batch_size: 1,
-      batch_count: 1,
-    }
-    
-    const needsTencSha = config.capabilities.requiresTenc || modelOverride.toLowerCase().endsWith('.gguf')
+    // Build extras based on engine capabilities (e.g. tenc_sha)
+    const extras: Record<string, unknown> = {}
+
+    const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
     if (needsTencSha) {
       const shas: string[] = []
       for (const label of textEncoders) {

@@ -108,3 +108,5 @@ apps/settings_values.json
 
 # uv (repo-local installer + managed CPython installs)
 /.uv/
+.sangoi/launcher/areas/core.json
+apps/paths.json

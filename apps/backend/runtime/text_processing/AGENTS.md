@@ -2,6 +2,7 @@
 <!-- tags: backend, runtime, text-processing -->
 Date: 2025-11-03
 Owner: Runtime Maintainers
+Last Review: 2026-01-02
 Status: Active
 
 ## Scope
@@ -37,3 +38,6 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 
 ## Not Implemented
 - Non-classic emphasis variants outside the configured registry will raise `NotImplementedError` when wired.
+
+## 2026-01-02 — Notes
+- Prompt token-merging tags (`<merge:...>` / `<tm:...>`) are stripped during parsing but intentionally have no effect in Codex.

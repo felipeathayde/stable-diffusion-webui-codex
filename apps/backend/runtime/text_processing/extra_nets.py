@@ -56,7 +56,7 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
             w = weight_s or '1.0'
             return f"({name}:{w})"
         # control tags: <clip_skip:N>, <sampler:NAME>, <scheduler:NAME>,
-        # <merge:ratio[:strategy]>, <width:N>/<height:N>, <cfg:x>, <steps:n>, <seed:n>, <denoise:x>
+        # <width:N>/<height:N>, <cfg:x>, <steps:n>, <seed:n>, <denoise:x>
         try:
             if kind == 'clip_skip':
                 n = int(float(weight_s or name))
@@ -66,13 +66,9 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
             elif kind == 'scheduler':
                 controls['scheduler'] = name
             elif kind in ('merge', 'tm'):
-                # name: ratio or strategy; weight is ratio if present
-                ratio = float(weight_s) if weight_s else float(name)
-                controls['token_merge_ratio'] = max(0.0, min(0.95, ratio))
-                # if both provided as <merge:strategy:ratio>
-                parts = (name or '').split(':')
-                if len(parts) >= 2:
-                    controls['token_merge_strategy'] = parts[0].lower()
+                # Token merging is intentionally not supported in Codex (never default).
+                # Strip the tag to avoid sending it into the text encoders.
+                pass
             elif kind in ('width','w'):
                 controls['width'] = max(8, int(float(weight_s or name)))
             elif kind in ('height','h'):

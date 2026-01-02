@@ -49,8 +49,6 @@ class SamplingPlan:
     subseeds: List[int]
     subseed_strength: float
     noise_settings: NoiseSettings
-    token_merging_ratio: float | None = None
-    token_merging_strategy: str | None = None
 
 
 @dataclass(slots=True)

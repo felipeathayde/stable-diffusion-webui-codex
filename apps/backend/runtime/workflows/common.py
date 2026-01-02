@@ -17,7 +17,6 @@ from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
 from apps.backend.core.state import state as backend_state
 from apps.backend.patchers.lora_apply import apply_loras_to_engine
-from apps.backend.patchers.token_merging import apply_token_merging
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.processing.conditioners import decode_latent_batch, txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
@@ -453,19 +452,6 @@ def execute_sampling(
         stats = apply_loras_to_engine(model, merged)
         logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
     model.codex_objects = model.codex_objects_after_applying_lora.shallow_copy()
-
-    strategy = prompt_controls.get("token_merge_strategy") or getattr(
-        processing,
-        "get_token_merging_strategy",
-        lambda: None,
-    )()
-    if not strategy:
-        strategy = os.getenv("CODEX_TOKEN_MERGE_STRATEGY", "avg")
-    ratio_override = prompt_controls.get("token_merge_ratio")
-    ratio = float(ratio_override) if ratio_override is not None else float(
-        processing.get_token_merging_ratio(for_hires=bool(init_latent is not None))
-    )
-    apply_token_merging(model, ratio, strategy=strategy)
 
     if processing.scripts is not None:
         processing.scripts.process_before_every_sampling(

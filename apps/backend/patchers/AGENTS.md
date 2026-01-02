@@ -1,17 +1,16 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2025-12-05
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
-- Hosts runtime patching utilities (LoRA injection, token merging, adapter application) that modify networks or inference behavior after models are loaded.
+- Hosts runtime patching utilities (LoRA injection, adapter application) that modify networks or inference behavior after models are loaded.
 
 ## Key Files
 - `base.py` — Core `ModelPatcher` with typed registries (LoRA/object patches) and lifecycle hooks.
 - `lora.py` — Implements `CodexLoraLoader` and variant-aware merge helpers backed by typed payloads, progress reporting, and strict validation.
 - `lora_apply.py` — Applies native LoRA selections to loaded networks.
-- `token_merging.py` — Implements token merging strategies consumed by engines/use cases.
 - `unet.py` — Codex-native UNet patcher built on typed helpers (`SamplingReservation`, `ControlNetChain`) for deterministic sampling reservations, ControlNet chaining, and patch registration.
 - `clipvision.py` — Adapter around `apps/backend/runtime/vision/clip/` providing legacy-facing APIs backed by the Codex encoder.
 - Additional patch modules (e.g., adapters) live here as they are ported.
@@ -28,6 +27,7 @@ Status: Active
 - 2025-11-03: Host pinning for offloaded models honours `RuntimeMemoryConfig.swap.pin_shared_memory`; disable the flag to avoid Windows pagefile pressure.
 - 2025-11-22: VAE patcher unwraps diffusers `DecoderOutput`/`AutoencoderKLOutput` before `.to(...)`, preventing `'DecoderOutput' object has no attribute 'to'` when SDXL uses the standard diffusers VAE.
 - 2025-12-05: VAE patcher gains a `smart_fallback` path that, when enabled, catches CUDA OOM during decode and performs a single full-image decode on CPU instead of repeatedly retrying GPU paths (regular + tiled). Encode now mirrors this behaviour: OOM during encode triggers a single full-image CPU encode when Smart Fallback is on, otherwise it falls back to tiled encode.
+- 2026-01-02: Removed token merging patches; prompt token-merging tags are stripped but have no effect.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

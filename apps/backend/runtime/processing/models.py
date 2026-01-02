@@ -165,8 +165,6 @@ class CodexProcessingBase:
     scheduler: Optional[str] = None
     user: str = "api"
     disable_extra_networks: bool = False
-    token_merging_ratio: float = 0.0
-    token_merging_ratio_hr: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
     extra_generation_params: Dict[str, Any] = field(default_factory=dict)
     override_settings: Dict[str, Any] = field(default_factory=dict)
@@ -256,13 +254,6 @@ class CodexProcessingBase:
                 self.all_seeds[idx],
                 self.all_subseeds[idx],
             )
-
-    def get_token_merging_ratio(self, *, for_hires: bool = False) -> float:
-        if for_hires:
-            if self.token_merging_ratio_hr > 0:
-                return self.token_merging_ratio_hr
-            return self.token_merging_ratio or 0.0
-        return self.token_merging_ratio or 0.0
 
     def set_scripts(self, scripts: Any, script_args: Optional[Sequence[Any]] = None) -> None:
         self.scripts = scripts

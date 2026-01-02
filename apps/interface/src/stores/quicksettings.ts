@@ -283,6 +283,60 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     )
   }
 
+  function resolveModelInfo(label: string | null | undefined): ModelInfo | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+    if (models.value.length === 0) return undefined
+
+    const normalized = raw.replace(/\\+/g, '/')
+    const tail = normalized.split('/').pop() || ''
+    const lower = raw.toLowerCase()
+    const isHex = /^[0-9a-f]+$/.test(lower)
+    const looksLikeShortSha = lower.length === 10 && isHex
+
+    for (const model of models.value) {
+      if (!model) continue
+      const modelHash = String(model.hash || '').trim().toLowerCase()
+      if (looksLikeShortSha && modelHash && modelHash === lower) return model
+
+      if (raw === model.title || raw === model.name || raw === model.filename) return model
+
+      const fileNorm = String(model.filename || '').replace(/\\+/g, '/')
+      if (normalized && normalized === fileNorm) return model
+
+      const fileTail = fileNorm.split('/').pop() || ''
+      if (tail && (tail === model.title || tail === model.name || tail === fileTail)) return model
+    }
+    return undefined
+  }
+
+  function resolveModelSha(label: string | null | undefined): string | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+
+    const lower = raw.toLowerCase()
+    if ((lower.length === 10 || lower.length === 64) && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
+    const model = resolveModelInfo(raw)
+    const sha = model ? String(model.hash || '').trim() : ''
+    return sha || undefined
+  }
+
+  function isModelGguf(label: string | null | undefined): boolean {
+    const raw = String(label || '').trim()
+    if (!raw) return false
+    const lower = raw.replace(/\\+/g, '/').toLowerCase()
+    if (lower.endsWith('.gguf')) return true
+
+    const model = resolveModelInfo(raw)
+    if (!model) return false
+    const title = String(model.title || '').toLowerCase()
+    const filename = String(model.filename || '').toLowerCase()
+    return title.endsWith('.gguf') || filename.endsWith('.gguf')
+  }
+
   async function setVae(label: string): Promise<void> {
     currentVae.value = label
     await updateOptions({ forge_selected_vae: label })
@@ -451,6 +505,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     // SHA maps for asset resolution
     textEncoderShaMap,
     resolveTextEncoderSha,
+    resolveModelSha,
+    isModelGguf,
     vaeShaMap,
   }
 })

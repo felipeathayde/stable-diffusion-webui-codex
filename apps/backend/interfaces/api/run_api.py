@@ -2035,16 +2035,30 @@ def build_app() -> FastAPI:
         else:
             smart_cache = bool(getattr(snap, "codex_smart_cache", False))
 
+        engine_override = payload.get('engine') or payload.get('codex_engine')
+        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
+        from apps.backend.runtime.models import api as _models_api
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
-        
-        if model_sha:
-            model_path = resolve_asset_by_sha(model_sha)
-            if model_path:
-                extras["model_path"] = model_path
+
+        sha_candidate = None
+        if isinstance(model_sha, str) and model_sha.strip():
+            sha_candidate = model_sha.strip()
+        elif isinstance(model_override, str):
+            maybe = model_override.strip()
+            if len(maybe) in (10, 64) and all(c in "0123456789abcdef" for c in maybe.lower()):
+                sha_candidate = maybe
+
+        if sha_candidate:
+            record = _models_api.find_checkpoint_by_sha(sha_candidate)
+            if record is None:
+                raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
+            model_override = record.filename
+            extras["model_path"] = record.filename
         if vae_sha:
             vae_path = resolve_asset_by_sha(vae_sha)
             if vae_path:
@@ -2063,9 +2077,6 @@ def build_app() -> FastAPI:
                 tenc_path = resolve_asset_by_sha(tenc_sha)
                 if tenc_path:
                     extras["tenc_path"] = tenc_path
-
-        engine_override = payload.get('engine') or payload.get('codex_engine')
-        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
         
         # GGUF models require text encoder
         if model_override and model_override.lower().endswith('.gguf') and not tenc_sha:
@@ -2199,13 +2210,40 @@ def build_app() -> FastAPI:
                     te_override = extras.get("text_encoder_override")
                     if isinstance(te_override, dict):
                         engine_options["text_encoder_override"] = dict(te_override)
-                    # Read tenc_sha from payload extras (for Z Image and other engines)
-                    tenc_sha_from_payload = extras.get("tenc_sha")
-                    if tenc_sha_from_payload and isinstance(tenc_sha_from_payload, str):
-                        from apps.backend.inventory.cache import resolve_asset_by_sha
-                        resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
-                        if resolved_path:
-                            engine_options["tenc_path"] = resolved_path
+
+                    vae_path_from_extras = extras.get("vae_path")
+                    if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
+                        engine_options["vae_path"] = vae_path_from_extras.strip()
+
+                    tenc_path_from_extras = extras.get("tenc_path")
+                    if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
+                        engine_options["tenc_path"] = tenc_path_from_extras.strip()
+                    elif isinstance(tenc_path_from_extras, list):
+                        resolved: list[str] = []
+                        for item in tenc_path_from_extras:
+                            if isinstance(item, str) and item.strip():
+                                resolved.append(item.strip())
+                        if resolved:
+                            engine_options["tenc_path"] = resolved
+
+                    # Back-compat: allow resolving tenc_sha in the worker when prepare_txt2img didn't.
+                    if "tenc_path" not in engine_options:
+                        tenc_sha_from_payload = extras.get("tenc_sha")
+                        if tenc_sha_from_payload:
+                            from apps.backend.inventory.cache import resolve_asset_by_sha
+
+                            if isinstance(tenc_sha_from_payload, list):
+                                tenc_paths = []
+                                for sha in tenc_sha_from_payload:
+                                    path = resolve_asset_by_sha(str(sha))
+                                    if path:
+                                        tenc_paths.append(path)
+                                if tenc_paths:
+                                    engine_options["tenc_path"] = tenc_paths
+                            elif isinstance(tenc_sha_from_payload, str):
+                                resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
+                                if resolved_path:
+                                    engine_options["tenc_path"] = resolved_path
                 except Exception:
                     pass
                 # Pass streaming option from settings to engine
@@ -2213,53 +2251,61 @@ def build_app() -> FastAPI:
                     snap = _opts_snapshot()
                     if getattr(snap, "codex_core_streaming", False):
                         engine_options["codex_core_streaming"] = True
+
+                    engine_id = str(engine_key).strip().lower()
+                    allow_global_overrides = engine_id not in ("sdxl", "sdxl_refiner")
                     # Pass VAE override path if set (non-Automatic)
                     # Check for SHA256-based selection first, fallback to label-based
-                    vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
-                    vae_label = getattr(snap, "forge_selected_vae", None) or ""
-                    if vae_sha:
-                        from apps.backend.inventory.cache import resolve_asset_by_sha
-                        resolved_path = resolve_asset_by_sha(vae_sha)
-                        if resolved_path:
-                            engine_options["vae_path"] = resolved_path
-                    elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
-                        engine_options["vae_path"] = vae_label
+                    if allow_global_overrides and "vae_path" not in engine_options:
+                        vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
+                        vae_label = getattr(snap, "forge_selected_vae", None) or ""
+                        if vae_sha:
+                            from apps.backend.inventory.cache import resolve_asset_by_sha
+
+                            resolved_path = resolve_asset_by_sha(vae_sha)
+                            if resolved_path:
+                                engine_options["vae_path"] = resolved_path
+                        elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
+                            engine_options["vae_path"] = vae_label
                     # Pass text encoder override paths if set
                     # Check for SHA256-based selection first, fallback to label-based
-                    tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
-                    tenc_modules = getattr(snap, "forge_additional_modules", None) or []
-                    if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
-                        first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
-                        if first_sha:
-                            from apps.backend.inventory.cache import resolve_asset_by_sha
-                            resolved_path = resolve_asset_by_sha(first_sha)
-                            if resolved_path:
-                                engine_options["tenc_path"] = resolved_path
-                    elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
-                        # Fallback: try direct path or label
-                        first_tenc = str(tenc_modules[0]) if tenc_modules else ""
-                        if first_tenc:
-                            # Check if it looks like a SHA256 (64 hex chars)
-                            if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
+                    if allow_global_overrides and "tenc_path" not in engine_options:
+                        tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
+                        tenc_modules = getattr(snap, "forge_additional_modules", None) or []
+                        if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
+                            first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
+                            if first_sha:
                                 from apps.backend.inventory.cache import resolve_asset_by_sha
-                                resolved_path = resolve_asset_by_sha(first_tenc)
+
+                                resolved_path = resolve_asset_by_sha(first_sha)
                                 if resolved_path:
                                     engine_options["tenc_path"] = resolved_path
-                            # Check if it's a path that exists
-                            elif os.path.isfile(first_tenc):
-                                engine_options["tenc_path"] = first_tenc
-                            # Extract path from label format "family/filename" if present
-                            elif "/" in first_tenc:
-                                parts = first_tenc.split("/", 1)
-                                if len(parts) == 2:
-                                    # This is a label format, try to find in inventory
-                                    filename = parts[1]
-                                    from apps.backend.inventory import cache as inv_cache
-                                    inv = inv_cache.get()
-                                    for item in inv.text_encoders:
-                                        if item.get("name") == filename:
-                                            engine_options["tenc_path"] = item.get("path", "")
-                                            break
+                        elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
+                            # Fallback: try direct path or label
+                            first_tenc = str(tenc_modules[0]) if tenc_modules else ""
+                            if first_tenc:
+                                # Check if it looks like a SHA256 (64 hex chars)
+                                if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
+                                    from apps.backend.inventory.cache import resolve_asset_by_sha
+
+                                    resolved_path = resolve_asset_by_sha(first_tenc)
+                                    if resolved_path:
+                                        engine_options["tenc_path"] = resolved_path
+                                # Check if it's a path that exists
+                                elif os.path.isfile(first_tenc):
+                                    engine_options["tenc_path"] = first_tenc
+                                # Extract path from label format "family/filename" if present
+                                elif "/" in first_tenc:
+                                    parts = first_tenc.split("/", 1)
+                                    if len(parts) == 2:
+                                        filename = parts[1]
+                                        from apps.backend.inventory import cache as inv_cache
+
+                                        inv = inv_cache.get()
+                                        for item in inv.get("text_encoders", []):
+                                            if item.get("name") == filename:
+                                                engine_options["tenc_path"] = item.get("path", "")
+                                                break
                 except Exception:
                     pass
                 with tasks_lock:
@@ -2464,14 +2510,26 @@ def build_app() -> FastAPI:
 
         # Resolve SHA-based assets (if provided in img2img_extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
+        from apps.backend.runtime.models import api as _models_api
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
 
-        if model_sha:
-            model_path = resolve_asset_by_sha(model_sha)
-            if model_path:
-                extras["model_path"] = model_path
+        sha_candidate = None
+        if isinstance(model_sha, str) and model_sha.strip():
+            sha_candidate = model_sha.strip()
+        elif isinstance(model_override, str):
+            maybe = model_override.strip()
+            if len(maybe) in (10, 64) and all(c in "0123456789abcdef" for c in maybe.lower()):
+                sha_candidate = maybe
+
+        if sha_candidate:
+            record = _models_api.find_checkpoint_by_sha(sha_candidate)
+            if record is None:
+                raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
+            model_override = record.filename
+            model_ref = record.filename
+            extras["model_path"] = record.filename
         if vae_sha:
             vae_path = resolve_asset_by_sha(vae_sha)
             if vae_path:
@@ -2576,21 +2634,34 @@ def build_app() -> FastAPI:
                     if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
                         engine_options["vae_path"] = vae_path_from_extras.strip()
 
-                    tenc_sha_from_payload = extras.get("tenc_sha")
-                    if tenc_sha_from_payload:
-                        from apps.backend.inventory.cache import resolve_asset_by_sha
-                        if isinstance(tenc_sha_from_payload, list):
-                            tenc_paths = []
-                            for sha in tenc_sha_from_payload:
-                                path = resolve_asset_by_sha(sha)
-                                if path:
-                                    tenc_paths.append(path)
-                            if tenc_paths:
-                                engine_options["tenc_path"] = tenc_paths
-                        elif isinstance(tenc_sha_from_payload, str):
-                            resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
-                            if resolved_path:
-                                engine_options["tenc_path"] = resolved_path
+                    tenc_path_from_extras = extras.get("tenc_path")
+                    if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
+                        engine_options["tenc_path"] = tenc_path_from_extras.strip()
+                    elif isinstance(tenc_path_from_extras, list):
+                        resolved: list[str] = []
+                        for item in tenc_path_from_extras:
+                            if isinstance(item, str) and item.strip():
+                                resolved.append(item.strip())
+                        if resolved:
+                            engine_options["tenc_path"] = resolved
+
+                    if "tenc_path" not in engine_options:
+                        tenc_sha_from_payload = extras.get("tenc_sha")
+                        if tenc_sha_from_payload:
+                            from apps.backend.inventory.cache import resolve_asset_by_sha
+
+                            if isinstance(tenc_sha_from_payload, list):
+                                tenc_paths = []
+                                for sha in tenc_sha_from_payload:
+                                    path = resolve_asset_by_sha(str(sha))
+                                    if path:
+                                        tenc_paths.append(path)
+                                if tenc_paths:
+                                    engine_options["tenc_path"] = tenc_paths
+                            elif isinstance(tenc_sha_from_payload, str):
+                                resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
+                                if resolved_path:
+                                    engine_options["tenc_path"] = resolved_path
                 except Exception:
                     pass
 
@@ -2600,35 +2671,43 @@ def build_app() -> FastAPI:
                     if getattr(snap, "codex_core_streaming", False):
                         engine_options["codex_core_streaming"] = True
 
-                    vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
-                    vae_label = getattr(snap, "forge_selected_vae", None) or ""
-                    if vae_sha:
-                        from apps.backend.inventory.cache import resolve_asset_by_sha
-                        resolved_path = resolve_asset_by_sha(vae_sha)
-                        if resolved_path:
-                            engine_options["vae_path"] = resolved_path
-                    elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
-                        engine_options["vae_path"] = vae_label
+                    engine_id = str(engine_key).strip().lower()
+                    allow_global_overrides = engine_id not in ("sdxl", "sdxl_refiner")
 
-                    tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
-                    tenc_modules = getattr(snap, "forge_additional_modules", None) or []
-                    if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
-                        first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
-                        if first_sha:
+                    if allow_global_overrides and "vae_path" not in engine_options:
+                        vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
+                        vae_label = getattr(snap, "forge_selected_vae", None) or ""
+                        if vae_sha:
                             from apps.backend.inventory.cache import resolve_asset_by_sha
-                            resolved_path = resolve_asset_by_sha(first_sha)
+
+                            resolved_path = resolve_asset_by_sha(vae_sha)
                             if resolved_path:
-                                engine_options["tenc_path"] = resolved_path
-                    elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
-                        first_tenc = str(tenc_modules[0]) if tenc_modules else ""
-                        if first_tenc:
-                            if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
+                                engine_options["vae_path"] = resolved_path
+                        elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
+                            engine_options["vae_path"] = vae_label
+
+                    if allow_global_overrides and "tenc_path" not in engine_options:
+                        tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
+                        tenc_modules = getattr(snap, "forge_additional_modules", None) or []
+                        if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
+                            first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
+                            if first_sha:
                                 from apps.backend.inventory.cache import resolve_asset_by_sha
-                                resolved_path = resolve_asset_by_sha(first_tenc)
+
+                                resolved_path = resolve_asset_by_sha(first_sha)
                                 if resolved_path:
                                     engine_options["tenc_path"] = resolved_path
-                            elif os.path.isfile(first_tenc):
-                                engine_options["tenc_path"] = first_tenc
+                        elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
+                            first_tenc = str(tenc_modules[0]) if tenc_modules else ""
+                            if first_tenc:
+                                if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
+                                    from apps.backend.inventory.cache import resolve_asset_by_sha
+
+                                    resolved_path = resolve_asset_by_sha(first_tenc)
+                                    if resolved_path:
+                                        engine_options["tenc_path"] = resolved_path
+                                elif os.path.isfile(first_tenc):
+                                    engine_options["tenc_path"] = first_tenc
                 except Exception:
                     pass
                 with tasks_lock:

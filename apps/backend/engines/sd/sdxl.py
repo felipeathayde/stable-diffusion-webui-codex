@@ -746,8 +746,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         unload_clip = self.smart_offload_enabled
         try:
             texts = tuple(str(x or "") for x in prompt)
-            width, height, _, _, _, _, is_negative = _prompt_meta(prompt)
-            opts = _opts()
+            width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
+            label = "uncond" if is_negative else "cond"
             smart_cache = _smart_cache_from_prompts(prompt)
             use_cache = smart_cache_enabled() if smart_cache is None else bool(smart_cache)
 
@@ -776,10 +776,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             embed_key = (
                 int(height),
                 int(width),
-                int(opts.sdxl_crop_top),
-                int(opts.sdxl_crop_left),
-                int(height),
-                int(width),
+                int(target_height),
+                int(target_width),
+                int(crop_top),
+                int(crop_left),
             )
             flat = None
             if use_cache:
@@ -792,20 +792,23 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                 embed_values = [
                     self.embedder(torch.tensor([height])),
                     self.embedder(torch.tensor([width])),
-                    self.embedder(torch.tensor([opts.sdxl_crop_top])),
-                    self.embedder(torch.tensor([opts.sdxl_crop_left])),
-                    self.embedder(torch.tensor([height])),
-                    self.embedder(torch.tensor([width])),
+                    self.embedder(torch.tensor([crop_top])),
+                    self.embedder(torch.tensor([crop_left])),
+                    self.embedder(torch.tensor([target_height])),
+                    self.embedder(torch.tensor([target_width])),
                 ]
-            flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
-            if use_cache:
-                self._embed_cache.clear()
-                # Store cached embeddings on CPU to avoid pinning VRAM.
-                self._embed_cache[embed_key] = flat_tensor.to("cpu")
-            flat = flat_tensor
+                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+                if use_cache:
+                    self._embed_cache.clear()
+                    # Store cached embeddings on CPU to avoid pinning VRAM.
+                    self._embed_cache[embed_key] = flat_tensor.to("cpu")
+                flat = flat_tensor
             flat = flat.repeat(pooled.shape[0], 1).to(pooled)
 
-            if is_negative and all(x == "" for x in prompt):
+            raw_texts = [str(x or "") for x in prompt]
+            force_zero_negative_prompt = is_negative and all(t.strip() == "" for t in raw_texts)
+
+            if force_zero_negative_prompt:
                 pooled = torch.zeros_like(pooled)
                 cond_g = torch.zeros_like(cond_g)
 
@@ -813,6 +816,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                 "crossattn": cond_g,
                 "vector": torch.cat([pooled, flat], dim=1),
             }
+
+            _validate_conditioning_payload(runtime, cond, label=label)
 
             logger.debug("Generated SDXL refiner conditioning for %d prompts.", len(prompt))
             return cond

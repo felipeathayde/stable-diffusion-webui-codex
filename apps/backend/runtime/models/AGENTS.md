@@ -2,7 +2,7 @@
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
 Owner: Runtime Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-02
 Status: Active
 
 ## Scope
@@ -52,3 +52,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2025-12-30: `apps/backend/runtime/models/__init__.py` switched back to lazy exports (no eager `import safety` / wildcard imports) so `create_api_app` and tests can import the API with a lightweight torch stub.
 - 2025-12-30: Text encoder overrides now accept `.gguf` weights; GGUF-packed state dicts are detected so T5 text encoders can load via the `"gguf"` quant path.
 - 2026-01-01: `ModelRegistry` checkpoint discovery now lists only file-based weights under `*_ckpt` roots (`.ckpt/.safetensors/.safetensor/.gguf/...`); it no longer treats vendored Hugging Face metadata folders as selectable checkpoints.
+- 2026-01-02: `runtime.models.api` gained `find_checkpoint_by_sha(...)` so API layers can resolve checkpoints from short-hash/sha256 identifiers (backed by `models/.hashes.json`).

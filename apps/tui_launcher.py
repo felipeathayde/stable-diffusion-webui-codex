@@ -313,6 +313,7 @@ class BIOSApp:
 
         cond = _enabled("CODEX_DEBUG_COND")
         sampler = _enabled("CODEX_LOG_SAMPLER")
+        cfg_delta = _enabled("CODEX_LOG_CFG_DELTA")
         sigmas = _enabled("CODEX_LOG_SIGMAS")
         force_native = _enabled("CODEX_SAMPLER_FORCE_NATIVE")
         trace = _enabled("CODEX_TRACE_DEBUG")
@@ -321,10 +322,13 @@ class BIOSApp:
         dump_path = env.get("CODEX_DUMP_LATENTS_PATH", "").strip()
         if not dump_path:
             dump_path = "<logs/diagnostics>"
+        cfg_delta_n = env.get("CODEX_LOG_CFG_DELTA_N", "2").strip() or "2"
         trace_max = env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", str(TRACE_DEBUG_DEFAULT))
         return [
             ("Conditioning Debug", f"[{'Enabled' if cond else 'Disabled'}]", "toggle_cond_debug"),
             ("Sampler Verbose Logs", f"[{'Enabled' if sampler else 'Disabled'}]", "toggle_sampler_logs"),
+            ("CFG Delta Logs", f"[{'Enabled' if cfg_delta else 'Disabled'}]", "toggle_cfg_delta_logs"),
+            ("CFG Delta Steps (N)", f"[{cfg_delta_n}]", "edit_cfg_delta_n"),
             ("Sigma Ladder Logs", f"[{'Enabled' if sigmas else 'Disabled'}]", "toggle_sigma_logs"),
             ("Force Native Sampler", f"[{'Enabled' if force_native else 'Disabled'}]", "toggle_force_native_sampler"),
             ("Trace Debug", f"[{'ON' if trace else 'OFF'}]", "toggle_trace_debug"),
@@ -529,6 +533,15 @@ class BIOSApp:
             "Sampler Verbose Logs": [
                 "Emit per-step sampler diagnostics (sigma schedule, timings).",
                 "Applies via CODEX_LOG_SAMPLER.",
+            ],
+            "CFG Delta Logs": [
+                "Log the cond/uncond delta inside CFG for the first N steps.",
+                "Requires CODEX_LOG_SAMPLER=1; enabling it also enables sampler logs.",
+                "Applies via CODEX_LOG_CFG_DELTA and CODEX_LOG_CFG_DELTA_N.",
+            ],
+            "CFG Delta Steps (N)": [
+                "How many initial steps to log cond/uncond delta for (0 disables).",
+                "Applies via CODEX_LOG_CFG_DELTA_N (default 2).",
             ],
             "Sigma Ladder Logs": [
                 "Dump full sigma ladder (first/last and compact summary).",
@@ -868,6 +881,35 @@ class BIOSApp:
                 message_on="Sampler logs enabled (restart API to apply).",
                 message_off="Sampler logs disabled.",
             )
+            # CFG delta logs require sampler logs; if sampler logs are disabled, also disable delta logs.
+            if env.get("CODEX_LOG_SAMPLER", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+                env.pop("CODEX_LOG_CFG_DELTA", None)
+        elif action == "toggle_cfg_delta_logs":
+            cur = env.get("CODEX_LOG_CFG_DELTA", "0").strip().lower()
+            if cur in {"1", "true", "yes", "on"}:
+                env.pop("CODEX_LOG_CFG_DELTA", None)
+                self.message = "CFG delta logs disabled."
+            else:
+                env["CODEX_LOG_CFG_DELTA"] = "1"
+                # Requires sampler logs to be enabled; turn them on automatically.
+                env["CODEX_LOG_SAMPLER"] = "1"
+                self.message = "CFG delta logs enabled (sampler logs enabled too). Restart API to apply."
+        elif action == "edit_cfg_delta_n":
+            val = self._prompt("CFG delta steps N (>=0): ")
+            if val is None:
+                return
+            val = val.strip()
+            if not val:
+                env.pop("CODEX_LOG_CFG_DELTA_N", None)
+                self.message = "CFG delta steps reset to default (2)."
+                return
+            try:
+                numeric = max(0, int(val))
+            except ValueError:
+                self.message = "Enter a valid integer."
+                return
+            env["CODEX_LOG_CFG_DELTA_N"] = str(numeric)
+            self.message = f"CFG delta steps set to {numeric}."
         elif action == "toggle_sigma_logs":
             _toggle_flag(
                 "CODEX_LOG_SIGMAS",

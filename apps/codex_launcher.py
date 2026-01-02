@@ -410,6 +410,7 @@ class CodexGUILauncher(tk.Tk):
         debug_flags = [
             ("CODEX_DEBUG_COND", "Conditioning Debug"),
             ("CODEX_LOG_SAMPLER", "Sampler Verbose Logs"),
+            ("CODEX_LOG_CFG_DELTA", "CFG Delta Logs (requires Sampler Verbose Logs)"),
             ("CODEX_LOG_SIGMAS", "Sigma Ladder Logs"),
             ("CODEX_SAMPLER_FORCE_NATIVE", "Force Native Sampler"),
             ("CODEX_TRACE_DEBUG", "Trace Debug (very verbose)"),
@@ -428,6 +429,53 @@ class CodexGUILauncher(tk.Tk):
                             command=self._mark_changed).grid(
                                 row=row, column=0, columnspan=2, sticky="w", padx=16, pady=4)
             row += 1
+
+        # Keep CFG delta logs consistent with sampler logging (CFG delta requires sampler logs).
+        self._cfg_delta_guard = False
+        if "CODEX_LOG_SAMPLER" in self._debug_flags and "CODEX_LOG_CFG_DELTA" in self._debug_flags:
+            sampler_var = self._debug_flags["CODEX_LOG_SAMPLER"]
+            delta_var = self._debug_flags["CODEX_LOG_CFG_DELTA"]
+
+            def _on_delta_changed(*_args: object) -> None:
+                if self._cfg_delta_guard:
+                    return
+                if not delta_var.get():
+                    return
+                if sampler_var.get():
+                    return
+                self._cfg_delta_guard = True
+                try:
+                    sampler_var.set(True)
+                finally:
+                    self._cfg_delta_guard = False
+                self._mark_changed()
+
+            def _on_sampler_changed(*_args: object) -> None:
+                if self._cfg_delta_guard:
+                    return
+                if sampler_var.get():
+                    return
+                if not delta_var.get():
+                    return
+                self._cfg_delta_guard = True
+                try:
+                    delta_var.set(False)
+                finally:
+                    self._cfg_delta_guard = False
+                self._mark_changed()
+
+            delta_var.trace_add("write", _on_delta_changed)
+            sampler_var.trace_add("write", _on_sampler_changed)
+            _on_delta_changed()
+
+        # CFG Delta Steps (N)
+        row = self._add_entry_row(
+            frame,
+            row,
+            "CFG Delta Steps (N)",
+            self.env.get("CODEX_LOG_CFG_DELTA_N", "2"),
+            "_var_cfg_delta_n",
+        )
 
         # Trace Max Per Func
         row = self._add_entry_row(frame, row, "Trace Max Per Func",
@@ -670,6 +718,11 @@ class CodexGUILauncher(tk.Tk):
         # Debug
         for key, var in self._debug_flags.items():
             env[key] = "1" if var.get() else "0"
+        cfg_delta_n = self._var_cfg_delta_n.get().strip()
+        if cfg_delta_n:
+            env["CODEX_LOG_CFG_DELTA_N"] = cfg_delta_n
+        else:
+            env.pop("CODEX_LOG_CFG_DELTA_N", None)
         env["CODEX_TRACE_DEBUG_MAX_PER_FUNC"] = self._var_trace_max.get()
         dump_path = self._var_dump_path.get().strip()
         if dump_path:

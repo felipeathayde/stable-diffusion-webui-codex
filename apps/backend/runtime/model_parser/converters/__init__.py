@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `convert_t5_encoder` (function): T5 encoder converter (enforces stable layer-norm dtype).
 - `convert_umt5_encoder` (function): UMT5 encoder converter (T5-compatible normalization).
 - `convert_t5xxl_encoder` (function): T5-XXL encoder converter (T5-compatible normalization).
-- `normalize_label_embeddings` (function): UNet label-embedding key normalizer (Forge-style SDXL variants).
+- `normalize_label_embeddings` (function): UNet label-embedding key normalizer for nested sequential SDXL label-embedding keys (`label_emb.0.0.*`).
 """
 
 from .clip import (

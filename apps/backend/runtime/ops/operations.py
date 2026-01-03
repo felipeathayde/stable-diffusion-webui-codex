@@ -151,8 +151,6 @@ def get_weight_and_bias(
 ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
     scale_weight = getattr(layer, "scale_weight", None)
     patches = getattr(layer, "codex_online_loras", None)
-    if patches is None:
-        patches = getattr(layer, "forge_online_loras", None)
 
     weight_patches = patches.get("weight") if patches is not None else None
     bias_patches = patches.get("bias") if patches is not None else None

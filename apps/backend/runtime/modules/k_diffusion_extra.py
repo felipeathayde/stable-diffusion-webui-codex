@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `model_wrapper` (function): Wraps a model into a VP-space epsilon predictor with optional guidance modes.
 - `sample_unipc` (function): Minimal UniPC sampler implementation operating over a sigma schedule.
 - `sample_unipc_bh2` (function): UniPC BH2 placeholder (currently forwards to `sample_unipc`).
-- `restart_sampler` (function): Restart sampling wrapper (requires k-diffusion; mirrors legacy behaviour with restart segments + noise injection).
+- `restart_sampler` (function): Restart sampling wrapper (requires k-diffusion; supports restart segments + noise injection).
 - `default_noise_sampler` (function): Returns a default noise sampler closure for stochastic samplers.
 - `generic_step_sampler` (function): Generic sampler driver that iterates sigmas and calls a provided step function.
 - `DDPMSampler_step` (function): Single-step DDPM update function used by the generic step sampler.
@@ -152,9 +152,9 @@ def sample_unipc_bh2(model, x, sigmas, extra_args=None, callback=None, disable=N
 def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=None, s_noise=1.0, restart_list=None):
     """Restart sampling (Restart Sampling for Improving Generative Processes, 2023).
 
-    Mirrors Forge/legacy behaviour: optionally inserts restart segments built with Karras sigmas,
-    applies Heun/Euler steps, and injects noise between segments. Parameters keep parity but use
-    the native k-diffusion utilities already imported in this module.
+    Optionally inserts restart segments built with Karras sigmas, applies Heun/Euler steps, and injects
+    noise between segments. Parameter semantics match the runtime config surface while using the native
+    k-diffusion utilities already imported in this module.
     """
 
     extra_args = {} if extra_args is None else extra_args
@@ -185,7 +185,7 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
         return x_out
 
     steps = sigmas.shape[0] - 1
-    # Auto restart plan mirrors legacy heuristic
+    # Auto restart plan mirrors the historical heuristic
     if restart_list is None:
         if steps >= 20:
             restart_steps = 9

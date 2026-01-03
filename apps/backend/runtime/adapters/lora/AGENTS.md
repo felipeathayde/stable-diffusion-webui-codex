@@ -12,6 +12,7 @@ Status: Active
 - `mapping.py` — Maps LoRA weights onto target modules.
 - `ops.py` — Runtime tensor operations for applying LoRAs.
 - `pipeline.py` — High-level orchestration used by engines/patchers.
+- `selections.py` — Process-wide LoRA selection state used by API endpoints and workflow builders.
 - `types.py` — Dataclasses describing LoRA assets.
 
 ## Notes

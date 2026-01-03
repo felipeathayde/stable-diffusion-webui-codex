@@ -652,7 +652,7 @@ def initialize(
     return namespace, config
 
 
-# Initialise module defaults with non-strict semantics so legacy imports succeed.
+# Initialise module defaults with non-strict semantics so early imports don't abort.
 args, memory_config = initialize(strict=False)
 
 dynamic_args = {

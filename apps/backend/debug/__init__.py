@@ -7,9 +7,9 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Backend debug utilities package marker.
-Hosts temporary debug helpers (e.g., legacy-mimic tooling) used for parity tracing; not part of production runtime paths unless explicitly enabled.
+Hosts temporary debug helpers used for parity tracing and diagnosis; not part of production runtime paths unless explicitly enabled.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `apps.backend.debug` (module): Package marker for backend debug utilities.
 """
-# tags: backend, debug, legacy-mimic
+# tags: backend, debug

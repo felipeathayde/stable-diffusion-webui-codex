@@ -439,7 +439,7 @@ class WanTransformer2DModel(nn.Module):
 def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
     """Remap WAN GGUF checkpoint keys to WanTransformer2DModel keys.
 
-    The WAN GGUF files use A1111/Comfy-style names (e.g. `patch_embedding.*`,
+    The WAN GGUF files use common WebUI/Comfy-style names (e.g. `patch_embedding.*`,
     `time_embedding.*`, `head.head.*`). The nn.Module implementation uses
     Codex-native names (e.g. `patch_embed.*`, `time_embed.*`, `head.*`).
 

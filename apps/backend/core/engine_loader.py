@@ -6,18 +6,19 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Compatibility engine loader for legacy/bootstrap entry points.
-Resolves a `DiffusionModelBundle`, instantiates the matching engine via the registry, and applies runtime options (device/dtype/attention/accelerator).
+Purpose: Bundle-aware engine loader for backend use cases.
+Resolves a `DiffusionModelBundle`, instantiates the matching engine via the registry, loads the model, and applies runtime options
+(attention/accelerator) for engines backed by diffusers pipelines.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadOptions` (dataclass): Optional engine load overrides (device/dtype/attention backend/accelerator/VAE override).
 - `load_engine` (function): Loads and initializes a diffusion engine for direct use (best-effort cleanup on failures).
-- `__all__` (constant): Explicit export list for this compatibility loader.
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -31,31 +32,28 @@ from apps.backend.runtime.models.loader import (
     resolve_diffusion_bundle,
 )
 
+_LOG = logging.getLogger("backend.core.engine_loader")
+
 
 @dataclass
 class EngineLoadOptions:
-    device: Optional[str] = None   # 'cuda'|'cpu'|None → auto
-    dtype: Optional[str] = None    # 'fp16'|'bf16'|'fp32'|None → default
+    device: Optional[str] = None  # 'cuda'|'cpu'|None → auto
+    dtype: Optional[str] = None  # 'fp16'|'bf16'|'fp32'|None → default
     attention_backend: Optional[str] = None  # 'torch-sdpa'|'xformers'|'sage'
-    accelerator: Optional[str] = None       # 'tensorrt'|'none'
-    vae_path: Optional[str] = None          # optional override
+    accelerator: Optional[str] = None  # 'tensorrt'|'none'
+    vae_path: Optional[str] = None  # optional override
 
 
-def _apply_runtime_options(engine, opts: EngineLoadOptions | None):
-    if not opts:
-        return engine
-    # Apply attention/accelerator to diffusers pipelines when present
-    pipe = getattr(getattr(engine, "_comp", None), "pipeline", None)
-    if pipe is not None:
-        try:
-            _apply_attn(pipe, backend=opts.attention_backend)
-        except Exception:
-            pass
-        try:
-            _apply_accel(pipe, accelerator=opts.accelerator)
-        except Exception:
-            pass
-    return engine
+def _ensure_registry_ready() -> None:
+    register_default_engines(replace=False)
+
+
+def _instantiate_engine(bundle: DiffusionModelBundle):
+    engine_key = FAMILY_TO_ENGINE_KEY.get(bundle.family)
+    if engine_key is None:
+        raise NotImplementedError(f"Model family {bundle.family.value} is not registered with Codex engines.")
+    _ensure_registry_ready()
+    return create_engine(engine_key)
 
 
 def _options_to_kwargs(opts: EngineLoadOptions | None) -> Dict[str, Any]:
@@ -75,16 +73,27 @@ def _options_to_kwargs(opts: EngineLoadOptions | None) -> Dict[str, Any]:
     return payload
 
 
-def _ensure_registry_ready() -> None:
-    register_default_engines(replace=False)
+def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
+    if not opts:
+        return engine
 
+    pipe = getattr(getattr(engine, "_comp", None), "pipeline", None)
+    if pipe is None:
+        return engine
 
-def _instantiate_engine(bundle: DiffusionModelBundle):
-    engine_key = FAMILY_TO_ENGINE_KEY.get(bundle.family)
-    if engine_key is None:
-        raise NotImplementedError(f"Model family {bundle.family.value} is not registered with Codex engines.")
-    _ensure_registry_ready()
-    return create_engine(engine_key)
+    if opts.attention_backend is not None:
+        try:
+            _apply_attn(pipe, backend=opts.attention_backend)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("Failed to apply attention backend %s: %s", opts.attention_backend, exc)
+
+    if opts.accelerator is not None:
+        try:
+            _apply_accel(pipe, accelerator=opts.accelerator)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("Failed to apply accelerator %s: %s", opts.accelerator, exc)
+
+    return engine
 
 
 def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
@@ -99,7 +108,6 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     try:
         engine.load(name_or_path, **load_kwargs)
     except Exception:
-        # Ensure partially-initialised engines don't linger loaded.
         with contextlib.suppress(Exception):
             engine.unload()
         raise
@@ -107,4 +115,5 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
     return _apply_runtime_options(engine, options)
 
 
-__all__ = ["load_engine", "EngineLoadOptions"]
+__all__ = ["EngineLoadOptions", "load_engine"]
+

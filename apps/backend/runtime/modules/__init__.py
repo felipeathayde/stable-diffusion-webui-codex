@@ -6,11 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Compatibility package exposing k-diffusion style wrappers and prediction helpers.
-This module re-exports legacy-facing helpers used by code paths that have not been fully migrated to native engines yet.
+Purpose: K-diffusion-style wrapper package for sampling adapters.
+This module re-exports k-diffusion oriented wrappers and prediction helpers used by the sampling stack and engine specs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `KModel` (class): Legacy-compatible wrapper implementing `apply_model` for k-diffusion style call sites.
+- `KModel` (class): K-diffusion-style wrapper implementing `apply_model` for sampler call sites.
 - `AbstractPrediction` (class): Base prediction module describing how schedulers interpret sigmas/timesteps.
 - `Prediction` (class): Concrete prediction adapter (diffusion) derived from scheduler configuration.
 - `FlowMatchEulerPrediction` (class): Flow-match Euler prediction adapter used by some Flow/EDM schedulers.

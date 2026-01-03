@@ -180,7 +180,7 @@ PY`
 **Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`
 **Wrong command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `The search still walks cached/ignored directories, so git add aborts on gitignored paths; enumerate the known changed sources explicitly instead of mass-adding.`
-**Correct command:** `git add apps/backend/runtime/models/loader.py apps/backend/codex/loader.py apps/backend/engines/common/base.py apps/backend/engines/{AGENTS.md,common/AGENTS.md,sd/AGENTS.md,flux/AGENTS.md,chroma/AGENTS.md} apps/backend/engines/sd/{sd15.py,sd20.py,sd35.py,sdxl.py} apps/backend/engines/flux/flux.py apps/backend/engines/chroma/chroma.py apps/backend/runtime/models/AGENTS.md apps/backend/codex/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-11-01-diffusion-engine-lifecycle.md .sangoi/handoffs/2025-11-01-diffusion-engine-lifecycle.md`
+**Correct command:** `git add apps/backend/runtime/models/loader.py apps/backend/core/engine_loader.py apps/backend/engines/common/base.py apps/backend/engines/{AGENTS.md,common/AGENTS.md,sd/AGENTS.md,flux/AGENTS.md,chroma/AGENTS.md} apps/backend/engines/sd/{sd15.py,sd20.py,sd35.py,sdxl.py} apps/backend/engines/flux/flux.py apps/backend/engines/chroma/chroma.py apps/backend/runtime/models/AGENTS.md apps/backend/core/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-11-01-diffusion-engine-lifecycle.md .sangoi/handoffs/2025-11-01-diffusion-engine-lifecycle.md`
 **Wrong command:** `python - <<'PY'
 from apps.backend.patchers.controlnet import ControlNet, ControlLora, apply_controlnet_advanced
 from apps.backend.runtime.controlnet import ControlRequest
@@ -253,7 +253,7 @@ PY`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `Sweep hits archived submodule refs under .legacy, causing git add to abort; stage the known modified files explicitly instead of scanning the entire tree.`
-**Correct command:** `git add .sangoi/CHANGELOG.md COMMON_MISTAKES.md apps/AGENTS.md apps/backend/AGENTS.md apps/backend/codex/AGENTS.md apps/backend/codex/options.py apps/backend/infra/config/args.py apps/backend/interfaces/api/run_api.py apps/backend/runtime/memory/memory_management.py apps/launcher/AGENTS.md apps/launcher/profiles.py apps/launcher/services.py .sangoi/handoffs/2025-11-02-backend-device-bootstrap-hardening.md .sangoi/handoffs/2025-11-02-sdxl-device-env-trace.md .sangoi/task-logs/2025-11-02-backend-device-bootstrap-hardening.md .sangoi/task-logs/2025-11-02-sdxl-device-env-trace.md`
+**Correct command:** `git add .sangoi/CHANGELOG.md COMMON_MISTAKES.md apps/AGENTS.md apps/backend/AGENTS.md apps/backend/services/options_store.py apps/backend/infra/config/args.py apps/backend/interfaces/api/run_api.py apps/backend/runtime/memory/memory_management.py apps/launcher/AGENTS.md apps/launcher/profiles.py apps/launcher/services.py .sangoi/handoffs/2025-11-02-backend-device-bootstrap-hardening.md .sangoi/handoffs/2025-11-02-sdxl-device-env-trace.md .sangoi/task-logs/2025-11-02-backend-device-bootstrap-hardening.md .sangoi/task-logs/2025-11-02-sdxl-device-env-trace.md`
 **Wrong command:** `python - <<'PY'
 from apps.backend.infra.config import args
 from apps.backend.runtime.memory.config import DeviceRole

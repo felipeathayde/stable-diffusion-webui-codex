@@ -10,7 +10,6 @@ Status: Active
 
 ## Subdirectories
 - `common/` — Shared base classes/helpers used by multiple engines.
-- `diffusion/` — Task-layer diffusion runners (txt2img, img2img, txt2vid, img2vid) that wire engines into use cases.
 - `sd/`, `flux/`, `chroma/`, `wan22/` — Model-specific engine implementations and components.
 - `util/` — Utility helpers for schedulers, attention mapping, etc.
 
@@ -20,7 +19,7 @@ Status: Active
 
 ## Notes
 - New engines should live under their own subdirectory (mirroring existing patterns) and register via `registration.py`.
-- Shared diffusion logic belongs in `diffusion/`; avoid duplicating orchestration that already exists in `use_cases/`.
+- Task orchestration lives under `apps/backend/use_cases/`; keep engines model-specific and keep shared logic under `apps/backend/runtime/`.
 - Diffusion engines now share a `BaseInferenceEngine` lifecycle; instantiate via the registry and let `load()` pull `DiffusionModelBundle` instances instead of invoking loaders manually.
 - 2025-11-03: SDXL engine reads `debug_conditioning` from backend config (no direct env lookup) to log conditioning norms when requested.
 - 2025-11-30: `apps.backend.engines.__init__` now lazily resolves WAN22 engine classes; importing the package no longer pulls Hugging Face assets or torch unless the engines are requested.

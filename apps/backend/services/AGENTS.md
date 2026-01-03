@@ -11,7 +11,7 @@ Status: Active
 - `image_service.py` — Orchestrates image generation requests, batching, and responses.
 - `media_service.py` — Handles encode/decode operations and format policies.
 - `live_preview_service.py` — Builds per-task live preview config from Settings and attaches encoded preview payloads to progress events.
-- `options_service.py` / related modules — Interface with the Codex options store and validation helpers.
+- `options_store.py` / `options_service.py` — JSON-backed options store (`apps/settings_values.json`) and API-friendly wrapper service.
 - `progress_service.py` — Aggregates progress reports emitted by use cases/engines.
 
 ## Notes

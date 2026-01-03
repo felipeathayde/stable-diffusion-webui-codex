@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Compatibility facade exposing Codex memory manager APIs under legacy names.
-Provides a stable module-level API (devices/dtypes/load/unload/cache) backed by `CodexMemoryManager`, so older code can call into the
-new manager without directly depending on its implementation details.
+Purpose: Memory management facade for backend runtime and services.
+Provides a stable module-level API (devices/dtypes/load/unload/cache) backed by `CodexMemoryManager`, so call sites can use a consistent
+interface without depending on implementation details.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `VRAMState` (class): Legacy VRAM mode labels (`disabled/no_vram/low_vram/normal_vram/high_vram/shared`) used by UI/compat code.
+- `VRAMState` (class): VRAM mode labels (`disabled/no_vram/low_vram/normal_vram/high_vram/shared`) used by UI/config code.
 - `_bind_config` (function): Internal initializer; unloads any previous manager, creates a new `CodexMemoryManager`, and wires globals/proxies.
 - `reinitialize` (function): Replaces the active memory manager with a new `RuntimeMemoryConfig`.
 - `_wrap_model_sequence` (function): Normalizes `models` input to a concrete `Sequence` for downstream loader calls.
@@ -42,23 +42,23 @@ Symbols (top-level; keep in sync; no ghosts):
 - `precision_hint` (function): Human-readable hint string for the current precision decision.
 - `intermediate_device` (function): Returns the device used for intermediate tensors (when different from core).
 - `force_upcast_attention_dtype` (function): Whether attention should be forced to an upcast dtype for stability.
-- `xformers_enabled` (function): Legacy flag: whether xformers attention is enabled.
+- `xformers_enabled` (function): Whether xformers attention is enabled.
 - `xformers_enabled_vae` (function): Legacy flag: whether xformers is enabled for VAE (if applicable).
 - `pytorch_attention_enabled` (function): Whether PyTorch-native attention (SDPA) is enabled.
-- `should_use_fp16` (function): Legacy heuristic for selecting FP16 given device/model params and perf/stability flags.
-- `should_use_bf16` (function): Legacy heuristic for selecting BF16 given device/model params and perf/stability flags.
+- `should_use_fp16` (function): Heuristic for selecting FP16 given device/model params and perf/stability flags.
+- `should_use_bf16` (function): Heuristic for selecting BF16 given device/model params and perf/stability flags.
 - `dtype_size` (function): Returns element size (bytes) for a torch dtype.
 - `state_dict_dtype` (function): Best-effort dtype extraction for a state dict (tensor dtype or string).
 - `bake_gguf_model` (function): Converts a GGUF-backed model to a baked/dequantized variant (manager-backed helper).
 - `is_device_cpu` (function): Returns whether a torch device is CPU.
-- `mps_mode` (function): Returns whether MPS mode is enabled (legacy).
-- `vram_state` (function): Returns the legacy VRAM state label from current config.
-- `_LoadedModelsProxy` (class): Proxy view over loaded models for legacy APIs (delegates to manager loaded-model registry).
-- `unload_model_clones` (function): Unloads any clones associated with a given model (legacy helper).
-- `unload_model` (function): Unloads a model/component (legacy helper).
-- `__getattr__` (function): Dynamic attribute proxy to the underlying manager (compat surface).
-- `__setattr__` (function): Dynamic attribute setter proxy to the underlying manager (compat surface).
-- `__dir__` (function): Dynamic dir() proxy for the module’s compat surface.
+- `mps_mode` (function): Returns whether MPS mode is enabled.
+- `vram_state` (function): Returns the VRAM state label from current config.
+- `_LoadedModelsProxy` (class): Proxy view over loaded models (delegates to manager loaded-model registry).
+- `unload_model_clones` (function): Unloads any clones associated with a given model.
+- `unload_model` (function): Unloads a model/component.
+- `__getattr__` (function): Dynamic attribute proxy to the underlying manager.
+- `__setattr__` (function): Dynamic attribute setter proxy to the underlying manager.
+- `__dir__` (function): Dynamic dir() proxy for the module’s surface.
 - `switch_primary_device` (function): Changes the primary device backend (cpu/cuda/etc) at runtime (returns success bool).
 - `set_component_backend` (function): Sets component backend for a role (core/vae/tenc) at runtime (returns success bool).
 - `set_component_dtype` (function): Sets component dtype for a role at runtime (returns success bool).
@@ -73,7 +73,7 @@ from typing import Iterable, Sequence
 
 import torch
 
-from apps.backend.infra.config import args as legacy_args
+from apps.backend.infra.config import args as config_args
 from .config import DeviceRole, RuntimeMemoryConfig
 from .exceptions import MemoryLoadError
 from .manager import CodexMemoryManager
@@ -118,7 +118,7 @@ def reinitialize(config: RuntimeMemoryConfig) -> None:
     _bind_config(config)
 
 
-_bind_config(legacy_args.memory_config)
+_bind_config(config_args.memory_config)
 
 
 def _wrap_model_sequence(models: Sequence[object] | Iterable[object]) -> Sequence[object]:
@@ -436,7 +436,7 @@ def __getattr__(name: str):
     if name == "VAE_ALWAYS_TILED":
         return _MANAGER.vae_always_tiled
     if name == "args":
-        return legacy_args.args
+        return config_args.args
     raise AttributeError(f"module {__name__} has no attribute {name!r}")
 
 

@@ -19,7 +19,6 @@ _EXPORTS = {
     # Core utilities / small helpers
     "utils": "apps.backend.runtime.utils",
     "trace": "apps.backend.runtime.trace",
-    "shared": "apps.backend.runtime.shared",
     # Memory stack
     "memory_management": "apps.backend.runtime.memory.memory_management",
     "stream": "apps.backend.runtime.memory.stream",

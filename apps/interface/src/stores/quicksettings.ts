@@ -79,7 +79,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const smartCache = ref<boolean>(true)
   const coreStreaming = ref<boolean>(false)
 
-  // Basic engine/mode options (sync with legacy fallback)
+  // Basic engine/mode options
   const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'kontext', 'svd', 'hunyuan_video', 'wan22'])
   const modeChoices = ref<string[]>(['Normal', 'LCM', 'Turbo', 'Lightning'])
 
@@ -150,16 +150,16 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       currentMode.value = opts.codex_mode
       if (!modeChoices.value.includes(opts.codex_mode)) modeChoices.value.push(opts.codex_mode)
     }
-    if (typeof opts.forge_selected_vae === 'string') {
-      currentVae.value = opts.forge_selected_vae || 'Automatic'
+    if (typeof (opts as any).sd_vae === 'string') {
+      currentVae.value = (opts as any).sd_vae || 'Automatic'
     }
-    if (Array.isArray(opts.forge_additional_modules)) {
-      currentTextEncoders.value = (opts.forge_additional_modules as unknown[])
+    if (Array.isArray((opts as any).text_encoder_overrides)) {
+      currentTextEncoders.value = ((opts as any).text_encoder_overrides as unknown[])
         .map((entry) => String(entry).trim())
         .filter((entry) => entry.length > 0)
     }
-    if (typeof opts.forge_unet_storage_dtype === 'string') {
-      currentUnetDtype.value = opts.forge_unet_storage_dtype
+    if (typeof (opts as any).codex_unet_storage_dtype === 'string') {
+      currentUnetDtype.value = (opts as any).codex_unet_storage_dtype
     }
     if (typeof (opts as any).codex_attention_backend === 'string') {
       currentAttention.value = (opts as any).codex_attention_backend
@@ -180,8 +180,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_core_dtype === 'string') coreDtype.value = (opts as any).codex_core_dtype
     if (typeof (opts as any).codex_te_dtype === 'string') teDtype.value = (opts as any).codex_te_dtype
     if (typeof (opts as any).codex_vae_dtype === 'string') vaeDtype.value = (opts as any).codex_vae_dtype
-    if (typeof opts.forge_inference_memory === 'number') {
-      gpuWeightsMb.value = opts.forge_inference_memory
+    if (typeof (opts as any).codex_inference_memory_mb === 'number') {
+      gpuWeightsMb.value = (opts as any).codex_inference_memory_mb
     }
     if (typeof (opts as any).codex_smart_offload === 'boolean') {
       smartOffload.value = (opts as any).codex_smart_offload
@@ -431,7 +431,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setVae(label: string): Promise<void> {
     currentVae.value = label
-    await updateOptions({ forge_selected_vae: label })
+    await updateOptions({ sd_vae: label })
   }
 
   async function setTextEncoders(labels: string[]): Promise<void> {
@@ -445,9 +445,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     // Labels may be backend text encoder roots or direct file paths; they are
     // persisted as-is so future overrides can resolve them centrally.
     // Also send SHA256 values for direct backend resolution.
-    const opts: Record<string, unknown> = { forge_additional_modules: labels }
+    const opts: Record<string, unknown> = { text_encoder_overrides: labels }
     if (shas.length > 0) {
-      opts.forge_additional_modules_sha = shas
+      opts.text_encoder_overrides_sha = shas
     }
     await updateOptions(opts)
   }
@@ -466,7 +466,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setUnetDtype(name: string): Promise<void> {
     currentUnetDtype.value = name
-    await updateOptions({ forge_unet_storage_dtype: name })
+    await updateOptions({ codex_unet_storage_dtype: name })
   }
 
   async function setAttentionBackend(value: string): Promise<void> {
@@ -512,7 +512,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setGpuWeightsMb(value: number): Promise<void> {
     gpuWeightsMb.value = value
-    await updateOptions({ forge_inference_memory: value })
+    await updateOptions({ codex_inference_memory_mb: value })
   }
 
   async function setSmartOffload(value: boolean): Promise<void> {

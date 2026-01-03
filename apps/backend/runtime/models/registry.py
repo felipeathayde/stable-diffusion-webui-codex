@@ -278,7 +278,7 @@ class ModelRegistry:
         1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux_ckpt, wan22_ckpt).
         2) Built-in defaults under models/: root, sd15, sdxl, flux.
 
-        This replaces the legacy scatter of A1111-style folders ('stable-diffusion', 'sd', 'checkpoints').
+        This replaces the legacy scatter of ad-hoc checkpoint folders ('stable-diffusion', 'sd', 'checkpoints').
         """
         candidates: List[Path] = []
 

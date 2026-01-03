@@ -14,6 +14,7 @@ Status: Active
 - `engine_interface.py` — Defines the base interfaces that engines must implement.
 - `orchestrator.py` — Coordinates use-case execution, binding requests to engines and runtime contexts.
 - `devices.py` / `state.py` — Track hardware availability and request-scoped generation state.
+- `engine_loader.py` — Bundle-aware engine loader used by use cases for model loading and runtime option application.
 - `rng.py` / `philox.py` — Native RNG stack (CPU/GPU/Philox) used across tasks.
 - `requests.py` — Typed request objects and validation helpers.
 - `registry.py` — Engine registration/lookup for orchestration.

@@ -108,6 +108,7 @@ bash .sangoi/.tools/link-check.sh .sangoi
 Sub-agents (`AGENTS.md` across the project) tell the truth or they shut up.
 
 * If you touch a folder, you touch its `AGENTS.md`. Same day. Same commit.
+* If you touch an `apps/**` source file, you keep its file header block honest. Same day. Same commit. If the purpose or top-level symbols changed, you update them — no ghosts, no lies. (Standard: `.sangoi/policies/file-header-block.md`)
 * You add one when a folder earns moving parts.
 * Minimum you keep: Purpose. Key files with real paths. Notes/decisions that survived daylight. Last Review with a real date.
 * When a file moves, you fix the path and you run the link checker.

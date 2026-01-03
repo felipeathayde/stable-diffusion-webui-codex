@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Prompt attention parsing helpers for emphasis-style markup.
-Parses `(...)` / `[...]` and explicit weight syntax `(:1.2)` into segments with per-segment multipliers (A1111-style).
+Parses `(...)` / `[...]` and explicit weight syntax `(:1.2)` into segments with per-segment multipliers (WebUI-style).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `re_attention` (constant): Main regex used to tokenize prompt attention syntax.

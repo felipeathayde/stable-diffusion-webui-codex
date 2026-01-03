@@ -29,7 +29,6 @@ import numpy as np
 import torch
 from PIL import Image
 
-from apps.backend.codex import main as codex_main
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.infra.config import args as backend_args
@@ -67,7 +66,7 @@ from apps.backend.runtime.workflows import (
     pil_to_tensor,
     run_process_scripts,
 )
-from apps.backend.codex.loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.use_cases.txt2img_pipeline.refiner import GlobalRefinerStage, HiresRefinerStage, RefinerStage
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
@@ -527,50 +526,22 @@ class Txt2ImgPipelineRunner:
     @pipeline_trace
     def _reload_for_hires(self, processing: CodexProcessingTxt2Img, state: PrepareState) -> None:
         assert state.hires_plan is not None
-        checkpoint_before = getattr(codex_main._SELECTIONS, "checkpoint_name")
-        modules_before = list(getattr(codex_main._SELECTIONS, "additional_modules"))
+        model_name = getattr(processing, "hr_checkpoint_name", None)
+        if not model_name or model_name == "Use same checkpoint":
+            return
 
-        reload_required = False
-        if (
-            getattr(processing, "hr_additional_modules", None) is not None
-            and "Use same choices" not in processing.hr_additional_modules
-        ):
-            modules_changed = codex_main.modules_change(
-                processing.hr_additional_modules, save=False, refresh=False
-            )
-            reload_required = reload_required or modules_changed
-
-        if (
-            processing.hr_checkpoint_name
-            and processing.hr_checkpoint_name != "Use same checkpoint"
-        ):
-            checkpoint_changed = codex_main.checkpoint_change(
-                processing.hr_checkpoint_name, save=False, refresh=False
-            )
-            if checkpoint_changed:
-                processing.firstpass_use_distilled_cfg_scale = processing.sd_model.use_distilled_cfg_scale
-                reload_required = True
-
-        if reload_required:
-            try:
-                codex_main.refresh_model_loading_parameters()
-                load_opts = EngineLoadOptions(
-                    device=None,
-                    dtype=None,
-                    attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
-                    accelerator=os.getenv("CODEX_ACCELERATOR"),
-                    vae_path=None,
-                )
-                new_engine = _load_engine(processing.hr_checkpoint_name, options=load_opts)
-                processing.sd_model = new_engine
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"Failed to load hires checkpoint '{processing.hr_checkpoint_name}': {exc}"
-                ) from exc
-            finally:
-                codex_main.modules_change(modules_before, save=False, refresh=False)
-                codex_main.checkpoint_change(checkpoint_before, save=False, refresh=False)
-                codex_main.refresh_model_loading_parameters()
+        processing.firstpass_use_distilled_cfg_scale = processing.sd_model.use_distilled_cfg_scale
+        load_opts = EngineLoadOptions(
+            device=None,
+            dtype=None,
+            attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
+            accelerator=os.getenv("CODEX_ACCELERATOR"),
+            vae_path=None,
+        )
+        try:
+            processing.sd_model = _load_engine(str(model_name), options=load_opts)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Failed to load hires checkpoint '{model_name}': {exc}") from exc
 
         if processing.sd_model.use_distilled_cfg_scale:
             processing.extra_generation_params["Hires Distilled CFG Scale"] = processing.hr_distilled_cfg

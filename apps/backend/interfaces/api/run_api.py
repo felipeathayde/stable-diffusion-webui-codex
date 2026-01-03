@@ -185,7 +185,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from apps.backend.codex import options as codex_options
+from apps.backend.services import options_store
 from apps.backend.infra.config import args as config_args
 from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.models import api as model_api
@@ -219,11 +219,6 @@ def ensure_initialized() -> None:
     global _initialized
     if _initialized:
         return
-
-    from apps.backend.codex.initialization import initialize_codex
-
-    # Native initialization only (no legacy bootstrap)
-    initialize_codex()
 
     # Configure root logging so engine/runtime INFO logs are visible in console
     try:
@@ -534,11 +529,11 @@ def build_app() -> FastAPI:
     live_preview = LivePreviewService()
     # Native options facade (JSON-backed). Import early so helpers are available
     # to any route or startup function defined below.
-    from apps.backend.codex.options import (
+    from apps.backend.services.options_store import (
         get_value as _opts_get,
         set_values as _opts_set_many,
         get_snapshot as _opts_snapshot,
-        _load as _opts_load_native,  # private, but safe here
+        load_values as _opts_load_native,
     )
     _embedding_db = None  # lazy init
     _settings_schema_cache: Optional[Dict[str, Any]] = None
@@ -839,8 +834,7 @@ def build_app() -> FastAPI:
         """
         # Heuristics based on current selected checkpoint title/path and registry metadata
         try:
-            from apps.backend.codex import main as _codex
-            current = getattr(_codex, "_SELECTIONS").checkpoint_name
+            current = str((_opts_load_native() or {}).get("sd_model_checkpoint") or "")
             infos = model_api.list_checkpoints_as_dict(refresh=False)
             target = None
             for i in infos:
@@ -1224,9 +1218,7 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=409, detail=f'checkpoint not found for selector: {sel_type}:{sel_value}')
 
         # Apply options atomically
-        from apps.backend.codex import main as _codex
         try:
-            _codex.checkpoint_change(str(target), save=True, refresh=False)
             updates = {'sd_model_checkpoint': str(target)}
             extra = preset.get('options') or {}
             if isinstance(extra, dict):
@@ -1311,8 +1303,7 @@ def build_app() -> FastAPI:
         models_info = [e.as_dict() for e in entries]
         # Current selection: track via codex options when available
         try:
-            from apps.backend.codex import main as _codex
-            current = getattr(_codex, "_SELECTIONS").checkpoint_name or (models[0]["name"] if models else None)
+            current = (_opts_load_native() or {}).get("sd_model_checkpoint") or (models[0]["name"] if models else None)
         except Exception:
             current = models[0]["name"] if models else None
         return {"models": models, "current": current, "models_info": models_info}
@@ -1414,9 +1405,8 @@ def build_app() -> FastAPI:
     @app.get('/api/vaes')
     def list_vaes() -> Dict[str, Any]:
         """Return available VAE modules and current selection (native registry)."""
-        from apps.backend.codex import options as _codex_opts
         from apps.backend.infra.registry.vae import list_vaes as _list_vaes, describe_vaes as _describe_vaes
-        current = _codex_opts.get_selected_vae('Automatic')
+        current = str(_opts_get("sd_vae", "Automatic"))
         try:
             models_root = str(CODEX_ROOT / "models")
             hf_root = str(CODEX_ROOT / "apps" / "backend" / "huggingface")
@@ -1439,7 +1429,6 @@ def build_app() -> FastAPI:
         surfaced directly here for overrides.
         """
         from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
-        from apps.backend.codex import options as _codex_opts
         try:
             roots_by_family = list_text_encoder_roots_by_family()
             entries: list[dict[str, object]] = []
@@ -1462,7 +1451,9 @@ def build_app() -> FastAPI:
                         }
                     )
             labels_sorted = sorted(set(labels))
-            selected = _codex_opts.get_additional_modules()
+            selected = _opts_get("text_encoder_overrides", []) or []
+            if not isinstance(selected, list):
+                selected = []
             selected_norm: list[str] = []
             for raw in selected:
                 s = str(raw or "").strip()
@@ -1504,9 +1495,12 @@ def build_app() -> FastAPI:
 
     @app.get('/api/loras/selections')
     def get_lora_selections() -> Dict[str, Any]:
-        from apps.backend.codex.lora import get_selections
+        from apps.backend.runtime.adapters.lora.selections import get_selections
+
         sels = get_selections()
-        return {"selections": [s.__dict__ for s in sels]}
+        return {
+            "selections": [{"path": s.path, "weight": s.weight, "online": s.online} for s in sels],
+        }
 
     @app.post('/api/loras/apply')
     def apply_lora_selections(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
@@ -1516,16 +1510,10 @@ def build_app() -> FastAPI:
         """
         if not isinstance(payload, dict) or 'selections' not in payload or not isinstance(payload['selections'], list):
             raise HTTPException(status_code=400, detail='payload must be {"selections": [...]}')
-        from apps.backend.codex.lora import set_selections, LoraSelection
-        raw = payload['selections']
-        # Normalize to dataclasses
-        sels = []
-        for it in raw:
-            if not isinstance(it, dict) or 'path' not in it:
-                continue
-            sels.append(LoraSelection(path=str(it['path']), weight=float(it.get('weight', 1.0)), online=bool(it.get('online', False))))
-        set_selections(sels)
-        return {"ok": True, "count": len(sels)}
+        from apps.backend.runtime.adapters.lora.selections import get_selections, set_selections
+
+        set_selections(payload["selections"])
+        return {"ok": True, "count": len(get_selections())}
 
     # Simple paths config for frontend-managed search locations
     @app.get('/api/paths')
@@ -1587,7 +1575,7 @@ def build_app() -> FastAPI:
         _save_json(cfg_path, new_paths)
         return {"ok": True}
 
-    # Native options store via Codex options facade (aliases defined above)
+    # Native options store (aliases defined above)
 
     @app.get('/api/options')
     def get_options() -> Dict[str, Any]:
@@ -1639,8 +1627,7 @@ def build_app() -> FastAPI:
             except Exception:
                 defaults = {}
         try:
-            from apps.backend.codex.options import get_snapshot as _snap  # type: ignore
-            snap = _snap().as_dict()
+            snap = _opts_snapshot().as_dict()
         except Exception:
             snap = {}
         return {"defaults": defaults, "snapshot": snap}
@@ -1655,10 +1642,31 @@ def build_app() -> FastAPI:
             idx = _field_index()  # type: ignore[name-defined]
         except Exception:
             return dict(payload)
+
+        # Native UI keys that are persisted but not yet modeled in the generated settings registry.
+        extra_keys = {
+            "text_encoder_overrides",
+            "text_encoder_overrides_sha",
+            "codex_unet_storage_dtype",
+            "codex_inference_memory_mb",
+        }
         out: Dict[str, Any] = {}
         for k, v in payload.items():
             f = idx.get(k)
             if not f:
+                if k not in extra_keys:
+                    continue
+                try:
+                    if k in {"text_encoder_overrides", "text_encoder_overrides_sha"}:
+                        if isinstance(v, (list, tuple)):
+                            out[k] = [str(item).strip() for item in v if str(item).strip()]
+                    elif k == "codex_unet_storage_dtype":
+                        if isinstance(v, str):
+                            out[k] = v
+                    elif k == "codex_inference_memory_mb":
+                        out[k] = max(0.0, float(v))
+                except Exception:
+                    continue
                 continue
             try:
                 # choices
@@ -2375,7 +2383,7 @@ def build_app() -> FastAPI:
                             if isinstance(info_obj, dict):
                                 for key, value in _GENERATION_PROVENANCE.items():
                                     info_obj.setdefault(key, value)
-                            if bool(codex_options.get_value("samples_save", True)):
+                            if bool(_opts_get("samples_save", True)):
                                 _save_generated_images(
                                     payload_obj.get("images", []),
                                     task=TaskType.TXT2IMG,
@@ -2758,7 +2766,7 @@ def build_app() -> FastAPI:
                             if isinstance(info_obj, dict):
                                 for key, value in _GENERATION_PROVENANCE.items():
                                     info_obj.setdefault(key, value)
-                            if bool(codex_options.get_value("samples_save", True)):
+                            if bool(_opts_get("samples_save", True)):
                                 _save_generated_images(
                                     payload_obj.get("images", []),
                                     task=TaskType.IMG2IMG,
@@ -3855,7 +3863,7 @@ def _enable_trace_debug(ns: Any) -> None:
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
     argv_seq = list(argv or [])
-    snapshot = codex_options.get_snapshot()
+    snapshot = options_store.get_snapshot()
     ns = _bootstrap_runtime(argv_seq, env or os.environ, snapshot.as_dict())
     _enable_trace_debug(ns)
     ensure_initialized()

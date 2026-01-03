@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
-from apps.backend.codex import options as codex_options
+from apps.backend.services import options_store
 from apps.backend.infra.config.repo_root import get_repo_root
 
 LOGGER = logging.getLogger("codex.launcher.profiles")
@@ -88,7 +88,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "WAN_LOG_DEBUG": os.getenv("WAN_LOG_DEBUG", "0"),
     }
     try:
-        snap = codex_options.get_snapshot()
+        snap = options_store.get_snapshot()
 
         def _set_core(key: str, value: str | None) -> None:
             if value is None:
@@ -277,7 +277,7 @@ class LauncherProfileStore:
                 continue
             updates[settings_key] = text
         if updates:
-            codex_options.set_values(updates)
+            options_store.set_values(updates)
 
     def _migrate_device_dtype_flags(self) -> None:
         def _canonical_device(value: str | None) -> str:

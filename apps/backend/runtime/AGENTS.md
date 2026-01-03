@@ -23,7 +23,7 @@ Status: Active
 - `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
-- `modules/` — Compatibility wrappers expected by legacy callers (will shrink over time).
+- `modules/` — K-diffusion-style wrappers used by samplers/patchers (candidate for future consolidation/rename).
 - `kernels/` — Custom CUDA/C++ kernels where required.
 
 ## Notes
@@ -43,4 +43,4 @@ Status: Active
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).
 - 2026-01-01: Live preview utilities now live in `runtime/live_preview.py` (method enum, preview decode helper, and debug preview-factor fitting/logging) so workflows and API layers don’t duplicate preview logic.
 - 2026-01-02: Added standardized file header docstrings to runtime modules (doc-only change; part of rollout).
-- 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py`, `pipeline_debug.py`, `shared.py`, `trace.py`) (doc-only change; part of rollout).
+- 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py`, `pipeline_debug.py`, `trace.py`) (doc-only change; part of rollout).

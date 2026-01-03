@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Compatibility surface re-exporting Flux runtime symbols and helper functions.
+Purpose: Public export surface re-exporting Flux runtime symbols and helper functions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FluxArchitectureConfig` (dataclass): Transformer architecture config (dims/blocks/positional/guidance).

@@ -26,7 +26,7 @@ Status: Draft
 - Provide synthetic/unit test coverage for parser plans.
 
 ## Notes
-- 2025-11-04: SDXL UNet converter now normalizes label embedding keys (Forge-style `label_emb.0.0.*`) before load, preventing missing/extra weights for custom checkpoints.
+- 2025-11-04: SDXL UNet converter now normalizes sequential label-embedding keys (`label_emb.0.0.*`) before load, preventing missing/extra weights for custom checkpoints.
 
 ## Notes
 - 2025-11-04: Parser execution now materializes lazy safetensor components via dedicated helpers before running converters, preventing repeated file handle churn on Windows.

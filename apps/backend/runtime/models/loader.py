@@ -680,7 +680,7 @@ def _maybe_convert_sdxl_vae_state_dict(
 ) -> Mapping[str, Any]:
     """Normalise SDXL VAE weights that use the original LDM naming.
 
-    Some SDXL checkpoints (including legacy Forge/A1111 exports) store VAE weights
+    Some SDXL checkpoints (including some exported variants) store VAE weights
     under ``first_stage_model.*`` with keys like::
 
         encoder.down.{i}.block.{j}.*

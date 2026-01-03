@@ -41,7 +41,7 @@ def _build_4bit_lookup_signed() -> torch.Tensor:
     Maps each possible uint16 value (0-65535) to a packed int32 containing
     4 int8 values, each being (nibble - 8) for range [-8, 7].
     
-    The format matches Forge's native_4bits_lookup_table.
+    The format matches the native_4bits_lookup_table schema.
     """
     # Generate all possible uint16 values
     indices = torch.arange(256 * 256, dtype=torch.long).to(torch.uint16)

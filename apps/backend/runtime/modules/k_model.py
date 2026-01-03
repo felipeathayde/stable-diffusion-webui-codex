@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: KModel compatibility wrapper for legacy `apply_model` callers.
+Purpose: KModel adapter for k-diffusion-style `apply_model` callers.
 Bridges k-diffusion-style apply_model usage to Codex diffusion models/predictors, enforcing context/y invariants and providing opt-in debug
 tensor stats for Z Image and other flow runtimes.
 
@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_env_flag` (function): Reads a boolean env flag with common truthy tokens.
 - `_env_int` (function): Reads an int env var with a fallback default.
 - `_tensor_stats` (function): Formats quick tensor statistics for debug logging.
-- `KModel` (class): Adapter module exposing `apply_model`/`forward` and `memory_required` for legacy sampling paths.
+- `KModel` (class): Adapter module exposing `apply_model`/`forward` and `memory_required` for k-diffusion-style sampling paths.
 """
 
 import torch

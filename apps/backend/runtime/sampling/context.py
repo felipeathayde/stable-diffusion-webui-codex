@@ -155,9 +155,9 @@ def _uniform_schedule_from_predictor(steps: int, predictor, *, device: torch.dev
 
 
 def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    """Forge-style 'simple' schedule built via predictor sigma/timestep.
+    """Predictor-ladder 'simple' schedule built via predictor sigma/timestep.
 
-    Mirrors `ForgeScheduleLinker.get_sigmas(n)`:
+    Mirrors the reference schedule-linker `get_sigmas(n)` behavior:
     - Construct a linear ladder of timesteps from high→low over the predictor domain.
     - Map timesteps back to sigmas via `predictor.sigma(t)`.
     - Append a terminal 0 as the last sigma.
@@ -280,7 +280,7 @@ def _kl_optimal_schedule(steps: int, sigma_min: float, sigma_max: float, *, devi
 
 
 def _align_your_steps_schedule(kind: SchedulerName, steps: int, *, is_sdxl: bool, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    # Tables mirrored from Forge sd_schedulers; trailing zero will be appended separately
+    # Tables mirrored from the reference sd_schedulers tables; trailing zero will be appended separately
     if kind is SchedulerName.ALIGN_YOUR_STEPS:
         sigmas = [14.615, 6.315, 3.771, 2.181, 1.342, 0.862, 0.555, 0.380, 0.234, 0.113, 0.029] if is_sdxl else [14.615, 6.475, 3.861, 2.697, 1.886, 1.396, 0.963, 0.652, 0.399, 0.152, 0.029]
     elif kind is SchedulerName.ALIGN_YOUR_STEPS_GITS:

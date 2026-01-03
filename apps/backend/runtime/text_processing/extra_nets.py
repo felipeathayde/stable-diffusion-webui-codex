@@ -26,7 +26,7 @@ from typing import List, Tuple
 import re
 
 from apps.backend.infra.registry.lora import list_loras
-from apps.backend.codex.lora import LoraSelection
+from apps.backend.runtime.adapters.lora.selections import LoraSelection
 
 
 _TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti|clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise|tiling)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)

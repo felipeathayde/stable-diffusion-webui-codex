@@ -26,9 +26,9 @@ from typing import Dict, Iterator
 
 
 def _snapshot():
-    from apps.backend.codex import options as codex_options
+    from apps.backend.services import options_store
 
-    return codex_options.get_snapshot()
+    return options_store.get_snapshot()
 
 
 _THREAD_OVERRIDES = threading.local()

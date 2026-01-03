@@ -50,7 +50,6 @@ __all__ = [
     "models",
     "nn",
     "ops",
-    "shared",
     "stream",
     "text_processing",
     "utils",

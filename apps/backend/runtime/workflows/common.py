@@ -47,7 +47,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from apps.backend.codex import lora as codex_lora
+from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
 from apps.backend.core.state import state as backend_state
@@ -345,7 +345,7 @@ def activate_extra_networks(processing: Any) -> None:
     if getattr(processing, "disable_extra_networks", False):
         return
     try:
-        selections = codex_lora.get_selections()
+        selections = lora_selections.get_selections()
     except Exception:
         selections = []
     if not selections:
@@ -366,7 +366,7 @@ def collect_lora_selections(prompt_loras: Sequence[Any]) -> list[Any]:
     selections: list[Any] = []
     seen: set[str] = set()
     try:
-        all_selections: Iterable[Any] = list(codex_lora.get_selections()) + list(prompt_loras)
+        all_selections: Iterable[Any] = list(lora_selections.get_selections()) + list(prompt_loras)
     except Exception:
         all_selections = list(prompt_loras)
     for sel in all_selections:

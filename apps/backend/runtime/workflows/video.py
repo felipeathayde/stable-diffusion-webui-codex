@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping, Sequence
 
-from apps.backend.codex import lora as codex_lora
+from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
 
@@ -62,7 +62,7 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
     from apps.backend.patchers.lora_apply import apply_loras_to_engine
 
     try:
-        selections = codex_lora.get_selections()
+        selections = lora_selections.get_selections()
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         raise RuntimeError(f"Failed to fetch LoRA selections: {exc}") from exc
 

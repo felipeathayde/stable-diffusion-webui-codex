@@ -49,7 +49,6 @@ class LazyExports:
         "models",
         "nn",
         "ops",
-        "shared",
         "stream",
         "text_processing",
         "utils",

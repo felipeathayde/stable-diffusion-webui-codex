@@ -288,7 +288,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
         except Exception as exc:  # noqa: BLE001
             raise TypeError("clip_skip must be an integer") from exc
 
-        # SDXL is locked to clip_skip=2 (Forge/A1111 parity).
+        # SDXL is locked to clip_skip=2 (reference pipeline parity).
         if requested != 2:
             logger.info("SDXL clip_skip is locked to 2 (requested %s); overriding.", requested)
         runtime.set_clip_skip(2)

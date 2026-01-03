@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List
-from apps.backend.codex.options import get_snapshot as _opts_snapshot  # type: ignore
+from apps.backend.services.options_store import get_snapshot as _opts_snapshot
 
 
 # Hydration choices are native and conservative. If richer choices are needed,

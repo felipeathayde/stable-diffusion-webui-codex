@@ -25,7 +25,7 @@ from typing import Callable
 
 import torch
 
-from apps.backend.codex.loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
 from apps.backend.runtime.workflows import build_sampling_plan, ensure_sampler_and_rng, execute_sampling

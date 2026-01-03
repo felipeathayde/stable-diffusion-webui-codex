@@ -245,7 +245,7 @@ You do not plan or write anything under the false god of "compat."
 * You read the `.refs` sources with a cold eye.
 * You list risks, side effects, globals.
 * Codex prefix or suffix is used where it actually adds meaning.
-* `.refs/Forge-A1111`, `.refs/InvokeAI`, and `.refs/ComfyUI` are museums. Read only.
+* `.refs/**` are museums. Read only. If you need a behavior baseline, start with Hugging Face Diffusers — then come back to the museum if you still have to.
 
 You do not keep or copy `.refs` code to `apps`.
 You redesign in Codex style:

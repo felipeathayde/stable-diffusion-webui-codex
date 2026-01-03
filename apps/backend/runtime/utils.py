@@ -531,8 +531,7 @@ def tensor2parameter(x):
 
 
 def fp16_fix(x):
-    # An interesting trick to avoid fp16 overflow
-    # Reference implementation: https://github.com/comfyanonymous/ComfyUI/blob/f1d6cef71c70719cc3ed45a2455a4e5ac910cd5e/comfy/ldm/flux/layers.py#L180
+    # Avoid fp16 overflow (Diffusers-style clamp).
 
     if x.dtype in [torch.float16]:
         return x.clip(-32768.0, 32768.0)

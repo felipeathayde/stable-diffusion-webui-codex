@@ -32,7 +32,7 @@ logger = logging.getLogger("backend.runtime.zimage.text_encoder")
 
 from .debug import env_flag, env_int, find_indices, summarize_ints, tensor_stats, truncate_text
 
-# Chat template for Qwen3 (matches ComfyUI z_image.py)
+# Chat template for Qwen3 (reference template)
 QWEN3_TEMPLATE = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
 
 
@@ -159,7 +159,7 @@ class ZImageTextEncoder(nn.Module):
         logger.info("Loading Qwen3 text encoder from state_dict (%d keys)", len(state_dict))
         
         try:
-            # Use native Qwen3_4B implementation (compatible with ComfyUI format)
+            # Use native Qwen3_4B implementation (compatible with the exported format)
             from .qwen3 import Qwen3_4B, Qwen3Config
             
             config = Qwen3Config()
@@ -211,7 +211,7 @@ class ZImageTextEncoder(nn.Module):
             logger.error("transformers library required for Qwen tokenizer")
             raise
 
-        # Prefer explicit config, then vendored HF assets, then ComfyUI tokenizer snapshot.
+        # Prefer explicit config, then vendored Hugging Face assets, then bundled tokenizer snapshot.
         repo_root = get_repo_root()
         runtime_root = Path(__file__).resolve().parents[1]
 
@@ -225,8 +225,8 @@ class ZImageTextEncoder(nn.Module):
         hf_tokenizer = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo" / "tokenizer"
         candidates.append(str(hf_tokenizer))
 
-        comfy_tokenizer = runtime_root / "text_processing" / "tokenizers" / "qwen25_tokenizer"
-        candidates.append(str(comfy_tokenizer))
+        bundled_tokenizer = runtime_root / "text_processing" / "tokenizers" / "qwen25_tokenizer"
+        candidates.append(str(bundled_tokenizer))
 
         errors: list[str] = []
         for raw in candidates:
@@ -280,7 +280,7 @@ class ZImageTextEncoder(nn.Module):
         debug_decode = env_flag("CODEX_ZIMAGE_DEBUG_TENC_DECODE", False)
         text_max = env_int("CODEX_ZIMAGE_DEBUG_TEXT_MAX", 400)
 
-        # Match ComfyUI behavior: if the user already provided a chat template,
+        # Behavior: if the user already provided a chat template,
         # do not wrap again.
         if apply_template:
             wrapped: list[str] = []
@@ -290,7 +290,7 @@ class ZImageTextEncoder(nn.Module):
                     wrapped.append(s)
                 else:
                     # Prefer the tokenizer's built-in chat template when available.
-                    # This keeps us aligned with the tokenizer files shipped with HF/ComfyUI.
+                    # This keeps us aligned with the tokenizer files shipped with Hugging Face model assets.
                     rendered = None
                     if hasattr(self._tokenizer, "apply_chat_template"):
                         try:
@@ -337,7 +337,7 @@ class ZImageTextEncoder(nn.Module):
                     str(pad_id),
                     summarize_ints([int(v) for v in ids0], window=12),
                 )
-                # Common Qwen token ids (observed in ComfyUI Qwen tokenizer): im_start=151644, im_end=151645.
+                # Common Qwen token ids (observed in bundled tokenizer snapshots): im_start=151644, im_end=151645.
                 # We log indices to help compare template slicing logic.
                 for name, tok in (("im_start", 151644), ("im_end", 151645)):
                     idxs = find_indices([int(v) for v in ids0], tok, limit=8)

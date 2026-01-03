@@ -74,7 +74,7 @@ from apps.backend.runtime.utils import _load_gguf_state_dict
 
 from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict
 from .sdpa import set_sdpa_settings
-# Local latent normalization (Comfy-inspired). Try relative first, then absolute for robustness.
+# Local latent normalization. Try relative first, then absolute for robustness.
 try:
     from .wan_latent_norms import resolve_norm
 except Exception as _ex_rel:
@@ -119,7 +119,7 @@ def _summarize_tensor(t: object, *, window: int = 6) -> str:
 
 def _resolve_i2v_order() -> str:
     """Return channel order for I2V concatenation.
-    - 'lat_first': latents(16) then cond extras (mask4+img16) → matches Comfy (xc + c_concat).
+    - 'lat_first': latents(16) then cond extras (mask4+img16) → matches the reference concat order (xc + c_concat).
     - 'lat_last' : cond extras first then latents(16).
     Defaults to 'lat_first'. Controlled by env WAN_I2V_ORDER.
     """
@@ -500,7 +500,7 @@ def _assemble_i2v_input(latents: torch.Tensor, expected_cin: int, logger: loggin
     if extra <= 0:
         return latents
     # I2V composition: 36 = 16 (lat) + 4 (mask) + 16 (image)
-    # Concat order depends on WAN_I2V_ORDER (default: lat_first to match Comfy xc + c_concat)
+    # Concat order depends on WAN_I2V_ORDER (default: lat_first to match xc + c_concat)
     if extra == 20:
         # Build mask (zeros if not provided): [B,4,T,H,W]
         mask = latents.new_zeros((B, 4, T, H, W))
@@ -819,7 +819,7 @@ def _vae_encode_init(init_image: Any, *, device: str, dtype: str, vae_dir: str |
             raise RuntimeError('init_image must be 4D (B,C,H,W) or 5D (B,C,T,H,W) after preprocessing')
     with torch.no_grad():
         latents = vae.encode(init_image).latent_dist.sample()
-        # Apply latent normalization for diffusion (Comfy-like)
+        # Apply latent normalization for diffusion
         latents = norm.process_in(latents)
     if offload_after:
         try:

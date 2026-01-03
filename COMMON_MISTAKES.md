@@ -12,7 +12,7 @@
 
 **Wrong command:** `rg -n "<<<<<<<|=======|>>>>>>>" .`
 **Cause + fix:** `This repo vendors tokenizer vocab files that include tokens like "========" and ">>>>>>>>", producing huge false-positive output that looks like merge conflicts. Exclude the Hugging Face vocab/tokenizer JSON trees (or search only source globs) when checking for real conflict markers.`
-**Correct command:** `rg -n "<<<<<<<|=======|>>>>>>>" --glob '!apps/backend/huggingface/**' --glob '!**/vocab.json' --glob '!**/tokenizer.json' --glob '!apps/interface/dist/**' .`
+**Correct command:** `rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!.refs/**' --glob '!apps/interface/dist/**' .`
 
 **Wrong command:** `./.uv/bin/uv python install 3.12.10`
 **Cause + fix:** `In sandboxed environments, $HOME/.local (XDG_DATA_HOME default) may be read-only, causing uv to fail creating ~/.local/share/uv/python. Set XDG_DATA_HOME to a writable path (e.g., under $HOME/.cache) when running uv python/lock commands.`
@@ -47,11 +47,11 @@
 **Correct command:** `sed -n '1,200p' .sangoi/handoffs/HANDOFF_GUIDE.md`
 
 **Wrong command:** `rg -n "huggingface_guess" legacy`
-**Cause + fix:** Repository archives legacy code under `.refs/Forge-A1111/`, so the command targeted a non-existent `legacy/` directory; point ripgrep at the `.refs` tree instead.
-**Correct command:** `rg -n "huggingface_guess" .refs/Forge-A1111`
+**Cause + fix:** Repository archives upstream snapshots under `.refs/**`, so the command targeted a non-existent `legacy/` directory; point ripgrep at the `.refs` tree instead.
+**Correct command:** `rg -n "huggingface_guess" .refs`
 **Wrong command:** `rg -n "iq1" legacy -g"*.py"`
-**Cause + fix:** Repository archives legacy sources under `.refs/Forge-A1111/`; point ripgrep at that tree instead of the non-existent `legacy/` path.
-**Correct command:** `rg -n "iq1" .refs/Forge-A1111 -g"*.py"`
+**Cause + fix:** Repository archives upstream sources under `.refs/**`; point ripgrep at that tree instead of the non-existent `legacy/` path.
+**Correct command:** `rg -n "iq1" .refs -g"*.py"`
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, `.refs/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
 **Correct command:** `git add AGENTS.md THIRD_PARTY_NOTICES.md COMMON_MISTAKES.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-docs-legacy-paths.md .sangoi/handoffs/2025-10-30-docs-legacy-paths.md`
@@ -67,9 +67,9 @@
 **Wrong command:** `rg -ni "unet" apps/backend/runtime/wan || true`
 **Cause + fix:** Model runtimes live under versioned directories like `wan22`; target the specific directory instead of a non-existent `wan`.
 **Correct command:** `rg -ni "unet" apps/backend/runtime/wan22 || true`
-**Wrong command:** `git checkout -- modules sysinfo.py modules/ui_settings.py modules/settings_v2.py modules/infotext_utils.py modules/shared_options.py modules_forge/shared_options.py modules_forge/diffusers_patcher.py modules_forge/supported_controlnet.py scripts/xyz_grid.py NEWS.md extensions-builtin/extra-options-section/scripts/extra_options_section.py`
+**Wrong command:** `git add apps backend/runtime utils.py tools dev/trace_pipeline_graph.py`
 **Cause + fix:** `Missing directory separators in multi-level paths; Git expects the exact tracked path.`
-**Correct command:** `git checkout -- modules/sysinfo.py modules/ui_settings.py modules/settings_v2.py modules/infotext_utils.py modules/shared_options.py modules_forge/shared_options.py modules_forge/diffusers_patcher.py modules_forge/supported_controlnet.py scripts/xyz_grid.py NEWS.md extensions-builtin/extra-options-section/scripts/extra_options_section.py`
+**Correct command:** `git add apps/backend/runtime/utils.py tools/dev/trace_pipeline_graph.py`
 
 **Wrong command:** `find . -type f -not -path ./.git/* -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `Command tried to add ignored caches; rerun with env var to skip errors or filter out ignored paths.`
@@ -168,15 +168,15 @@ PY`
 **Correct command:** `~/.venv/bin/python tools/debug/test_dequant.py`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-**Cause + fix:** `The blanket find walks into legacy submodules under .refs/Forge-A1111, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
+**Cause + fix:** `The blanket find walks into archived submodules under .refs/**, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
 **Correct command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 
-**Wrong command:** `git commit -m "feat(gguf): port iq-family forge kernels"`
+**Wrong command:** `git commit -m "feat(gguf): port iq-family GGUF kernels"`
 **Cause + fix:** `Global git identity isn't configured in this workspace; set user.name and user.email before committing.`
 **Correct command:** `git config --global user.name "Lucas Sangoi" && git config --global user.email "lucas@sangoi.dev"`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
-**Cause + fix:** `The bulk add traverses .refs/Forge-A1111 submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
+**Cause + fix:** `The bulk add traverses .refs/** submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
 **Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`
 **Wrong command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `The search still walks cached/ignored directories, so git add aborts on gitignored paths; enumerate the known changed sources explicitly instead of mass-adding.`
@@ -504,9 +504,9 @@ PY`
 **Cause + fix:** The repository has no `docs/` directory; documentation lives under `.sangoi/`, so `docs/plan` errors. List the real doc root first to discover the available subdirectories.
 **Correct command:** `ls .sangoi`
 
-**Wrong command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom apps.backend.runtime.models.state_dict import load_state_dict\nfrom pathlib import Path\npath = Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors')\nload_state_dict(path)\nPY`
+**Wrong command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom apps.backend.runtime.models.state_dict import load_state_dict\nfrom pathlib import Path\npath = Path('/mnt/f/stable-diffusion-webui-codex/models/Stable-diffusion/cyberrealisticPony_v140.safetensors')\nload_state_dict(path)\nPY`
 **Cause + fix:** `load_state_dict` expects a model plus a state-dict mapping; calling it with only a path raises a missing-argument error. To inspect checkpoint keys, load the safetensors mapping with `load_torch_file` instead.
-**Correct command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom pathlib import Path\nfrom apps.backend.runtime.utils import load_torch_file\nsd = load_torch_file(Path('/mnt/f/stable-diffusion-webui-forge/models/Stable-diffusion/cyberrealisticPony_v140.safetensors'))\nprint(len(sd), list(sd.keys())[:5])\nPY`
+**Correct command:** `PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python - <<'PY'\nfrom pathlib import Path\nfrom apps.backend.runtime.utils import load_torch_file\nsd = load_torch_file(Path('/mnt/f/stable-diffusion-webui-codex/models/Stable-diffusion/cyberrealisticPony_v140.safetensors'))\nprint(len(sd), list(sd.keys())[:5])\nPY`
 
 Wrong command: python - <<'PY'
 Cause and fix: Executed with system Python that lacks project deps; reran with ~/.venv/python.
@@ -559,7 +559,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=
 **Correct command:** `ls .sangoi`
 
 **Wrong command:** `ls .legacy`
-**Cause + fix:** The repo does not ship a `.legacy` directory; reference snapshots now live under `.refs/` (e.g., `.refs/Forge-A1111/`). Use `find` to confirm before targeting paths.
+**Cause + fix:** The repo does not ship a `.legacy` directory; reference snapshots now live under `.refs/` (e.g., `.refs/**`). Use `find` to confirm before targeting paths.
 **Correct command:** `find . -maxdepth 2 -type d -name '.refs'`
 
 **Wrong command:** `npm install --save-dev vitest`

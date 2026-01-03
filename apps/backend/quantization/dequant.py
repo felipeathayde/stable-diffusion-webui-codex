@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 AND Apache-2.0
 Required Notice: see NOTICE
 
 Purpose: GGUF/GGML dequantization kernels (torch) for runtime decoding of quantized blocks.
-Ported/adapted from city96/ComfyUI-GGUF (Apache-2.0): https://github.com/city96/ComfyUI-GGUF/blob/main/dequant.py
+Ported/adapted from a city96 GGUF dequantization reference (Apache-2.0).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `split_block_dims` (function): Splits a block tensor into the requested per-field shapes used by quant formats.

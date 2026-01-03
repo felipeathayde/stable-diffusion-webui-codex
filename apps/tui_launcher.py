@@ -446,7 +446,7 @@ class BIOSApp:
             
             "I2V Concat Order": [
                 "Order for I2V channels when assembling 36ch volume:",
-                "lat_first (Comfy: latents first, then mask+img) or lat_last.",
+                "lat_first (latents first, then mask+img) or lat_last.",
                 "Applied via WAN_I2V_ORDER.",
             ],
             "WAN_SDPA_DEBUG": [

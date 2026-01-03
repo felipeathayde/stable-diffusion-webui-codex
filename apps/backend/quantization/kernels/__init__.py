@@ -55,12 +55,12 @@ def _make_dequantize_wrapper(dequant_fn, block_size: int, type_size: int):
     This wrapper binds block_size and type_size, and reshapes the tensor
     to (n_blocks, type_size) as expected by dequant functions.
     
-    Reference: city96/ComfyUI-GGUF dequant.py::dequantize()
+    Reference: city96 GGUF dequant.py::dequantize()
     """
     @functools.wraps(dequant_fn)
     def wrapper(blocks: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
         # Reshape to (n_blocks, type_size) as expected by dequant functions
-        # Reference: ComfyUI-GGUF dequant.py lines 28-32
+        # Reference: upstream dequant.py lines 28-32
         rows = blocks.reshape((-1, blocks.shape[-1])).view(torch.uint8)
         n_blocks = rows.numel() // type_size
         reshaped = rows.reshape((n_blocks, type_size))

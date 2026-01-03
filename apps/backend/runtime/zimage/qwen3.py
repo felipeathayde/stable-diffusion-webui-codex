@@ -258,7 +258,7 @@ class Attention(nn.Module):
         
         # Scaled dot-product attention
         # IMPORTANT: Always use is_causal=False! The causal mask is already in attention_mask.
-        # This follows the ComfyUI pattern which constructs causal mask manually.
+        # Construct causal mask manually (required by this implementation).
         attn_output = F.scaled_dot_product_attention(
             q, k, v,
             attn_mask=attention_mask,
@@ -482,7 +482,7 @@ class Qwen3_4B(nn.Module):
             logger.info("[qwen3-debug] Embedding output OK: shape=%s mean=%.4f", 
                        hidden_states.shape, hidden_states.float().mean().item())
         
-        # Create causal mask - ALWAYS create it (following ComfyUI pattern)
+        # Create causal mask - ALWAYS create it
         # The mask is added to attention scores before softmax
         batch_size = hidden_states.shape[0]
         seq_len = hidden_states.shape[1]

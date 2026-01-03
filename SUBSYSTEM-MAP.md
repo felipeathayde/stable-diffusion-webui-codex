@@ -33,7 +33,7 @@ These are the recurring “dangerous assumptions” that showed up in session re
 They are not theoretical — if you follow the drift, you end up debugging the wrong thing or (worse) implementing silent fallbacks that this WebUI explicitly rejects.
 
 ### DRIFT-API-PREFIX: Assuming legacy endpoints exist (`/sdapi/v1/*`, `/codex/api/v1/*`, `/api/v1/*`)
-- Wrong assumption: the WebUI uses an A1111-compatible prefix (or a “codex_api” router) for generation.
+- Wrong assumption: the WebUI uses a legacy WebUI-compatible prefix (or a “codex_api” router) for generation.
 - Correct contract: current UI/backends use `/api/*` only; don’t invent endpoints — confirm in `apps/backend/interfaces/api/run_api.py`.
 - Quick verify: `rg -n \"@app\\.(get|post|patch|delete)\\('/api\" apps/backend/interfaces/api/run_api.py`.
 

@@ -93,7 +93,7 @@ def load_flow16_vae(
     logger.info("Loading Flow16 VAE from: %s", vae_path)
 
     def _strip_known_prefixes(sd: Mapping[str, Any]) -> dict[str, Any]:
-        """Strip common VAE prefixes (Comfy/SD checkpoints) to diffusers keys.
+        """Strip common VAE prefixes (checkpoint exports) to diffusers keys.
 
         Flow16 VAEs show up in a few layouts:
         - diffusers keys (encoder.*, decoder.*)

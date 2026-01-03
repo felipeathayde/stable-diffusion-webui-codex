@@ -2,7 +2,7 @@
 # apps/backend/quantization Overview
 Date: 2025-12-15
 Owner: Runtime Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: Active
 - 2025-12-19: Tooling gained additional NumPy quant packers (`Q2_K/Q3_K/IQ4_NL` + `Q4_0/Q4_1/Q5_0/Q5_1/Q6_K`) so the GGUF Converter can emit more GGML types.
 - 2026-01-01: `CodexParameter.to(...)` avoids unnecessary clones for packed GGUF tensors and returns `self` for no-op device moves (reduces per-step overhead and wrapper churn).
 - 2026-01-02: Added standardized file header docstrings across quantization modules (public API, registry/cache/ops, GGUF loader, kernels bootstrap, GGUF IO helpers) (doc-only change; part of rollout).
+- 2026-01-03: Standardized upstream references in quantization docs/comments (avoid naming unrelated projects as baselines; keep necessary attributions in headers/notices).

@@ -292,7 +292,7 @@ def apply_rope_pair(q: torch.Tensor, k: torch.Tensor, freqs: torch.Tensor) -> tu
 class Attention(nn.Module):
     """Self-attention with combined QKV, QK normalization, and RoPE.
     
-    Matches ComfyUI's JointAttention dimension ordering for RoPE.
+    Matches the JointAttention dimension ordering for RoPE.
     Q/K/V are [B, N, H, D] during RoPE, then [B, H, N, D] for SDPA.
     """
     
@@ -327,14 +327,14 @@ class Attention(nn.Module):
         
         # QKV projection and reshape to [B, N, 3, H, D]
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
-        # Split into [B, N, H, D] each - matching ComfyUI JointAttention
+        # Split into [B, N, H, D] each (JointAttention layout)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         
         # QK normalization (operates on last dim = head_dim)
         q = self.q_norm(q)
         k = self.k_norm(k)
         
-        # Apply RoPE in [B, N, H, D] format (matching ComfyUI)
+        # Apply RoPE in [B, N, H, D] format
         if freqs is not None:
             q, k = apply_rope_pair(q, k, freqs)
         
@@ -356,7 +356,7 @@ class Attention(nn.Module):
 class TransformerBlock(nn.Module):
     """Transformer block with adaLN modulation.
     
-    Architecture matching ComfyUI's NextDiT for z_image_modulation:
+    Architecture matching NextDiT for z_image_modulation:
     - adaLN_modulation.0: Linear(min(dim, 256), 4 * dim) = Linear(256, 4*3840)
     - Outputs 4 modulation values: scale_msa, gate_msa, scale_mlp, gate_mlp
     - Uses tanh gating like NextDiT
@@ -517,7 +517,7 @@ class NoiseRefinerBlock(nn.Module):
             mod = self.adaLN_modulation(t_emb)  # [B, 4 * dim]
             scale_msa, gate_msa, scale_mlp, gate_mlp = mod.chunk(4, dim=-1)
             
-            # Attention with modulation (tanh gating like ComfyUI's NextDiT)
+            # Attention with modulation (tanh gating like NextDiT)
             normed = self.attention_norm1(x)
             normed = normed * (1 + scale_msa.unsqueeze(1))
             attn_out = self.attention(normed, attention_mask, freqs)
@@ -540,13 +540,13 @@ class FinalLayer(nn.Module):
     """Final layer with adaLN modulation.
     
     Uses LayerNorm with elementwise_affine=False (no learnable params) to match
-    the GGUF checkpoint structure from ComfyUI's NextDiT. The GGUF doesn't have
-    weights for this norm layer because ComfyUI uses non-affine LayerNorm.
+    the GGUF checkpoint structure from NextDiT. The GGUF doesn't have weights for this norm
+    layer because the reference implementation uses non-affine LayerNorm.
     """
     
     def __init__(self, hidden_dim: int, t_dim: int, out_dim: int, eps: float = 1e-6):
         super().__init__()
-        # ComfyUI uses LayerNorm(elementwise_affine=False), so no weight/bias in norm
+        # Non-affine LayerNorm: no weight/bias in the checkpoint for this norm
         self.norm_final = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=eps)
         # Checkpoint: adaLN_modulation.1.weight is [hidden_dim, t_dim]
         self.adaLN_modulation = nn.Sequential(

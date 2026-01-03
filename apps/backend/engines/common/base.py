@@ -654,7 +654,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         from apps.backend.engines.util.adapters import build_txt2img_processing
         from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
         from apps.backend.runtime.processing.conditioners import decode_latent_batch
-        from apps.backend.runtime.workflows.common import latents_to_pil
+        from apps.backend.runtime.workflows.image_io import latents_to_pil
         from apps.backend.runtime.text_processing import last_extra_generation_params
         
         self.ensure_loaded()
@@ -834,7 +834,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         from apps.backend.engines.util.adapters import build_img2img_processing
         from apps.backend.use_cases.img2img import generate_img2img as _generate_img2img
         from apps.backend.runtime.processing.conditioners import decode_latent_batch
-        from apps.backend.runtime.workflows.common import latents_to_pil
+        from apps.backend.runtime.workflows.image_io import latents_to_pil
         from apps.backend.runtime.text_processing import last_extra_generation_params
 
         self.ensure_loaded()

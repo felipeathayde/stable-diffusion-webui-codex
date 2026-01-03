@@ -50,7 +50,7 @@ import json
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent
 import secrets
 from apps.backend.runtime.processing.conditioners import decode_latent_batch
-from apps.backend.runtime.workflows.common import latents_to_pil
+from apps.backend.runtime.workflows.image_io import latents_to_pil
 from apps.backend.runtime.text_processing import last_extra_generation_params
 
 

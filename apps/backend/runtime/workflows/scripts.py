@@ -1,0 +1,124 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Script hooks + extra network activation for workflow orchestration.
+Keeps processing-level script callbacks and LoRA selection application isolated from sampler execution logic.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `run_process_scripts` (function): Run processing scripts (legacy-compatible) when present.
+- `activate_extra_networks` (function): Apply globally selected extra networks (LoRAs) to the current engine.
+- `set_shared_job` (function): Update shared job metadata for batch runs.
+- `collect_lora_selections` (function): Merge global selections with prompt-local LoRA descriptors.
+- `run_before_sampling_hooks` (function): Invoke before-sampling hooks (scripts + extra networks + shared job metadata).
+- `run_post_sample_hooks` (function): Invoke post-sample hooks, returning potentially modified samples.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Iterable, Sequence
+
+import torch
+
+from apps.backend.runtime.adapters.lora import selections as lora_selections
+from apps.backend.core.state import state as backend_state
+from apps.backend.patchers.lora_apply import apply_loras_to_engine
+from apps.backend.runtime.processing.datatypes import PromptContext
+
+logger = logging.getLogger(__name__)
+
+
+def run_process_scripts(processing: Any) -> None:
+    """Execute legacy script hooks if present."""
+    script_runner = getattr(processing, "scripts", None)
+    if script_runner is not None and hasattr(script_runner, "process"):
+        script_runner.process(processing)
+
+
+def activate_extra_networks(processing: Any) -> None:
+    """Apply globally selected extra networks to the current engine."""
+    if getattr(processing, "disable_extra_networks", False):
+        return
+    try:
+        selections = lora_selections.get_selections()
+    except Exception:
+        selections = []
+    if not selections:
+        return
+    stats = apply_loras_to_engine(processing.sd_model, selections)
+    logger.info("[native] Applied %d LoRA(s), %d params touched", stats.files, stats.params_touched)
+
+
+def set_shared_job(processing: Any) -> None:
+    """Update shared backend job metadata for batch runs."""
+    if getattr(processing, "iterations", 1) <= 1:
+        return
+    backend_state.begin(job=f"Batch 1 out of {processing.iterations}")
+
+
+def collect_lora_selections(prompt_loras: Sequence[Any]) -> list[Any]:
+    """Merge global selections with prompt-local LoRA descriptors."""
+    selections: list[Any] = []
+    seen: set[str] = set()
+    try:
+        all_selections: Iterable[Any] = list(lora_selections.get_selections()) + list(prompt_loras)
+    except Exception:
+        all_selections = list(prompt_loras)
+    for sel in all_selections:
+        path = getattr(sel, "path", None)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        selections.append(sel)
+    return selections
+
+
+def run_before_sampling_hooks(
+    processing: Any,
+    prompt_context: PromptContext,
+    seeds: Sequence[int],
+    subseeds: Sequence[int],
+) -> None:
+    """Invoke before-sampling hooks on processing scripts."""
+    script_runner = getattr(processing, "scripts", None)
+    if script_runner is None:
+        activate_extra_networks(processing)
+        return
+
+    hook_kwargs = {
+        "batch_number": 0,
+        "prompts": prompt_context.prompts,
+        "seeds": list(seeds),
+        "subseeds": list(subseeds),
+        "negative_prompts": prompt_context.negative_prompts,
+    }
+
+    if hasattr(script_runner, "before_process_batch"):
+        script_runner.before_process_batch(processing, **hook_kwargs)
+
+    if hasattr(script_runner, "process_batch"):
+        script_runner.process_batch(processing, **hook_kwargs)
+
+    activate_extra_networks(processing)
+    set_shared_job(processing)
+
+
+def run_post_sample_hooks(processing: Any, samples: torch.Tensor) -> torch.Tensor:
+    """Invoke post-sample hooks, returning the potentially modified samples."""
+    script_runner = getattr(processing, "scripts", None)
+    if script_runner is None or not hasattr(script_runner, "post_sample"):
+        return samples
+
+    class _Args:
+        def __init__(self, value: torch.Tensor) -> None:
+            self.samples = value
+
+    args = _Args(samples)
+    script_runner.post_sample(processing, args)
+    return getattr(args, "samples", samples)
+

@@ -1,7 +1,7 @@
 # apps/backend/runtime/workflows Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -9,10 +9,15 @@ Status: Active
 - Centralize stage logic (prompt normalization, sampler planning, init-image prep, video metadata) to keep use cases lightweight and consistent.
 
 ## Key Files
-- `common.py` — Prompt parsing, sampling plan helpers, sampler execution, tiling toggles.
+- `prompt_context.py` — Prompt parsing + prompt-derived controls (clip_skip, width/height overrides).
+- `sampling_plan.py` — Scheduler normalization, noise settings, plan building, sampler/RNG preparation.
+- `sampling_execute.py` — Sampler execution + live preview callback + latent dump diagnostics.
+- `scripts.py` — Script hooks + extra network (LoRA) activation helpers.
+- `image_io.py` — PIL/tensor conversions + optional hires decode helper.
+- `tiling.py` — VAE tiling apply/restore toggles.
 - `image_init.py` — Utilities for encoding img2img/img2vid init images into tensor+latent bundles.
 - `video.py` — Video plan builder, LoRA application, sampler configuration, and metadata assembly.
-- `__init__.py` — Re-exports workflow helpers for downstream modules.
+- `__init__.py` — Package marker (intentionally no re-export facade; callers import modules directly).
 
 ## Notes
 - Modules in this directory must stay dependency-light and only import from `apps.*` namespaces.
@@ -25,3 +30,4 @@ Status: Active
 - 2026-01-01: Preview-factor fitting/logging (least-squares latent→RGB `factors`/`bias`) lives in `runtime/live_preview.py` and can be enabled via `CODEX_DEBUG_PREVIEW_FACTORS=1` (used to derive `Approx cheap` mappings for new latent formats).
 - 2026-01-02: Removed token merging application from `common.py`; `<merge:...>` / `<tm:...>` tags are stripped but have no effect.
 - 2026-01-02: Added standardized file header docstrings to workflow helper modules (doc-only change; part of rollout).
+- 2026-01-03: Split the former `common.py` golema into focused modules and removed the workflow re-export facade (`__init__.py` is now intentionally empty).

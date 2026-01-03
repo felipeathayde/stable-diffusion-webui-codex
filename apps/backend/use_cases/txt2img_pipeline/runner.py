@@ -51,21 +51,20 @@ from apps.backend.runtime.processing.datatypes import (
 )
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
-from apps.backend.runtime.workflows import (
+from apps.backend.runtime.workflows.image_io import latents_to_pil, maybe_decode_for_hr, pil_to_tensor
+from apps.backend.runtime.workflows.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
-    apply_sampling_overrides,
-    apply_tiling_if_requested,
     build_prompt_context,
+)
+from apps.backend.runtime.workflows.sampling_execute import execute_sampling
+from apps.backend.runtime.workflows.sampling_plan import (
+    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
-    execute_sampling,
-    finalize_tiling,
-    latents_to_pil,
-    maybe_decode_for_hr,
-    pil_to_tensor,
-    run_process_scripts,
 )
+from apps.backend.runtime.workflows.scripts import run_process_scripts
+from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, finalize_tiling
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.use_cases.txt2img_pipeline.refiner import GlobalRefinerStage, HiresRefinerStage, RefinerStage
 
@@ -363,7 +362,7 @@ class Txt2ImgPipelineRunner:
                     seed=seed,
                 )
                 # Convert PIL images to tensor format expected by pipeline
-                from apps.backend.runtime.workflows import pil_to_tensor
+                from apps.backend.runtime.workflows.image_io import pil_to_tensor
                 if images:
                     # pil_to_tensor returns decoded RGB tensor
                     decoded_tensor = pil_to_tensor(images)

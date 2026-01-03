@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Request payload parsing helpers for the API layer.
+Provides small converters used to validate required fields and coerce basic types from dict payloads.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `require` (function): Returns a required key from a payload or raises a `ValueError`.
+- `as_list` (function): Returns a value as a list (wrapping scalars, defaulting to empty list).
+- `as_int` (function): Coerces a payload field to `int`, optionally providing a default.
+- `as_float` (function): Coerces a payload field to `float`, optionally providing a default.
+- `as_float_optional` (function): Best-effort float coercion returning `None`/default on failure.
+- `as_bool` (function): Coerces a payload field to `bool`, supporting common string/int forms.
+"""
+
 from __future__ import annotations
 
 from typing import Any, List, Optional
@@ -58,4 +78,3 @@ def as_bool(payload: dict, key: str, default: Optional[bool] = None) -> bool:
         return bool(v)
     s = str(v).strip().lower()
     return s in ("1", "true", "yes", "on")
-

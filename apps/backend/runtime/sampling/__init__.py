@@ -1,11 +1,17 @@
-"""Native sampling primitives for Codex engines.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This package is intentionally import-light so helpers like
-`apps.backend.runtime.sampling.catalog` can be used by the API/UI without
-pulling torch-heavy modules at import time.
+Purpose: Import-light sampling facade for Codex engines.
+Exposes torch-bound inner-loop helpers via a lazy `__getattr__` hook so API/UI tooling can import sampling catalogs without pulling heavy runtime modules.
 
-Torch-bound sampling internals live in `inner_loop.py` and are loaded only when
-engines execute sampling (via `driver.py`).
+Symbols (top-level; keep in sync; no ghosts):
+- `__getattr__` (function): Lazy import hook exposing `sampling_*` helpers from `inner_loop.py` on first access.
+- `__all__` (constant): Export list for sampling helpers exposed via the facade.
 """
 
 from __future__ import annotations

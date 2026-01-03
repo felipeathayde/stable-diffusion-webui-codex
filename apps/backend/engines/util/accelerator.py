@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Engine-side accelerator selection for diffusers pipelines.
+Applies an accelerator backend (or no-op) based on explicit input or `CODEX_ACCELERATOR`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_get_selected_accelerator` (function): Reads accelerator selection from the environment (defaults to `"none"`).
+- `apply_to_diffusers_pipeline` (function): Applies the selected accelerator to a diffusers pipeline or raises with cause.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Optional

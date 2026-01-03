@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler dropdown selector.
+Renders a sampler dropdown from the supported sampler list and emits the selected sampler name.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SamplerSelector` (component): Sampler selector component.
+- `onChange` (function): Emits `update:modelValue` for the selected sampler.
+-->
+
 <template>
   <div class="form-field">
     <label class="label-muted">{{ labelText }}</label>

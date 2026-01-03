@@ -15,3 +15,5 @@ Status: Active
 ## Logging
 - DEBUG (`backend.runtime.unet`) pode registrar `context_dim` efetivo e shapes de entrada.
 
+## Notes
+- 2026-01-02: Added standardized file header docstrings to `__init__.py`, `config.py`, and `utils.py` (doc-only change; part of rollout).

@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared PromptCard state and helpers.
+Encapsulates negative prompt visibility, modal toggles (LoRA/TI/Style), style selection, and token insertion into prompt fields.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptInsertPayload` (type): Token insertion payload accepted by `onInsertToken`.
+- `usePromptCard` (function): Returns reactive state and handlers for PromptCard UI.
+*/
+
 import { computed, ref, type Ref } from 'vue'
 
 import { useStylesStore } from '../stores/styles'

@@ -1,9 +1,29 @@
-"""Native error reporting utilities for the Codex backend.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module supersedes legacy ``modules.errors`` helpers by providing a
-thread-safe registry of recent exceptions along with convenience wrappers
-around :mod:`logging`.  Backends can import these helpers to surface rich,
-actionable diagnostics without depending on legacy state.
+Purpose: Structured error reporting utilities for the Codex backend.
+Provides a thread-safe registry of recent exceptions plus helpers to capture, log, format, and display actionable diagnostics without relying on
+legacy error globals.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ExceptionFrame` (dataclass): One captured stack frame (location + optional source line).
+- `ExceptionRecord` (dataclass): Captured exception payload (type/message/context + frames) with dict conversion helper.
+- `ErrorRegistry` (class): Thread-safe bounded registry (deque) of recent exception records.
+- `_format_tb` (function): Converts a traceback into `ExceptionFrame` entries.
+- `record_exception` (function): Records an exception into the global registry and returns an `ExceptionRecord`.
+- `record_current_exception` (function): Records the current active exception (if any).
+- `get_recent_exceptions` (function): Returns recent exception records (newest first).
+- `clear_records` (function): Clears the global registry.
+- `report_error` (function): Logs an error message and records the associated exception (optional `exc_info`).
+- `print_error_explanation` (function): Prints a human-readable explanation block (used for CLI/UI-friendly diagnostics).
+- `display_exception` (function): Records and logs an exception with optional full traceback.
+- `display_exception_once` (function): Like `display_exception`, but only logs once per context string.
+- `iter_exception_dicts` (function): Iterates exception records as JSON-serializable dicts.
 """
 
 from __future__ import annotations
@@ -204,4 +224,3 @@ __all__ = [
     "record_exception",
     "report_error",
 ]
-

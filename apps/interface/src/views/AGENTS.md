@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Active
 - 2026-01-01: `ImageModelTab.vue` and `WANTab.vue` History sections now use `WanSubHeader` and hide per-item actions until hover (with horizontal scroll when needed) to save space.
 - 2026-01-01: History cards now render as a single-row horizontal strip, and `WANTab.vue` reuses the shared `cdx-history-*` card layout for parity with image tabs.
 - 2026-01-01: Results empty states now reflect running tasks (“Starting inference…” / “Generating…”) and image tabs can show live preview frames inside `ResultViewer.vue` while sampling.
+- 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).

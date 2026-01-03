@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: `UNetConfig` dataclass and helpers for normalizing scalar/sequence configuration values.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_ensure_tuple` (function): Internal helper to normalize scalar/sequence values into tuples.
+- `UNetConfig` (dataclass): Typed configuration for `UNet2DConditionModel` (includes helper expansion methods).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

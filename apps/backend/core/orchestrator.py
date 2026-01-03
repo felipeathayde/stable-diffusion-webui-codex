@@ -1,4 +1,19 @@
-"""High-level orchestrator to route requests to engines and stream events."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Backend inference orchestrator (engine routing + caching + event streaming).
+Resolves engines from the registry, loads/unloads per request, fingerprints load-affecting options, purges VRAM on model swaps, and yields
+typed progress events back to API callers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `InferenceOrchestrator` (class): Routes typed requests to engines; caches loaded engines with option fingerprinting, reloads when overrides
+  change, and manages VRAM hygiene across generations (contains nested helpers for option freezing and cache purges).
+"""
 
 from __future__ import annotations
 

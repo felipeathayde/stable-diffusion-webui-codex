@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Emphasis implementations applied to text encoder hidden states during prompt encoding.
+Provides several emphasis modes that post-process token embeddings using per-token multipliers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Emphasis` (class): Base emphasis adapter holding token/multiplier state and an `after_transformers` hook.
+- `EmphasisNone` (class): Disables emphasis interpretation (treats emphasis markup as literal).
+- `EmphasisIgnore` (class): Ignores emphasis markup (treats all words as un-emphasized).
+- `EmphasisOriginal` (class): Original emphasis implementation with mean normalization.
+- `EmphasisOriginalNoNorm` (class): Emphasis implementation without mean normalization (often better for SDXL).
+- `get_current_option` (function): Resolve an emphasis class by name, defaulting to `EmphasisOriginal`.
+- `get_options_descriptions` (function): Return a human-readable summary of available emphasis modes.
+- `options` (constant): List of supported emphasis classes.
+"""
+
 import torch
 
 

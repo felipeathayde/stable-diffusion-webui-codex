@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Settings form renderer from the backend schema.
+Renders settings fields from the `/api/settings/schema` model and applies changes via `/api/options`, tracking pending/dirty changes locally.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SettingsForm` (component): Dynamic settings form used in the Settings view.
+- `onChange` (function): Updates local model state and tracks dirty keys.
+- `applyChanges` (function): Persists pending changes via the backend options endpoint.
+-->
+
 <template>
   <div class="settings-form">
     <div v-if="fields.length === 0" class="card caption">No settings in this section.</div>

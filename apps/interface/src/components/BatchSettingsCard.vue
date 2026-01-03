@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Batch size/count controls for generation views.
+Renders numeric inputs for batch count and batch size, clamping to configured min/max values.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BatchSettingsCard` (component): Batch settings card (count + size).
+- `clampInt` (function): Clamps and truncates numeric inputs for batch values.
+-->
+
 <template>
   <div class="gen-card">
     <div class="gc-row">
@@ -68,4 +84,3 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n))
 }
 </script>
-

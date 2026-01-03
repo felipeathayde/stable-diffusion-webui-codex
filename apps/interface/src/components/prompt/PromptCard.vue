@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Prompt panel wrapper with toolbars and modals.
+Renders `PromptFields` and an optional toolbar for Negative prompt toggling, asset insertion (LoRA/TI), and styles creation/application.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptCard` (component): Prompt panel with prompt/negative fields, optional assets/styles controls, and insertion modals.
+-->
+
 <template>
   <div class="panel">
     <div class="panel-header">{{ title }}

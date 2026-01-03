@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler/scheduler mapping for diffusers pipelines.
+Maps UI-facing sampler/scheduler selections to a strict diffusers scheduler instance (no silent fallbacks).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `apply_sampler_scheduler` (function): Applies a sampler/scheduler selection to a pipeline and returns the effective outcome.
+"""
+
 from __future__ import annotations
 
 from typing import List, Optional, Union

@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
 Owner: Engine Maintainers
-Last Review: 2025-12-05
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Active
 - 2025-11-03: SDXL engine reads `debug_conditioning` from backend config (no direct env lookup) to log conditioning norms when requested.
 - 2025-11-30: `apps.backend.engines.__init__` now lazily resolves WAN22 engine classes; importing the package no longer pulls Hugging Face assets or torch unless the engines are requested.
 - 2025-12-05: `common.base.BaseInferenceEngine.load()` now accepts an optional `text_encoder_override` option (family + `/api/text-encoders` label [+ optional components]) and forwards it to `runtime.models.resolve_diffusion_bundle`, so text encoder overrides are applied centrally by the loader instead of por-engine shims.
+- 2026-01-02: Added standardized file header docstrings to engine facade/registration modules (doc-only change; part of rollout).

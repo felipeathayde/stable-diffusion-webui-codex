@@ -1,7 +1,32 @@
-"""Torch-bound sampling inner loop.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Kept in a separate module so `apps.backend.runtime.sampling` can stay import-light
-for API/UI imports.
+Purpose: Torch-bound sampling inner loop (kept separate so `apps.backend.runtime.sampling` stays import-light for API/UI imports).
+Implements conditioning batching, CFG routing, and sampling lifecycle hooks (prepare/cleanup) for native samplers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_env_flag` (function): Reads a boolean env var flag (truthy strings only; missing → False).
+- `_env_int` (function): Reads an integer env var with default fallback.
+- `get_area_and_mult` (function): Computes per-conditioning spatial area crop + mask multiplier (supports `area`, `mask`, `strength`,
+  and timestep gates) and returns the prepared slice for batching.
+- `cond_equal_size` (function): Checks whether two compiled conditionings are size-compatible for batching.
+- `can_concat_cond` (function): Checks whether two conditioning entries can be concatenated into the same UNet batch (area/control/patch compat).
+- `cond_cat` (function): Concatenates a list of compiled conditioning dicts into a single dict with canonical keys (`c_crossattn`, `y`, `c_concat`).
+- `compute_cond_mark` (function): Builds a cond/uncond mark tensor aligned to the sigma ladder (used for chunked batching/indexing).
+- `compute_cond_indices` (function): Computes flat indices for conditional vs unconditional slices in a packed `(batch*sigmas)` tensor layout.
+- `calc_cond_uncond_batch` (function): Runs batched UNet calls to compute conditional/unconditional predictions with area masks, memory-aware
+  batching, and strict conditioning validation (no fallbacks).
+- `sampling_function_inner` (function): Core CFG math and hook routing; handles distilled/turbo `uncond=None`, optional deep debug logs,
+  and sampler pre/post cfg modifiers.
+- `sampling_function` (function): Wrapper around `sampling_function_inner` for the denoiser interface; applies conditioning modifiers and
+  control/image concat plumbing, returning denoised + (cond/uncond) predictions.
+- `sampling_prepare` (function): Pre-sampling hook; activates ControlNet runtime, loads required models to GPU, and prepares smart-offload state.
+- `sampling_cleanup` (function): Post-sampling hook; cleans up ControlNet, smart-offload state, unloads models, and triggers op cache cleanup.
 """
 
 import os

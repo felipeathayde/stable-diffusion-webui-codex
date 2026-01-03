@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SD3/SD3.5 parser plan builder (DiT core + optional VAE + CLIP-L/CLIP-G/T5XXL).
+Defines split/conversion/validation steps for SD3-family checkpoints, converting embedded CLIP and (optional) T5-XXL components and
+validating core presence and required text-encoder keys.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `build_plan` (function): Builds and returns the SD3 `ParserPlanBundle`.
+- `_convert_clip_l` (function): Converts CLIP-L tensors and registers the `clip_l` alias mapping.
+- `_convert_clip_g` (function): Converts CLIP-G tensors when present and registers the `clip_g` alias mapping.
+- `_convert_t5` (function): Converts T5-XXL tensors when present and registers the `t5xxl` alias mapping.
+- `_validate_transformer_core` (function): Validates presence of required SD3 transformer keys.
+- `_validate_clip_l` (function): Validates CLIP-L conversion output presence.
+- `_validate_clip_g` (function): Validates CLIP-G conversion output presence when provided.
+- `_validate_t5` (function): Validates T5 conversion output keys when provided.
+"""
+
 from __future__ import annotations
 
 from typing import Dict

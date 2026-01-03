@@ -1,4 +1,26 @@
-"""Shared dataclasses for Codex generation workflows."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared dataclasses for Codex generation workflows (conditioning, plans, results, metadata).
+These structures are consumed by engines and workflow builders to describe runs without relying on legacy state containers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ExtraNetworkDescriptor` (dataclass): Parsed extra network descriptor (e.g. LoRA path/weight + metadata).
+- `PromptContext` (dataclass): Normalized prompt state after preprocessing (prompts/negatives/loras/controls/metadata).
+- `ConditioningPayload` (dataclass): Conditioning tensors assembled for a generation pass (cond/uncond + extras).
+- `SamplingPlan` (dataclass): Complete specification of a sampling run (sampler/scheduler/steps/seeds/noise settings).
+- `HiResPlan` (dataclass): High-resolution second pass configuration (target size + steps/denoise/cfg).
+- `InitImageBundle` (dataclass): Inputs derived from an initial image (pixels/latents + optional mask).
+- `AppliedExtra` (dataclass): Record of applied extra network or post-processing effect.
+- `GenerationResult` (dataclass): Outputs and diagnostics from a generation pass (samples/decoded + metadata/applied_extras).
+- `VideoPlan` (dataclass): Execution plan for video workflows (frames/fps/steps/scheduler + extras).
+- `VideoResult` (dataclass): Result bundle for video workflows (frames + metadata).
+"""
 
 from __future__ import annotations
 

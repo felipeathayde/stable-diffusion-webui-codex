@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared generation parameters panel (basic + batch).
+Composes `BasicParametersCard` and `BatchSettingsCard` into a single settings block used by image model tabs.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `GenerationSettingsCard` (component): Shared generation settings block for image tabs.
+-->
+
 <template>
   <div class="cdx-stack">
     <BasicParametersCard

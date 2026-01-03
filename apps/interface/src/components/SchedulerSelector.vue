@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Scheduler dropdown selector.
+Renders a scheduler dropdown from the supported scheduler list and emits the selected scheduler name.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SchedulerSelector` (component): Scheduler selector component.
+- `onChange` (function): Emits `update:modelValue` for the selected scheduler.
+-->
+
 <template>
   <div class="form-field">
     <label class="label-muted">{{ labelText }}</label>

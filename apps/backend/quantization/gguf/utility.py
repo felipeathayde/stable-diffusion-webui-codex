@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Utility helpers for GGUF naming and size labels.
+Implements size rounding/labels and filename convention helpers used by conversion tooling.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `fill_templated_filename` (function): Fills GGUF filename templates (e.g. `{ftype}` placeholders) using the output type.
+- `model_weight_count_rounded_notation` (function): Formats a parameter count using K/M/B/T notation with stable rounding.
+- `size_label` (function): Builds a size label string, including MoE-aware formatting when experts are present.
+- `naming_convention` (function): Constructs a GGUF-style output filename following the upstream naming convention.
+"""
+
 from __future__ import annotations
 
 from typing import Literal

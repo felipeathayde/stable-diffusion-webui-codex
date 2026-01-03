@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native Stable Diffusion 3.5 engine.
+Assembles an `SDEngineRuntime` using `SD35_SPEC`; optional text-encoder behavior is controlled via `CODEX_SD3_ENABLE_T5`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_opts` (function): Loads SD3/SD35 environment flags (currently `CODEX_SD3_ENABLE_T5`) into a simple namespace.
+- `StableDiffusion3` (class): SD 3.5 diffusion engine wiring runtime components to the Codex engine interface.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -28,3 +28,4 @@ Status: Active
 - 2025-12-16: Added `TaskType.VID2VID` + `Vid2VidRequest` for WAN video-to-video orchestration; video requests also carry optional `video_options` for export settings.
 - 2025-12-30: `InferenceOrchestrator` now reloads an already-loaded engine when load-affecting `engine_options` change (e.g. `text_encoder_override`, VAE override, core streaming), so overrides actually apply and caches don’t go stale across requests.
 - 2026-01-01: `InferenceOrchestrator` now purges VRAM (unload cached engines + memory manager unload/empty_cache) before a generation when the requested `(checkpoint, text encoders)` signature differs from the previous generation (prevents OOM on model swaps).
+- 2026-01-02: Added standardized file header docstrings across `apps/backend/core/**` modules (doc-only change; part of rollout).

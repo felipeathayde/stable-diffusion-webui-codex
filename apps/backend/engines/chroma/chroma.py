@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native Chroma engine built on the Flux engine toolkit.
+Assembles a `FluxEngineRuntime` from `CHROMA_SPEC` and exposes the `CodexDiffusionEngine` surface used by API/use-cases.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Chroma` (class): Chroma diffusion engine (txt2img/img2img) wiring the Chroma runtime (Flux toolkit) to the Codex engine interface.
+"""
+
 from __future__ import annotations
 
 import logging

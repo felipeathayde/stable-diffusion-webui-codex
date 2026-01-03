@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SafeTensors helper wrappers for runtime adapter loading.
+Provides a small exception type and safe-open context manager used by adapter loaders to read tensors without leaking handles.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SafeTensorError` (class): Adapter-facing error for safetensors open/load failures.
+- `open_safetensor` (contextmanager): Context manager opening a safetensors file and ensuring the handle is closed.
+- `load_tensors` (function): Loads all tensors from a safetensors file into a `{key: tensor}` mapping.
+"""
+
 from __future__ import annotations
 
 from contextlib import contextmanager

@@ -1,3 +1,23 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Prompt token node + prompt parsing/serialization for the editor.
+Defines the Tiptap `PromptToken` node view and implements best-effort conversion between the editor JSON document and the legacy prompt string format used by the backend.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptTokenAttrs` (interface): Attributes stored on a prompt token node (kind/name/weight/enabled).
+- `PromptToken` (const): Tiptap node definition rendered via `PromptTokenChip`.
+- `nodeTypeName` (function): Best-effort node type resolver for ProseMirror/Tiptap nodes.
+- `forEachChild` (function): Child iterator for ProseMirror/Tiptap node content.
+- `serializePrompt` (function): Serializes an editor JSON document into a legacy prompt string (tokens + text).
+- `parsePromptToTiptap` (function): Parses a legacy prompt string into a minimal Tiptap doc with prompt token nodes.
+*/
+
 // tags: prompt, serialization, tiptap
 import { Node, mergeAttributes } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'

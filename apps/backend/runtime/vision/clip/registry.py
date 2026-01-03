@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Variant detection and validation for CLIP vision checkpoints.
+Infers supported `ClipVisionVariant` values from hallmark state-dict keys and performs lightweight consistency checks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for detection/validation diagnostics.
+- `_detect_openclip_variant` (function): Detects OpenCLIP variants by counting transformer blocks.
+- `detect_variant_from_state_dict` (function): Detects the supported CLIP vision variant for a state dict.
+- `get_spec_for_state_dict` (function): Returns the variant spec corresponding to a detected state dict.
+- `validate_state_dict` (function): Validates a state dict matches the provided variant spec (layer count + required keys).
+"""
+
 from __future__ import annotations
 
 import logging

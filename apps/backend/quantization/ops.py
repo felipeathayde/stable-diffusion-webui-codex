@@ -1,4 +1,23 @@
-# CodexQuantization - Optimized bit operations
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Optimized bit unpacking and block utilities for quantized tensors.
+Provides cached lookup-table-based nibble unpackers and helpers for splitting packed blocks into typed slices used by dequant kernels.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_build_4bit_lookup_signed` (function): Builds a lookup table for fast signed 4-bit unpacking.
+- `_build_4bit_lookup_unsigned` (function): Builds a lookup table for fast unsigned 4-bit unpacking.
+- `unpack_4bits_signed` (function): Unpacks packed 4-bit values into int8 range [-8, 7] using a cached LUT.
+- `unpack_4bits_unsigned` (function): Unpacks packed 4-bit values into uint8 range [0, 15] using a cached LUT.
+- `unpack_1bits` (function): Unpacks 1-bit packed tensors into 0/1 values.
+- `reorder_4bits` (function): Reorders packed nibbles to improve memory access patterns.
+- `split_blocks` (function): Splits a block tensor along the last dimension with explicit size validation.
+"""
 
 from __future__ import annotations
 

@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lightweight pipeline debug toggle and decorator helpers.
+Provides a process-wide debug flag, a best-effort env-driven enable hook (`CODEX_PIPELINE_DEBUG`), and a decorator placeholder for tracing.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PIPELINE_DEBUG_ENABLED` (constant): Global on/off switch for pipeline debug logging.
+- `set_pipeline_debug` (function): Enables/disables pipeline debug logging.
+- `log` (function): Logs a message when pipeline debug is enabled.
+- `apply_env_flag` (function): Reads `CODEX_PIPELINE_DEBUG` and toggles pipeline debug accordingly.
+- `pipeline_trace` (function): Decorator helper (currently a no-op wrapper preserving signature via `functools.wraps`).
+"""
+
 from __future__ import annotations
 
 import logging

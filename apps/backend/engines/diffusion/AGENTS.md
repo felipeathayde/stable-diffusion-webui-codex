@@ -1,7 +1,7 @@
 # apps/backend/engines/diffusion Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2025-10-28
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -9,3 +9,4 @@ Status: Active
 
 ## Notes
 - Keep orchestration logic generic; delegate model-specific behaviour to the respective engine subpackages and runtimes.
+- 2026-01-02: Added standardized file header docstrings to diffusion facade modules (doc-only change; part of rollout).

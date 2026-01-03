@@ -2,7 +2,7 @@
 # apps/interface/src/components/ui Overview
 Date: 2025-12-23
 Owner: Frontend Maintainers
-Last Review: 2025-12-27
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -17,3 +17,4 @@ Status: Active
 ## Notes
 - Keep components presentational: props in, emits out; no store calls or API fetching.
 - Styling should live under `apps/interface/src/styles/components/` and use `cdx-*` semantic classes.
+- 2026-01-03: Added standardized file header blocks to UI primitive components (doc-only change; part of rollout).

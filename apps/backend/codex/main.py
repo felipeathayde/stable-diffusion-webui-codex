@@ -1,9 +1,23 @@
-from __future__ import annotations
-
-"""Codex model/runtime management (native).
-
-Forward-looking API for model/module selection entirely no-legacy.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Transitional model/module selection state for Codex bootstrap paths.
+Stores additional module selections and checkpoint state for compatibility code paths that have not migrated to the native services/options stack.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_Selections` (dataclass): Global selection state (additional modules + checkpoint name).
+- `_SELECTIONS` (constant): Singleton selection state instance.
+- `modules_change` (function): Updates additional modules selection and returns whether it changed.
+- `checkpoint_change` (function): Updates checkpoint selection and returns whether it changed.
+- `refresh_model_loading_parameters` (function): Native stub for legacy reload hooks (no-op).
+"""
+
+from __future__ import annotations
 
 from typing import Any, List
 

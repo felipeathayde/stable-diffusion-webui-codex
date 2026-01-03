@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampling driver (native + optional k-diffusion) for diffusion runtimes.
+Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
+while emitting timeline/diagnostic hooks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
+- `_raise_if_cancelled` (function): Checks cancellation state and raises `_SamplingCancelled` when requested.
+- `_PrecisionFallbackRequest` (exception): Signals the caller to retry sampling with a different precision policy.
+- `_kd_sampler_callable` (function): Wraps a k-diffusion sampler call with the compiled cond/uncond and CFG scale plumbing.
+- `_KDiffusionModel` (class): Adapter that exposes the model interface expected by k-diffusion samplers.
+- `_run_kdiffusion_sampler` (function): Runs the selected k-diffusion sampler with the current sampling context and hooks.
+- `CodexSampler` (class): Main sampler driver; builds `SamplingContext`, resolves sampler specs (native vs k-diffusion), runs the inner loop,
+  and integrates memory-management/timeline diagnostics.
+"""
+
 from __future__ import annotations
 
 # tags: sampling, diagnostics

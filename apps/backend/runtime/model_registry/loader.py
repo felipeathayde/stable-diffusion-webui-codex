@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model signature detection by running the registered detectors against a state dict.
+Builds a `SignalBundle` and returns the single matching `ModelSignature` (fails fast with `UnknownModelError`/`AmbiguousModelError`).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `detect_from_state_dict` (function): Detects checkpoint family/architecture and returns a structured `ModelSignature`.
+"""
+
 from __future__ import annotations
 
 from typing import Mapping, Any, List

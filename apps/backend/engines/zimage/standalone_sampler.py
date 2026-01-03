@@ -1,12 +1,18 @@
-"""Standalone Z Image Sampler using Diffusers math.
-
-Uses OUR loader/encoder/transformer but follows Diffusers scheduler exactly.
-This bypasses all k-diffusion machinery and uses FlowMatchEulerDiscreteScheduler.
-
-Key insight from Diffusers pipeline_z_image.py:
-- Diffusers computes `noise_pred = -model_output` before `scheduler.step(...)`.
-- Codex Z-Image core returns `noise_pred` already; do not double-negate.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Standalone Z Image sampler using Diffusers scheduler math.
+Runs the Z-Image transformer directly while following `FlowMatchEulerDiscreteScheduler` semantics (including `shift` and terminal sigma handling) without the k-diffusion stack.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `sample_zimage_diffusers_math` (function): Samples Z Image latents using Diffusers math/scheduler steps (no double-negation of the model output).
+"""
+
 from __future__ import annotations
 
 import logging

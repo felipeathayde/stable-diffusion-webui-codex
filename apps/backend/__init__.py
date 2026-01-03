@@ -1,4 +1,22 @@
-"""Apps backend façade exposing orchestrator interfaces and engines."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Backend package facade with lazy exports.
+Re-exports core engine/request types and lazily resolves engines/runtime/patchers/services on first access to avoid importing heavy dependencies during startup.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TaskType` (enum): Canonical backend task types used across requests and orchestrator (re-export).
+- `EngineRegistry` (class): Engine registry type (re-export).
+- `registry` (constant): Global engine registry instance (re-export).
+- `_LAZY` (constant): Lazy export name groups that drive `__getattr__` dispatch.
+- `__getattr__` (function): Lazy import hook for heavy backend surfaces and special-cased exports.
+- `__all__` (constant): Explicit export list for the backend facade (see list for the full public surface).
+"""
 # tags: backend, exports, lazy-imports
 
 from .core.engine_interface import BaseInferenceEngine, EngineCapabilities, TaskType

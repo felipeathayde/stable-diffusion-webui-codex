@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model-family → parser-plan dispatch for the Codex model parser.
+Maps `ModelFamily` values to the appropriate `build_plan(...)` implementation and provides a single `resolve_plan(...)` entrypoint used by
+`parse_state_dict(...)`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_BUILDERS` (constant): Mapping of supported `ModelFamily` values to plan-builder callables.
+- `resolve_plan` (function): Resolves a `ParserPlanBundle` for a signature (raises `UnsupportedFamilyError` when missing).
+"""
+
 from __future__ import annotations
 
 from typing import Callable, Dict

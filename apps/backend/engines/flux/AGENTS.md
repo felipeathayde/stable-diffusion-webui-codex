@@ -1,7 +1,7 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2025-12-30
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 - Flux-family engines expose `EngineCapabilities` and set distilled-CFG behaviour during `load()`; keep bundle assembly side-effect free.
 - 2025-12-30: Flux now wraps prompts with per-job metadata (`distilled_cfg_scale`, `smart_cache`) and the conditioning cache respects `smart_cache` and includes `distilled_cfg_scale` in its key (avoids stale embeddings when toggling cache or changing distilled CFG).
 - 2026-01-01: `Flux.set_clip_skip(...)` now clears the conditioning cache to avoid returning stale pooled embeddings when `smart_cache` is enabled.
+- 2026-01-02: Added standardized file header docstrings to Flux engine modules (doc-only change; part of rollout).

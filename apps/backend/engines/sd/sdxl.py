@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SDXL diffusion engine implementation (base + refiner) for the backend orchestrator.
+Implements SDXL txt2img/img2img execution with smart cache integration, conditioning validation, and event emission for progress/results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_stats` (function): Computes basic tensor statistics for debug logging (shape/dtype/device + min/max/mean/std).
+- `_opts` (function): Builds an SDXL options namespace (crop defaults and related SDXL processing defaults).
+- `_validate_conditioning_payload` (function): Validates conditioning-related payload fields against the assembled runtime/spec.
+- `_SDXLPrompt` (class): Prompt marker type used for internal prompt/meta handling.
+- `_prompt_meta` (function): Computes metadata for a prompt batch (length/count flags) used in caching and diagnostics.
+- `_smart_cache_from_prompts` (function): Determines smart-cache behavior hints from prompt content and runtime settings.
+- `StableDiffusionXL` (class): Main SDXL engine (loads bundles, assembles runtime, runs inference, and emits `InferenceEvent` stream).
+- `StableDiffusionXLRefiner` (class): SDXL refiner engine (second-stage refinement runtime; similar lifecycle to the base engine).
+"""
+
 from __future__ import annotations
 
 import logging

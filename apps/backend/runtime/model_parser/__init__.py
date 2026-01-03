@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Public API for parsing checkpoint state dicts into Codex components.
+Exposes `parse_state_dict(...)` which resolves the correct family plan, executes it over a (possibly lazy) state dict, and returns a
+`CodexEstimatedConfig` describing the parsed components and defaults.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `parse_state_dict` (function): Parses a state dict using a `ModelSignature` and returns a `CodexEstimatedConfig`.
+- `CodexEstimatedConfig` (class): Parse output structure (re-export from `.specs`).
+"""
+
 from __future__ import annotations
 
 from collections.abc import MutableMapping

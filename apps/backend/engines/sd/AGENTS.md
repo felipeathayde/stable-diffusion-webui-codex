@@ -19,6 +19,7 @@ Status: Active
 - 2025-11-28: SDXL `get_learned_conditioning` now validates cross-attn/ADM tensors (shapes, NaN/Inf) against UNet config and fails fast on mismatches to prevent “golesma” outputs.
 - 2025-12-05: SDXL base/refiner engines honor per-job Smart Cache (`smart_cache` on `Txt2ImgRequest`/`CodexProcessingTxt2Img`) via `_SDXLPrompt.smart_cache`, with fallback to the global option when unset. SDXL `txt2img` also preenche `info["timings_ms"]` com tempos aproximados de sampling/decode para apoiar profiling backend sem impactar o gentime da UI.
 - 2026-01-02: Fixed SDXL refiner embed cache correctness (cache hits no longer crash) and aligned refiner time-id embedding with `_prompt_meta` + `_validate_conditioning_payload` (fail-fast on malformed conditioning).
+- 2026-01-02: Added standardized file header docstrings to SD engine modules (doc-only change; part of rollout).
 
 ### Event Emission
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.

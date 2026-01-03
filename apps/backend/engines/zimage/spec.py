@@ -1,4 +1,26 @@
-"""Z Image engine specification (analogous to Flux spec.py)."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Z Image engine specification and runtime assembly (analogous to Flux `spec.py`).
+Builds a `ZImageEngineRuntime` from parsed components, optionally loading external VAE/text-encoder assets when the checkpoint is core-only.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
+- `ZImageTextPipelines` (dataclass): Text processing pipeline bundle for the Z Image engine (currently Qwen3 text).
+- `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/UNet/text pipelines/clip wrapper/device/dtype).
+- `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
+- `_k_predictor` (function): Builds the flow-match predictor used by the UNet patcher for Z Image sampling.
+- `_load_external_vae` (function): Loads an external VAE asset for core-only checkpoints.
+- `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder asset for core-only checkpoints.
+- `assemble_zimage_runtime` (function): Assembles the runtime (including external assets when required) and returns a `ZImageEngineRuntime`.
+- `ZIMAGE_SPEC` (constant): Default Z Image engine spec instance.
+- `__all__` (constant): Public export list for this module.
+"""
 
 from __future__ import annotations
 
@@ -119,20 +141,14 @@ def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
     16-channel latent space as Flux.
     """
     import torch
-    from apps.backend.runtime.common.vae import load_flow16_vae, find_flow16_vae
+    from apps.backend.runtime.common.vae import load_flow16_vae
     
     torch_dtype = torch.bfloat16 if dtype == "bf16" else torch.float16 if dtype == "fp16" else torch.float32
     
-    # Find VAE if path not provided
-    if vae_path is None:
-        from apps.backend.infra.config.paths import get_paths_for
-        search_paths = get_paths_for("flux_vae") + get_paths_for("zimage_vae")
-        vae_path = find_flow16_vae(search_paths)
-    
-    if vae_path is None:
+    if vae_path is None or not str(vae_path).strip():
         raise ValueError(
             "Z Image GGUF requires external VAE. "
-            "Please select a VAE or place one in models/zimage-vae/ or models/flux-vae/"
+            "Please select a VAE so the request can include 'vae_sha' (sha256)."
         )
     
     return load_flow16_vae(vae_path, dtype=torch_dtype)

@@ -1,4 +1,20 @@
-"""Core dataclasses for Flux streaming infrastructure."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Dataclasses/enums describing Flux streaming blocks, segments, and execution plans.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BlockType` (enum): Flux transformer block type classification (double vs single stream).
+- `BlockInfo` (dataclass): Metadata about a single transformer block (index/type/module/bytes).
+- `Segment` (dataclass): Streaming unit grouping consecutive blocks of the same type.
+- `ExecutionPlan` (dataclass): Ordered plan describing segment execution order and total sizes.
+- `calculate_module_bytes` (function): Sum parameter bytes for a module (for VRAM accounting).
+"""
 
 from __future__ import annotations
 

@@ -1,3 +1,23 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Frontend-driven XYZ sweep store for image tabs.
+Builds parameter grid combos, enqueues jobs, starts txt2img tasks, streams task events, and supports stop modes/cancellation while collecting
+per-cell results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
+- `StopMode` (type): Stop behavior for a running sweep (`immediate` vs `after_current`).
+- `XyzJob` (interface): Internal job record for each cell (payload/task id/status/result/error).
+- `useXyzStore` (store): Pinia store for XYZ sweeps; builds combos, runs jobs, subscribes to task SSE, and writes results into cells.
+- `XyzStore` (type): Convenience return type alias for `useXyzStore`.
+*/
+
 // tags: xyz, store, sweeps
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'

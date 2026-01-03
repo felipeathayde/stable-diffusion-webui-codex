@@ -2,7 +2,7 @@
 # apps/backend/quantization/gguf Overview
 Date: 2025-12-15
 Owner: Runtime Maintainers
-Last Review: 2025-12-15
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Active
 ## Notes
 - Keep this subpackage dependency-light: NumPy-only + stdlib.
 - Quantization math lives in `apps/backend/quantization/kernels/*` (not here).
+- 2026-01-02: Added standardized file header docstrings to GGUF helper modules (doc-only change; part of rollout).

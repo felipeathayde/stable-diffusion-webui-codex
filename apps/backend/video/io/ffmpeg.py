@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: ffmpeg/ffprobe-backed video IO helpers (probe metadata + extract frames).
+Provides a small fail-fast wrapper around `ffprobe` to parse video metadata (fps/duration/codecs) and a frame-extraction helper using `ffmpeg`,
+intended for backend video tasks without pulling heavy dependencies (no cv2).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FFmpegUnavailableError` (class): Raised when `ffmpeg`/`ffprobe` are missing from PATH.
+- `_which` (function): Resolves a required binary from PATH (raises `FFmpegUnavailableError` when missing).
+- `_parse_ratio` (function): Parses ffprobe ratio strings (e.g. `30000/1001`) into floats.
+- `VideoProbe` (dataclass): Parsed video metadata returned by `probe_video`.
+- `probe_video` (function): Runs `ffprobe` and returns a parsed `VideoProbe`.
+- `extract_frames` (function): Extracts frames from a video into an output directory (ffmpeg subprocess).
+"""
+
 from __future__ import annotations
 
 import json

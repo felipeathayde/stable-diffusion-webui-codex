@@ -1,28 +1,18 @@
-"""BIOS-style curses TUI (pure stdlib) for managing services and options.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Settings persist under ``.sangoi/launcher/`` segmented in meta/areas/models.
+Purpose: BIOS-style curses TUI (stdlib-only) for managing Codex services and launcher options.
+Settings persist under `.sangoi/launcher/` and the UI controls API/UI service processes plus runtime flags (including WAN controls).
 
-Tabs
-- Main: status + actions (Start/Restart/Kill API/UI)
-- Runtime: engine/runtime options (attention backend, dtypes, swap policy)
-- WAN: WAN22 runtime controls (I2V order, TE placement, debug toggles)
-- Logging: configure Codex log level and WAN logging output
-- Logs: combined logs with scrolling
-- Exit: Save and Exit / Exit Without Saving
-
-Controls
-- Left/Right: change tab
-- Up/Down: move selection
-- Enter: select / toggle
-- +/-: change value (where applicable)
-- g / G: bottom/top in Logs
-- c: clear logs (Logs tab)
-- F10: Save and Exit
-- Esc: Exit without saving
-
-Notes
-- External terminal launch is supported only on Windows (new console window).
-- WAN_SDPA_DEBUG toggles verbose SDPA backend logs in wan22 runtime.
+Symbols (top-level; keep in sync; no ghosts):
+- `BIOSApp` (class): Curses app implementing the tabbed launcher UI (render loop + key handling); includes nested helpers for panes,
+  item lists per tab (`_items_main/_items_runtime/_items_wan/_items_debug/_items_logging`), popup selection, and applying changes to the profile/env.
+- `main` (function): Curses entrypoint (used with `curses.wrapper`); creates `BIOSApp` and runs the UI loop.
 """
 from __future__ import annotations
 

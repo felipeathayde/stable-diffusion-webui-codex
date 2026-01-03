@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: Active
 - 2025-12-26: `WanStagePanel.vue` now places Sampler/Scheduler/Steps on the first row and Seed/CFG on the second; LoRA UI was extracted into `WanStageLoraField.vue`.
 - 2025-12-28: Added `WanSubHeader.vue` and made `WanVideoOutputPanel.vue` embeddable (so WANTab can compose “Video Output” without nested card borders); Interpolation (RIFE) is now a single toggle button.
 - 2025-12-29: `WanVideoOutputPanel.vue` renders the RIFE toggle inline with the other output toggles (Ping-pong/Save/Trim) for layout parity.
+- 2026-01-03: Added standardized file header blocks to WAN components (doc-only change; part of rollout).

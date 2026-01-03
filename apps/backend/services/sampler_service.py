@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler/scheduler resolution and validation for API requests.
+Resolves sampler aliases to canonical names and validates requested samplers against the supported catalog.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SamplerService` (class): Resolves/validates sampler + scheduler names for requests.
+"""
+
 from __future__ import annotations
 
 from fastapi.exceptions import HTTPException

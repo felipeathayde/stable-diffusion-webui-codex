@@ -1,3 +1,37 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampling context + sigma schedule construction utilities for diffusion samplers.
+Defines the canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, align-your-steps, etc.), then packages
+per-run sampling state (sampler kind, noise settings, scheduler config) into a `SamplingContext`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (alias-aware, no silent fallback).
+- `_append_zero` (function): Appends a terminal sigma=0 to a sigma schedule tensor.
+- `_karras_schedule` (function): Builds a Karras sigma schedule.
+- `_polyexponential_schedule` (function): Builds a polyexponential sigma schedule.
+- `_exponential_schedule` (function): Builds an exponential sigma schedule.
+- `_uniform_schedule_from_predictor` (function): Builds a uniform schedule from a predictor function.
+- `_simple_schedule_from_predictor` (function): Builds a simple schedule from a predictor function.
+- `_sgm_uniform_schedule` (function): Builds an SGM-uniform schedule (SGM-style).
+- `_ddim_uniform_schedule` (function): Builds a DDIM-uniform schedule.
+- `_normal_schedule` (function): Builds a normal/beta-derived schedule (optionally SGM variant).
+- `_beta_schedule` (function): Builds a beta schedule.
+- `_linear_quadratic_schedule` (function): Builds a linear-quadratic schedule.
+- `_kl_optimal_schedule` (function): Builds a KL-optimal schedule.
+- `_align_your_steps_schedule` (function): Builds the “align your steps” schedule variants (SDXL aware).
+- `_turbo_schedule` (function): Builds a turbo schedule.
+- `build_sigma_schedule` (function): Main scheduler entrypoint; selects the schedule builder and returns the sigma tensor.
+- `_env_flag` (function): Reads boolean toggles from env for debug/feature flags affecting sampling context.
+- `SamplingContext` (dataclass): Bundles sampling configuration/state for one run (sampler kind, scheduler, noise settings, etc.).
+- `build_sampling_context` (function): Builds a `SamplingContext` from inputs (engine/runtime settings + request payload).
+"""
+
 from __future__ import annotations
 
 import logging

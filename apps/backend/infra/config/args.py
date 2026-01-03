@@ -1,3 +1,30 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Backend CLI argument parsing and runtime memory config bootstrap.
+Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smart offload) and turns argv/env into a `RuntimeMemoryConfig`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
+- `_truthy` (function): Parses a string env/arg into a boolean (truthy/falsey).
+- `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
+- `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
+- `_validate_required_devices` (function): Validates required device flags are present/consistent (raises on invalid combos).
+- `_normalize_device_choice` (function): Normalizes device choice strings (e.g., cpu/cuda/directml) into canonical form.
+- `_normalize_dtype_choice` (function): Normalizes dtype choice strings (fp32/fp16/bf16/fp8) into canonical form.
+- `_torch_dtype_for_choice` (function): Maps a dtype choice string to a torch dtype name (string form used across config objects).
+- `_apply_component_device_overrides` (function): Applies per-component device overrides (core/vae/text encoders) to `RuntimeMemoryConfig`.
+- `_apply_env_overrides` (function): Applies environment-variable overrides onto parsed args.
+- `_resolve_attention_backend` (function): Resolves attention backend selection into `AttentionBackend`.
+- `build_runtime_memory_config` (function): Builds a `RuntimeMemoryConfig` from parsed args (includes validation + defaults).
+- `initialize` (function): Entry-point helper; parses argv/env and returns the built runtime config (used by launchers).
+"""
+
 import argparse
 import logging
 import os

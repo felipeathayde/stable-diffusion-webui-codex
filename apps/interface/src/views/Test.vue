@@ -1,3 +1,26 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Internal/test view for WAN GGUF harness (manual request builder + SSE streaming preview).
+Used for debugging WAN video generation, asset selection, and streaming task events without going through the full Model Tabs UX.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Test` (component): WAN GGUF harness UI; builds payloads, starts tasks, subscribes to SSE events, and renders previews/results.
+- `toDataUrl` (function): Converts a `GeneratedImage` payload into a data URL for rendering.
+- `stopStream` (function): Unsubscribes from the active task SSE stream (if any).
+- `readFileAsDataURL` (function): Reads a `File` into a data URL (used for init image upload).
+- `onFile` (function): Handles file input change events and stores image data (async).
+- `generate` (function): Submits the current request payload and starts streaming task events (async).
+- `resizeDataUrl` (function): Resizes a data URL image to the given dimensions (used for previews).
+- `onTaskEvent` (function): Handles task SSE events (status/progress/result/error/end) and updates UI state.
+- `saveProfile` (function): Persists current UI settings/profile locally for reuse.
+-->
+
 <template>
   <section class="panels test-view">
     <div class="panel-stack">

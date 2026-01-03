@@ -15,6 +15,7 @@ Status: Active
 ## Notes
 - Keep schemas in sync with the frontend API client (`apps/interface/src/api`).
 - Avoid embedding business logic here—delegate to services/use cases and focus on validation and serialization.
+- Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` captures the “how assets are listed + selected” contract (inventory → SHA selection → backend resolution).
 - API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/run_api.py` (`_ORCH` singleton).
 - 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.highres`) but still tolerates compatibility keys (`codex_engine`, `codex_diffusion_device`, `sd_model_checkpoint`) while downstream clients migrate; prompts may be empty to support negative-only runs.
 - 2025-11-21: SPA static mount now registers after all `/api/*` routes to prevent POSTs from being intercepted by the UI fallback; invalid txt2/img2/video payloads raise HTTP errors instead of returning 200 with a background error.
@@ -46,3 +47,4 @@ Status: Active
 - 2026-01-01: Added `--debug-preview-factors` (launcher arg) so the runtime can log best-fit latent→RGB preview factors (`[preview-factors]`) for deriving new `Approx cheap` mappings.
 - 2026-01-02: `/api/{txt2img,img2img}` now accepts checkpoint selection by SHA (10-char short hash or 64-char sha256) via `model`/`sd_model_checkpoint` or `extras.model_sha`; SDXL ignores global VAE/TE overrides (`forge_selected_vae`, `forge_additional_modules`) unless explicit `extras.vae_path`/`extras.tenc_path` are supplied.
 - 2026-01-01: `/api/models` now accepts `?refresh=1` to re-scan checkpoint roots so the UI can pick up newly copied weights without restarting the backend.
+- 2026-01-02: Added standardized file header docstrings to interface modules (doc-only change; part of rollout).

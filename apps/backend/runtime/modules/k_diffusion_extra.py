@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Optional sampler extras (UniPC, Restart, DDPM) for the k-diffusion-enabled path.
+Provides lightweight noise-schedule utilities and step samplers used by the runtime sampling driver when k-diffusion-backed samplers are
+explicitly enabled and available.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `NoiseScheduleVP` (class): VP noise schedule helper (discrete/linear/cosine) providing alpha/sigma/lambda accessors for samplers.
+- `model_wrapper` (function): Wraps a model into a VP-space epsilon predictor with optional guidance modes.
+- `sample_unipc` (function): Minimal UniPC sampler implementation operating over a sigma schedule.
+- `sample_unipc_bh2` (function): UniPC BH2 placeholder (currently forwards to `sample_unipc`).
+- `restart_sampler` (function): Restart sampling wrapper (requires k-diffusion; mirrors legacy behaviour with restart segments + noise injection).
+- `default_noise_sampler` (function): Returns a default noise sampler closure for stochastic samplers.
+- `generic_step_sampler` (function): Generic sampler driver that iterates sigmas and calls a provided step function.
+- `DDPMSampler_step` (function): Single-step DDPM update function used by the generic step sampler.
+- `sample_ddpm` (function): DDPM sampler wrapper using `generic_step_sampler`.
+"""
+
 import math
 
 import torch

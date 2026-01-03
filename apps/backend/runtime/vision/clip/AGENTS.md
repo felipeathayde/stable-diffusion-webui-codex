@@ -1,7 +1,7 @@
 # apps/backend/runtime/vision/clip Overview
 Date: 2025-10-31
 Owner: Backend Runtime Maintainers
-Last Review: 2025-10-31
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -12,3 +12,4 @@ Status: Active
 - Specs live in `specs.py` and feed detection/registry helpers; extend via dataclasses/enums.
 - `ClipVisionEncoder` handles device/dtype selection and logging; keep it free of UI concerns.
 - Update `.sangoi/plans/codex-legacy-backlog.md` entry #9 when behaviour changes or new variants land.
+- 2026-01-02: Added standardized file header docstrings to CLIP vision runtime modules (doc-only change; part of rollout).

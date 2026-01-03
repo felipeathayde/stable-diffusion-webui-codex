@@ -1,7 +1,18 @@
-"""WAN 2.2 14B Engine (Clean implementation matching Flux pattern).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This is a complete rewrite using the WanTransformer2DModel and
-centralized runtime assembly pattern.
+Purpose: WAN 2.2 14B engine (Codex runtime assembly) for txt2vid/img2vid.
+Resolves the model bundle, assembles a `WanEngineRuntime` via `assemble_wan_runtime`, and executes video requests with optional core
+streaming settings (Flux-like engine pattern).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Wan2214BEngine` (class): Codex diffusion engine for WAN22 14B; assembles runtime, handles txt2vid/img2vid runs, and streams progress/events
+  (contains nested helpers for core streaming and bundle resolution).
 """
 
 from __future__ import annotations

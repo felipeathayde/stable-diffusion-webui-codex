@@ -1,7 +1,7 @@
 # apps/backend/video/interpolation Overview
 Date: 2025-10-28
 Owner: Video Runtime Maintainers
-Last Review: 2025-10-28
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -12,3 +12,4 @@ Status: Active
 
 ## Notes
 - Keep interpolation helpers lightweight and stateless. Engines should supply context (frames, options) and handle fallbacks when interpolation is unavailable.
+- 2026-01-03: Added standardized file header docstrings to interpolation modules (doc-only change; part of rollout).

@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: HiRes (second pass) settings panel.
+Renders HiRes controls (scale/denoise/steps/upscaler) and optional hires refiner settings when enabled.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `HighresSettingsCard` (component): HiRes settings block for supported image tabs.
+- `toggle` (function): Toggles the HiRes enabled state.
+-->
+
 <template>
   <div class="highres-card">
     <div class="hr-header">

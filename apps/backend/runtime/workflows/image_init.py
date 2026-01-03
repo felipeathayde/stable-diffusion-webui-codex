@@ -1,4 +1,18 @@
-"""Helpers for preparing init-image bundles for img2img-style workflows."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Init-image preparation helpers for img2img-style workflows.
+Encodes an init image into tensors/latents and returns a structured `InitImageBundle` for downstream workflows.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `prepare_init_bundle` (function): Converts a processing init image into a tensor/latent bundle (optionally includes a mask).
+- `__all__` (constant): Explicit export list for the module.
+"""
 
 from __future__ import annotations
 

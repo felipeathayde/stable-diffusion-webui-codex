@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA adapter discovery and lightweight type sniffing.
+Lists LoRA files from per-model roots (plus `apps/paths.json` overrides), and optionally inspects safetensors keys to classify adapter types.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LoraEntry` (dataclass): Described LoRA metadata (path/format/size/types).
+- `_iter_files` (function): Yields files under a root directory matching a set of extensions.
+- `_default_search_roots` (function): Returns default LoRA search roots (per-model folders + `apps/paths.json` overrides).
+- `list_loras` (function): Returns stable `{name,path}` entries for discovered LoRAs.
+- `_detect_types_safetensors` (function): Best-effort type detection from safetensors key names (`lora/loha/lokr/glora/diff`).
+- `describe_loras` (function): Returns `LoraEntry` objects including file size and detected types when available.
+"""
+
 from __future__ import annotations
 
 import os

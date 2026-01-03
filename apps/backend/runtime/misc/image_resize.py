@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Tensor image resize helpers used by pipelines (bislerp/lanczos/adaptive).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `bislerp` (function): Resize via spherical interpolation in feature space (nested slerp + bilinear coords).
+- `lanczos` (function): Resize via PIL Lanczos resampling (CPU round-trip).
+- `adaptive_resize` (function): Resize with optional center crop, selecting the requested upscale method.
+"""
+
 import torch
 import numpy as np
 

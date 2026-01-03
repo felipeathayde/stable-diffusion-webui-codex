@@ -1,7 +1,7 @@
 # apps/backend/runtime/adapters/lora Overview
 Date: 2025-10-28
 Owner: Runtime Adapter Maintainers
-Last Review: 2025-10-28
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 
 ## Notes
 - Keep this pipeline aligned with `apps/backend/patchers/lora_apply.py` and the options service so selections remain consistent.
+- 2026-01-02: Added standardized file header docstrings to `__init__.py`, `mapping.py`, `ops.py`, `pipeline.py`, and `types.py` (doc-only change; part of rollout).

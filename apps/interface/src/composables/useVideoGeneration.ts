@@ -1,3 +1,33 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Unified video generation composable for WAN (txt2vid/img2vid/vid2vid).
+Owns per-tab video generation state (progress/frames/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
+to update UI state and fetch final results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Status` (type): Video generation status state (`idle|running|error|done`).
+- `VideoMode` (type): Supported video modes (`txt2vid|img2vid|vid2vid`).
+- `VideoRunStatus` (type): Terminal status for history entries (`completed|error|cancelled`).
+- `VideoRunHistoryItem` (interface): Persisted run history entry (task id, status, summary, params snapshot, error message).
+- `VideoQueuedRun` (interface): Queued run entry (payload snapshot + optional file) to support sequential submissions.
+- `VideoProgressState` (interface): Progress payload shape (stage/percent/eta/step/totalSteps).
+- `VideoGenerationState` (interface): Per-tab runtime state (status/progress/frames/video result/history/queue/cancel flags).
+- `freshState` (function): Creates a new `VideoGenerationState` with empty progress/history/queue.
+- `getTabState` (function): Returns (and initializes) the per-tab `VideoGenerationState` for a given tab id.
+- `defaultStage` (function): Creates default `WanStageParams` for UI state initialization.
+- `defaultVideo` (function): Creates default `WanVideoParams` for UI state initialization.
+- `WanAssetsParams` (interface): Minimal assets selection state (metadata/text encoder/VAE labels/paths) used for WAN requests.
+- `defaultAssets` (function): Creates default `WanAssetsParams`.
+- `useVideoGeneration` (function): Main composable API; wires payload building, task start/cancel, SSE handling, queued runs, and history updates
+  (contains nested handlers for events, queue progression, and per-mode payload assembly).
+*/
+
 import { computed, ref } from 'vue'
 
 import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, startVid2Vid, subscribeTask } from '../api/client'

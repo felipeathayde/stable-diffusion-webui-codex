@@ -1,9 +1,17 @@
-"""GGUF file loader for text encoders.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module provides utilities for loading GGUF (GPT-Generated Unified Format)
-files as PyTorch state dicts, with automatic dequantization.
+Purpose: GGUF → state_dict loader with optional dequantization.
+Loads GGUF tensor blobs and metadata using `GGUFReader`, returning either raw float tensors or `CodexParameter` entries for deferred/on-demand dequantization.
 
-The GGUF format is commonly used for quantized LLM models (Q4_K, Q5_K, Q8_0, etc).
+Symbols (top-level; keep in sync; no ghosts):
+- `load_gguf_state_dict` (function): Loads a GGUF file into a PyTorch-style state dict (optionally dequantizing tensors).
+- `get_gguf_metadata` (function): Extracts GGUF metadata fields into a JSON-serializable dict.
 """
 
 from __future__ import annotations

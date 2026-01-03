@@ -1,6 +1,23 @@
-"""Debug helpers for Z Image runtime.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-All logging here is opt-in via environment flags to avoid flooding normal runs.
+Purpose: Opt-in debug helpers for Z-Image runtime.
+Implements env-flag parsing and lightweight tensor/text summaries to support targeted diagnostics without flooding normal runs.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_TRUE` (constant): Accepted truthy values for env flags.
+- `env_flag` (function): Reads a boolean env flag (supports global `CODEX_ZIMAGE_DEBUG` enablement).
+- `env_int` (function): Reads an integer env flag with a default fallback.
+- `truncate_text` (function): Truncates text to a configurable max length for logs.
+- `summarize_ints` (function): Summarizes long integer sequences using a head/tail window.
+- `find_indices` (function): Finds a bounded number of indices matching a value in a sequence.
+- `tensor_stats` (function): Logs min/max/mean/std/norm for a tensor (no-grad, float stats).
+- `__all__` (constant): Explicit export list for debug helpers.
 """
 
 from __future__ import annotations

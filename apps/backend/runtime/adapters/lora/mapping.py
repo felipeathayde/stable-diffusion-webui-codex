@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA key mapping helpers for CLIP and UNet modules.
+Builds stable key maps translating LoRA naming conventions into model parameter names, including architecture-aware UNet mapping using diffusers key conversion.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LORA_CLIP_MAP` (constant): CLIP attention/MLP suffix mapping used for legacy LoRA key compatibility.
+- `_register_generic_weights` (function): Adds generic `{prefix: weight}` mappings for raw state dict keys.
+- `model_lora_keys_clip` (function): Builds the LoRA-key → CLIP/text-encoder parameter map.
+- `model_lora_keys_unet` (function): Builds the LoRA-key → UNet parameter map (includes diffusers mapping for UNet architectures).
+"""
+
 from __future__ import annotations
 
 from typing import Dict

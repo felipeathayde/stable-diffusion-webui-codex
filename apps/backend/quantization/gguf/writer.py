@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: GGUF file writer (header/KV/tensor-info/tensor-data) with sharding and alignment support.
+Serializes GGUF metadata keys and quantized tensor buffers to `.gguf` files, handling endianness, type tags, and write-state transitions.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TensorInfo` (dataclass): Tensor metadata (shape/dtype/size + optional numpy buffer) used during write planning.
+- `GGUFValue` (dataclass): Typed GGUF value wrapper (`value` + `GGUFValueType`) for metadata serialization.
+- `WriterState` (enum): Internal GGUF writer state machine (no file/header/kv/tensor-info/weights).
+- `GGUFWriter` (class): Main writer implementation; writes headers + metadata + tensor tables + weights, supports sharding and temp files
+  (contains many helper methods for KV encoding, alignment, and tensor write paths).
+"""
+
 from __future__ import annotations
 
 import logging

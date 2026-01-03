@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
+Defines the shared “engine core” container for UNet/VAE/text encoders and an abstract base engine with model-load/validate semantics.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CodexObjects` (dataclass): Container for core diffusion components (UNet/VAE/text encoders + optional clipvision) with validate/describe helpers.
+- `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
+- `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration and runtime helpers
+  (subclasses implement task-specific inference behavior and required component sets).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -353,7 +371,16 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 explicit_paths=explicit_paths,
             )
         if bundle_obj is None:
-            bundle = resolve_diffusion_bundle(model_ref, text_encoder_override=te_override_cfg)
+            vae_path_for_bundle = raw_options.get("vae_path")
+            if not isinstance(vae_path_for_bundle, str) or not vae_path_for_bundle.strip():
+                vae_path_for_bundle = None
+            else:
+                vae_path_for_bundle = vae_path_for_bundle.strip()
+            bundle = resolve_diffusion_bundle(
+                model_ref,
+                text_encoder_override=te_override_cfg,
+                vae_path=vae_path_for_bundle,
+            )
         elif isinstance(bundle_obj, DiffusionModelBundle):
             bundle = bundle_obj
         else:
@@ -386,6 +413,17 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
         # Optional VAE override: explicit user path has priority over bundled VAE.
         override_vae_path = self._load_options.get("vae_path")
+        try:
+            external_vae_path = (getattr(bundle, "metadata", {}) or {}).get("vae_external_path")
+        except Exception:
+            external_vae_path = None
+        if override_vae_path and external_vae_path:
+            try:
+                if os.path.samefile(str(override_vae_path), str(external_vae_path)):
+                    override_vae_path = None
+            except Exception:
+                if str(override_vae_path) == str(external_vae_path):
+                    override_vae_path = None
         if override_vae_path:
             if not os.path.isfile(override_vae_path):
                 raise FileNotFoundError(f"vae_path '{override_vae_path}' does not exist.")

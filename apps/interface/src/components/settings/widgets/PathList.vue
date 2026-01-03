@@ -1,3 +1,22 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Editable list widget for path arrays.
+Provides add/remove controls for a list of paths and a best-effort “Browse…” helper (uses the browser directory picker API when available).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PathList` (component): Path list editor used by `SettingsPaths.vue`.
+- `add` (function): Adds a path from the input to the list (deduped).
+- `remove` (function): Removes a path entry by index.
+- `dedupe` (function): Deduplicates paths using a normalized key.
+- `browse` (function): Best-effort directory picker helper (falls back to an alert when unsupported).
+-->
+
 <template>
     <div class="path-list">
     <div class="pathlist-controls">

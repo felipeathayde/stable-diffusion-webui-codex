@@ -1,8 +1,22 @@
-/**
- * Unified generation composable.
- * Provides generate(), progress, gallery, status for any engine type.
- * State is stored per-tab in model_tabs.
- */
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Unified generation composable for image tabs (txt2img/img2img).
+Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
+starts `/api/txt2img` and `/api/img2img`, and consumes task SSE events to update UI state.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
+- `GenerationState` (interface): Per-tab reactive runtime state (status/progress/preview/gallery/history selection).
+- `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
+- `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
+- `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates (includes nested handlers).
+*/
 
 import { computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
@@ -203,35 +217,59 @@ export function useGeneration(tabId: string) {
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
 
-    const teOverride = engineType.value === 'flux'
-      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
-      : undefined
-    
-    // Build extras based on engine capabilities (e.g. tenc_sha)
-    const extras: Record<string, unknown> = {}
+	    const teOverride = engineType.value === 'flux'
+	      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
+	      : undefined
+	    
+	    // Build extras based on engine capabilities (e.g. tenc_sha)
+	    const extras: Record<string, unknown> = {}
 
-    const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
-    if (needsTencSha) {
-      const shas: string[] = []
-      for (const label of textEncoders) {
-        const sha = quicksettings.resolveTextEncoderSha(label)
-        if (!sha) {
+	    const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
+	    if (needsTencSha) {
+	      const shas: string[] = []
+	      for (const label of textEncoders) {
+	        const sha = quicksettings.resolveTextEncoderSha(label)
+	        if (!sha) {
+	          state.value.status = 'error'
+	          state.value.errorMessage = `Text encoder SHA not found for '${label}'.`
+	          return
+	        }
+	        shas.push(sha)
+	      }
+	      if (shas.length === 0) {
+	        state.value.status = 'error'
+	        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
+	        return
+	      }
+        if (engineType.value === 'flux' && shas.length !== 2) {
           state.value.status = 'error'
-          state.value.errorMessage = `Text encoder SHA not found for '${label}'.`
+          state.value.errorMessage = 'Flux requires exactly 2 text encoders (CLIP + T5).'
           return
         }
-        shas.push(sha)
+        if (engineType.value === 'zimage' && shas.length !== 1) {
+          state.value.status = 'error'
+          state.value.errorMessage = 'Z Image requires exactly 1 text encoder (Qwen3).'
+          return
+        }
+	      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
+	    }
+
+      const selectedVae = String(quicksettings.currentVae || '').trim()
+      const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
+      if (config.capabilities.requiresVae) {
+        if (!resolvedVaeSha) {
+          state.value.status = 'error'
+          state.value.errorMessage = 'Select a VAE so the request can include vae_sha.'
+          return
+        }
+        extras.vae_sha = resolvedVaeSha
+      } else if (resolvedVaeSha) {
+        // Optional override for SD/SDXL families: if user picked an explicit VAE, include its sha.
+        extras.vae_sha = resolvedVaeSha
       }
-      if (shas.length === 0) {
-        state.value.status = 'error'
-        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
-        return
-      }
-      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
-    }
-    
-    const device = (quicksettings.currentDevice || 'cpu') as any
-    let engineOverrideForRequest = String(engineType.value)
+	    
+	    const device = (quicksettings.currentDevice || 'cpu') as any
+	    let engineOverrideForRequest = String(engineType.value)
     // Flux img2img should run via the Kontext workflow engine.
     if (p.useInitImage && engineOverrideForRequest === 'flux') {
       engineOverrideForRequest = 'kontext'

@@ -1,3 +1,20 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: QuickSettings global store (models/samplers/schedulers/options + asset SHA selection).
+Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
+resolve to backend SHA-based assets (no raw-path inputs).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
+  setters that call API updates, and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers).
+*/
+
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo } from '../api/types'
@@ -20,6 +37,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   // SHA256 lookup maps for text encoders and VAEs (populated from inventory)
   const textEncoderShaMap = ref<Map<string, string>>(new Map())
   const vaeShaMap = ref<Map<string, string>>(new Map())
+  const wanGgufShaMap = ref<Map<string, string>>(new Map())
   const attentionChoices = ref<{ value: string; label: string }[]>([
     { value: 'torch-sdpa', label: 'Torch (SDPA)' },
     { value: 'xformers', label: 'xFormers' },
@@ -257,11 +275,49 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
         // Also populate VAE SHA map
         const vaeMap = new Map<string, string>()
         for (const v of inv.vaes || []) {
-          if (v.name && v.sha256) {
-            vaeMap.set(v.name, v.sha256)
+          const sha = typeof v.sha256 === 'string' ? v.sha256 : ''
+          if (!sha) continue
+          const name = typeof v.name === 'string' ? v.name : ''
+          const rawPath = typeof v.path === 'string' ? v.path : ''
+          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+          const keys = new Set<string>()
+          if (name) keys.add(name)
+          if (rawPath) keys.add(rawPath)
+          if (normPath) keys.add(normPath)
+          const basename = normPath ? normPath.split('/').pop() : name
+          if (basename) keys.add(basename)
+          if (normPath) {
+            for (const prefix of prefixes) {
+              keys.add(`${prefix}/${normPath}`)
+            }
+          }
+          for (const key of keys) {
+            vaeMap.set(key, sha)
           }
         }
         vaeShaMap.value = vaeMap
+
+        const wanMap = new Map<string, string>()
+        const wanFiles = (inv as any)?.wan22?.gguf
+        if (Array.isArray(wanFiles)) {
+          for (const w of wanFiles) {
+            const sha = typeof w?.sha256 === 'string' ? w.sha256 : ''
+            if (!sha) continue
+            const name = typeof w?.name === 'string' ? w.name : ''
+            const rawPath = typeof w?.path === 'string' ? w.path : ''
+            const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+            const keys = new Set<string>()
+            if (name) keys.add(name)
+            if (rawPath) keys.add(rawPath)
+            if (normPath) keys.add(normPath)
+            const basename = normPath ? normPath.split('/').pop() : name
+            if (basename) keys.add(basename)
+            for (const key of keys) {
+              wanMap.set(key, sha)
+            }
+          }
+        }
+        wanGgufShaMap.value = wanMap
       } catch (_) {
         // Non-critical - SHA lookup will just be empty
       }
@@ -322,6 +378,42 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     const model = resolveModelInfo(raw)
     const sha = model ? String(model.hash || '').trim() : ''
     return sha || undefined
+  }
+
+  function resolveVaeSha(label: string | null | undefined): string | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+
+    const lower = raw.toLowerCase()
+    if (lower === 'automatic' || lower === 'built in' || lower === 'built-in' || lower === 'none') {
+      return undefined
+    }
+    if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
+    const normalized = raw.replace(/\\+/g, '/')
+    const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
+    const tail = normalized.split('/').pop() || ''
+    return (
+      vaeShaMap.value.get(normalized) ||
+      vaeShaMap.value.get(withoutPrefix) ||
+      vaeShaMap.value.get(tail)
+    )
+  }
+
+  function resolveWanGgufSha(label: string | null | undefined): string | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+
+    const lower = raw.toLowerCase()
+    if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
+    const normalized = raw.replace(/\\+/g, '/')
+    const tail = normalized.split('/').pop() || ''
+    return wanGgufShaMap.value.get(normalized) || wanGgufShaMap.value.get(tail)
   }
 
   function isModelGguf(label: string | null | undefined): boolean {
@@ -506,7 +598,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     textEncoderShaMap,
     resolveTextEncoderSha,
     resolveModelSha,
+    resolveVaeSha,
+    resolveWanGgufSha,
     isModelGguf,
     vaeShaMap,
+    wanGgufShaMap,
   }
 })

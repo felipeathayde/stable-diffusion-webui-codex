@@ -1,4 +1,22 @@
-# CodexQuantization - Public API functions
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Quantization public API (bake/quantize/dequantize) for GGUF packed tensors.
+Exposes torch and NumPy helpers for working with GGML/GGUF quantized weights, used by runtime ops and tooling (e.g. GGUF converter).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `bake` (function): Pre-bakes a `CodexParameter` for faster repeated dequantization.
+- `dequantize` (function): Dequantizes a GGUF `CodexParameter` to a torch tensor (auto-bake as needed).
+- `quantize` (function): Quantizes a torch tensor into a GGUF `CodexParameter` (when supported by the quant spec).
+- `quantize_numpy` (function): Quantizes a NumPy float array into packed GGUF bytes (tooling path).
+- `dequantize_numpy` (function): Dequantizes packed GGUF bytes into float32 NumPy arrays.
+- `dequantize_tensor` (function): Convenience wrapper for callsites that may receive a `CodexParameter` or a regular tensor.
+"""
 
 from __future__ import annotations
 

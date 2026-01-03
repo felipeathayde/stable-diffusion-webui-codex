@@ -1,4 +1,19 @@
-"""Abstract interfaces and capability descriptors for inference engines."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Abstract interfaces and capability descriptors for inference engines.
+Defines the engine contract (`BaseInferenceEngine`) and typed capability metadata (`EngineCapabilities`) used by the orchestrator/registry.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TaskType` (enum): Supported task types (txt2img/img2img/inpaint/upscale/video).
+- `EngineCapabilities` (dataclass): Declares tasks/model types/devices/precision supported by an engine.
+- `BaseInferenceEngine` (class): Abstract base class for engine implementations (lifecycle + per-task iterator APIs).
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,20 @@
-# tags: sampling, registry, samplers
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler registry helpers mapping UI/API sampler names to validated sampler specifications.
+Normalizes aliases and enforces scheduler compatibility before sampling context creation.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SamplerSpec` (dataclass): Canonical sampler specification (kind, aliases, default scheduler, allowed schedulers).
+- `get_sampler_spec` (function): Resolve a sampler name/alias to a validated `SamplerSpec`.
+- `__all__` (constant): Public export list for registry helpers.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

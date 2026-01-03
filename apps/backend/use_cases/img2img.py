@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Image-to-image use case orchestration (init image + optional hires pass).
+Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally
+performs a hires second pass.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_build_hires_plan` (function): Builds a `HiResPlan` from the processing config (or returns `None` when disabled).
+- `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
+- `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples.
+- `_derive_seeds` (function): Normalizes seed/subseed inputs from processing config.
+- `generate_img2img` (function): Core img2img implementation; applies overrides, computes conditioning/init bundle, executes sampling, and returns samples.
+- `run_img2img` (function): Thin wrapper used by orchestrators to run img2img with an engine + prepared processing object.
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace

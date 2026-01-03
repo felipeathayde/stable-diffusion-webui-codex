@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Image encode/decode helpers for API/service layers.
+Decodes base64/data URIs or (optionally) fetches remote URLs under env guards, and encodes images with PNG text metadata or JPEG/WEBP EXIF parameters.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `MediaService` (class): Decode/encode helpers used by the API and progress services.
+"""
+
 from __future__ import annotations
 
 import base64

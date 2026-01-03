@@ -1,4 +1,27 @@
-"""Sampler/scheduler availability policy for engines and tasks."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler/scheduler availability policy for engines and tasks.
+Defines default sampler/scheduler lists and per-engine overrides, exposing a stable API for UI gating and backend request validation.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SAMPLER_NAME` (constant): Mapping of `SamplerKind` to UI display names.
+- `DEFAULT_IMAGE_SAMPLERS` (constant): Baseline sampler display names for image tasks.
+- `DEFAULT_IMAGE_SCHEDULERS` (constant): Baseline scheduler display names for image tasks.
+- `DEFAULT_VIDEO_SAMPLERS` (constant): Baseline sampler display names for video tasks.
+- `DEFAULT_VIDEO_SCHEDULERS` (constant): Baseline scheduler display names for video tasks.
+- `ENGINE_OVERRIDES` (constant): Per-engine overrides keyed by engine key and `TaskType`.
+- `ENGINE_ALIAS` (constant): Engine key alias map (normalized to override keys).
+- `_base_for_task` (function): Returns baseline lists for the given task kind (image vs video).
+- `allowed_samplers` (function): Returns allowed sampler display names for an engine/task.
+- `allowed_schedulers` (function): Returns allowed scheduler display names for an engine/task.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, List

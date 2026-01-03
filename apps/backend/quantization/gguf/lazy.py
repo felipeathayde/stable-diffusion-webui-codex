@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lazy tensor wrappers for GGUF/quantization NumPy operations.
+Defines a metaclass-driven lazy computation graph over NumPy arrays, enabling meta-tensor shape/dtype propagation and deferred evaluation
+of tensor operations when only metadata is needed.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LazyMeta` (class): Metaclass that injects wrapped special methods and dynamic attribute access for lazy tensors.
+- `LazyBase` (class): Abstract base for lazy tensors (meta/eager conversion + recursive wrapping of nested structures).
+- `LazyNumpyTensor` (class): Lazy tensor implementation for NumPy ndarrays.
+"""
+
 from __future__ import annotations
 from abc import ABC, ABCMeta, abstractmethod
 

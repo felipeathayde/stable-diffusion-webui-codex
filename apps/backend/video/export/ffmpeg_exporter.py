@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Encode frame sequences to a video container via ffmpeg (mp4/webm/gif).
+Writes frames to a workspace-local temp dir, runs ffmpeg (optional audio mux), and returns a structured export result suitable for
+serving under `/api/output/{rel_path}`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `VideoExportError` (class): Explicit export error surfaced when ffmpeg/Pillow or encoding fails.
+- `_which` (function): Resolves an executable path from PATH (raises `VideoExportError` if missing).
+- `_output_root` (function): Resolves the repo-local output root (`CODEX_ROOT/output`).
+- `_sanitize_filename_prefix` (function): Sanitizes a user/task-provided filename prefix for safe output paths.
+- `_normalize_video_options` (function): Normalizes legacy `video_*` option keys into exporter option keys.
+- `_format_to_container` (function): Maps a format token to an output container + codec kind.
+- `_audio_codec_for` (function): Chooses an audio codec for a given output container.
+- `VideoExportResult` (dataclass): Export result container (saved flag + path/rel_path/mime + metadata).
+- `export_video` (function): Main entrypoint; writes frames and runs ffmpeg to produce the final video file.
+"""
+
 from __future__ import annotations
 
 import json

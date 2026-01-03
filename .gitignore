@@ -103,6 +103,9 @@ apps/settings_values.json
 !requirements*.txt
 *.docx
 .sangoi/reports/tooling/pyright/*
+# Codex session reasoning extracts (local artifacts; do not commit)
+.sangoi/backups/webui_reasoning.jsonl
+.sangoi/backups/webui_reasoning_report.md
 # Model weights at repo root (do not ignore */models/ code folders).
 /models/
 

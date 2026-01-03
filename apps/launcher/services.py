@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Launcher service specs and process supervision (API + UI).
+Defines service specs/handles, spawns subprocesses with environment overrides, streams logs into a shared buffer, and performs strict port
+availability checks (IPv4/IPv6) before starting the API.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ServiceStatus` (enum): Launcher service lifecycle status.
+- `CodexServiceSpec` (dataclass): Static service definition (command/cwd/env + external-terminal policy).
+- `CodexServiceHandle` (dataclass): Runtime service handle; spawns/monitors subprocess and forwards stdout to a log buffer.
+- `_codex_root` (function): Resolves the repo root used for service working directories.
+- `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
+- `_now` (function): Timestamp helper for launcher log lines.
+- `_extract_cli_port` (function): Extracts a `--port` value from a command list.
+- `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
+- `_windows_no_activate` (function): Windows startupinfo helper to open consoles without stealing focus.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native UNet patcher (sampling reservations + ControlNet chaining + patch registration).
+Wraps the diffusion UNet in a `ModelPatcher` with extra state for deterministic sampling reservations and a structured ControlNet graph,
+building a composite runtime on activation (no fallbacks; invalid payloads raise).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SamplingReservation` (dataclass): Tracks reserved memory and auxiliary patchers required during sampling (clone/add_memory/add_patcher).
+- `UnetPatcher` (class): Main UNet patcher; wraps `KModel`, tracks `ControlNode` graph, builds/activates composite control runtime, and
+  exposes validated helpers for cloning, patch registration, and sampling-time reservations (contains nested helper methods for node cloning,
+  composite rebuild, and property accessors).
+"""
+
 from __future__ import annotations
 
 import copy

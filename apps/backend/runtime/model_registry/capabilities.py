@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Semantic engine capability surfaces exposed to the UI layer.
+Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections are expected to be used for each engine.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler allow-lists).
+- `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
+- `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

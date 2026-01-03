@@ -1,6 +1,20 @@
-"""WAN Video Sampling Module.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Flow-matching sampler for WAN 2.2 video generation with 5D latents [B, C, T, H, W].
+Purpose: WAN 2.2 flow-matching video sampler for 5D latents.
+Implements a sigma schedule and Euler ODE integration with classifier-free guidance for WAN-style video latents shaped `[B, C, T, H, W]`,
+plus a convenience helper that decodes sampled latents through a VAE.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WAN_FLOW_MULTIPLIER_DEFAULT` (constant): Default multiplier applied to sigma when constructing model timestep inputs.
+- `get_flow_sigmas` (function): Builds a shifted sigma schedule for flow-matching from 1→0.
+- `WanVideoSampler` (class): Sampler wrapper around the WAN transformer (CFG + Euler integration).
+- `sample_txt2vid` (function): High-level txt2vid helper (samples latents then decodes via VAE).
 """
 
 from __future__ import annotations

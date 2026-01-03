@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Prompt style editor modal.
+Creates a named style (prompt + negative) via the styles store and emits `saved` when the style is persisted.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StyleEditorModal` (component): Modal for creating/editing prompt styles.
+- `onSave` (function): Persists the style via the store and closes the modal.
+-->
+
 <template>
   <div v-if="modelValue" class="modal">
     <div class="modal-panel">

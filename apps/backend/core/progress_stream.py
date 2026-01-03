@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Threaded streaming adapter for synchronous run_* functions.
+Runs a blocking `run_fn(cfg, ..., on_progress=callback)` in a worker thread and yields progress/result/error events to the caller as an iterator.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `stream_run` (function): Wraps a synchronous run function and yields dict events (`progress`/`result`/`error`).
+"""
+
 from __future__ import annotations
 
 from threading import Thread

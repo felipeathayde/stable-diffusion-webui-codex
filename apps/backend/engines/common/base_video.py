@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared helpers for video engines (txt2vid/img2vid).
+Provides a small `BaseInferenceEngine` wrapper with common event/serialization helpers for video-oriented engines.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BaseVideoEngine` (class): Base class for video engines with shared JSON serialization and optional export wiring helpers.
+"""
+
 from __future__ import annotations
 
 import json
@@ -46,4 +61,3 @@ class BaseVideoEngine(BaseInferenceEngine):
         if options and options.get("save_output"):
             return {"saved": False, "reason": "exporter-not-wired", "fps": int(fps)}
         return None
-

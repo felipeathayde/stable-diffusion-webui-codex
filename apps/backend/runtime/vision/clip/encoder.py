@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Runtime wrapper for Codex-native CLIP vision encoders.
+Constructs and loads HF `CLIPVisionModelWithProjection`, applies memory-management policies, and returns structured outputs.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for clip vision encoder lifecycle and timing logs.
+- `ClipVisionEncoder` (class): Encapsulates model construction/loading and provides `encode(...)` returning `ClipVisionOutput`.
+"""
+
 from __future__ import annotations
 
 import logging

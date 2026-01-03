@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: VAE asset discovery registry for UI dropdowns and metadata panels.
+Scans common VAE locations under `models/`, vendored Hugging Face repos, and engine-specific paths configured in `apps/paths.json`, returning
+stable name lists and basic per-VAE metadata (format/latent_channels/scaling_factor) when available.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `DEFAULT_BASELINES` (constant): Baseline VAE entries shown first (Automatic/Built in/None).
+- `_collect_from_models_root` (function): Collects VAE entries from `models/` (including `models/VAE`).
+- `_collect_from_vendored_hf` (function): Collects `vae/` directories from vendored HF repos.
+- `list_vaes` (function): Returns ordered VAE choice names (baselines + discovered entries).
+- `_read_json` (function): Best-effort JSON reader used for VAE config probing.
+- `describe_vaes` (function): Returns metadata dicts for discovered VAEs (name/path/format + optional config hints).
+"""
+
 from __future__ import annotations
 
 import os

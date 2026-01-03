@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Directory inventory for vendored tokenizers in the Hugging Face cache.
+Lists `{org}/{repo}/tokenizer[_2]` directories under `apps/backend/huggingface` for UI/diagnostics layers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `list_tokenizers` (function): Returns a sorted list of `{name,path}` entries for vendored tokenizer directories.
+"""
+
 from __future__ import annotations
 
 import os

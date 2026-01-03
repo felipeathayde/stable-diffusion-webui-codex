@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Engine-side attention backend selection for diffusers pipelines.
+Applies an attention backend (torch SDPA / xFormers / SageAttention) based on explicit input or `CODEX_ATTENTION_BACKEND`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_get_selected_backend` (function): Reads attention backend selection from the environment (defaults to `"torch-sdpa"`).
+- `apply_to_diffusers_pipeline` (function): Applies the chosen attention backend to a diffusers pipeline or raises with cause.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Optional

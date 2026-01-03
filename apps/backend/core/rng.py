@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Deterministic noise generation helpers for image pipelines.
+Implements image latent noise generation with support for GPU/CPU/Philox sources, subseeds (slerp), and resize-from seeding policies.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `NoiseSourceKind` (enum): Selects the noise source backend (GPU/CPU/Philox).
+- `NoiseSettings` (dataclass): Noise source configuration (source + eta seed delta + optional forced device).
+- `_slerp` (function): Spherical interpolation between two noise tensors (used for subseeds).
+- `_resolve_generator_device` (function): Chooses the device used by the underlying generator given settings/target device.
+- `_seed_to_tensor` (function): Generates a deterministic normal tensor for a given seed and shape.
+- `ImageRNG` (dataclass): Deterministic noise batch generator honoring seed/subseed/resize policies.
+"""
+
 from __future__ import annotations
 
 import enum
@@ -168,4 +188,3 @@ class ImageRNG:
 
 
 __all__ = ["ImageRNG", "NoiseSettings", "NoiseSourceKind"]
-

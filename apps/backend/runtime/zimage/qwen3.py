@@ -1,17 +1,36 @@
-"""Native Qwen3-4B implementation for Z Image text encoding.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This is a standalone implementation that doesn't depend on the transformers library,
-enabling GGUF support through our quantization system.
+Purpose: Native Qwen3-4B text encoder implementation used by the ZImage runtime.
+This is a standalone implementation that avoids `transformers`, enabling GGUF support through the quantization system.
 
-Architecture based on ComfyUI's implementation and Qwen3-4B specifications:
+Architecture notes (Qwen3-4B):
 - hidden_size: 2560
 - intermediate_size: 9728
 - num_hidden_layers: 36
 - num_attention_heads: 32
 - num_key_value_heads: 8 (GQA)
-- RoPE with theta=1000000
+- RoPE theta: 1_000_000
 - Q/K normalization (Gemma3 style)
 - SwiGLU activation
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Qwen3Config` (dataclass): Configuration defaults for Qwen3-4B (dims/layers/heads/RoPE/norm eps).
+- `RMSNorm` (class): RMSNorm implementation used throughout the encoder.
+- `rotate_half` (function): Helper for RoPE rotation (splits and rotates half-dims).
+- `apply_rotary_pos_emb` (function): Applies rotary positional embeddings to `(q, k)` tensors.
+- `RotaryEmbedding` (class): Builds rotary embedding frequency tensors for a given head dim and max positions.
+- `Attention` (class): Attention module (GQA support + optional Q/K norm + SDPA).
+- `MLP` (class): SwiGLU feed-forward block.
+- `TransformerBlock` (class): One transformer layer (attn + MLP + residual/norm plumbing).
+- `Qwen3Model` (class): Core Qwen3 transformer stack (embeddings + blocks + forward).
+- `Qwen3_4B` (class): Convenience wrapper for the 4B variant (loads config, provides encode-style forward usage).
+- `remap_gguf_keys` (function): Remaps GGUF state dict keys to this implementation’s expected parameter names.
 """
 
 from __future__ import annotations

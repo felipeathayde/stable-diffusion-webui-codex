@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Preprocessing helpers for CLIP vision encoders in backend runtime.
+Normalizes a batch of images (expected in BHWC) to the encoder input format (BCHW) using resize/crop and mean/std stats.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for clip vision preprocessing.
+- `_ensure_mean_std` (function): Validates and converts normalization stats into a tensor.
+- `preprocess_image` (function): Resizes/crops and normalizes an image batch for a given preprocess spec.
+"""
+
 from __future__ import annotations
 
 import logging

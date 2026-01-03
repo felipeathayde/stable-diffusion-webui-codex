@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Compatibility engine loader for legacy/bootstrap entry points.
+Resolves a `DiffusionModelBundle`, instantiates the matching engine via the registry, and applies runtime options (device/dtype/attention/accelerator).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EngineLoadOptions` (dataclass): Optional engine load overrides (device/dtype/attention backend/accelerator/VAE override).
+- `load_engine` (function): Loads and initializes a diffusion engine for direct use (best-effort cleanup on failures).
+- `__all__` (constant): Explicit export list for this compatibility loader.
+"""
+
 from __future__ import annotations
 
 import contextlib

@@ -1,3 +1,7 @@
+**Wrong command:** `ls -λα apps/interface/src/stores`
+**Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
+**Correct command:** `ls -la apps/interface/src/stores`
+
 **Wrong command:** `rg -n "Unit test that `prepare_txt2vid`" .sangoi/plans/2025-12-14-wan22-ui-backend-alignment.md`
 **Cause + fix:** `Backticks are command substitution in bash; the shell tries to execute the text inside them before rg runs. Use single quotes around patterns that contain backticks (or escape them) so the pattern is passed literally to rg.`
 **Correct command:** `rg -n --fixed-strings 'Unit test that `prepare_txt2vid`' .sangoi/plans/2025-12-14-wan22-ui-backend-alignment.md`

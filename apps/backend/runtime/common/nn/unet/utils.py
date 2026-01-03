@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Utility helpers for the UNet implementation (conv/pool factories, embeddings, and control application).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `checkpoint` (function): Gradient checkpoint stub (raises `NotImplementedError` when enabled).
+- `exists` (function): True when a value is not `None`.
+- `default` (function): Return a fallback when the provided value is `None`.
+- `conv_nd` (function): Build a Conv layer for 2D/3D tensors.
+- `avg_pool_nd` (function): Build an AvgPool layer for 1D/2D/3D tensors.
+- `apply_control` (function): Apply a residual from a `control` dict to a tensor (best-effort; logs on mismatch).
+- `timestep_embedding` (function): Sinusoidal timestep embedding helper.
+- `ensure_sequence` (function): Normalize a scalar/iterable into an integer tuple, optionally padding to a target length.
+"""
+
 from __future__ import annotations
 
 import logging

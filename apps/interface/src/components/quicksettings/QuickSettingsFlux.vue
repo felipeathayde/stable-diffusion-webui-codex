@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux-specific quicksettings selectors.
+Renders checkpoint/VAE selectors plus a dual text-encoder selection row (CLIP + T5) for Flux model tabs.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsFlux` (component): Flux quicksettings for checkpoint/VAE and dual text encoders.
+- `truncatePath` (function): Truncates absolute paths for compact dropdown labels.
+- `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder values.
+-->
+
 <template>
   <!-- Flux-specific quicksettings row -->
   <div class="quicksettings-group qs-group-checkpoint">
@@ -17,7 +34,8 @@
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
-          <option v-for="v in vaeChoices" :key="v" :value="v">{{ v === 'Automatic' ? 'Built-in' : truncatePath(v) }}</option>
+          <option value="">Select VAE</option>
+          <option v-for="v in vaeChoices" :key="v" :value="v">{{ truncatePath(v) }}</option>
         </select>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
       </div>
@@ -29,14 +47,14 @@
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="textEncoderPrimary" @change="$emit('update:textEncoderPrimary', ($event.target as HTMLSelectElement).value)">
-          <option value="">Built-in CLIP</option>
+          <option value="">Select CLIP</option>
           <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
       </div>
       <div class="qs-pair">
         <select class="select-md" :value="textEncoderSecondary" @change="$emit('update:textEncoderSecondary', ($event.target as HTMLSelectElement).value)">
-          <option value="">Built-in T5</option>
+          <option value="">Select T5</option>
           <option v-for="te in textEncoderChoices" :key="`sec-${te}`" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>

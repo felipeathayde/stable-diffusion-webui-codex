@@ -1,4 +1,68 @@
-"""Compatibility facade exposing Codex memory manager APIs."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Compatibility facade exposing Codex memory manager APIs under legacy names.
+Provides a stable module-level API (devices/dtypes/load/unload/cache) backed by `CodexMemoryManager`, so older code can call into the
+new manager without directly depending on its implementation details.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `VRAMState` (class): Legacy VRAM mode labels (`disabled/no_vram/low_vram/normal_vram/high_vram/shared`) used by UI/compat code.
+- `_bind_config` (function): Internal initializer; unloads any previous manager, creates a new `CodexMemoryManager`, and wires globals/proxies.
+- `reinitialize` (function): Replaces the active memory manager with a new `RuntimeMemoryConfig`.
+- `_wrap_model_sequence` (function): Normalizes `models` input to a concrete `Sequence` for downstream loader calls.
+- `get_torch_device` (function): Returns the active primary torch device.
+- `get_free_memory` (function): Returns free memory for a device (optionally including torch allocator-free memory).
+- `minimum_inference_memory` (function): Returns the minimum memory budget required for inference.
+- `memory_snapshot` (function): Returns a JSON-serializable snapshot of current memory/config state.
+- `load_models_gpu` (function): Loads a sequence of models onto GPU given a required memory budget (compat wrapper around manager load).
+- `load_model_gpu` (function): Loads a single model onto GPU (compat wrapper).
+- `free_memory` (function): Frees memory to satisfy a requirement (supports keeping some models loaded / freeing all).
+- `soft_empty_cache` (function): Best-effort cache emptying (no hard guarantee; wraps manager behavior).
+- `unload_all_models` (function): Unloads all currently loaded models/components via the manager.
+- `cast_to_device` (function): Casts/moves a tensor to a device/dtype with optional copy.
+- `module_size` (function): Estimates module size (bytes) with optional include/exclude device filtering.
+- `get_computation_dtype` (function): Chooses computation dtype for a device/model size given supported dtypes.
+- `core_dtype` (function): Chooses core model dtype for the current config/device.
+- `core_offload_device` (function): Returns the offload device used for core model components.
+- `core_initial_load_device` (function): Returns the initial-load device for core model components given params/dtype.
+- `text_encoder_device` (function): Returns the active device for text encoder components.
+- `text_encoder_offload_device` (function): Returns the offload device for text encoder components.
+- `text_encoder_dtype` (function): Chooses dtype for text encoder components.
+- `vae_device` (function): Returns the active device for VAE components.
+- `vae_offload_device` (function): Returns the offload device for VAE components.
+- `vae_dtype` (function): Chooses dtype for VAE components.
+- `current_precision` (function): Returns current precision for a `DeviceRole` (core/vae/tenc).
+- `allow_precision_fallback` (function): Whether precision fallback is allowed for the role.
+- `report_precision_failure` (function): Reports a precision failure and returns a suggested fallback dtype (or None).
+- `precision_hint` (function): Human-readable hint string for the current precision decision.
+- `intermediate_device` (function): Returns the device used for intermediate tensors (when different from core).
+- `force_upcast_attention_dtype` (function): Whether attention should be forced to an upcast dtype for stability.
+- `xformers_enabled` (function): Legacy flag: whether xformers attention is enabled.
+- `xformers_enabled_vae` (function): Legacy flag: whether xformers is enabled for VAE (if applicable).
+- `pytorch_attention_enabled` (function): Whether PyTorch-native attention (SDPA) is enabled.
+- `should_use_fp16` (function): Legacy heuristic for selecting FP16 given device/model params and perf/stability flags.
+- `should_use_bf16` (function): Legacy heuristic for selecting BF16 given device/model params and perf/stability flags.
+- `dtype_size` (function): Returns element size (bytes) for a torch dtype.
+- `state_dict_dtype` (function): Best-effort dtype extraction for a state dict (tensor dtype or string).
+- `bake_gguf_model` (function): Converts a GGUF-backed model to a baked/dequantized variant (manager-backed helper).
+- `is_device_cpu` (function): Returns whether a torch device is CPU.
+- `mps_mode` (function): Returns whether MPS mode is enabled (legacy).
+- `vram_state` (function): Returns the legacy VRAM state label from current config.
+- `_LoadedModelsProxy` (class): Proxy view over loaded models for legacy APIs (delegates to manager loaded-model registry).
+- `unload_model_clones` (function): Unloads any clones associated with a given model (legacy helper).
+- `unload_model` (function): Unloads a model/component (legacy helper).
+- `__getattr__` (function): Dynamic attribute proxy to the underlying manager (compat surface).
+- `__setattr__` (function): Dynamic attribute setter proxy to the underlying manager (compat surface).
+- `__dir__` (function): Dynamic dir() proxy for the module’s compat surface.
+- `switch_primary_device` (function): Changes the primary device backend (cpu/cuda/etc) at runtime (returns success bool).
+- `set_component_backend` (function): Sets component backend for a role (core/vae/tenc) at runtime (returns success bool).
+- `set_component_dtype` (function): Sets component dtype for a role at runtime (returns success bool).
+"""
 
 from __future__ import annotations
 

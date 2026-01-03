@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Detector interface and registry for the model registry.
+Defines the detector contract (`matches`/`build_signature`) and a global `REGISTRY` used by detector modules to self-register at import time.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ModelDetector` (protocol): Detector interface (priority + `matches()` + `build_signature()`).
+- `DetectorRegistry` (class): Registry that stores detectors sorted by priority (lower runs first).
+- `REGISTRY` (constant): Global registry instance used across detector modules.
+"""
+
 from __future__ import annotations
 
 from typing import Protocol

@@ -1,22 +1,20 @@
-"""Legacy pipeline mimic/tracer (optional).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Goal
-----
-Provide a throwaway hook layer that mirrors the Forge/A1111 pipeline snapshot
-under `.refs/Forge-A1111` so we can compare Codex vs legacy behaviour
-end-to-end. When enabled, it logs checkpoint loading, processing, decode, and
-image save events without altering outputs.
+Purpose: Legacy pipeline mimic/tracer (optional) for Codex vs Forge/A1111 parity debugging.
+When enabled, installs lightweight hooks that mirror the legacy pipeline snapshot under `.refs/Forge-A1111`, logging checkpoint loading,
+processing, decode, and image save stages without altering outputs.
 
-Usage
------
-```python
-from apps.backend.debug import legacy_mimic
-legacy_mimic.enable()  # idempotent
-```
-
-After enabling, run the legacy/Forge UI as usual. Logs are printed to stdout
-with prefix `[legacy-mimic]` for the key stages. Disable by restarting the
-process; this module avoids global side effects otherwise.
+Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_stats` (function): Formats quick tensor stats for debug logs.
+- `_log` (function): Emits a single structured log line for a stage.
+- `_wrap_sd_model` (function): Wraps key SD model methods with log hooks (idempotent per instance).
+- `enable` (function): Enables the mimic hooks (idempotent); safe unless explicitly called.
 """
 
 from __future__ import annotations

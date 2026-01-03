@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Img2vid orchestration using Diffusers pipelines (WAN22).
+Runs high/low stages, configures sampler settings, applies LoRAs, optionally performs video frame interpolation, exports video, and yields progress/result events.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
+- `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
+"""
+
 from __future__ import annotations
 
 import time

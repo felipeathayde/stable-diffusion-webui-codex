@@ -3,7 +3,7 @@
 # apps/backend/runtime/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
-Last Review: 2025-12-14
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -35,3 +35,4 @@ Status: Active
   - Logs (INFO): shapes de `input_ids` e `last_hidden_state` (prompt/negative), dtype/device.
 - Engine (Diffusers path):
   - Loga device/dtype efetivos e tipos das principais componentes (TE/UNet/VAE).
+- 2026-01-02: Added standardized file header docstrings to WAN22 runtime modules (doc-only change; part of rollout).

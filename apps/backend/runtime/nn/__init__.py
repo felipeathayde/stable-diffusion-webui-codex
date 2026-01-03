@@ -1,4 +1,27 @@
-"""Neural network building blocks for backend runtimes."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Convenience re-exports for neural network building blocks used by backend runtimes.
+This module groups commonly used classes/functions so engines can import from a single location, while keeping model-specific logic in their own packages.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ModuleDict` (class): `torch.nn.Module` wrapper that registers a provided module dict (compat helper).
+- `ObjectDict` (class): Attribute-access wrapper for a plain mapping (compat helper).
+- `Dummy` (class): Minimal `ConfigMixin` module used by some diffusers-style patterns.
+- `IntegratedCLIP` (class): Integrated CLIP wrapper exposing expected `logit_scale`/projection fields.
+- `IntegratedT5` (class): Integrated T5 wrapper used by native pipelines.
+- `UNet2DConditionModel` (class): Native UNet implementation used by SD-family engines.
+- `FluxTransformer2DModel` (class): Native Flux transformer core.
+- `ChromaTransformer2DModel` (class): Native Chroma transformer core.
+- `AutoencoderKLWan` (class): WAN22-specific VAE implementation.
+- `SD3Transformer2DModel` (class): SD3 transformer core.
+- `__all__` (constant): Export list for the re-exported symbols.
+"""
 
 from apps.backend.runtime.common.nn.base import ModuleDict, ObjectDict, Dummy
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
@@ -62,5 +85,3 @@ __all__ = [
     "rope",
     "t2i_adapter",
 ]
-
- 

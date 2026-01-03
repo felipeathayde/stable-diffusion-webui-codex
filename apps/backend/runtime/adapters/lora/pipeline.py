@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA pipeline helpers for patch dict building and variant detection.
+Converts parsed LoRA tensors into `ModelPatcher` patch dictionaries and provides a small helper to describe which adapter variants are present in a file.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `VARIANT_LABELS` (constant): Mapping from `PatchKind` to stable string labels for variant reporting.
+- `convert_specs_to_patch_dict` (function): Converts `PatchSpec` items into `ModelPatcher`-compatible patch dict tuples.
+- `build_patch_dicts` (function): Builds patch dictionaries from raw tensors and a `to_load` key map.
+- `describe_lora_file` (function): Returns the set of variant labels detected in a LoRA file.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, Iterable, Mapping, Set

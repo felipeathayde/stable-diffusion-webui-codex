@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Clip vision patcher adapter backed by the Codex runtime vision encoder.
+Provides legacy-facing load/preprocess/encode helpers, normalizing state dict keys and delegating model details to `apps.backend.runtime.vision.clip`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CLIP_VISION_G` (constant): Hugging Face kwargs for the CLIP-ViT-bigG-14 vision variant.
+- `CLIP_VISION_H` (constant): Hugging Face kwargs for the CLIP-ViT-H-14 vision variant.
+- `CLIP_VISION_VITL` (constant): Hugging Face kwargs for the CLIP-ViT-L vision variant.
+- `Output` (class): Dict-like wrapper around `ClipVisionOutput` with attribute-style access.
+- `ClipVisionModel` (class): Legacy-facing wrapper around `ClipVisionEncoder` with load/encode helpers.
+- `clip_preprocess` (function): Preprocesses an image tensor using a `ClipVisionPreprocessSpec` (size override supported).
+- `_normalize_state_dict` (function): Normalizes and filters vision state dict keys (optional OpenCLIP conversion).
+- `load_clipvision_from_sd` (function): Builds a `ClipVisionModel` from an in-memory state dict.
+- `load` (function): Loads a CLIP vision checkpoint from disk and returns a `ClipVisionModel`.
+"""
+
 from __future__ import annotations
 
 import logging

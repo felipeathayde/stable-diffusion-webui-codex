@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed signature specs produced by model detectors and consumed by loader/runtime assembly.
+Defines the core enums and dataclasses for checkpoint signatures (family, prediction kind, latent format, quantization hints, and component signatures).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ModelFamily` (enum): Checkpoint family tags (SD/SDXL/Flux/WAN22/etc).
+- `PredictionKind` (enum): Prediction parameterization tags (`eps`, `v_prediction`, `flow`, etc).
+- `LatentFormat` (enum): Latent space format tags used by runtimes.
+- `QuantizationKind` (enum): Quantization scheme identifiers (`none`, `nf4`, `fp4`, `gguf`).
+- `QuantizationHint` (dataclass): Structured quantization hint (kind + optional detail).
+- `TextEncoderSignature` (dataclass): Text encoder metadata (name/prefix/expected dim/tokenizer hint).
+- `VAESignature` (dataclass): VAE metadata (key prefix + latent channels).
+- `CodexCoreArchitecture` (enum): Core architecture tags (UNet/DiT/Transformer/FlowTransformer).
+- `CodexCoreSignature` (dataclass): Core network signature (channels, context dim, depth, key prefixes).
+- `ModelSignature` (dataclass): Full checkpoint signature contract produced by detectors (`unet` is a legacy alias for `core`).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

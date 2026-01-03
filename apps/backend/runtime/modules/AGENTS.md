@@ -2,7 +2,7 @@
 <!-- tags: runtime, modules, k_prediction -->
 Date: 2025-11-10
 Owner: Runtime Maintainers
-Last Review: 2025-12-12
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 ## Notes
 - Audit and remove modules as soon as upstream consumers migrate to the native APIs.
 - 2025-11-28: `k_prediction_from_diffusers_scheduler` now preserves scheduler `sigma_data`/`prediction_type` when constructing `Prediction`, avoiding silent scaling drift for v-pred SDXL variants.
+- 2026-01-02: Added standardized file header docstrings to legacy module wrappers (including `__init__.py`) (doc-only change; part of rollout).
 
 ## Invariants (KModel.apply_model)
 - `c_crossattn` deve ser Tensor 3D (B,S,C); erro explícito se inválido.

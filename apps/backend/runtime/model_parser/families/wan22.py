@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 parser plan builder (temporal DiT core + optional VAE + text encoders).
+Builds split/conversion/validation steps for WAN22 checkpoints using signature-provided core prefixes and text-encoder signatures, converting
+UMT5-XXL (required) and CLIP-L when present and validating core patch/head weights.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_REQUIRED_ENCODERS` (constant): Set of required encoder names (currently `umt5xxl`).
+- `_CLIP_LAYERS` (constant): CLIP-L layer count used by WAN22 conversions.
+- `build_plan` (function): Builds and returns the WAN22 `ParserPlanBundle`.
+- `_component_name` (function): Derives a component name for a `TextEncoderSignature` (`text_encoder_<name>`).
+- `_converter_for` (function): Returns a converter closure for a given text encoder signature (registers alias mapping).
+- `_validator_for` (function): Returns a validator closure for a given text encoder signature.
+- `_validate_core` (function): Validates presence of required WAN transformer keys.
+- `_has_any` (function): Checks whether any key ends with one of the given suffixes.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, Iterable

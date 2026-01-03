@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Textual inversion (TI) embeddings discovery and metadata extraction.
+Scans common embedding roots (plus `apps/paths.json` overrides), lists available embeddings, and best-effort extracts vector/dim/step metadata
+from safetensors/pt/bin or embedded payloads in images.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EmbeddingEntry` (dataclass): Described TI embedding metadata (format, vectors, dims, step).
+- `_default_roots` (function): Discovers default embedding roots under `models/` and `apps/paths.json`.
+- `_iter_files` (function): Yields files in a directory tree matching a set of extensions.
+- `list_embeddings` (function): Returns stable `{name,path}` entries for discovered embeddings.
+- `_load_meta` (function): Best-effort extraction of (vectors, dims, step) from embedding file contents.
+- `describe_embeddings` (function): Returns `EmbeddingEntry` objects for discovered embeddings.
+"""
+
 from __future__ import annotations
 
 import os
@@ -109,4 +130,3 @@ def describe_embeddings(roots: List[str] | None = None) -> List[EmbeddingEntry]:
 
 
 __all__ = ["EmbeddingEntry", "list_embeddings", "describe_embeddings"]
-

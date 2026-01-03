@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux Kontext img2img use case (init image as conditioning tokens).
+Implements the Kontext img2img flow where the init image becomes conditioning (`image_latents`) and sampling starts from pure noise (no
+denoise-strength schedule), following the diffusers FluxKontext pipeline semantics.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_floor_multiple` (function): Floors a value to a positive multiple (used for resolution constraints).
+- `_pick_preferred_resolution` (function): Picks a recommended Kontext resolution based on init image aspect ratio.
+- `_compute_conditioning` (function): Builds conditional/unconditional conditioning using the engine's TE hooks.
+- `generate_kontext_img2img` (function): Runs Kontext img2img sampling and returns latent samples.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,17 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Build script for the `wan_te_cuda` CUDA extension (WAN T5 FP8 encoder kernels).
+
+Symbols (top-level; keep in sync; no ghosts):
+- (none): Setup script configuring `CUDAExtension` sources/flags for `wan_te_cuda`.
+"""
+
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 import os

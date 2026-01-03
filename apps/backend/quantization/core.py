@@ -1,4 +1,22 @@
-# CodexQuantization - Core types, registry, and base classes
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Core quantization types and registry for GGUF kernels.
+Defines `QuantSpec` and a global registry mapping quantization type IDs to dequant/quant/bake kernels (PyTorch + optional NumPy helpers).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuantType` (enum): GGML/GGUF quantization type identifiers (alias of `GGMLQuantizationType`).
+- `BLOCK_SIZES` (constant): Mapping `{QuantType: (block_size, type_size)}` for packed GGUF tensors.
+- `QuantSpec` (dataclass): Kernel specification for a quant type (block/type sizes + dequant/quant/bake hooks).
+- `QUANT_REGISTRY` (constant): Global quant registry `{QuantType: QuantSpec}`.
+- `register_quant` (function): Registers a `QuantType` and associated kernels/spec into `QUANT_REGISTRY`.
+- `get_quant_spec` (function): Retrieves the registered `QuantSpec` for a `QuantType` (or None).
+"""
 
 from __future__ import annotations
 

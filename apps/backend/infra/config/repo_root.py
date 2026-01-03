@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Repo root resolution helpers (CODEX_ROOT-based).
+Provides a single source of truth for locating the repository on disk and constructing repo-relative filesystem paths.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `get_repo_root` (function): Resolves and validates the repo root path from `CODEX_ROOT` (fails fast when invalid).
+- `repo_path` (function): Convenience wrapper for `get_repo_root().joinpath(...)`.
+"""
+
 from __future__ import annotations
 
 import os

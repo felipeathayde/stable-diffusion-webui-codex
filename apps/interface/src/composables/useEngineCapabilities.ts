@@ -1,7 +1,17 @@
-/**
- * Composable for accessing engine capabilities in components.
- * Use this to conditionally show/hide fields based on engine type.
- */
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Engine capability composable for UI gating.
+Builds convenience computed flags from engine config/capabilities so components can show/hide fields based on engine semantics.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useEngineCapabilities` (function): Returns engine config, capabilities, and common UI gating computed flags.
+*/
 
 import { computed } from 'vue'
 import { getEngineConfig, getEngineCapabilities, type EngineType, type EngineCapabilities } from '../stores/engine_config'

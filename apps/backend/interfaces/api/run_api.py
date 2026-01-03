@@ -1,4 +1,47 @@
 # // tags: api-entrypoint, fastapi, task-router
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
+This module builds the `/api/*` surface (generation/tasks/models/inventory/options/tools/ui persistence), streams task events via SSE,
+and mounts the built UI as SPA static files after API routes.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_path_for_api` (function): Normalizes filesystem paths for API responses (prefer repo-relative under `CODEX_ROOT`).
+- `_normalize_inventory_for_api` (function): Applies `_path_for_api` to inventory items before returning them to the UI.
+- `_path_from_api` (function): Resolves repo-relative paths from API payloads back to absolute paths under `CODEX_ROOT`.
+- `_normalize_wan_stage_payload` (function): Normalizes WAN stage override payload fields (`model_dir`, `lora_path`) to absolute paths.
+- `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
+- `_parse_trace_max` (function): Parses `--trace-debug-max-per-func` into a non-negative int (or `None`).
+- `ensure_initialized` (function): Performs early runtime bootstrap (repo root/sys.path, optional tracing/logging hooks) before serving.
+- `_SuppressUvicornAccessNoiseFilter` (class): Logging filter to reduce uvicorn access-log spam for noisy endpoints.
+- `_install_uvicorn_access_noise_filter` (function): Installs `_SuppressUvicornAccessNoiseFilter` when configured.
+- `TaskEntry` (class): In-memory task registry entry (status/result/error + SSE event queue + cancellation flags).
+- `get_task` (function): Reads a task entry by id from the in-process registry.
+- `register_task` (function): Registers a new task entry in the in-process registry.
+- `request_task_cancel` (function): Marks a task as cancelled (`immediate` vs `after_current`) for worker/coordinator checks.
+- `_load_json` (function): Loads JSON from disk (repo-scoped paths), returning `{}` on missing/unreadable files.
+- `_save_json` (function): Saves JSON to disk atomically-ish (best-effort; used for UI persistence artifacts).
+- `port_free` (function): Checks whether a TCP port is free on IPv4/IPv6 loopback/wildcard.
+- `scan_range` (function): Scans a port range to find a free port.
+- `pick_api_port_simple` (function): Picks a free port near a base port (and reports whether it was the base).
+- `banner` (function): Prints the startup banner with the selected port.
+- `_serialize_checkpoint` (function): Serializes a checkpoint record for `/api/models` responses (hash/path/name metadata).
+- `_serialize_sampler` (function): Serializes a sampler option for `/api/samplers`.
+- `_serialize_scheduler` (function): Serializes a scheduler option for `/api/schedulers`.
+- `_DummyRequest` (class): Minimal request shim used where a request-like object is needed without FastAPI internals.
+- `build_app` (function): Constructs the FastAPI app; defines all `/api/*` routes as nested handlers, configures task SSE, and mounts the UI SPA.
+- `_bootstrap_runtime` (function): Bootstraps runtime settings/env before app creation (used by the uvicorn factory path).
+- `_enable_trace_debug` (function): Enables global tracing/debug logging when requested via argv/env.
+- `create_api_app` (function): Canonical uvicorn `--factory` entrypoint; calls bootstrap and returns the built FastAPI app.
+- `main` (function): CLI entrypoint used by launchers (selects port, builds app, runs uvicorn).
+"""
+
 import asyncio
 import time
 from datetime import datetime
@@ -1819,8 +1862,35 @@ def build_app() -> FastAPI:
         # SHA keys for asset selection (from dataclass)
         from apps.backend.types.payloads import SHA_KEYS
         for key in SHA_KEYS.ALL:
-            if key in raw:
-                extras[key] = str(raw[key])
+            if key not in raw:
+                continue
+            value = raw.get(key)
+            if value is None:
+                continue
+            if key == "tenc_sha":
+                if isinstance(value, str):
+                    sha = value.strip()
+                    if sha:
+                        extras[key] = sha
+                    continue
+                if isinstance(value, list):
+                    shas: list[str] = []
+                    for entry in value:
+                        if not isinstance(entry, str):
+                            raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
+                        sha = entry.strip()
+                        if sha:
+                            shas.append(sha)
+                    if shas:
+                        extras[key] = shas
+                    continue
+                raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
+
+            if not isinstance(value, str):
+                raise HTTPException(status_code=400, detail=f"'extras.{key}' must be a string")
+            sha = value.strip()
+            if sha:
+                extras[key] = sha
         # Batch params
         if 'batch_size' in raw:
             extras['batch_size'] = int(raw['batch_size'])
@@ -2041,6 +2111,7 @@ def build_app() -> FastAPI:
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
+        engine_id = str(engine_override or snap.codex_engine).strip().lower()
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
@@ -2059,28 +2130,67 @@ def build_app() -> FastAPI:
                 raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
             model_override = record.filename
             extras["model_path"] = record.filename
-        if vae_sha:
-            vae_path = resolve_asset_by_sha(vae_sha)
-            if vae_path:
+
+        requires_external_vae = engine_id in ("flux", "kontext", "zimage")
+        requires_external_tenc = engine_id in ("flux", "kontext", "zimage")
+
+        if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
+            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.vae_sha' (sha256)")
+        if requires_external_tenc and not tenc_sha:
+            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.tenc_sha' (sha256)")
+
+        if vae_sha is not None:
+            if not isinstance(vae_sha, str):
+                raise HTTPException(status_code=400, detail="'extras.vae_sha' must be a string")
+            vae_sha_norm = vae_sha.strip().lower()
+            if vae_sha_norm:
+                vae_path = resolve_asset_by_sha(vae_sha_norm)
+                if not vae_path:
+                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {vae_sha_norm}")
                 extras["vae_path"] = vae_path
-        if tenc_sha:
-            # tenc_sha can be a string (single encoder) or list (multiple encoders like Flux)
-            if isinstance(tenc_sha, list):
-                tenc_paths = []
-                for sha in tenc_sha:
-                    path = resolve_asset_by_sha(sha)
-                    if path:
-                        tenc_paths.append(path)
-                if tenc_paths:
-                    extras["tenc_path"] = tenc_paths
+
+        tenc_shas: list[str] = []
+        if tenc_sha is not None:
+            if isinstance(tenc_sha, str):
+                sha = tenc_sha.strip().lower()
+                if sha:
+                    tenc_shas = [sha]
+            elif isinstance(tenc_sha, list):
+                for entry in tenc_sha:
+                    if not isinstance(entry, str):
+                        raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
+                    sha = entry.strip().lower()
+                    if sha:
+                        tenc_shas.append(sha)
             else:
-                tenc_path = resolve_asset_by_sha(tenc_sha)
-                if tenc_path:
-                    extras["tenc_path"] = tenc_path
-        
-        # GGUF models require text encoder
-        if model_override and model_override.lower().endswith('.gguf') and not tenc_sha:
-            raise HTTPException(status_code=400, detail="GGUF models require tenc_sha in extras")
+                raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
+
+        if requires_external_tenc:
+            if engine_id in ("flux", "kontext"):
+                if len(tenc_shas) != 2:
+                    raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'extras.tenc_sha'")
+            elif len(tenc_shas) != 1:
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 1 text encoder via 'extras.tenc_sha'")
+
+        if tenc_shas:
+            tenc_paths: list[str] = []
+            for sha in tenc_shas:
+                path = resolve_asset_by_sha(sha)
+                if not path:
+                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
+                tenc_paths.append(path)
+            extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
+
+            # Flux/Kontext: translate sha-selected encoders into a loader override (paths stay server-side).
+            if engine_id in ("flux", "kontext"):
+                if "text_encoder_override" in extras:
+                    raise HTTPException(status_code=400, detail="Do not send extras.text_encoder_override for Flux; use extras.tenc_sha only.")
+                clip_path, t5_path = tenc_paths
+                extras["text_encoder_override"] = {
+                    "family": "flux",
+                    "label": "flux/sha",
+                    "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
+                }
 
         req = Txt2ImgRequest(
             task=TaskType.TXT2IMG,
@@ -2205,109 +2315,30 @@ def build_app() -> FastAPI:
                 entry.last_preview_id_sent = 0
 
                 engine_options: Dict[str, object] = {}
-                try:
-                    extras = getattr(req, "extras", {}) or {}
-                    te_override = extras.get("text_encoder_override")
-                    if isinstance(te_override, dict):
-                        engine_options["text_encoder_override"] = dict(te_override)
+                extras = getattr(req, "extras", {}) or {}
+                te_override = extras.get("text_encoder_override")
+                if isinstance(te_override, dict):
+                    engine_options["text_encoder_override"] = dict(te_override)
 
-                    vae_path_from_extras = extras.get("vae_path")
-                    if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
-                        engine_options["vae_path"] = vae_path_from_extras.strip()
+                vae_path_from_extras = extras.get("vae_path")
+                if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
+                    engine_options["vae_path"] = vae_path_from_extras.strip()
 
-                    tenc_path_from_extras = extras.get("tenc_path")
-                    if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
-                        engine_options["tenc_path"] = tenc_path_from_extras.strip()
-                    elif isinstance(tenc_path_from_extras, list):
-                        resolved: list[str] = []
-                        for item in tenc_path_from_extras:
-                            if isinstance(item, str) and item.strip():
-                                resolved.append(item.strip())
-                        if resolved:
-                            engine_options["tenc_path"] = resolved
+                tenc_path_from_extras = extras.get("tenc_path")
+                if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
+                    engine_options["tenc_path"] = tenc_path_from_extras.strip()
+                elif isinstance(tenc_path_from_extras, list):
+                    resolved: list[str] = []
+                    for item in tenc_path_from_extras:
+                        if isinstance(item, str) and item.strip():
+                            resolved.append(item.strip())
+                    if resolved:
+                        engine_options["tenc_path"] = resolved
 
-                    # Back-compat: allow resolving tenc_sha in the worker when prepare_txt2img didn't.
-                    if "tenc_path" not in engine_options:
-                        tenc_sha_from_payload = extras.get("tenc_sha")
-                        if tenc_sha_from_payload:
-                            from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                            if isinstance(tenc_sha_from_payload, list):
-                                tenc_paths = []
-                                for sha in tenc_sha_from_payload:
-                                    path = resolve_asset_by_sha(str(sha))
-                                    if path:
-                                        tenc_paths.append(path)
-                                if tenc_paths:
-                                    engine_options["tenc_path"] = tenc_paths
-                            elif isinstance(tenc_sha_from_payload, str):
-                                resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
-                                if resolved_path:
-                                    engine_options["tenc_path"] = resolved_path
-                except Exception:
-                    pass
-                # Pass streaming option from settings to engine
-                try:
-                    snap = _opts_snapshot()
-                    if getattr(snap, "codex_core_streaming", False):
-                        engine_options["codex_core_streaming"] = True
-
-                    engine_id = str(engine_key).strip().lower()
-                    allow_global_overrides = engine_id not in ("sdxl", "sdxl_refiner")
-                    # Pass VAE override path if set (non-Automatic)
-                    # Check for SHA256-based selection first, fallback to label-based
-                    if allow_global_overrides and "vae_path" not in engine_options:
-                        vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
-                        vae_label = getattr(snap, "forge_selected_vae", None) or ""
-                        if vae_sha:
-                            from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                            resolved_path = resolve_asset_by_sha(vae_sha)
-                            if resolved_path:
-                                engine_options["vae_path"] = resolved_path
-                        elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
-                            engine_options["vae_path"] = vae_label
-                    # Pass text encoder override paths if set
-                    # Check for SHA256-based selection first, fallback to label-based
-                    if allow_global_overrides and "tenc_path" not in engine_options:
-                        tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
-                        tenc_modules = getattr(snap, "forge_additional_modules", None) or []
-                        if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
-                            first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
-                            if first_sha:
-                                from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                                resolved_path = resolve_asset_by_sha(first_sha)
-                                if resolved_path:
-                                    engine_options["tenc_path"] = resolved_path
-                        elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
-                            # Fallback: try direct path or label
-                            first_tenc = str(tenc_modules[0]) if tenc_modules else ""
-                            if first_tenc:
-                                # Check if it looks like a SHA256 (64 hex chars)
-                                if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
-                                    from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                                    resolved_path = resolve_asset_by_sha(first_tenc)
-                                    if resolved_path:
-                                        engine_options["tenc_path"] = resolved_path
-                                # Check if it's a path that exists
-                                elif os.path.isfile(first_tenc):
-                                    engine_options["tenc_path"] = first_tenc
-                                # Extract path from label format "family/filename" if present
-                                elif "/" in first_tenc:
-                                    parts = first_tenc.split("/", 1)
-                                    if len(parts) == 2:
-                                        filename = parts[1]
-                                        from apps.backend.inventory import cache as inv_cache
-
-                                        inv = inv_cache.get()
-                                        for item in inv.get("text_encoders", []):
-                                            if item.get("name") == filename:
-                                                engine_options["tenc_path"] = item.get("path", "")
-                                                break
-                except Exception:
-                    pass
+                # Pass streaming option from settings to engine (no model-part fallbacks).
+                snap = _opts_snapshot()
+                if getattr(snap, "codex_core_streaming", False):
+                    engine_options["codex_core_streaming"] = True
                 with tasks_lock:
                     for ev in _ORCH.run(
                         TaskType.TXT2IMG,
@@ -2511,9 +2542,13 @@ def build_app() -> FastAPI:
         # Resolve SHA-based assets (if provided in img2img_extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
+        engine_id = str(engine_key).strip().lower()
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
+
+        if "vae_path" in extras or "tenc_path" in extras:
+            raise HTTPException(status_code=400, detail="img2img_extras must not include raw '*_path' fields; use sha256 via '*_sha'")
 
         sha_candidate = None
         if isinstance(model_sha, str) and model_sha.strip():
@@ -2530,23 +2565,66 @@ def build_app() -> FastAPI:
             model_override = record.filename
             model_ref = record.filename
             extras["model_path"] = record.filename
-        if vae_sha:
-            vae_path = resolve_asset_by_sha(vae_sha)
-            if vae_path:
+
+        requires_external_vae = engine_id in ("flux", "kontext", "zimage")
+        requires_external_tenc = engine_id in ("flux", "kontext", "zimage")
+
+        if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
+            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.vae_sha' (sha256)")
+        if requires_external_tenc and not tenc_sha:
+            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.tenc_sha' (sha256)")
+
+        if vae_sha is not None:
+            if not isinstance(vae_sha, str):
+                raise HTTPException(status_code=400, detail="'img2img_extras.vae_sha' must be a string")
+            vae_sha_norm = vae_sha.strip().lower()
+            if vae_sha_norm:
+                vae_path = resolve_asset_by_sha(vae_sha_norm)
+                if not vae_path:
+                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {vae_sha_norm}")
                 extras["vae_path"] = vae_path
-        if tenc_sha:
-            if isinstance(tenc_sha, list):
-                tenc_paths = []
-                for sha in tenc_sha:
-                    path = resolve_asset_by_sha(sha)
-                    if path:
-                        tenc_paths.append(path)
-                if tenc_paths:
-                    extras["tenc_path"] = tenc_paths
+
+        tenc_shas: list[str] = []
+        if tenc_sha is not None:
+            if isinstance(tenc_sha, str):
+                sha = tenc_sha.strip().lower()
+                if sha:
+                    tenc_shas = [sha]
+            elif isinstance(tenc_sha, list):
+                for entry in tenc_sha:
+                    if not isinstance(entry, str):
+                        raise HTTPException(status_code=400, detail="'img2img_extras.tenc_sha' must be a string or array of strings")
+                    sha = entry.strip().lower()
+                    if sha:
+                        tenc_shas.append(sha)
             else:
-                tenc_path = resolve_asset_by_sha(tenc_sha)
-                if tenc_path:
-                    extras["tenc_path"] = tenc_path
+                raise HTTPException(status_code=400, detail="'img2img_extras.tenc_sha' must be a string or array of strings")
+
+        if requires_external_tenc:
+            if engine_id in ("flux", "kontext"):
+                if len(tenc_shas) != 2:
+                    raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'img2img_extras.tenc_sha'")
+            elif len(tenc_shas) != 1:
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 1 text encoder via 'img2img_extras.tenc_sha'")
+
+        if tenc_shas:
+            tenc_paths: list[str] = []
+            for sha in tenc_shas:
+                path = resolve_asset_by_sha(sha)
+                if not path:
+                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
+                tenc_paths.append(path)
+            extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
+
+            if engine_id in ("flux", "kontext"):
+                if "text_encoder_override" in extras:
+                    raise HTTPException(status_code=400, detail="Do not send img2img_extras.text_encoder_override for Flux; use img2img_extras.tenc_sha only.")
+                clip_path, t5_path = tenc_paths
+                extras["text_encoder_override"] = {
+                    "family": "flux",
+                    "label": "flux/sha",
+                    "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
+                }
     
         metadata = {
             "styles": styles,
@@ -2583,10 +2661,6 @@ def build_app() -> FastAPI:
             smart_cache=bool(payload.get("smart_cache")) if payload.get("smart_cache") is not None else bool(getattr(_opts_snapshot(), "codex_smart_cache", False)),
         )
     
-        # GGUF models require text encoder
-        if model_override and str(model_override).lower().endswith('.gguf') and not tenc_sha:
-            raise HTTPException(status_code=400, detail="GGUF models require tenc_sha in img2img_extras")
-
         return req, str(engine_key), model_ref
     
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
@@ -2624,92 +2698,30 @@ def build_app() -> FastAPI:
                 entry.last_preview_id_sent = 0
 
                 engine_options: Dict[str, object] = {}
-                try:
-                    extras = getattr(req, "extras", {}) or {}
-                    te_override = extras.get("text_encoder_override")
-                    if isinstance(te_override, dict):
-                        engine_options["text_encoder_override"] = dict(te_override)
+                extras = getattr(req, "extras", {}) or {}
+                te_override = extras.get("text_encoder_override")
+                if isinstance(te_override, dict):
+                    engine_options["text_encoder_override"] = dict(te_override)
 
-                    vae_path_from_extras = extras.get("vae_path")
-                    if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
-                        engine_options["vae_path"] = vae_path_from_extras.strip()
+                vae_path_from_extras = extras.get("vae_path")
+                if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
+                    engine_options["vae_path"] = vae_path_from_extras.strip()
 
-                    tenc_path_from_extras = extras.get("tenc_path")
-                    if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
-                        engine_options["tenc_path"] = tenc_path_from_extras.strip()
-                    elif isinstance(tenc_path_from_extras, list):
-                        resolved: list[str] = []
-                        for item in tenc_path_from_extras:
-                            if isinstance(item, str) and item.strip():
-                                resolved.append(item.strip())
-                        if resolved:
-                            engine_options["tenc_path"] = resolved
+                tenc_path_from_extras = extras.get("tenc_path")
+                if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
+                    engine_options["tenc_path"] = tenc_path_from_extras.strip()
+                elif isinstance(tenc_path_from_extras, list):
+                    resolved: list[str] = []
+                    for item in tenc_path_from_extras:
+                        if isinstance(item, str) and item.strip():
+                            resolved.append(item.strip())
+                    if resolved:
+                        engine_options["tenc_path"] = resolved
 
-                    if "tenc_path" not in engine_options:
-                        tenc_sha_from_payload = extras.get("tenc_sha")
-                        if tenc_sha_from_payload:
-                            from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                            if isinstance(tenc_sha_from_payload, list):
-                                tenc_paths = []
-                                for sha in tenc_sha_from_payload:
-                                    path = resolve_asset_by_sha(str(sha))
-                                    if path:
-                                        tenc_paths.append(path)
-                                if tenc_paths:
-                                    engine_options["tenc_path"] = tenc_paths
-                            elif isinstance(tenc_sha_from_payload, str):
-                                resolved_path = resolve_asset_by_sha(tenc_sha_from_payload)
-                                if resolved_path:
-                                    engine_options["tenc_path"] = resolved_path
-                except Exception:
-                    pass
-
-                # Pass streaming option and legacy VAE/TE overrides from settings snapshot.
-                try:
-                    snap = _opts_snapshot()
-                    if getattr(snap, "codex_core_streaming", False):
-                        engine_options["codex_core_streaming"] = True
-
-                    engine_id = str(engine_key).strip().lower()
-                    allow_global_overrides = engine_id not in ("sdxl", "sdxl_refiner")
-
-                    if allow_global_overrides and "vae_path" not in engine_options:
-                        vae_sha = getattr(snap, "forge_selected_vae_sha", None) or ""
-                        vae_label = getattr(snap, "forge_selected_vae", None) or ""
-                        if vae_sha:
-                            from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                            resolved_path = resolve_asset_by_sha(vae_sha)
-                            if resolved_path:
-                                engine_options["vae_path"] = resolved_path
-                        elif vae_label and vae_label not in ("Automatic", "Built in", "None"):
-                            engine_options["vae_path"] = vae_label
-
-                    if allow_global_overrides and "tenc_path" not in engine_options:
-                        tenc_sha = getattr(snap, "forge_additional_modules_sha", None)
-                        tenc_modules = getattr(snap, "forge_additional_modules", None) or []
-                        if tenc_sha and isinstance(tenc_sha, (list, tuple)) and len(tenc_sha) > 0:
-                            first_sha = str(tenc_sha[0]) if tenc_sha[0] else ""
-                            if first_sha:
-                                from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                                resolved_path = resolve_asset_by_sha(first_sha)
-                                if resolved_path:
-                                    engine_options["tenc_path"] = resolved_path
-                        elif tenc_modules and isinstance(tenc_modules, (list, tuple)) and len(tenc_modules) > 0:
-                            first_tenc = str(tenc_modules[0]) if tenc_modules else ""
-                            if first_tenc:
-                                if len(first_tenc) == 64 and all(c in "0123456789abcdef" for c in first_tenc.lower()):
-                                    from apps.backend.inventory.cache import resolve_asset_by_sha
-
-                                    resolved_path = resolve_asset_by_sha(first_tenc)
-                                    if resolved_path:
-                                        engine_options["tenc_path"] = resolved_path
-                                elif os.path.isfile(first_tenc):
-                                    engine_options["tenc_path"] = first_tenc
-                except Exception:
-                    pass
+                # Pass streaming option from settings to engine (no model-part fallbacks).
+                snap = _opts_snapshot()
+                if getattr(snap, "codex_core_streaming", False):
+                    engine_options["codex_core_streaming"] = True
                 with tasks_lock:
                     for ev in _ORCH.run(
                         TaskType.IMG2IMG,
@@ -2819,19 +2831,69 @@ def build_app() -> FastAPI:
             }
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
-        if isinstance(payload.get('wan_high'), dict):
-            extras['wan_high'] = _normalize_wan_stage_payload(payload.get('wan_high'))
-        if isinstance(payload.get('wan_low'), dict):
-            extras['wan_low'] = _normalize_wan_stage_payload(payload.get('wan_low'))
-        # Pass-through of explicit WAN GGUF complements (no guessing)
+        # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
+        from apps.backend.inventory.cache import resolve_asset_by_sha
+
+        def _require_sha_field(key: str) -> str:
+            val = payload.get(key)
+            if isinstance(val, dict):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
+            if not isinstance(val, str) or not val.strip():
+                raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
+            return val.strip().lower()
+
+        def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
+            raw = payload.get(stage_key)
+            if not isinstance(raw, dict):
+                raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+            if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
+            sha_raw = raw.get("model_sha")
+            if not isinstance(sha_raw, str) or not sha_raw.strip():
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
+            sha = sha_raw.strip().lower()
+            model_path = resolve_asset_by_sha(sha)
+            if not model_path:
+                raise HTTPException(status_code=409, detail=f"WAN stage model not found for sha: {sha}")
+            if not str(model_path).lower().endswith(".gguf"):
+                raise HTTPException(status_code=409, detail=f"WAN stage sha does not resolve to a .gguf file: {sha}")
+            out: dict[str, object] = dict(raw)
+            out.pop("model_sha", None)
+            out["model_dir"] = model_path
+            if isinstance(out.get("lora_path"), str):
+                out["lora_path"] = _path_from_api(out.get("lora_path"))
+            return out
+
+        extras["wan_high"] = _resolve_wan_stage("wan_high")
+        extras["wan_low"] = _resolve_wan_stage("wan_low")
+
+        # Resolve sha-selected WAN assets
+        if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
+            raise HTTPException(status_code=400, detail="WAN sha-only mode: do not send wan_*_path fields; send wan_vae_sha/wan_tenc_sha instead.")
+
+        wan_vae_sha = _require_sha_field("wan_vae_sha")
+        wan_tenc_sha = _require_sha_field("wan_tenc_sha")
+
+        wan_vae_path = resolve_asset_by_sha(wan_vae_sha)
+        if not wan_vae_path:
+            raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
+        extras["wan_vae_path"] = wan_vae_path
+
+        wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
+        if not wan_tenc_path:
+            raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
+        if not str(wan_tenc_path).lower().endswith(".safetensors"):
+            raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
+        extras["wan_text_encoder_path"] = wan_tenc_path
+
+        # Metadata/tokenizer dirs are still paths (directories) but must be explicit.
+        meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
+        if not isinstance(meta_dir, str) or not meta_dir.strip():
+            raise HTTPException(status_code=400, detail="'wan_metadata_dir' (or 'wan_tokenizer_dir') is required for WAN GGUF")
+        extras["wan_metadata_dir"] = _path_from_api(meta_dir)
+
+        # Pass-through of runtime controls (non-model-part config)
         for key in (
-            'wan_format',
-            'wan_vae_path',
-            'wan_text_encoder_path',
-            'wan_text_encoder_dir',
-            'wan_metadata_dir',
-            'wan_tokenizer_dir',
-            # memory/attention/runtime controls
             'gguf_offload',
             'gguf_offload_level',
             'gguf_sdpa_policy',
@@ -2839,16 +2901,12 @@ def build_app() -> FastAPI:
             'gguf_cache_policy',
             'gguf_cache_limit_mb',
             'gguf_log_mem_interval',
-            # TE kernel/device controls
             'gguf_te_device',
             'gguf_te_impl',
             'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
-                if key in ('wan_vae_path', 'wan_text_encoder_path', 'wan_text_encoder_dir', 'wan_metadata_dir', 'wan_tokenizer_dir'):
-                    extras[key] = _path_from_api(payload.get(key))
-                else:
-                    extras[key] = payload.get(key)
+                extras[key] = payload.get(key)
     
         req = Txt2VidRequest(
             task=TaskType.TXT2VID,
@@ -2871,30 +2929,9 @@ def build_app() -> FastAPI:
             },
         )
     
-        # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
-        engine_key = None
-        if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = _pick_wan_engine(extras)
-        else:
-            sem = _detect_semantic_engine()
-            if sem == 'wan22':
-                engine_key = 'wan22_14b'
-            elif sem == 'hunyuan_video':
-                engine_key = 'hunyuan_video'
-            else:
-                engine_key = 'wan22_14b'
-        # Choose model_ref: if WAN extras provide model_dir, use it; else fallback to current checkpoint
-        model_ref = _opts_snapshot().sd_model_checkpoint
-        try:
-            wh = extras.get('wan_high') or {}
-            wl = extras.get('wan_low') or {}
-            if isinstance(wh, dict) and wh.get('model_dir'):
-                model_ref = str(wh.get('model_dir'))
-            elif isinstance(wl, dict) and wl.get('model_dir'):
-                model_ref = str(wl.get('model_dir'))
-        except Exception:
-            pass
-        return req, str(engine_key), model_ref
+        engine_key = "wan22_5b"
+        model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
+        return req, engine_key, model_ref
     
     def prepare_img2vid(payload: Dict[str, Any]) -> Tuple[Img2VidRequest, str, Optional[str]]:
         logging.getLogger('backend.api').info('[api] DEBUG: enter prepare_img2vid')
@@ -2945,19 +2982,69 @@ def build_app() -> FastAPI:
             }
         if isinstance(payload.get('video_interpolation'), dict):
             extras['video_interpolation'] = payload.get('video_interpolation')
-        if isinstance(payload.get('wan_high'), dict):
-            extras['wan_high'] = _normalize_wan_stage_payload(payload.get('wan_high'))
-        if isinstance(payload.get('wan_low'), dict):
-            extras['wan_low'] = _normalize_wan_stage_payload(payload.get('wan_low'))
-        # Pass-through of explicit WAN GGUF complements (no guessing)
+        # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
+        from apps.backend.inventory.cache import resolve_asset_by_sha
+
+        def _require_sha_field(key: str) -> str:
+            val = payload.get(key)
+            if isinstance(val, dict):
+                raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
+            if not isinstance(val, str) or not val.strip():
+                raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
+            return val.strip().lower()
+
+        def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
+            raw = payload.get(stage_key)
+            if not isinstance(raw, dict):
+                raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+            if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
+            sha_raw = raw.get("model_sha")
+            if not isinstance(sha_raw, str) or not sha_raw.strip():
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
+            sha = sha_raw.strip().lower()
+            model_path = resolve_asset_by_sha(sha)
+            if not model_path:
+                raise HTTPException(status_code=409, detail=f"WAN stage model not found for sha: {sha}")
+            if not str(model_path).lower().endswith(".gguf"):
+                raise HTTPException(status_code=409, detail=f"WAN stage sha does not resolve to a .gguf file: {sha}")
+            out: dict[str, object] = dict(raw)
+            out.pop("model_sha", None)
+            out["model_dir"] = model_path
+            if isinstance(out.get("lora_path"), str):
+                out["lora_path"] = _path_from_api(out.get("lora_path"))
+            return out
+
+        extras["wan_high"] = _resolve_wan_stage("wan_high")
+        extras["wan_low"] = _resolve_wan_stage("wan_low")
+
+        # Resolve sha-selected WAN assets
+        if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
+            raise HTTPException(status_code=400, detail="WAN sha-only mode: do not send wan_*_path fields; send wan_vae_sha/wan_tenc_sha instead.")
+
+        wan_vae_sha = _require_sha_field("wan_vae_sha")
+        wan_tenc_sha = _require_sha_field("wan_tenc_sha")
+
+        wan_vae_path = resolve_asset_by_sha(wan_vae_sha)
+        if not wan_vae_path:
+            raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
+        extras["wan_vae_path"] = wan_vae_path
+
+        wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
+        if not wan_tenc_path:
+            raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
+        if not str(wan_tenc_path).lower().endswith(".safetensors"):
+            raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
+        extras["wan_text_encoder_path"] = wan_tenc_path
+
+        # Metadata/tokenizer dirs are still paths (directories) but must be explicit.
+        meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
+        if not isinstance(meta_dir, str) or not meta_dir.strip():
+            raise HTTPException(status_code=400, detail="'wan_metadata_dir' (or 'wan_tokenizer_dir') is required for WAN GGUF")
+        extras["wan_metadata_dir"] = _path_from_api(meta_dir)
+
+        # Pass-through of runtime controls (non-model-part config)
         for key in (
-            'wan_format',
-            'wan_vae_path',
-            'wan_text_encoder_path',
-            'wan_text_encoder_dir',
-            'wan_metadata_dir',
-            'wan_tokenizer_dir',
-            # memory/attention/runtime controls
             'gguf_offload',
             'gguf_offload_level',
             'gguf_sdpa_policy',
@@ -2965,16 +3052,12 @@ def build_app() -> FastAPI:
             'gguf_cache_policy',
             'gguf_cache_limit_mb',
             'gguf_log_mem_interval',
-            # TE kernel/device controls
             'gguf_te_device',
             'gguf_te_impl',
             'gguf_te_kernel_required',
         ):
             if key in payload and payload.get(key) is not None:
-                if key in ('wan_vae_path', 'wan_text_encoder_path', 'wan_text_encoder_dir', 'wan_metadata_dir', 'wan_tokenizer_dir'):
-                    extras[key] = _path_from_api(payload.get(key))
-                else:
-                    extras[key] = payload.get(key)
+                extras[key] = payload.get(key)
     
         req = Img2VidRequest(
             task=TaskType.IMG2VID,
@@ -2998,31 +3081,10 @@ def build_app() -> FastAPI:
             },
         )
     
-        # Select engine: prefer explicit WAN extras, then semantic detection, then WAN default
-        engine_key = None
-        if extras.get('wan_high') or extras.get('wan_low'):
-            engine_key = _pick_wan_engine(extras)
-        else:
-            sem = _detect_semantic_engine()
-            if sem == 'wan22':
-                engine_key = 'wan22_14b'
-            elif sem == 'hunyuan_video':
-                engine_key = 'hunyuan_video'
-            else:
-                engine_key = 'wan22_14b'
-        # Choose model_ref from WAN extras when provided
-        model_ref = _opts_snapshot().sd_model_checkpoint
-        try:
-            wh = extras.get('wan_high') or {}
-            wl = extras.get('wan_low') or {}
-            if isinstance(wh, dict) and wh.get('model_dir'):
-                model_ref = str(wh.get('model_dir'))
-            elif isinstance(wl, dict) and wl.get('model_dir'):
-                model_ref = str(wl.get('model_dir'))
-        except Exception:
-            pass
+        engine_key = "wan22_5b"
+        model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         logging.getLogger('backend.api').info('[api] DEBUG: exit prepare_img2vid engine=%s model_ref=%s size=%dx%d frames=%d', engine_key, model_ref, width_val, height_val, frames_val)
-        return req, str(engine_key), model_ref
+        return req, engine_key, model_ref
 
     def _resolve_vid2vid_input_path(raw: str, *, field: str) -> str:
         """Resolve a user-supplied input path safely (root-scoped).
@@ -3150,33 +3212,89 @@ def build_app() -> FastAPI:
             }
         if isinstance(payload.get("video_interpolation"), dict):
             extras["video_interpolation"] = payload.get("video_interpolation")
-        if isinstance(payload.get("wan_high"), dict):
-            extras["wan_high"] = _normalize_wan_stage_payload(payload.get("wan_high"))
-        if isinstance(payload.get("wan_low"), dict):
-            extras["wan_low"] = _normalize_wan_stage_payload(payload.get("wan_low"))
-        for key in (
-            "wan_format",
-            "wan_vae_path",
-            "wan_text_encoder_path",
-            "wan_text_encoder_dir",
-            "wan_metadata_dir",
-            "wan_tokenizer_dir",
-            "gguf_offload",
-            "gguf_offload_level",
-            "gguf_sdpa_policy",
-            "gguf_attn_chunk",
-            "gguf_cache_policy",
-            "gguf_cache_limit_mb",
-            "gguf_log_mem_interval",
-            "gguf_te_device",
-            "gguf_te_impl",
-            "gguf_te_kernel_required",
-        ):
-            if key in payload and payload.get(key) is not None:
-                if key in ("wan_vae_path", "wan_text_encoder_path", "wan_text_encoder_dir", "wan_metadata_dir", "wan_tokenizer_dir"):
-                    extras[key] = _path_from_api(payload.get(key))
-                else:
+        if method != "wan_animate":
+            # WAN (GGUF-only): strict sha-only selection for model parts (no raw paths).
+            from apps.backend.inventory.cache import resolve_asset_by_sha
+
+            def _require_sha_field(key: str) -> str:
+                val = payload.get(key)
+                if isinstance(val, dict):
+                    raise HTTPException(status_code=400, detail=f"'{key}' must be a string sha256, got object")
+                if not isinstance(val, str) or not val.strip():
+                    raise HTTPException(status_code=400, detail=f"'{key}' is required and must be a non-empty sha256 string")
+                return val.strip().lower()
+
+            def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
+                raw = payload.get(stage_key)
+                if not isinstance(raw, dict):
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
+                if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
+                sha_raw = raw.get("model_sha")
+                if not isinstance(sha_raw, str) or not sha_raw.strip():
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
+                sha = sha_raw.strip().lower()
+                model_path = resolve_asset_by_sha(sha)
+                if not model_path:
+                    raise HTTPException(status_code=409, detail=f"WAN stage model not found for sha: {sha}")
+                if not str(model_path).lower().endswith(".gguf"):
+                    raise HTTPException(status_code=409, detail=f"WAN stage sha does not resolve to a .gguf file: {sha}")
+                out: dict[str, object] = dict(raw)
+                out.pop("model_sha", None)
+                out["model_dir"] = model_path
+                if isinstance(out.get("lora_path"), str):
+                    out["lora_path"] = _path_from_api(out.get("lora_path"))
+                return out
+
+            extras["wan_high"] = _resolve_wan_stage("wan_high")
+            extras["wan_low"] = _resolve_wan_stage("wan_low")
+
+            if payload.get("wan_vae_path") or payload.get("wan_text_encoder_path") or payload.get("wan_text_encoder_dir"):
+                raise HTTPException(status_code=400, detail="WAN sha-only mode: do not send wan_*_path fields; send wan_vae_sha/wan_tenc_sha instead.")
+
+            wan_vae_sha = _require_sha_field("wan_vae_sha")
+            wan_tenc_sha = _require_sha_field("wan_tenc_sha")
+
+            wan_vae_path = resolve_asset_by_sha(wan_vae_sha)
+            if not wan_vae_path:
+                raise HTTPException(status_code=409, detail=f"WAN VAE not found for sha: {wan_vae_sha}")
+            extras["wan_vae_path"] = wan_vae_path
+
+            wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
+            if not wan_tenc_path:
+                raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
+            if not str(wan_tenc_path).lower().endswith(".safetensors"):
+                raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
+            extras["wan_text_encoder_path"] = wan_tenc_path
+
+            meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
+            if not isinstance(meta_dir, str) or not meta_dir.strip():
+                raise HTTPException(status_code=400, detail="'wan_metadata_dir' (or 'wan_tokenizer_dir') is required for WAN GGUF")
+            extras["wan_metadata_dir"] = _path_from_api(meta_dir)
+
+            for key in (
+                "gguf_offload",
+                "gguf_offload_level",
+                "gguf_sdpa_policy",
+                "gguf_attn_chunk",
+                "gguf_cache_policy",
+                "gguf_cache_limit_mb",
+                "gguf_log_mem_interval",
+                "gguf_te_device",
+                "gguf_te_impl",
+                "gguf_te_kernel_required",
+            ):
+                if key in payload and payload.get(key) is not None:
                     extras[key] = payload.get(key)
+        else:
+            # wan_animate: keep legacy path normalization for stage payloads (not GGUF sha-only).
+            if isinstance(payload.get("wan_high"), dict):
+                extras["wan_high"] = _normalize_wan_stage_payload(payload.get("wan_high"))
+            if isinstance(payload.get("wan_low"), dict):
+                extras["wan_low"] = _normalize_wan_stage_payload(payload.get("wan_low"))
+            for key in ("wan_metadata_dir", "wan_tokenizer_dir"):
+                if key in payload and payload.get(key) is not None:
+                    extras[key] = _path_from_api(payload.get(key))
 
         extras["vid2vid"] = {
             "method": method_raw,
@@ -3225,20 +3343,13 @@ def build_app() -> FastAPI:
             metadata={"mode": _opts_snapshot().codex_mode},
         )
 
-        engine_key = "wan22_animate_14b" if method == "wan_animate" else "wan22_5b"
+        if method == "wan_animate":
+            engine_key = "wan22_animate_14b"
+            model_ref = str(payload.get("vid2vid_model_dir") or _opts_snapshot().sd_model_checkpoint)
+            return req, engine_key, model_ref
 
-        model_ref = str(payload.get("vid2vid_model_dir") or _opts_snapshot().sd_model_checkpoint)
-        if engine_key != "wan22_animate_14b":
-            # Keep the existing WAN-stage model_dir override path for the flow-chunk engine.
-            try:
-                wh = extras.get("wan_high") or {}
-                wl = extras.get("wan_low") or {}
-                if isinstance(wh, dict) and wh.get("model_dir"):
-                    model_ref = str(wh.get("model_dir"))
-                elif isinstance(wl, dict) and wl.get("model_dir"):
-                    model_ref = str(wl.get("model_dir"))
-            except Exception:
-                pass
+        engine_key = "wan22_5b"
+        model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         return req, engine_key, model_ref
     
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:

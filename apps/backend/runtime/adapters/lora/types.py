@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Dataclasses describing LoRA-family weight payloads.
+Defines typed payload structures for LoRA/LoHa/LoKr/GLoRA and related patch kinds, plus helpers for ordering and building `PatchSpec` entries.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LoraWeights` (dataclass): Payload for classic LoRA (up/down/mid/alpha/dora_scale).
+- `LohaWeights` (dataclass): Payload for LoHa weights (w1/w2 components + optional Tucker tensors).
+- `LokrWeights` (dataclass): Payload for LoKr weights (factorized weights + optional Tucker tensor).
+- `GloraWeights` (dataclass): Payload for GLoRA weights (a/b matrices + alpha/dora_scale).
+- `DiffWeights` (dataclass): Payload for diff-style patches.
+- `SetWeights` (dataclass): Payload for set/overwrite patches.
+- `LORA_VARIANT_ORDER` (constant): Stable ordering of patch kinds for deterministic processing.
+- `make_spec` (function): Builds a `PatchSpec` from a parameter/kind/payload triple.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

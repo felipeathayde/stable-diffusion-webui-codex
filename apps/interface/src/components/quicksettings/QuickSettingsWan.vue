@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN22-specific quicksettings selectors.
+Renders WAN mode selection, LightX2V toggle, stage model dirs (high/low), metadata dir, text encoder, and VAE selectors with “Browse…” actions.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsWan` (component): WAN quicksettings row used by the main quicksettings bar.
+- `dirLabel` (function): Produces compact directory/file labels from absolute paths.
+- `encoderLabel` (function): Produces compact `family/basename` labels for WAN text encoder values.
+-->
+
 <template>
   <div class="quicksettings-group qs-group-wan-mode">
     <label class="label-muted">Mode</label>
@@ -121,7 +138,7 @@ defineEmits<{
   (e: 'browseVae'): void
 }>()
 
-const builtInLabel = 'Built-in'
+const builtInLabel = 'Select…'
 
 function dirLabel(path: string): string {
   const norm = path.replace(/\\/g, '/')

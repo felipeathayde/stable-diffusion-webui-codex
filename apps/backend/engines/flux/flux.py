@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux diffusion engine (txt2img/img2img) using the Codex Flux runtime.
+Assembles the runtime via `assemble_flux_runtime`, manages conditioning caching, and exposes the hooks required by shared txt2img/img2img
+workflows (encode/decode/conditioning + optional core streaming controller).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_FluxPromptList` (class): Prompt list wrapper carrying distilled CFG scale + negative/smart-cache flags for conditioning.
+- `Flux` (class): Codex diffusion engine implementation for Flux (runtime assembly, conditioning, sampling integration).
+"""
+
 from __future__ import annotations
 
 import logging

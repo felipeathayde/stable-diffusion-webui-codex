@@ -1,3 +1,33 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Zod request schemas + payload builders for image generation (txt2img/img2img).
+Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including highres/refiner) and to
+derive Flux explicit text-encoder overrides from `flux/<abs_path>` labels.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FLOW_ENGINES` (const): Engine ids treated as flow models (distilled CFG; negative prompt omitted).
+- `DEVICE_VALUES` (const): Allowed device tokens for requests.
+- `DeviceEnum` (const): Zod enum built from `DEVICE_VALUES`.
+- `RefinerOptionsSchema` (const): Zod schema for refiner options.
+- `HighresOptionsSchema` (const): Zod schema for highres options (including nested refiner).
+- `PromptSchema` (const): Zod schema for prompt validation/normalization.
+- `Txt2ImgRequestSchema` (const): Zod schema for txt2img/img2img request payloads.
+- `Txt2ImgRequest` (type): Inferred request type from `Txt2ImgRequestSchema`.
+- `HighresFormState` (interface): UI form state for highres options.
+- `RefinerFormState` (interface): UI form state for refiner options.
+- `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
+- `normalizeDevice` (function): Normalizes and validates a device token.
+- `buildTxt2ImgPayload` (function): Builds and validates a `Txt2ImgRequest` from UI form state.
+- `deriveFluxTextEncoderOverrideFromLabels` (function): Builds a Flux explicit `text_encoder_override` from `flux/…` labels.
+- `formatZodError` (function): Converts Zod errors (or unknown errors) into a readable message.
+*/
+
 import { z, ZodError } from 'zod'
 
 // Flow models use distilled_cfg, no negative prompt

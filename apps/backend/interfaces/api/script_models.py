@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Pydantic schemas for script metadata (legacy/compat UI surface).
+Defines model shapes used to describe “scripts” and their argument metadata to clients.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ScriptArg` (class): Schema for one script argument (label/value/min/max/step/choices).
+- `ScriptInfo` (class): Schema for a script (name/flags + argument list).
+"""
+
 from __future__ import annotations
 
 from typing import Any, Optional

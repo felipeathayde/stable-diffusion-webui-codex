@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native Stable Diffusion 1.5 engine.
+Assembles an `SDEngineRuntime` using `SD15_SPEC` and exposes the `CodexDiffusionEngine` surface (txt2img/img2img).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StableDiffusion` (class): SD 1.5 diffusion engine wiring runtime components to the Codex engine interface.
+"""
+
 from __future__ import annotations
 
 import logging

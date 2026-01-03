@@ -1,17 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Engine/model-family text encoder roots registry (`apps/paths.json`-backed).
+Exposes configured text encoder root directories for each `ModelFamily` (e.g. `sd15_tenc`, `flux_tenc`, `wan22_tenc`) without loading models,
+so inventory/diagnostics layers can list available roots safely.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_FAMILY_KEYS` (constant): Mapping from `ModelFamily` to the corresponding `apps/paths.json` key.
+- `TextEncoderRoot` (dataclass): Engine-specific text encoder root entry (subclass of `AssetEntry`).
+- `_build_name` (function): Builds a stable display name (prefers repo-relative labels when possible).
+- `list_text_encoder_roots` (function): Lists all configured text encoder roots across families.
+- `list_text_encoder_roots_by_family` (function): Returns configured text encoder roots grouped by family string.
+"""
+
 from __future__ import annotations
-
-"""
-Engine-specific text encoder roots registry (paths.json-backed).
-
-This module exposes the directories configured under apps/paths.json for:
-  - sd15_tenc
-  - sdxl_tenc
-  - flux_tenc
-  - wan22_tenc
-
-It does *not* load any models or import torch; it is safe to use from
-inventory, diagnostics, and future selection UIs.
-"""
 
 from dataclasses import dataclass
 from typing import Dict, List

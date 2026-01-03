@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Performance quicksettings toggles (smart flags + streaming).
+Renders toggle buttons for Smart Offload/Fallback/Cache and Core Streaming, emitting updates to the quicksettings store.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsPerf` (component): Performance toggles for smart runtime flags and core streaming.
+-->
+
 <template>
   <!-- Smart Offload -->
   <div class="quicksettings-group qs-group-perf qs-group-perf-offload">

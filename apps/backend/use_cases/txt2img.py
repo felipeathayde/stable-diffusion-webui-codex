@@ -1,4 +1,19 @@
-"""Txt2Img entry point using the staged pipeline runner."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Txt2img entry point using the staged pipeline runner.
+Delegates execution to `Txt2ImgPipelineRunner` for processing/conditioning inputs and integrates pipeline tracing for debugging.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_logger` (constant): Module logger for the txt2img use case.
+- `_RUNNER` (constant): Singleton `Txt2ImgPipelineRunner` instance.
+- `generate_txt2img` (function): Runs the txt2img pipeline runner for the provided processing context and prompts.
+"""
 
 from __future__ import annotations
 

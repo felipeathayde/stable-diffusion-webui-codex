@@ -50,13 +50,16 @@ News are moved to this link: [Click here to see the News section](https://github
 
 # License
 
-- This repository is licensed under the GNU Affero General Public License, version 3.0 or (at your option) any later version.
-- SPDX: `AGPL-3.0-or-later`.
-- Full text: see the `LICENSE` file and <https://www.gnu.org/licenses/agpl-3.0-standalone.html>.
+- This repository is licensed under the PolyForm Noncommercial License 1.0.0.
+- SPDX: `PolyForm-Noncommercial-1.0.0`.
+- Full text: see the `LICENSE` file and <https://polyformproject.org/licenses/noncommercial/1.0.0>.
+- Required Notice: see `NOTICE` (must be preserved in redistributions).
+- Commercial use is not permitted; see `COMMERCIAL.md` for practical examples.
+- Trademarks/branding: see `TRADEMARKS.md`.
 - Third-party components under `.refs/Forge-A1111/` and `extensions-builtin/` may include their own licenses (e.g., MIT); see the LICENSE files within those folders for details. Their original terms remain applicable.
 
-AGPL §13 (Network Use)
-- The UI footer shows a “Source (AGPL)” link. Configure its target at build time using the env var `VITE_SOURCE_URL` (e.g., your Git remote or a tarball URL for this exact source).
+Source link (optional)
+- The UI footer can show a “Source” link. Configure its target at build time using the env var `VITE_SOURCE_URL` (e.g., your Git remote or a tarball URL for this exact source).
 - Example: `VITE_SOURCE_URL=https://github.com/your-org/stable-diffusion-webui-codex`.
 
 # Developer Notes

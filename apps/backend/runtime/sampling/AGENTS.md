@@ -1,5 +1,8 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
+Owner: Runtime Maintainers
+Last Review: 2026-01-02
+Status: Active
 
 ## Purpose
 - Native sampling primitives for Codex engines: sigma schedule construction and sampling context used by the runtime samplers.
@@ -33,6 +36,9 @@
 - 2026-01-01: Native `DPM++ 2M` now uses the log-sigma-time DPM-Solver++(2M) update (k-diffusion parity); `DPM++ 2M SDE` uses the midpoint log-sigma form with independent noise in the native path (no BrownianTree noise sampler).
 - Distilled/turbo CFG: when unconditional conditioning is omitted (`uncond=None`), `sampling_function_inner` bypasses CFG interpolation and returns the conditional prediction directly. This allows Turbo models to run with `guidance_scale=0` without collapsing denoised to zeros.
 - Flow precision: for flow-match predictors (`prediction_type='const'`, e.g. Flux/Z-Image), `driver.py` forces sampling latents to fp32 (matching diffusers schedulers) even if the core runs in bf16/fp16.
+
+## Updates
+- 2026-01-02: Added standardized file header docstrings to sampling facade helpers (`__init__.py`, `condition.py`, `registry.py`) (doc-only change; part of rollout).
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

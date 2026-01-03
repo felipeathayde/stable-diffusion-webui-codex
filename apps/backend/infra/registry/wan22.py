@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN22-specific registry helpers for GGUF weights under `models/`.
+Discovers `.gguf` candidates and classifies them as high/low stage based on filename heuristics for use in selection UIs and tooling.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `GGUFEntry` (dataclass): Discovered GGUF file record (name/path/stage).
+- `_detect_stage` (function): Heuristically classifies a filename as `high`/`low`/`unknown`.
+- `list_wan22_gguf` (function): Returns sorted GGUF candidates from `models/` and common WAN subfolders.
+"""
+
 from __future__ import annotations
 
 import os
@@ -56,4 +73,3 @@ def list_wan22_gguf(models_root: str = "models") -> List[GGUFEntry]:
 
 
 __all__ = ["GGUFEntry", "list_wan22_gguf"]
-

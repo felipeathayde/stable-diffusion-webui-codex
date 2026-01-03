@@ -1,10 +1,17 @@
-"""GUI Launcher for Codex services (tkinter).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Touch-friendly interface for managing API/UI services and runtime configuration.
-Complements the curses TUI (`apps/tui_launcher.py`) for use via AnyDesk on mobile devices.
+Purpose: GUI launcher for Codex services (tkinter).
+Provides a touch-friendly UI to manage API/UI service processes and runtime configuration; complements the curses TUI (`apps/tui_launcher.py`).
 
-Usage:
-    python apps/codex_launcher.py  # requires CODEX_ROOT (e.g., run-webui.bat)
+Symbols (top-level; keep in sync; no ghosts):
+- `CodexGUILauncher` (class): Main Tk app; builds widgets, polls service status, starts/stops services, edits env/profile values, and shows logs.
+- `main` (function): CLI entrypoint that instantiates `CodexGUILauncher` and runs the tkinter main loop.
 """
 from __future__ import annotations
 

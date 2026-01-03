@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Best-effort CUDA/XPU stream helpers for async swap operations (when `swap_method=async`).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `stream_context` (function): Return the torch stream context manager for the active backend, or None.
+- `get_current_stream` (function): Return the current device stream when safe/available.
+- `get_new_stream` (function): Create and validate a new device stream when safe/available.
+- `should_use_stream` (function): True when streams are activated and both streams are available.
+- `stream_activated` (constant): Whether async swapping is enabled by config (`args.swap_method=="async"`).
+- `current_stream` (constant): Best-effort current stream object (or None).
+- `mover_stream` (constant): Best-effort mover stream object (or None).
+"""
+
 import platform
 import torch
 from apps.backend.infra.config.args import args

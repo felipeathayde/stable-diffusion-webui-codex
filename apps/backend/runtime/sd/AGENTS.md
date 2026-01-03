@@ -1,7 +1,7 @@
 # apps/backend/runtime/sd Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2025-10-28
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -12,3 +12,4 @@ Status: Active
 
 ## Notes
 - Keep SD runtime modules aligned with `apps/backend/engines/sd/`.
+- 2026-01-02: Added standardized file header docstrings to `__init__.py` (doc-only change; part of rollout).

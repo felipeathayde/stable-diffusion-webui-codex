@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Canonical engine registration functions for the backend.
+Defines one `register_<engine>(...)` helper per engine family and wires aliases into the shared `EngineRegistry`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `register_sd15` (function): Registers the SD 1.5 engine and aliases.
+- `register_sd20` (function): Registers the SD 2.x engine and aliases.
+- `register_sdxl` (function): Registers SDXL base/refiner engines and aliases.
+- `register_sd35` (function): Registers the SD 3.5 engine and aliases.
+- `register_flux` (function): Registers the Flux engine and aliases.
+- `register_kontext` (function): Registers the Kontext engine and aliases.
+- `register_chroma` (function): Registers the Chroma engine.
+- `register_wan22_videos` (function): Registers WAN22 video engines (14B/5B/animate) and aliases.
+- `register_zimage` (function): Registers the Z-Image engine and aliases.
+"""
+
 from __future__ import annotations
 
 from typing import Optional

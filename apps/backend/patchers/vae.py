@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: VAE patcher + tiling helpers for encode/decode (diffusers + WAN-aware).
+Provides a VAE wrapper that normalizes diffusers outputs, supports tiled decode/encode paths, and integrates memory-management
+and smart-fallback behavior.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
+- `_unwrap_decode_output` (function): Normalizes diffusers decode outputs to a plain tensor (`DecoderOutput.sample` or passthrough).
+- `_unwrap_encode_output` (function): Normalizes diffusers encode outputs to a latent tensor (handles `latent_dist`, `.sample()`, `.mean`, etc.).
+- `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that normalizes encode/decode return shapes/types for downstream use.
+- `tiled_scale_multidim` (function): Multi-dim tiled scaling helper (used to process large images in overlapping tiles).
+- `get_tiled_scale_steps` (function): Computes the number of tile steps given dimensions and overlap.
+- `tiled_scale` (function): Convenience wrapper for tiled scaling in 2D (tile_x/tile_y).
+- `VAE` (class): ModelPatcher for VAEs; provides encode/decode APIs (optionally tiled), device/dtype placement, and fallback/normalization logic
+  (includes nested helpers for memory-management and diffusers/WAN VAE compatibility).
+"""
+
 import torch
 import math
 import itertools

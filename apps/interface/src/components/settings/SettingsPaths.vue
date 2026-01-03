@@ -1,3 +1,21 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Settings panel for model search paths (`/api/paths`).
+Edits engine-specific checkpoint/VAE/LoRA/text-encoder roots and persists them via the backend paths API, using `PathList` to manage per-key lists.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SettingsPaths` (component): Settings panel for model and asset path roots.
+- `getList` (function): Normalizes a raw key list from the backend paths payload.
+- `reload` (function): Fetches and populates current paths from the backend.
+- `save` (function): Persists the edited paths back to the backend.
+-->
+
 <template>
   <div class="space-y-4">
     <div class="panel-section">

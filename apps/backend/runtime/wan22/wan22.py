@@ -1,7 +1,61 @@
-"""WAN 2.2 — GGUF path (nn.Module).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Loads WAN 2.2 stage GGUF weights into `WanTransformer2DModel` via
-`CodexOperationsGGUF` and runs flow sampling for txt2vid/img2vid.
+Purpose: WAN 2.2 runtime (GGUF path) for txt2vid/img2vid.
+This module loads WAN 2.2 stage GGUF weights into `WanTransformer2DModel` via Codex operations, runs flow sampling,
+and supports both “run” (batch) and “stream” (generator) execution with optional per-step progress callbacks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_wan_log_sigmas_enabled` (function): Enables/disables sigma logging via config/env toggles.
+- `_summarize_tensor` (function): Debug helper summarizing tensor-ish objects (shape/dtype/range sample).
+- `_resolve_i2v_order` (function): Resolves the image-to-video conditioning order policy.
+- `_log_enabled` (function): Returns whether a given log verbosity level is enabled.
+- `_li` (function): Logger convenience wrapper (info).
+- `_lw` (function): Logger convenience wrapper (warning).
+- `_le` (function): Logger convenience wrapper (error).
+- `_ld` (function): Logger convenience wrapper (debug).
+- `_dbg` (function): Lightweight debug marker/logger helper for tracing execution points.
+- `_io` (function): Decorator factory for entry/exit tracing when `_DEBUG_IO` is enabled.
+- `_latent_dimensions` (function): Computes latent tensor dimensions from a `PatchGeometry` description.
+- `_ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
+- `_sample_stage_latents` (function): Core latent sampling for a single WAN stage (high/low) using the selected scheduler/sampler.
+- `_sample_stage_latents_generator` (function): Generator version of stage sampling for streaming progress (yields intermediate states).
+- `_decode_latents_to_frames` (function): Decodes sampled latents into video frames (uses VAE and postprocessing).
+- `_prepare_stage_seed_latents` (function): Prepares seeded stage latents (for determinism across runs/stages).
+- `_assemble_i2v_input` (function): Builds img2vid latent inputs to match expected input channels/order.
+- `_get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer.
+- `_load_vae` (function): Loads the WAN VAE component (and moves it to device/dtype as needed).
+- `_log_latent_norm` (function): Logs latent normalization statistics for debugging.
+- `_vae_encode_init` (function): Encodes an init image into latents for img2vid.
+- `_vae_decode_video` (function): Decodes video latents to frames and optionally offloads/cleans up after decode.
+- `PatchGeometry` (class): Patch/tile geometry configuration used to infer latent/video shapes.
+- `_try_set_cache_policy` (function): Best-effort GGUF cache policy configuration (limit + eviction strategy).
+- `_try_clear_cache` (function): Best-effort cache clearing (used during long streaming runs or debug).
+- `_normalize_win_path` (function): Normalizes Windows paths to reduce path-encoding edge cases.
+- `_pick_stage_gguf` (function): Selects the GGUF file for a given stage from a directory (if not explicitly provided).
+- `_load_stage_model_from_gguf` (function): Loads a stage model from GGUF into a runtime transformer (wraps ops + remapping).
+- `StageConfig` (class): Stage-level configuration (steps/cfg/seed/sampler/scheduler + stage model selection).
+- `RunConfig` (class): Full run configuration (geometry, prompts, devices/dtypes, assets, and both stages).
+- `_as_dtype` (function): Parses dtype strings into torch dtypes (with validation).
+- `_get_logger` (function): Normalizes a logger argument into a `logging.Logger` (or `None`).
+- `_cuda_empty_cache` (function): Best-effort CUDA cache emptying with optional logging.
+- `_infer_patch_geometry` (function): Infers patch geometry defaults from config and requested output size.
+- `_make_scheduler` (function): Constructs the scheduler instance for a run (based on sampler/scheduler selection).
+- `_cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
+- `_log_cuda_mem` (function): Logs CUDA memory stats for debugging long video runs.
+- `_log_t_mapping` (function): Logs timestep mapping/debug info for schedulers.
+- `_time_snr_shift` (function): Time/SNR shift helper used in scheduler-time transformations.
+- `_resolve_device_name` (function): Normalizes device names (`cuda`/`cpu`/etc) into runtime-compatible values.
+- `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode (uses multiple helpers).
+- `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
+- `run_img2vid` (function): Batch img2vid runner; encodes init image, runs stages, decodes frames (uses multiple helpers).
+- `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding.
+- `_resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 """
 
 from __future__ import annotations
@@ -933,38 +987,19 @@ def _normalize_win_path(p: str) -> str:
     return p
 
 
-def _first_gguf_in(dir_path: Optional[str]) -> Optional[str]:
-    if not dir_path:
-        return None
-    _dir = _normalize_win_path(dir_path)
-    abspath = _dir if os.path.isabs(_dir) else os.path.abspath(_dir)
-    try:
-        for fn in os.listdir(abspath):
-            if fn.lower().endswith('.gguf'):
-                return os.path.join(abspath, fn)
-    except Exception:
-        return None
-    return None
-
-
 def _pick_stage_gguf(dir_path: Optional[str], stage: str) -> Optional[str]:
-    p = _first_gguf_in(dir_path)
     if not dir_path:
-        return p
-    _dir = _normalize_win_path(dir_path)
-    abspath = _dir if os.path.isabs(_dir) else os.path.abspath(_dir)
-    try:
-        stage_lc = stage.lower().strip()
-        cands = [fn for fn in os.listdir(abspath) if fn.lower().endswith('.gguf')]
-        for fn in cands:
-            name = fn.lower()
-            if stage_lc == 'high' and ('high' in name or 'highnoise' in name):
-                return os.path.join(abspath, fn)
-            if stage_lc == 'low' and ('low' in name or 'lownoise' in name):
-                return os.path.join(abspath, fn)
-    except Exception:
-        pass
-    return p
+        return None
+
+    raw = _normalize_win_path(dir_path)
+    abspath = raw if os.path.isabs(raw) else os.path.abspath(raw)
+    if os.path.isfile(abspath) and abspath.lower().endswith(".gguf"):
+        return abspath
+    if os.path.isdir(abspath):
+        raise RuntimeError(
+            f"WAN22 GGUF stage '{stage}' requires an explicit .gguf file path (sha-selected); got directory: {abspath}"
+        )
+    return None
 
 
 def _load_stage_model_from_gguf(

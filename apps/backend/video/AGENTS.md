@@ -1,7 +1,7 @@
 # apps/backend/video Overview
 Date: 2025-10-28
 Owner: Video Runtime Maintainers
-Last Review: 2025-12-16
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 ## Notes
 - Keep video utilities generic so multiple engines/use cases can reuse them.
 - Video IO/export requires `ffmpeg` + `ffprobe` on PATH; flow guidance requires `torch` + `torchvision`.
+- 2026-01-02: Added standardized file header docstrings to video export modules (doc-only change; part of rollout).

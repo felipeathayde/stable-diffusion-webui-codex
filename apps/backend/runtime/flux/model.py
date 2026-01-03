@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native Flux transformer model (`nn.Module`) with explicit configuration validation.
+Implements the Flux core transformer forward pass and supports both internal and HuggingFace-style config names (depth/single_depth,
+axes_dim/axes_dims_rope), using shared Flux components and Codex runtime utilities.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FluxTransformer2DModel` (class): Core Flux transformer module; validates/normalizes config, builds double/single stream blocks + last layer,
+  and runs the forward pass with rotary embeddings and attention primitives (contains nested helpers for HF config coercion).
+"""
+
 from __future__ import annotations
 
 import logging

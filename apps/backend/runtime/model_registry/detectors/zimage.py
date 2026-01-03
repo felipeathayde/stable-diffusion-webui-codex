@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Z Image Turbo model detector for the Codex model registry.
+Identifies Z Image core transformer checkpoints (GGUF or prefixed SafeTensors exports), infers key architecture dimensions, and builds a
+`ModelSignature` describing the core-only transformer plus external text encoder/VAE expectations.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ZIMAGE_CORE_KEYS` (constant): Minimal key set used to identify Z Image core weights (with optional prefix).
+- `_DIFFUSION_MODEL_PREFIX` (constant): Prefix used by some SafeTensors exports (`model.diffusion_model.*`).
+- `_has_zimage_keys` (function): Checks presence of Z Image core keys in a signal bundle (prefixed or unprefixed).
+- `ZImageDetector` (class): Detector that matches Z Image bundles and builds a `ModelSignature` (dims + quantization hint).
+- `_infer_latent_channels` (function): Attempts to infer latent channels from checkpoint/VAE shapes (fallback helper; may be unused).
+- `_shape` (function): Shape helper reading from bundle metadata or tensor objects.
+"""
+
 from __future__ import annotations
 
 from typing import Optional

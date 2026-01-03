@@ -1,4 +1,24 @@
-"""Shared helpers for Codex video generation workflows."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared helpers for Codex video generation workflows.
+Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, and assembles export metadata.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger used by video workflow helpers.
+- `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
+- `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
+- `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
+- `export_video` (function): Exports a frame sequence to a video file according to request options.
+- `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
+- `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
+- `__all__` (constant): Explicit export list for the module.
+"""
 
 from __future__ import annotations
 

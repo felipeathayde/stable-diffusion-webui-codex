@@ -1,3 +1,60 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Frontend API client (typed fetch helpers + endpoint wrappers).
+Provides JSON/Form fetch helpers and exports functions for models/options/inventory/tasks, UI tabs/workflows persistence, and UI schema/preset
+endpoints under `VITE_API_BASE` (default `/api`).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `API_BASE` (const): Base URL prefix for backend endpoints (from Vite env, default `/api`).
+- `requestJson` (function): JSON request helper with consistent error handling.
+- `requestForm` (function): Form POST helper for multipart endpoints.
+- `fetchModels` (function): Fetches the model list (`/models`).
+- `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
+- `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
+- `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
+- `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
+- `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
+- `fetchVaes` (function): Fetches VAE list (`/vaes`).
+- `fetchTextEncoders` (function): Fetches text encoder list (`/text-encoders`).
+- `fetchOptions` (function): Fetches runtime options (`/options`).
+- `updateOptions` (function): Updates runtime options (`POST /options`).
+- `startTxt2Img` (function): Starts a txt2img task (`POST /txt2img`).
+- `startImg2Img` (function): Starts an img2img task (`POST /img2img`).
+- `startTxt2Vid` (function): Starts a txt2vid task (`POST /txt2vid`).
+- `startImg2Vid` (function): Starts an img2vid task (`POST /img2vid`).
+- `startVid2Vid` (function): Starts a vid2vid task (`POST /vid2vid` multipart).
+- `fetchTaskResult` (function): Fetches a task result (`/tasks/:id`).
+- `cancelTask` (function): Requests task cancellation (`/tasks/:id/cancel`).
+- `subscribeTask` (function): Subscribes to task SSE events and returns an unsubscribe closure.
+- `fetchMemory` (function): Fetches memory stats (`/memory`).
+- `fetchVersion` (function): Fetches backend version (`/version`).
+- `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
+- `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
+- `fetchLoras` (function): Fetches LoRA list (`/loras`).
+- `fetchPaths` (function): Fetches configured paths (`/paths`).
+- `updatePaths` (function): Updates configured paths (`POST /paths`).
+- `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`) with a static fallback.
+- `fetchUiBlocks` (function): Fetches UI blocks schema (`/ui/blocks`).
+- `fetchUiPresets` (function): Fetches UI presets (`/ui/presets`).
+- `applyUiPreset` (function): Applies a UI preset (`POST /ui/presets/apply`).
+- `fetchTabs` (function): Fetches persisted tabs (`/ui/tabs`).
+- `createTabApi` (function): Creates a tab (`POST /ui/tabs`).
+- `updateTabApi` (function): Updates a tab (`PATCH /ui/tabs/:id`).
+- `reorderTabsApi` (function): Reorders tabs (`POST /ui/tabs/reorder`).
+- `deleteTabApi` (function): Deletes a tab (`DELETE /ui/tabs/:id`).
+- `fetchWorkflows` (function): Fetches workflows (`/ui/workflows`).
+- `createWorkflow` (function): Creates a workflow (`POST /ui/workflows`).
+- `deleteWorkflow` (function): Deletes a workflow (`DELETE /ui/workflows/:id`).
+- `loadModelsForTab` (function): Loads models for a tab (`POST /models/load`).
+- `unloadModelsForTab` (function): Unloads models for a tab (`POST /models/unload`).
+*/
+
 import type {
   ModelsResponse,
   SamplersResponse,

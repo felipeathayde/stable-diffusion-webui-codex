@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lightweight progress/task tracker without legacy globals.
+Tracks queued/active task IDs and retains a small history of finished tasks/results for `/api/tasks` status and UI polling.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_now` (function): Returns current monotonic wall time as seconds.
+- `create_task_id` (function): Generates a short task ID token for queueing/polling.
+- `TrackerSnapshot` (dataclass): Snapshot of current/pending/finished task IDs.
+- `CodexProgressTracker` (class): Thread-safe tracker with queue/begin/complete lifecycle and last-result access.
+"""
+
 from __future__ import annotations
 
 import random

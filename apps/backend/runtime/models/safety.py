@@ -1,9 +1,25 @@
-"""Secure checkpoint loading helpers.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Provides restricted-unpickler validation and thin wrappers around
-``torch.load`` so that legacy `.ckpt/.pt` files can be inspected before
-deserialization.  This supersedes the legacy ``modules.safe`` module and is
-used by the Codex backend when ``safe_load=True``.
+Purpose: Secure checkpoint validation and restricted `torch.load` wrapper for legacy `.ckpt/.pt`.
+Validates pickled checkpoints via a restricted unpickler before deserialization, and provides a safer `safe_torch_load` wrapper that can use
+`weights_only` and mmap when supported. Used by the backend when `safe_load=True`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `UnsafeCheckpointError` (class): Raised when checkpoint validation fails.
+- `RestrictedUnpickler` (class): Restricted unpickler that blocks globals outside an allowlist.
+- `_validate_zip_checkpoint` (function): Validates zip-format checkpoints and their `data.pkl` payload.
+- `_validate_legacy_pickle` (function): Validates legacy multi-pickle checkpoint format.
+- `validate_checkpoint` (function): Validates a checkpoint path and raises `UnsafeCheckpointError` on failure.
+- `_torch_supports_weights_only` (function): Detects whether this torch build supports `torch.load(..., weights_only=...)`.
+- `_restricted_pickle_module` (function): Builds a pickle module wrapper using the restricted unpickler.
+- `safe_torch_load` (function): Safer `torch.load` wrapper with validation and conservative defaults.
+- `extra_globals` (contextmanager): Temporarily allows additional globals during restricted unpickling.
 """
 
 from __future__ import annotations

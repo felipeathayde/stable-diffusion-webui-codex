@@ -1,7 +1,20 @@
-"""Memory controller for WAN streaming (nn.Module pattern).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This mirrors the Flux streaming controller, using .to(device) on
-nn.Module blocks rather than GGUF-specific tensor operations.
+Purpose: Memory controller for WAN22 core streaming (nn.Module segment offload).
+Mirrors the Flux streaming controller but operates on nn.Module blocks (device `.to(...)`) instead of GGUF tensor ops, allowing the WAN
+transformer core to run with segment-based CPU↔GPU transfer policies.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanStreamingPolicy` (enum): Streaming policy (`naive`/`window`/`aggressive`) controlling segment residency.
+- `TransferStats` (dataclass): Tracks CPU↔GPU transfer bytes/counts/time for streaming telemetry.
+- `WanCoreController` (class): Core streaming controller; loads/unloads segments around forward passes and manages LRU/window policies.
+- `create_controller` (function): Factory that builds a `WanCoreController` from policy and blocks-per-segment inputs.
 """
 
 from __future__ import annotations

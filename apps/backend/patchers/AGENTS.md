@@ -28,6 +28,7 @@ Status: Active
 - 2025-11-22: VAE patcher unwraps diffusers `DecoderOutput`/`AutoencoderKLOutput` before `.to(...)`, preventing `'DecoderOutput' object has no attribute 'to'` when SDXL uses the standard diffusers VAE.
 - 2025-12-05: VAE patcher gains a `smart_fallback` path that, when enabled, catches CUDA OOM during decode and performs a single full-image decode on CPU instead of repeatedly retrying GPU paths (regular + tiled). Encode now mirrors this behaviour: OOM during encode triggers a single full-image CPU encode when Smart Fallback is on, otherwise it falls back to tiled encode.
 - 2026-01-02: Removed token merging patches; prompt token-merging tags are stripped but have no effect.
+- 2026-01-02: Added standardized file header docstrings to patcher modules (doc-only change; part of rollout).
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

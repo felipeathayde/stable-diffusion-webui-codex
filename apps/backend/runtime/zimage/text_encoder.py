@@ -1,7 +1,19 @@
-"""Qwen3-4B Text Encoder for Z Image.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Wrapper for Qwen3-4B model used as text encoder in Z Image Turbo.
-Based on ComfyUI's comfy/text_encoders/z_image.py.
+Purpose: Qwen3-4B text encoder wrapper for Z Image (GGUF or safetensors).
+Wraps the Qwen3 model used by Z Image Turbo for text encoding, including tokenizer handling and the chat-template prompt format.
+This module follows the “Flux pattern” by providing a small text-processing engine wrapper for consistent interfaces.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ZImageTextEncoder` (class): nn.Module wrapper for Qwen3-4B; supports loading from GGUF/safetensors, tokenization, and embedding extraction
+  (contains nested helpers for tokenizer loading, chat templating, debug tracing, and encode/tokenize APIs).
+- `ZImageTextProcessingEngine` (class): Thin adapter providing a consistent callable interface (`__call__`, `tokenize`) around `ZImageTextEncoder`.
 """
 
 from __future__ import annotations

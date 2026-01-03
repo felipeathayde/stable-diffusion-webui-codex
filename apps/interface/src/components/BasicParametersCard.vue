@@ -1,3 +1,24 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared basic generation parameters card (sampler/scheduler/steps/seed/CFG/dimensions).
+Reusable card used across model tabs to edit common fields, with optional resolution presets, CLIP skip, and init-image dimension sync.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BasicParametersCard` (component): Basic params card SFC; wires selectors/sliders and emits `update:*` events plus seed actions/sync hooks.
+- `clampFloat` (function): Clamps a numeric value to a `[min,max]` range.
+- `clampInt` (function): Clamps and truncates a numeric value to an integer range.
+- `clampIntToStep` (function): Clamps and snaps an integer value to a step size (used for width/height constraints).
+- `onSeedChange` (function): Handles manual seed input changes and emits a normalized integer seed.
+- `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
+- `applyResolutionPreset` (function): Applies a preset (W,H) pair to the width/height controls while respecting constraints.
+-->
+
 <template>
   <div class="gen-card">
     <WanSubHeader v-if="sectionTitle" :title="sectionTitle" />

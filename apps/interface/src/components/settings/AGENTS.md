@@ -2,7 +2,7 @@
 # apps/interface/src/components/settings Overview
 Date: 2025-12-04
 Owner: Frontend Maintainers
-Last Review: 2025-12-23
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -15,3 +15,4 @@ Status: Active
 - 2025-12-22: `SettingsForm.vue` no longer uses a Vue SFC `<style scoped>` block; it relies on `apps/interface/src/styles/components/settings-form.css` and uses shared primitives (`select-md`, `slider`, `caption`).
 - 2025-12-23: Slider settings now use the shared `components/ui/SliderField.vue` layout (label+input header, slider below).
 - 2025-12-23: Settings sliders use `cdx-input-w-sm` for the numeric input width (no more `w-24` one-off CSS).
+- 2026-01-03: Added standardized file header blocks to settings components and widgets (doc-only change; part of rollout).

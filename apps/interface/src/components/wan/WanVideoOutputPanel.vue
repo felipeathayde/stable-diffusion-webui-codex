@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN video output options panel.
+Configures export format/CRF/pixel format/loop options and output toggles (pingpong/save/metadata/trim + optional RIFE interpolation) for WAN video tasks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanVideoOutputPanel` (component): Video output settings panel used by WANTab.
+- `updateVideo` (function): Emits a partial `video` patch (`update:video`).
+- `toInt` (function): Parses an event target value as an integer (fallback on invalid).
+-->
+
 <template>
   <div :class="['gen-card', { 'gen-card--embedded': embedded }]">
     <div v-if="!embedded" class="row-split">

@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Optional RIFE frame interpolation integration hook.
+Attempts to import an out-of-tree RIFE integration module and run interpolation when requested, raising `RIFEUnavailableError` on runtime failures.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `RIFEUnavailableError` (class): Raised when a RIFE integration is present but fails at runtime.
+- `maybe_interpolate_rife` (function): Attempts RIFE interpolation via dynamic import; returns `None` when unavailable.
+"""
+
 from __future__ import annotations
 
 from typing import List, Optional, Sequence
@@ -51,4 +67,3 @@ def maybe_interpolate_rife(
         if "No module named" in msg:
             return None
         raise RIFEUnavailableError(msg)
-

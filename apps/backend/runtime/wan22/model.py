@@ -1,12 +1,26 @@
-"""WAN 2.2 Transformer model as nn.Module (format-agnostic).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module provides WanTransformer2DModel, a native PyTorch implementation
-of the WAN diffusion transformer that works with any weight format (GGUF,
-safetensors, etc.) via the operations registry.
+Purpose: WAN 2.2 Transformer model as nn.Module (format-agnostic).
+Provides `WanTransformer2DModel`, a native PyTorch implementation of the WAN diffusion transformer that can load weights from
+multiple formats (GGUF, safetensors, etc.) via the operations registry; GGUF handling is transparent through `CodexOperationsGGUF`.
 
-Unlike WanDiTGGUF which operates directly on GGUF state dicts, this model
-uses standard nn.Module layers, making GGUF handling transparent through
-CodexOperationsGGUF.
+Symbols (top-level; keep in sync; no ghosts):
+- `WanArchitectureConfig` (dataclass): Architecture hyperparameters for WAN (dims/heads/blocks/patch size/etc) used for construction/inference.
+- `WanRMSNorm` (class): RMSNorm with optional GGUF parameter dequantization (supports `CodexParameter` weights).
+- `WanSelfAttention` (class): Self-attention block for WAN (QKV projection + SDPA implementation).
+- `WanCrossAttention` (class): Cross-attention block for WAN (text context attention path).
+- `WanFFN` (class): Feed-forward (MLP) block used in WAN transformer blocks.
+- `WanTransformerBlock` (class): One transformer block combining attention + FFN + norms/residuals.
+- `WanTransformer2DModel` (class): Full WAN transformer stack (embeddings/blocks/forward); used by `runtime/wan22/wan22.py`.
+- `remap_wan22_gguf_state_dict` (function): Remaps WAN22 GGUF key names into this module’s expected parameter keys.
+- `infer_wan_architecture_from_state_dict` (function): Infers `WanArchitectureConfig` from a loaded state dict (dims/layers/heads).
+- `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with remapping).
 """
 
 from __future__ import annotations

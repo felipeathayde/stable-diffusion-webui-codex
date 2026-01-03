@@ -1,3 +1,31 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model-asset inventory scanning and caching.
+Builds a snapshot of local model files (VAEs, text encoders, LoRAs, WAN22 GGUF) and exposes cached helpers used by backend inventory endpoints and asset resolution.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Inventory` (dataclass): Container for scanned model inventories (vaes/text_encoders/loras/wan22/metadata).
+- `_CACHE` (constant): Process-local cached `Inventory` instance.
+- `_repo_root` (function): Resolves the repository root used for scan defaults.
+- `_models_root` (function): Returns the default `models/` root path under the repo.
+- `_hf_root` (function): Returns the default Hugging Face metadata root path under `apps/backend/huggingface`.
+- `_list_files` (function): Lists files under a directory matching extensions, optionally adding SHA256.
+- `_get_file_sha256` (function): Computes/loads SHA256 for a file via the model registry cache.
+- `resolve_asset_by_sha` (function): Resolves a SHA256 hash to a file path using the current inventory snapshot.
+- `_SHA_TO_PATH` (constant): Lazy cache mapping `sha256 -> path` populated from the current inventory.
+- `_list_dirs` (function): Lists immediate subdirectories under a directory.
+- `scan_all` (function): Scans configured roots and returns an `Inventory` snapshot.
+- `init` (function): Initializes the process-local inventory cache.
+- `get` (function): Returns the cached inventory as a JSON-friendly dict.
+- `refresh` (function): Rebuilds the inventory and replaces the process-local cache.
+"""
+
 from __future__ import annotations
 
 import os
@@ -133,12 +161,12 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     except Exception:
         # Do not break inventory on misconfigured paths.json; legacy roots still apply.
         pass
-    # Engine-specific VAEs from apps/paths.json (flux_vae, zimage_vae): scan roots directly without
+    # Engine-specific VAEs from apps/paths.json (flux_vae, zimage_vae, wan22_vae): scan roots directly without
     # relying on filename heuristics. Any weight-like file under these roots is exposed
     # so the UI can list concrete Flux/ZImage VAEs based purely on paths.json.
     try:
         engine_vaes: List[Dict[str, str]] = []
-        for key in ("flux_vae", "zimage_vae"):
+        for key in ("flux_vae", "zimage_vae", "wan22_vae"):
             for root in get_paths_for(key):
                 if os.path.isdir(root):
                     for name in os.listdir(root):

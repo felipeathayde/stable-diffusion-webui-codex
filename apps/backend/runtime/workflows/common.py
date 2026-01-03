@@ -1,4 +1,39 @@
-"""Shared workflow primitives used across Codex generation tasks."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared workflow primitives used across Codex generation tasks.
+Defines the common helpers for prompt parsing, conditioning, scheduler normalization, sampling plan construction/execution, LoRA activation,
+tiling, and conversions between latent tensors and PIL images.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_truthy` (function): Parses a string env/value into a boolean toggle.
+- `_maybe_dump_latents` (function): Dumps latents to disk when `CODEX_DUMP_LATENTS` is enabled (debug diagnostics).
+- `_normalize_scheduler_name` (function): Normalizes scheduler names/aliases into canonical scheduler IDs (no silent fallback).
+- `build_prompt_context` (function): Builds a `PromptContext` (prompt parsing, extras) for a processing run.
+- `apply_prompt_context` (function): Applies a `PromptContext` onto a processing object (prompts, extras, derived fields).
+- `apply_dimension_overrides` (function): Applies dimension/size overrides from workflow controls into processing state.
+- `resolve_noise_settings` (function): Resolves `NoiseSettings` for a run (seed source, noise kind, deterministic toggles).
+- `build_sampling_plan` (function): Builds a `SamplingPlan` from processing state (steps/sampler/scheduler/guidance/etc).
+- `apply_sampling_overrides` (function): Applies workflow overrides onto a `SamplingPlan` (sampler/scheduler/steps/etc).
+- `ensure_sampler_and_rng` (function): Ensures a `CodexSampler` and `ImageRNG` exist and are configured for this run.
+- `run_process_scripts` (function): Executes processing scripts/hooks (where enabled) before sampling.
+- `activate_extra_networks` (function): Activates extra networks such as LoRAs derived from prompts/workflow inputs.
+- `set_shared_job` (function): Sets the shared job state for the backend (used for progress/reporting integration).
+- `collect_lora_selections` (function): Collects LoRA selections from parsed prompt extras into a normalized list.
+- `run_before_sampling_hooks` (function): Runs pre-sampling hooks (LoRA application, preview setup, memory policy changes).
+- `run_post_sample_hooks` (function): Runs post-sampling hooks (preview decoding, tiling cleanup, latent dumps) and returns samples.
+- `latents_to_pil` (function): Converts decoded latent tensors into PIL images for output.
+- `pil_to_tensor` (function): Converts PIL images into a tensor (used for img2img/tiling paths).
+- `maybe_decode_for_hr` (function): Optionally decodes samples for hi-res stages (returns decoded tensor or `None`).
+- `execute_sampling` (function): Executes the sampler loop given processing + plan + conditions (main sampling entrypoint).
+- `apply_tiling_if_requested` (function): Applies tiling settings before sampling when requested (returns previous flags for restoration).
+- `finalize_tiling` (function): Restores tiling-related global flags after sampling.
+"""
 
 from __future__ import annotations
 

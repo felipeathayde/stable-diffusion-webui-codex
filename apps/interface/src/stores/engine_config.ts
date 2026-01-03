@@ -1,7 +1,27 @@
-/**
- * Engine configuration - defaults and capabilities per engine type.
- * Used by dynamic tabs to set appropriate defaults.
- */
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Static engine configs (defaults + capability flags) for the WebUI.
+Defines engine types and per-engine defaults/capabilities used by dynamic tabs and composables to pick UI defaults and gate fields.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EngineType` (type): Known engine identifiers used by the UI config.
+- `TaskType` (type): Supported task identifiers (txt2img/img2img/txt2vid/img2vid).
+- `EngineCapabilities` (interface): Capability flags used to gate UI controls (CFG/negative prompt/asset requirements/etc.).
+- `EngineDefaults` (interface): Default generation parameters (width/height/steps/cfg/etc.).
+- `EngineConfig` (interface): Full engine config entry (id/label/capabilities/defaults).
+- `getEngineConfig` (function): Returns the config entry for a given engine id.
+- `getEngineDefaults` (function): Returns default parameters for a given engine id.
+- `getEngineCapabilities` (function): Returns capability flags for a given engine id.
+- `getAllEngines` (function): Returns all engine config entries.
+- `getImageEngines` (function): Returns image-capable engine configs.
+- `getVideoEngines` (function): Returns video-capable engine configs.
+*/
 
 export type EngineType = 
   | 'sd15' 
@@ -99,8 +119,8 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,
-      requiresTenc: false,
-      requiresVae: false,
+      requiresTenc: true,  // GGUF core-only requires external text encoders
+      requiresVae: true,   // GGUF core-only requires external VAE
       isVideoEngine: false,
     },
     defaults: {
@@ -121,7 +141,7 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesDistilledCfg: true,
       usesNegativePrompt: false,
       requiresTenc: true,  // GGUF requires text encoder
-      requiresVae: false,
+      requiresVae: true,   // GGUF core-only requires external VAE
       isVideoEngine: false,
     },
     defaults: {
@@ -162,8 +182,8 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: true,
       usesDistilledCfg: false,
       usesNegativePrompt: true,
-      requiresTenc: false,
-      requiresVae: false,
+      requiresTenc: true,
+      requiresVae: true,
       isVideoEngine: true,
     },
     defaults: {
@@ -182,8 +202,8 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: true,
       usesDistilledCfg: false,
       usesNegativePrompt: true,
-      requiresTenc: false,
-      requiresVae: false,
+      requiresTenc: true,
+      requiresVae: true,
       isVideoEngine: true,
     },
     defaults: {

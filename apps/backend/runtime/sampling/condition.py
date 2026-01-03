@@ -1,9 +1,24 @@
-"""Condition helpers for diffusion sampling.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Invariants (enforced):
-- For dict-based conditioning (SDXL/SD3+), keys must include 'crossattn' (B,S,C) and 'vector' (B,V).
-- For tensor-based conditioning (SD15/SD20 legacy), input must be (B,S,C) and is treated as cross-attn only.
-- No silent coercions: violations raise ValueError with the root cause.
+Purpose: Conditioning helpers for diffusion sampling (tensor and dict-based conditioning payloads).
+Enforces shape invariants and wraps conditioning tensors in small helper classes used by samplers and legacy adapters.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `repeat_to_batch_size` (function): Repeat/slice a tensor batch dimension to match a target batch size.
+- `lcm` (function): Least common multiple helper used for cross-attn concatenation.
+- `Condition` (class): Base wrapper for a conditioning tensor with concat/processing helpers.
+- `ConditionNoiseShape` (class): Conditioning wrapper that slices by a noise-shape area before batching.
+- `ConditionCrossAttn` (class): Cross-attention wrapper supporting LCM-based concat along sequence length.
+- `ConditionConstant` (class): Wrapper for constant (non-tensor) conditioning values.
+- `compile_conditions` (function): Normalize a conditioning payload (tensor or dict) into the canonical structure used by samplers.
+- `compile_weighted_conditions` (function): Compile a list of weighted conditioning indices into per-strength condition bundles.
+- `logger` (constant): Module logger used for DEBUG diagnostics.
 """
 
 import math

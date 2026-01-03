@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Textual Inversion picker + insertion modal.
+Fetches embeddings via the backend API, filters by search query, and emits TI tokens (optionally weighted) for prompt insertion.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TextualInversionModal` (component): Modal for selecting embeddings and emitting insertion tokens.
+- `filtered` (const): Filtered embedding name list based on the current search query.
+- `insert` (function): Formats and emits an embedding token for insertion into a prompt.
+-->
+
 <template>
   <Modal v-model="open" title="Textual Inversion">
     <div class="form-grid">

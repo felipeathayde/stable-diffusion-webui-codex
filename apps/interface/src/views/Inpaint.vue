@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Inpaint route view.
+Prototype inpaint workspace wiring an init image picker and a preview panel (mask editing and generation are TODO).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Inpaint` (component): Inpaint route view component.
+- `onFileSet` (function): Handles init image file selection and stores it in the inpaint store.
+-->
+
 <template>
   <section class="panels">
     <!-- Left column: Init image + mask tools placeholder -->

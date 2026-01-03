@@ -1,15 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN latent normalization helpers (ComfyUI-inspired).
+Provides per-channel mean/std normalization utilities for WAN latent formats (Wan21 16ch and Wan22 48ch).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LatentNorm` (class): Base normalizer interface with `process_in`/`process_out` hooks.
+- `Wan21Norm` (class): Per-channel normalization for 16-channel WAN latents.
+- `Wan22Norm` (class): Per-channel normalization for 48-channel WAN latents.
+- `IdentityNorm` (class): No-op normalization implementation for arbitrary channel counts.
+- `resolve_norm` (function): Resolves the appropriate normalizer based on requested kind and latent channel count.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple
+
 import torch
-
-
-"""WAN latent normalization helpers (ComfyUI-inspired).
-
-Provides simple per-channel mean/std normalization for WAN latent formats.
-Defaults to Wan21 (16ch). No SD15 fallback here by design.
-"""
 
 
 @dataclass

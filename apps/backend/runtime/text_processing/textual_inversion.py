@@ -1,3 +1,30 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Textual inversion embedding loading + database for prompt parsing.
+Loads embeddings from image-embedded payloads (PNG/WebP/JXL/AVIF) and weight files (torch/safetensors), maintains an embedding database keyed
+by tokenizer ids, and supports SDXL dual-embedding shapes.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EmbeddingEncoder` (class): JSON encoder that serializes torch tensors into list form for embedding payloads.
+- `EmbeddingDecoder` (class): JSON decoder/object hook that rebuilds tensors from serialized embedding payloads.
+- `embedding_to_b64` (function): Encodes an embedding payload dict into base64 JSON.
+- `embedding_from_b64` (function): Decodes a base64 JSON embedding payload dict.
+- `lcg` (function): Linear congruential generator used by embedded-image decoding helpers.
+- `xor_block` (function): XOR-decodes an embedded image block using the LCG stream.
+- `crop_black` (function): Crops black padding regions from an extracted image array.
+- `extract_image_data_embed` (function): Extracts embedded TI data from an image preview payload.
+- `Embedding` (class): In-memory embedding record (vectors + metadata).
+- `DirWithTextualInversionEmbeddings` (class): Tracks one embeddings directory and change detection.
+- `EmbeddingDatabase` (class): Embedding registry keyed by tokenizer ids; loads/refreshes embeddings from configured dirs.
+- `create_embedding_from_data` (function): Builds an `Embedding` from loaded TI/SDXL/diffusers embedding data.
+"""
+
 import logging
 import os
 import torch

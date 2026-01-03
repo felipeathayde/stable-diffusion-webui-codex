@@ -1,10 +1,29 @@
-from __future__ import annotations
-
-"""Native options facade (Codex).
-
-Backs options with a simple JSON file under `apps/settings_values.json`. This module
-is the single point of truth for reading/writing option values from the backend.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Native options facade backed by `apps/settings_values.json` (Codex).
+Provides read/write accessors and an `OptionsSnapshot` for consumers that need stable, typed option values during the migration phase.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_VALUES_PATH` (constant): Absolute path to the persisted JSON settings file under `CODEX_ROOT/apps`.
+- `get_value` (function): Reads an option value from disk with a fallback default.
+- `set_values` (function): Persists a dict of option updates and returns the updated keys.
+- `get_selected_vae` (function): Convenience accessor for the selected VAE label/path.
+- `get_additional_modules` (function): Returns selected additional modules from the transitional `codex.main` state.
+- `get_mode` (function): Returns the current Codex mode string (UI-facing).
+- `get_engine` (function): Returns the current engine key string (UI-facing).
+- `get_current_checkpoint` (function): Returns the configured checkpoint name/path when set.
+- `OptionsSnapshot` (class): Typed snapshot of option values used by runtime/engines.
+- `get_snapshot` (function): Builds an `OptionsSnapshot` from persisted values.
+- `__all__` (constant): Explicit export list for compatibility consumers.
+"""
+
+from __future__ import annotations
 
 from typing import Any, List, Dict, Optional
 from dataclasses import dataclass

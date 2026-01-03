@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model-tab header controls (rename/enable/actions).
+Provides a small header panel used by model tabs to rename, enable/disable, and run tab actions (duplicate/remove/load/unload/generate).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BaseTabHeader` (component): Header/actions control panel for a model tab.
+- `onTitleInput` (function): Emits the updated title value (`rename`).
+- `onToggle` (function): Emits the updated enabled state (`set-enabled`).
+-->
+
 <template>
   <div class="panel">
     <div class="panel-header">

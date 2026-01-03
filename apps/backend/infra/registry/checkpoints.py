@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Legacy checkpoint registry adapter (runtime model registry-backed).
+Provides a small `CheckpointEntry` wrapper and delegates discovery/description to `apps.backend.runtime.models.api`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CheckpointEntry` (dataclass): Legacy checkpoint record wrapper used by callers expecting the old registry format.
+- `list_checkpoints` (function): Returns sorted `CheckpointEntry` objects (delegates to runtime model listing).
+- `describe_checkpoints` (function): Returns checkpoint metadata dicts for UI/API (delegates to runtime model listing).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

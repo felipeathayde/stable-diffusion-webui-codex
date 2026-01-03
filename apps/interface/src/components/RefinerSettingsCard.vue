@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Refiner configuration card (e.g., SDXL).
+Renders a compact refiner enable switch and optional fields (model/VAE/steps/CFG/seed), emitting updates to parent views.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `RefinerSettingsCard` (component): Refiner settings panel component.
+- `toggle` (function): Toggles `enabled` via `update:enabled`.
+-->
+
 <template>
   <div :class="['refiner-card', { 'refiner-card--dense': dense } ]">
     <div class="rf-header">

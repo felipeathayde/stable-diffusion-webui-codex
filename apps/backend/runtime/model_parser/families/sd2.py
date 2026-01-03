@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SD2.x parser plan builder (UNet + optional VAE + CLIP-H).
+Defines split/conversion/validation steps for SD2.x checkpoints, converting CLIP-H (`clip_h`) and validating UNet channel count and
+required CLIP layer-norm keys.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `build_plan` (function): Builds and returns the SD2.x `ParserPlanBundle`.
+- `_convert_clip` (function): Converts SD2.x CLIP tensors and registers the `clip_h` alias mapping.
+- `_validate_unet_channels` (function): Validates UNet `channels_in` vs the `ModelSignature` expectation.
+- `_validate_clip_keys` (function): Validates that required CLIP keys exist after conversion.
+"""
+
 from __future__ import annotations
 
 from typing import Dict

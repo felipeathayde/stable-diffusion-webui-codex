@@ -1,8 +1,21 @@
-"""Miscellaneous backend helpers (lazy exports to avoid import cycles).
-
-This package exposes symbols on demand to prevent importing heavy modules
-at package import time. It keeps `utils` and `memory` free from cycles.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Misc runtime helper facade with lazy exports (avoids heavy imports and import cycles).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_EXPORTS` (constant): Mapping `{name: (module_path, symbol)}` for on-demand exports.
+- `__getattr__` (function): Lazy import hook resolving `_EXPORTS` entries on first access.
+- `__all__` (constant): Sorted list of exported names (keys of `_EXPORTS`).
+"""
+
+# This package exposes symbols on demand to prevent importing heavy modules at
+# package import time. It keeps `utils` and `memory` free from cycles.
 
 from importlib import import_module
 from typing import Any

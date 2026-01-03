@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stable Diffusion 1.x (SD1.5-style) model detector for the model registry.
+Detects classic UNet checkpoints by key patterns, channel shapes, and CLIP-L embedding size, and returns a `ModelSignature` including quantization hints.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SD15_REQUIRED_KEYS` (constant): Keys required to identify SD1.x/SD1.5-style checkpoints.
+- `StableDiffusionV1Detector` (class): Detector for SD1.5-style UNet checkpoints (channels 4/9; CLIP-L text encoder).
+- `_infer_quantization` (function): Infers `QuantizationHint` from state-dict key patterns (bitsandbytes NF4/FP4).
+"""
+
 from __future__ import annotations
 
 import math

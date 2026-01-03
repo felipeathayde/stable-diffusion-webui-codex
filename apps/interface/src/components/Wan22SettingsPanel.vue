@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 settings panel (model paths + LoRA toggles + video export + interpolation flags).
+Renders a configuration panel bound to a provided store object, hydrates GGUF model/LoRA datalist options from `/api/models/inventory`, and
+exposes a helper (`store.__resolveWan22Paths`) to map user-facing names to absolute paths before submitting.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Wan22SettingsPanel` (component): WAN settings panel UI bound to a parent-provided store.
+- `resolveName` (function): Resolves a display name to a canonical path using the inventory maps.
+-->
+
 <template>
   <div class="panel wan22-panel">
     <div class="panel-header">WAN 2.2 Settings</div>

@@ -1,17 +1,24 @@
-"""Centralized exception capture and full-traceback dumper.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Usage:
-- Call `install_exception_hooks(log_dir=...)` as early as possible in process startup.
-- Optionally call `attach_asyncio(loop)` to capture unhandled asyncio task exceptions.
-- For caught exceptions you still want to persist, call
-  `dump_exception(exc_type, exc, tb, where=..., context=...)` or
-  `dump_current_exception(where=..., context=...)`.
+Purpose: Centralized exception capture + full-traceback dumping for backend processes.
+Installs sys/threading/asyncio exception hooks that dump full tracebacks to an append-only log file (by day + pid) under `CODEX_ROOT/logs/`,
+and provides helpers to persist caught exceptions with a one-line stderr notice for TUI visibility.
 
-Design notes:
-- Writes to a stable file per (day, pid): logs/exceptions-YYYYmmdd-<pid>.log
-  to keep append-only and avoid unbounded file count.
-- Emits a one-line notice to stderr on every dump so the TUI will display a
-  confirmation line with the output path.
+Symbols (top-level; keep in sync; no ghosts):
+- `_ensure_log_path` (function): Resolves and creates the exception log file path (stable by day+pid).
+- `install_exception_hooks` (function): Installs sys/threading exception hooks (idempotent) and returns the log path.
+- `attach_asyncio` (function): Hooks the asyncio loop exception handler to dump unhandled task exceptions.
+- `dump_message` (function): Writes an arbitrary message record into the exception log.
+- `dump_exception` (function): Dumps an exception triple (type/value/tb) to the log and emits a stderr notice.
+- `dump_current_exception` (function): Convenience wrapper for dumping the current exception via `sys.exc_info()`.
+- `_stderr_notice` (function): Emits a one-line stderr notice pointing at the log file path.
+- `get_log_path` (function): Returns the resolved exception log path (or `None` if not installed).
 """
 
 from __future__ import annotations

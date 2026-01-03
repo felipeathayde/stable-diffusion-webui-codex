@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native prompt processing for T5 text encoders (chunking + emphasis + padding).
+Tokenizes prompts, applies emphasis weights, chunks/pads sequences to the required minimum length, and runs the T5 text encoder with the
+selected TE device/dtype policy.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptChunkFix` (constant): Namedtuple describing a fix-up embedding splice (offset + embedding tensor).
+- `PromptChunk` (dataclass): One token chunk (tokens + per-token multipliers) with append/pad helpers.
+- `PromptEncoding` (dataclass): Chunked encoding container (chunks + token count) with max-length helper.
+- `T5TextProcessingEngine` (class): Prompt processor/encoder for T5-based text encoders.
+"""
+
 from __future__ import annotations
 
 import logging

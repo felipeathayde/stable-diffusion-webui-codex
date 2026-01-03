@@ -1,3 +1,33 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: NumPy quantization kernels for GGML block formats.
+Implements pure-NumPy quantization of `(n_blocks, 32)` float blocks into packed GGML block layouts (Q8_0/Q4_0/Q4_1/Q5_*/Q*_K/IQ4_NL),
+matching ggml rounding/packing conventions.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_np_roundf` (function): GGML-style round-half-up rounding used for quant packing.
+- `_pack_nibbles_32x4` (function): Packs 32 4-bit values into 16 bytes using ggml nibble order.
+- `_pack_bits_32` (function): Packs 32 1-bit flags into 4 bytes (little-endian bit order).
+- `quantize_blocks_q8_0` (function): Quantizes blocks to GGML Q8_0 packed layout.
+- `quantize_blocks_q4_0` (function): Quantizes blocks to GGML Q4_0 packed layout.
+- `quantize_blocks_q4_1` (function): Quantizes blocks to GGML Q4_1 packed layout.
+- `quantize_blocks_q5_0` (function): Quantizes blocks to GGML Q5_0 packed layout.
+- `quantize_blocks_q5_1` (function): Quantizes blocks to GGML Q5_1 packed layout.
+- `quantize_blocks_iq4_nl` (function): Quantizes blocks to GGML IQ4_NL packed layout.
+- `_pack_k_scale_min` (function): Packs K-quant scale/min arrays into the ggml K-block header layout.
+- `quantize_blocks_q4_k` (function): Quantizes blocks to GGML Q4_K packed layout.
+- `quantize_blocks_q5_k` (function): Quantizes blocks to GGML Q5_K packed layout.
+- `quantize_blocks_q3_k` (function): Quantizes blocks to GGML Q3_K packed layout.
+- `quantize_blocks_q2_k` (function): Quantizes blocks to GGML Q2_K packed layout.
+- `quantize_blocks_q6_k` (function): Quantizes blocks to GGML Q6_K packed layout.
+"""
+
 from __future__ import annotations
 
 import numpy as np

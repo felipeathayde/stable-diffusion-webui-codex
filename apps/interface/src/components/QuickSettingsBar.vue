@@ -1,3 +1,50 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/ZImage/WAN).
+Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
+and emits/commits overrides (device/engine/memory flags) used by generation payload builders.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
+- `cancelAdvancedAnimation` (function): Cancels in-flight advanced-row animations (used by toggling/resize logic).
+- `easeOutCubic` (function): Easing helper used for advanced-row animations.
+- `syncAdvancedHeight` (function): Measures/synchronizes advanced-row height for smooth expand/collapse transitions.
+- `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
+- `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
+- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux`/`wan`/`zimage`).
+- `normalizeTabFamily` (function): Normalizes unknown inputs to a `TabFamily` (or `null`).
+- `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
+- `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
+- `fileInPaths` (function): Checks whether a file path belongs to the configured roots for a key from `/api/paths` (drives selector filtering).
+- `modelMatchesFamily` (function): Determines whether a checkpoint/inventory entry matches a given family (combines heuristics + `fileInPaths`).
+- `isVaeForFamily` (function): Filters VAE entries to those relevant for the current family.
+- `normalizeTextEncoderLabels` (function): Normalizes raw TE values into a stable label list (used for Flux/WAN multi-TE cases).
+- `WanAssetsParams` (type): Minimal WAN assets triple used for payload building (metadata dir + TE + VAE).
+- `currentWanAssets` (function): Builds `WanAssetsParams` from current UI selections (used by WAN payload generation).
+- `textEncoderLabel` (function): Converts raw TE selector values into a canonical label (handles WAN-style prefixes).
+- `onPrimaryTextEncoderChange` (function): Applies primary text-encoder selection changes (and triggers dependent updates).
+- `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (Flux/Kontext dual-encoder workflows).
+- `onUnetDtypeChange` (function): Updates UNet dtype selection in quicksettings/store.
+- `onGpuWeightsChange` (function): Updates GPU weights slider value for relevant engines.
+- `onAttentionChange` (function): Updates attention implementation selection (backend/runtime policy).
+- `onSmartOffloadChange` (function): Updates Smart Offload toggle (impacts per-request memory behavior).
+- `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
+- `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
+- `onCoreStreamingChange` (function): Updates core streaming toggle (runtime streaming behavior).
+- `onWanModeChange` (function): Updates WAN mode selection and derived controls.
+- `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
+- `enginePrefixForFamily` (function): Maps a `TabFamily` to the engine prefix used in options/labels.
+- `dedupePaths` (function): Deduplicates path lists for selector options.
+- `promptForPath` (function): Prompts the user for a path update when needed (path config UX).
+- `openOverrides` (function): Opens the overrides UI surface (advanced controls entrypoint).
+-->
+
 <template>
   <section :class="['quicksettings', { 'quicksettings-loading': isLoadingQuicksettings }]">
     <div class="quicksettings-row quicksettings-row--main">
@@ -469,6 +516,16 @@ function isVaeForFamily(name: string, fam: string): boolean {
 
 const filteredVaeChoices = computed(() => {
   const fam = activeFamily.value
+  if (fam === 'flux') {
+    return inventoryVaes.value
+      .filter((v) => typeof v.path === 'string' && fileInPaths(v.path, 'flux_vae'))
+      .map((v) => String(v.path || ''))
+  }
+  if (fam === 'zimage') {
+    return inventoryVaes.value
+      .filter((v) => typeof v.path === 'string' && (fileInPaths(v.path, 'zimage_vae') || fileInPaths(v.path, 'flux_vae')))
+      .map((v) => String(v.path || ''))
+  }
   return (store.vaeChoices.length ? store.vaeChoices : ['Automatic']).filter(v => v === 'Automatic' || isVaeForFamily(v, fam))
 })
 
@@ -592,20 +649,14 @@ async function refreshAll(): Promise<void> {
   await initQuicksettings({ forceInventoryRefresh: true, forceModelsRefresh: true })
 }
 
-// WAN-specific helpers (directories derived from inventory)
-function parentDir(path: string): string {
-  const norm = path.replace(/\\/g, '/')
-  const idx = norm.lastIndexOf('/')
-  return idx >= 0 ? norm.slice(0, idx) : norm
-}
-
 const wanHighDirChoices = computed(() => {
   const seen = new Set<string>()
   const out: string[] = []
   for (const g of inventoryWan.value) {
     if (g.stage !== 'high') continue
-    const dir = parentDir(g.path)
-    if (!seen.has(dir)) { seen.add(dir); out.push(dir) }
+    const path = String(g.path || '').trim()
+    if (!path) continue
+    if (!seen.has(path)) { seen.add(path); out.push(path) }
   }
   return out
 })
@@ -615,8 +666,9 @@ const wanLowDirChoices = computed(() => {
   const out: string[] = []
   for (const g of inventoryWan.value) {
     if (g.stage !== 'low') continue
-    const dir = parentDir(g.path)
-    if (!seen.has(dir)) { seen.add(dir); out.push(dir) }
+    const path = String(g.path || '').trim()
+    if (!path) continue
+    if (!seen.has(path)) { seen.add(path); out.push(path) }
   }
   return out
 })

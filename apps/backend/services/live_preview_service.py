@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Live preview task configuration and progress-event attachment.
+Builds per-task preview settings, encodes a resized preview image, and attaches it to SSE progress payloads when enabled.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LivePreviewImageFormat` (enum): Supported output formats for encoded preview images.
+- `LivePreviewEncodedImage` (dataclass): Encoded preview payload (`format` + base64 `data`).
+- `LivePreviewTaskConfig` (dataclass): Preview config for a task; can apply runtime env vars for the engine runtime.
+- `LivePreviewService` (class): Builds preview config, encodes images, and attaches previews to progress events.
+- `__all__` (constant): Explicit export list for this module.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -163,4 +182,3 @@ __all__ = [
     "LivePreviewService",
     "LivePreviewTaskConfig",
 ]
-

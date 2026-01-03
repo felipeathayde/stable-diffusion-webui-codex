@@ -1,3 +1,18 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Server-driven UI blocks schema store.
+Fetches `/api/ui/blocks` (optionally tab-scoped) and exposes the current block set/version for rendering parameter panels.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useUiBlocksStore` (const): Pinia store for UI block schemas (version/blocks/semantic_engine).
+*/
+
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { UiBlock, UiBlocksResponse } from '../api/types'

@@ -1,14 +1,18 @@
-"""Test endpoint for Diffusers bypass pipeline.
-
-Usage from Python console or test script:
-    from apps.backend.engines.zimage.test_diffusers import test_zimage_diffusers
-    
-    images = test_zimage_diffusers(
-        "a beautiful sunset over mountains",
-        seed=42,
-    )
-    images[0].save("test_output.png")
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Manual test helper for the Z Image Diffusers-bypass sampling path.
+Loads a Z-Image GGUF model through the engine and runs generation using the standalone Diffusers scheduler math path for debugging.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `test_zimage_diffusers` (function): Loads the engine and runs a single prompt via the Diffusers-bypass sampler, returning PIL images.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared Results helpers (toast + clipboard + JSON formatting).
+Provides clipboard copy helpers, a short-lived notice/toast state, and JSON formatting utilities used by results panels.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `formatJson` (function): Formats a value as pretty JSON (fallback to string).
+- `useResultsCard` (function): Returns notice state and helpers for results UI (toast/clipboard).
+*/
+
 import { onBeforeUnmount, ref } from 'vue'
 
 export function formatJson(value: unknown): string {

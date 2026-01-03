@@ -3,7 +3,7 @@ Third-Party Notices
 
 This repository bundles code from multiple third-party projects under their original licenses. These components reside primarily under `.refs/Forge-A1111/` and `extensions-builtin/` and retain their own LICENSE files and notices. Below is a non-exhaustive index to aid discovery.
 
-Important: The top-level repository is licensed AGPL-3.0-or-later. Third-party subcomponents remain under their original terms; see each component’s LICENSE.
+Important: The top-level repository is licensed under the PolyForm Noncommercial License 1.0.0. Third-party subcomponents remain under their original terms; see each component’s LICENSE.
 
 Highlights (examples)
 - `.refs/Forge-A1111/` — Snapshot of “Stable Diffusion WebUI Forge” (itself a fork of AUTOMATIC1111). Mixed licenses per upstream files. Consult `.refs/Forge-A1111/LICENSE` and subfolders.

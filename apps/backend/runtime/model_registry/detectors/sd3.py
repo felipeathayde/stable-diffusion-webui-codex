@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stable Diffusion 3 / 3.5 model detector for the model registry.
+Detects SD3-family checkpoints and builds a `ModelSignature`, heuristically classifying SD3 vs SD3.5 (medium/large) from transformer depth/structure.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SD3_REQUIRED_KEYS` (constant): Key set used to identify SD3-family checkpoints.
+- `StableDiffusion3Detector` (class): Detector for SD3/SD3.5 checkpoints (variant classification via `_classify_variant`).
+- `_shape` (function): Helper to read a single shape dimension from a bundle.
+- `_classify_variant` (function): Infers SD3/SD3.5 variant from depth and dual-block presence.
+"""
+
 from __future__ import annotations
 
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY

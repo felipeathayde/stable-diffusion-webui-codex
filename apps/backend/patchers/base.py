@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Core patcher primitives (model options hooks + LoRA patch registry + object patching + ModelPatcher wrapper).
+Provides the shared patch/registry structures that engines use to apply LoRA patches, inject CFG/UNet/VAE wrappers, and manage
+device placement and smart offload interactions.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LoraPatchRegistry` (dataclass): Tracks LoRA patch bundles keyed by filename/strength (clone/merge helpers; supports “online” LoRA mode).
+- `ObjectPatchRegistry` (dataclass): Tracks object attribute patches and backups (register/apply/restore against a model object).
+- `_ensure_transformer_options` (function): Ensures model options include the nested transformer-options mapping.
+- `_copy_transformer_options` (function): Copies transformer options mapping to avoid shared-mutation across clones.
+- `set_model_options_patch_replace` (function): Adds a “patch replace” entry into model options (block/name/indices keyed).
+- `set_model_options_post_cfg_function` (function): Registers a post-CFG callback in model options.
+- `set_model_options_pre_cfg_function` (function): Registers a pre-CFG callback in model options.
+- `ModelPatcher` (class): Main patcher wrapper around a model; owns LoRA/object patch registries and exposes many methods to
+  register wrappers/patches (CFG hooks, attention patches, VAE wrappers) and apply/unapply them with memory-management integration.
+"""
+
 from __future__ import annotations
 
 import copy

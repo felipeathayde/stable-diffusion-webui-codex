@@ -1,15 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Native LoRA application pipeline (no legacy modules).
+Converts LoRA files into patch dictionaries and applies them to the engine's UNet and CLIP via the `ModelPatcher` system, then materializes
+merges by refreshing LoRAs on the patchers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `AppliedStats` (dataclass): Counters for applied LoRA files and matched parameters.
+- `_build_to_load_maps` (function): Builds LoRA-key → model-param maps for UNet and CLIP encoders.
+- `_apply_patches` (function): Adds patches to a patcher and returns the number of matched parameters.
+- `apply_loras_to_engine` (function): Applies selected LoRAs to the engine's patchers and refreshes merges.
+"""
+
 from __future__ import annotations
-
-"""
-Native LoRA application pipeline (no legacy modules).
-
-This layer converts LoRA files into patch dictionaries and applies them to the
-engine's UNet and text encoders via our ModelPatcher system.
-
-It builds on the existing in-backend patchers (UnetPatcher/CLIP ModelPatcher)
-and the LoRA weight merge helpers in patchers/lora.py (which support multiple
-LoRA variants and quantization-aware merges).
-"""
 
 from dataclasses import dataclass
 from typing import Dict, Tuple, Any, Iterable, List

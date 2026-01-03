@@ -1,7 +1,21 @@
-"""WAN 2.2 engine runtime specification (analogous to Flux spec.py).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module provides the abstraction layer between the engine and runtime,
-mirroring the Flux pattern with centralized runtime assembly.
+Purpose: WAN 2.2 engine runtime specification (analogous to Flux `spec.py`).
+Defines the engine-facing `WanEngineSpec`/`WanEngineRuntime` containers and centralized runtime assembly used by WAN engines, delegating
+defaults to `FamilyRuntimeSpec` and wiring the T5 text pipeline + UNet/VAE patchers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanTextPipelines` (dataclass): Text processing pipelines for WAN (T5 only; no CLIP).
+- `WanEngineRuntime` (dataclass): Runtime container for WAN components (VAE, UNet patcher, text pipelines, device/dtype).
+- `WanEngineSpec` (dataclass): Engine spec wrapper that delegates defaults to `FamilyRuntimeSpec` with per-variant overrides.
+- `_k_predictor` (function): Builds the WAN flow predictor configured from the spec.
+- `assemble_wan_runtime` (function): Assembles a `WanEngineRuntime` from a model family spec + loaded components.
 """
 
 from __future__ import annotations

@@ -1,8 +1,22 @@
-"""Philox-based random number generator mirroring CUDA ``torch.randn`` outputs.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-The legacy pipeline exposed an NV/Philox RNG path to reproduce CUDA noise on
-CPU-only setups. We keep the functionality available for determinism-sensitive
-users while integrating it into the native backend stack.
+Purpose: Philox-based random number generator compatible with CUDA `torch.randn` output.
+Implements a deterministic Philox 4x32 generator + Box–Muller transform so CPU-only runs can reproduce CUDA noise for determinism-sensitive workflows.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_PHILOX_M` (constant): Philox round multiplier constants.
+- `_PHILOX_W` (constant): Philox key schedule constants.
+- `_split_uint64_to_uint32` (function): Views `(N,) uint64` as `(2, N) uint32` words.
+- `_philox_round` (function): Single Philox 4x32 round (in-place counter transform).
+- `_philox4x32` (function): Runs multiple Philox rounds and returns the transformed counter stream.
+- `_box_muller` (function): Converts uniform uint32 streams into normal floats via Box–Muller.
+- `PhiloxGenerator` (dataclass): Deterministic generator exposing `randn()` compatible with `torch.randn` shapes/devices.
 """
 
 from __future__ import annotations
@@ -91,4 +105,3 @@ class PhiloxGenerator:
 
 
 __all__ = ["PhiloxGenerator"]
-

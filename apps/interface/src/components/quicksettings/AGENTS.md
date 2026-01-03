@@ -2,7 +2,7 @@
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2025-12-28
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height and keep a visible border (no fixed `2rem` height from `.btn-*` variants).
 - 2025-12-28: Removed the obsolete “Diffusion in Low Bits” selectors and moved Smart toggles + GPU VRAM / Attention Backend / Overrides into a collapsible Advanced nested area (open by default, left-side handle); WAN `LightX2V` is a toggle button and the Guided gen header button is hidden for now.
 - 2025-12-31: `QuickSettingsWan.vue` now declares `defineEmits(...)` for `browse*` + `update:*` events to avoid Vue “extraneous non-emits listeners” warnings with a fragment root template.
+- 2026-01-03: Added standardized file header blocks to quicksettings components (doc-only change; part of rollout).

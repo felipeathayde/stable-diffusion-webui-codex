@@ -1,7 +1,20 @@
-#
-# GGUF file reading/modification support. For API usage information,
-# please see the files scripts/ for some fairly simple examples.
-#
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: GGUF file reader (NumPy/memmap) and inspection helpers.
+Parses GGUF headers, metadata KV entries, and tensor tables from `.gguf` files, exposing them as light tuple views and via a
+high-level reader object. Includes a `__main__` helper for local inspection under `CODEX_ROOT`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ReaderField` (NamedTuple): Parsed metadata entry (key + typed value) as read from the GGUF KV store.
+- `ReaderTensor` (NamedTuple): Parsed tensor table entry (name/shape/type/offsets) with helpers for byte/shape calculations.
+- `GGUFReader` (class): Main reader; loads GGUF structure and provides access to fields/tensors (contains nested IO/alignment helpers).
+"""
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Hydrate settings schema with dynamic choices and current values.
+Injects conservative, backend-native `choices` for selected fields and attaches current option values from the backend options snapshot.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_choices_upscalers` (function): Returns upscaler choices (currently minimal-safe; no native registry yet).
+- `_choices_sd_unet` (function): Returns UNet variant choices (currently none).
+- `_choices_cross_attention` (function): Returns cross-attention optimization choices (currently only `Automatic`).
+- `_choices_hypernetworks` (function): Returns hypernetwork choices (currently `None` only).
+- `_choices_localizations` (function): Returns localization choices (currently `None` only).
+- `HYDRATORS` (constant): Mapping from field key → hydrator function producing a `choices` list.
+- `hydrate_schema` (function): Returns a hydrated schema dict with dynamic `choices` and `current` values when available.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List

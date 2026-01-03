@@ -1,3 +1,30 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Core UNet building blocks (timestep-aware residual blocks, spatial transformer blocks, attention, and up/down sampling layers).
+Defines the nn.Module layers used by the Codex-native `UNet2DConditionModel` implementation, including cross-attention via `context`
+and optional ADM conditioning via `y` (enforced by the UNet model invariants; no fallbacks).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TimestepBlock` (class): Marker base class for layers that accept a timestep embedding.
+- `TimestepEmbedSequential` (class): Sequential container that routes `(x, emb, context, transformer_options)` through mixed layer types
+  and applies `block_inner_modifiers` hooks (contains nested per-layer dispatch logic).
+- `Timestep` (class): Timestep embedding wrapper (calls `timestep_embedding` from `.utils`).
+- `GEGLU` (class): Gated GELU linear projection used in transformer feed-forward blocks.
+- `FeedForward` (class): Transformer feed-forward network (optionally GEGLU-gated) with dropout.
+- `CrossAttention` (class): Cross-attention module used by spatial transformers (supports transformer options + attention backend selection).
+- `BasicTransformerBlock` (class): Transformer block (attn + FFN + norms) used inside `SpatialTransformer`.
+- `SpatialTransformer` (class): Applies transformer blocks over spatial feature maps (rearrange to sequences + back; routes `context`).
+- `Upsample` (class): UNet upsampling layer (supports explicit output_shape).
+- `Downsample` (class): UNet downsampling layer.
+- `ResBlock` (class): Timestep-conditioned residual block used in UNet encoder/decoder paths (supports scale/shift norms and optional up/down).
+"""
+
 from __future__ import annotations
 
 import torch

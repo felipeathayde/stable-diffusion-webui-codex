@@ -1,4 +1,20 @@
-"""Stage-based txt2img pipeline orchestrator."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
+Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
+- `SamplingOutput` (dataclass): Sampling result container (latents/images + metadata) passed between pipeline stages.
+- `Txt2ImgPipelineRunner` (class): Main orchestrator; owns the stage pipeline (conditioning/sampling/hires/refiner) and calls the runtime helpers
+  (contains nested stage methods and integrates smart cache + pipeline tracing).
+"""
 # // tags: txt2img, pipeline, sdxl, hires, refiner
 
 from __future__ import annotations

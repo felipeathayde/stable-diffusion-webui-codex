@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: UNet state-dict normalization helpers for model parsing.
+Currently provides label-embedding key normalization for legacy/Forge SDXL checkpoints that encode sequential label embeddings under nested
+`label_emb.0.0.*` keys.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `normalize_label_embeddings` (function): Flattens nested SDXL label-embedding keys into the expected `label_emb.<idx>.*` layout.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, Any
@@ -43,4 +59,3 @@ def normalize_label_embeddings(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 __all__ = ["normalize_label_embeddings"]
-

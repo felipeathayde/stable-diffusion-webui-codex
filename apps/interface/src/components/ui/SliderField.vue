@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Slider field with label and numeric input.
+Composes a range slider with a numeric input (default `NumberStepperInput`) and emits updates for reactive settings and generation parameters.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SliderField` (component): Slider + numeric input field that emits `update:modelValue`.
+- `onRangeInput` (function): Range slider input handler that emits a numeric value.
+-->
+
 <template>
   <div class="cdx-slider-field">
     <div class="cdx-slider-field__head">

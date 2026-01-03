@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Request→processing adapters for txt2img/img2img (highres/refiner/smart flags).
+Builds Codex processing objects from API request DTOs, including Highres/Refiner configs and per-job smart runtime flags used by workflows.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_build_hires_config` (function): Builds a `CodexHighResConfig` from request payload data (including nested hires refiner).
+- `_build_refiner_config` (function): Builds a `RefinerConfig` from request payload data.
+- `build_txt2img_processing` (function): Converts a `Txt2ImgRequest` into a fully-populated `CodexProcessingTxt2Img`.
+- `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img`.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence

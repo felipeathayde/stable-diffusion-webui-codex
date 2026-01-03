@@ -1,4 +1,16 @@
-"""Configuration for Flux core streaming."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: StreamingConfig for enabling Flux core streaming and tuning policy thresholds.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StreamingConfig` (dataclass): Configuration for streaming Flux transformer blocks between CPU/GPU during inference.
+"""
 
 from __future__ import annotations
 

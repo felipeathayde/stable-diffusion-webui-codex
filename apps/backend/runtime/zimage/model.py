@@ -1,16 +1,39 @@
-"""Z Image Turbo (Alibaba) Transformer Model.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-NextDiT/Lumina2-style diffusion transformer for Z Image Turbo.
-Architecture follows the original checkpoint format with verified shapes.
+Purpose: Z Image Turbo (Alibaba) transformer model architecture (NextDiT/Lumina2-style) and loader.
+Implements the core blocks (RMSNorm, RoPE, attention, transformer blocks, refiner blocks) and provides a state-dict loader that maps
+checkpoint weights into `ZImageTransformer2DModel`.
 
-Key dimensions from z_image_turbo_bf16.safetensors:
+Key dimensions (from `z_image_turbo_bf16.safetensors`):
 - hidden_dim = 3840
-- context_dim = 2560  
+- context_dim = 2560
 - t_dim = 256 (timestep embedding intermediate)
 - head_dim = 128, num_heads = 30 (3840/128)
 - mlp_hidden = 10240
 - latent_channels = 16, patch_size = 2
 - num_layers = 30, num_refiner_layers = 2
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ZImageConfig` (dataclass): Architecture/config defaults for ZImage transformer (dims, layers, RoPE axes, eps, etc).
+- `RMSNorm` (class): RMSNorm layer used across transformer blocks.
+- `TimestepEmbedder` (class): Timestep embedding module for diffusion timestep conditioning.
+- `SwiGLU` (class): SwiGLU MLP block used inside transformer blocks.
+- `RoPEEmbedding` (class): Rotary positional embedding builder for multi-axis RoPE.
+- `apply_rotary_emb` (function): Applies rotary embeddings to a tensor using precomputed complex frequencies.
+- `apply_rope_pair` (function): Applies RoPE to a `(q, k)` pair and returns the rotated tensors.
+- `Attention` (class): Attention module (QKV + optional norms + RoPE application; used by transformer blocks).
+- `TransformerBlock` (class): Main transformer block (attn + MLP + residuals; composes the core model depth).
+- `RefinerBlock` (class): Refiner-stage block used for late refinement layers.
+- `NoiseRefinerBlock` (class): Noise-refiner variant block used for specific refinement passes.
+- `FinalLayer` (class): Final projection layer mapping hidden states back to output channels/patches.
+- `ZImageTransformer2DModel` (class): Full ZImage transformer model (owns embeddings, blocks, refiners, and forward pass).
+- `load_zimage_from_state_dict` (function): Loads `ZImageTransformer2DModel` weights from a checkpoint state dict (with validation/remapping).
 """
 
 from __future__ import annotations

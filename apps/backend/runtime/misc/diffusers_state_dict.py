@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: UNet state-dict key mapping helper for converting legacy configs to Diffusers parameter names.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `UNET_MAP_ATTENTIONS` (constant): Set of attention parameter suffixes used in mapping generation.
+- `TRANSFORMER_BLOCKS` (constant): Set of transformer-block parameter suffixes used in mapping generation.
+- `UNET_MAP_RESNET` (constant): Mapping from legacy ResBlock keys to Diffusers ResNet keys.
+- `UNET_MAP_BASIC` (constant): Basic key pairs for common UNet weights (legacy ↔ Diffusers).
+- `unet_to_diffusers` (function): Build a `{diffusers_key: legacy_key}` mapping from a UNet config dict.
+"""
+
 UNET_MAP_ATTENTIONS = {
     "proj_in.weight",
     "proj_in.bias",

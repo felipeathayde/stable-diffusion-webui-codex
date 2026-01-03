@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared checkpoint/model selector dropdown.
+Renders a model list dropdown and emits updates (and a `change` event) when a model is selected.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ModelSelector` (component): Model selector dropdown component.
+- `onChange` (function): Emits `update:modelValue` and `change` for the selected model title.
+-->
+
 <template>
   <div class="form-field">
     <label class="label">{{ labelText }}</label>
@@ -33,4 +49,3 @@ function onChange(event: Event): void {
   emit('change', value)
 }
 </script>
-

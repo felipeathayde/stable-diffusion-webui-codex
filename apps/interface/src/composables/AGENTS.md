@@ -2,7 +2,7 @@
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
 Owner: Frontend Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - 2025-12-27: Added `useModelTabNavigation` to bridge “Send to Img2Img/Inpaint” actions into `/models/:tabId` tabs by setting init-image params.
 - 2026-01-01: `useGeneration(tabId)` now tracks live preview images from task progress events (`previewImage`/`previewStep`) and sets the initial stage to `starting` immediately on Generate click (so Results doesn’t read as “No results yet” during request setup).
 - 2026-01-02: `useGeneration(tabId)` now resolves the selected checkpoint to its short hash (when available) before sending requests, and uses `quicksettings.isModelGguf(...)` to decide when `tenc_sha` is required.
+- 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).

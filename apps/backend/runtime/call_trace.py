@@ -1,18 +1,27 @@
-from __future__ import annotations
-
-"""Global function-call tracer for Codex backend.
-
-Design goals:
-- Log every Python function call via logger.debug once enabled.
-- Minimal overhead and no recursion into logging/tracing internals.
-- Safe across threads (installs both sys.setprofile and threading.setprofile).
-- Activates/deactivates cleanly without leaving patched globals around.
-
-This is intentionally separate from `runtime.trace` and `pipeline_debug`:
-- `runtime.trace` focuses on selected torch/state-dict events.
-- `pipeline_debug` is an opt-in decorator for specific pipelines.
-- `call_trace` is a global hammer: it logs every call for deep debugging.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Global Python function-call tracer for deep Codex debugging.
+Implements a sys/thread profile hook that logs function calls under `apps.*` with indentation and per-function call caps, and provides env-driven
+enable/disable helpers to avoid flooding logs by default.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_truthy` (function): Parses common truthy tokens for env-driven toggles.
+- `_profiler` (function): Profile hook used by `sys.setprofile` / `threading.setprofile` (logs `call`/`return` events).
+- `_set_max_per_func` (function): Configures the per-function call cap (0 disables the cap).
+- `_reset_counters` (function): Clears per-function call counters and “muted” notifications.
+- `enable` (function): Enables global call tracing (optionally configuring caps) and installs the profiler hooks.
+- `disable` (function): Disables call tracing and restores prior profiler hooks.
+- `_env_trace_limit` (function): Reads the max-per-func cap from environment variables.
+- `enable_from_env` (function): Enables tracing when env flags request it (launcher/API entrypoint integration).
+"""
+
+from __future__ import annotations
 
 import logging
 import os

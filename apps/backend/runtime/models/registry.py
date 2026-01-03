@@ -1,4 +1,29 @@
-"""Checkpoint / VAE discovery with caching and telemetry."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Checkpoint/VAE discovery with sha256 caching and telemetry.
+Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, computes sha256 hashes, and maintains a
+persistent cache in `models/.hashes.json` to support fast UI inventory and backend SHA-based resolution.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_repo_root` (function): Resolves repo root from `CODEX_ROOT` (fails fast if unset).
+- `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
+- `_default_hf_root` (function): Returns the default Hugging Face vendor cache root under `CODEX_ROOT` (when used).
+- `_sha256` (function): Computes sha256 digest for a file path.
+- `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
+- `_load_hash_cache` (function): Loads `.hashes.json` cache from disk.
+- `_save_hash_cache` (function): Writes `.hashes.json` cache to disk.
+- `ModelRegistry` (class): Registry service; scans paths, maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API.
+- `get_registry` (function): Returns the singleton `ModelRegistry` instance.
+- `list_checkpoints` (function): Returns checkpoint records (optional refresh).
+- `list_vaes` (function): Returns VAE records (optional refresh).
+- `refresh` (function): Forces a rescan + cache update for checkpoints/VAEs.
+"""
 
 from __future__ import annotations
 

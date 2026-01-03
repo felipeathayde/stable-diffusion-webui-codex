@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Token merging (ToMeSD) utilities for reducing attention token count.
+Implements bipartite soft matching for 2D token grids and a patcher that can merge tokens at a configured ratio, helping reduce compute/VRAM in
+attention-heavy paths when enabled.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `do_nothing` (function): No-op placeholder used when token merging is disabled.
+- `mps_gather_workaround` (function): MPS-specific gather workaround for edge-case tensor shapes.
+- `bipartite_soft_matching_random2d` (function): Builds merge/unmerge functions for 2D token grids via bipartite soft matching.
+- `get_functions` (function): Computes ToMe merge/unmerge functions given ratio and original tensor shape.
+- `TomePatcher` (class): Applies token merging to supported modules by patching forward paths (contains nested patch helpers).
+"""
+
 import torch
 import math
 

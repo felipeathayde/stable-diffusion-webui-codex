@@ -2,7 +2,7 @@
 # apps/interface Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -29,3 +29,4 @@ Status: Active
 - 2025-12-03: Vitest added for frontend unit tests (`npm test`) to cover prompt serialization and future UI logic.
 - 2026-01-01: Updated `apps/interface/README.md` to reflect the repo-local `.venv` (and `run-webui.sh` as the recommended dev entrypoint).
 - 2026-01-01: Added a branded `public/favicon.ico` and referenced it from `index.html` so the browser tab icon matches the project branding.
+- 2026-01-03: Added standardized file header blocks to WebUI entrypoints/config (`vite.config.ts`, `src/{App,main,router}.ts/.vue`, `src/api/types.ts`) (doc-only change; part of rollout).

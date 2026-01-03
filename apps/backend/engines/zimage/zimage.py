@@ -1,6 +1,19 @@
-"""Z Image Turbo Engine.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Alibaba Z Image Turbo (6B) txt2img engine following Flux pattern.
+Purpose: Z Image Turbo txt2img engine (Flux-like “core-only” checkpoint + external VAE/Qwen3 TE).
+Implements prompt formatting, conditioning, and execution for Z Image Turbo by assembling a runtime from a core transformer checkpoint
+and external assets (text encoder + Flow16 VAE), with strict asset selection and smart-cache/timeline integration.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_ZImagePromptList` (class): List-like prompt wrapper that carries per-run metadata (CFG scale, smart-cache policy, negative marker).
+- `ZImageEngine` (class): `CodexDiffusionEngine` implementation for Z Image txt2img; loads/keeps runtime, formats prompts, builds conditioning,
+  runs the shared txt2img pipeline, and records cache/timeline telemetry (contains nested helpers for prompt metadata and capability gating).
 """
 
 from __future__ import annotations

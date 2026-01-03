@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux engine spec + runtime assembly (components + text pipelines + optional streaming core).
+Defines the Flux engine runtime containers (UNet/CLIP/T5/VAE + streaming policy) and assembles a runnable runtime from selected models,
+with strict validation (no implicit fallbacks) and optional streamed core execution.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FluxTextPipelines` (dataclass): Holds the text processing engines used by Flux (optional CLIP classic + required T5).
+- `FluxEngineRuntime` (dataclass): Fully assembled runtime components for Flux (CLIP, VAE, UNet patcher, text pipelines, distilled CFG flag).
+- `FluxEngineSpec` (dataclass): Spec/config holder for a Flux runtime build (repo/model selection + streaming policy/config).
+- `_k_predictor` (function): Builds the FlowMatchEuler predictor for the selected Flux variant (Schnell vs dev).
+- `_maybe_enable_streaming_core` (function): Wraps a core transformer with streaming support based on policy/config and runtime flags.
+- `_is_clip_encoder` (function): Type guard for identifying CLIP text encoder models in a mixed component set.
+- `_is_t5_encoder` (function): Type guard for identifying T5 text encoder models in a mixed component set.
+- `assemble_flux_runtime` (function): Assembles a validated `FluxEngineRuntime` from selected components, applying device/memory policies
+  and streaming options (contains nested helpers for controller setup and trace planning).
+"""
+
 from __future__ import annotations
 
 import logging

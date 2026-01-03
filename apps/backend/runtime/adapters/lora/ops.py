@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Tensor math utilities for LoRA/LoHa/LoKr variants.
+Implements low-level decompositions and Tucker/CP reconstruction helpers used when materializing adapter weights.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `rebuild_cp_decomposition` (function): Reconstructs weights for CP-decomposed LoRA variants.
+- `rebuild_conventional` (function): Reconstructs conventional LoRA weights (optionally with dynamic dim trimming).
+- `factorization` (function): Finds a factor pair for a dimension (used for LoKr-style decompositions).
+- `tucker_weight_from_conv` (function): Reconstructs Tucker weights from conv-style components.
+- `tucker_weight` (function): Reconstructs Tucker weights from factor matrices.
+"""
+
 from __future__ import annotations
 
 import torch

@@ -1,4 +1,19 @@
-"""Latent refiner stages for the txt2img pipeline."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Latent refiner stages for the txt2img pipeline.
+Implements SDXL refiner sampling stages (global + hires) that load a refiner engine, rebuild conditioning, and run an additional sampling pass over existing latents.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `RefinerStage` (dataclass): Executable refiner stage implementing shared refiner sampling logic and engine loading.
+- `GlobalRefinerStage` (class): Refiner stage for the global (base) scope.
+- `HiresRefinerStage` (class): Refiner stage for the hires scope.
+"""
 # // tags: refiner, pipeline, sdxl, hires
 
 from __future__ import annotations

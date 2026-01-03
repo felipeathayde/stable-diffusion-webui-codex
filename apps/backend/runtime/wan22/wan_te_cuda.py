@@ -1,22 +1,30 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN T5 CUDA FP8 extension bridge (optional runtime path).
+Loads the `wan_te_cuda` extension and exposes minimal FP8 ops used by WAN text-encoder code paths.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `available` (function): Returns True when the extension is available (may attempt a JIT build).
+- `last_error` (function): Returns the last extension load/build error message, when present.
+- `Fp8Weight` (class): Container describing an FP8 packed weight tensor and scale.
+- `linear_fp8` (function): Calls the extension linear kernel for FP8 weights.
+- `attn_fp8` (function): Calls the extension attention kernel for FP8 q/k/v (returns output + optional probs).
+"""
+
 from __future__ import annotations
 
+import logging
 import os
 import sys
-import logging
 from typing import Optional, Tuple
 
 import torch
-
-"""
-WAN T5 CUDA FP8 bridge.
-
-This module loads the custom CUDA extension (wan_te_cuda) and exposes a minimal
-encoder interface for UMT5-XXL in FP8 (scaled) form. It is designed to be used
-as an optional path; when unavailable, callers may choose to fall back to CPU TE.
-
-Status: scaffold — kernels currently delegate to PyTorch ops; FP8 path to be
-implemented. The API is stable to allow incremental adoption.
-"""
 
 log = logging.getLogger("wan22.te.cuda")
 if not log.handlers:

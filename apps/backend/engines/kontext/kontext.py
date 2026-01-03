@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux.1 Kontext engine implementation (Flux-derived, image-conditioned flow model).
+Overrides the img2img contract to encode the init image as conditioning tokens (`image_latents`) instead of starting from a noisy latent.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Kontext` (class): Flux-derived image-conditioned engine with a custom img2img execution path.
+"""
+
 from __future__ import annotations
 
 import logging

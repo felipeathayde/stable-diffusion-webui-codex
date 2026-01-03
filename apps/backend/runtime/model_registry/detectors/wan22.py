@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 model detector for the Codex model registry.
+Matches WAN22 checkpoints by key suffixes and tensor shapes, infers patch/latent dimensions, detects embedded VAE/text-encoder components,
+and returns a `ModelSignature` describing the WAN core transformer and assets.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WAN_HEAD_KEY` (constant): Suffix used to locate the WAN modulation head in a state dict.
+- `Wan22Detector` (class): Detector that matches WAN22 bundles and builds a `ModelSignature` (core dims + TE/VAE signatures).
+- `_interpret_patch_shape` (function): Interprets patch-embedding weight shapes (PyTorch vs GGUF layouts) into `(Cin,Cout,patch_size)`.
+- `_infer_latent_channels` (function): Infers latent channels from head weight shape and patch size.
+- `_collect_text_encoders` (function): Collects embedded text encoder signatures (UMT5-XXL, CLIP-L) when present.
+- `_tensor_last_dim` (function): Returns the last dimension of a tensor/shape (used for TE expected dims).
+- `_find_key` (function): Finds the shortest matching key by suffix (optional prefix filtering).
+- `_detect_model_type` (function): Heuristically classifies WAN variant (t2v/i2v/ti2v/vace/s2v/animate).
+"""
+
 from __future__ import annotations
 
 from typing import Optional

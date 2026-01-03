@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -28,3 +28,4 @@ Status: Active
 - 2025-12-29: `model_tabs.updateParams()` mutates the params object in-place (instead of replacing it) to reduce whole-view rerenders on small boolean toggles (e.g. LightX2V / Low “Use High settings”).
 - 2026-01-01: `quicksettings.ts` now exposes a `refreshModelsList()` helper that calls `/api/models?refresh=1` so the UI can pick up new checkpoint files after changing `apps/paths.json` or copying weights into `*_ckpt` folders.
 - 2026-01-02: `quicksettings.ts` now exposes `resolveModelSha` + `isModelGguf` so callers can send checkpoint selection as a hash (instead of titles/paths) and still enforce GGUF requirements.
+- 2026-01-03: Added standardized file header blocks to stores (doc-only change; part of rollout).

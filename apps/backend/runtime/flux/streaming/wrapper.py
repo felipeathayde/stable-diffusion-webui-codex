@@ -1,4 +1,19 @@
-"""StreamedFluxCore wrapper for block-based streaming."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Streamed Flux core wrapper (segment-by-segment execution with memory control).
+Wraps `FluxTransformer2DModel` to execute transformer blocks in segments according to an `ExecutionPlan`, delegating device placement and
+eviction decisions to a `CoreController` for reduced peak VRAM.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StreamedFluxCore` (class): Flux core wrapper enabling segment-based streaming (executes double/single blocks per segment and exposes
+  controller reset/stats helpers).
+"""
 
 from __future__ import annotations
 

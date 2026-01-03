@@ -43,7 +43,7 @@ Status: Active
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.
 - The predictor provided by the model must expose `sigma_min`/`sigma_max` scalars; upstream code validates this.
-- This module does not import from `.refs/**` and does not depend on external schedulers.
+- This module does not import from archived upstream snapshots and does not depend on external schedulers.
 - `compile_conditions(cond)` invariants:
   - `cond=None` → `None` (semântica preservada).
   - `cond` tensor → tratado como cross-attn (B,S,C); erro se `ndim!=3`.

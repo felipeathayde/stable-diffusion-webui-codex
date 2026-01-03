@@ -2,7 +2,7 @@
 trigger: always_on
 ---
 
-- Sempre verifique `.refs/ComfyUI` quando ocorrerem erros de pipeline, para encontrar a solução.
+- Sempre verifique `ComfyUI` quando ocorrerem erros de pipeline, para encontrar a solução.
 - Priorize soluções completas, robustas e coerentes com o domínio, em vez de pequenos ajustes "mínimos" só para reduzir risco de quebra;
 - Trate o projeto como laboratório de alto padrão: é aceitável quebrar, desde que os erros sejam claros, rastreáveis e seguidos de correção;
 - Diante de tarefas grandes ou complexas, divida o trabalho em etapas menores, bem definidas, com fronteiras claras entre os subproblemas;

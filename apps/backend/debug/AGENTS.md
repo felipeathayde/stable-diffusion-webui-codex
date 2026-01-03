@@ -10,6 +10,6 @@ Status: Experimental
 - Safe to remove once parity investigations are complete; no runtime dependency for production paths unless explicitly enabled.
 
 ## Notes
-- Do not import or execute code from `.refs/**` from `apps/**` (including debug helpers).
+- Do not import or execute code from archived upstream snapshots inside `apps/**` (including debug helpers).
 - 2026-01-02: Added standardized file header docstrings to debug modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstring to `debug/__init__.py` (doc-only change; part of rollout).

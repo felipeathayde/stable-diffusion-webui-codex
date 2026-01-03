@@ -19,6 +19,6 @@ Status: Active
 - `models/chroma/` – placeholder raising `NotImplementedError` until Chroma support lands.
 
 ## Notes
-- All modules operate exclusivamente em imports `apps.*`; código legado em `.refs/**` é apenas referência.
+- All modules operate exclusivamente em imports `apps.*`; código legado em snapshots de referência é apenas referência.
 - Weight schedules and masks validate against runtime transformer options and emit descriptive failures.
 - Any new model family integration must document itself here and update `.sangoi/plans/controlnet-refactor.md`.

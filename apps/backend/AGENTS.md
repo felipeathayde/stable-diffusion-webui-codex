@@ -7,7 +7,7 @@ Status: Active
 
 ## Purpose
 - Implements the Codex-native backend: engine orchestration, runtime components, services, registries, and vendor assets.
-- Provides a clean separation from legacy web UI code (no imports from `modules.*`, `backend.*`, or `.refs/**`).
+- Provides a clean separation from legacy web UI code (no imports from `modules.*`, `backend.*`, or archived upstream snapshots).
 
 ## Subdirectories (Top-Level)
 - `core/` — Core orchestration (engine interface, device/state management, RNG stack, request handling, parameter schemas).

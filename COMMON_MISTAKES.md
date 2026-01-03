@@ -12,7 +12,7 @@
 
 **Wrong command:** `rg -n "<<<<<<<|=======|>>>>>>>" .`
 **Cause + fix:** `This repo vendors tokenizer vocab files that include tokens like "========" and ">>>>>>>>", producing huge false-positive output that looks like merge conflicts. Exclude the Hugging Face vocab/tokenizer JSON trees (or search only source globs) when checking for real conflict markers.`
-**Correct command:** `rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!.refs/**' --glob '!apps/interface/dist/**' .`
+**Correct command:** `rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!apps/interface/dist/**' .`
 
 **Wrong command:** `./.uv/bin/uv python install 3.12.10`
 **Cause + fix:** `In sandboxed environments, $HOME/.local (XDG_DATA_HOME default) may be read-only, causing uv to fail creating ~/.local/share/uv/python. Set XDG_DATA_HOME to a writable path (e.g., under $HOME/.cache) when running uv python/lock commands.`
@@ -47,13 +47,13 @@
 **Correct command:** `sed -n '1,200p' .sangoi/handoffs/HANDOFF_GUIDE.md`
 
 **Wrong command:** `rg -n "huggingface_guess" legacy`
-**Cause + fix:** Repository archives upstream snapshots under `.refs/**`, so the command targeted a non-existent `legacy/` directory; point ripgrep at the `.refs` tree instead.
-**Correct command:** `rg -n "huggingface_guess" .refs`
+**Cause + fix:** Repository uses a local reference snapshot tree for upstream inspection; the command targeted a non-existent `legacy/` directory. Search from repo root instead.
+**Correct command:** `rg -n "huggingface_guess" .`
 **Wrong command:** `rg -n "iq1" legacy -g"*.py"`
-**Cause + fix:** Repository archives upstream sources under `.refs/**`; point ripgrep at that tree instead of the non-existent `legacy/` path.
-**Correct command:** `rg -n "iq1" .refs -g"*.py"`
+**Cause + fix:** Repository uses a local reference snapshot tree for upstream inspection; the command targeted a non-existent `legacy/` path. Search from repo root instead.
+**Correct command:** `rg -n "iq1" . -g"*.py"`
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-**Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, `.refs/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
+**Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
 **Correct command:** `git add AGENTS.md THIRD_PARTY_NOTICES.md COMMON_MISTAKES.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-docs-legacy-paths.md .sangoi/handoffs/2025-10-30-docs-legacy-paths.md`
 **Wrong command:** `cat .sangoi/task-guidelines.md`
 **Cause + fix:** Task guidelines file lives under `.sangoi/templates/document-guidelines.md`; referencing the old path triggers a file-not-found. Repeated slip—double-check the path before running.
@@ -168,17 +168,17 @@ PY`
 **Correct command:** `~/.venv/bin/python tools/debug/test_dequant.py`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
-**Cause + fix:** `The blanket find walks into archived submodules under .refs/**, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
-**Correct command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
+**Cause + fix:** `The blanket find walks into archived submodules under **, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
+**Correct command:** `find . -path './' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 
 **Wrong command:** `git commit -m "feat(gguf): port iq-family GGUF kernels"`
 **Cause + fix:** `Global git identity isn't configured in this workspace; set user.name and user.email before committing.`
 **Correct command:** `git config --global user.name "Lucas Sangoi" && git config --global user.email "lucas@sangoi.dev"`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
-**Cause + fix:** `The bulk add traverses .refs/** submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
+**Cause + fix:** `The bulk add traverses ** submodules, so git add aborts on nested .git metadata; stage the touched files explicitly instead.`
 **Correct command:** `git add apps/backend/patchers/unet.py apps/backend/patchers/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-backend-unet-patcher-refactor.md .sangoi/handoffs/2025-10-30-backend-unet-patcher-refactor.md`
-**Wrong command:** `find . -path './.refs' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Wrong command:** `find . -path './' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `The search still walks cached/ignored directories, so git add aborts on gitignored paths; enumerate the known changed sources explicitly instead of mass-adding.`
 **Correct command:** `git add apps/backend/runtime/models/loader.py apps/backend/core/engine_loader.py apps/backend/engines/common/base.py apps/backend/engines/{AGENTS.md,common/AGENTS.md,sd/AGENTS.md,flux/AGENTS.md,chroma/AGENTS.md} apps/backend/engines/sd/{sd15.py,sd20.py,sd35.py,sdxl.py} apps/backend/engines/flux/flux.py apps/backend/engines/chroma/chroma.py apps/backend/runtime/models/AGENTS.md apps/backend/core/AGENTS.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-11-01-diffusion-engine-lifecycle.md .sangoi/handoffs/2025-11-01-diffusion-engine-lifecycle.md`
 **Wrong command:** `python - <<'PY'
@@ -367,7 +367,7 @@ PY`
 **Correct command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** `Even with --ignore-errors, git stops when xargs feeds ignored paths; prune __pycache__/refs before piping to git add.`
-**Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -not -path './.refs/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -not -path './*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 
 **Wrong command:** `~/.venv/bin/python tools/dev/validate_sdxl_contract.py`
 **Cause + fix:** Python couldn't import the local `apps.*` packages when invoked from the repo root; the script lacked a `sys.path` entry for the repository root. Prepend the repo root to `sys.path` within the script before importing `apps.*`.
@@ -394,7 +394,7 @@ PY`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause and fix:** `Command walks through ignored paths (node_modules/, __pycache__, logs) so git aborts. Filter ignored directories before piping into git add (or add --ignore-errors).`
-**Correct command:** `find . -type f -not -path './.git/*' -not -path './.refs/*' -not -path '*/__pycache__/*' -not -path '*/node_modules/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
+**Correct command:** `find . -type f -not -path './.git/*' -not -path './*' -not -path '*/__pycache__/*' -not -path '*/node_modules/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 
 **Wrong command:** `git push -u origin HEAD` (with 1s timeout)
 **Cause and fix:** `CLI invocation limited the push to ~1s and the remote handshake didn't finish in time, so the helper timed out even though git was fine.`
@@ -559,8 +559,8 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=
 **Correct command:** `ls .sangoi`
 
 **Wrong command:** `ls .legacy`
-**Cause + fix:** The repo does not ship a `.legacy` directory; reference snapshots now live under `.refs/` (e.g., `.refs/**`). Use `find` to confirm before targeting paths.
-**Correct command:** `find . -maxdepth 2 -type d -name '.refs'`
+**Cause + fix:** The repo does not ship a `.legacy` directory; use `find` to confirm what local snapshot/reference directories exist before targeting paths.
+**Correct command:** `find . -maxdepth 2 -type d -name '.legacy*'`
 
 **Wrong command:** `npm install --save-dev vitest`
 **Cause + fix:** Default npm cache under `~/.npm` is owned by root, so installs fail with EACCES; point npm to a writable user cache.
@@ -582,6 +582,6 @@ Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && pytest -q
 Cause and fix: Running pytest without the project venv/PYTHONPATH breaks imports like `apps.*` during test collection (`ModuleNotFoundError: No module named 'apps'`). Use the repo venv and set `PYTHONPATH` (and `CODEX_ROOT` for tests that need it).
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/pytest -q
 
-Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -لا .refs/diffusers | sed -n '1,120p'
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -لا diffusers | sed -n '1,120p'
 Cause and fix: The `-l` flag was typed with a non-ASCII character (likely a locale/encoding artifact), so `ls` interpreted it as an invalid option. Use plain ASCII flags (`-la`) or run `ls --help` to confirm supported options.
-Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la .refs/diffusers | sed -n '1,120p'
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la diffusers | sed -n '1,120p'

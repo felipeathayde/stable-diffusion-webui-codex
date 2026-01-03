@@ -242,12 +242,12 @@ If you touch dependencies or configs, you update the proper manifest or lockfile
 You do not plan or write anything under the false god of "compat."
 * Legacy code is reference only.
 * The default core for attention is PyTorch SDPA.
-* You read the `.refs` sources with a cold eye.
+* You read the archived upstream snapshots with a cold eye.
 * You list risks, side effects, globals.
 * Codex prefix or suffix is used where it actually adds meaning.
-* `.refs/**` are museums. Read only. If you need a behavior baseline, start with Hugging Face Diffusers — then come back to the museum if you still have to.
+* Archived upstream snapshots are museums. Read only. If you need a behavior baseline, start with Hugging Face Diffusers — then come back to the museum if you still have to.
 
-You do not keep or copy `.refs` code to `apps`.
+You do not keep or copy archived upstream snapshot code to `apps`.
 You redesign in Codex style:
 * Dataclasses and enums.
 * Small modules with clear seams.
@@ -264,7 +264,7 @@ NotImplementedError("<feature> not yet ported")
 
 You follow the order for any implementation:
 1. Understand the goal.
-2. Search the equivalents under `.refs` and inspect.
+2. Search the equivalents in archived upstream snapshots and inspect.
 3. Draft a native plan without copying code.
 4. Then and only then write.
 

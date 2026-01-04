@@ -16,14 +16,21 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.engines.common.base import CodexObjects
 from apps.backend.engines.flux.flux import Flux
+from apps.backend.engines.flux.spec import FLUX_SPEC
+from apps.backend.runtime.models.loader import DiffusionModelBundle
+
+from .factory import CodexKontextFactory
 
 logger = logging.getLogger("backend.engines.kontext")
+
+_KONTEXT_FACTORY = CodexKontextFactory(spec=FLUX_SPEC)
 
 
 class Kontext(Flux):
@@ -43,6 +50,28 @@ class Kontext(Flux):
                 "schedulers": ("simple", "beta", "normal"),
             },
         )
+
+    def _build_components(
+        self,
+        bundle: DiffusionModelBundle,
+        *,
+        options: Mapping[str, Any],
+    ) -> CodexObjects:
+        assembly = _KONTEXT_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
+        self._runtime = runtime  # type: ignore[assignment]
+        self.use_distilled_cfg_scale = runtime.use_distilled_cfg
+        logger.debug("Kontext runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
+
+        from apps.backend.runtime.flux.streaming import StreamedFluxCore
+
+        core_model = getattr(runtime.denoiser.model, "diffusion_model", runtime.denoiser.model)
+        if isinstance(core_model, StreamedFluxCore):
+            self._streaming_controller = core_model.controller  # type: ignore[assignment]
+        else:
+            self._streaming_controller = None  # type: ignore[assignment]
+
+        return assembly.codex_objects
 
     def img2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:  # type: ignore[override]
         import json

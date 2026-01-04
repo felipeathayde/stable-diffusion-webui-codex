@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2025-12-30: `InferenceOrchestrator` now reloads an already-loaded engine when load-affecting `engine_options` change (e.g. `text_encoder_override`, VAE override, core streaming), so overrides actually apply and caches don’t go stale across requests.
 - 2026-01-01: `InferenceOrchestrator` now purges VRAM (unload cached engines + memory manager unload/empty_cache) before a generation when the requested `(checkpoint, text encoders)` signature differs from the previous generation (prevents OOM on model swaps).
 - 2026-01-02: Added standardized file header docstrings across `apps/backend/core/**` modules (doc-only change; part of rollout).
+- 2026-01-03: `apps/backend/core/__init__.py` no longer re-exports star-import facades; callers must import from specific modules (e.g. `core.requests`, `core.registry`).

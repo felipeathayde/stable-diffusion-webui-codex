@@ -10,6 +10,12 @@ Status: Active
 - WAN22 engine implementations (txt2vid, img2vid, etc.) that coordinate WAN-specific runtime components and GGUF loaders.
 - Experimental Codex-style runtime path for WAN22 (spec/runtime separado em `spec.py` e runtime/wan22), ligado a `txt2vid`/`img2vid` em modo opt-in via `_bundle` + option (`codex_wan22_use_spec_runtime`/`use_codex_runtime`).
 
+## Key Files
+- `apps/backend/engines/wan22/spec.py` — Codex runtime containers + assembly (`WanEngineSpec`/`WanEngineRuntime`, `assemble_wan_runtime`).
+- `apps/backend/engines/wan22/factory.py` — Factory seam returning `(runtime, CodexObjects)` for consistent Codex runtime assembly.
+- `apps/backend/engines/wan22/wan22_14b.py` — `Wan2214BEngine` (txt2vid/img2vid; supports optional core streaming for Codex runtime path).
+- `apps/backend/engines/wan22/wan22_5b.py` — `Wan225BEngine` (older/legacy-heavy; Diffusers/GGUF paths + per-stage overrides).
+
 ## Notes
 - Keep WAN engines alinhados com `runtime/wan22` (GGUF + nn.Module) e helpers GGUF para garantir tratamento estrito de assets.
 - 2025-11-30: WAN22 engines now resolve vendored Hugging Face metadata under `apps/backend/huggingface` using a repo-root anchor, replacing the old `apps/server/backend/huggingface` path.
@@ -21,7 +27,8 @@ Status: Active
 - 2025-12-16: Added `wan22_animate_14b` engine as a `vid2vid` strategy (`vid2vid_method="wan_animate"`) using Diffusers `WanAnimatePipeline` (expects preprocessed pose/face videos + reference image; `replace` mode also needs bg/mask). Requires a diffusers version that includes `WanAnimatePipeline` (>=0.36).
 - 2025-12-29: WAN22 engines now anchor vendored HF paths under `CODEX_ROOT` (required) so they don’t depend on the backend process CWD.
 - 2026-01-02: Added standardized file header docstrings to WAN22 engine modules (doc-only change; part of rollout).
-- 2026-01-04: Codex runtime (experimental) now stores the sampling core as `WanEngineRuntime.denoiser` via `DenoiserPatcher` (ControlNet is UNet-only).
+- 2026-01-03: Codex runtime (experimental) now stores the sampling core as `WanEngineRuntime.denoiser` via `DenoiserPatcher` (ControlNet is UNet-only).
+- 2026-01-03: `Wan2214BEngine` now assembles via `CodexWan22Factory` (factory-first seam; reduces drift in `_build_components`).
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

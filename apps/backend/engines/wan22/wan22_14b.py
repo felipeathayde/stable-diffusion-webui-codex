@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN 2.2 14B engine (Codex runtime assembly) for txt2vid/img2vid.
-Resolves the model bundle, assembles a `WanEngineRuntime` via `assemble_wan_runtime`, and executes video requests with optional core
+Resolves the model bundle, assembles a `WanEngineRuntime` via `CodexWan22Factory`, and executes video requests with optional core
 streaming settings (Flux-like engine pattern).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -30,9 +30,12 @@ from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 
-from .spec import WAN_14B_SPEC, WanEngineRuntime, assemble_wan_runtime
+from .factory import CodexWan22Factory
+from .spec import WAN_14B_SPEC, WanEngineRuntime
 
 logger = logging.getLogger("backend.engines.wan22.wan22_14b")
+
+_WAN14B_FACTORY = CodexWan22Factory(spec=WAN_14B_SPEC)
 
 
 class Wan2214BEngine(CodexDiffusionEngine):
@@ -63,17 +66,11 @@ class Wan2214BEngine(CodexDiffusionEngine):
         options: Mapping[str, Any],
     ) -> CodexObjects:
         """Build engine components using centralized runtime assembly."""
-        self._device = str(options.get("device", "cuda"))
-        self._dtype = str(options.get("dtype", "bf16"))
-
-        runtime = assemble_wan_runtime(
-            spec=WAN_14B_SPEC,
-            codex_components=bundle.components,
-            estimated_config=bundle.estimated_config,
-            device=self._device,
-            dtype=self._dtype,
-        )
+        assembly = _WAN14B_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         self._runtime = runtime
+        self._device = str(getattr(runtime, "device", "cuda"))
+        self._dtype = str(getattr(runtime, "dtype", "bf16"))
         logger.info("WAN runtime assembled for %s", WAN_14B_SPEC.name)
 
         # Streaming configuration
@@ -117,12 +114,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         else:
             self._streaming_controller = None
 
-        return CodexObjects(
-            denoiser=runtime.denoiser,
-            vae=runtime.vae,
-            text_encoders={"t5": runtime.text.t5_text},  # WAN uses T5 only
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     @property
     def required_text_encoders(self) -> tuple[str, ...]:

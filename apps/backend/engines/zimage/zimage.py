@@ -35,9 +35,12 @@ from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.timeline import timeline_node
 from apps.backend.runtime.zimage.debug import env_flag, env_int, truncate_text
 
-from .spec import ZIMAGE_SPEC, ZImageEngineRuntime, assemble_zimage_runtime
+from .factory import CodexZImageFactory
+from .spec import ZIMAGE_SPEC, ZImageEngineRuntime
 
 logger = logging.getLogger("backend.engines.zimage.zimage")
+
+_ZIMAGE_FACTORY = CodexZImageFactory(spec=ZIMAGE_SPEC)
 
 
 class _ZImagePromptList(list[str]):
@@ -84,18 +87,8 @@ class ZImageEngine(CodexDiffusionEngine):
         options: Mapping[str, Any],
     ) -> CodexObjects:
         """Build engine components."""
-        self._device = str(options.get("device", "cuda"))
-        self._dtype = str(options.get("dtype", "bf16"))
-
-        runtime = assemble_zimage_runtime(
-            spec=ZIMAGE_SPEC,
-            codex_components=bundle.components,
-            estimated_config=bundle.estimated_config,
-            device=self._device,
-            dtype=self._dtype,
-            external_vae_path=options.get("vae_path"),
-            external_tenc_path=options.get("tenc_path"),
-        )
+        assembly = _ZIMAGE_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         logger.info(
             "Z Image build: vae_path=%s tenc_path=%s all_options=%s",
             options.get("vae_path"),
@@ -103,17 +96,14 @@ class ZImageEngine(CodexDiffusionEngine):
             list(options.keys()),
         )
         self._runtime = runtime
+        self._device = str(getattr(runtime, "device", "cuda"))
+        self._dtype = str(getattr(runtime, "dtype", "bf16"))
         logger.info("Z Image runtime assembled")
 
         # Turbo models use distilled guidance; disable CFG/uncond conditioning.
         self.use_distilled_cfg_scale = True
 
-        return CodexObjects(
-            denoiser=runtime.denoiser,
-            vae=runtime.vae,
-            text_encoders={"qwen3": runtime.text.qwen3_text},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     @property
     def required_text_encoders(self) -> tuple[str, ...]:

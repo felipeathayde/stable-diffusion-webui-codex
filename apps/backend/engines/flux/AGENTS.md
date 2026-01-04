@@ -1,15 +1,15 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-04
 Status: Active
 
 ## Purpose
-- Flux engine implementations and task wiring leveraging the Flux runtime.
+- Flux.1 family engines (Flux, Chroma, Kontext) leveraging the Flux runtime.
 
 ## Notes
 - Ensure scheduler and runtime dependencies stay in sync with `apps/backend/runtime/flux/`.
-- Shared assembly helpers live in `spec.py`; Flux/Chroma engines assemble runtimes via `CodexFluxFamilyFactory` (`apps/backend/engines/flux/factory.py`) which wraps `assemble_flux_runtime`.
+- Shared assembly helpers live in `spec.py`; Flux-family engines assemble runtimes via `CodexFluxFamilyFactory` (`apps/backend/engines/flux/factory.py`) which wraps `assemble_flux_runtime`.
 - `assemble_flux_runtime` now accepts `engine_options` and can wrap the Flux transformer core in a `StreamedFluxCore` when `StreamingConfig` (built from engine options) decides streaming should be enabled based on VRAM state.
 - Streaming is currently gated to the Flux engine (`spec.name == "flux"`) and uses devices from the memory manager (`get_torch_device` / `core_offload_device`); when disabled, the runtime is identical to the previous non-streaming path.
 - `_maybe_enable_streaming_core` also unwraps an already-streamed core when streaming is disabled, so turning streaming off does not keep a stale `StreamedFluxCore` wrapper alive across reloads.
@@ -18,4 +18,5 @@ Status: Active
 - 2026-01-01: `Flux.set_clip_skip(...)` now clears the conditioning cache to avoid returning stale pooled embeddings when `smart_cache` is enabled.
 - 2026-01-02: Added standardized file header docstrings to Flux engine modules (doc-only change; part of rollout).
 - 2026-01-03: Flux runtime now uses `DenoiserPatcher` (`FluxEngineRuntime.denoiser`) instead of `UnetPatcher`; ControlNet hooks remain UNet-only.
-- 2026-01-03: Flux/Chroma engines now assemble runtimes via `CodexFluxFamilyFactory` (keeps `_build_components` consistent and reduces drift).
+- 2026-01-03: Flux/Chroma/Kontext engines now assemble runtimes via `CodexFluxFamilyFactory` (keeps `_build_components` consistent and reduces drift).
+- 2026-01-04: Flux Kontext is treated as a Flux.1 variant (`Flux.1-Kontext-dev`) and is co-located with the Flux family under `apps/backend/engines/flux/kontext.py`.

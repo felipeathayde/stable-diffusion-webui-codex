@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
 Owner: Engine Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-04
 Status: Active
 
 ## Purpose
@@ -10,7 +10,7 @@ Status: Active
 
 ## Subdirectories
 - `common/` — Shared base classes/helpers used by multiple engines.
-- `sd/`, `flux/`, `chroma/`, `wan22/` — Model-specific engine implementations and components.
+- `sd/`, `flux/`, `wan22/` — Model-specific engine implementations and components (Flux family includes Chroma + Flux Kontext variants).
 - `util/` — Utility helpers for schedulers, attention mapping, etc.
 
 ## Key Files

@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Flux-family runtime factory helpers (Flux/Chroma) for consistent engine assembly.
-Centralizes Flux-family runtime assembly and `CodexObjects` construction so Flux/Chroma engines keep only model-specific logic.
+Purpose: Flux-family runtime factory helpers (Flux/Chroma/Kontext) for consistent engine assembly.
+Centralizes Flux-family runtime assembly and `CodexObjects` construction so Flux-family engines keep only model-specific logic.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexFluxFamilyAssembly` (dataclass): Assembled Flux-family runtime + `CodexObjects` bundle.
@@ -55,4 +55,3 @@ class CodexFluxFamilyFactory:
             clipvision=None,
         )
         return CodexFluxFamilyAssembly(runtime=runtime, codex_objects=codex_objects)
-

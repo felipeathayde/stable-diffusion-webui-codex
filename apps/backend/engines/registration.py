@@ -62,12 +62,12 @@ def register_flux(*, registry: EngineRegistry | None = None, replace: bool = Fal
 
 
 def register_kontext(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
-    from apps.backend.engines.kontext.kontext import Kontext
+    from apps.backend.engines.flux.kontext import Kontext
     _reg("kontext", Kontext, registry=registry, replace=replace, aliases=("flux_kontext", "flux-kontext"))
 
 
 def register_chroma(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
-    from apps.backend.engines.chroma.chroma import Chroma
+    from apps.backend.engines.flux.chroma import Chroma
     _reg("chroma", Chroma, registry=registry, replace=replace)
 
 

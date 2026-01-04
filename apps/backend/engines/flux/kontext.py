@@ -23,14 +23,13 @@ import torch
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexObjects
 from apps.backend.engines.flux.flux import Flux
+from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import FLUX_SPEC
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
-from .factory import CodexKontextFactory
+logger = logging.getLogger("backend.engines.flux.kontext")
 
-logger = logging.getLogger("backend.engines.kontext")
-
-_KONTEXT_FACTORY = CodexKontextFactory(spec=FLUX_SPEC)
+_KONTEXT_FACTORY = CodexFluxFamilyFactory(spec=FLUX_SPEC)
 
 
 class Kontext(Flux):
@@ -59,7 +58,7 @@ class Kontext(Flux):
     ) -> CodexObjects:
         assembly = _KONTEXT_FACTORY.assemble(bundle, options=options)
         runtime = assembly.runtime
-        self._runtime = runtime  # type: ignore[assignment]
+        self._runtime = runtime
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Kontext runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
 
@@ -67,9 +66,9 @@ class Kontext(Flux):
 
         core_model = getattr(runtime.denoiser.model, "diffusion_model", runtime.denoiser.model)
         if isinstance(core_model, StreamedFluxCore):
-            self._streaming_controller = core_model.controller  # type: ignore[assignment]
+            self._streaming_controller = core_model.controller
         else:
-            self._streaming_controller = None  # type: ignore[assignment]
+            self._streaming_controller = None
 
         return assembly.codex_objects
 

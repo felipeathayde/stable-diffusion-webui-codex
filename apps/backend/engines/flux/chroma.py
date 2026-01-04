@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Codex-native Chroma engine built on the Flux engine toolkit.
+Purpose: Flux.1 Chroma engine (Flux-family variant).
 Assembles a `FluxEngineRuntime` from `CHROMA_SPEC` via the Flux family factory and exposes the `CodexDiffusionEngine` surface used by API/use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -27,7 +27,7 @@ from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
-logger = logging.getLogger("backend.engines.chroma")
+logger = logging.getLogger("backend.engines.flux.chroma")
 
 _CHROMA_FACTORY = CodexFluxFamilyFactory(spec=CHROMA_SPEC)
 

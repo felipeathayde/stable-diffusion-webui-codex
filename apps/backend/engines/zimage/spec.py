@@ -12,9 +12,9 @@ Builds a `ZImageEngineRuntime` from parsed components, optionally loading extern
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
 - `ZImageTextPipelines` (dataclass): Text processing pipeline bundle for the Z Image engine (currently Qwen3 text).
-- `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/UNet/text pipelines/clip wrapper/device/dtype).
+- `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/denoiser/text pipelines/clip wrapper/device/dtype).
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
-- `_k_predictor` (function): Builds the flow-match predictor used by the UNet patcher for Z Image sampling.
+- `_k_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
 - `_load_external_vae` (function): Loads an external VAE asset for core-only checkpoints.
 - `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder asset for core-only checkpoints.
 - `assemble_zimage_runtime` (function): Assembles the runtime (including external assets when required) and returns a `ZImageEngineRuntime`.
@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
 from apps.backend.patchers.base import ModelPatcher
-from apps.backend.patchers.unet import UnetPatcher
+from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
@@ -76,7 +76,7 @@ class ZImageTextPipelines:
 class ZImageEngineRuntime:
     """Runtime container for Z Image engine components."""
     vae: VAE
-    unet: UnetPatcher  # wraps ZImageTransformer2DModel
+    denoiser: DenoiserPatcher  # wraps ZImageTransformer2DModel
     text: ZImageTextPipelines
     clip: ZImageCLIP  # wrapper with ModelPatcher for memory management
     device: str = "cuda"
@@ -249,15 +249,15 @@ def assemble_zimage_runtime(
     vae = VAE(model=vae_model, family=ModelFamily.ZIMAGE)
     _log_vram("AFTER VAE wrapper")
     
-    # Wrap transformer in UnetPatcher
+    # Wrap transformer in DenoiserPatcher
     k_predictor = _k_predictor(spec)
-    unet = UnetPatcher.from_model(
+    denoiser = DenoiserPatcher.from_model(
         model=transformer,
         diffusers_scheduler=None,
         k_predictor=k_predictor,
         config=estimated_config,
     )
-    _log_vram("AFTER UnetPatcher.from_model")
+    _log_vram("AFTER DenoiserPatcher.from_model")
     
     # Wrap text encoder with ZImageCLIP for memory management
     clip = ZImageCLIP(text_encoder)
@@ -272,7 +272,7 @@ def assemble_zimage_runtime(
     
     return ZImageEngineRuntime(
         vae=vae,
-        unet=unet,
+        denoiser=denoiser,
         text=ZImageTextPipelines(qwen3_text=text_engine),
         clip=clip,
         device=device,

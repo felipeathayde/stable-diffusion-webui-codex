@@ -32,7 +32,8 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime, assemble_engine_runtime
+from apps.backend.engines.sd.factory import CodexSDFamilyFactory
+from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime
 from apps.backend.engines.util.adapters import build_txt2img_processing
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
@@ -57,6 +58,9 @@ from apps.backend.runtime.text_processing import last_extra_generation_params
 # note: no extra device assertions here; diagnostics should be captured upstream
 
 logger = logging.getLogger("backend.engines.sd.sdxl")
+
+_SDXL_FACTORY = CodexSDFamilyFactory(spec=SDXL_SPEC)
+_SDXL_REFINER_FACTORY = CodexSDFamilyFactory(spec=SDXL_REFINER_SPEC)
 
 
 def _tensor_stats(tensor: torch.Tensor) -> dict[str, object]:
@@ -246,7 +250,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_engine_runtime(SDXL_SPEC, bundle.estimated_config, bundle.components)
+        assembly = _SDXL_FACTORY.assemble(bundle, options=dict(options))
+        runtime = assembly.runtime
         self._runtime = runtime
         self.register_model_family("sdxl")
         # New runtime / weights invalidate any cached conditioning.
@@ -266,12 +271,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             runtime.classic_engine("clip_l").clip_skip,
         )
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None
@@ -718,7 +718,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_engine_runtime(SDXL_REFINER_SPEC, bundle.estimated_config, bundle.components)
+        assembly = _SDXL_REFINER_FACTORY.assemble(bundle, options=dict(options))
+        runtime = assembly.runtime
         self._runtime = runtime
         self.register_model_family("sdxl")
         self._cond_cache.clear()
@@ -729,12 +730,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             runtime.classic_engine("clip_g").clip_skip,
         )
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None

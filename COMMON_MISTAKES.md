@@ -585,3 +585,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT=
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -لا diffusers | sed -n '1,120p'
 Cause and fix: The `-l` flag was typed with a non-ASCII character (likely a locale/encoding artifact), so `ls` interpreted it as an invalid option. Use plain ASCII flags (`-la`) or run `ls --help` to confirm supported options.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la diffusers | sed -n '1,120p'
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "<<<<<<</|=======|>>>>>>>" apps .sangoi || true
+Cause and fix: The pattern was not anchored, so tokenizer/vocab JSONs matched `========`/`>>>>>>>>` and produced huge false positives/output. Use anchored conflict-marker patterns and exclude vendored Hugging Face assets.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!apps/interface/dist/**' .

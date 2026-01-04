@@ -109,7 +109,7 @@ class ZImageEngine(CodexDiffusionEngine):
         self.use_distilled_cfg_scale = True
 
         return CodexObjects(
-            unet=runtime.unet,
+            denoiser=runtime.denoiser,
             vae=runtime.vae,
             text_encoders={"qwen3": runtime.text.qwen3_text},
             clipvision=None,
@@ -291,10 +291,10 @@ class ZImageEngine(CodexDiffusionEngine):
         logger.info("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
         
         # Step 2: Get transformer (raw model, not wrapped)
-        transformer_model = runtime.unet.model.diffusion_model
+        transformer_model = runtime.denoiser.model.diffusion_model
         
         # Load transformer to GPU
-        memory_management.load_model_gpu(runtime.unet)
+        memory_management.load_model_gpu(runtime.denoiser)
         
         try:
             # Step 3: Sample using Diffusers scheduler + negation
@@ -321,7 +321,7 @@ class ZImageEngine(CodexDiffusionEngine):
             
         finally:
             if self.smart_offload_enabled:
-                memory_management.unload_model(runtime.unet)
+                memory_management.unload_model(runtime.denoiser)
         
         # Step 4: Decode latents to images
         memory_management.load_model_gpu(self.codex_objects.vae)

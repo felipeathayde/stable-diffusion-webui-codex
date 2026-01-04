@@ -1,7 +1,7 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
 Owner: Engine Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -24,3 +24,4 @@ Status: Active
 - **Debugging:** set `CODEX_ZIMAGE_DEBUG_PROMPT=1` to log the formatted prompt string and `distilled_cfg_scale` used for the run.
 - 2026-01-01: ZImage prompt conditioning now participates in `smart_cache` (`zimage.conditioning`) so repeated prompts don’t re-encode Qwen3 each time; `get_learned_conditioning(...)` returns the cross-attn tensor directly (no placeholder `vector/guidance` allocations).
 - 2026-01-02: Added standardized file header docstrings to Z Image engine modules (doc-only change; part of rollout).
+- 2026-01-04: Z Image runtime core is now stored as `ZImageEngineRuntime.denoiser` via `DenoiserPatcher` (no ControlNet graph).

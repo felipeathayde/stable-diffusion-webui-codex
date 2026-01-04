@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -21,6 +21,7 @@ Status: Active
 - 2025-12-16: Added `wan22_animate_14b` engine as a `vid2vid` strategy (`vid2vid_method="wan_animate"`) using Diffusers `WanAnimatePipeline` (expects preprocessed pose/face videos + reference image; `replace` mode also needs bg/mask). Requires a diffusers version that includes `WanAnimatePipeline` (>=0.36).
 - 2025-12-29: WAN22 engines now anchor vendored HF paths under `CODEX_ROOT` (required) so they don’t depend on the backend process CWD.
 - 2026-01-02: Added standardized file header docstrings to WAN22 engine modules (doc-only change; part of rollout).
+- 2026-01-04: Codex runtime (experimental) now stores the sampling core as `WanEngineRuntime.denoiser` via `DenoiserPatcher` (ControlNet is UNet-only).
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

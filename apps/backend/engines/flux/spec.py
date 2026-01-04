@@ -7,12 +7,12 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Flux engine spec + runtime assembly (components + text pipelines + optional streaming core).
-Defines the Flux engine runtime containers (UNet/CLIP/T5/VAE + streaming policy) and assembles a runnable runtime from selected models,
+Defines the Flux engine runtime containers (denoiser/CLIP/T5/VAE + streaming policy) and assembles a runnable runtime from selected models,
 with strict validation (no implicit fallbacks) and optional streamed core execution.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FluxTextPipelines` (dataclass): Holds the text processing engines used by Flux (optional CLIP classic + required T5).
-- `FluxEngineRuntime` (dataclass): Fully assembled runtime components for Flux (CLIP, VAE, UNet patcher, text pipelines, distilled CFG flag).
+- `FluxEngineRuntime` (dataclass): Fully assembled runtime components for Flux (CLIP, VAE, denoiser patcher, text pipelines, distilled CFG flag).
 - `FluxEngineSpec` (dataclass): Spec/config holder for a Flux runtime build (repo/model selection + streaming policy/config).
 - `_k_predictor` (function): Builds the FlowMatchEuler predictor for the selected Flux variant (Schnell vs dev).
 - `_maybe_enable_streaming_core` (function): Wraps a core transformer with streaming support based on policy/config and runtime flags.
@@ -37,7 +37,7 @@ from apps.backend.runtime.flux.streaming import (
     trace_execution_plan,
 )
 from apps.backend.patchers.clip import CLIP
-from apps.backend.patchers.unet import UnetPatcher
+from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
@@ -59,7 +59,7 @@ class FluxTextPipelines:
 class FluxEngineRuntime:
     clip: CLIP
     vae: VAE
-    unet: UnetPatcher
+    denoiser: DenoiserPatcher
     text: FluxTextPipelines
     use_distilled_cfg: bool
 
@@ -336,7 +336,7 @@ def assemble_flux_runtime(
     transformer = codex_components["transformer"]
     transformer = _maybe_enable_streaming_core(transformer, spec=spec, engine_options=engine_options)
 
-    unet = UnetPatcher.from_model(
+    denoiser = DenoiserPatcher.from_model(
         model=transformer,
         diffusers_scheduler=None,
         k_predictor=k_predictor,
@@ -387,7 +387,7 @@ def assemble_flux_runtime(
     return FluxEngineRuntime(
         clip=clip,
         vae=vae,
-        unet=unet,
+        denoiser=denoiser,
         text=FluxTextPipelines(clip_text=clip_engine, t5_text=t5_engine),
         use_distilled_cfg=use_distilled_cfg,
     )

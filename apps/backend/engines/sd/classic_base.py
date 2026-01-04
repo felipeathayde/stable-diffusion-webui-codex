@@ -6,11 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Codex-native Chroma engine built on the Flux engine toolkit.
-Assembles a `FluxEngineRuntime` from `CHROMA_SPEC` and exposes the `CodexDiffusionEngine` surface used by API/use-cases.
+Purpose: Shared SD1/SD2 engine implementation (classic CLIP text encoder + UNet denoiser + VAE).
+Centralizes the duplicated conditioning/encode/decode logic so SD15 and SD20 engines only specify spec + capabilities.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Chroma` (class): Chroma diffusion engine (txt2img/img2img) wiring the Chroma runtime (Flux toolkit) to the Codex engine interface.
+- `CodexSDClassicEngineBase` (class): Shared implementation for SD1/SD2 engines (build/runtime lifecycle + TE/VAE helpers).
 """
 
 from __future__ import annotations
@@ -20,32 +20,28 @@ from typing import Any, List, Mapping, Optional
 
 import torch
 
-from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime, assemble_flux_runtime
+from apps.backend.engines.sd.factory import CodexSDFamilyFactory
+from apps.backend.engines.sd.spec import SDEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
-logger = logging.getLogger("backend.engines.chroma")
 
+class CodexSDClassicEngineBase(CodexDiffusionEngine):
+    """Shared SD1/SD2 engine implementation (classic CLIP + UNet + VAE)."""
 
-class Chroma(CodexDiffusionEngine):
-    """Codex native Chroma engine built on Flux toolkit."""
-
-    engine_id = "chroma"
+    engine_id: str
+    _factory: CodexSDFamilyFactory
+    _model_family: str
 
     def __init__(self) -> None:
         super().__init__()
-        self._runtime: Optional[FluxEngineRuntime] = None
+        self._runtime: Optional[SDEngineRuntime] = None
+        self._primary_branch: Optional[str] = None
 
-    def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
-        return EngineCapabilities(
-            engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
-            model_types=("chroma",),
-            devices=("cpu", "cuda"),
-            precision=("fp16", "bf16", "fp32"),
-        )
+    @property
+    def _logger(self) -> logging.Logger:
+        return logging.getLogger(f"backend.engines.sd.{self.engine_id}")
 
     def _build_components(
         self,
@@ -53,33 +49,28 @@ class Chroma(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_flux_runtime(
-            spec=CHROMA_SPEC,
-            estimated_config=bundle.estimated_config,
-            codex_components=bundle.components,
-            engine_options=options,
-        )
+        assembly = self._factory.assemble(bundle, options=dict(options))
+        runtime = assembly.runtime
         self._runtime = runtime
-        self.use_distilled_cfg_scale = runtime.use_distilled_cfg
-        logger.debug("Chroma runtime prepared")
+        self._primary_branch = runtime.classic_order[0] if runtime.classic_order else None
+        self.register_model_family(self._model_family)
 
-        return CodexObjects(
-            denoiser=runtime.denoiser,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        self._logger.debug("%s runtime prepared with branches=%s", self.engine_id, runtime.classic_order)
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None
+        self._primary_branch = None
 
-    def _require_runtime(self) -> FluxEngineRuntime:
+    def _require_runtime(self) -> SDEngineRuntime:
         if self._runtime is None:
-            raise RuntimeError("Chroma runtime is not initialised; call load() first.")
+            raise RuntimeError(f"{self.engine_id} runtime is not initialised; call load() first.")
         return self._runtime
 
-    def set_clip_skip(self, clip_skip: int):
-        logger.debug("Chroma ignores clip_skip (no CLIP branch)")
+    def set_clip_skip(self, clip_skip: int) -> None:
+        runtime = self._require_runtime()
+        runtime.set_clip_skip(clip_skip)
+        self._logger.debug("Clip skip set to %d for %s.", clip_skip, self.engine_id)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
@@ -87,8 +78,8 @@ class Chroma(CodexDiffusionEngine):
         memory_management.load_model_gpu(self.codex_objects.text_encoders["clip"].patcher)
         unload_clip = self.smart_offload_enabled
         try:
-            conditioning = runtime.text.t5_text(prompt)
-            logger.debug("Chroma conditioning generated for %d prompts", len(prompt))
+            conditioning = runtime.primary_classic()(prompt)
+            self._logger.debug("Generated conditioning for %d prompts.", len(prompt))
             return conditioning
         finally:
             if unload_clip:
@@ -97,8 +88,10 @@ class Chroma(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
         runtime = self._require_runtime()
-        token_count = len(runtime.text.t5_text.tokenize([prompt])[0])
-        return token_count, max(255, token_count)
+        engine = runtime.primary_classic()
+        _, token_count = engine.process_texts([prompt])
+        target = engine.get_target_prompt_token_count(token_count)
+        return token_count, target
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
@@ -123,3 +116,4 @@ class Chroma(CodexDiffusionEngine):
         finally:
             if unload_vae:
                 memory_management.unload_model(self.codex_objects.vae)
+

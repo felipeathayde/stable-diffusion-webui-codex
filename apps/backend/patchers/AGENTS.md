@@ -1,7 +1,7 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -12,6 +12,7 @@ Status: Active
 - `lora.py` — Implements `CodexLoraLoader` and variant-aware merge helpers backed by typed payloads, progress reporting, and strict validation.
 - `lora_apply.py` — Applies native LoRA selections to loaded networks.
 - `unet.py` — Codex-native UNet patcher built on typed helpers (`SamplingReservation`, `ControlNetChain`) for deterministic sampling reservations, ControlNet chaining, and patch registration.
+- `denoiser.py` — Generic `DenoiserPatcher` wrapper (ControlNet-free) for non-UNet denoisers; wraps `KModel` and exposes the shared `ModelPatcher` surface.
 - `clipvision.py` — Adapter around `apps/backend/runtime/vision/clip/` providing legacy-facing APIs backed by the Codex encoder.
 - Additional patch modules (e.g., adapters) live here as they are ported.
 
@@ -29,6 +30,7 @@ Status: Active
 - 2025-12-05: VAE patcher gains a `smart_fallback` path that, when enabled, catches CUDA OOM during decode and performs a single full-image decode on CPU instead of repeatedly retrying GPU paths (regular + tiled). Encode now mirrors this behaviour: OOM during encode triggers a single full-image CPU encode when Smart Fallback is on, otherwise it falls back to tiled encode.
 - 2026-01-02: Removed token merging patches; prompt token-merging tags are stripped but have no effect.
 - 2026-01-02: Added standardized file header docstrings to patcher modules (doc-only change; part of rollout).
+- 2026-01-04: Added `DenoiserPatcher` for Flux/Z-Image/WAN runtimes; `UnetPatcher` remains UNet/ControlNet-specific.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

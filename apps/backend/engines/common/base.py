@@ -7,10 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
-Defines the shared “engine core” container for UNet/VAE/text encoders and an abstract base engine with model-load/validate semantics.
+Defines the shared “engine core” container for denoiser/VAE/text encoders and an abstract base engine with model-load/validate semantics.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `CodexObjects` (dataclass): Container for core diffusion components (UNet/VAE/text encoders + optional clipvision) with validate/describe helpers.
+- `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
 - `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration and runtime helpers
   (subclasses implement task-specific inference behavior and required component sets).
@@ -57,7 +57,7 @@ class CodexObjects:
     text encoder types (e.g., {"clip": ...}, {"qwen3": ...}, {"clip": ..., "t5": ...}).
     """
 
-    unet: Any
+    denoiser: Any
     vae: Any
     text_encoders: dict[str, Any]  # Flexible text encoders dict
     clipvision: Any | None = None
@@ -65,7 +65,7 @@ class CodexObjects:
     def shallow_copy(self) -> "CodexObjects":
         """Return a shallow copy preserving component references."""
         return CodexObjects(
-            unet=self.unet,
+            denoiser=self.denoiser,
             vae=self.vae,
             text_encoders=dict(self.text_encoders),  # Shallow copy of dict
             clipvision=self.clipvision,
@@ -78,8 +78,8 @@ class CodexObjects:
             context: Error message context.
             required_text_encoders: Tuple of required text encoder names.
         """
-        if self.unet is None:
-            raise ValueError(f"{context}: UNet component is required.")
+        if self.denoiser is None:
+            raise ValueError(f"{context}: denoiser component is required.")
         if self.vae is None:
             raise ValueError(f"{context}: VAE component is required.")
         for te_name in required_text_encoders:
@@ -92,7 +92,7 @@ class CodexObjects:
             return component.__class__.__name__ if component is not None else "None"
 
         result = {
-            "unet": _name(self.unet),
+            "denoiser": _name(self.denoiser),
             "vae": _name(self.vae),
             "clipvision": _name(self.clipvision),
         }
@@ -125,9 +125,9 @@ class _ComponentTracker:
         self._after_lora = components.shallow_copy()
         snapshot = components.describe()
         self._logger.debug(
-            "Engine components bound (%s): unet=%s vae=%s clipvision=%s text_encoders=%s",
+            "Engine components bound (%s): denoiser=%s vae=%s clipvision=%s text_encoders=%s",
             context,
-            snapshot["unet"],
+            snapshot["denoiser"],
             snapshot["vae"],
             snapshot["clipvision"],
             list(components.text_encoders.keys()),
@@ -146,8 +146,8 @@ class _ComponentTracker:
         self._after_lora = active.shallow_copy()
         snapshot = self._after_lora.describe()
         self._logger.debug(
-            "Stored post-LoRA snapshot: unet=%s vae=%s clipvision=%s text_encoders=%s",
-            snapshot["unet"],
+            "Stored post-LoRA snapshot: denoiser=%s vae=%s clipvision=%s text_encoders=%s",
+            snapshot["denoiser"],
             snapshot["vae"],
             snapshot["clipvision"],
             list(active.text_encoders.keys()),
@@ -458,7 +458,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             except Exception:
                 return None, None
             return getattr(candidate, 'device', None), getattr(candidate, 'dtype', None)
-        _ = _probe_device_dtype(getattr(components, 'unet', None))
+        _ = _probe_device_dtype(getattr(components, 'denoiser', None))
         _ = _probe_device_dtype(getattr(components, 'clip', None))
         _ = _probe_device_dtype(getattr(components, 'vae', None))
         self.bind_components(components, label=self.engine_id)
@@ -508,7 +508,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
         targets: list[object] = []
         # These wrappers are passed directly into memory_management.load_model_gpu(...)
-        targets.append(getattr(components, "unet", None))
+        targets.append(getattr(components, "denoiser", None))
         targets.append(getattr(components, "vae", None))
         targets.append(getattr(components, "clipvision", None))
 
@@ -956,7 +956,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def _post_txt2img_cleanup(self) -> None:
         """Post-job cleanup when smart offload is enabled.
 
-        Keeps UNet resident but nudges CUDA to release unused cached memory so the
+        Keeps the denoiser resident but nudges CUDA to release unused cached memory so the
         next job starts from a clean allocator state without paying reload cost.
         """
         if not self.smart_offload_enabled:
@@ -972,7 +972,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def save_unet(self, filename: str) -> str:
         """Persist the current UNet weights to a safetensors file."""
         components = self.codex_objects
-        unet = getattr(components.unet, "model", None)
+        unet = getattr(components.denoiser, "model", None)
         if unet is None:
             raise RuntimeError("UNet patcher is unavailable; cannot export weights.")
         diffusion = getattr(unet, "diffusion_model", None)

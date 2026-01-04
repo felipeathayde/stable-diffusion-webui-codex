@@ -416,7 +416,7 @@ def build_sampling_context(
     is_sdxl: bool = False,
 ) -> SamplingContext:
     sampler_kind = SamplerKind.from_string(sampler_name or "automatic")
-    predictor_container = predictor or getattr(sd_model.codex_objects.unet, "model", None)
+    predictor_container = predictor or getattr(sd_model.codex_objects.denoiser, "model", None)
     if predictor_container is None or getattr(predictor_container, "predictor", None) is None:
         raise RuntimeError("sd_model does not expose a predictor for sigma bounds")
 

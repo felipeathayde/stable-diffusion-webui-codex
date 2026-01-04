@@ -1,7 +1,7 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
 Owner: Runtime Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -29,7 +29,7 @@ Status: Active
 - Simple schedule: `SIMPLE` is predictor-aware and always appends a terminal 0.
 - Default path mirrors the historical `simple_scheduler` behavior, sampling directly from the predictor's `sigmas` ladder (highest-to-lowest).
   - Z Image Turbo parity: when the predictor is `FlowMatchEulerPrediction(pseudo_timestep_range=1000)` we mirror diffusers `ZImagePipeline` behavior: force `sigma_min=0.0`, use a base `linspace(1→0)` ladder, apply `shift` once, and append terminal 0 (double-zero tail). Default `steps=9` yields ~8 effective updates (last `dt=0`).
-- Precision guardrails: `driver.py` observes UNet outputs for NaNs and escalates precision via `memory_management.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
+- Precision guardrails: `driver.py` observes denoiser outputs for NaNs and escalates precision via `memory_management.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 - Diagnostics: set `CODEX_LOG_SAMPLER=1` to log sampler setup and per-step norms; set `CODEX_LOG_SIGMAS=1` to dump the sigma ladder (first/last and a compact summary) for schedule comparisons.
 - 2025-12-12: Added opt-in deep logs for flow debugging: `CODEX_ZIMAGE_DEBUG=1` / `CODEX_ZIMAGE_DEBUG_SAMPLING_INNER=1` prints CFG routing + cond/uncond norms for the first few inner-loop calls.
 - 2025-12-29: `sampling/__init__.py` is now an import-light facade; torch-bound code moved to `inner_loop.py` and is only loaded by `driver.py` during sampling (keeps `sampling.catalog` usable by the API/UI without pulling torch at import time). `inner_loop.py` still imports `cleanup_cache` lazily to avoid loading `runtime.ops` until cleanup is needed.
@@ -39,6 +39,7 @@ Status: Active
 
 ## Updates
 - 2026-01-02: Added standardized file header docstrings to sampling facade helpers (`__init__.py`, `condition.py`, `registry.py`) (doc-only change; part of rollout).
+- 2026-01-04: Sampling now treats the engine core as `codex_objects.denoiser`; ControlNet hooks are optional and only active when the denoiser patcher supports them.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.
@@ -55,7 +56,7 @@ Status: Active
 - `CODEX_LOG_SAMPLER=1` logs sampler setup with scheduler name, prediction_type (from predictor/scheduler), sigma bounds, and the first few sigmas; per-step logs continue to show sigma transitions and latent norms.
 - K-diffusion routing is controlled exclusively via `CODEX_SAMPLER_ENABLE_KDIFFUSION=1`; enabling sampler logging alone (`CODEX_LOG_SAMPLER`) does not change whether k-diffusion is used.
 
-### Pré-checagens antes do UNet
+### Pré-checagens antes do denoiser
 - Após a montagem (`cond_cat(c)`), validação obrigatória:
   - `'c_crossattn'` existe e é Tensor 3D.
   - Se `model.diffusion_model.num_classes` não é `None`, exigir `'y'` (Tensor 2D).

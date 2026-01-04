@@ -93,8 +93,10 @@ class Wan2214BEngine(CodexDiffusionEngine):
                     WanStreamingPolicy,
                     StreamedWanTransformer,
                 )
-                # Get transformer from patcher
-                core_model = runtime.unet.model
+                # Get transformer core from KModel wrapper
+                core_model = getattr(runtime.denoiser.model, "diffusion_model", None)
+                if core_model is None:
+                    raise RuntimeError("WAN denoiser wrapper does not expose diffusion_model; cannot enable streaming.")
                 plan = build_execution_plan(core_model, blocks_per_segment=blocks_per_segment)
                 controller = WanCoreController(
                     storage_device="cpu",
@@ -102,7 +104,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
                     policy=WanStreamingPolicy(streaming_policy),
                 )
                 streamed_core = StreamedWanTransformer(core_model, plan, controller)
-                runtime.unet.model = streamed_core
+                runtime.denoiser.model.diffusion_model = streamed_core
                 self._streaming_controller = controller
                 logger.info(
                     "WAN streaming active: %d segments, %.2f MB total",
@@ -116,7 +118,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
             self._streaming_controller = None
 
         return CodexObjects(
-            unet=runtime.unet,
+            denoiser=runtime.denoiser,
             vae=runtime.vae,
             text_encoders={"t5": runtime.text.t5_text},  # WAN uses T5 only
             clipvision=None,
@@ -225,12 +227,12 @@ class Wan2214BEngine(CodexDiffusionEngine):
         dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
         dtype = dtype_map.get(self._dtype, torch.bfloat16)
         
-        # Get transformer from unet patcher
-        transformer = self.codex_objects.unet.model
+        # Get transformer core from the KModel wrapper
+        transformer = getattr(self.codex_objects.denoiser.model, "diffusion_model", self.codex_objects.denoiser.model)
         vae = runtime.vae
         
         # Load models to GPU
-        memory_management.load_model_gpu(self.codex_objects.unet)
+        memory_management.load_model_gpu(self.codex_objects.denoiser)
         
         # Progress tracking for yield
         progress_events = []

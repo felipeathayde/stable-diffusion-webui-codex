@@ -36,7 +36,7 @@ class AppliedStats:
 
 def _build_to_load_maps(engine) -> Tuple[Dict[str, str], Dict[str, str]]:
     """Return LoRA-key → model-param maps for UNet and CLIP encoders."""
-    unet_model = engine.codex_objects_after_applying_lora.unet.model
+    unet_model = engine.codex_objects_after_applying_lora.denoiser.model
     clip_model = engine.codex_objects_after_applying_lora.text_encoders["clip"].cond_stage_model
     unet_map = model_lora_keys_unet(unet_model)
     clip_map = model_lora_keys_clip(clip_model)
@@ -64,7 +64,7 @@ def apply_loras_to_engine(engine, selections: Iterable[dict | Any]) -> AppliedSt
         return stats
 
     unet_map, clip_map = _build_to_load_maps(engine)
-    unet_patcher = engine.codex_objects_after_applying_lora.unet
+    unet_patcher = engine.codex_objects_after_applying_lora.denoiser
     clip_patcher = engine.codex_objects_after_applying_lora.text_encoders["clip"].patcher
 
     for sel in selections:

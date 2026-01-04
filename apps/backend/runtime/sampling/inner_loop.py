@@ -426,15 +426,15 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
 
 
 def sampling_function(self, denoiser_params, cond_scale, cond_composition):
-    unet_patcher = self.inner_model.inner_model.codex_objects.unet
-    model = unet_patcher.model
-    control = unet_patcher.controlnet_linked_list
-    extra_concat_condition = unet_patcher.extra_concat_condition
+    denoiser_patcher = self.inner_model.inner_model.codex_objects.denoiser
+    model = denoiser_patcher.model
+    control = getattr(denoiser_patcher, "controlnet_linked_list", None)
+    extra_concat_condition = getattr(denoiser_patcher, "extra_concat_condition", None)
     x = denoiser_params.x
     timestep = denoiser_params.sigma
     uncond = compile_conditions(denoiser_params.text_uncond)
     cond = compile_weighted_conditions(denoiser_params.text_cond, cond_composition)
-    model_options = unet_patcher.model_options
+    model_options = denoiser_patcher.model_options
     seed = self.p.seeds[0]
 
     if extra_concat_condition is not None:
@@ -466,18 +466,18 @@ def sampling_function(self, denoiser_params, cond_scale, cond_composition):
     return denoised, cond_pred, uncond_pred
 
 
-def sampling_prepare(unet, x):
+def sampling_prepare(denoiser, x):
     B, C, H, W = x.shape
 
-    memory_estimation_function = unet.model_options.get('memory_peak_estimation_modifier', unet.memory_required)
+    memory_estimation_function = denoiser.model_options.get('memory_peak_estimation_modifier', denoiser.memory_required)
 
-    unet_inference_memory = memory_estimation_function([B * 2, C, H, W])
-    additional_inference_memory = unet.extra_preserved_memory_during_sampling
-    additional_model_patchers = unet.extra_model_patchers_during_sampling
+    denoiser_inference_memory = memory_estimation_function([B * 2, C, H, W])
+    additional_inference_memory = int(getattr(denoiser, "extra_preserved_memory_during_sampling", 0) or 0)
+    additional_model_patchers = list(getattr(denoiser, "extra_model_patchers_during_sampling", []) or [])
 
-    control_runtime = unet.activate_control()
+    control_runtime = denoiser.activate_control() if hasattr(denoiser, "activate_control") else None
     if control_runtime:
-        additional_inference_memory += control_runtime.inference_memory_requirements(unet.model_dtype())
+        additional_inference_memory += control_runtime.inference_memory_requirements(denoiser.model_dtype())
         additional_model_patchers += control_runtime.get_models()
         logger.debug(
             "Control runtime activated: extra_memory=%s models=%d",
@@ -485,26 +485,33 @@ def sampling_prepare(unet, x):
             len(additional_model_patchers),
         )
 
-    if unet.has_online_lora():
-        lora_memory = utils.nested_compute_size(unet.lora_patches, element_size=utils.dtype_to_element_size(unet.model.computation_dtype))
+    if denoiser.has_online_lora():
+        lora_memory = utils.nested_compute_size(
+            denoiser.lora_patches,
+            element_size=utils.dtype_to_element_size(denoiser.model.computation_dtype),
+        )
         additional_inference_memory += lora_memory
 
-    models_to_load = [unet] + additional_model_patchers
+    models_to_load = [denoiser] + additional_model_patchers
     memory_management.load_models_gpu(
         models=models_to_load,
-        memory_required=unet_inference_memory,
+        memory_required=denoiser_inference_memory,
         hard_memory_preservation=additional_inference_memory
     )
 
     if smart_offload_enabled():
-        setattr(unet, "_codex_smart_offload_models", models_to_load)
+        setattr(denoiser, "_codex_smart_offload_models", models_to_load)
     else:
-        setattr(unet, "_codex_smart_offload_models", [])
+        setattr(denoiser, "_codex_smart_offload_models", [])
 
-    if unet.has_online_lora():
-        utils.nested_move_to_device(unet.lora_patches, device=unet.current_device, dtype=unet.model.computation_dtype)
+    if denoiser.has_online_lora():
+        utils.nested_move_to_device(
+            denoiser.lora_patches,
+            device=denoiser.current_device,
+            dtype=denoiser.model.computation_dtype,
+        )
 
-    real_model = unet.model
+    real_model = denoiser.model
 
     percent_to_timestep_function = lambda p: real_model.predictor.percent_to_sigma(p)
 
@@ -515,19 +522,20 @@ def sampling_prepare(unet, x):
     return
 
 
-def sampling_cleanup(unet):
-    if unet.has_online_lora():
-        utils.nested_move_to_device(unet.lora_patches, device=unet.offload_device)
-    control_runtime = unet.controlnet_linked_list
+def sampling_cleanup(denoiser):
+    if denoiser.has_online_lora():
+        utils.nested_move_to_device(denoiser.lora_patches, device=denoiser.offload_device)
+    control_runtime = getattr(denoiser, "controlnet_linked_list", None)
     if control_runtime:
         control_runtime.cleanup()
         logger.debug("Control runtime cleaned up after sampling")
-    unet.clear_control()
+    if hasattr(denoiser, "clear_control"):
+        denoiser.clear_control()
     if smart_offload_enabled():
-        models_to_unload = getattr(unet, "_codex_smart_offload_models", [])
+        models_to_unload = getattr(denoiser, "_codex_smart_offload_models", [])
         for model in models_to_unload:
             memory_management.unload_model(model)
-        setattr(unet, "_codex_smart_offload_models", [])
+        setattr(denoiser, "_codex_smart_offload_models", [])
     from apps.backend.runtime.ops import cleanup_cache
     cleanup_cache()
     return

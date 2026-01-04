@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Codex-native Chroma engine built on the Flux engine toolkit.
-Assembles a `FluxEngineRuntime` from `CHROMA_SPEC` and exposes the `CodexDiffusionEngine` surface used by API/use-cases.
+Assembles a `FluxEngineRuntime` from `CHROMA_SPEC` via the Flux family factory and exposes the `CodexDiffusionEngine` surface used by API/use-cases.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Chroma` (class): Chroma diffusion engine (txt2img/img2img) wiring the Chroma runtime (Flux toolkit) to the Codex engine interface.
@@ -22,11 +22,14 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime, assemble_flux_runtime
+from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
+from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.chroma")
+
+_CHROMA_FACTORY = CodexFluxFamilyFactory(spec=CHROMA_SPEC)
 
 
 class Chroma(CodexDiffusionEngine):
@@ -53,22 +56,13 @@ class Chroma(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_flux_runtime(
-            spec=CHROMA_SPEC,
-            estimated_config=bundle.estimated_config,
-            codex_components=bundle.components,
-            engine_options=options,
-        )
+        assembly = _CHROMA_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         self._runtime = runtime
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Chroma runtime prepared")
 
-        return CodexObjects(
-            denoiser=runtime.denoiser,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None

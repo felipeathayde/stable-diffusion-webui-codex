@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Flux diffusion engine (txt2img/img2img) using the Codex Flux runtime.
-Assembles the runtime via `assemble_flux_runtime`, manages conditioning caching, and exposes the hooks required by shared txt2img/img2img
+Assembles the runtime via `CodexFluxFamilyFactory`, manages conditioning caching, and exposes the hooks required by shared txt2img/img2img
 workflows (encode/decode/conditioning + optional core streaming controller).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -24,7 +24,8 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime, assemble_flux_runtime
+from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
+from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
@@ -34,6 +35,8 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.flux")
+
+_FLUX_FACTORY = CodexFluxFamilyFactory(spec=FLUX_SPEC)
 
 
 class _FluxPromptList(list[str]):
@@ -80,12 +83,8 @@ class Flux(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_flux_runtime(
-            spec=FLUX_SPEC,
-            estimated_config=bundle.estimated_config,
-            codex_components=bundle.components,
-            engine_options=options,
-        )
+        assembly = _FLUX_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         self._runtime = runtime
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Flux runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
@@ -99,12 +98,7 @@ class Flux(CodexDiffusionEngine):
         else:
             self._streaming_controller = None
 
-        return CodexObjects(
-            denoiser=runtime.denoiser,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None

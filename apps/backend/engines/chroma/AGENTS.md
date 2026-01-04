@@ -9,7 +9,7 @@ Status: Active
 
 ## Notes
 - Align runtime and engine changes; move shared pieces into `runtime/chroma/` when appropriate.
-- Chroma reuses the Flux engine toolkit (`apps/backend/engines/flux/spec.py`); extend specs and rely on `_build_components` to assemble runtime state during `load()`.
+- Chroma reuses the Flux engine toolkit (`apps/backend/engines/flux/spec.py`); assemble via `CodexFluxFamilyFactory` (`apps/backend/engines/flux/factory.py`) to keep `_build_components` consistent.
 - Engine capabilities now advertise txt2img/img2img support and enforce runtime guards before accessing Flux structures.
 - 2026-01-02: Added standardized file header docstrings to Chroma engine modules (doc-only change; part of rollout).
-- 2026-01-04: Chroma (Flux toolkit) now treats the sampling core as `runtime.denoiser` (not `runtime.unet`).
+- 2026-01-03: Chroma (Flux toolkit) now treats the sampling core as `runtime.denoiser` (not `runtime.unet`).

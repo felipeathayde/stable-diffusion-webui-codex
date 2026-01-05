@@ -2,7 +2,7 @@
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-05
 Status: Active
 
 ## Purpose
@@ -12,14 +12,14 @@ Status: Active
 - `QuickSettingsBase.vue` — Generic quicksettings (mode, checkpoint, VAE, optional text encoder) for SD15/SDXL model tabs; advanced controls are rendered by `QuickSettingsBar.vue`.
 - `QuickSettingsPerf.vue` — Performance toggles shared across engines (Smart Offload/Fallback/Cache/Core Streaming) rendered in the Advanced nested area.
 - `QuickSettingsWan.vue` — WAN22-specific quicksettings (mode + `LightX2V` toggle button, high/low model dirs, metadata/text encoder/VAE selectors).
-- `QuickSettingsFlux.vue` / `QuickSettingsZImage.vue` — Flux/ZImage-specific checkpoint/VAE/text encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
+- `QuickSettingsFlux.vue` / `QuickSettingsZImage.vue` — FLUX.1/ZImage-specific checkpoint/VAE/text encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
 
 ## Notes
-- `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. Flux-only TE layout, WAN-only selectors) live in `QuickSettingsBar.vue`.
+- `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. FLUX.1-only TE layout, WAN-only selectors) live in `QuickSettingsBar.vue`.
 - `QuickSettingsBar.vue` renders a main row for engine selectors and a collapsible Advanced nested area (Smart toggles + GPU VRAM / Attention Backend / Overrides), with a left-side handle button.
 - `QuickSettingsPerf` uses toggle buttons (`.qs-toggle-btn`) for Smart Offload/Fallback/Cache/Core Streaming (no legacy switches).
 - Text encoder dropdowns display a compact label (`family/basename`) even when `/api/text-encoders` or the inventory return long absolute paths; the full value is still posted back in the `<option value>`.
-- For Flux, `QuickSettingsBar` hides the base text encoder field and exposes a Flux-only pair of text encoder selectors based on individual files under `flux_tenc`; wiring to backend overrides is intentionally deferred to a dedicated handoff.
+- For FLUX.1, `QuickSettingsBar` hides the base text encoder field and exposes a FLUX.1-only pair of text encoder selectors based on individual files under `flux1_tenc`; wiring to backend overrides is intentionally deferred to a dedicated handoff.
 - 2025-12-27: Removed the `hideCheckpoint` toggle/prop; checkpoint selection is always rendered, and on `/models/:tabId` it is tab-scoped (`tab.params.checkpoint`, auto-seeded) while still filtering choices by engine-specific `*_ckpt` roots from `apps/paths.json` (plus user-added paths).
 - 2025-12-14: WAN text encoder selector now lists explicit `.safetensors` files under `wan22_tenc` and stores values as `wan22/<abs_path>` for consistent labeling; payload builders must normalize before sending to backend.
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.

@@ -11,7 +11,7 @@ Persists named parameter snapshots for txt2img/img2img (mode-scoped) and exposes
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PresetDef` (interface): Preset definition (name + values object).
-- `usePresetsStore` (const): Pinia store for listing/saving/retrieving presets.
+- `usePresetsStore` (store): Pinia store for listing/saving/retrieving presets.
 - `loadList` (function): Loads a preset list from localStorage for a mode.
 - `saveList` (function): Persists a preset list to localStorage for a mode.
 */

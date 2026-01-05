@@ -10,8 +10,6 @@ Purpose: Torch-bound sampling inner loop (kept separate so `apps.backend.runtime
 Implements conditioning batching, CFG routing, and sampling lifecycle hooks (prepare/cleanup) for native samplers.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_env_flag` (function): Reads a boolean env var flag (truthy strings only; missing → False).
-- `_env_int` (function): Reads an integer env var with default fallback.
 - `get_area_and_mult` (function): Computes per-conditioning spatial area crop + mask multiplier (supports `area`, `mask`, `strength`,
   and timestep gates) and returns the prepared slice for batching.
 - `cond_equal_size` (function): Checks whether two compiled conditionings are size-compatible for batching.
@@ -38,31 +36,14 @@ import logging
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime import utils
+from apps.backend.infra.config.env_flags import env_flag, env_int
 
 
 logger = logging.getLogger("backend.runtime.sampling")
 from .condition import Condition, compile_conditions, compile_weighted_conditions
 from apps.backend.infra.config.args import dynamic_args, args
 
-_TRUE = {"1", "true", "yes", "on"}
 _ZIMAGE_SAMPLING_DEBUG_COUNT = 0
-
-
-def _env_flag(name: str) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in _TRUE
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return int(default)
-    try:
-        return int(str(raw).strip())
-    except Exception:
-        return int(default)
 
 
 def get_area_and_mult(conds, x_in, timestep_in):
@@ -375,8 +356,8 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
 
     # Optional deep diagnostics for flow models (Z Image/Flux): log CFG routing and tensor norms.
     global _ZIMAGE_SAMPLING_DEBUG_COUNT
-    debug_enabled = _env_flag("CODEX_ZIMAGE_DEBUG") or _env_flag("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER")
-    debug_limit = max(0, _env_int("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER_N", 3))
+    debug_enabled = env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER")
+    debug_limit = env_int("CODEX_ZIMAGE_DEBUG_SAMPLING_INNER_N", 3, min_value=0)
     if debug_enabled and _ZIMAGE_SAMPLING_DEBUG_COUNT < debug_limit:
         try:
             sigma0 = float(timestep.detach().view(-1)[0].item()) if isinstance(timestep, torch.Tensor) else float(timestep)

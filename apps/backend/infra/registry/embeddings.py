@@ -30,6 +30,9 @@ import torch
 import safetensors.torch as sf
 from PIL import Image
 
+from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.infra.config.repo_root import get_repo_root
+
 from apps.backend.runtime.text_processing.textual_inversion import create_embedding_from_data
 
 
@@ -45,20 +48,17 @@ class EmbeddingEntry:
 
 def _default_roots(models_root: str = "models") -> List[str]:
     roots = []
+    models_root_abs = models_root
+    if not os.path.isabs(models_root_abs):
+        models_root_abs = os.path.join(str(get_repo_root()), models_root_abs)
     for sub in ("embeddings", "Embeddings", "textual_inversion", "ti"):
-        p = os.path.join(models_root, sub)
+        p = os.path.join(models_root_abs, sub)
         if os.path.isdir(p):
             roots.append(p)
     # apps paths override
-    cfg = os.path.join("apps", "paths.json")
-    try:
-        with open(cfg, "r", encoding="utf-8") as f:
-            data = json.load(f) or {}
-        for p in (data.get("embeddings") or []):
-            if isinstance(p, str) and os.path.isdir(p):
-                roots.append(p)
-    except Exception:
-        pass
+    for p in get_paths_for("embeddings"):
+        if os.path.isdir(p):
+            roots.append(p)
     seen = set(); out: List[str] = []
     for r in roots:
         if r not in seen:

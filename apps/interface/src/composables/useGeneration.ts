@@ -217,7 +217,7 @@ export function useGeneration(tabId: string) {
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
 
-	    const teOverride = engineType.value === 'flux'
+	    const teOverride = engineType.value === 'flux1'
 	      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
 	      : undefined
 	    
@@ -241,9 +241,9 @@ export function useGeneration(tabId: string) {
 	        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
 	        return
 	      }
-        if (engineType.value === 'flux' && shas.length !== 2) {
+        if (engineType.value === 'flux1' && shas.length !== 2) {
           state.value.status = 'error'
-          state.value.errorMessage = 'Flux requires exactly 2 text encoders (CLIP + T5).'
+          state.value.errorMessage = 'FLUX.1 requires exactly 2 text encoders (CLIP + T5).'
           return
         }
         if (engineType.value === 'zimage' && shas.length !== 1) {
@@ -269,10 +269,11 @@ export function useGeneration(tabId: string) {
       }
 	    
 	    const device = (quicksettings.currentDevice || 'cpu') as any
-	    let engineOverrideForRequest = String(engineType.value)
-    // Flux img2img should run via the Kontext workflow engine.
-    if (p.useInitImage && engineOverrideForRequest === 'flux') {
-      engineOverrideForRequest = 'kontext'
+	    const tabType = String(engineType.value)
+	    let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
+    // Flux.1 img2img should run via the Kontext workflow engine.
+    if (p.useInitImage && engineOverrideForRequest === 'flux1') {
+      engineOverrideForRequest = 'flux1_kontext'
     }
 
     try {

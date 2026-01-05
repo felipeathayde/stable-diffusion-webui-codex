@@ -35,13 +35,13 @@ _KONTEXT_FACTORY = CodexFluxFamilyFactory(spec=FLUX_SPEC)
 class Kontext(Flux):
     """Flux Kontext engine (Flux-derived, image-conditioned)."""
 
-    engine_id = "kontext"
+    engine_id = "flux1_kontext"
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
             tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
-            model_types=("flux_kontext", "kontext"),
+            model_types=("flux1_kontext", "kontext"),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
             extras={

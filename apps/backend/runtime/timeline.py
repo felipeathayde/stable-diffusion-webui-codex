@@ -11,8 +11,6 @@ Provides a lightweight runtime “timeline” for debugging inference flow, incl
 Can be enabled via env (`CODEX_TIMELINE=1`) or used programmatically with `timeline.capture(...)` / `@timeline_node(...)`.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_env_flag` (function): Parses a boolean environment variable.
-- `_env_int` (function): Parses an integer environment variable.
 - `TimelineEvent` (dataclass): One enter/exit event (stage/name/depth/thread + duration/vram + extra metadata).
 - `TimelineCapture` (dataclass): One captured session (name + start/end + events snapshot).
 - `TimelineCollector` (class): Main collector; manages event stack, capture contexts, VRAM sampling, and render/export helpers.
@@ -40,26 +38,13 @@ from typing import Any, Callable, List, Optional, TypeVar
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
+
 _log = logging.getLogger("backend.timeline")
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    val = os.environ.get(name, "").lower()
-    if val in ("1", "true", "yes", "on"):
-        return True
-    if val in ("0", "false", "no", "off"):
-        return False
-    return default
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
 
 
 # -----------------------------------------------------------------------------
@@ -109,9 +94,9 @@ class TimelineCollector:
         return cls._instance
     
     def _init(self) -> None:
-        self._enabled = _env_flag("CODEX_TIMELINE", False)
-        self._max_events = _env_int("CODEX_TIMELINE_MAX_EVENTS", 10000)
-        self._track_vram = _env_flag("CODEX_TIMELINE_VRAM", True)
+        self._enabled = env_flag("CODEX_TIMELINE", False)
+        self._max_events = env_int("CODEX_TIMELINE_MAX_EVENTS", 10000, min_value=0)
+        self._track_vram = env_flag("CODEX_TIMELINE_VRAM", True)
         self._captures: List[TimelineCapture] = []
         self._active_capture: Optional[TimelineCapture] = None
         self._depth = threading.local()
@@ -440,7 +425,7 @@ def export_chrome_trace(capture: Optional[TimelineCapture] = None) -> dict:
 
 def enable_from_env() -> None:
     """Enable timeline if CODEX_TIMELINE=1."""
-    if _env_flag("CODEX_TIMELINE", False):
+    if env_flag("CODEX_TIMELINE", False):
         timeline.enable()
 
 

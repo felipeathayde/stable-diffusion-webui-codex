@@ -9,16 +9,6 @@ Required Notice: see NOTICE
 Purpose: Native Qwen3-4B text encoder implementation used by the ZImage runtime.
 This is a standalone implementation that avoids `transformers`, enabling GGUF support through the quantization system.
 
-Architecture notes (Qwen3-4B):
-- hidden_size: 2560
-- intermediate_size: 9728
-- num_hidden_layers: 36
-- num_attention_heads: 32
-- num_key_value_heads: 8 (GQA)
-- RoPE theta: 1_000_000
-- Q/K normalization (Gemma3 style)
-- SwiGLU activation
-
 Symbols (top-level; keep in sync; no ghosts):
 - `Qwen3Config` (dataclass): Configuration defaults for Qwen3-4B (dims/layers/heads/RoPE/norm eps).
 - `RMSNorm` (class): RMSNorm implementation used throughout the encoder.
@@ -34,6 +24,16 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+
+# Architecture notes (Qwen3-4B):
+# - hidden_size: 2560
+# - intermediate_size: 9728
+# - num_hidden_layers: 36
+# - num_attention_heads: 32
+# - num_key_value_heads: 8 (GQA)
+# - RoPE theta: 1_000_000
+# - Q/K normalization (Gemma3 style)
+# - SwiGLU activation
 
 import logging
 import math

@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Build script for the `wan_te_cuda` CUDA extension (WAN T5 FP8 encoder kernels).
 
 Symbols (top-level; keep in sync; no ghosts):
-- (none): Setup script configuring `CUDAExtension` sources/flags for `wan_te_cuda`.
+- `apps.backend.runtime.kernels.wan_t5.setup` (module): Setup script configuring `CUDAExtension` sources/flags for `wan_te_cuda`.
 """
 
 from setuptools import setup

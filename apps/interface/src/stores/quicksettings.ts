@@ -80,8 +80,26 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const coreStreaming = ref<boolean>(false)
 
   // Basic engine/mode options
-  const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'kontext', 'svd', 'hunyuan_video', 'wan22'])
+  const engineChoices = ref<string[]>([
+    'sd15',
+    'sdxl',
+    'flux1',
+    'flux1_kontext',
+    'flux1_chroma',
+    'zimage',
+    'svd',
+    'hunyuan_video',
+    'wan22',
+  ])
   const modeChoices = ref<string[]>(['Normal', 'LCM', 'Turbo', 'Lightning'])
+
+  function normalizeEngineKey(value: string): string {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    const key = raw.toLowerCase()
+    if (!engineChoices.value.includes(key)) return ''
+    return key
+  }
 
   async function init(): Promise<void> {
     await Promise.all([
@@ -143,8 +161,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       currentSeed.value = opts.seed
     }
     if (typeof opts.codex_engine === 'string') {
-      currentEngine.value = opts.codex_engine
-      if (!engineChoices.value.includes(opts.codex_engine)) engineChoices.value.push(opts.codex_engine)
+      const engine = normalizeEngineKey(opts.codex_engine)
+      if (engine) {
+        currentEngine.value = engine
+        if (!engineChoices.value.includes(engine)) engineChoices.value.push(engine)
+      }
     }
     if (typeof opts.codex_mode === 'string') {
       currentMode.value = opts.codex_mode
@@ -218,8 +239,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   async function setEngine(name: string): Promise<void> {
-    currentEngine.value = name
-    await updateOptions({ codex_engine: name })
+    const engine = normalizeEngineKey(name)
+    if (!engine) return
+    currentEngine.value = engine
+    await updateOptions({ codex_engine: engine })
   }
 
   async function setMode(name: string): Promise<void> {
@@ -249,7 +272,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       try {
         const inv = await fetchModelInventory()
         const shaMap = new Map<string, string>()
-        const prefixes = ['sd15', 'sdxl', 'flux', 'wan22', 'zimage']
+        const prefixes = ['sd15', 'sdxl', 'flux1', 'wan22', 'zimage']
         for (const te of inv.text_encoders || []) {
           const sha = typeof te.sha256 === 'string' ? te.sha256 : ''
           if (!sha) continue

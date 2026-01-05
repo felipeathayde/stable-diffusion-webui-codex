@@ -10,7 +10,7 @@ Purpose: Typed signature specs produced by model detectors and consumed by loade
 Defines the core enums and dataclasses for checkpoint signatures (family, prediction kind, latent format, quantization hints, and component signatures).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ModelFamily` (enum): Checkpoint family tags (SD/SDXL/Flux/WAN22/etc).
+- `ModelFamily` (enum): Checkpoint family tags (SD/SDXL/Flux.1/WAN22/etc).
 - `PredictionKind` (enum): Prediction parameterization tags (`eps`, `v_prediction`, `flow`, etc).
 - `LatentFormat` (enum): Latent space format tags used by runtimes.
 - `QuantizationKind` (enum): Quantization scheme identifiers (`none`, `nf4`, `fp4`, `gguf`).
@@ -36,8 +36,8 @@ class ModelFamily(Enum):
     SDXL_REFINER = "sdxl_refiner"
     SD3 = "sd3"
     SD35 = "sd35"
-    FLUX = "flux"
-    FLUX_KONTEXT = "flux_kontext"
+    FLUX = "flux1"
+    FLUX_KONTEXT = "flux1_kontext"
     STABLE_CASCADE = "stable_cascade"
     CHROMA = "chroma"
     KOALA = "koala"

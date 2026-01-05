@@ -9,5 +9,5 @@ Required Notice: see NOTICE
 Purpose: Shared runtime helpers and neural-network building blocks used across model families.
 
 Symbols (top-level; keep in sync; no ghosts):
-- (none): Package marker only; see submodules (e.g., `nn/`) for implementations.
+- `apps.backend.runtime.common` (module): Package marker only; see submodules (e.g., `nn/`) for implementations.
 """

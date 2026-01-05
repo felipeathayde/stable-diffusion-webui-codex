@@ -2,9 +2,33 @@
 **Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
 **Correct command:** `ls -la apps/interface/src/stores`
 
+**Wrong command:** `rg -n "engine\\s*[=:]\\s*[\\\"'`]\\s*(flux|kontext|chroma|flux-1|flux\\.1)\\s*[\\\"'`]" .sangoi/plans .sangoi/tasks || true`
+**Cause + fix:** `Backticks are command substitution in bash even inside double quotes, so `rg` never receives the intended regex. Avoid backticks in double-quoted patterns, or escape them / use single quotes.`
+**Correct command:** `rg -n "engine\\s*[=:]\\s*[\\\"']\\s*(flux|kontext|chroma|flux-1|flux\\.1)\\s*[\\\"']" .sangoi/plans .sangoi/tasks || true`
+
+**Wrong command:** `rg -n "^## `apps/backend/engines/registration\\.py`" .sangoi/reports/tooling/apps-file-header-blocks.md`
+**Cause + fix:** `The backticks trigger bash command substitution, attempting to execute apps/backend/engines/registration.py as a command before rg runs. Search for the path without backticks (or escape them).`
+**Correct command:** `rg -n "apps/backend/engines/registration\\.py" .sangoi/reports/tooling/apps-file-header-blocks.md`
+
 **Wrong command:** `rg -n "Unit test that `prepare_txt2vid`" .sangoi/plans/2025-12-14-wan22-ui-backend-alignment.md`
 **Cause + fix:** `Backticks are command substitution in bash; the shell tries to execute the text inside them before rg runs. Use single quotes around patterns that contain backticks (or escape them) so the pattern is passed literally to rg.`
 **Correct command:** `rg -n --fixed-strings 'Unit test that `prepare_txt2vid`' .sangoi/plans/2025-12-14-wan22-ui-backend-alignment.md`
+
+**Wrong command:** `rg -n "engine=\"kontext\"|engine='kontext'|engine key `kontext`|engine key kontext|`kontext` engine" .sangoi | sed -n '1,200p'`
+**Cause + fix:** `Backticks are command substitution in bash; the shell tries to execute the text inside them before rg runs. Use single quotes around patterns that contain backticks (or escape them) so the pattern is passed literally to rg.`
+**Correct command:** `rg -n 'engine="kontext"|engine="flux1_kontext"|`kontext`' .sangoi | sed -n '1,200p'`
+
+**Wrong command:** `rg -n "\{wan22,sd,flux,chroma\}|engines/\" .sangoi/architecture/repo-structure.md && sed -n '1,80p' .sangoi/architecture/repo-structure.md`
+**Cause + fix:** `Unbalanced quotes caused bash to abort before running rg. Re-run with correct quoting (or split into two commands).`
+**Correct command:** `rg -n 'engines/' .sangoi/architecture/repo-structure.md && sed -n '1,80p' .sangoi/architecture/repo-structure.md`
+
+**Wrong command:** `rg -n "engine `flux`|engine `kontext`|engine=\"kontext\"|engine=\"flux\"" .sangoi/tasks .sangoi/plans .sangoi/one-trainer || true`
+**Cause + fix:** `Backticks are command substitution in bash; the shell tries to execute the text inside them before rg runs. Wrap the full pattern in single quotes so backticks are passed literally.`
+**Correct command:** `rg -n 'engine `flux`|engine `kontext`|engine="kontext"|engine="flux"' .sangoi/tasks .sangoi/plans .sangoi/one-trainer || true`
+
+**Wrong command:** `rg -n "engine_key='flux'|engine=\"flux\"|engine `flux`" .sangoi | sed -n '1,120p'`
+**Cause + fix:** `Backticks are command substitution in bash; the shell tries to execute the text inside them before rg runs. Avoid backticks in double quotes, or wrap the full pattern in single quotes (or split the search).`
+**Correct command:** `rg -n "engine_key='flux'|engine=\\\"flux\\\"" .sangoi | sed -n '1,120p'`
 
 **Wrong command:** `rg -n "--color-border" apps/interface/src/styles.css apps/interface/src/styles/*.css | head -n 50`
 **Cause + fix:** `Patterns that start with "--" look like CLI flags to rg. Use "--" to end option parsing (or pass the pattern with -e) so rg treats it as a literal search term.`
@@ -589,3 +613,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la diff
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "<<<<<<</|=======|>>>>>>>" apps .sangoi || true
 Cause and fix: The pattern was not anchored, so tokenizer/vocab JSONs matched `========`/`>>>>>>>>` and produced huge false positives/output. Use anchored conflict-marker patterns and exclude vendored Hugging Face assets.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!apps/interface/dist/**' .
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n -- "open\\(.*paths\\.json|with open\\(.*paths\\.json" apps/backend --glob '!apps/backend/infra/config/paths.py'
+Cause and fix: `rg` options like `--glob` must appear before the search paths; placing `apps/backend` before `--glob` made ripgrep treat `--glob` (and the negated glob) as a literal file path and fail. Move `--glob` before the search path argument.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n --glob '!apps/backend/infra/config/paths.py' -- "open\\(.*paths\\.json|with open\\(.*paths\\.json" apps/backend

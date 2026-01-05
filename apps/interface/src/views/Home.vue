@@ -74,7 +74,7 @@ Symbols (top-level; keep in sync; no ghosts):
               <select id="engineType" class="select-md" v-model="newType">
                 <option value="sd15">SD 1.5</option>
                 <option value="sdxl">SDXL</option>
-                <option value="flux">FLUX</option>
+                <option value="flux1">FLUX.1</option>
                 <option value="zimage">Z Image</option>
                 <option value="wan">WAN 2.2</option>
               </select>

@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Zod request schemas + payload builders for image generation (txt2img/img2img).
 Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including highres/refiner) and to
-derive Flux explicit text-encoder overrides from `flux/<abs_path>` labels.
+derive Flux.1 explicit text-encoder overrides from `flux1/<abs_path>` labels.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FLOW_ENGINES` (const): Engine ids treated as flow models (distilled CFG; negative prompt omitted).
@@ -24,14 +24,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
 - `normalizeDevice` (function): Normalizes and validates a device token.
 - `buildTxt2ImgPayload` (function): Builds and validates a `Txt2ImgRequest` from UI form state.
-- `deriveFluxTextEncoderOverrideFromLabels` (function): Builds a Flux explicit `text_encoder_override` from `flux/…` labels.
+- `deriveFluxTextEncoderOverrideFromLabels` (function): Builds a Flux.1 explicit `text_encoder_override` from `flux1/…` labels.
 - `formatZodError` (function): Converts Zod errors (or unknown errors) into a readable message.
 */
 
 import { z, ZodError } from 'zod'
 
 // Flow models use distilled_cfg, no negative prompt
-const FLOW_ENGINES = ['flux', 'zimage', 'chroma'] as const
+const FLOW_ENGINES = ['flux1', 'flux1_kontext', 'flux1_chroma', 'zimage'] as const
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 
@@ -304,7 +304,7 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
 }
 
 export function deriveFluxTextEncoderOverrideFromLabels(labels: string[]): Txt2ImgFormState['textEncoderOverride'] | undefined {
-  const fluxPrefix = 'flux/'
+  const fluxPrefix = 'flux1/'
   const fluxLabels = labels.filter((label) => typeof label === 'string' && label.startsWith(fluxPrefix)) as string[]
   if (fluxLabels.length === 0) return undefined
 
@@ -322,10 +322,10 @@ export function deriveFluxTextEncoderOverrideFromLabels(labels: string[]): Txt2I
   if (components.length === 0) return undefined
 
   return {
-    family: 'flux',
+    family: 'flux1',
     // Label is still required by the backend schema but is not used in explicit-path mode.
     // Keep the `<family>/…` pattern so API-side validation passes.
-    label: 'flux/explicit',
+    label: 'flux1/explicit',
     components,
   }
 }

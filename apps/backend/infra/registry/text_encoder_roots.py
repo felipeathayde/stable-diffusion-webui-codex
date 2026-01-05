@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Engine/model-family text encoder roots registry (`apps/paths.json`-backed).
-Exposes configured text encoder root directories for each `ModelFamily` (e.g. `sd15_tenc`, `flux_tenc`, `wan22_tenc`) without loading models,
+Exposes configured text encoder root directories for each `ModelFamily` (e.g. `sd15_tenc`, `flux1_tenc`, `wan22_tenc`) without loading models,
 so inventory/diagnostics layers can list available roots safely.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -35,8 +35,8 @@ from .base import AssetEntry
 _FAMILY_KEYS: Dict[ModelFamily, str] = {
     ModelFamily.SD15: "sd15_tenc",
     ModelFamily.SDXL: "sdxl_tenc",
-    ModelFamily.FLUX: "flux_tenc",
-    ModelFamily.FLUX_KONTEXT: "flux_tenc",
+    ModelFamily.FLUX: "flux1_tenc",
+    ModelFamily.FLUX_KONTEXT: "flux1_tenc",
     ModelFamily.ZIMAGE: "zimage_tenc",
     ModelFamily.WAN22: "wan22_tenc",
 }
@@ -49,7 +49,7 @@ class TextEncoderRoot(AssetEntry):
     name: human-friendly label (e.g., 'sd15/models/sd15-tenc')
     path: absolute filesystem path
     kind: fixed to 'text_encoder_root'
-    tags: includes the ModelFamily value (sd15/sdxl/flux/wan22)
+    tags: includes the ModelFamily value (sd15/sdxl/flux1/wan22)
     """
 
 

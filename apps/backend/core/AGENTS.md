@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-04
 Status: Active
 
 ## Purpose

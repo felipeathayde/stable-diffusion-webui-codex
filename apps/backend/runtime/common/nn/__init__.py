@@ -9,5 +9,5 @@ Required Notice: see NOTICE
 Purpose: Shared neural-network helpers and lightweight wrappers used across runtimes.
 
 Symbols (top-level; keep in sync; no ghosts):
-- (none): Package marker only; see submodules for implementations.
+- `apps.backend.runtime.common.nn` (module): Package marker only; see submodules for implementations.
 """

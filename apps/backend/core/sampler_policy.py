@@ -71,11 +71,11 @@ DEFAULT_VIDEO_SCHEDULERS: List[str] = ["Automatic", "Karras"]
 
 # Per-engine overrides (lowercase engine keys)
 ENGINE_OVERRIDES: Dict[str, Dict[TaskType, Dict[str, List[str]]]] = {
-    "flux": {
+    "flux1": {
         TaskType.TXT2IMG: {"samplers": DEFAULT_IMAGE_SAMPLERS, "schedulers": DEFAULT_IMAGE_SCHEDULERS},
         TaskType.IMG2IMG: {"samplers": DEFAULT_IMAGE_SAMPLERS, "schedulers": DEFAULT_IMAGE_SCHEDULERS},
     },
-    "chroma": {
+    "flux1_chroma": {
         TaskType.TXT2IMG: {"samplers": DEFAULT_IMAGE_SAMPLERS, "schedulers": DEFAULT_IMAGE_SCHEDULERS},
         TaskType.IMG2IMG: {"samplers": DEFAULT_IMAGE_SAMPLERS, "schedulers": DEFAULT_IMAGE_SCHEDULERS},
     },
@@ -91,9 +91,8 @@ ENGINE_OVERRIDES: Dict[str, Dict[TaskType, Dict[str, List[str]]]] = {
 
 # Engines that should reuse FLUX lists (fine-tuned variants share same controls).
 ENGINE_ALIAS: Dict[str, str] = {
-    "flux.1": "flux",
-    "flux-1": "flux",
-    "flux_schnell": "flux",
+    "flux1_kontext": "flux1",
+    "flux1_chroma": "flux1_chroma",
 }
 
 

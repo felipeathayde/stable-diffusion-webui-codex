@@ -11,8 +11,6 @@ Bridges k-diffusion-style apply_model usage to Codex diffusion models/predictors
 tensor stats for Z Image and other flow runtimes.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_env_flag` (function): Reads a boolean env flag with common truthy tokens.
-- `_env_int` (function): Reads an int env var with a fallback default.
 - `_tensor_stats` (function): Formats quick tensor statistics for debug logging.
 - `KModel` (class): Adapter module exposing `apply_model`/`forward` and `memory_required` for k-diffusion-style sampling paths.
 """
@@ -21,31 +19,13 @@ import torch
 import logging
 import os
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.runtime import attention
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.modules.k_prediction import k_prediction_from_diffusers_scheduler
 
 
 logger = logging.getLogger("backend.runtime.k_model")
-
-_TRUE = {"1", "true", "yes", "on"}
-
-
-def _env_flag(name: str) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in _TRUE
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return int(default)
-    try:
-        return int(str(raw).strip())
-    except Exception:
-        return int(default)
 
 
 def _tensor_stats(label: str, tensor: torch.Tensor | None) -> str:
@@ -81,8 +61,8 @@ class KModel(torch.nn.Module):
             self.predictor = k_predictor
 
     def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
-        debug_enabled = _env_flag("CODEX_ZIMAGE_DEBUG") or _env_flag("CODEX_ZIMAGE_DEBUG_APPLY_MODEL")
-        debug_limit = max(0, _env_int("CODEX_ZIMAGE_DEBUG_APPLY_MODEL_N", 3))
+        debug_enabled = env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_APPLY_MODEL")
+        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_APPLY_MODEL_N", 3, min_value=0)
         debug_count = int(getattr(self, "_codex_apply_model_debug_count", 0) or 0)
 
         sigma = t

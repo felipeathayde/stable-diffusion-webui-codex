@@ -493,7 +493,7 @@ def build_app() -> FastAPI:
     from apps.backend.services.live_preview_service import LivePreviewService
 
     app = FastAPI(title='SD WebUI Codex API', version='0.2.0')
-    # Ensure engines are registered (sd15/sdxl/flux + video engines incl. WAN)
+    # Ensure engines are registered (sd15/sdxl/flux1 + video engines incl. WAN)
     try:
         from apps.backend.engines import register_default_engines as _register_default_engines  # type: ignore
         _register_default_engines(replace=False)
@@ -829,7 +829,7 @@ def build_app() -> FastAPI:
     def _detect_semantic_engine() -> str:
         """Infer a semantic engine tag from the currently selected checkpoint.
 
-        Returns one of: 'wan22', 'hunyuan_video', 'svd', 'flux', 'sdxl', 'sd15'.
+        Returns one of: 'wan22', 'hunyuan_video', 'svd', 'flux1', 'sdxl', 'sd15'.
         This is a conservative, metadata-first detector with filename fallback.
         """
         # Heuristics based on current selected checkpoint title/path and registry metadata
@@ -849,7 +849,7 @@ def build_app() -> FastAPI:
                 comps = target.get('components') or []
                 if any('flux' in blob for blob in [blob]) or 'transformer' in comps:
                     if 'flux' in blob:
-                        return 'flux'
+                        return 'flux1'
                 if 'text_encoder_2' in comps and 'tokenizer_2' in comps:
                     return 'sdxl'
                 if 'hunyuan' in blob:
@@ -861,7 +861,7 @@ def build_app() -> FastAPI:
             # Fallback on title string hints
             t = (current or '').lower()
             if 'flux' in t:
-                return 'flux'
+                return 'flux1'
             if 'xl' in t:
                 return 'sdxl'
             if 'wan' in t:
@@ -872,6 +872,18 @@ def build_app() -> FastAPI:
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
+    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "zimage", "wan"}
+
+    def _normalize_tab_type(value: object) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in ("wan22", "wan22_14b", "wan22_5b"):
+            return "wan"
+        if raw == "flux":
+            return "flux1"
+        if raw in _ALLOWED_TAB_TYPES:
+            return raw
+        return "sd15"
+
     def _tabs_path() -> str:
         return str(CODEX_ROOT / 'apps' / 'interface' / 'tabs.json')
 
@@ -891,7 +903,7 @@ def build_app() -> FastAPI:
                 'params': {}, 'meta': {'createdAt': now, 'updatedAt': now}
             }
         return {'version': 1, 'tabs': [
-            mk('sd15', 'SD 1.5', 0), mk('sdxl', 'SDXL', 1), mk('flux', 'FLUX', 2), mk('wan', 'WAN 2.2', 3)
+            mk('sd15', 'SD 1.5', 0), mk('sdxl', 'SDXL', 1), mk('flux1', 'FLUX.1', 2), mk('wan', 'WAN 2.2', 3)
         ]}
 
     def _load_tabs() -> Dict[str, Any]:
@@ -908,6 +920,41 @@ def build_app() -> FastAPI:
         data = _load_json(p)
         if not isinstance(data, dict) or 'tabs' not in data:
             data = _default_tabs()
+
+        # Normalize/migrate tab payloads so the API never returns legacy identifiers.
+        changed = False
+        tabs_in = data.get("tabs")
+        if isinstance(tabs_in, list):
+            for t in tabs_in:
+                if not isinstance(t, dict):
+                    continue
+                old_type = t.get("type")
+                new_type = _normalize_tab_type(old_type)
+                if new_type != old_type:
+                    t["type"] = new_type
+                    changed = True
+                if new_type == "flux1":
+                    title = str(t.get("title") or "")
+                    if title.strip().lower() == "flux":
+                        t["title"] = "FLUX.1"
+                        changed = True
+                    params = t.get("params")
+                    if isinstance(params, dict):
+                        raw_labels = params.get("textEncoders")
+                        if isinstance(raw_labels, list):
+                            migrated: list[str] = []
+                            for raw in raw_labels:
+                                s = str(raw or "").strip()
+                                if s.startswith("flux/"):
+                                    s = "flux1/" + s[len("flux/") :]
+                                    changed = True
+                                if s:
+                                    migrated.append(s)
+                            params["textEncoders"] = migrated
+
+        if changed:
+            _save_tabs(data)
+            return data
         _tabs_cache, _tabs_mtime = data, stat.st_mtime
         return data
 
@@ -953,8 +1000,13 @@ def build_app() -> FastAPI:
     def api_create_tab(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         data = _load_tabs()
         tabs = list(data.get('tabs') or [])
-        ttype = str(payload.get('type') or 'sd15')
-        title = str(payload.get('title') or ttype.upper())
+        raw_type = str(payload.get("type") or "sd15").strip().lower()
+        if raw_type == "flux":
+            raise HTTPException(status_code=400, detail="invalid tab type: flux (use flux1)")
+        if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b"):
+            raise HTTPException(status_code=400, detail=f"invalid tab type: {raw_type}")
+        ttype = _normalize_tab_type(raw_type)
+        title = str(payload.get('title') or ("FLUX.1" if ttype == "flux1" else ttype.upper()))
         params = payload.get('params') or {}
         new_id = str(payload.get('id') or '').strip() or f"tab-{int(time.time()*1000)}"
         if any(str(t.get('id')) == new_id for t in tabs):
@@ -1139,7 +1191,7 @@ def build_app() -> FastAPI:
     # UI Presets (Model UI)
     def _load_ui_presets() -> Dict[str, Any]:
         nonlocal _ui_presets_cache, _ui_presets_mtime
-        presets_path = str(CODEX_ROOT / 'apps' / 'ui' / 'presets.json')
+        presets_path = str(CODEX_ROOT / 'apps' / 'interface' / 'presets.json')
         try:
             stat = os.stat(presets_path)
             mtime = stat.st_mtime
@@ -1312,9 +1364,9 @@ def build_app() -> FastAPI:
     def list_models_inventory(refresh: bool = Query(False, description="If true, re-scan the models/ and huggingface/ folders.")) -> Dict[str, Any]:
         """Inventory of model-related assets discovered at startup.
 
-        - vaes: files under /models/VAE
-        - text_encoders: files under /models/text-encoder plus per-engine roots from apps/paths.json (sd15_tenc, sdxl_tenc, flux_tenc, wan22_tenc)
-        - loras: files under /models/Lora
+        - vaes: files under per-family roots from apps/paths.json (*_vae)
+        - text_encoders: files under /models/text-encoder plus per-engine roots from apps/paths.json (sd15_tenc, sdxl_tenc, flux1_tenc, wan22_tenc)
+        - loras: files under /models/Lora plus per-family roots (models/*-loras) and apps/paths.json overrides (*_loras)
         - wan22.gguf: files under /models/wan22 (or explicit roots from apps/paths.json/wan22_ckpt)
         - metadata: org/repo roots under backend/huggingface
         """
@@ -1420,7 +1472,7 @@ def build_app() -> FastAPI:
     def list_text_encoders() -> Dict[str, Any]:
         """Return available text encoder overrides and current selection list.
 
-        - `text_encoders`: flat list of labels suitable for QuickSettings (e.g., 'flux/my-te.safetensors').
+        - `text_encoders`: flat list of labels suitable for QuickSettings (e.g., 'flux1/my-te.safetensors').
         - `current`: persisted selection from Codex options (labels as stored).
         - `text_encoders_info`: structured metadata for each override entry.
 
@@ -1450,6 +1502,69 @@ def build_app() -> FastAPI:
                             "meta": dict(root.meta),
                         }
                     )
+            # Inventory-backed text encoder file labels for families that select TE weights directly.
+            # This keeps `/api/text-encoders` aligned with `/api/models/inventory` for Flux/ZImage.
+            try:
+                from apps.backend.infra.config.paths import get_paths_for
+                from apps.backend.inventory import cache as _inv_cache
+
+                def _matches_any_root(path: Path, roots: list[str]) -> bool:
+                    for root in roots:
+                        r = str(root or "").strip()
+                        if not r:
+                            continue
+                        try:
+                            p = Path(os.path.expanduser(r)).resolve(strict=False)
+                        except Exception:
+                            p = Path(r)
+                        if path == p:
+                            return True
+                        try:
+                            path.relative_to(p)
+                        except Exception:
+                            continue
+                        return True
+                    return False
+
+                inv = _inv_cache.get()
+                file_roots_by_family = {
+                    "flux1": get_paths_for("flux1_tenc"),
+                    "zimage": get_paths_for("zimage_tenc"),
+                }
+                for item in inv.get("text_encoders", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    full = item.get("path")
+                    if not isinstance(full, str) or not full.strip():
+                        continue
+                    try:
+                        full_p = Path(os.path.expanduser(full)).resolve(strict=False)
+                    except Exception:
+                        full_p = Path(full)
+                    for family, roots in file_roots_by_family.items():
+                        if not roots:
+                            continue
+                        if not _matches_any_root(full_p, list(roots)):
+                            continue
+                        rel = _path_for_api(str(full_p))
+                        label = f"{family}/{rel}" if rel else family
+                        labels.append(label)
+                        meta: dict[str, object] = {}
+                        sha = item.get("sha256")
+                        if isinstance(sha, str) and sha:
+                            meta["sha256"] = sha
+                        entries.append(
+                            {
+                                "name": label,
+                                "path": rel,
+                                "family": family,
+                                "kind": "text_encoder_file",
+                                "tags": [family],
+                                "meta": meta,
+                            }
+                        )
+            except Exception:
+                pass
             labels_sorted = sorted(set(labels))
             selected = _opts_get("text_encoder_overrides", []) or []
             if not isinstance(selected, list):
@@ -1467,7 +1582,7 @@ def build_app() -> FastAPI:
                 selected_norm.append(s)
             return {"text_encoders": labels_sorted, "current": selected_norm, "text_encoders_info": entries}
         except Exception:
-            return {"text_encoders": {}, "current": [], "text_encoders_info": {}}
+            return {"text_encoders": [], "current": [], "text_encoders_info": []}
 
     @app.get('/api/embeddings')
     def list_embeddings() -> Dict[str, Any]:
@@ -1525,7 +1640,7 @@ def build_app() -> FastAPI:
           "paths": {
             "sd15_ckpt": [...], "sd15_vae": [...], "sd15_loras": [...], "sd15_tenc": [...],
             "sdxl_ckpt": [...], "sdxl_vae": [...], "sdxl_loras": [...], "sdxl_tenc": [...],
-            "flux_ckpt": [...], "flux_vae": [...], "flux_loras": [...], "flux_tenc": [...],
+            "flux1_ckpt": [...], "flux1_vae": [...], "flux1_loras": [...], "flux1_tenc": [...],
             "wan22_ckpt": [...], "wan22_vae": [...], "wan22_loras": [...], "wan22_tenc": [...],
             ...
           }
@@ -2057,6 +2172,17 @@ def build_app() -> FastAPI:
             "refiner": cfg.get("refiner"),
         }
 
+    def _canonical_engine_key(value: object) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        key = raw.lower()
+        from apps.backend.core.registry import registry as _engine_registry
+        try:
+            return _engine_registry.get_descriptor(key).key
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Unknown engine key: {key}") from exc
+
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
@@ -2119,7 +2245,10 @@ def build_app() -> FastAPI:
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
-        engine_id = str(engine_override or snap.codex_engine).strip().lower()
+        engine_key = _canonical_engine_key(engine_override or snap.codex_engine)
+        if not engine_key:
+            raise HTTPException(status_code=400, detail="Missing engine key (engine/codex_engine)")
+        engine_id = engine_key
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
@@ -2139,8 +2268,8 @@ def build_app() -> FastAPI:
             model_override = record.filename
             extras["model_path"] = record.filename
 
-        requires_external_vae = engine_id in ("flux", "kontext", "zimage")
-        requires_external_tenc = engine_id in ("flux", "kontext", "zimage")
+        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage")
+        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage")
 
         if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.vae_sha' (sha256)")
@@ -2174,7 +2303,7 @@ def build_app() -> FastAPI:
                 raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
 
         if requires_external_tenc:
-            if engine_id in ("flux", "kontext"):
+            if engine_id in ("flux1", "flux1_kontext"):
                 if len(tenc_shas) != 2:
                     raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'extras.tenc_sha'")
             elif len(tenc_shas) != 1:
@@ -2189,14 +2318,14 @@ def build_app() -> FastAPI:
                 tenc_paths.append(path)
             extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
 
-            # Flux/Kontext: translate sha-selected encoders into a loader override (paths stay server-side).
-            if engine_id in ("flux", "kontext"):
+            # Flux.1/Kontext: translate sha-selected encoders into a loader override (paths stay server-side).
+            if engine_id in ("flux1", "flux1_kontext"):
                 if "text_encoder_override" in extras:
-                    raise HTTPException(status_code=400, detail="Do not send extras.text_encoder_override for Flux; use extras.tenc_sha only.")
+                    raise HTTPException(status_code=400, detail="Do not send extras.text_encoder_override for Flux.1; use extras.tenc_sha only.")
                 clip_path, t5_path = tenc_paths
                 extras["text_encoder_override"] = {
-                    "family": "flux",
-                    "label": "flux/sha",
+                    "family": "flux1",
+                    "label": "flux1/sha",
                     "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
                 }
 
@@ -2221,9 +2350,8 @@ def build_app() -> FastAPI:
             smart_cache=smart_cache,
         )
 
-        engine_key = engine_override or snap.codex_engine
         model_ref = model_override or snap.sd_model_checkpoint
-        return req, str(engine_key), model_ref
+        return req, engine_key, model_ref
 
     def encode_images(images: Any, *, metadata: Optional[Mapping[str, str]] = None) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
         encoded: list[Dict[str, str]] = []
@@ -2430,9 +2558,11 @@ def build_app() -> FastAPI:
         engine_override = payload.get('engine') or payload.get('codex_engine')
         model_override = payload.get('model') or payload.get('sd_model_checkpoint')
         snap = _opts_snapshot()
-        engine_key = engine_override or snap.codex_engine
+        engine_key = _canonical_engine_key(engine_override or snap.codex_engine)
+        if not engine_key:
+            raise HTTPException(status_code=400, detail="Missing engine key (engine/codex_engine)")
         model_ref = model_override or snap.sd_model_checkpoint
-        is_kontext = str(engine_key) == "kontext"
+        is_kontext = engine_key == "flux1_kontext"
 
         prompt = _p.require(payload, 'img2img_prompt') or ''
         negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
@@ -2550,7 +2680,7 @@ def build_app() -> FastAPI:
         # Resolve SHA-based assets (if provided in img2img_extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
-        engine_id = str(engine_key).strip().lower()
+        engine_id = engine_key
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
@@ -2574,8 +2704,8 @@ def build_app() -> FastAPI:
             model_ref = record.filename
             extras["model_path"] = record.filename
 
-        requires_external_vae = engine_id in ("flux", "kontext", "zimage")
-        requires_external_tenc = engine_id in ("flux", "kontext", "zimage")
+        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage")
+        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage")
 
         if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.vae_sha' (sha256)")
@@ -2609,7 +2739,7 @@ def build_app() -> FastAPI:
                 raise HTTPException(status_code=400, detail="'img2img_extras.tenc_sha' must be a string or array of strings")
 
         if requires_external_tenc:
-            if engine_id in ("flux", "kontext"):
+            if engine_id in ("flux1", "flux1_kontext"):
                 if len(tenc_shas) != 2:
                     raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'img2img_extras.tenc_sha'")
             elif len(tenc_shas) != 1:
@@ -2624,13 +2754,13 @@ def build_app() -> FastAPI:
                 tenc_paths.append(path)
             extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
 
-            if engine_id in ("flux", "kontext"):
+            if engine_id in ("flux1", "flux1_kontext"):
                 if "text_encoder_override" in extras:
-                    raise HTTPException(status_code=400, detail="Do not send img2img_extras.text_encoder_override for Flux; use img2img_extras.tenc_sha only.")
+                    raise HTTPException(status_code=400, detail="Do not send img2img_extras.text_encoder_override for Flux.1; use img2img_extras.tenc_sha only.")
                 clip_path, t5_path = tenc_paths
                 extras["text_encoder_override"] = {
-                    "family": "flux",
-                    "label": "flux/sha",
+                    "family": "flux1",
+                    "label": "flux1/sha",
                     "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
                 }
     
@@ -2669,7 +2799,7 @@ def build_app() -> FastAPI:
             smart_cache=bool(payload.get("smart_cache")) if payload.get("smart_cache") is not None else bool(getattr(_opts_snapshot(), "codex_smart_cache", False)),
         )
     
-        return req, str(engine_key), model_ref
+        return req, engine_key, model_ref
     
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
         loop = entry.loop

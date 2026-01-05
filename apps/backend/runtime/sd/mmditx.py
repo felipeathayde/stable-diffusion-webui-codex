@@ -7,11 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: MM-DiT (SD3 core transformer) implementation used by the SD3 runtime.
-
-Upstream reference (for behavior/provenance):
-- Source: https://github.com/Stability-AI/sd3.5
-- Note: upstream splits some pieces across files (e.g. attention/MLP vs core); this file contains the local integrated implementation.
-- Local modifications: minor changes to `SD3Transformer2DModel.__init__()` and `SD3Transformer2DModel.forward()`.
+Upstream: Stability-AI/sd3.5 (integrated from split upstream; minor local tweaks to `SD3Transformer2DModel` init/forward).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `attention` (function): Convenience wrapper for scaled dot-product attention using torch SDPA.

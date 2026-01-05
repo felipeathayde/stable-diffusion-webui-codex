@@ -46,10 +46,10 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
     "sdxl_vae",
     "sdxl_loras",
     # Flux
-    "flux_ckpt",
-    "flux_tenc",
-    "flux_vae",
-    "flux_loras",
+    "flux1_ckpt",
+    "flux1_tenc",
+    "flux1_vae",
+    "flux1_loras",
     # WAN22
     "wan22_ckpt",
     "wan22_tenc",

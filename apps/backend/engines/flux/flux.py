@@ -57,7 +57,7 @@ class _FluxPromptList(list[str]):
 class Flux(CodexDiffusionEngine):
     """Codex native Flux engine."""
 
-    engine_id = "flux"
+    engine_id = "flux1"
 
     def __init__(self) -> None:
         super().__init__()
@@ -68,7 +68,7 @@ class Flux(CodexDiffusionEngine):
         return EngineCapabilities(
             engine_id=self.engine_id,
             tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
-            model_types=("flux",),
+            model_types=("flux1",),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
             extras={

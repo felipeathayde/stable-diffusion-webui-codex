@@ -10,7 +10,7 @@ Purpose: Workflow snapshots store for the WebUI.
 Fetches, creates, and deletes workflow snapshots via the backend API and keeps the workflows list reactive for the Workflows view.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useWorkflowsStore` (const): Pinia store for listing and mutating workflows (refresh/createSnapshot/remove).
+- `useWorkflowsStore` (store): Pinia store for listing and mutating workflows (refresh/createSnapshot/remove).
 */
 
 import { defineStore } from 'pinia'

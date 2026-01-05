@@ -9,10 +9,10 @@
       "options": {}
     },
     {
-      "id": "flux",
-      "title": "FLUX",
+      "id": "flux1",
+      "title": "FLUX.1",
       "tabs": ["txt2img"],
-      "model_select": { "type": "pattern", "value": "flux" },
+      "model_select": { "type": "pattern", "value": "flux.1" },
       "options": {}
     },
     {
@@ -24,4 +24,3 @@
     }
   ]
 }
-

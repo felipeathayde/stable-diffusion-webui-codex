@@ -240,9 +240,9 @@ export interface UiPresetApplyResponse { applied: boolean; model: string }
 
 // Tabs/workflows persistence
 export interface ApiTabMeta { createdAt: string; updatedAt: string }
-export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux' | 'zimage' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
+export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
 export interface TabsResponse { version: number; tabs: ApiTab[] }
-export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>} 
+export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>}
 
 // Model inventory (for populating selects)
 export interface InventoryResponse {

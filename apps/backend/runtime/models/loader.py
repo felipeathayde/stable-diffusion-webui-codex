@@ -564,11 +564,11 @@ class DiffusionModelBundle:
 ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "sdxl": ModelFamily.SDXL,
     "sdxl_refiner": ModelFamily.SDXL_REFINER,
-    "flux": ModelFamily.FLUX,
-    "kontext": ModelFamily.FLUX_KONTEXT,
+    "flux1": ModelFamily.FLUX,
+    "flux1_kontext": ModelFamily.FLUX_KONTEXT,
     "sd35": ModelFamily.SD35,
     "sd3": ModelFamily.SD3,
-    "chroma": ModelFamily.CHROMA,
+    "flux1_chroma": ModelFamily.CHROMA,
     "sd20": ModelFamily.SD20,
     "sd15": ModelFamily.SD15,
     "wan22_14b": ModelFamily.WAN22,
@@ -578,11 +578,11 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
 FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.SDXL_REFINER: "sdxl_refiner",
     ModelFamily.SDXL: "sdxl",
-    ModelFamily.FLUX: "flux",
-    ModelFamily.FLUX_KONTEXT: "kontext",
+    ModelFamily.FLUX: "flux1",
+    ModelFamily.FLUX_KONTEXT: "flux1_kontext",
     ModelFamily.SD35: "sd35",
     ModelFamily.SD3: "sd35",
-    ModelFamily.CHROMA: "chroma",
+    ModelFamily.CHROMA: "flux1_chroma",
     ModelFamily.SD20: "sd20",
     ModelFamily.SD15: "sd15",
     ModelFamily.WAN22: "wan22_14b",
@@ -1802,17 +1802,17 @@ class _SimpleEstimated:
 def _detect_engine_from_config(config: dict) -> str:
     pipeline_cls = str(config.get("_class_name") or "").strip().lower()
     if pipeline_cls == "fluxkontextpipeline":
-        return "kontext"
+        return "flux1_kontext"
     comps = {k: v for k, v in config.items() if isinstance(v, list) and len(v) == 2}
     cls_by_name = {k: v[1] for k, v in comps.items()}
     if "text_encoder_2" in comps and "unet" in comps:
         return "sdxl"
     if cls_by_name.get("transformer") in ("FluxTransformer2DModel",):
-        return "flux"
+        return "flux1"
     if cls_by_name.get("transformer") in ("SD3Transformer2DModel",):
         return "sd35"
     if cls_by_name.get("transformer") in ("ChromaTransformer2DModel",):
-        return "chroma"
+        return "flux1_chroma"
     if "unet" in comps and "text_encoder" in comps and "vae" in comps:
         te_cls = cls_by_name.get("text_encoder", "")
         if te_cls.endswith("WithProjection"):

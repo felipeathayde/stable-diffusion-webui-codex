@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 export type EngineType = 
   | 'sd15' 
   | 'sdxl' 
-  | 'flux' 
+  | 'flux1' 
   | 'zimage' 
   | 'chroma'
   | 'wan22_14b' 
@@ -111,9 +111,9 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
     },
   },
   
-  flux: {
-    id: 'flux',
-    label: 'FLUX',
+  flux1: {
+    id: 'flux1',
+    label: 'FLUX.1',
     capabilities: {
       tasks: ['txt2img', 'img2img'],
       usesCfg: false,

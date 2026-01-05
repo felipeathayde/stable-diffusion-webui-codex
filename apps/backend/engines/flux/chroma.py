@@ -35,7 +35,7 @@ _CHROMA_FACTORY = CodexFluxFamilyFactory(spec=CHROMA_SPEC)
 class Chroma(CodexDiffusionEngine):
     """Codex native Chroma engine built on Flux toolkit."""
 
-    engine_id = "chroma"
+    engine_id = "flux1_chroma"
 
     def __init__(self) -> None:
         super().__init__()

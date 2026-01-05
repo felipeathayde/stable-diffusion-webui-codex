@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-05
 Status: Active
 
 ## Purpose
@@ -13,11 +13,11 @@ Status: Active
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
 - Generation + highres + refiner controls live in `GenerationSettingsCard.vue`, `HighresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.
-- Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/Flux) sem um componente dedicado de selector.
+- Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
 - `QuickSettingsBar.vue` surfaces engine/tab selectors in the main header row; it renders a nested, collapsible Advanced area (Smart toggles + GPU VRAM / Attention Backend / Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `quicksettings.currentEngine`.
 - 2025-12-29: `QuickSettingsBar.vue` no longer writes `--sticky-offset` directly; the header offset is tracked by `App.vue` via a `ResizeObserver`.
 - 2025-12-29: `QuickSettingsBar.vue` keeps the active model tab in sync with the current route (`/models/:tabId`) to avoid falling back to the global engine during Vite HMR reloads.
-- 2025-12-27: `QuickSettingsBar.vue` binds checkpoint selection to the active model tab (`tab.params.checkpoint`, auto-seeded from the engine’s `*_ckpt` roots in `apps/paths.json`), and Flux/ZImage model tabs also keep per-tab text encoders (`tab.params.textEncoders`) used by `useGeneration` for `tenc_sha`/`text_encoder_override`.
+- 2025-12-27: `QuickSettingsBar.vue` binds checkpoint selection to the active model tab (`tab.params.checkpoint`, auto-seeded from the engine’s `*_ckpt` roots in `apps/paths.json`), and FLUX.1/ZImage model tabs also keep per-tab text encoders (`tab.params.textEncoders`) used by `useGeneration` for `tenc_sha`/`text_encoder_override`.
 - 2026-01-01: `QuickSettingsBar.vue` “Refresh” now triggers a checkpoint rescan (`/api/models?refresh=1`) so newly copied weights under `*_ckpt` roots show up without restarting the backend.
 - 2025-12-26: QuickSettings header buttons now use `qs-btn-secondary`/`qs-btn-outline` (fill the `qs-row` height, with consistent borders; no fixed `2rem` height).
 - `ResultViewer.vue` exibe um overlay full-screen para zoom de imagens (sem modal encaixotado): o preview da galeria continua grande no card, enquanto o overlay usa o viewport inteiro com ferramenta lateral para pan/zoom (drag para pan, botões de Fit/1:1/+/−/Close na barra à direita).

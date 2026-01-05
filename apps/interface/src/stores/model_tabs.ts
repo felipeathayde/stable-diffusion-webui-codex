@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
 - `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
-- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux/ZImage.
+- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/ZImage.
 - `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
 - `uuid` (function): Generates a random tab id (client-side).
 - `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
@@ -192,7 +192,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     return { high: stage(), low: stage(), video, assets, lightx2v: false, lowFollowsHigh: false }
   }
 
-  // Image tabs (SD15, SDXL, Flux)
+  // Image tabs (SD15, SDXL, FLUX.1)
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
@@ -252,7 +252,7 @@ function normalizeTabType(type: unknown): BaseTabType {
   if (!raw) return 'sd15'
   const value = raw.toLowerCase()
   if (value === 'wan22' || value === 'wan22_14b' || value === 'wan22_5b') return 'wan'
-  if (value === 'sd15' || value === 'sdxl' || value === 'flux' || value === 'zimage' || value === 'wan') return value as BaseTabType
+  if (value === 'sd15' || value === 'sdxl' || value === 'flux1' || value === 'zimage' || value === 'wan') return value as BaseTabType
   // Fail closed: unknown tab types fall back to a safe image tab.
   return 'sd15'
 }
@@ -295,7 +295,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
 
-  const requiredTypes: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'zimage', 'wan']
+  const requiredTypes: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'zimage', 'wan']
 
   function save(): void {
     const payload = { tabs: tabs.value, activeId: activeId.value }
@@ -375,7 +375,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   function bootstrap(): void {
     // Create minimal default tabs when backend persistence is unavailable.
     const createdAt = nowIso()
-    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'zimage', 'wan']
+    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'zimage', 'wan']
     tabs.value = types.map((type, idx) => ({
       id: uuid(),
       type,

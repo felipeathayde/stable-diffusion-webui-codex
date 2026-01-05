@@ -10,7 +10,6 @@ Purpose: Opt-in debug helpers for Z-Image runtime.
 Implements env-flag parsing and lightweight tensor/text summaries to support targeted diagnostics without flooding normal runs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_TRUE` (constant): Accepted truthy values for env flags.
 - `env_flag` (function): Reads a boolean env flag (supports global `CODEX_ZIMAGE_DEBUG` enablement).
 - `env_int` (function): Reads an integer env flag with a default fallback.
 - `truncate_text` (function): Truncates text to a configurable max length for logs.
@@ -28,30 +27,25 @@ from typing import Iterable, Sequence
 
 import torch
 
-
-_TRUE = {"1", "true", "yes", "on"}
+from apps.backend.infra.config.env_flags import env_flag as _env_flag
+from apps.backend.infra.config.env_flags import env_int as _env_int
 
 
 def env_flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
         # Convenience: a single switch enables most ZImage debug flags.
-        if name != "CODEX_ZIMAGE_DEBUG" and name.startswith("CODEX_ZIMAGE_DEBUG_"):
-            global_raw = os.getenv("CODEX_ZIMAGE_DEBUG")
-            if global_raw is not None and str(global_raw).strip().lower() in _TRUE:
-                return True
+        if name != "CODEX_ZIMAGE_DEBUG" and name.startswith("CODEX_ZIMAGE_DEBUG_") and _env_flag(
+            "CODEX_ZIMAGE_DEBUG",
+            default=False,
+        ):
+            return True
         return bool(default)
-    return str(raw).strip().lower() in _TRUE
+    return _env_flag(name, default=default)
 
 
 def env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return int(default)
-    try:
-        return int(str(raw).strip())
-    except Exception:
-        return int(default)
+    return _env_int(name, default)
 
 
 def truncate_text(text: str, *, limit: int = 300) -> str:

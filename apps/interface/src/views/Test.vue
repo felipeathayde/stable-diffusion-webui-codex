@@ -33,14 +33,14 @@ Symbols (top-level; keep in sync; no ghosts):
             <div class="test-grid test-grid-two">
               <div class="field-stack">
                 <label class="label" for="vaeDir">VAE (input list)</label>
-                <input id="vaeDir" class="ui-input" list="dl-vaes" v-model="state.vaeDir" placeholder="/models/VAE/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <input id="vaeDir" class="ui-input" list="dl-vaes" v-model="state.vaeDir" placeholder="/models/wan22-vae/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-vaes">
                   <option v-for="opt in options.vaes" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div class="field-stack">
                 <label class="label" for="textEncoderDir">Text Encoder (input list)</label>
-                <input id="textEncoderDir" class="ui-input" list="dl-te" v-model="state.textEncoderDir" placeholder="/models/text-encoder/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <input id="textEncoderDir" class="ui-input" list="dl-te" v-model="state.textEncoderDir" placeholder="/models/wan22-tenc/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-te">
                   <option v-for="opt in options.textEncoders" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
                 </datalist>

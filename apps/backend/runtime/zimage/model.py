@@ -6,18 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Z Image Turbo (Alibaba) transformer model architecture (NextDiT/Lumina2-style) and loader.
-Implements the core blocks (RMSNorm, RoPE, attention, transformer blocks, refiner blocks) and provides a state-dict loader that maps
-checkpoint weights into `ZImageTransformer2DModel`.
-
-Key dimensions (from `z_image_turbo_bf16.safetensors`):
-- hidden_dim = 3840
-- context_dim = 2560
-- t_dim = 256 (timestep embedding intermediate)
-- head_dim = 128, num_heads = 30 (3840/128)
-- mlp_hidden = 10240
-- latent_channels = 16, patch_size = 2
-- num_layers = 30, num_refiner_layers = 2
+Purpose: Z Image Turbo (Alibaba) transformer architecture (NextDiT/Lumina2-style) and state-dict loader.
+Implements core blocks (norm/RoPE/attention/transformers/refiners) and loads checkpoints into `ZImageTransformer2DModel`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageConfig` (dataclass): Architecture/config defaults for ZImage transformer (dims, layers, RoPE axes, eps, etc).
@@ -37,6 +27,15 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from __future__ import annotations
+
+# Key dimensions (from `z_image_turbo_bf16.safetensors`):
+# - hidden_dim = 3840
+# - context_dim = 2560
+# - t_dim = 256 (timestep embedding intermediate)
+# - head_dim = 128, num_heads = 30 (3840/128)
+# - mlp_hidden = 10240
+# - latent_channels = 16, patch_size = 2
+# - num_layers = 30, num_refiner_layers = 2
 
 import logging
 import math
@@ -999,54 +998,30 @@ def load_zimage_from_state_dict(
     config: Optional[ZImageConfig] = None,
 ) -> ZImageTransformer2DModel:
     """Load Z Image model from state dict with automatic config detection."""
-    
-    # Detect dimensions from checkpoint
-    hidden_dim = 3840
-    context_dim = 2560
-    t_dim = 256
-    num_layers = 30
-    num_refiner = 2
-    mlp_hidden = 10240
-    
-    if "x_embedder.weight" in state_dict:
-        hidden_dim = int(state_dict["x_embedder.weight"].shape[0])
-    
-    if "cap_embedder.1.weight" in state_dict:
-        w = state_dict["cap_embedder.1.weight"]
-        context_dim = int(w.shape[1])
-    
-    if "t_embedder.mlp.2.weight" in state_dict:
-        t_dim = int(state_dict["t_embedder.mlp.2.weight"].shape[0])
-    
-    for key in state_dict.keys():
-        if key.startswith("layers.") and ".adaLN_modulation." in key:
-            idx = int(key.split(".")[1])
-            num_layers = max(num_layers, idx + 1)
-    
-    for key in state_dict.keys():
-        if key.startswith("context_refiner."):
-            idx = int(key.split(".")[1])
-            num_refiner = max(num_refiner, idx + 1)
-    
-    if "layers.0.feed_forward.w1.weight" in state_dict:
-        mlp_hidden = int(state_dict["layers.0.feed_forward.w1.weight"].shape[0])
-    
-    num_heads = hidden_dim // 128
-    
-    logger.info(
-        f"Detected: hidden={hidden_dim}, context={context_dim}, t_dim={t_dim}, "
-        f"layers={num_layers}, refiner={num_refiner}, heads={num_heads}, mlp={mlp_hidden}"
-    )
-    
-    config = ZImageConfig(
-        hidden_dim=hidden_dim,
-        context_dim=context_dim,
-        t_dim=t_dim,
-        num_layers=num_layers,
-        num_refiner_layers=num_refiner,
-        num_heads=num_heads,
-        mlp_hidden=mlp_hidden,
-    )
+
+    if config is None:
+        from .inference import infer_zimage_dims_from_state_dict
+
+        dims = infer_zimage_dims_from_state_dict(state_dict, patch_size=2)
+        logger.info(
+            "Detected: hidden=%d context=%d t_dim=%d layers=%d refiner=%d heads=%d mlp=%d",
+            dims.hidden_dim,
+            dims.context_dim,
+            dims.t_dim,
+            dims.num_layers,
+            dims.num_refiner_layers,
+            dims.num_heads,
+            dims.mlp_hidden,
+        )
+        config = ZImageConfig(
+            hidden_dim=dims.hidden_dim,
+            context_dim=dims.context_dim,
+            t_dim=dims.t_dim,
+            num_layers=dims.num_layers,
+            num_refiner_layers=dims.num_refiner_layers,
+            num_heads=dims.num_heads,
+            mlp_hidden=dims.mlp_hidden,
+        )
     
     model = ZImageTransformer2DModel(config=config)
     

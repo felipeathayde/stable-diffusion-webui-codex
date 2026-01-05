@@ -27,7 +27,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_align_your_steps_schedule` (function): Builds the “align your steps” schedule variants (SDXL aware).
 - `_turbo_schedule` (function): Builds a turbo schedule.
 - `build_sigma_schedule` (function): Main scheduler entrypoint; selects the schedule builder and returns the sigma tensor.
-- `_env_flag` (function): Reads boolean toggles from env for debug/feature flags affecting sampling context.
 - `SamplingContext` (dataclass): Bundles sampling configuration/state for one run (sampler kind, scheduler, noise settings, etc.).
 - `build_sampling_context` (function): Builds a `SamplingContext` from inputs (engine/runtime settings + request payload).
 """
@@ -46,6 +45,7 @@ import torch
 from apps.backend.core.rng import NoiseSettings, NoiseSourceKind
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.sampling.catalog import SCHEDULER_ALIAS_TO_CANONICAL
+from apps.backend.infra.config.env_flags import env_flag
 
 
 _LOGGER = logging.getLogger(__name__ + ".context")
@@ -376,13 +376,6 @@ def build_sigma_schedule(
     raise ValueError(f"Unsupported scheduler '{scheduler_name}' after normalization")
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass
 class SamplingContext:
     sampler_kind: SamplerKind
@@ -466,7 +459,7 @@ def build_sampling_context(
         steps=steps,
         noise_settings=noise_settings,
         preview_interval=int(os.getenv("CODEX_PREVIEW_INTERVAL", "0") or 0),
-        enable_progress=_env_flag("CODEX_PROGRESS_BAR", default=False),
+        enable_progress=env_flag("CODEX_PROGRESS_BAR", default=False),
         prediction_type=prediction_type,
         sigma_min=sigma_min,
         sigma_max=sigma_max,

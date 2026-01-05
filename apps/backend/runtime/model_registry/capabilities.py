@@ -32,7 +32,7 @@ class SemanticEngine(str, Enum):
 
     SD15 = "sd15"
     SDXL = "sdxl"
-    FLUX = "flux"
+    FLUX = "flux1"
     WAN22 = "wan22"
     HUNYUAN_VIDEO = "hunyuan_video"
     SVD = "svd"
@@ -84,7 +84,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,
         supports_controlnet=False,
     ),
-    # Flux (flow-based image diffusion).
+    # Flux.1 (flow-based image diffusion).
     SemanticEngine.FLUX: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,

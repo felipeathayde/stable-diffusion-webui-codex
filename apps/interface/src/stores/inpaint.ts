@@ -10,7 +10,7 @@ Purpose: Inpaint/init-image store for the frontend.
 Keeps an init image (data URL + name) in state and exposes helpers to set/clear it from an uploaded file.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useInpaintStore` (const): Pinia store for init-image state used by inpaint/img2img flows.
+- `useInpaintStore` (store): Pinia store for init-image state used by inpaint/img2img flows.
 - `readFileAsDataURL` (function): Reads a `File` into a `data:` URL via `FileReader`.
 */
 

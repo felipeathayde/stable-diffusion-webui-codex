@@ -11,7 +11,7 @@ Persists named prompt/negative prompt style snippets and exposes helpers to list
 
 Symbols (top-level; keep in sync; no ghosts):
 - `StyleDef` (interface): Style definition (name + prompt + negative).
-- `useStylesStore` (const): Pinia store for prompt styles.
+- `useStylesStore` (store): Pinia store for prompt styles.
 - `load` (function): Loads styles list from localStorage.
 - `save` (function): Persists styles list to localStorage.
 */

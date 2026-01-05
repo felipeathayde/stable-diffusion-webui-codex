@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
 - `_load_hash_cache` (function): Loads `.hashes.json` cache from disk.
 - `_save_hash_cache` (function): Writes `.hashes.json` cache to disk.
-- `ModelRegistry` (class): Registry service; scans paths, maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API.
+- `ModelRegistry` (class): Registry service; scans paths, maintains caches, and produces `CheckpointRecord`/`VAERecord` lists for UI/API (also provides public hash-cache helpers).
 - `get_registry` (function): Returns the singleton `ModelRegistry` instance.
 - `list_checkpoints` (function): Returns checkpoint records (optional refresh).
 - `list_vaes` (function): Returns VAE records (optional refresh).
@@ -160,6 +160,25 @@ class ModelRegistry:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def hash_for(self, path: Path) -> Tuple[str | None, str | None]:
+        """Return (sha256, short_hash) for a file path, using the persistent hash cache.
+
+        This is safe to call outside registry scans (it is lock-protected) and is the
+        supported way for other subsystems (e.g. inventory) to request hashes without
+        reaching into private internals.
+        """
+
+        with self._lock:
+            return self._hash_for(path)
+
+    def flush_hash_cache(self) -> None:
+        """Persist the hash cache to disk if any new hashes were computed."""
+
+        with self._lock:
+            if self._hash_cache_dirty:
+                _save_hash_cache(self._ensure_hash_cache())
+                self._hash_cache_dirty = False
+
     def list_checkpoints(self, *, refresh: bool = False) -> List[CheckpointRecord]:
         if refresh:
             self.refresh()
@@ -244,18 +263,27 @@ class ModelRegistry:
             yield record
 
     def _scan_vaes(self) -> Iterable[VAERecord]:
-        vae_root = self._models_root / "VAE"
         candidates: List[Path] = []
-        if vae_root.is_dir():
-            candidates.extend([p for p in vae_root.rglob("*") if p.is_file() and p.suffix.lower() in _VAE_EXTS])
-        # Also consider checkpoints beside model files (suffix .vae.*)
-        for file in self._iter_checkpoint_files():
-            lower = file.name.lower()
-            if any(lower.endswith(suf) for suf in _CHECKPOINT_BLACKLIST_SUFFIXES):
-                candidates.append(file)
+        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "wan22_vae", "zimage_vae"):
+            for raw in get_paths_for(key):
+                p = Path(raw)
+                if p not in candidates:
+                    candidates.append(p)
+
+        files: List[Path] = []
+        for root in candidates:
+            if root.is_file() and root.suffix.lower() in _VAE_EXTS:
+                files.append(root)
+            elif root.is_dir():
+                try:
+                    for path in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
+                        if path.is_file() and path.suffix.lower() in _VAE_EXTS:
+                            files.append(path)
+                except Exception:
+                    continue
 
         seen: set[str] = set()
-        for path in candidates:
+        for path in files:
             key = str(path.resolve())
             if key in seen:
                 continue
@@ -275,7 +303,7 @@ class ModelRegistry:
         """Iterate over checkpoint files using paths.json overrides + curated defaults.
 
         Resolution order:
-        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux_ckpt, wan22_ckpt).
+        1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, wan22_ckpt).
         2) Built-in defaults under models/: root, sd15, sdxl, flux.
 
         This replaces the legacy scatter of ad-hoc checkpoint folders ('stable-diffusion', 'sd', 'checkpoints').
@@ -284,7 +312,7 @@ class ModelRegistry:
 
         # 1) User overrides from apps/paths.json per engine
         try:
-            for key in ("sd15_ckpt", "sdxl_ckpt", "flux_ckpt", "wan22_ckpt", "zimage_ckpt"):
+            for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "wan22_ckpt", "zimage_ckpt"):
                 for raw in get_paths_for(key):
                     p = Path(raw)
                     if p not in candidates:

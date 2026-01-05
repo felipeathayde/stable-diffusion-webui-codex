@@ -83,8 +83,8 @@ class ZImageTextEncoder(nn.Module):
         from .qwen3 import Qwen3_4B, Qwen3Config, remap_gguf_keys
         
         # Load GGUF state dict using our infrastructure
-        from apps.backend.quantization.gguf_loader import load_gguf_state_dict
         from apps.backend.runtime.ops.operations import using_codex_operations
+        from apps.backend.runtime.utils import load_gguf_state_dict
         
         try:
             # Load GGUF file

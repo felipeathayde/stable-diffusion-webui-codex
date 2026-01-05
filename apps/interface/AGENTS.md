@@ -2,7 +2,7 @@
 # apps/interface Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-05
 Status: Active
 
 ## Purpose
@@ -16,7 +16,7 @@ Status: Active
 ## Key Files
 - `package.json` / `tsconfig.json` / `vite.config.ts` — Build and tooling configuration.
 - `blocks.json` — Server-driven UI definition synced with backend.
-- `presets.json` — Placeholder for frontend preset definitions (subject to Codex alignment).
+- `presets.json` — UI presets served by the backend `/api/ui/presets` endpoint (source of truth for preset IDs/options).
 
 ## Notes
 - Run `npm run dev` from this directory for local development; backend expects the build artifacts emitted by Vite.

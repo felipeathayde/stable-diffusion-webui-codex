@@ -35,6 +35,7 @@ from torch import nn
 
 from apps.backend.runtime.ops.operations_gguf import CodexParameter, dequantize_tensor as gguf_dequantize_tensor
 
+from .inference import infer_wan22_latent_channels, infer_wan22_patch_embedding, infer_wan22_patch_size_and_in_channels
 from .sdpa import sdpa as wan_sdpa
 
 logger = logging.getLogger("backend.runtime.wan22.model")
@@ -479,11 +480,16 @@ def infer_wan_architecture_from_state_dict(state_dict: dict) -> WanArchitectureC
         return shape or None
 
     d_model = 5120
-    for key in ("patch_embed.weight", "time_embed.0.weight", "blocks.0.self_attn.q.weight"):
-        shape = _shape(key)
-        if shape and len(shape) >= 1:
-            d_model = int(shape[0])
-            break
+    patch_embed_shape = _shape("patch_embed.weight")
+    if patch_embed_shape and len(patch_embed_shape) == 5:
+        _in, model_dim, _patch = infer_wan22_patch_embedding(patch_embed_shape, default_model_dim=d_model)
+        d_model = int(model_dim)
+    else:
+        for key in ("time_embed.0.weight", "blocks.0.self_attn.q.weight"):
+            shape = _shape(key)
+            if shape and len(shape) >= 1:
+                d_model = int(shape[0])
+                break
 
     n_blocks = 0
     for key in state_dict.keys():
@@ -508,12 +514,13 @@ def infer_wan_architecture_from_state_dict(state_dict: dict) -> WanArchitectureC
                 n_heads = int(candidate)
                 break
 
-    patch_size = (1, 2, 2)
-    in_channels = 16
     patch_shape = _shape("patch_embed.weight")
-    if patch_shape and len(patch_shape) == 5:
-        in_channels = int(patch_shape[1])
-        patch_size = (int(patch_shape[2]), int(patch_shape[3]), int(patch_shape[4]))
+    head_shape = _shape("head.weight")
+    patch_size, in_channels = infer_wan22_patch_size_and_in_channels(
+        patch_shape,
+        default_patch_size=(1, 2, 2),
+        default_in_channels=16,
+    )
 
     time_embed_dim = 256
     te0_shape = _shape("time_embed.0.weight")
@@ -534,12 +541,11 @@ def infer_wan_architecture_from_state_dict(state_dict: dict) -> WanArchitectureC
 
     qkv_bias = "blocks.0.self_attn.q.bias" in state_dict or "blocks.0.self_attn.k.bias" in state_dict
 
-    latent_channels = in_channels
-    head_shape = _shape("head.weight")
-    if head_shape and len(head_shape) == 2:
-        patch_volume = int(patch_size[0] * patch_size[1] * patch_size[2])
-        if patch_volume > 0 and head_shape[0] % patch_volume == 0:
-            latent_channels = int(head_shape[0] // patch_volume)
+    latent_channels = infer_wan22_latent_channels(
+        head_shape,
+        patch_size=patch_size,
+        default_latent_channels=in_channels,
+    )
 
     return WanArchitectureConfig(
         d_model=d_model,

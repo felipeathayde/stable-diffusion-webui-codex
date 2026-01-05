@@ -10,7 +10,7 @@ Purpose: Server-driven UI presets store.
 Fetches `/api/ui/presets` and exposes preset lists with helpers to filter by tab and apply a preset via the backend.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useUiPresetsStore` (const): Pinia store for UI presets (init + namesFor + applyByTitle).
+- `useUiPresetsStore` (store): Pinia store for UI presets (init + namesFor + applyByTitle).
 */
 
 import { defineStore } from 'pinia'

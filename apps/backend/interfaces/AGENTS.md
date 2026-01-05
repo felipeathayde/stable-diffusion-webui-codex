@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-05
 Status: Active
 
 ## Purpose
@@ -48,3 +48,5 @@ Status: Active
 - 2026-01-02: `/api/{txt2img,img2img}` now accepts checkpoint selection by SHA (10-char short hash or 64-char sha256) via `model`/`sd_model_checkpoint` or `extras.model_sha`; SDXL ignores global VAE/TE overrides (`sd_vae`, `text_encoder_overrides`) unless explicit `extras.vae_path`/`extras.tenc_path` are supplied.
 - 2026-01-01: `/api/models` now accepts `?refresh=1` to re-scan checkpoint roots so the UI can pick up newly copied weights without restarting the backend.
 - 2026-01-02: Added standardized file header docstrings to interface modules (doc-only change; part of rollout).
+- 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); `run_api.py` resolves engine keys via the registry and rejects unknown keys with HTTP 400.
+- 2026-01-04: `/api/text-encoders` now mirrors inventory-derived TE file labels for Flux.1/ZImage to reduce “exists in inventory but not in dropdown” drift; tooling guardrail added to prevent direct `apps/paths.json` reads outside `infra/config/paths.py`.

@@ -14,8 +14,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `register_sd20` (function): Registers the SD 2.x engine and aliases.
 - `register_sdxl` (function): Registers SDXL base/refiner engines and aliases.
 - `register_sd35` (function): Registers the SD 3.5 engine and aliases.
-- `register_flux` (function): Registers the Flux engine and aliases.
-- `register_kontext` (function): Registers the Kontext engine and aliases.
+- `register_flux` (function): Registers the Flux engine.
+- `register_kontext` (function): Registers the Flux Kontext engine.
 - `register_chroma` (function): Registers the Chroma engine.
 - `register_wan22_videos` (function): Registers WAN22 video engines (14B/5B/animate) and aliases.
 - `register_zimage` (function): Registers the Z-Image engine and aliases.
@@ -58,17 +58,23 @@ def register_sd35(*, registry: EngineRegistry | None = None, replace: bool = Fal
 
 def register_flux(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.flux.flux import Flux
-    _reg("flux", Flux, registry=registry, replace=replace, aliases=("flux.1", "flux-1"))
+    _reg("flux1", Flux, registry=registry, replace=replace, aliases=())
 
 
 def register_kontext(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.flux.kontext import Kontext
-    _reg("kontext", Kontext, registry=registry, replace=replace, aliases=("flux_kontext", "flux-kontext"))
+    _reg(
+        "flux1_kontext",
+        Kontext,
+        registry=registry,
+        replace=replace,
+        aliases=(),
+    )
 
 
 def register_chroma(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.flux.chroma import Chroma
-    _reg("chroma", Chroma, registry=registry, replace=replace)
+    _reg("flux1_chroma", Chroma, registry=registry, replace=replace, aliases=())
 
 
 def register_svd(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:  # optional

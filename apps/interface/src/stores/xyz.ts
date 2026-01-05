@@ -111,6 +111,7 @@ export const useXyzStore = defineStore('xyz', () => {
     const quick = useQuicksettingsStore()
     const activeTab = tabs.activeTab
     const params = activeTab?.params as ImageBaseParams | undefined
+    const engineKey = activeTab?.type === 'wan' ? 'wan22' : (activeTab?.type || 'sdxl')
     const checkpoint = String((params as any)?.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
     const resolvedModelSha = quick.resolveModelSha(modelLabel)
@@ -129,7 +130,7 @@ export const useXyzStore = defineStore('xyz', () => {
       batchCount: 1,
       styles: [],
       device: quick.currentDevice,
-      engine: activeTab?.type || 'sdxl',
+      engine: engineKey,
       model: resolvedModelSha || modelLabel,
     }
   }
@@ -247,7 +248,8 @@ export const useXyzStore = defineStore('xyz', () => {
     // Ensure engine/model are set before firing many tasks
     if (quick.currentModel) {
       try {
-        await updateOptions({ codex_engine: activeTab?.type || 'sdxl', sd_model_checkpoint: quick.currentModel })
+        const engineKey = activeTab?.type === 'wan' ? 'wan22' : (activeTab?.type || 'sdxl')
+        await updateOptions({ codex_engine: engineKey, sd_model_checkpoint: quick.currentModel })
       } catch (err) {
         errorMessage.value = err instanceof Error ? err.message : String(err)
         status.value = 'error'

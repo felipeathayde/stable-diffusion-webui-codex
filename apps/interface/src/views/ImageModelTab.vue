@@ -373,7 +373,7 @@ const enableStyles = computed(() => true)
 const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' : ''))
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
-const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux')
+const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux1')
 const minClipSkip = computed(() => (props.type === 'sdxl' ? 2 : 1))
 const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
 
@@ -528,7 +528,7 @@ function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: s
 }
 
 function profileStorageKeyFor(type: EngineType): string {
-  if (type === 'flux') return 'codex.flux.profile'
+  if (type === 'flux1') return 'codex.flux1.profile.v1'
   if (type === 'sdxl') return 'codex.sdxl.profile.v1'
   if (type === 'zimage') return 'codex.zimage.profile'
   if (type === 'sd15') return 'codex.sd15.profile.v1'
@@ -726,8 +726,8 @@ async function syncInitImageDims(): Promise<void> {
 }
 
 function maybeApplyKontextDefaults(): void {
-  if (props.type !== 'flux') return
-  const defaults = getEngineDefaults('flux')
+  if (props.type !== 'flux1') return
+  const defaults = getEngineDefaults('flux1')
   const defaultCfg = defaults.distilledCfg ?? defaults.cfg
   // Only apply when user hasn't customized away from the Flux defaults.
   if (params.value.steps === defaults.steps) setParams({ steps: _KONTEXT_DEFAULT_STEPS })

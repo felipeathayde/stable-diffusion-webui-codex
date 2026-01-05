@@ -108,7 +108,7 @@ def _maybe_enable_streaming_core(
     Streaming is currently only applied to the Flux engine (not Chroma) and only when
     the transformer is a FluxTransformer2DModel instance.
     """
-    if spec.name != "flux":
+    if spec.name != "flux1":
         return transformer
 
     streamed: StreamedFluxCore | None = None
@@ -323,7 +323,7 @@ def assemble_flux_runtime(
         tokenizer_dict = {"t5xxl": tok1}
 
     clip = CLIP(model_dict=model_dict, tokenizer_dict=tokenizer_dict, model_config=estimated_config)
-    vae_family = ModelFamily.FLUX if spec.name == "flux" else ModelFamily.CHROMA
+    vae_family = ModelFamily.FLUX if spec.name == "flux1" else ModelFamily.CHROMA
     vae = VAE(model=codex_components["vae"], family=vae_family)
 
     repo = getattr(estimated_config, "huggingface_repo", "" ) or ""
@@ -394,7 +394,7 @@ def assemble_flux_runtime(
 
 
 FLUX_SPEC = FluxEngineSpec(
-    name="flux",
+    name="flux1",
     uses_clip_branch=True,
     distilled_cfg_scale_default=3.5,
     schnell_threshold=lambda repo: "schnell" in repo.lower(),

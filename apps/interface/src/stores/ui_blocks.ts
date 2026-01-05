@@ -10,7 +10,7 @@ Purpose: Server-driven UI blocks schema store.
 Fetches `/api/ui/blocks` (optionally tab-scoped) and exposes the current block set/version for rendering parameter panels.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `useUiBlocksStore` (const): Pinia store for UI block schemas (version/blocks/semantic_engine).
+- `useUiBlocksStore` (store): Pinia store for UI block schemas (version/blocks/semantic_engine).
 */
 
 import { defineStore } from 'pinia'

@@ -241,6 +241,7 @@ If you touch dependencies or configs, you update the proper manifest or lockfile
 
 You do not plan or write anything under the false god of "compat."
 * Legacy code is reference only.
+* **No code-level compat for renames.** If a symbol/field/parameter is renamed (e.g. `unet` → `denoiser`), do **not** add aliases, fallback kwargs, or translation layers to “keep old callers working”. Let the old name raise loudly (TypeError/AttributeError) and update call sites instead.
 * The default core for attention is PyTorch SDPA.
 * You read the archived upstream snapshots with a cold eye.
 * You list risks, side effects, globals.

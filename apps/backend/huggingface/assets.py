@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Hugging Face asset allowlist helpers for offline/strict execution.
+Ensures minimal diffusers repository files (configs/tokenizers/schedulers, optional weights) exist under a local mirror, downloading only
+allowlisted lightweight assets when permitted.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_expected_config_files_from_model_index` (function): Derives expected component config paths from a diffusers `model_index.json`.
+- `_has_config` (function): Checks whether a local repo has required config coverage (including WAN stage configs and component configs).
+- `_has_tokenizer` (function): Detects tokenizer assets under a local repo (tokenizer.json or sentencepiece/BPE variants).
+- `_has_scheduler` (function): Detects scheduler configs under `scheduler/`.
+- `ensure_repo_minimal_files` (function): Ensures required assets exist under `local_path`, optionally downloading missing allowlisted files.
+- `_copy_selected_files` (function): Copies allowlisted files from a downloaded snapshot into the target repo directory.
+- `_http_list_and_download` (function): HTTP helper to list repo files and download allowlisted matches (used for minimal fetches).
+"""
+
 from __future__ import annotations
 
 import json
@@ -100,7 +122,7 @@ def _has_scheduler(local_path: str) -> bool:
     return False
 
 
-from typing import Iterable, Union
+from typing import Union
 
 
 def ensure_repo_minimal_files(

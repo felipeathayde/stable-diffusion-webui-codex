@@ -1,3 +1,29 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Minimal T5 encoder implementation used by Codex text encoders.
+Defines a small T5 encoder stack (attention + FF blocks + relative position bias) used by Flux/WAN-style runtimes without relying on the full
+transformers model class at runtime.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `activations` (constant): Mapping from activation names to callables used by FF blocks.
+- `T5LayerNorm` (class): T5-style layer norm (weight-only) used across the stack.
+- `T5DenseActDense` (class): Feed-forward dense block (wi→act→wo).
+- `T5DenseGatedActDense` (class): Gated feed-forward block (wi_0*act ⊙ wi_1).
+- `T5LayerFF` (class): Residual FF layer (layer norm + dense block).
+- `T5Attention` (class): Multi-head self-attention with optional relative position bias.
+- `T5LayerSelfAttention` (class): Residual self-attention layer with optional cached bias.
+- `T5Block` (class): One encoder block (self-attention + FF).
+- `T5Stack` (class): Encoder stack of `T5Block` layers with final layer norm.
+- `T5` (class): Minimal T5 encoder wrapper (shared embedding + encoder stack).
+- `IntegratedT5` (class): Wrapper around `T5` used for integrated encoder bundles (holds `logit_scale`).
+"""
+
 import torch
 import math
 

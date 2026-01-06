@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 5B video engine implementation (Diffusers and GGUF paths).
+Implements txt2vid/img2vid/vid2vid by loading WAN components (pipeline, VAE, text encoder, metadata) and dispatching to the respective
+use-cases, with strict asset resolution and stage overrides via request extras.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
+- `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
+- `_build_wan22_gguf_run_config` (function): Maps a request + extras into a GGUF runtime `RunConfig` (resolves assets from sha selection,
+  applies high/low stage overrides, and validates required metadata/tokenizer dirs).
+- `Wan225BEngine` (class): `BaseVideoEngine` implementation for WAN22 5B; loads vendor HF metadata, builds/loads components, and runs
+  txt2vid/img2vid/vid2vid via progress-streamed use-cases (contains nested helper logic for diffusers/GGUF mode selection).
+"""
+
 from __future__ import annotations
 
 import time
@@ -22,7 +43,6 @@ from apps.backend.engines.wan22.wan22_common import (
     WanStageOptions,
     resolve_wan_repo_candidates,
     resolve_user_supplied_assets,
-    _first_existing_path_for,
 )
 from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
 from apps.backend.infra.config.repo_root import get_repo_root
@@ -66,45 +86,33 @@ def _build_wan22_gguf_run_config(
     ex_raw = getattr(request, "extras", {}) or {}
     ex: Dict[str, Any] = dict(ex_raw) if isinstance(ex_raw, dict) else {}
 
-    # Resolve assets (strict when provided; fallback roots are applied only when empty).
-    vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex, comp.hf_repo_dir)
-    if not vae_path:
-        vae_path = _first_existing_path_for("wan22_vae")
-    if not te_path:
-        te_path = _first_existing_path_for("wan22_tenc")
+    # Resolve assets (sha-only; no implicit fallbacks).
+    vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex)
     if not te_path:
         raise RuntimeError(
             "WAN22 GGUF requires a text encoder weights file; provide 'wan_text_encoder_path' "
-            "or configure 'wan22_tenc' with a directory containing exactly one '.safetensors' file."
+            "(resolved from sha selection)."
+        )
+    if not vae_path:
+        raise RuntimeError(
+            "WAN22 GGUF requires a VAE weights file; provide 'wan_vae_path' (resolved from sha selection)."
+        )
+    if not meta_dir:
+        raise RuntimeError(
+            "WAN22 GGUF requires tokenizer metadata; provide 'wan_metadata_dir' or 'wan_tokenizer_dir'."
         )
 
     te_path = os.path.expanduser(str(te_path))
-    if os.path.isdir(te_path):
-        try:
-            candidates = sorted(
-                fn for fn in os.listdir(te_path) if fn.lower().endswith(".safetensors")
-            )
-        except Exception as exc:
-            raise RuntimeError(f"WAN22 GGUF: failed to list text encoder dir '{te_path}': {exc}") from exc
-        if len(candidates) == 1:
-            te_path = os.path.join(te_path, candidates[0])
-        elif len(candidates) == 0:
-            raise RuntimeError(
-                f"WAN22 GGUF: no '.safetensors' file found under text encoder dir '{te_path}'. "
-                "Provide 'wan_text_encoder_path' explicitly."
-            )
-        else:
-            raise RuntimeError(
-                f"WAN22 GGUF: multiple '.safetensors' files found under text encoder dir '{te_path}': {candidates}. "
-                "Provide 'wan_text_encoder_path' explicitly."
-            )
-
     if not str(te_path).lower().endswith(".safetensors"):
         raise RuntimeError(
             f"WAN22 GGUF: 'wan_text_encoder_path' must be a '.safetensors' file, got: {te_path}"
         )
     if not os.path.isfile(te_path):
         raise RuntimeError(f"WAN22 GGUF: text encoder weights not found: {te_path}")
+
+    vae_path = os.path.expanduser(str(vae_path))
+    if not os.path.isfile(vae_path) and not os.path.isdir(vae_path):
+        raise RuntimeError(f"WAN22 GGUF: VAE weights not found: {vae_path}")
 
     # WAN stage overrides
     wh_raw = ex.get("wan_high") if isinstance(ex.get("wan_high"), dict) else None
@@ -116,9 +124,18 @@ def _build_wan22_gguf_run_config(
     hi_opts = WanStageOptions.from_mapping(wh_raw, default_steps=default_steps, default_cfg=default_cfg)
     lo_opts = WanStageOptions.from_mapping(wl_raw, default_steps=default_steps, default_cfg=default_cfg)
 
-    base_dir = str(getattr(comp, "model_dir", "") or "")
-    hi_dir = str(hi_opts.model_dir or base_dir)
-    lo_dir = str(lo_opts.model_dir or base_dir)
+    if not hi_opts.model_dir or not str(hi_opts.model_dir).strip():
+        raise RuntimeError("WAN22 GGUF requires wan_high.model_dir (resolved from model_sha).")
+    if not lo_opts.model_dir or not str(lo_opts.model_dir).strip():
+        raise RuntimeError("WAN22 GGUF requires wan_low.model_dir (resolved from model_sha).")
+
+    hi_dir = os.path.expanduser(str(hi_opts.model_dir))
+    lo_dir = os.path.expanduser(str(lo_opts.model_dir))
+    for label, gguf_path in (("high", hi_dir), ("low", lo_dir)):
+        if not str(gguf_path).lower().endswith(".gguf"):
+            raise RuntimeError(f"WAN22 GGUF: {label} stage model must be a .gguf file, got: {gguf_path}")
+        if not os.path.isfile(gguf_path):
+            raise RuntimeError(f"WAN22 GGUF: {label} stage model not found: {gguf_path}")
 
     # Seed is applied to the High stage only in the current GGUF runtime.
     seed = getattr(request, "seed", None)

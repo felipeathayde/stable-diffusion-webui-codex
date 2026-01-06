@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Best-effort persistence of generated images to disk.
+Saves PNG samples under `CODEX_ROOT/output/<task>/<YYYY-MM-DD>/` with seed-aware filenames and optional PNG metadata, without breaking inference on errors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_LOGGER` (constant): Module logger used for best-effort persistence warnings.
+- `_safe_int` (function): Parses an integer from JSON-like values (or returns `None`).
+- `_seed_for_index` (function): Extracts the seed for an image index from an `info` mapping.
+- `_pnginfo_for_image` (function): Builds a `PngInfo` payload from image metadata and provided key/value metadata.
+- `save_generated_images` (function): Saves images to disk and returns the written paths.
+- `__all__` (constant): Explicit export list for this module.
+"""
+
 from __future__ import annotations
 
 # // tags: outputs, saving, images
@@ -136,4 +156,3 @@ def save_generated_images(
 
 
 __all__ = ["save_generated_images"]
-

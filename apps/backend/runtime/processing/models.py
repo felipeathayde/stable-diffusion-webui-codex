@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Processing model dataclasses (txt2img/img2img) used by engine runtimes and orchestration.
+Defines the stable “processing” parameter containers (hires/refiner + common fields) and helpers that normalize list-like inputs so
+per-batch runs have consistent lengths.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_repeat_to_length` (function): Expands/truncates a sequence to a target length (used for per-batch list normalization).
+- `RefinerConfig` (dataclass): Refiner stage configuration (enabled/steps/cfg/seed + model/vae overrides) with override serialization.
+- `CodexHighResConfig` (dataclass): Hi-res fix configuration (target scale/steps/denoise + latent settings) with override serialization.
+- `CodexProcessingBase` (dataclass): Shared processing fields for image generation runs (prompt/negative/seed/steps/cfg/dims + hi-res/refiner).
+- `CodexProcessingTxt2Img` (dataclass): Txt2img processing container (extends base with txt2img-specific fields).
+- `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength and related fields).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

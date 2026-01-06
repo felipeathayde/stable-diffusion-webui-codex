@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: GGUF tensor-name mapping for different model architectures.
+Maps `MODEL_TENSOR` identifiers to known parameter name patterns across architectures, and provides lookup helpers to resolve a key to
+its canonical tensor type/name (used by GGUF readers/writers and conversion tooling).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TensorNameMap` (class): Per-architecture tensor mapping table; builds a name index for `n_blocks` and provides lookup helpers
+  (`get_name/get_type/get_type_and_name`, container dunder methods).
+- `get_tensor_name_map` (function): Factory that returns a `TensorNameMap` for a given `MODEL_ARCH` and block count.
+"""
+
 from __future__ import annotations
 
 from typing import Sequence

@@ -1,13 +1,23 @@
-"""Memory utilities for backend runtimes.
-
-This package is intentionally import-light: modules like
-`apps.backend.infra.config.args` import `apps.backend.runtime.memory.config`, and
-we must not pull torch-heavy modules (or create circular imports) just by
-importing the package.
-
-Torch-bound runtime management lives in `memory_management.py` and is loaded on
-demand.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Import-light memory package exposing torch-bound helpers via lazy module exports.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `__getattr__` (function): Lazy import hook for `memory_management` and `stream` submodules.
+- `__all__` (constant): Public module exports (lazy-resolved names).
+"""
+
+# This package is intentionally import-light: modules like
+# `apps.backend.infra.config.args` import `apps.backend.runtime.memory.config`, and
+# we must not pull torch-heavy modules (or create circular imports) just by
+# importing the package. Torch-bound runtime management lives in
+# `memory_management.py` and is loaded on demand.
 
 from __future__ import annotations
 

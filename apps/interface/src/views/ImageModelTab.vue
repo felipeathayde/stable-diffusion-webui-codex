@@ -1,3 +1,46 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Image model tab view (txt2img/img2img) UI for SD/Flux/ZImage-family engines.
+Owns prompt + parameter controls, init-image handling for img2img, per-tab history, and integrates with the generation composable to
+submit `/api/txt2img`/`/api/img2img` tasks and render progress/results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
+- `sendToWorkflows` (function): Sends the current params snapshot to the workflows subsystem (async).
+- `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
+- `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
+- `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
+- `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
+- `profileStorageKeyFor` (function): Computes the localStorage key for saving/loading per-engine profiles.
+- `loadProfile` (function): Loads a saved profile into current params (with validation/defaulting).
+- `saveProfile` (function): Saves current params as a profile in localStorage.
+- `setParams` (function): Applies partial updates to the current tab params state.
+- `setHighres` (function): Applies partial updates to the highres config object.
+- `setHighresRefiner` (function): Applies partial updates to the highres-refiner config object.
+- `setRefiner` (function): Applies partial updates to the refiner config object.
+- `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
+- `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
+- `onInitToggle` (function): Toggles init-image usage (img2img) and triggers dimension sync when enabled.
+- `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
+- `clearInit` (function): Clears init image fields.
+- `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
+- `randomizeSeed` (function): Randomizes the seed field for the current tab params.
+- `reuseSeed` (function): Reuses the last seed from history/current run as the next seed.
+- `download` (function): Downloads a generated image artifact to disk.
+- `sendToImg2Img` (function): Sends a generated image back into img2img init-image fields (async).
+- `readFileAsDataURL` (function): Reads a File into a data URL (used for init-image handling).
+- `readImageDimensions` (function): Reads width/height from an image source URL (used for init-image dimension sync).
+- `syncInitImageDims` (function): Synchronizes init-image derived dimensions into width/height params (async).
+- `maybeApplyKontextDefaults` (function): Applies Kontext-specific default params when relevant to the current engine/tab.
+- `syncPreviewHeight` (function): Keeps the preview panel height aligned with layout changes (uses DOM measurements).
+-->
+
 <template>
   <section v-if="tab" class="panels">
     <!-- Left column: Prompt + Parameters -->
@@ -330,7 +373,7 @@ const enableStyles = computed(() => true)
 const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' : ''))
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
-const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux')
+const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux1')
 const minClipSkip = computed(() => (props.type === 'sdxl' ? 2 : 1))
 const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
 
@@ -485,7 +528,7 @@ function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: s
 }
 
 function profileStorageKeyFor(type: EngineType): string {
-  if (type === 'flux') return 'codex.flux.profile'
+  if (type === 'flux1') return 'codex.flux1.profile.v1'
   if (type === 'sdxl') return 'codex.sdxl.profile.v1'
   if (type === 'zimage') return 'codex.zimage.profile'
   if (type === 'sd15') return 'codex.sd15.profile.v1'
@@ -683,8 +726,8 @@ async function syncInitImageDims(): Promise<void> {
 }
 
 function maybeApplyKontextDefaults(): void {
-  if (props.type !== 'flux') return
-  const defaults = getEngineDefaults('flux')
+  if (props.type !== 'flux1') return
+  const defaults = getEngineDefaults('flux1')
   const defaultCfg = defaults.distilledCfg ?? defaults.cfg
   // Only apply when user hasn't customized away from the Flux defaults.
   if (params.value.steps === defaults.steps) setParams({ steps: _KONTEXT_DEFAULT_STEPS })

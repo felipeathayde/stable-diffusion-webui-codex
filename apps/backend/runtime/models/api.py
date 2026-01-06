@@ -1,4 +1,24 @@
-"""Public facade for checkpoint/VAE registry operations."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Public facade for checkpoint and VAE registry operations.
+Provides lightweight wrappers for listing assets and resolving checkpoints by name/path/title or SHA identifiers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `list_checkpoints` (function): Return discovered checkpoint records (optionally refresh the registry cache).
+- `list_checkpoints_as_dict` (function): Return JSON-friendly checkpoint records.
+- `list_vaes` (function): Return discovered VAE records (optionally refresh the registry cache).
+- `list_vaes_as_dict` (function): Return JSON-friendly VAE records.
+- `find_checkpoint` (function): Resolve a checkpoint record by name/title/filename/stem/path.
+- `_HEX_RE` (constant): Regex used to validate hex-only SHA strings.
+- `find_checkpoint_by_sha` (function): Resolve a checkpoint record by sha256 (64 hex) or short-hash (10 hex).
+- `refresh` (function): Force a registry rescan.
+"""
 
 from __future__ import annotations
 

@@ -1,7 +1,20 @@
-"""Core dataclasses for WAN streaming infrastructure (nn.Module pattern).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module mirrors the Flux streaming specs, operating on nn.Module
-blocks rather than raw GGUF tensors.
+Purpose: Core dataclasses for WAN streaming infrastructure (nn.Module pattern).
+Defines `WanExecutionPlan`/`WanSegment`/`WanBlockInfo` plus a helper to build a plan from a model's `.blocks` list.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanBlockInfo` (class): Metadata for a single WAN transformer block (index/module/bytes).
+- `WanSegment` (class): Streaming segment containing one or more consecutive blocks.
+- `WanExecutionPlan` (class): Ordered execution plan for streaming WAN blocks.
+- `calculate_module_bytes` (function): Computes parameter size in bytes for an nn.Module.
+- `build_execution_plan` (function): Builds an execution plan by grouping model blocks into fixed-size segments.
 """
 
 from __future__ import annotations

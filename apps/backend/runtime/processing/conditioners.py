@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Preprocessing helpers for building conditioning tensors and decoding latents.
+Implements txt2img/img2img image-conditioning helpers (including inpaint mask handling) used by SD-family engines.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `decode_latent_batch` (function): Decode a batch of latents via `sd_model.decode_first_stage`, optionally moving to a target device.
+- `txt2img_conditioning` (function): Build txt2img image-conditioning tensor (inpaint vs non-inpaint layouts).
+- `_prepare_mask` (function): Normalize mask inputs (tensor/PIL/array) into a batched float tensor (optionally rounded).
+- `img2img_conditioning` (function): Build img2img image-conditioning tensor (handles inpaint mask + VAE encoding when required).
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Any

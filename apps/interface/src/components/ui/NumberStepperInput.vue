@@ -1,3 +1,21 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Numeric input with optional +/- stepper controls.
+Normalizes numeric input, clamps to min/max, snaps to step, and emits updates via `update:modelValue`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `NumberStepperInput` (component): Numeric input + optional stepper buttons with clamping/quantization.
+- `commit` (function): Parses and commits an input value (clamp + quantize) to the model.
+- `inc` (function): Increments the current value by `nudgeStep` and emits the result.
+- `dec` (function): Decrements the current value by `nudgeStep` and emits the result.
+-->
+
 <template>
   <div class="cdx-stepper-input" :data-size="size">
     <input
@@ -116,4 +134,3 @@ function dec(): void {
   emit('update:modelValue', next)
 }
 </script>
-

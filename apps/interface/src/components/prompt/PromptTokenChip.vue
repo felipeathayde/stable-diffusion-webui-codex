@@ -1,3 +1,23 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Tiptap node-view chip for prompt tokens.
+Renders a compact chip for `PromptToken` nodes with controls to enable/disable, adjust weight, and remove the token.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptTokenChip` (component): Node-view component for prompt token chips.
+- `update` (function): Updates the node attributes in-place via a Tiptap transaction.
+- `remove` (function): Deletes the token node from the document.
+- `toggle` (function): Toggles the token enabled state.
+- `inc` (function): Increments token weight (clamped).
+- `dec` (function): Decrements token weight (clamped).
+-->
+
 <template>
   <NodeViewWrapper as="span" class="chip" :data-enabled="node.attrs.enabled ? '1' : '0'" contenteditable="false">
     <span class="chip-name">{{ node.attrs.name }}</span>

@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Native “extra networks” prompt parser (LoRA/TI/control tags).
+Parses `<lora:...>` / `<ti:...>` tags and a small set of control tags (sampler/scheduler/width/height/cfg/steps/seed/denoise/tiling),
+returning a cleaned prompt plus resolved LoRA selections and parsed controls.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_TAG_RE` (constant): Primary regex matching supported `<...:...>` tags.
+- `ParsedExtras` (dataclass): Parsed extras bundle (cleaned prompt, selected LoRAs, parsed controls dict).
+- `parse_prompt_for_extras` (function): Parse a single prompt, resolving LoRAs via the registry and stripping known tags.
+- `parse_prompts` (function): Parse a list of prompts, returning cleaned prompts and deduplicated LoRA selections.
+- `parse_prompts_with_extras` (function): Parse prompts and return merged controls in addition to cleaned prompts + LoRAs.
+- `__all__` (constant): Export list for extra-net parsing helpers.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,18 +26,7 @@ from typing import List, Tuple
 import re
 
 from apps.backend.infra.registry.lora import list_loras
-from apps.backend.codex.lora import LoraSelection
-
-
-"""Native extra-networks parser.
-
-Currently supports LoRA tags embedded in prompts, e.g.:
-  - <lora:name>
-  - <lora:name:0.8>
-
-Returns a cleaned prompt string and a list of LoRA selections with resolved
-paths against the native LoRA registry. Unknown names are ignored explicitly.
-"""
+from apps.backend.runtime.adapters.lora.selections import LoraSelection
 
 
 _TAG_RE = re.compile(r"<\s*(?P<kind>lora|ti|clip_skip|sampler|scheduler|merge|tm|width|height|w|h|cfg|steps|seed|denoise|tiling)\s*:\s*(?P<name>[^:>]+)(?::(?P<weight>[-+]?\d*\.?\d+))?\s*>", re.IGNORECASE)

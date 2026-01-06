@@ -1,3 +1,38 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Edge/line preprocessors for ControlNet (Canny/binary/sobel/lineart/HED/PiDiNet/MLSD/anime/manga).
+Registers a suite of edge detectors into the `ControlPreprocessorRegistry` and provides the preprocessing implementations, including
+optional torchvision Canny and model-backed methods (HED/PiDiNet/MLSD/lineart variants).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EdgePreprocessorConfig` (dataclass): Configuration defaults (thresholds + weights filenames) for all edge preprocessors.
+- `register_edge_preprocessors` (function): Registers all edge preprocessors by name into a registry using a shared config instance.
+- `preprocess_canny` (function): Canny edge detection (uses torchvision if available; otherwise falls back to manual implementation).
+- `preprocess_binary` (function): Simple binary-threshold edge map.
+- `preprocess_sobel` (function): Sobel edge detection (gradient magnitude).
+- `preprocess_lineart` (function): Simple “lineart” edge map (thresholded gradient / smoothing pipeline).
+- `preprocess_hed` (function): HED model-based edge detection (loads weights via `load_hed_model`).
+- `preprocess_pidinet` (function): PiDiNet model-based edge detection (loads weights via `load_pidinet_model`).
+- `preprocess_mlsd` (function): MLSD line segment detection (loads weights, decodes lines, renders line map).
+- `preprocess_lineart_anime` (function): Anime lineart model-based preprocessor.
+- `preprocess_manga_line` (function): Manga line model-based preprocessor.
+- `_ensure_image_batch` (function): Ensures input tensor has a batch dimension.
+- `_to_grayscale` (function): Converts RGB tensor to grayscale.
+- `_normalize_tensor` (function): Normalizes tensor to `[0, 1]` range (best-effort).
+- `_sobel_filters` (function): Builds Sobel filter kernels for the given device/dtype.
+- `_gaussian_kernel` (function): Builds a Gaussian blur kernel tensor.
+- `_canny_manual` (function): Manual Canny implementation (gaussian blur + gradients + NMS + hysteresis).
+- `_non_maximum_suppression` (function): Non-maximum suppression for gradient magnitude along orientation.
+- `_hysteresis` (function): Hysteresis thresholding step for Canny.
+- `_build_metadata` (function): Builds a metadata mapping for a `PreprocessorResult`.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,26 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: XYZ sweep parsing and combination helpers.
+Defines axis types and helpers to parse axis values, build X/Y/Z combinations, and format labels used by the XYZ plot store and view.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `AxisParam` (type): Allowed axis parameter identifiers.
+- `AxisValue` (type): Axis value union (`string | number`).
+- `AxisConfig` (interface): Axis configuration (param + values array).
+- `Combo` (interface): Single X/Y/Z combination entry with stable index.
+- `XyzCell` (interface): UI cell state for a sweep combo (status + optional image/info/error).
+- `AXIS_OPTIONS` (const): Supported axis option list with display labels and kinds.
+- `parseAxisValues` (function): Parses multiline/comma-separated axis values as text or numbers.
+- `buildCombos` (function): Builds the cartesian product of X/Y/Z values into `Combo` entries.
+- `labelOf` (function): Formats an axis value for display.
+*/
+
 // tags: xyz, parsing, sweeps
 import type { GeneratedImage } from '../api/types'
 

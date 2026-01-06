@@ -1,10 +1,19 @@
-"""Shared VAE utilities for Flow-based models.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module provides VAE loading and configuration for models that use
-16-channel latent spaces (Flux, Z Image, etc).
+Purpose: Shared Flow16 VAE utilities (16-channel latent AutoencoderKL) for Flux/Z Image families.
+Defines the canonical Flow16 VAE config parity used by diffusers (no quant/post-quant conv), plus helpers to locate and load a Flow16 VAE
+from either a diffusers directory or a single `.safetensors` file.
 
-The Flow16VAE is a standard AutoencoderKL with 16 latent channels instead
-of the typical 4 channels used by SD1.x/SDXL.
+Symbols (top-level; keep in sync; no ghosts):
+- `FLOW16_VAE_CONFIG` (constant): Canonical diffusers-like config dict for Flow16 VAEs (16 latent channels, scaling/shift factors).
+- `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or `.safetensors` file with strict latent-channel validation.
+- `find_flow16_vae` (function): Searches candidate directories for a valid Flow16 VAE path.
 """
 
 from __future__ import annotations
@@ -84,7 +93,7 @@ def load_flow16_vae(
     logger.info("Loading Flow16 VAE from: %s", vae_path)
 
     def _strip_known_prefixes(sd: Mapping[str, Any]) -> dict[str, Any]:
-        """Strip common VAE prefixes (Comfy/SD checkpoints) to diffusers keys.
+        """Strip common VAE prefixes (checkpoint exports) to diffusers keys.
 
         Flow16 VAEs show up in a few layouts:
         - diffusers keys (encoder.*, decoder.*)

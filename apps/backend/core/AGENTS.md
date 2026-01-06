@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-04
 Status: Active
 
 ## Purpose
@@ -14,6 +14,7 @@ Status: Active
 - `engine_interface.py` — Defines the base interfaces that engines must implement.
 - `orchestrator.py` — Coordinates use-case execution, binding requests to engines and runtime contexts.
 - `devices.py` / `state.py` — Track hardware availability and request-scoped generation state.
+- `engine_loader.py` — Bundle-aware engine loader used by use cases for model loading and runtime option application.
 - `rng.py` / `philox.py` — Native RNG stack (CPU/GPU/Philox) used across tasks.
 - `requests.py` — Typed request objects and validation helpers.
 - `registry.py` — Engine registration/lookup for orchestration.
@@ -28,3 +29,5 @@ Status: Active
 - 2025-12-16: Added `TaskType.VID2VID` + `Vid2VidRequest` for WAN video-to-video orchestration; video requests also carry optional `video_options` for export settings.
 - 2025-12-30: `InferenceOrchestrator` now reloads an already-loaded engine when load-affecting `engine_options` change (e.g. `text_encoder_override`, VAE override, core streaming), so overrides actually apply and caches don’t go stale across requests.
 - 2026-01-01: `InferenceOrchestrator` now purges VRAM (unload cached engines + memory manager unload/empty_cache) before a generation when the requested `(checkpoint, text encoders)` signature differs from the previous generation (prevents OOM on model swaps).
+- 2026-01-02: Added standardized file header docstrings across `apps/backend/core/**` modules (doc-only change; part of rollout).
+- 2026-01-03: `apps/backend/core/__init__.py` no longer re-exports star-import facades; callers must import from specific modules (e.g. `core.requests`, `core.registry`).

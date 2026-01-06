@@ -1,9 +1,20 @@
-"""GGUF runtime operations (CodexQuantization-backed).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module is the runtime integration layer for GGUF-quantized parameters:
-- `CodexParameter` is the canonical packed-tensor type (no `gguf_cls` indirection).
-- `dequantize_tensor()` returns float tensors for execution.
-- Optional CPU LRU cache can store dequantized weights to reduce repeated work.
+Purpose: GGUF runtime operations backed by `apps.backend.quantization` (CodexQuantization).
+Provides `dequantize_tensor(...)` and an optional CPU LRU cache for dequantized weights used during runtime execution.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CodexParameter` (class): Packed GGUF tensor wrapper (imported from `apps.backend.quantization.tensor`).
+- `set_cache_policy` (function): Configure optional CPU LRU dequant cache (`none` or `cpu_lru`) and size limit.
+- `clear_cache` (function): Clear cached dequantized tensors.
+- `dequantize_tensor` (function): Dequantize a `CodexParameter` to a float tensor (pass-through for non-GGUF tensors).
+- `__all__` (constant): Public export list for GGUF runtime operations.
 """
 
 from __future__ import annotations

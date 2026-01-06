@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: XYZ sweep view.
+Runs parameter sweeps over up to three axes (X/Y/Z) using the XYZ store and renders a grid of results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `XyzPlot` (component): XYZ sweep route view component.
+-->
+
 <template>
   <section class="panels xyz-panels">
     <div class="panel-stack">

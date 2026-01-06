@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Backend state snapshot for progress reporting.
+Provides a small thread-safe state object (`BackendState`) used by runtimes/services to report progress without relying on legacy globals.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BackendState` (dataclass): Backend progress state (job/task counters + current image/latent pointers).
+- `state` (constant): Global `BackendState` singleton used by services.
+"""
+
 from __future__ import annotations
 
 import threading

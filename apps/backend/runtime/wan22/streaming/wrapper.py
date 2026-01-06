@@ -1,7 +1,18 @@
-"""StreamedWanTransformer wrapper for block-based streaming (nn.Module pattern).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This mirrors Flux's StreamedFluxCore, intercepting the forward pass
-and executing blocks segment-by-segment with GPU memory management.
+Purpose: StreamedWanTransformer wrapper for segment-based WAN22 core streaming (nn.Module pattern).
+Mirrors Flux's `StreamedFluxCore` by intercepting the WAN transformer forward pass and executing blocks segment-by-segment using a
+`WanExecutionPlan` and `WanCoreController` to manage GPU residency and transfer policy.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StreamedWanTransformer` (class): Wrapper around `WanTransformer2DModel` enabling segment streaming for the forward pass.
+- `wrap_for_streaming` (function): Factory that builds a plan+controller and returns a `StreamedWanTransformer` wrapper.
 """
 
 from __future__ import annotations

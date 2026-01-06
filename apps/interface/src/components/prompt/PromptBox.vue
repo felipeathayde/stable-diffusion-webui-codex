@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Prompt input box with label + token count.
+Wraps `PromptEditor` with a label and a small whitespace-token counter used by generation views.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptBox` (component): Prompt editor wrapper with label + token-count badge.
+- `countTokens` (function): Counts whitespace-delimited tokens in the current prompt text.
+- `tokenCount` (const): Computed token count derived from the current prompt value.
+-->
+
 <template>
   <div class="prompt-box" :data-variant="variant">
     <div class="prompt-header">

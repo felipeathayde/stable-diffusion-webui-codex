@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Quantization detection and dtype validation for model-parser components.
+Detects GGUF quantization via `CodexParameter` markers and NF4/FP4 via bitsandbytes key markers / fp8 dtypes, and provides a strict
+validation helper to catch mis-detections where a component contains no floating-point tensors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/NF4/FP4/none).
+- `detect_quantization_from_component` (function): Infers quantization from one component mapping (prefers GGUF tensor markers).
+- `detect_quantization` (function): Infers quantization for a full parser context (UNet/transformer prioritized).
+- `validate_component_dtypes` (function): Fails fast when a component has no floating-point tensors (likely a wrong split/prefix).
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

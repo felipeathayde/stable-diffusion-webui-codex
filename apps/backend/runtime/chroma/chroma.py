@@ -1,4 +1,24 @@
-"""Chroma transformer runtime built on the Codex Flux components."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Chroma transformer runtime built on the Codex Flux components.
+Implements the Chroma core transformer blocks and model module (Flux-like double/single stream blocks + modulation), assembling the
+transformer used by the Chroma runtime/engine.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Approximator` (class): Auxiliary nn.Module used in modulation/conditioning paths (contains nested helpers for forward computation).
+- `ModulationOut` (dataclass): Modulation output container for per-block modulation parameters.
+- `DoubleStreamBlock` (class): Dual-stream transformer block (separate streams + cross interactions) used in early Chroma layers.
+- `SingleStreamBlock` (class): Single-stream transformer block used in later Chroma layers.
+- `LastLayer` (class): Final projection/output layer for Chroma transformer outputs.
+- `ChromaTransformer2DModel` (class): Main Chroma transformer module; builds blocks from config and performs forward pass with rotary embeddings
+  and Flux-shared attention primitives.
+"""
 
 from __future__ import annotations
 

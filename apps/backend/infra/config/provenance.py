@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stable, non-sensitive generation provenance fields for outputs.
+Provides a best-effort git commit resolver (when `.git/` exists) and a cached `generation_provenance(...)` map for metadata embedding.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CODEX_GENERATED_BY` (constant): Identifier string used in output metadata.
+- `CODEX_REPO_URL` (constant): Canonical repository URL for provenance metadata.
+- `_FULL_SHA_RE` (constant): Regex matching a full 40-hex git SHA.
+- `best_effort_git_commit` (function): Returns the current git commit SHA when `.git/` is available (else None).
+- `_cached_generation_provenance` (function): Small LRU-cached provenance tuple builder used by `generation_provenance`.
+- `generation_provenance` (function): Returns a provenance dict (generated_by/repo/commit?) for the given repo root.
+"""
+
 from __future__ import annotations
 
 import re

@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler/scheduler option catalog (labels + aliases + defaults) for the WebUI/API surface.
+Defines the canonical sampler/scheduler names exposed to users, plus alias normalization tables and default scheduler selection rules used by
+the sampling driver and UI selectors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SAMPLER_OPTIONS` (constant): UI-facing sampler option table (name/label/aliases + optional scheduler allowlists).
+- `SAMPLER_ALIAS_TO_CANONICAL` (constant): Normalization map from alias tokens to canonical sampler names.
+- `SUPPORTED_SAMPLERS` (constant): Set of supported sampler canonical names.
+- `SCHEDULER_OPTIONS` (constant): UI-facing scheduler option table (name/label/aliases).
+- `SCHEDULER_ALIAS_TO_CANONICAL` (constant): Normalization map from alias tokens to canonical scheduler names.
+- `SUPPORTED_SCHEDULERS` (constant): Set of supported scheduler canonical names.
+- `SAMPLER_DEFAULT_SCHEDULER` (constant): Default scheduler per sampler when the user selects an automatic scheduler.
+- `AUTO_TOKENS` (constant): Normalized tokens treated as “automatic/same/default” selectors.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, List, Set
@@ -158,7 +181,7 @@ SUPPORTED_SCHEDULERS: Set[str] = {entry["name"] for entry in SCHEDULER_OPTIONS i
 
 # Default scheduler per sampler when user selects "Automatic" or "Use same".
 SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
-    # Euler-family samplers default to the predictor ladder (Forge-style "simple" schedule).
+    # Euler-family samplers default to the predictor ladder ("simple" schedule).
     "euler": "simple",
     "euler a": "simple",
     "euler cfg++": "euler_discrete",

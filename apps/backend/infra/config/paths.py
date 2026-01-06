@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Load and normalize the `apps/paths.json` backend paths config.
+Provides cached accessors for model asset roots (checkpoints/text encoders/VAEs/LoRAs) and expands repo-relative paths into absolute paths.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_MODEL_DIR_KEYS` (constant): Keys in `apps/paths.json` whose missing repo-relative directories are created best-effort.
+- `_repo_root` (function): Returns repo root (delegates to `get_repo_root()`).
+- `_paths_json_path` (function): Returns the absolute path to `apps/paths.json` under the repo root.
+- `_load_paths_config` (function): Loads and caches the `paths.json` mapping (and triggers best-effort directory provisioning).
+- `_ensure_model_dirs` (function): Creates missing model directories for known keys when entries are repo-relative.
+- `get_paths_config` (function): Returns a shallow copy of the raw `paths.json` mapping.
+- `get_paths_for` (function): Returns a normalized list of filesystem paths for a given logical key.
+"""
+
 from __future__ import annotations
 
 import json
@@ -25,10 +46,10 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
     "sdxl_vae",
     "sdxl_loras",
     # Flux
-    "flux_ckpt",
-    "flux_tenc",
-    "flux_vae",
-    "flux_loras",
+    "flux1_ckpt",
+    "flux1_tenc",
+    "flux1_vae",
+    "flux1_loras",
     # WAN22
     "wan22_ckpt",
     "wan22_tenc",

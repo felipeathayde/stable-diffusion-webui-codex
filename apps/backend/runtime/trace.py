@@ -1,4 +1,20 @@
-"""Lightweight tracing helpers for torch operations and sections."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lightweight tracing helpers for torch ops and scoped sections.
+Implements an env-driven trace mode that patches `torch.nn.Module.to` to emit debug logs, plus a context manager for scoped tracing.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `enable` (function): Enables trace mode (reads `CODEX_TRACE_TORCH` and `CODEX_TRACE_LIMIT`) and patches `torch.nn.Module.to`.
+- `disable` (function): Disables trace mode and restores the original `torch.nn.Module.to`.
+- `event` (function): Emits a trace log event when tracing is enabled.
+- `trace_section` (contextmanager): Context manager that enables tracing for the duration of a section and logs timing metadata.
+"""
 
 from __future__ import annotations
 

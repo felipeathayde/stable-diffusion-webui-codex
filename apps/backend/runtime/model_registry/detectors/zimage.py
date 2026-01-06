@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Z Image Turbo model detector for the Codex model registry.
+Identifies Z Image core transformer checkpoints (GGUF or prefixed SafeTensors exports), infers key architecture dimensions, and builds a
+`ModelSignature` describing the core-only transformer plus external text encoder/VAE expectations.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ZIMAGE_CORE_KEYS` (constant): Minimal key set used to identify Z Image core weights (with optional prefix).
+- `_DIFFUSION_MODEL_PREFIX` (constant): Prefix used by some SafeTensors exports (`model.diffusion_model.*`).
+- `_has_zimage_keys` (function): Checks presence of Z Image core keys in a signal bundle (prefixed or unprefixed).
+- `ZImageDetector` (class): Detector that matches Z Image bundles and builds a `ModelSignature` (dims + quantization hint).
+- `_shape` (function): Shape helper reading from bundle metadata or tensor objects.
+"""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -5,7 +25,7 @@ from typing import Optional
 import torch
 
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
-from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks, has_all_keys
+from apps.backend.runtime.model_registry.signals import SignalBundle
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,
     CodexCoreSignature,
@@ -19,6 +39,7 @@ from apps.backend.runtime.model_registry.specs import (
     VAESignature,
 )
 from apps.backend.quantization.tensor import CodexParameter
+from apps.backend.runtime.zimage.inference import infer_zimage_dims
 
 
 # Core keys for Z Image Turbo (NextDiT/Lumina2 format)
@@ -72,41 +93,23 @@ class ZImageDetector(ModelDetector):
         if (_DIFFUSION_MODEL_PREFIX + "x_embedder.weight") in keys_set:
             prefix = _DIFFUSION_MODEL_PREFIX
         
-        # NextDiT/Lumina2 format keys (with detected prefix)
-        x_embedder = _shape(bundle, prefix + "x_embedder.weight")
-        cap_embedder = _shape(bundle, prefix + "cap_embedder.0.weight")
-        final_layer = _shape(bundle, prefix + "final_layer.linear.weight")
-        t_embedder = _shape(bundle, prefix + "t_embedder.mlp.0.weight")
+        stripped_keys = [k[len(prefix):] for k in bundle.keys if prefix and k.startswith(prefix)] if prefix else list(bundle.keys)
 
-        # Infer dimensions from checkpoint shapes (with safe access)
-        hidden_dim = x_embedder[0] if x_embedder and len(x_embedder) >= 1 else 3840
-        context_dim = cap_embedder[1] if cap_embedder and len(cap_embedder) >= 2 else 2560
-        
-        # Output: patch_size^2 * latent_channels
-        if final_layer and len(final_layer) >= 1:
-            out_dim = final_layer[0]
-            latent_channels = out_dim // 4  # patch_size=2, so 2*2=4
-        else:
-            latent_channels = 16
-        
-        channels_in = latent_channels * 4  # patch_size^2 * latent_channels
-        channels_out = latent_channels
+        def _shape_prefixed(name: str) -> Optional[tuple[int, ...]]:
+            return _shape(bundle, prefix + name) if prefix else _shape(bundle, name)
 
-        num_layers = count_blocks(bundle.keys, prefix + "layers.{}.")
-        num_layers = num_layers if num_layers else 30
-        
-        num_refiner_layers = count_blocks(bundle.keys, prefix + "context_refiner.{}.")
-        num_refiner_layers = num_refiner_layers if num_refiner_layers else 2
+        dims = infer_zimage_dims(stripped_keys, _shape_prefixed, patch_size=2)
 
-        num_heads = hidden_dim // 128 if hidden_dim and hidden_dim % 128 == 0 else 30
+        channels_out = dims.latent_channels
+        channels_in = dims.latent_channels * 4  # patch_size=2 => 2*2=4
 
         extras = {
-            "hidden_dim": hidden_dim,
-            "context_dim": context_dim,
-            "num_layers": num_layers,
-            "num_refiner_layers": num_refiner_layers,
-            "num_heads": num_heads,
-            "latent_channels": latent_channels,
+            "hidden_dim": dims.hidden_dim,
+            "context_dim": dims.context_dim,
+            "num_layers": dims.num_layers,
+            "num_refiner_layers": dims.num_refiner_layers,
+            "num_heads": dims.num_heads,
+            "latent_channels": dims.latent_channels,
             "guidance_embeds": False,
             # Both GGUF and prefixed safetensors (FP8/BF16) are core-only
             # They don't have embedded VAE or text encoder
@@ -117,14 +120,14 @@ class ZImageDetector(ModelDetector):
             TextEncoderSignature(
                 name="qwen3_4b",
                 key_prefix="text_encoder.",
-                expected_dim=context_dim,
+                expected_dim=dims.context_dim,
                 tokenizer_hint="Qwen/Qwen3-4B",
             )
         ]
 
         # Core-only models (GGUF or prefixed safetensors) don't have embedded VAE
         is_core_only = is_gguf or bool(prefix)
-        vae = VAESignature(key_prefix="vae.", latent_channels=latent_channels) if not is_core_only else None
+        vae = VAESignature(key_prefix="vae.", latent_channels=dims.latent_channels) if not is_core_only else None
         
         # Set quantization hint based on detection
         if is_gguf:
@@ -142,26 +145,15 @@ class ZImageDetector(ModelDetector):
                 architecture=CodexCoreArchitecture.DIT,
                 channels_in=channels_in,
                 channels_out=channels_out,
-                context_dim=context_dim,
+                context_dim=dims.context_dim,
                 temporal=False,
-                depth=num_layers,
+                depth=dims.num_layers,
                 key_prefixes=[prefix + "layers."] if prefix else ["layers."],
             ),
             text_encoders=text_encoders,
             vae=vae,
             extras=extras,
         )
-
-
-def _infer_latent_channels(bundle: SignalBundle) -> int:
-    proj_out = _shape(bundle, "proj_out.weight")
-    if proj_out and len(proj_out) == 2:
-        patch_area = 4
-        return int(proj_out[0] // patch_area) if proj_out[0] % patch_area == 0 else int(proj_out[0])
-    latent = bundle.shape("vae.decoder.conv_out.weight")
-    if latent:
-        return int(latent[1])
-    return 16
 
 
 def _shape(bundle: SignalBundle, key: str) -> Optional[tuple[int, ...]]:

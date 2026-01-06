@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 model detector for the Codex model registry.
+Matches WAN22 checkpoints by key suffixes and tensor shapes, infers patch/latent dimensions, detects embedded VAE/text-encoder components,
+and returns a `ModelSignature` describing the WAN core transformer and assets.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WAN_HEAD_KEY` (constant): Suffix used to locate the WAN modulation head in a state dict.
+- `Wan22Detector` (class): Detector that matches WAN22 bundles and builds a `ModelSignature` (core dims + TE/VAE signatures).
+- `_collect_text_encoders` (function): Collects embedded text encoder signatures (UMT5-XXL, CLIP-L) when present.
+- `_tensor_last_dim` (function): Returns the last dimension of a tensor/shape (used for TE expected dims).
+- `_find_key` (function): Finds the shortest matching key by suffix (optional prefix filtering).
+- `_detect_model_type` (function): Heuristically classifies WAN variant (t2v/i2v/ti2v/vace/s2v/animate).
+"""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -17,6 +38,7 @@ from apps.backend.runtime.model_registry.specs import (
     TextEncoderSignature,
     VAESignature,
 )
+from apps.backend.runtime.wan22.inference import infer_wan22_latent_channels, infer_wan22_patch_embedding
 
 
 WAN_HEAD_KEY = "head.modulation"
@@ -40,11 +62,15 @@ class Wan22Detector(ModelDetector):
 
         patch_shape = bundle.shape(f"{prefix}patch_embedding.weight")
         assert patch_shape is not None and len(patch_shape) == 5
-        in_channels, model_dim, patch_size = _interpret_patch_shape(patch_shape)
+        in_channels, model_dim, patch_size = infer_wan22_patch_embedding(patch_shape)
 
         head_shape = bundle.shape(f"{prefix}head.head.weight")
         assert head_shape is not None
-        latent_channels = _infer_latent_channels(head_shape, patch_size)
+        latent_channels = infer_wan22_latent_channels(
+            head_shape,
+            patch_size=patch_size,
+            default_latent_channels=in_channels,
+        )
 
         num_layers = count_blocks(bundle.keys, f"{prefix}blocks.{{}}.")
 
@@ -85,37 +111,6 @@ class Wan22Detector(ModelDetector):
             vae=vae_sig,
             extras=extras,
         )
-
-
-def _interpret_patch_shape(shape: tuple[int, ...]) -> tuple[int, int, tuple[int, int, int]]:
-    if shape[0] > shape[-1]:  # PyTorch (out, in, kt, kh, kw)
-        out_channels = int(shape[0])
-        in_channels = int(shape[1])
-        patch_size = (int(shape[2]), int(shape[3]), int(shape[4]))
-    else:  # GGUF (kt, kh, kw, in, out)
-        out_channels = int(shape[-1])
-        in_channels = int(shape[-2])
-        patch_size = (int(shape[-3]), int(shape[-4]), int(shape[-5]))
-    # Ensure canonical ordering (t, h, w)
-    if patch_size[0] <= 2 and patch_size[1] <= 2 and patch_size[2] <= 2:
-        patch = patch_size
-    else:
-        patch = tuple(sorted(patch_size, reverse=False))
-    # convert to (t,h,w) with expectation (1,2,2)
-    patch = (patch[0], patch[1], patch[2])
-    return in_channels, out_channels, patch
-
-
-def _infer_latent_channels(head_shape: tuple[int, ...], patch_size: tuple[int, int, int]) -> int:
-    patch_prod = int(patch_size[0] * patch_size[1] * patch_size[2])
-    if len(head_shape) != 2:
-        return patch_prod
-    a, b = head_shape
-    if a % patch_prod == 0:
-        return int(a // patch_prod)
-    if b % patch_prod == 0:
-        return int(b // patch_prod)
-    return int(a)
 
 
 def _collect_text_encoders(bundle: SignalBundle, prefix: str) -> list[TextEncoderSignature]:

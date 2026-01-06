@@ -1,19 +1,41 @@
-"""Z Image Turbo (Alibaba) Transformer Model.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-NextDiT/Lumina2-style diffusion transformer for Z Image Turbo.
-Architecture follows the original checkpoint format with verified shapes.
+Purpose: Z Image Turbo (Alibaba) transformer architecture (NextDiT/Lumina2-style) and state-dict loader.
+Implements core blocks (norm/RoPE/attention/transformers/refiners) and loads checkpoints into `ZImageTransformer2DModel`.
 
-Key dimensions from z_image_turbo_bf16.safetensors:
-- hidden_dim = 3840
-- context_dim = 2560  
-- t_dim = 256 (timestep embedding intermediate)
-- head_dim = 128, num_heads = 30 (3840/128)
-- mlp_hidden = 10240
-- latent_channels = 16, patch_size = 2
-- num_layers = 30, num_refiner_layers = 2
+Symbols (top-level; keep in sync; no ghosts):
+- `ZImageConfig` (dataclass): Architecture/config defaults for ZImage transformer (dims, layers, RoPE axes, eps, etc).
+- `RMSNorm` (class): RMSNorm layer used across transformer blocks.
+- `TimestepEmbedder` (class): Timestep embedding module for diffusion timestep conditioning.
+- `SwiGLU` (class): SwiGLU MLP block used inside transformer blocks.
+- `RoPEEmbedding` (class): Rotary positional embedding builder for multi-axis RoPE.
+- `apply_rotary_emb` (function): Applies rotary embeddings to a tensor using precomputed complex frequencies.
+- `apply_rope_pair` (function): Applies RoPE to a `(q, k)` pair and returns the rotated tensors.
+- `Attention` (class): Attention module (QKV + optional norms + RoPE application; used by transformer blocks).
+- `TransformerBlock` (class): Main transformer block (attn + MLP + residuals; composes the core model depth).
+- `RefinerBlock` (class): Refiner-stage block used for late refinement layers.
+- `NoiseRefinerBlock` (class): Noise-refiner variant block used for specific refinement passes.
+- `FinalLayer` (class): Final projection layer mapping hidden states back to output channels/patches.
+- `ZImageTransformer2DModel` (class): Full ZImage transformer model (owns embeddings, blocks, refiners, and forward pass).
+- `load_zimage_from_state_dict` (function): Loads `ZImageTransformer2DModel` weights from a checkpoint state dict (with validation/remapping).
 """
 
 from __future__ import annotations
+
+# Key dimensions (from `z_image_turbo_bf16.safetensors`):
+# - hidden_dim = 3840
+# - context_dim = 2560
+# - t_dim = 256 (timestep embedding intermediate)
+# - head_dim = 128, num_heads = 30 (3840/128)
+# - mlp_hidden = 10240
+# - latent_channels = 16, patch_size = 2
+# - num_layers = 30, num_refiner_layers = 2
 
 import logging
 import math
@@ -269,7 +291,7 @@ def apply_rope_pair(q: torch.Tensor, k: torch.Tensor, freqs: torch.Tensor) -> tu
 class Attention(nn.Module):
     """Self-attention with combined QKV, QK normalization, and RoPE.
     
-    Matches ComfyUI's JointAttention dimension ordering for RoPE.
+    Matches the JointAttention dimension ordering for RoPE.
     Q/K/V are [B, N, H, D] during RoPE, then [B, H, N, D] for SDPA.
     """
     
@@ -304,14 +326,14 @@ class Attention(nn.Module):
         
         # QKV projection and reshape to [B, N, 3, H, D]
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
-        # Split into [B, N, H, D] each - matching ComfyUI JointAttention
+        # Split into [B, N, H, D] each (JointAttention layout)
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         
         # QK normalization (operates on last dim = head_dim)
         q = self.q_norm(q)
         k = self.k_norm(k)
         
-        # Apply RoPE in [B, N, H, D] format (matching ComfyUI)
+        # Apply RoPE in [B, N, H, D] format
         if freqs is not None:
             q, k = apply_rope_pair(q, k, freqs)
         
@@ -333,7 +355,7 @@ class Attention(nn.Module):
 class TransformerBlock(nn.Module):
     """Transformer block with adaLN modulation.
     
-    Architecture matching ComfyUI's NextDiT for z_image_modulation:
+    Architecture matching NextDiT for z_image_modulation:
     - adaLN_modulation.0: Linear(min(dim, 256), 4 * dim) = Linear(256, 4*3840)
     - Outputs 4 modulation values: scale_msa, gate_msa, scale_mlp, gate_mlp
     - Uses tanh gating like NextDiT
@@ -494,7 +516,7 @@ class NoiseRefinerBlock(nn.Module):
             mod = self.adaLN_modulation(t_emb)  # [B, 4 * dim]
             scale_msa, gate_msa, scale_mlp, gate_mlp = mod.chunk(4, dim=-1)
             
-            # Attention with modulation (tanh gating like ComfyUI's NextDiT)
+            # Attention with modulation (tanh gating like NextDiT)
             normed = self.attention_norm1(x)
             normed = normed * (1 + scale_msa.unsqueeze(1))
             attn_out = self.attention(normed, attention_mask, freqs)
@@ -517,13 +539,13 @@ class FinalLayer(nn.Module):
     """Final layer with adaLN modulation.
     
     Uses LayerNorm with elementwise_affine=False (no learnable params) to match
-    the GGUF checkpoint structure from ComfyUI's NextDiT. The GGUF doesn't have
-    weights for this norm layer because ComfyUI uses non-affine LayerNorm.
+    the GGUF checkpoint structure from NextDiT. The GGUF doesn't have weights for this norm
+    layer because the reference implementation uses non-affine LayerNorm.
     """
     
     def __init__(self, hidden_dim: int, t_dim: int, out_dim: int, eps: float = 1e-6):
         super().__init__()
-        # ComfyUI uses LayerNorm(elementwise_affine=False), so no weight/bias in norm
+        # Non-affine LayerNorm: no weight/bias in the checkpoint for this norm
         self.norm_final = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=eps)
         # Checkpoint: adaLN_modulation.1.weight is [hidden_dim, t_dim]
         self.adaLN_modulation = nn.Sequential(
@@ -976,54 +998,30 @@ def load_zimage_from_state_dict(
     config: Optional[ZImageConfig] = None,
 ) -> ZImageTransformer2DModel:
     """Load Z Image model from state dict with automatic config detection."""
-    
-    # Detect dimensions from checkpoint
-    hidden_dim = 3840
-    context_dim = 2560
-    t_dim = 256
-    num_layers = 30
-    num_refiner = 2
-    mlp_hidden = 10240
-    
-    if "x_embedder.weight" in state_dict:
-        hidden_dim = int(state_dict["x_embedder.weight"].shape[0])
-    
-    if "cap_embedder.1.weight" in state_dict:
-        w = state_dict["cap_embedder.1.weight"]
-        context_dim = int(w.shape[1])
-    
-    if "t_embedder.mlp.2.weight" in state_dict:
-        t_dim = int(state_dict["t_embedder.mlp.2.weight"].shape[0])
-    
-    for key in state_dict.keys():
-        if key.startswith("layers.") and ".adaLN_modulation." in key:
-            idx = int(key.split(".")[1])
-            num_layers = max(num_layers, idx + 1)
-    
-    for key in state_dict.keys():
-        if key.startswith("context_refiner."):
-            idx = int(key.split(".")[1])
-            num_refiner = max(num_refiner, idx + 1)
-    
-    if "layers.0.feed_forward.w1.weight" in state_dict:
-        mlp_hidden = int(state_dict["layers.0.feed_forward.w1.weight"].shape[0])
-    
-    num_heads = hidden_dim // 128
-    
-    logger.info(
-        f"Detected: hidden={hidden_dim}, context={context_dim}, t_dim={t_dim}, "
-        f"layers={num_layers}, refiner={num_refiner}, heads={num_heads}, mlp={mlp_hidden}"
-    )
-    
-    config = ZImageConfig(
-        hidden_dim=hidden_dim,
-        context_dim=context_dim,
-        t_dim=t_dim,
-        num_layers=num_layers,
-        num_refiner_layers=num_refiner,
-        num_heads=num_heads,
-        mlp_hidden=mlp_hidden,
-    )
+
+    if config is None:
+        from .inference import infer_zimage_dims_from_state_dict
+
+        dims = infer_zimage_dims_from_state_dict(state_dict, patch_size=2)
+        logger.info(
+            "Detected: hidden=%d context=%d t_dim=%d layers=%d refiner=%d heads=%d mlp=%d",
+            dims.hidden_dim,
+            dims.context_dim,
+            dims.t_dim,
+            dims.num_layers,
+            dims.num_refiner_layers,
+            dims.num_heads,
+            dims.mlp_hidden,
+        )
+        config = ZImageConfig(
+            hidden_dim=dims.hidden_dim,
+            context_dim=dims.context_dim,
+            t_dim=dims.t_dim,
+            num_layers=dims.num_layers,
+            num_refiner_layers=dims.num_refiner_layers,
+            num_heads=dims.num_heads,
+            mlp_hidden=dims.mlp_hidden,
+        )
     
     model = ZImageTransformer2DModel(config=config)
     

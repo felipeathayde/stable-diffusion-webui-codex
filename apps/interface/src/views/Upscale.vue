@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Upscale route view.
+Prototype upscaling view with a results panel and simple preset storage (upscale implementation is TODO).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Upscale` (component): Upscale route view component.
+-->
+
 <template>
   <section class="panels">
     <!-- Left column: basic controls (stub) -->

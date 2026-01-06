@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Legacy-facing CLIP wrapper backed by the Codex patcher stack.
+Provides a small `CLIP` facade exposing `cond_stage_model`, `tokenizer`, and a `ModelPatcher` with device/offload defaults.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `JointTextEncoder` (class): Thin `ModuleDict` wrapper used to hold text encoder weights as a joint stage model.
+- `CLIP` (class): Wrapper around text encoder + tokenizer with patching helpers and cloning support.
+"""
+
 from apps.backend.runtime.memory import memory_management
 from .base import ModelPatcher
 from apps.backend.runtime.nn import ModuleDict, ObjectDict

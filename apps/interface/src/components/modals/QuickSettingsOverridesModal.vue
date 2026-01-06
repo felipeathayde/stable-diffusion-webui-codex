@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Modal for quicksettings device/dtype overrides.
+Provides global device selection and per-component device/dtype overrides (core/TE/VAE) backed by the quicksettings store.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsOverridesModal` (component): Quicksettings overrides modal for device/dtype settings.
+- `resetAll` (function): Resets overrides back to `auto` for all components.
+- `close` (function): Closes the modal.
+-->
+
 <template>
   <Modal v-model="open" title="Component overrides">
     <p class="subtitle">

@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stable Cascade stage B/C model detectors for the model registry.
+Detects Stable Cascade prior/decoder checkpoints by locating stage-specific mapper keys, then builds `ModelSignature` metadata for loader/UI inventory.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StableCascadeStageCDetector` (class): Detector for Stable Cascade stage C checkpoints (prior).
+- `StableCascadeStageBDetector` (class): Detector for Stable Cascade stage B checkpoints (decoder; lite/full variant heuristic).
+- `_prefix_from_key` (function): Derives the shared stage prefix from a discovered key.
+- `_find_key` (function): Searches for a key suffix across common candidate prefixes.
+"""
+
 from __future__ import annotations
 
 from typing import Optional

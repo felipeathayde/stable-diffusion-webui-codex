@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Embedding modules for Flux variants (rotary frequencies + simple MLP projections).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EmbedND` (class): Builds N-D rotary frequency embeddings from integer positional IDs.
+- `MLPEmbedder` (class): Two-layer MLP used for time/guidance/vector projections.
+"""
+
 from __future__ import annotations
 
 import torch

@@ -1,3 +1,36 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2vid/img2vid/vid2vid).
+Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
+handling unset sentinels and producing backend-ready payloads for `/api/*` requests.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
+- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
+- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
+- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
+- `WanVideoOutputInput` (interface): Output options (filename prefix, output folder, format) mapped into payload.
+- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
+- `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
+- `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (prompt, dims, steps, seed, stage params, assets).
+- `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
+- `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
+- `stageToPayload` (function): Converts a `WanStageInput` into the backend stage override object (drops unset fields).
+- `isUnsetSentinel` (function): Detects UI sentinel values (e.g., “Automatic”/“Built-in”) that must not be sent as real asset paths.
+- `addWanAssets` (function): Injects selected WAN assets into the payload (skips unset/empty values).
+- `addWanOutput` (function): Injects output-related fields into the payload.
+- `addWanInterpolation` (function): Injects interpolation config into the payload.
+- `buildWanTxt2VidPayload` (function): Builds a validated txt2vid payload from UI common input.
+- `buildWanImg2VidPayload` (function): Builds a validated img2vid payload from UI input plus init image data.
+- `buildWanVid2VidPayload` (function): Builds a validated vid2vid payload from UI vid2vid input.
+*/
+
 import { z } from 'zod'
 
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const

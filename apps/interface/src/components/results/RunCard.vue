@@ -1,3 +1,29 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Results run card wrapper (Generate button + batch controls popover).
+Renders a `ResultsCard` with a Generate CTA and an optional batch settings panel (count/size) that can be reused across image/video views.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `RunCard` (component): Run/results card with generate CTA and optional batch controls.
+- `setBatchCount` (function): Emits a clamped batch-count update.
+- `setBatchSize` (function): Emits a clamped batch-size update.
+- `toggleBatchMenu` (function): Toggles the batch settings popover.
+- `openBatchMenu` (function): Opens the batch settings popover and schedules positioning.
+- `closeBatchMenu` (function): Closes the batch settings popover and clears handlers.
+- `isEventInsideBatchMenu` (function): Checks whether a DOM event target is inside the menu panel/toggle.
+- `onDocumentPointerDown` (function): Outside-click handler that closes the popover.
+- `onDocumentKeyDown` (function): Keydown handler (Escape closes the popover).
+- `updateBatchMenuPosition` (function): Computes and applies the popover position style.
+- `scheduleBatchMenuPositionUpdate` (function): Debounced/nextTick positioning update helper.
+- `clampInt` (function): Clamps and truncates numeric values to an integer range.
+-->
+
 <template>
   <ResultsCard
     :title="props.title"

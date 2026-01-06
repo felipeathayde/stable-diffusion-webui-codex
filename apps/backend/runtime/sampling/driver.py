@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampling driver (native + optional k-diffusion) for diffusion runtimes.
+Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
+while emitting timeline/diagnostic hooks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
+- `_raise_if_cancelled` (function): Checks cancellation state and raises `_SamplingCancelled` when requested.
+- `_PrecisionFallbackRequest` (exception): Signals the caller to retry sampling with a different precision policy.
+- `_kd_sampler_callable` (function): Wraps a k-diffusion sampler call with the compiled cond/uncond and CFG scale plumbing.
+- `_KDiffusionModel` (class): Adapter that exposes the model interface expected by k-diffusion samplers.
+- `_run_kdiffusion_sampler` (function): Runs the selected k-diffusion sampler with the current sampling context and hooks.
+- `CodexSampler` (class): Main sampler driver; builds `SamplingContext`, resolves sampler specs (native vs k-diffusion), runs the inner loop,
+  and integrates memory-management/timeline diagnostics.
+"""
+
 from __future__ import annotations
 
 # tags: sampling, diagnostics
@@ -229,8 +252,8 @@ class CodexSampler:
         return f"{head},...,{tail}"
 
     def _rebind_unet_precision(self, dtype: torch.dtype) -> None:
-        unet = self.sd_model.codex_objects.unet
-        model = getattr(unet, "model", None)
+        denoiser = self.sd_model.codex_objects.denoiser
+        model = getattr(denoiser, "model", None)
         if model is None:
             return
         previous = getattr(model, "computation_dtype", None)
@@ -265,8 +288,8 @@ class CodexSampler:
         spec = get_sampler_spec(self.algorithm)
 
         while True:
-            unet = self.sd_model.codex_objects.unet
-            model = unet.model
+            denoiser = self.sd_model.codex_objects.denoiser
+            model = denoiser.model
 
             steps = int(getattr(processing, "steps", 20))
             cfg_scale = float(getattr(processing, "cfg_scale", 7.0))
@@ -304,7 +327,7 @@ class CodexSampler:
             active_context = base_context
 
             try:
-                sampling_prepare(unet, noise)
+                sampling_prepare(denoiser, noise)
                 prepared = True
 
                 scheduler_name = getattr(processing, "scheduler", None)
@@ -494,7 +517,7 @@ class CodexSampler:
                         preview_interval=active_context.preview_interval,
                     )
 
-                    sampling_cleanup(unet)
+                    sampling_cleanup(denoiser)
                     prepared = False
                     backend_state.end()
                     state_started = False
@@ -535,11 +558,11 @@ class CodexSampler:
                             compiled_uncond,
                             compiled_cond,
                             cfg_scale,
-                            unet.model_options,
+                            denoiser.model_options,
                             seed=None,
                             return_full=True,
                         )
-                        cfg1_optimization = math.isclose(cfg_scale, 1.0) and not unet.model_options.get(
+                        cfg1_optimization = math.isclose(cfg_scale, 1.0) and not denoiser.model_options.get(
                             "disable_cfg1_optimization", False
                         )
                         if compiled_uncond is None or cfg1_optimization:
@@ -572,7 +595,7 @@ class CodexSampler:
                             compiled_uncond,
                             compiled_cond,
                             cfg_scale,
-                            unet.model_options,
+                            denoiser.model_options,
                             seed=None,
                             return_full=False,
                         )
@@ -686,7 +709,7 @@ class CodexSampler:
                             compiled_uncond,
                             compiled_cond,
                             cfg_scale,
-                            unet.model_options,
+                            denoiser.model_options,
                             seed=None,
                             return_full=False,
                         )
@@ -704,7 +727,7 @@ class CodexSampler:
                             compiled_uncond,
                             compiled_cond,
                             cfg_scale,
-                            unet.model_options,
+                            denoiser.model_options,
                             seed=None,
                             return_full=False,
                         )
@@ -744,7 +767,7 @@ class CodexSampler:
                     progress_bar.close()
                     progress_bar = None
 
-                sampling_cleanup(unet)
+                sampling_cleanup(denoiser)
                 prepared = False
 
                 backend_state.end()
@@ -760,7 +783,7 @@ class CodexSampler:
                 if progress_bar is not None:
                     progress_bar.close()
                 if prepared:
-                    sampling_cleanup(unet)
+                    sampling_cleanup(denoiser)
                 if state_started:
                     backend_state.end()
                 backend_state.clear_flags()

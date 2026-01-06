@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux diffusion engine (txt2img/img2img) using the Codex Flux runtime.
+Assembles the runtime via `CodexFluxFamilyFactory`, manages conditioning caching, and exposes the hooks required by shared txt2img/img2img
+workflows (encode/decode/conditioning + optional core streaming controller).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_FluxPromptList` (class): Prompt list wrapper carrying distilled CFG scale + negative/smart-cache flags for conditioning.
+- `Flux` (class): Codex diffusion engine implementation for Flux (runtime assembly, conditioning, sampling integration).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -7,7 +24,8 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime, assemble_flux_runtime
+from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
+from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
@@ -17,6 +35,8 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.flux")
+
+_FLUX_FACTORY = CodexFluxFamilyFactory(spec=FLUX_SPEC)
 
 
 class _FluxPromptList(list[str]):
@@ -37,7 +57,7 @@ class _FluxPromptList(list[str]):
 class Flux(CodexDiffusionEngine):
     """Codex native Flux engine."""
 
-    engine_id = "flux"
+    engine_id = "flux1"
 
     def __init__(self) -> None:
         super().__init__()
@@ -48,7 +68,7 @@ class Flux(CodexDiffusionEngine):
         return EngineCapabilities(
             engine_id=self.engine_id,
             tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
-            model_types=("flux",),
+            model_types=("flux1",),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
             extras={
@@ -63,12 +83,8 @@ class Flux(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_flux_runtime(
-            spec=FLUX_SPEC,
-            estimated_config=bundle.estimated_config,
-            codex_components=bundle.components,
-            engine_options=options,
-        )
+        assembly = _FLUX_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         self._runtime = runtime
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Flux runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
@@ -76,17 +92,13 @@ class Flux(CodexDiffusionEngine):
         # Note: Streaming is handled in assemble_flux_runtime() via _maybe_enable_streaming_core
         # Check if streaming was enabled and store controller reference
         from apps.backend.runtime.flux.streaming import StreamedFluxCore
-        if isinstance(runtime.unet.model, StreamedFluxCore):
-            self._streaming_controller = runtime.unet.model.controller
+        core_model = getattr(runtime.denoiser.model, "diffusion_model", runtime.denoiser.model)
+        if isinstance(core_model, StreamedFluxCore):
+            self._streaming_controller = core_model.controller
         else:
             self._streaming_controller = None
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None

@@ -1,10 +1,35 @@
-### This file contains impls for MM-DiT, the core model component of SD3
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-## source https://github.com/Stability-AI/sd3.5
-## attention, Mlp : other_impls.py
-## all else : mmditx.py
+Purpose: MM-DiT (SD3 core transformer) implementation used by the SD3 runtime.
+Upstream: Stability-AI/sd3.5 (integrated from split upstream; minor local tweaks to `SD3Transformer2DModel` init/forward).
 
-## minor modifications to SD3Transformer2DModel.__init__() and SD3Transformer2DModel.forward()
+Symbols (top-level; keep in sync; no ghosts):
+- `attention` (function): Convenience wrapper for scaled dot-product attention using torch SDPA.
+- `Mlp` (class): MLP block used by the SD3 transformer (ViT-style feed-forward).
+- `PatchEmbed` (class): 2D image → patch embedding module.
+- `modulate` (function): Applies shift/scale modulation to activations (used for conditioning).
+- `get_2d_sincos_pos_embed` (function): Generates 2D sine/cosine positional embeddings.
+- `get_2d_sincos_pos_embed_from_grid` (function): Builds 2D sine/cosine embeddings from a precomputed grid.
+- `get_1d_sincos_pos_embed_from_grid` (function): Builds 1D sine/cosine embeddings from positions.
+- `TimestepEmbedder` (class): Timestep embedding module for diffusion conditioning.
+- `VectorEmbedder` (class): Embeds conditioning vectors into model space.
+- `split_qkv` (function): Splits a fused QKV tensor into `(q, k, v)` views.
+- `optimized_attention` (function): Optimized attention path for fused QKV inputs.
+- `SelfAttention` (class): Self-attention module (QKV + attention compute + projections).
+- `RMSNorm` (class): RMS normalization module.
+- `SwiGLUFeedForward` (class): SwiGLU feed-forward block used by transformer layers.
+- `DismantledBlock` (class): Core transformer block variant used in SD3’s architecture.
+- `block_mixing` (function): Mixing helper for context/x streams inside joint blocks.
+- `JointBlock` (class): Joint block combining context and latent streams.
+- `FinalLayer` (class): Final projection/output layer for SD3 transformer.
+- `SD3Transformer2DModel` (class): Full SD3 MM-DiT model (embeddings + blocks + forward pass; contains many internal helpers).
+"""
 
 import logging
 import math

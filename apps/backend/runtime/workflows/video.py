@@ -1,11 +1,31 @@
-"""Shared helpers for Codex video generation workflows."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared helpers for Codex video generation workflows.
+Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, and assembles export metadata.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger used by video workflow helpers.
+- `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
+- `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
+- `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
+- `export_video` (function): Exports a frame sequence to a video file according to request options.
+- `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
+- `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
+- `__all__` (constant): Explicit export list for the module.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any, Mapping, Sequence
 
-from apps.backend.codex import lora as codex_lora
+from apps.backend.runtime.adapters.lora import selections as lora_selections
 from apps.backend.engines.util.schedulers import apply_sampler_scheduler, SamplerKind
 from apps.backend.runtime.processing.datatypes import VideoPlan, VideoResult
 
@@ -42,7 +62,7 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
     from apps.backend.patchers.lora_apply import apply_loras_to_engine
 
     try:
-        selections = codex_lora.get_selections()
+        selections = lora_selections.get_selections()
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         raise RuntimeError(f"Failed to fetch LoRA selections: {exc}") from exc
 

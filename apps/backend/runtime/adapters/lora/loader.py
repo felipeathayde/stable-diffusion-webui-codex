@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA tensor parsing into runtime patch specs (LoRA/LoHa/LoKr/GLORA/DIFF/SET).
+Parses adapter tensors into typed `PatchSpec` entries for the runtime adapter pipeline, supporting multiple LoRA conventions and optional
+metadata keys (alpha/dora_scale), and logs missing keys for diagnostics.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_item` (function): Converts scalar tensors (alpha/dora_scale) into Python floats.
+- `_maybe_convert_bfl_control` (function): Normalizes certain BFL/Control-style tensor key patterns into Codex naming.
+- `_select_first_present` (function): Returns the first matching key + tensor from a list of candidate names.
+- `_extract_lora` (function): Extracts standard LoRA weights (up/down[/mid]) into a `PatchSpec`.
+- `_extract_loha` (function): Extracts LoHa weights into a `PatchSpec`.
+- `_extract_lokr` (function): Extracts LoKr weights into a `PatchSpec`.
+- `_extract_glora` (function): Extracts GLORA weights into a `PatchSpec`.
+- `_extract_diff` (function): Extracts DIFF/SET weights (and optional diff bias) into `PatchSpec` entries.
+- `parse_lora_tensors` (function): Main entrypoint; parses tensors and returns `(PatchSpec list, loaded-key set)`.
+"""
+
 from __future__ import annotations
 
 import logging

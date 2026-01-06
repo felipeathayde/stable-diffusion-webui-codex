@@ -1,4 +1,22 @@
-"""Helpers for stage-wise smart offload / fallback control."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Thread-local overrides + option-backed helpers for smart offload/fallback/cache flags.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `smart_runtime_overrides` (function): Context manager to override smart flags for the current thread/request.
+- `smart_offload_enabled` (function): True when smart offload is enabled (options + thread overrides).
+- `smart_fallback_enabled` (function): True when smart CPU fallback on OOM is enabled (options + thread overrides).
+- `smart_cache_enabled` (function): True when Smart Cache is enabled (options + thread overrides).
+- `record_smart_cache_hit` (function): Increment Smart Cache hit counter for a named bucket.
+- `record_smart_cache_miss` (function): Increment Smart Cache miss counter for a named bucket.
+- `get_smart_cache_stats` (function): Return hit/miss counters for all Smart Cache buckets.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +26,9 @@ from typing import Dict, Iterator
 
 
 def _snapshot():
-    from apps.backend.codex import options as codex_options
+    from apps.backend.services import options_store
 
-    return codex_options.get_snapshot()
+    return options_store.get_snapshot()
 
 
 _THREAD_OVERRIDES = threading.local()

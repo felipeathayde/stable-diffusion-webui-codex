@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Txt2vid orchestration using Diffusers pipelines (WAN22).
+Configures sampler settings, applies LoRAs, runs the pipeline, exports the resulting video, and yields progress/result events.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_run_pipeline` (function): Runs a Diffusers txt2vid pipeline and returns generated frames.
+- `run_txt2vid` (function): Orchestrates txt2vid generation and yields an `InferenceEvent` stream.
+"""
+
 from __future__ import annotations
 
 import time
@@ -6,7 +22,7 @@ from typing import Any, Iterator
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.runtime.processing.datatypes import VideoPlan
-from apps.backend.runtime.workflows import (
+from apps.backend.runtime.workflows.video import (
     apply_engine_loras,
     build_video_plan,
     build_video_result,

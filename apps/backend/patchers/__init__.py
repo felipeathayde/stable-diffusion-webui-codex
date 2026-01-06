@@ -1,8 +1,18 @@
-"""Patchers for backend models (CLIP, VAE, UNet, ControlNet, LoRA).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This package exposes many symbols via lazy imports to avoid circular imports
-during application startup. Accessing an attribute will import the minimal
-submodule that defines it.
+Purpose: Patcher package facade with lazy imports (CLIP/VAE/UNet/ControlNet/LoRA).
+Exposes patcher symbols via `__getattr__` to avoid import cycles during startup; attributes resolve to the minimal submodule that defines them.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_EXPORTS` (constant): Export map `{symbol_name: (module_path, attribute_name)}` used by the lazy import hook.
+- `__all__` (constant): Sorted list of public export names (keys of `_EXPORTS`).
+- `__getattr__` (function): Lazy import hook that resolves exports on first access.
 """
 
 from importlib import import_module

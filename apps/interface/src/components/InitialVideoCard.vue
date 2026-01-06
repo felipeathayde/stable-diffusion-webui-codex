@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Initial video file picker for vid2vid workflows.
+Provides a file input, preview, and remove action and emits the selected `File` back to the parent.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `InitialVideoCard` (component): Initial video picker panel.
+- `onFile` (function): Handles file selection and emits `set`/clears the input value.
+-->
+
 <template>
   <div class="panel-section">
     <label class="label-muted">{{ label }}</label>

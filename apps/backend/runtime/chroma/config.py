@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed configuration dataclasses for Chroma architecture and distilled guidance.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ChromaGuidanceConfig` (dataclass): Distilled-guidance modulation network config (validated in `__post_init__`).
+- `ChromaArchitectureConfig` (dataclass): Transformer config (positional + guidance defaults, derived `patch_area`).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

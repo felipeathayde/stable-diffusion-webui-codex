@@ -1,3 +1,37 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Tools view (GGUF converter + file browser modal).
+Starts GGUF conversion jobs via `/api/tools/convert-gguf`, polls job status, and provides a modal file browser to pick config/weights/output paths
+without manual typing.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ToolsTab` (component): Tools page SFC; owns GGUF converter form state and the file browser modal.
+- `GGUFForm` (interface): GGUF converter form state (paths + quantization + overrides).
+- `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
+- `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
+- `BrowserData` (interface): File browser listing payload (current path + items).
+- `startConversion` (function): Starts a conversion job and begins polling.
+- `parseTensorTypeOverrides` (function): Parses textarea overrides into a normalized line list.
+- `pollStatus` (function): Polls job status and stops polling when complete/error.
+- `browseForConfig` (function): Opens the file browser in config selection mode.
+- `browseForSafetensors` (function): Opens the file browser in safetensors selection mode.
+- `browseForOutput` (function): Opens the file browser in output selection mode.
+- `openFileBrowser` (function): Opens the modal and loads the current path listing.
+- `closeFileBrowser` (function): Closes the modal.
+- `loadBrowserPath` (function): Fetches the directory listing for the current browser path.
+- `goToParent` (function): Navigates the browser up one directory.
+- `selectItem` (function): Selects a browser row item.
+- `openItem` (function): Opens a directory (or confirms selection for files).
+- `confirmSelection` (function): Applies the selected path to the active form field and closes the modal.
+- `formatSize` (function): Formats byte sizes for display.
+-->
+
 <template>
   <section class="panel-stack cdx-tools">
     <div class="panel">

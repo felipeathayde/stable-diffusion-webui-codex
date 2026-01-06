@@ -1,3 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SD engine spec/runtime assembly (classic CLIP text encoding + UNet/VAE patchers + dynamic args).
+Defines the schema for SD “classic” engine branches and provides the assembly function that validates required components and produces
+an `SDEngineRuntime` used by SD engines to run inference.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SDEngineConfigurationError` (exception): Raised when required SD components or dynamic args are missing/None.
+- `_require_component` (function): Validates a required component is present and non-None in a component mapping.
+- `_require_dynamic_arg` (function): Fetches a required dynamic arg and raises on missing/None.
+- `_resolve_attr` (function): Resolves a dotted attribute path on an object and raises on missing/None (used for branch accessors).
+- `SDClassicBranchSpec` (dataclass): Spec for a classic CLIP branch (identifier, embedding shape, clip-skip defaults, pooled/text-proj flags).
+- `SDT5BranchSpec` (dataclass): Spec for a T5 branch (identifier + min length) used by SD3-style configurations (when applicable).
+- `SDEngineSpec` (dataclass): High-level SD engine spec (family + branches + clip/tenc expectations) used to drive runtime assembly.
+- `SDEngineRuntime` (dataclass): Assembled runtime (CLIP/text engine + UNet/VAE patchers + resolved model family/dynamic flags).
+- `assemble_engine_runtime` (function): Validates components and builds an `SDEngineRuntime` (resolves CLIP branches, sets clip-skip, and
+  wires `ClassicTextProcessingEngine` + patchers based on `dynamic_args` and model family).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -10,6 +35,7 @@ from apps.backend.patchers.unet import UnetPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
+from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 
 logger = logging.getLogger("backend.engines.sd.spec")
 

@@ -108,6 +108,7 @@ bash .sangoi/.tools/link-check.sh .sangoi
 Sub-agents (`AGENTS.md` across the project) tell the truth or they shut up.
 
 * If you touch a folder, you touch its `AGENTS.md`. Same day. Same commit.
+* If you touch an `apps/**` source file, you keep its file header block honest. Same day. Same commit. If the purpose or top-level symbols changed, you update them — no ghosts, no lies. (Standard: `.sangoi/policies/file-header-block.md`)
 * You add one when a folder earns moving parts.
 * Minimum you keep: Purpose. Key files with real paths. Notes/decisions that survived daylight. Last Review with a real date.
 * When a file moves, you fix the path and you run the link checker.
@@ -240,13 +241,14 @@ If you touch dependencies or configs, you update the proper manifest or lockfile
 
 You do not plan or write anything under the false god of "compat."
 * Legacy code is reference only.
+* **No code-level compat for renames.** If a symbol/field/parameter is renamed (e.g. `unet` → `denoiser`), do **not** add aliases, fallback kwargs, or translation layers to “keep old callers working”. Let the old name raise loudly (TypeError/AttributeError) and update call sites instead.
 * The default core for attention is PyTorch SDPA.
-* You read the `.refs` sources with a cold eye.
+* You read the archived upstream snapshots with a cold eye.
 * You list risks, side effects, globals.
 * Codex prefix or suffix is used where it actually adds meaning.
-* `.refs/Forge-A1111`, `.refs/InvokeAI`, and `.refs/ComfyUI` are museums. Read only.
+* Archived upstream snapshots are museums. Read only. If you need a behavior baseline, start with Hugging Face Diffusers — then come back to the museum if you still have to.
 
-You do not keep or copy `.refs` code to `apps`.
+You do not keep or copy archived upstream snapshot code to `apps`.
 You redesign in Codex style:
 * Dataclasses and enums.
 * Small modules with clear seams.
@@ -263,7 +265,7 @@ NotImplementedError("<feature> not yet ported")
 
 You follow the order for any implementation:
 1. Understand the goal.
-2. Search the equivalents under `.refs` and inspect.
+2. Search the equivalents in archived upstream snapshots and inspect.
 3. Draft a native plan without copying code.
 4. Then and only then write.
 

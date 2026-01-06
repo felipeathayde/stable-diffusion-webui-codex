@@ -1,7 +1,7 @@
 # apps/backend/runtime/zimage
 Date: 2025-12-12
 Owner: Runtime Maintainers
-Last Review: 2025-12-29
+Last Review: 2026-01-04
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 ## Key Files
 - `apps/backend/runtime/zimage/model.py` — Z Image Turbo DiT core + RoPE embedding (consumes HF `axes_dims`/`t_scale` config keys).
 - `apps/backend/runtime/zimage/text_encoder.py` — Qwen3-4B text encoder wrapper + GGUF/state_dict loading.
+- `apps/backend/runtime/zimage/inference.py` — Shared dimension inference (detector + loader) for prefixed exports and GGUF-core state dicts.
 - `apps/backend/runtime/zimage/qwen3.py` — Native Qwen3 modules + attention-mask / SDPA debug helpers.
 - `apps/backend/runtime/zimage/debug.py` — Opt-in debug helpers (env flags, tensor stats, token summaries).
 
@@ -33,6 +34,9 @@ Status: Active
 - **VAE normalization:** Flow16 (Flux/Z-Image) scaling/shift is applied outside the runtime core via `vae.first_stage_model.process_in/out`.
 - **Tokenizer source of truth:** prefer the vendored HF tokenizer at `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/tokenizer` (no hub fetch). Override with `CODEX_ZIMAGE_TOKENIZER_PATH` when needed.
 - 2025-12-29: ZImage tokenizer fallback paths are now anchored to `CODEX_ROOT` (required) so tokenizers resolve correctly when the process CWD is not the repo root.
+- 2026-01-04: ZImage GGUF text encoder loads GGUF via `apps/backend/runtime/utils.py:load_gguf_state_dict` so global runtime flags (e.g. `--gguf-dequantize-upfront`) apply consistently.
+- 2026-01-04: Added `runtime/zimage/inference.py` and updated detector/loader to use it (prevents drift in hidden/context/latent/layer inference; supports prefixed SafeTensors exports).
+- 2026-01-02: Added standardized file header docstrings to Z-Image runtime facade/debug modules (doc-only change; part of rollout).
 - **Debugging:** enable extra logs with env flags:
   - `CODEX_ZIMAGE_DEBUG_PROMPT=1` (engine prompt string + distilled cfg scale)
   - `CODEX_ZIMAGE_DEBUG_TENC_TEXT=1`, `CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1`, `CODEX_ZIMAGE_DEBUG_TENC_DECODE=1`, `CODEX_ZIMAGE_DEBUG_TENC_RUN=1` (tokenization + embedding stats)

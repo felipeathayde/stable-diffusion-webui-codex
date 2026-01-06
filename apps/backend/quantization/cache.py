@@ -1,4 +1,19 @@
-# CodexQuantization - Thread-safe device cache
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Thread-safe per-device tensor cache for quantization helpers.
+Used to store lookup tables and other device-specific tensors (e.g., bit-unpack LUTs) without mutating global state during inference.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `DeviceCache` (class): Thread-safe per-device tensor cache with lazy factory creation.
+- `_GLOBAL_CACHE` (constant): Module-level singleton `DeviceCache` instance.
+- `get_device_cache` (function): Returns the global `DeviceCache` singleton.
+"""
 
 from __future__ import annotations
 

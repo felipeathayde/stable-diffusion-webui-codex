@@ -1,4 +1,28 @@
-"""Typed configuration models for Codex runtime memory management."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed configuration models for runtime memory management (devices, swap, attention, and budgets).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `DeviceBackend` (enum): Execution backend selection (auto/cuda/cpu/mps/xpu/directml).
+- `DeviceRole` (enum): Logical component roles managed by the memory manager.
+- `SwapPolicy` (enum): Where models are offloaded when VRAM is constrained.
+- `SwapMethod` (enum): How tensors are copied during swap operations (blocked vs async).
+- `AttentionBackend` (enum): Preferred attention implementation.
+- `PrecisionFlags` (dataclass): Fine-grained dtype override flags for core/text/VAE/CLIP components.
+- `ComponentPolicy` (dataclass): Device/dtype expectations for a component role.
+- `SwapConfig` (dataclass): Swap strategy controlling offload behavior.
+- `AttentionConfig` (dataclass): Attention backend preferences and fallback flags.
+- `MemoryBudgets` (dataclass): Budget constraints for load/offload heuristics.
+- `_default_component_policies` (function): Internal default mapping for `RuntimeMemoryConfig.components`.
+- `RuntimeMemoryConfig` (dataclass): High-level configuration consumed by the memory manager.
+- `HardwareProbe` (dataclass): Snapshot of detected hardware capabilities (VRAM/RAM/dtype/backend support).
+"""
 
 from __future__ import annotations
 

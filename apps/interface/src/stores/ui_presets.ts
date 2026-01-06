@@ -1,3 +1,18 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Server-driven UI presets store.
+Fetches `/api/ui/presets` and exposes preset lists with helpers to filter by tab and apply a preset via the backend.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useUiPresetsStore` (store): Pinia store for UI presets (init + namesFor + applyByTitle).
+*/
+
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { UiPreset, UiPresetsResponse } from '../api/types'
@@ -43,4 +58,3 @@ export const useUiPresetsStore = defineStore('uiPresets', () => {
 
   return { version, presets, loaded, error, init, namesFor, applyByTitle }
 })
-

@@ -1,3 +1,45 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
+This module resolves TE/VAE overrides, normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
+ready for orchestrator/engine execution (with memory-management hooks).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_strip_unet_prefixes_mapping` (function): Builds a remap of UNet keys by stripping known prefixes in a checkpoint mapping.
+- `_normalize_depth_list` (function): Normalizes “depth list” inputs (pad/trim) to a fixed length used by model configs.
+- `_build_diffusers_to_ldm_map` (function): Builds a diffusers→LDM key mapping for UNet state dict conversion based on config.
+- `_normalize_unet_state_dict` (function): Normalizes/rewrites UNet state dict keys to the expected internal layout.
+- `TextEncoderOverrideError` (class): Raised when TE override configs are invalid or cannot be resolved to usable paths.
+- `TextEncoderOverrideConfig` (dataclass): Normalized TE override description (family/label/components; supports explicit path components).
+- `_canonical_override_family` (function): Canonicalizes override “family” for loader semantics (so UI/API can use stable labels).
+- `resolve_text_encoder_override_paths` (function): Resolves a TE override config into explicit weight paths (including `alias=/abs/path` entries).
+- `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
+- `DiffusionModelBundle` (dataclass): Loaded model components and configs (UNet/VAE/text encoders + signature + quant/layout info).
+- `_supported_inference_dtypes` (function): Returns supported inference dtypes for a given model family.
+- `_prediction_type_value` (function): Converts a `PredictionKind` into the string value expected by configs/pipelines.
+- `_load_state_dict` (function): Loads a state dict from disk (handles supported formats) for downstream parsing.
+- `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
+- `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
+- `_load_component_config` (function): Loads a component config dict from a diffusers component directory.
+- `_resolve_vae_class` (function): Picks the VAE class/loader path based on model signature and layout (`diffusers` vs legacy layouts).
+- `_maybe_convert_sdxl_vae_state_dict` (function): Applies SDXL-specific VAE key conversions when the checkpoint layout requires it.
+- `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
+- `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory.
+- `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
+- `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution, VAE layout handling,
+  dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
+- `_SimpleEstimated` (class): Minimal estimate container used for config detection/compat when only partial metadata is available.
+- `_detect_engine_from_config` (function): Detects engine identifier from a diffusers config dict.
+- `load_engine_from_diffusers` (function): Loads a `DiffusionModelBundle` directly from a diffusers repo directory.
+- `resolve_diffusion_bundle` (function): Resolves and loads a diffusion bundle from either checkpoint paths or diffusers repos based on inputs.
+"""
+
 import importlib
 import json
 import logging
@@ -12,7 +54,6 @@ from transformers import modeling_utils
 
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.args import args
-from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
@@ -523,11 +564,11 @@ class DiffusionModelBundle:
 ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "sdxl": ModelFamily.SDXL,
     "sdxl_refiner": ModelFamily.SDXL_REFINER,
-    "flux": ModelFamily.FLUX,
-    "kontext": ModelFamily.FLUX_KONTEXT,
+    "flux1": ModelFamily.FLUX,
+    "flux1_kontext": ModelFamily.FLUX_KONTEXT,
     "sd35": ModelFamily.SD35,
     "sd3": ModelFamily.SD3,
-    "chroma": ModelFamily.CHROMA,
+    "flux1_chroma": ModelFamily.CHROMA,
     "sd20": ModelFamily.SD20,
     "sd15": ModelFamily.SD15,
     "wan22_14b": ModelFamily.WAN22,
@@ -537,11 +578,11 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
 FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.SDXL_REFINER: "sdxl_refiner",
     ModelFamily.SDXL: "sdxl",
-    ModelFamily.FLUX: "flux",
-    ModelFamily.FLUX_KONTEXT: "kontext",
+    ModelFamily.FLUX: "flux1",
+    ModelFamily.FLUX_KONTEXT: "flux1_kontext",
     ModelFamily.SD35: "sd35",
     ModelFamily.SD3: "sd35",
-    ModelFamily.CHROMA: "chroma",
+    ModelFamily.CHROMA: "flux1_chroma",
     ModelFamily.SD20: "sd20",
     ModelFamily.SD15: "sd15",
     ModelFamily.WAN22: "wan22_14b",
@@ -567,84 +608,6 @@ def _load_state_dict(path: str) -> Mapping[str, Any]:
         tensor_count = -1
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
-
-
-def _load_flux_vae_state_dict() -> Mapping[str, Any]:
-    """Load VAE weights for Flux core-only GGUF from configured paths.
-
-    Flux GGUF core-only checkpoints ship only the rectified-flow backbone. VAE
-    weights are expected to live under the `flux_vae` key in `apps/paths.json`.
-
-    Each `flux_vae` entry may be either:
-      - a direct weights file (`*.safetensors`/`*.bin`/`*.pt`), or
-      - a directory containing standard VAE weights (e.g., `vae/diffusion_pytorch_model.*`).
-
-    The first path that successfully loads is used. Failures are logged and
-    we continue to the next candidate. If no usable path is found, a
-    RuntimeError is raised with guidance for configuration.
-    """
-    candidates = get_paths_for("flux_vae")
-    search_files: list[str] = []
-
-    for entry in candidates:
-        if os.path.isfile(entry):
-            search_files.append(entry)
-            continue
-        if not os.path.isdir(entry):
-            continue
-
-        # Prefer a diffusers-style VAE folder structure when present.
-        preferred_dirs = [entry, os.path.join(entry, "vae")]
-        preferred_names = [
-            "diffusion_pytorch_model.safetensors",
-            "diffusion_pytorch_model.bin",
-            "diffusion_pytorch_model.pt",
-        ]
-        found = None
-        for base in preferred_dirs:
-            if not os.path.isdir(base):
-                continue
-            for name in preferred_names:
-                candidate = os.path.join(base, name)
-                if os.path.isfile(candidate):
-                    found = candidate
-                    break
-            if found is not None:
-                break
-
-        # If no canonical file found, fall back to the first VAE-like weights file.
-        if found is None:
-            try:
-                for root, _, files in os.walk(entry):
-                    for name in sorted(files):
-                        lower = name.lower()
-                        if lower.endswith((".safetensors", ".bin", ".pt")):
-                            found = os.path.join(root, name)
-                            break
-                    if found is not None:
-                        break
-            except Exception:
-                # Directory may be unreadable; move on to next candidate.
-                LOGGER.exception("Failed to scan Flux VAE directory %s", entry)
-                continue
-
-        if found is not None:
-            search_files.append(found)
-
-    for path in search_files:
-        try:
-            LOGGER.info("Loading Flux VAE weights from %s", path)
-            return _load_state_dict(path)
-        except Exception:  # noqa: BLE001
-            LOGGER.exception("Failed to load Flux VAE weights from %s", path)
-            continue
-
-    raise RuntimeError(
-        "Flux GGUF core-only checkpoint requires external VAE weights, but no usable path was found. "
-        "Configure at least one 'flux_vae' entry in apps/paths.json pointing to a VAE file or directory "
-        "containing the VAE weights (e.g., diffusion_pytorch_model.safetensors)."
-    )
-
 
 def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> ParsedCheckpoint:
     base_state = _load_state_dict(primary_path)
@@ -717,7 +680,7 @@ def _maybe_convert_sdxl_vae_state_dict(
 ) -> Mapping[str, Any]:
     """Normalise SDXL VAE weights that use the original LDM naming.
 
-    Some SDXL checkpoints (including legacy Forge/A1111 exports) store VAE weights
+    Some SDXL checkpoints (including some exported variants) store VAE weights
     under ``first_stage_model.*`` with keys like::
 
         encoder.down.{i}.block.{j}.*
@@ -944,7 +907,7 @@ def _load_huggingface_component(
                     "or use a checkpoint with an embedded SDXL VAE."
                 )
             # Flux GGUF core-only checkpoints carry only the rectified-flow backbone;
-            # compose them with an external VAE sourced from `flux_vae` paths.
+            # they must be composed with an explicit external VAE (sha-selected).
             signature = getattr(parsed, "signature", None)
             quant = getattr(signature, "quantization", None)
             extras = getattr(signature, "extras", {}) or {}
@@ -955,9 +918,11 @@ def _load_huggingface_component(
                 and bool(extras.get("gguf_core_only"))
             )
             if is_flux_core_gguf:
-                state_dict = _load_flux_vae_state_dict()
-            else:
-                return None
+                raise RuntimeError(
+                    "Flux GGUF core-only checkpoint is missing a VAE. "
+                    "Provide one explicitly (request extras.vae_sha), so the API passes a valid vae_path to the loader."
+                )
+            return None
 
         # Unwrap common packing shapes (e.g., {'state_dict': {...}})
         if isinstance(state_dict, Mapping) and len(state_dict) == 1 and "state_dict" in state_dict:
@@ -1687,6 +1652,7 @@ def codex_loader(
     sd_path: str,
     additional_state_dicts=None,
     text_encoder_override: TextEncoderOverrideConfig | None = None,
+    vae_path: str | None = None,
 ) -> DiffusionModelBundle:
     try:
         parsed = _parse_checkpoint(sd_path, additional_state_dicts or [])
@@ -1694,6 +1660,26 @@ def codex_loader(
         raise ValueError("Failed to recognize model type!") from exc
 
     config = parsed.config
+    signature = getattr(parsed, "signature", None)
+
+    quant = getattr(signature, "quantization", None)
+    extras = getattr(signature, "extras", {}) or {}
+    is_flux_core_gguf = (
+        isinstance(signature, ModelSignature)
+        and signature.family in (ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT)
+        and getattr(quant, "kind", None) is QuantizationKind.GGUF
+        and bool(extras.get("gguf_core_only"))
+    )
+    external_vae_used: str | None = None
+    if is_flux_core_gguf:
+        if not isinstance(vae_path, str) or not vae_path.strip():
+            raise RuntimeError(
+                "Flux GGUF core-only checkpoint requires an external VAE (sha-selected). "
+                "Provide a VAE via request extras.vae_sha so the API can pass a valid vae_path."
+            )
+        vae_path = os.path.expanduser(vae_path.strip())
+        if not os.path.isfile(vae_path):
+            raise RuntimeError(f"Flux GGUF core-only VAE path not found: {vae_path}")
 
     try:
         te_override_paths = resolve_text_encoder_override_paths(
@@ -1724,6 +1710,10 @@ def codex_loader(
             continue
         lib_name, cls_name = component_info
         component_sd = component_states.get(component_name)
+
+        if component_sd is None and is_flux_core_gguf and cls_name == "AutoencoderKL":
+            component_sd = _load_state_dict(vae_path)
+            external_vae_used = vae_path
 
         override_path = te_override_paths.get(component_name)
         if override_path is not None:
@@ -1785,6 +1775,8 @@ def codex_loader(
     metadata = {"repo_id": repo_name}
     if yaml_prediction:
         metadata["prediction_type"] = yaml_prediction
+    if external_vae_used:
+        metadata["vae_external_path"] = external_vae_used
 
     return _build_diffusion_bundle(
         model_ref=sd_path,
@@ -1810,17 +1802,17 @@ class _SimpleEstimated:
 def _detect_engine_from_config(config: dict) -> str:
     pipeline_cls = str(config.get("_class_name") or "").strip().lower()
     if pipeline_cls == "fluxkontextpipeline":
-        return "kontext"
+        return "flux1_kontext"
     comps = {k: v for k, v in config.items() if isinstance(v, list) and len(v) == 2}
     cls_by_name = {k: v[1] for k, v in comps.items()}
     if "text_encoder_2" in comps and "unet" in comps:
         return "sdxl"
     if cls_by_name.get("transformer") in ("FluxTransformer2DModel",):
-        return "flux"
+        return "flux1"
     if cls_by_name.get("transformer") in ("SD3Transformer2DModel",):
         return "sd35"
     if cls_by_name.get("transformer") in ("ChromaTransformer2DModel",):
-        return "chroma"
+        return "flux1_chroma"
     if "unet" in comps and "text_encoder" in comps and "vae" in comps:
         te_cls = cls_by_name.get("text_encoder", "")
         if te_cls.endswith("WithProjection"):
@@ -1880,6 +1872,7 @@ def resolve_diffusion_bundle(
     *,
     additional_state_dicts: Optional[list[str]] = None,
     text_encoder_override: TextEncoderOverrideConfig | None = None,
+    vae_path: str | None = None,
 ) -> DiffusionModelBundle:
     """Resolve a diffusion model reference into a fully loaded bundle."""
     if os.path.isdir(model_ref):
@@ -1893,6 +1886,7 @@ def resolve_diffusion_bundle(
             model_ref,
             additional_state_dicts=additional_state_dicts,
             text_encoder_override=text_encoder_override,
+            vae_path=vae_path,
         )
 
     record = model_api.find_checkpoint(model_ref)
@@ -1911,4 +1905,5 @@ def resolve_diffusion_bundle(
         record.filename,
         additional_state_dicts=additional_state_dicts,
         text_encoder_override=text_encoder_override,
+        vae_path=vae_path,
     )

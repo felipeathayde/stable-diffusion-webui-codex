@@ -1,3 +1,59 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Frontend API DTOs and response/payload types.
+Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ModelInfo` (interface): Model list entry returned by `/api/models`.
+- `SamplerInfo` (interface): Sampler metadata entry returned by `/api/samplers`.
+- `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
+- `ModelsResponse` (interface): `/api/models` response shape.
+- `SamplersResponse` (interface): `/api/samplers` response shape.
+- `SchedulersResponse` (interface): `/api/schedulers` response shape.
+- `VaesResponse` (interface): `/api/vaes` response shape.
+- `TextEncodersResponse` (interface): `/api/text-encoders` response shape.
+- `OptionsResponse` (interface): `/api/options` response shape.
+- `OptionsUpdateResponse` (interface): `/api/options` update response shape.
+- `Txt2ImgStartResponse` (interface): Start-task response shape (`task_id`).
+- `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
+- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
+- `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
+- `MemoryResponse` (interface): `/api/memory` response shape.
+- `VersionResponse` (interface): `/api/version` response shape.
+- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+- `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
+- `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
+- `LoraListResponse` (interface): `/api/loras` response shape.
+- `PathsResponse` (interface): `/api/paths` response shape.
+- `PathsUpdateResponse` (interface): `/api/paths` update response shape.
+- `SettingsCategory` (interface): Settings category entry in settings schema responses.
+- `SettingsSection` (interface): Settings section entry in settings schema responses.
+- `SettingsFieldType` (type): Allowed field types in settings schema definitions.
+- `SettingsField` (interface): Settings field entry in settings schema responses.
+- `SettingsSchemaResponse` (interface): `/api/settings/schema` response shape.
+- `UiFieldType` (type): Allowed field types for server-driven UI blocks.
+- `UiFieldBind` (interface): Optional binds mapping UI fields to payload keys.
+- `UiField` (interface): UI block field definition.
+- `UiBlockWhen` (interface): Conditional activation for a UI block.
+- `UiBlockLayout` (interface): Layout metadata for a UI block.
+- `UiBlock` (interface): Server-driven UI block definition.
+- `UiBlocksResponse` (interface): `/api/ui/blocks` response shape.
+- `UiPreset` (interface): UI preset definition used by the frontend.
+- `UiPresetsResponse` (interface): `/api/ui/presets` response shape.
+- `UiPresetApplyResponse` (interface): `/api/ui/presets/apply` response shape.
+- `ApiTabMeta` (interface): Per-tab metadata timestamps.
+- `ApiTab` (interface): Persisted model tab definition.
+- `TabsResponse` (interface): `/api/ui/tabs` response shape.
+- `WorkflowsResponse` (interface): `/api/ui/workflows` response shape.
+- `InventoryResponse` (interface): `/api/models/inventory` response shape.
+*/
+
 export interface ModelInfo {
   title: string
   name: string
@@ -184,9 +240,9 @@ export interface UiPresetApplyResponse { applied: boolean; model: string }
 
 // Tabs/workflows persistence
 export interface ApiTabMeta { createdAt: string; updatedAt: string }
-export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux' | 'zimage' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
+export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
 export interface TabsResponse { version: number; tabs: ApiTab[] }
-export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>} 
+export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>}
 
 // Model inventory (for populating selects)
 export interface InventoryResponse {

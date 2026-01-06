@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Chroma-family model detector for the model registry.
+Detects Chroma checkpoints and builds a `ModelSignature` for runtime assembly; Radiance variants are explicitly marked as not yet ported.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CHROMA_KEYS` (constant): Key set used to identify Chroma checkpoints.
+- `ChromaDetector` (class): Detector for Chroma flow DiT checkpoints (raises `NotImplementedError` for Radiance).
+- `_infer_latents` (function): Infers VAE latent channels from the VAE output conv weight.
+- `_shape` (function): Helper to fetch a tensor shape from a bundle/state dict (best-effort).
+"""
+
 from __future__ import annotations
 
 from typing import Optional

@@ -9,6 +9,30 @@
 #   Self-attention Does Not Need O(n2) Memory":
 #   https://arxiv.org/abs/2112.05682v2
 
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Memory-efficient attention (sub-quadratic chunked dot-product attention).
+Implements a chunked attention routine with optional checkpointing and an OOM-aware softmax fallback, used to reduce peak VRAM on long
+sequences while maintaining attention correctness.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `dynamic_slice` (function): Helper that slices tensors using start/size tuples.
+- `AttnChunk` (NamedTuple): Per-chunk attention summary (exp-weighted values, sums, max score).
+- `SummarizeChunk` (Protocol): Protocol for per-chunk summarization callables.
+- `ComputeQueryChunkAttn` (Protocol): Protocol for query-chunk attention implementations.
+- `_summarize_chunk` (function): Summarizes one KV chunk for a fixed query chunk (handles scale/mask/upcast).
+- `_query_chunk_attention` (function): Scans KV chunks to compute attention for one query chunk.
+- `_get_attention_scores_no_kv_chunking` (function): Fast path for small KV (includes OOM-aware softmax fallback).
+- `ScannedChunk` (NamedTuple): Helper tuple carrying a scanned chunk index and its summary.
+- `efficient_dot_product_attention` (function): Main entrypoint computing attention with sub-quadratic memory usage.
+"""
+
 from functools import partial
 import logging
 import torch

@@ -1,9 +1,20 @@
-"""Typed records for checkpoint and VAE assets discovered by the backend.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-These dataclasses are the canonical representation that registry providers and
-public APIs should rely on.  They intentionally avoid legacy-specific fields
-so other subsystems (engines, services, CLI tooling) can reuse them without
-dragging in historical shims.
+Purpose: Typed records for checkpoint and VAE assets discovered by the backend.
+These are the canonical representations used by registries and public APIs, avoiding legacy-specific fields.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CheckpointFormat` (enum): Origin/layout type for checkpoint assets (single-file, diffusers folder, GGUF).
+- `CheckpointPrediction` (enum): Prediction type hint for diffusion checkpoints (`epsilon`, `v_prediction`, `edm`, `unknown`).
+- `CheckpointRecord` (dataclass): Metadata describing a discoverable checkpoint (paths, hashes, format, defaults, `as_dict()`).
+- `VAERecord` (dataclass): Metadata describing a standalone VAE weights file (`as_dict()`).
+- `__all__` (constant): Explicit export list for public record types.
 """
 
 from __future__ import annotations
@@ -115,4 +126,3 @@ __all__ = [
     "CheckpointRecord",
     "VAERecord",
 ]
-

@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Viewer for generated images/videos with zoom overlay.
+Displays generated outputs and provides an overlay viewer for zoom/pan actions and per-item controls.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.
+-->
+
 <template>
   <div class="viewer-card">
     <!-- Images gallery mode -->

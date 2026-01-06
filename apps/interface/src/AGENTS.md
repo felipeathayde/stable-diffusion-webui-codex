@@ -2,7 +2,7 @@
 # apps/interface/src Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2025-12-23: Added shared slider primitives under `components/ui/` (SliderField + NumberStepperInput) with matching styles under `styles/components/`.
 - 2025-12-29: `App.vue` derives `--sticky-offset` from the `.main-header` height (via `ResizeObserver`) so `RunCard` can stay sticky below the header.
 - 2026-01-01: Image model tabs now include `clipSkip` in their per-tab params and send `clip_skip`/`img2img_clip_skip` to the backend (no prompt-tag injection needed).
+- 2026-01-03: Added standardized file header blocks to `App.vue`, `main.ts`, and `router.ts` (doc-only change; part of rollout).

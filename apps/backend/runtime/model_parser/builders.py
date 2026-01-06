@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Build `CodexEstimatedConfig` from parser context + model signature.
+Provides family presets for legacy UNet-like core config defaults, resolves a canonical Hugging Face repo id for external assets, and
+normalizes quantization metadata by comparing detector hints with parser-detected tensor types.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_CORE_CONFIG_PRESETS` (constant): Default core config presets per `ModelFamily` for compatibility loaders (UNet-like models).
+- `_FALLBACK_REPOS` (constant): Fallback diffusers repo ids used when `ModelSignature.repo_hint` is missing.
+- `register_text_encoder` (function): Records a logical text encoder alias → component name mapping in `ParserContext.metadata`.
+- `build_estimated_config` (function): Builds the `CodexEstimatedConfig` returned by `parse_state_dict` (components + repo id + extras + quantization).
+"""
+
 from __future__ import annotations
 
 from typing import Dict

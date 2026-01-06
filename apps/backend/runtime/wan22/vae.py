@@ -1,3 +1,29 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 VAE implementation (`AutoencoderKLWan`) for video latent encode/decode.
+Defines the WAN22-specific VAE blocks (ResNet/Attention/Encoder/Decoder) and the final `AutoencoderKLWan` module used by WAN engines to
+encode frames to latents and decode latents back to RGB, including distribution sampling utilities.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `nonlinearity` (function): Activation helper (SiLU-like: `x * sigmoid(x)`) used across blocks.
+- `Normalize` (function): GroupNorm helper used across residual/attention blocks.
+- `DiagonalGaussianDistribution` (class): Gaussian distribution wrapper for VAE posterior/prior (sampling + mode), used by KL-style VAEs.
+- `Upsample` (class): Upsampling block (optionally with convolution) used in the decoder path.
+- `Downsample` (class): Downsampling block (optionally with convolution) used in the encoder path.
+- `ResnetBlock` (class): Residual block used in encoder/decoder stacks.
+- `AttnBlock` (class): Spatial attention block used at configured resolutions (uses single-head attention helper).
+- `Encoder` (class): VAE encoder mapping images → latent moments (mu/logvar) via conv/resnet/attn stacks.
+- `Decoder` (class): VAE decoder mapping latents → images via conv/resnet/attn/upsample stacks.
+- `AutoencoderKLWan` (class): Full VAE module (diffusers-style `ConfigMixin`); wires encoder/decoder + quantization layers and exposes
+  encode/decode APIs (contains nested helpers for config defaults and tensor plumbing).
+"""
+
 import logging
 import torch
 import numpy as np

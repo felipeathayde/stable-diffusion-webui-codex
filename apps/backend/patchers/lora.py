@@ -1,3 +1,44 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA patch loader/applier for runtime models (UNet/CLIP and related components).
+Loads LoRA tensors, normalizes patch payloads across variants (diff/set/lora/loha/lokr/glora), and applies them to weights with
+dtype/device management (including GGUF dequantization paths).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LoraPatchEntry` (type): Raw LoRA patch entry tuple/list shape used by conversion helpers.
+- `LoraVariant` (enum): Supported LoRA patch variants (diff/set/lora/loha/lokr/glora) with tag parsing.
+- `OffsetSpec` (dataclass): Tensor narrow/slice spec used for offset-based LoRA segments.
+- `LoraPatchSegment` (dataclass): Normalized patch segment representation (variant + tensors + offsets) used by apply helpers.
+- `load_lora` (function): Loads/filters LoRA tensors for a target model mapping and returns normalized segments + tensor table.
+- `model_lora_keys_clip` (function): Builds CLIP LoRA key mapping for a model.
+- `model_lora_keys_unet` (function): Builds UNet LoRA key mapping for a model.
+- `_to_offset` (function): Converts raw offset arrays into `OffsetSpec` (or `None`).
+- `_compose_segment` (function): Builds a `LoraPatchSegment` from a raw patch entry (handles offsets and dtype normalization).
+- `_normalize_payload` (function): Normalizes raw payload objects into canonical shapes/types for each `LoraVariant`.
+- `_expect_tensor` (function): Validates that an object is a tensor and raises with a clear label/key on mismatch.
+- `_cast_tensor` (function): Moves/casts a tensor to a target device/dtype for patch application.
+- `_reshape_like` (function): Reshapes a tensor to match a reference tensor shape (for variant compatibility).
+- `_pad_mismatch` (function): Pads diff tensors to match current weight shapes when needed.
+- `weight_decompose` (function): Decomposes weights to an apply-friendly form for certain variants/quant paths.
+- `merge_lora_to_weight` (function): Merges a LoRA patch into a target weight tensor (variant-dispatched).
+- `_apply_segment` (function): Applies one `LoraPatchSegment` onto a weight (dispatches by variant).
+- `_apply_diff_patch` (function): Applies a “diff” variant patch.
+- `_apply_set_patch` (function): Applies a “set” variant patch.
+- `_apply_lora_patch` (function): Applies a standard LoRA (rank decomposition) patch.
+- `_apply_lokr_patch` (function): Applies a LoKR patch.
+- `_apply_loha_patch` (function): Applies a LoHA patch.
+- `_apply_glora_patch` (function): Applies a GLoRA patch.
+- `get_parameter_devices` (function): Captures current parameter device mapping for later restoration.
+- `set_parameter_devices` (function): Restores parameters to a previously captured device mapping.
+- `CodexLoraLoader` (class): High-level loader/applier that integrates mapping, device placement, and progress reporting (tqdm).
+"""
+
 from __future__ import annotations
 
 import logging

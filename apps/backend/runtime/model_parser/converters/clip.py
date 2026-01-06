@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: CLIP state-dict conversion helpers for model parsing (SD1.5/SD2.x/SDXL).
+Normalizes CLIP checkpoints into the expected Codex/HF-like key layout using `transformers_convert`, fixes position-id dtype when requested,
+and canonicalizes text-projection keys (handling alias/prefix variants).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_ensure_position_ids_long` (function): Ensures `position_ids` tensors are `torch.long` (rounding when needed).
+- `_with_prefix` (function): Adds a prefix to every key in a state dict mapping.
+- `_strip_prefix` (function): Removes a key prefix when present (leaves non-matching keys unchanged).
+- `_normalize_text_projection` (function): Normalizes text-projection weights into `*.text_projection.weight` (optional transpose).
+- `convert_clip` (function): Generic CLIP converter (alias-aware; OpenCLIP/diffusers key normalization via `transformers_convert`).
+- `convert_sd15_clip` (function): SD1.5 CLIP-L converter (drops heads reconstructed at runtime).
+- `convert_sd20_clip` (function): SD2.x CLIP-H converter (transposes projection weights).
+- `convert_sdxl_clip_l` (function): SDXL CLIP-L converter (drops runtime-reconstructed projection weights).
+- `convert_sdxl_clip_g` (function): SDXL CLIP-G converter (transposes projection; keeps logit_scale).
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict

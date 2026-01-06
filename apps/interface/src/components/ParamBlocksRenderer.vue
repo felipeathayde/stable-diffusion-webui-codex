@@ -1,3 +1,22 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Renderer for server-driven UI parameter blocks.
+Renders `UiBlock` definitions (fields + layout) into concrete inputs, binding field values to a provided store and honoring `visibleIf` conditions.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ParamBlocksRenderer` (component): Renders UI blocks schema into parameter controls.
+- `readField` (function): Reads a field value from the bound store (or default).
+- `writeField` (function): Writes a field value into the bound store.
+- `gridCols` (function): Resolves the grid column count for a block (clamped 1–4).
+- `isVisible` (function): Evaluates a field `visibleIf` condition against current values.
+-->
+
 <template>
   <div class="param-blocks">
     <div v-for="blk in blocks" :key="blk.id" class="panel-section">

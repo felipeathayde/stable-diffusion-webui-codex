@@ -1,7 +1,39 @@
-"""GGUF Converter Tool.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Converts Safetensors model files to GGUF format with optional quantization.
-This is used primarily for text encoders (e.g. Z Image Qwen3 variants).
+Purpose: GGUF converter tool (SafeTensors → GGUF) with optional quantization, metadata injection, and verification.
+Used primarily for text encoders and other components that need GGUF artifacts (e.g. ZImage Qwen3 variants), including sharded HF-style weights.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuantizationType` (enum): Supported “human” quantization selectors for conversion (maps to `GGMLQuantizationType`).
+- `ConversionConfig` (dataclass): Conversion configuration (input/output paths, quantization choices, tensor overrides, and metadata inputs).
+- `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
+- `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
+- `_get_layer_key_mapping` (function): Builds layer-index key mapping for known architectures (used for tensor name remapping).
+- `build_key_mapping` (function): Builds the full key mapping for a model given number of layers.
+- `_TensorPlan` (dataclass): Planned tensor conversion entry (name/shape/type + strategy) used by the converter.
+- `_resolve_config_json_path` (function): Resolves a config path (file/dir/HF layout) to a concrete `config.json` path.
+- `_ShardedSafetensorsIndex` (dataclass): Parsed representation of a sharded SafeTensors index JSON.
+- `_load_sharded_safetensors_index` (function): Loads a sharded SafeTensors index and validates required fields.
+- `_pick_safetensors_index_path` (function): Picks an index JSON path from a weights directory (if sharded).
+- `_ShardedSafetensors` (class): Abstraction over sharded SafeTensors sources (opens the right shard for a tensor key).
+- `_open_safetensors_source` (function): Opens a SafeTensors source (single file or sharded directory/index) for reading.
+- `_requested_ggml_type` (function): Maps `QuantizationType` to the requested `GGMLQuantizationType`.
+- `_default_tensor_type_overrides` (function): Returns default per-tensor type overrides for a given quantization strategy.
+- `_compile_tensor_overrides` (function): Compiles user-provided overrides into normalized match rules.
+- `_select_tensor_ggml_type` (function): Selects the effective GGML type for a tensor given shape and requested type.
+- `_plan_tensors` (function): Plans tensor conversion (name mapping, overrides, target quant types, and byte shapes).
+- `_hash_file` (function): Computes sha256 for a file (used for metadata/provenance).
+- `_is_hf_repo_id` (function): Heuristic for whether a string looks like a HuggingFace repo id (`org/name`).
+- `_add_basic_metadata` (function): Adds standard provenance/license metadata keys into the output GGUF.
+- `convert_safetensors_to_gguf` (function): Main conversion entrypoint; reads SafeTensors (incl. sharded), quantizes tensors, writes GGUF,
+  and optionally verifies the output (uses many helpers above).
+- `_verify_gguf_file` (function): Verifies a written GGUF file (metadata/tensor tables/types) and raises on mismatch.
 """
 
 from __future__ import annotations

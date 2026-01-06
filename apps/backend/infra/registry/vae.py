@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: VAE asset discovery registry for UI dropdowns and metadata panels.
+Scans per-family VAE roots configured in `apps/paths.json` and vendored Hugging Face repos under `apps/backend/huggingface`, returning stable
+name lists and basic per-VAE metadata (format/latent_channels/scaling_factor) when available.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `DEFAULT_BASELINES` (constant): Baseline VAE entries shown first (Automatic/Built in/None).
+- `_collect_from_paths_roots` (function): Collects VAE entries from per-family `*_vae` roots declared in `apps/paths.json`.
+- `_collect_from_vendored_hf` (function): Collects `vae/` directories from vendored HF repos.
+- `list_vaes` (function): Returns ordered VAE choice names (baselines + discovered entries).
+- `_read_json` (function): Best-effort JSON reader used for VAE config probing.
+- `describe_vaes` (function): Returns metadata dicts for discovered VAEs (name/path/format + optional config hints).
+"""
+
 from __future__ import annotations
 
 import os
@@ -5,31 +26,17 @@ from typing import List
 
 from .base import AssetEntry, _iter_dirs
 import json
+from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.inventory.scanners.vaes import iter_vae_files
 
 
 DEFAULT_BASELINES = ["Automatic", "Built in", "None"]
 
 
-def _collect_from_models_root(models_root: str) -> List[AssetEntry]:
+def _collect_from_paths_roots(models_root: str) -> List[AssetEntry]:
     out: List[AssetEntry] = []
-    if not models_root:
-        return out
-    # common locations: models/VAE/*.safetensors or any file/folder with 'vae' keyword
-    vae_dir = os.path.join(models_root, "VAE")
-    try:
-        for base in (vae_dir, models_root):
-            if not os.path.isdir(base):
-                continue
-            for name in os.listdir(base):
-                full = os.path.join(base, name)
-                if os.path.isdir(full):
-                    if name.lower().startswith("vae"):
-                        out.append(AssetEntry(name=name, path=full, kind="vae"))
-                elif os.path.isfile(full) and name.lower().endswith((".safetensors", ".pt", ".bin")):
-                    if "vae" in name.lower():
-                        out.append(AssetEntry(name=name, path=full, kind="vae"))
-    except Exception:
-        return out
+    for full in iter_vae_files(models_root=models_root):
+        out.append(AssetEntry(name=os.path.basename(full), path=full, kind="vae"))
     return out
 
 
@@ -52,10 +59,15 @@ def list_vaes(models_root: str = "models", vendored_hf_root: str = "apps/backend
     """Return an ordered list of VAE choices (names).
 
     Baselines always first; discovered entries are appended in stable order.
-    Includes VAEs from engine-specific paths in paths.json (flux_vae, zimage_vae, sd15_vae, etc.).
+    Includes VAEs from engine-specific paths in paths.json (flux1_vae, zimage_vae, sd15_vae, etc.).
     """
+    if not os.path.isabs(models_root):
+        models_root = str(get_repo_root() / models_root)
+    if not os.path.isabs(vendored_hf_root):
+        vendored_hf_root = str(get_repo_root() / vendored_hf_root)
+
     entries: List[AssetEntry] = []
-    entries.extend(_collect_from_models_root(models_root))
+    entries.extend(_collect_from_paths_roots(models_root))
     # scan one level deep in vendored hf
     if os.path.isdir(vendored_hf_root):
         try:
@@ -63,24 +75,6 @@ def list_vaes(models_root: str = "models", vendored_hf_root: str = "apps/backend
                 entries.extend(_collect_from_vendored_hf(org))
         except Exception:
             pass
-
-    # Collect VAEs from engine-specific paths in paths.json
-    try:
-        from apps.backend.infra.config.paths import get_paths_for
-        seen_paths = {e.path for e in entries}
-        for key in ("sd15_vae", "sdxl_vae", "flux_vae", "zimage_vae", "wan22_vae"):
-            for root in get_paths_for(key):
-                if os.path.isdir(root):
-                    for name in os.listdir(root):
-                        full = os.path.join(root, name)
-                        if os.path.isfile(full) and full not in seen_paths:
-                            entries.append(AssetEntry(name=name, path=full, kind="vae"))
-                            seen_paths.add(full)
-                elif os.path.isfile(root) and root not in seen_paths:
-                    entries.append(AssetEntry(name=os.path.basename(root), path=root, kind="vae"))
-                    seen_paths.add(root)
-    except Exception:
-        pass
 
     names = [e.name for e in entries]
     ordered = DEFAULT_BASELINES + [n for n in sorted(names) if n not in DEFAULT_BASELINES]
@@ -99,12 +93,17 @@ def describe_vaes(models_root: str = "models", vendored_hf_root: str = "apps/bac
     """Return metadata for discovered VAEs.
 
     Each entry contains: name, path, format (diffusers|file|dir), latent_channels, scaling_factor.
-    Includes VAEs from engine-specific paths in paths.json (flux_vae, sd15_vae, etc.).
+    Includes VAEs from engine-specific paths in paths.json (flux1_vae, sd15_vae, etc.).
     """
+    if not os.path.isabs(models_root):
+        models_root = str(get_repo_root() / models_root)
+    if not os.path.isabs(vendored_hf_root):
+        vendored_hf_root = str(get_repo_root() / vendored_hf_root)
+
     info = []
     seen_paths: set[str] = set()
-    # Scan models_root
-    for e in _collect_from_models_root(models_root):
+    # Scan paths.json roots
+    for e in _collect_from_paths_roots(models_root):
         if e.path in seen_paths:
             continue
         seen_paths.add(e.path)
@@ -131,34 +130,6 @@ def describe_vaes(models_root: str = "models", vendored_hf_root: str = "apps/bac
                         meta["latent_channels"] = cfg.get("latent_channels")
                         meta["scaling_factor"] = cfg.get("scaling_factor")
                     info.append(meta)
-    # Collect VAEs from engine-specific paths in paths.json
-    try:
-        from apps.backend.infra.config.paths import get_paths_for
-        for key in ("sd15_vae", "sdxl_vae", "flux_vae", "zimage_vae", "wan22_vae"):
-            for root in get_paths_for(key):
-                if os.path.isdir(root):
-                    for name in os.listdir(root):
-                        full = os.path.join(root, name)
-                        if os.path.isfile(full) and full not in seen_paths:
-                            seen_paths.add(full)
-                            meta = {"name": name, "path": full, "format": "file", "latent_channels": None, "scaling_factor": None}
-                            cfg_path = os.path.join(os.path.dirname(full), "config.json")
-                            if os.path.isfile(cfg_path):
-                                cfg = _read_json(cfg_path)
-                                meta["latent_channels"] = cfg.get("latent_channels") or cfg.get("vae_latent_channels")
-                                meta["scaling_factor"] = cfg.get("scaling_factor")
-                            info.append(meta)
-                elif os.path.isfile(root) and root not in seen_paths:
-                    seen_paths.add(root)
-                    meta = {"name": os.path.basename(root), "path": root, "format": "file", "latent_channels": None, "scaling_factor": None}
-                    cfg_path = os.path.join(os.path.dirname(root), "config.json")
-                    if os.path.isfile(cfg_path):
-                        cfg = _read_json(cfg_path)
-                        meta["latent_channels"] = cfg.get("latent_channels") or cfg.get("vae_latent_channels")
-                        meta["scaling_factor"] = cfg.get("scaling_factor")
-                    info.append(meta)
-    except Exception:
-        pass
     return sorted(info, key=lambda m: m["name"].lower())
 
 

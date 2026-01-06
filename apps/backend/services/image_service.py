@@ -1,4 +1,21 @@
 # // tags: image-service, generation, outputs
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Image generation service wrapper for the API layer.
+Runs `InferenceOrchestrator` for txt2img/img2img and returns base64-encoded PNG images plus the engine `info` payload, persisting samples via `save_generated_images(...)`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_encode_images` (function): Encodes PIL images to `{format,data}` base64 PNG payloads.
+- `_save_images_to_disk` (function): Persists generated images to disk via `save_generated_images`.
+- `ImageService` (class): Orchestrates txt2img/img2img requests via `InferenceOrchestrator`.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional

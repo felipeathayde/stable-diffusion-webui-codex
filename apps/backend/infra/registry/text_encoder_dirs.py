@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Directory inventory for vendored text encoders in the Hugging Face cache.
+Lists `{org}/{repo}/{subdir}` directories such as `text_encoder`, `text_encoder_2`, `t5`, and `clip` under `apps/backend/huggingface`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `list_text_encoder_dirs` (function): Returns a sorted list of `{name,path}` entries for vendored text encoder directories.
+"""
+
 from __future__ import annotations
 
 import os

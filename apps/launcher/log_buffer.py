@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Thread-safe in-memory log ring buffer.
+Captures the last N launcher log lines for UI display and diagnostics without relying on external logging sinks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CodexLogBuffer` (dataclass): Thread-safe ring buffer for launcher log lines.
+"""
+
 from __future__ import annotations
 
 from collections import deque

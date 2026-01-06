@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed video export/interpolation option payloads.
+Holds ffmpeg export options and optional interpolation settings to be passed through request schemas and UI/service layers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `VideoExportOptions` (dataclass): Export parameters for video output (format/codec knobs + metadata/save flags).
+- `VideoInterpolationOptions` (dataclass): Optional interpolation settings (enable + model + times).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
@@ -31,4 +47,3 @@ class VideoInterpolationOptions:
 
 
 __all__ = ["VideoExportOptions", "VideoInterpolationOptions"]
-

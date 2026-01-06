@@ -1,7 +1,22 @@
-"""Payload validation key definitions.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-These keys are concatenated to build validation sets.
-HIRES reuses keys from CORE (prompt, steps, sampler, scheduler).
+Purpose: Payload validation key set definitions.
+Defines frozen key groups for SHA selection, txt2img, and extras payloads and exposes singleton instances used by request validators.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ShaKeys` (dataclass): Frozen key groups for SHA256-based asset selection payload fields.
+- `Txt2ImgKeys` (dataclass): Frozen key groups for txt2img payload fields (CORE/DIFFUSION/FLOW/HIRES/etc.).
+- `ExtrasKeys` (dataclass): Frozen key groups for `payload.extras` fields.
+- `SHA_KEYS` (constant): Singleton instance of `ShaKeys`.
+- `TXT2IMG_KEYS` (constant): Singleton instance of `Txt2ImgKeys`.
+- `EXTRAS_KEYS` (constant): Singleton instance of `ExtrasKeys`.
+- `__all__` (constant): Explicit export list for this module.
 """
 
 from __future__ import annotations

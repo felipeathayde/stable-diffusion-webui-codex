@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Inpaint/init-image store for the frontend.
+Keeps an init image (data URL + name) in state and exposes helpers to set/clear it from an uploaded file.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useInpaintStore` (store): Pinia store for init-image state used by inpaint/img2img flows.
+- `readFileAsDataURL` (function): Reads a `File` into a `data:` URL via `FileReader`.
+*/
+
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
@@ -36,4 +52,3 @@ async function readFileAsDataURL(file: File): Promise<string> {
     reader.readAsDataURL(file)
   })
 }
-

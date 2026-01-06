@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Base quicksettings selectors for diffusion tabs (SD15/SDXL).
+Renders Mode/Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and “add path” actions to the parent quicksettings bar.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsBase` (component): Base quicksettings selectors for diffusion model tabs.
+- `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder dropdown values.
+-->
+
 <template>
   <div class="quicksettings-group qs-group-mode">
     <label class="label-muted">Mode</label>

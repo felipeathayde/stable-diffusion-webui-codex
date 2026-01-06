@@ -1,3 +1,37 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Runtime “operations” layer for model execution (weight fetch/casting, GGUF dequantization, streaming/swap hooks).
+Provides `CodexOperations` implementations used by runtimes to run common ops while supporting manual casting, memory streaming,
+and GGUF-specific paths.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_parse_positive_int` (function): Parses env/config ints with a non-negative clamp and default fallback.
+- `_log_weight_fetch` (function): Debug logger for repeated weight/bias fetch events (with per-layer mute limit).
+- `OperationContext` (dataclass): Thread-local-ish operation config (device/dtype + manual cast + bnb dtype hints).
+- `StreamStashEntry` (dataclass): One stashed streaming entry (weight/bias + bookkeeping for swap/stream state).
+- `StreamStash` (dataclass): Tracks streaming stash state across ops (used to coordinate stream workers and cleanup).
+- `get_operation_context` (function): Returns the active `OperationContext` (resolved from env/defaults).
+- `_resolve_device` (function): Resolves a default device for operations (explicit override vs runtime defaults).
+- `_resolve_dtype` (function): Resolves a default dtype for operations (explicit override vs runtime defaults).
+- `get_weight_and_bias` (function): Fetches weight/bias tensors for a layer, applying patches and optional streaming hooks.
+- `weights_manual_cast` (function): Context manager enabling/disabling “manual cast” behavior for weights/activations.
+- `main_stream_worker` (function): Stream worker used to stage weights/biases for streamed execution.
+- `cleanup_cache` (function): Best-effort cleanup of internal caches/stashes (used between runs/model switches).
+- `_select_operations_class` (function): Chooses the correct operations implementation (vanilla vs GGUF) from context/override.
+- `CodexOperations` (class): Base operations implementation used by runtimes (contains many op methods: linear/conv/norm/attention helpers).
+- `CodexOperationsGGUF` (class): GGUF-aware operations implementation (handles GGUF parameter containers and dequantization paths).
+- `using_codex_operations` (function): Context manager installing an operations instance + operation context for a block of execution.
+- `shift_manual_cast` (function): Applies manual-cast toggles to a model/module tree for runtime execution.
+- `automatic_memory_management` (function): Context manager enabling/disabling automatic memory management policies for a block.
+- `DynamicSwapInstaller` (class): Helper for installing dynamic swap hooks/policies into model execution.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -117,8 +151,6 @@ def get_weight_and_bias(
 ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
     scale_weight = getattr(layer, "scale_weight", None)
     patches = getattr(layer, "codex_online_loras", None)
-    if patches is None:
-        patches = getattr(layer, "forge_online_loras", None)
 
     weight_patches = patches.get("weight") if patches is not None else None
     bias_patches = patches.get("bias") if patches is not None else None

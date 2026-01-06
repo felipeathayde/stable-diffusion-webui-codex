@@ -1,4 +1,27 @@
-"""Typed request/response objects for the modular inference pipeline."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed request and event objects for backend engines/orchestration.
+Defines progress/result events and request payload dataclasses for image and video tasks, used by the API, orchestrator, engines, and services.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ProgressEvent` (dataclass): Progress update event (stage/percent/step + optional metadata).
+- `ResultEvent` (dataclass): Result event carrying an engine payload and optional metadata.
+- `InferenceEvent` (type alias): Union of `ProgressEvent` and `ResultEvent` produced by engines.
+- `BaseRequest` (dataclass): Shared request fields across tasks (prompt/sampler/seed/LoRA/etc).
+- `Txt2ImgRequest` (dataclass): Text-to-image request.
+- `Img2ImgRequest` (dataclass): Image-to-image/inpaint request (init image + optional mask).
+- `Txt2VidRequest` (dataclass): Text-to-video request.
+- `Img2VidRequest` (dataclass): Image-to-video request.
+- `Vid2VidRequest` (dataclass): Video-to-video request (source video + optional reference/pose/background inputs).
+- `ImageRequest` (type alias): Union of image request dataclasses accepted by image engines.
+- `VideoRequest` (type alias): Union of video request dataclasses accepted by video engines.
+"""
 
 from __future__ import annotations
 

@@ -1,9 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN22-specific registry helpers for GGUF weights under `models/`.
+Discovers `.gguf` candidates under the configured WAN22 roots and classifies them as high/low stage based on filename heuristics
+for use in selection UIs and tooling.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `GGUFEntry` (dataclass): Discovered GGUF file record (name/path/stage).
+- `list_wan22_gguf` (function): Returns sorted GGUF candidates from the canonical WAN22 roots (`paths.json:wan22_ckpt` or `models/wan22`).
+"""
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List
 
+from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.inventory.scanners.wan22_gguf import infer_wan22_stage, iter_wan22_gguf_files
 
 @dataclass(frozen=True)
 class GGUFEntry:
@@ -11,49 +30,16 @@ class GGUFEntry:
     path: str
     stage: str  # 'high' | 'low' | 'unknown'
 
-
-def _detect_stage(filename: str) -> str:
-    n = filename.lower()
-    if any(k in n for k in ("high", "highnoise", "high_noise")):
-        return "high"
-    if any(k in n for k in ("low", "lownoise", "low_noise")):
-        return "low"
-    return "unknown"
-
-
 def list_wan22_gguf(models_root: str = "models") -> List[GGUFEntry]:
     out: List[GGUFEntry] = []
-    if not os.path.isdir(models_root):
-        return out
-    # look for .gguf files at root and in common subfolders
-    candidates: List[str] = []
-    try:
-        for name in os.listdir(models_root):
-            p = os.path.join(models_root, name)
-            if os.path.isfile(p) and name.lower().endswith(".gguf"):
-                candidates.append(p)
-    except Exception:
-        pass
-    for sub in ("Wan", "wan", "codex", "wan22", "WAN", "WAN22"):
-        d = os.path.join(models_root, sub)
-        try:
-            if os.path.isdir(d):
-                for name in os.listdir(d):
-                    p = os.path.join(d, name)
-                    if os.path.isfile(p) and name.lower().endswith(".gguf"):
-                        candidates.append(p)
-        except Exception:
-            pass
+    mr = models_root
+    if not os.path.isabs(mr):
+        mr = os.path.join(str(get_repo_root()), mr)
 
-    seen = set()
-    for full in candidates:
-        if full in seen:
-            continue
-        seen.add(full)
-        stage = _detect_stage(os.path.basename(full))
-        out.append(GGUFEntry(name=os.path.basename(full), path=full, stage=stage))
+    for full in iter_wan22_gguf_files(models_root=mr):
+        name = os.path.basename(full)
+        out.append(GGUFEntry(name=name, path=full, stage=infer_wan22_stage(name)))
     return sorted(out, key=lambda e: e.name.lower())
 
 
 __all__ = ["GGUFEntry", "list_wan22_gguf"]
-

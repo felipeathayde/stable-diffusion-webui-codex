@@ -1,4 +1,19 @@
-"""Sampler and scheduler type definitions."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampler and scheduler type definitions.
+Defines the canonical `SamplerKind` enum and an `ApplyOutcome` result container, including alias resolution for sampler strings.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ApplyOutcome` (dataclass): Result of applying sampler/scheduler selection to a pipeline/request.
+- `SamplerKind` (enum): Canonical sampler identifiers with alias resolution via `SAMPLER_ALIAS_TO_CANONICAL`.
+- `__all__` (constant): Explicit export list for this module.
+"""
 
 from __future__ import annotations
 

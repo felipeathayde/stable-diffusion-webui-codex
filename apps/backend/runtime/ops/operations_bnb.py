@@ -1,10 +1,24 @@
-# Copyright Codex 2024
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-"""bitsandbytes integration helpers.
+Purpose: bitsandbytes 4-bit integration helpers (typed config + registry).
+Provides a small wrapper layer around bitsandbytes 4-bit weights and ops so loaders can request quantized parameters without importing
+bitsandbytes internals directly.
 
-Legacy Forge implementation pulled in 1:1; Codex rebuild introduces typed configs,
-explicit validation, and a registry so downstream loaders can request q/bnb helpers
-without touching raw bitsandbytes state.
+Symbols (top-level; keep in sync; no ghosts):
+- `BnbQuantConfig` (dataclass): Typed configuration for bitsandbytes quantized weights (validated in `__post_init__`).
+- `_copy_quant_state` (function): Copies a `QuantState` to a target device (handles nested quant states).
+- `CodexParams4bit` (class): `Params4bit` wrapper that carries a `BnbQuantConfig` and triggers Codex memory hooks on quantize.
+- `CodexLoader4Bit` (class): Loader module that materializes 4-bit weights using a registry configuration (serializes quant state).
+- `BnbOperationRegistry` (class): Registry for 4-bit functional ops and loader factories keyed by quant type.
+- `_register_defaults` (function): Registers default quant types (`nf4`/`fp4`/`4bit`) into the registry.
+- `functional_linear_4bits` (function): Functional 4-bit linear helper dispatching to the registry.
+- `functional_dequantize_4bit` (function): Functional 4-bit dequantize helper dispatching to the registry.
 """
 
 from __future__ import annotations

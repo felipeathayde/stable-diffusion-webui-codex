@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: QuickSettings path-like option editor.
+Surfaces a small set of backend path-like options (temp/output dirs) and persists changes immediately via `/api/options`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsPaths` (component): Path option editor shown in QuickSettings areas.
+- `init` (function): Loads current values from `/api/options`.
+- `onChange` (function): Persists an updated key via `updateOptions`.
+-->
+
 <template>
   <section class="quicksettings">
     <div class="quicksettings-group" v-for="item in items" :key="item.key">
@@ -38,4 +55,3 @@ async function onChange(event: Event, key: string): Promise<void> {
   await updateOptions({ [key]: val })
 }
 </script>
-

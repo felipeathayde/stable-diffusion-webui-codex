@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Settings route view.
+Fetches the settings schema/options and renders the Settings UI (settings form + paths panel).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Settings` (component): Settings route view component.
+-->
+
 <template>
   <section class="panels settings-page">
     <div class="panel-stack">

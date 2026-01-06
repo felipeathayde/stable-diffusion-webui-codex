@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Inventory and metadata for text encoders in vendored Hugging Face trees.
+Lists which repos contain encoder/tokenizer subfolders and can extract lightweight `config.json` fields (hidden size, vocab size, projections) for
+diagnostics and documentation.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_find_text_encoder_roots` (function): Returns present encoder/tokenizer subfolders under a repo directory.
+- `list_text_encoders` (function): Returns a mapping `{repo_name: [subdirs...]}` for vendored HF repos.
+- `_read_json` (function): Best-effort JSON reader used for `config.json` extraction.
+- `describe_text_encoders` (function): Returns richer metadata entries for vendored HF repos/subdirs.
+"""
+
 from __future__ import annotations
 
 import os

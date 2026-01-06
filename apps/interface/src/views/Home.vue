@@ -1,3 +1,29 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Engine-agnostic landing page and model-tab manager UI.
+Renders the Home workspace, creates new tabs, and manages existing tabs (enable/disable, rename, load/unload, duplicate, remove) while
+linking users to model tabs (`/models/:tabId`), workflows, and utilities.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Home` (component): Home workspace + tab manager; drives tab CRUD and status actions via stores/API (contains nested UI helpers and dialogs).
+- `HelpTopic` (type): Help topic selector for the contextual help panel.
+- `onCreate` (function): Creates a new model tab for the selected engine type (optional title).
+- `setTitleDraft` (function): Updates the in-memory title draft for a tab row (before persisting).
+- `commitTitle` (function): Persists a tab title edit to the backend/store.
+- `setEnabled` (function): Toggles a tab enabled/disabled state and persists the change.
+- `load` (function): Loads/activates a tab (backend load when required).
+- `unload` (function): Unloads/deactivates a tab (backend unload when supported).
+- `dup` (function): Duplicates an existing tab (clones params into a new id).
+- `remove` (function): Deletes a tab and removes it from the store.
+- `setHelpTopic` (function): Switches the active help topic in the UI.
+-->
+
 <template>
   <section class="panels">
     <div class="panel">
@@ -48,7 +74,7 @@
               <select id="engineType" class="select-md" v-model="newType">
                 <option value="sd15">SD 1.5</option>
                 <option value="sdxl">SDXL</option>
-                <option value="flux">FLUX</option>
+                <option value="flux1">FLUX.1</option>
                 <option value="zimage">Z Image</option>
                 <option value="wan">WAN 2.2</option>
               </select>

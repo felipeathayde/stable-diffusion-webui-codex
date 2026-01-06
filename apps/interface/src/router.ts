@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WebUI router configuration.
+Defines the SPA route table and lazy-loads page-level views (model tabs, tools, settings, etc.).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `router` (const): Vue Router instance configured with history + route table.
+- `default` (const): Default export of the configured router instance.
+*/
+
 import { createRouter, createWebHistory } from 'vue-router'
 
 const Upscale = () => import('./views/Upscale.vue')

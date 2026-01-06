@@ -1,8 +1,20 @@
-"""Family Runtime Specifications.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module defines runtime parameters for each model family,
-providing a centralized source of truth for latent channels,
-VAE normalization, and other family-specific settings.
+Purpose: Per-model-family runtime specification (capabilities + latent/normalization defaults).
+Defines UI-facing capability flags and runtime defaults per `ModelFamily` (latent channels, prediction kind, normalization hints),
+acting as the single source of truth for both backend assembly and frontend conditional UI.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FamilyCapabilities` (dataclass): UI-facing capability flags (what controls should be shown/hidden; supported/excluded samplers/schedulers).
+- `FamilyRuntimeSpec` (dataclass): Runtime defaults for a `ModelFamily` (latent channels, prediction kind, and related family invariants).
+- `get_family_spec` (function): Returns the `FamilyRuntimeSpec` for a known `ModelFamily` (raises on missing entries; no fallbacks).
+- `get_family_spec_or_default` (function): Returns `FamilyRuntimeSpec` for a family, with an explicit caller-provided default fallback.
 """
 from __future__ import annotations
 

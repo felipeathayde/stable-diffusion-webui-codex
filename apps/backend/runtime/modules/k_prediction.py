@@ -1,3 +1,31 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: K-prediction helpers and predictor modules (FlowMatch / EDM variants) used by schedulers/samplers.
+Provides prediction modules that transform model outputs into the form expected by different sigma schedules (including FlowMatch Euler),
+plus helper utilities for beta schedules and SNR/sigma rescaling.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `betas_for_alpha_bar` (function): Builds beta schedule from an alpha-bar function (discretized diffusion schedule helper).
+- `make_beta_schedule` (function): Creates standard beta schedules (linear/cosine/sqrt variants) as tensors.
+- `time_snr_shift` (function): Applies an SNR-based time shift parameterization.
+- `rescale_zero_terminal_snr_sigmas` (function): Rescales sigmas for “zero terminal SNR” behavior.
+- `AbstractPrediction` (class): Base prediction module interface (torch.nn.Module) for mapping model output → prediction.
+- `Prediction` (class): Standard prediction implementation (inherits `AbstractPrediction`).
+- `PredictionEDM` (class): EDM-style prediction wrapper (inherits `Prediction`).
+- `PredictionContinuousEDM` (class): Continuous EDM prediction base (sigma-continuous mapping).
+- `PredictionContinuousV` (class): Continuous V-prediction implementation (inherits continuous EDM base).
+- `PredictionFlow` (class): Flow prediction implementation (for flow-matching style training/inference).
+- `PredictionDiscreteFlow` (class): Discrete flow prediction implementation.
+- `FlowMatchEulerPrediction` (class): FlowMatch Euler discrete prediction module (used by Flux schedulers; contains nested scheduler mapping).
+- `k_prediction_from_diffusers_scheduler` (function): Builds the appropriate prediction module from a diffusers scheduler instance.
+"""
+
 import math
 import torch
 import numpy as np

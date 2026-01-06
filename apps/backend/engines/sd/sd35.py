@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native Stable Diffusion 3.5 engine.
+Assembles an `SDEngineRuntime` using `SD35_SPEC`; optional text-encoder behavior is controlled via `CODEX_SD3_ENABLE_T5`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_opts` (function): Loads SD3/SD35 environment flags (currently `CODEX_SD3_ENABLE_T5`) into a simple namespace.
+- `StableDiffusion3` (class): SD 3.5 diffusion engine wiring runtime components to the Codex engine interface.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -9,12 +25,15 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime, assemble_engine_runtime
+from apps.backend.engines.sd.factory import CodexSDFamilyFactory
+from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 
 logger = logging.getLogger("backend.engines.sd.sd35")
+
+_SD35_FACTORY = CodexSDFamilyFactory(spec=SD35_SPEC)
 
 
 def _opts():
@@ -46,18 +65,14 @@ class StableDiffusion3(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_engine_runtime(SD35_SPEC, bundle.estimated_config, bundle.components)
+        assembly = _SD35_FACTORY.assemble(bundle, options=dict(options))
+        runtime = assembly.runtime
         self._runtime = runtime
         self.register_model_family("sd3")
 
         logger.debug("StableDiffusion3 runtime prepared with classic branches=%s", runtime.classic_order)
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None

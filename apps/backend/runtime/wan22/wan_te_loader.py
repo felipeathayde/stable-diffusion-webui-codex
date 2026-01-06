@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN UMT5-XXL FP8 weights loader (safetensors) for CUDA TE kernels.
+Reads a UMT5-XXL encoder weights file stored as FP8 (`uint8` + per-tensor scale) and builds a lightweight mapping usable by CUDA kernels.
+Does not dequantize; validates shapes, collects scales, and fails fast on missing/invalid tensors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LinearPack` (dataclass): Packed linear layer weights/bias with expected (Cout,Cin) shape.
+- `WanTEFp8Weights` (dataclass): Structured FP8 TE weight bundle (embedding + per-layer linear packs + shape metadata).
+- `_tensor_from_safe` (function): Loads one tensor from safetensors with strict missing-key errors.
+- `_fp8_pack_from` (function): Builds one `LinearPack` by reading FP8 weights + optional scale/bias tensors.
+- `load_umt5_xxl_fp8` (function): Loads a full UMT5-XXL FP8 weights file into a `WanTEFp8Weights` bundle.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,17 +29,6 @@ import torch
 from safetensors import safe_open
 
 from .wan_te_cuda import Fp8Weight
-
-"""
-WAN T5 FP8 Weights Loader (safetensors)
-
-Reads a UMT5-XXL encoder weights file stored as FP8 (uint8 + scale) and
-builds a lightweight mapping usable by the CUDA kernels. This loader does not
-perform any dequantization; it only validates shapes and collects per-tensor
-scales.
-
-Strict errors: missing tensors or unexpected shapes raise with explicit context.
-"""
 
 log = logging.getLogger("wan22.te.loader")
 if not log.handlers:
@@ -165,4 +174,3 @@ def load_umt5_xxl_fp8(path: str) -> WanTEFp8Weights:
 
     log.info("loaded TE FP8: layers=%d d_model=%s embed=%s", num_layers, d_model, tuple(embed.w_u8.shape))
     return WanTEFp8Weights(embed=embed, blocks=blocks, num_layers=num_layers, d_model=int(d_model), n_heads=int(n_heads))
-

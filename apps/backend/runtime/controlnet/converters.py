@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: ControlNet conversion helpers (config inference + key mapping).
+Derives a supported ControlNet/UNet config from a ControlNet state dict and builds diffusers key maps used for weight conversion between
+UNet variants.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_count_blocks` (function): Counts indexed block groups in a state dict given a prefix template.
+- `_convert_config` (function): Normalizes/unrolls legacy-style UNet config fields into the expected diffusers shapes.
+- `derive_controlnet_config` (function): Infers a compatible ControlNet config template from state dict shapes and returns a normalized config.
+- `build_diffusers_key_map` (function): Builds a parameter name mapping between diffusers UNet keys and legacy/SD-style keys.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, Mapping

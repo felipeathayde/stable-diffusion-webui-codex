@@ -1,22 +1,28 @@
-"""TVA-Style Timeline Tracer for Inference Pipelines.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Inspired by Loki's Sacred Timeline visualization, this module provides
-visual tracking of execution flow during model inference.
+Purpose: Timeline tracer for inference pipelines (nested stage/event tracking + ASCII render + Chrome trace export).
+Provides a lightweight runtime “timeline” for debugging inference flow, including optional VRAM snapshots and per-thread event streams.
+Can be enabled via env (`CODEX_TIMELINE=1`) or used programmatically with `timeline.capture(...)` / `@timeline_node(...)`.
 
-Usage:
-    # Enable via environment variable
-    CODEX_TIMELINE=1 python launch.py
-
-    # Or programmatically
-    from apps.backend.runtime.timeline import timeline, timeline_node
-
-    @timeline_node("sampling.step")
-    def my_function():
-        ...
-
-    with timeline.capture("my_inference"):
-        run_inference()
-    timeline.render()
+Symbols (top-level; keep in sync; no ghosts):
+- `TimelineEvent` (dataclass): One enter/exit event (stage/name/depth/thread + duration/vram + extra metadata).
+- `TimelineCapture` (dataclass): One captured session (name + start/end + events snapshot).
+- `TimelineCollector` (class): Main collector; manages event stack, capture contexts, VRAM sampling, and render/export helpers.
+- `timeline` (object): Global `TimelineCollector` instance used across the runtime.
+- `timeline_node` (function): Decorator to wrap a function and emit enter/exit events under a stage/name.
+- `render_timeline` (function): Renders a timeline capture as a formatted string (optionally colorized).
+- `print_timeline` (function): Prints the rendered timeline to stdout.
+- `export_chrome_trace` (function): Exports a capture to a Chrome Trace JSON dict.
+- `enable_from_env` (function): Enables timeline collection based on env vars (and configures autosave/printing).
+- `get_logs_dir` (function): Returns the runtime logs directory path (for saving traces).
+- `save_to_logs` (function): Saves the current/selected capture to logs (returns filename or None).
+- `auto_save_and_print` (function): Convenience helper used by the runtime to auto-save and/or print when enabled.
 """
 
 from __future__ import annotations
@@ -32,26 +38,13 @@ from typing import Any, Callable, List, Optional, TypeVar
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
+
 _log = logging.getLogger("backend.timeline")
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    val = os.environ.get(name, "").lower()
-    if val in ("1", "true", "yes", "on"):
-        return True
-    if val in ("0", "false", "no", "off"):
-        return False
-    return default
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except ValueError:
-        return default
 
 
 # -----------------------------------------------------------------------------
@@ -101,9 +94,9 @@ class TimelineCollector:
         return cls._instance
     
     def _init(self) -> None:
-        self._enabled = _env_flag("CODEX_TIMELINE", False)
-        self._max_events = _env_int("CODEX_TIMELINE_MAX_EVENTS", 10000)
-        self._track_vram = _env_flag("CODEX_TIMELINE_VRAM", True)
+        self._enabled = env_flag("CODEX_TIMELINE", False)
+        self._max_events = env_int("CODEX_TIMELINE_MAX_EVENTS", 10000, min_value=0)
+        self._track_vram = env_flag("CODEX_TIMELINE_VRAM", True)
         self._captures: List[TimelineCapture] = []
         self._active_capture: Optional[TimelineCapture] = None
         self._depth = threading.local()
@@ -432,7 +425,7 @@ def export_chrome_trace(capture: Optional[TimelineCapture] = None) -> dict:
 
 def enable_from_env() -> None:
     """Enable timeline if CODEX_TIMELINE=1."""
-    if _env_flag("CODEX_TIMELINE", False):
+    if env_flag("CODEX_TIMELINE", False):
         timeline.enable()
 
 

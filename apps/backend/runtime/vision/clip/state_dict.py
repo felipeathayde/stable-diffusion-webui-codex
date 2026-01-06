@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: State-dict conversion and filtering helpers for CLIP vision encoders.
+Normalizes OpenCLIP-style layouts into HF naming, rekeys diffusers/HF outputs, and provides diagnostics for loading.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for state-dict conversion and filtering diagnostics.
+- `_transpose_projection` (function): Validates and transposes projection weights to match HF conventions.
+- `convert_openclip_checkpoint` (function): In-place OpenCLIP→HF key conversion for vision checkpoints.
+- `rekey_vision_state_dict` (function): Re-prefix helper for state dicts produced by diffusers/HF.
+- `cleaned_state_dict` (function): Filters a state dict to keep only keys under the allowed prefixes.
+- `summarize_state_dict` (function): Returns (#tensors, total parameters) for diagnostics.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed output structures for Codex-native CLIP vision encoding.
+Provides a dataclass bundle with strict accessors to avoid silently returning missing tensors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ClipVisionOutput` (class): Output bundle for a CLIP vision encode call (hidden states + embeddings + optional extras).
+- `__all__` (constant): Explicit export list for the module.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

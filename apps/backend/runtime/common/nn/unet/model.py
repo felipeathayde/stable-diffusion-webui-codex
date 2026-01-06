@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native `UNet2DConditionModel` implementation (SD-style UNet with optional SpatialTransformer blocks).
+Builds the UNet graph from `UNetConfig` and the core layers in `layers.py`, supporting cross-attention conditioning via `context` and
+optional ADM conditioning via `y` (strict invariants: if `num_classes` is None then `y` must be None; otherwise `y` must be a 2D tensor).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `UNet2DConditionModel` (class): Main UNet module; constructs input/down/middle/up blocks, embeds timesteps (and ADM when enabled),
+  routes `context` into `SpatialTransformer` blocks, and exposes a diffusers-compatible config interface via `ConfigMixin`.
+"""
+
 from __future__ import annotations
 
 from typing import List, Sequence

@@ -1,3 +1,21 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN stage parameter panel (High/Low).
+Renders sampler/scheduler/steps/cfg/seed controls for a WAN stage and emits a `stage` patch to the parent view; optionally shows stage LoRA controls when `LightX2V` is enabled.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanStagePanel` (component): High/Low stage panel for WAN generation parameters.
+- `updateStage` (function): Emits a patch for the stage params (`update:stage`).
+- `randomizeSeed` (function): Stores the previous seed and sets seed to `-1` (random).
+- `reuseSeed` (function): Reuses the last non-random seed when available.
+-->
+
 <template>
   <div :class="['gen-card', { 'gen-card--embedded': embedded }]">
     <div v-if="!embedded" class="row-split">

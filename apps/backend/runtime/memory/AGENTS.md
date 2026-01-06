@@ -1,7 +1,7 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2025-12-30
+Last Review: 2026-01-02
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 - 2025-12-05: `smart_offload` and `smart_fallback` flags are driven via Codex options (`codex_smart_offload`, `codex_smart_fallback`); the VAE patcher now uses `smart_fallback` to reroute decode and encode to CPU após um CUDA OOM instead of repeatedly retrying on GPU (encode falls back to tiled mode when Smart Fallback is disabled).
 - 2025-12-05: `CodexMemoryManager` expõe `memory_snapshot()` e `hardware_probe` para diagnósticos — use `apps.backend.runtime.memory.memory_management.memory_snapshot()` quando precisar inspecionar VRAM/CPU sem tocar em campos internos ou forçar `empty_cache`; o endpoint `/api/memory` é o consumidor público recomendado.
 - 2025-12-30: `memory_management.state_dict_dtype` now recognizes GGUF packed weights (`CodexParameter`) and returns `"gguf"` so loaders can route text encoders through the GGUF ops path.
+- 2026-01-02: Added standardized file header docstrings to `__init__.py`, `config.py`, `exceptions.py`, `smart_offload.py`, and `stream.py` (doc-only change; part of rollout).

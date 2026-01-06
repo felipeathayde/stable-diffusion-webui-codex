@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 Animate 14B video engine (Diffusers).
+Loads `WanAnimatePipeline`-style weights with vendored Hugging Face metadata and dispatches `vid2vid` jobs via the shared `use_cases.vid2vid` runner.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Wan22Animate14BEngine` (class): VID2VID engine for WAN2.2 Animate 14B using Diffusers pipelines.
+"""
+
 from __future__ import annotations
 
 import os

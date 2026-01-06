@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model tabs management view.
+Lists model tabs and provides actions to create/open/duplicate/remove tabs.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ModelsList` (component): View for managing model tabs.
+-->
+
 <template>
   <section class="panel-stack">
     <div class="panel">
@@ -6,7 +21,7 @@
           <select class="select-md" v-model="newType" aria-label="New tab type">
             <option value="sd15">SD 1.5</option>
             <option value="sdxl">SDXL</option>
-            <option value="flux">FLUX</option>
+            <option value="flux1">FLUX.1</option>
             <option value="zimage">Z Image</option>
             <option value="wan">WAN 2.2</option>
           </select>

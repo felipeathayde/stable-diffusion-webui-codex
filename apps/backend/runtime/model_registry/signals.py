@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lazy state-dict signal extraction helpers for model detection.
+Wraps a checkpoint mapping in a `SignalBundle` that exposes keys and lazily computed shapes, plus small helpers used across detectors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SignalBundle` (dataclass): State-dict wrapper exposing keys and lazy/cached shape lookup.
+- `build_bundle` (function): Builds a `SignalBundle` without materializing all tensors.
+- `count_blocks` (function): Counts sequential blocks matching a template prefix pattern.
+- `has_all_keys` (function): Returns True if all required keys exist in a bundle.
+- `get_tensor_dtype` (function): Best-effort dtype name extraction for a tensor-like object.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

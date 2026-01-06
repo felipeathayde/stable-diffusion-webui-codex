@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux transformer components (norms, attention, and stream blocks).
+Implements RMSNorm/QKNorm, rotary-aware self-attention, modulation MLPs, and the Double/Single stream transformer blocks plus the final
+projection layer used by Flux-family runtimes.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `RMSNorm` (class): Root-mean-square normalization with dtype-aware parameter casting.
+- `QKNorm` (class): Applies independent RMSNorm to query/key pairs for attention.
+- `SelfAttention` (class): Rotary-aware self-attention module with QKV projection and output projection.
+- `ModulationMLP` (class): Produces shift/scale/gate modulation vectors (single or double stream).
+- `DoubleStreamBlock` (class): Double-stream transformer block with joint attention across text+image streams (modulated MLP + attention).
+- `SingleStreamBlock` (class): Single-stream transformer block operating on concatenated tokens (modulated attention + MLP).
+- `LastLayer` (class): Final adaptive layer norm + linear projection to patch outputs.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,18 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Pinia store for backend engine capability gating.
+Fetches `/api/engines/capabilities` once and exposes a cached map so views/components can hide unsupported UI features per engine.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useEngineCapabilitiesStore` (store): Pinia store exposing engine capabilities, load state, and lookup helpers.
+*/
+
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { EngineCapabilitiesResponse, EngineCapabilities } from '../api/types'
@@ -42,4 +57,3 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     get,
   }
 })
-

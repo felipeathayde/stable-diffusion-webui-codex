@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Prompt attention parsing helpers for emphasis-style markup.
+Parses `(...)` / `[...]` and explicit weight syntax `(:1.2)` into segments with per-segment multipliers (WebUI-style).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `re_attention` (constant): Main regex used to tokenize prompt attention syntax.
+- `re_break` (constant): Regex matching `BREAK` tokens.
+- `parse_prompt_attention` (function): Parse a prompt string into `[text, weight]` segments according to emphasis rules.
+"""
+
 import re
 
 

@@ -1,4 +1,22 @@
-"""Registry utilities for inference engines."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: In-memory registry utilities for inference engines.
+Provides a thread-safe registry that maps engine keys/aliases to engine classes and exposes helpers to register, list, and instantiate engines.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EngineDescriptor` (dataclass): Describes one engine registration (key, class, aliases, metadata).
+- `EngineRegistry` (class): Thread-safe registry for engine descriptors and alias resolution.
+- `registry` (constant): Global `EngineRegistry` instance used by default.
+- `register_engine` (function): Registers an engine class in the global registry.
+- `list_engines` (function): Returns sorted engine keys from the global registry.
+- `create_engine` (function): Instantiates an engine from the global registry by key/alias.
+"""
 
 from __future__ import annotations
 

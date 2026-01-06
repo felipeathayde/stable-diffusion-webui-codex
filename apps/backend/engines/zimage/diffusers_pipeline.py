@@ -1,22 +1,22 @@
-"""Diffusers Pipeline Bypass for Z Image.
-
-Uses Diffusers ZImagePipeline directly with our GGUF model loader.
-This bypasses Codex's k-diffusion sampler and uses Diffusers scheduler instead.
-
-Usage in txt2img:
-    from apps.backend.engines.zimage.diffusers_pipeline import run_zimage_diffusers
-    
-    images = run_zimage_diffusers(
-        transformer=loaded_gguf_transformer,
-        text_encoder=loaded_qwen3,
-        vae=loaded_vae,
-        prompt="...",
-        height=1024,
-        width=1024,
-        num_inference_steps=9,
-        guidance_scale=0.0,
-    )
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Diffusers pipeline bypass for Z Image (use `ZImagePipeline` directly).
+Builds a diffusers `ZImagePipeline` from Codex-loaded components (GGUF core + text encoder + VAE) and runs inference using diffusers'
+scheduler path instead of the Codex k-diffusion sampler.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TextEncoderOutput` (class): Simple output wrapper exposing `hidden_states` for diffusers compatibility.
+- `DiffusersTextEncoderWrapper` (class): Adapter that makes a Codex text encoder behave like a diffusers/HF text encoder.
+- `create_zimage_pipeline` (function): Creates a `ZImagePipeline` wired to the provided components and scheduler.
+- `run_zimage_diffusers` (function): Runs the pipeline for a prompt and returns images (thin convenience wrapper).
+"""
+
 from __future__ import annotations
 
 import logging

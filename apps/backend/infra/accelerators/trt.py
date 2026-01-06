@@ -1,10 +1,19 @@
-from __future__ import annotations
-
-"""TensorRT accelerator stub.
-
-This provides a minimal, safe adapter that the backend can import regardless of
-environment. It never raises on import; availability is determined at runtime.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: TensorRT accelerator adapter stub (import-safe).
+Provides a minimal `TensorRTAccelerator` with an availability probe and a placeholder `apply_to_diffusers(...)` hook.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TensorRTAccelerator` (class): TensorRT adapter with runtime availability probe (`tensorrt` import or `CODEX_TRT_AVAILABLE`) and a no-op `apply_to_diffusers`.
+"""
+
+from __future__ import annotations
 
 from typing import Any
 
@@ -39,4 +48,3 @@ class TensorRTAccelerator:
             return
         # TODO: Integrate a proper TensorRT application path when supported
         return
-

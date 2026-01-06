@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Torchvision RAFT optical flow estimation and warping utilities.
+Implements a lazy-loaded RAFT flow estimator and a `warp_frame(...)` helper for flow-guided video workflows, raising `FlowGuidanceError` when torch/torchvision are missing.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FlowGuidanceError` (class): Raised when flow guidance dependencies are missing or inputs are invalid.
+- `_round_down_to_multiple` (function): Rounds a value down to a given multiple (used for downscaled inference shapes).
+- `RaftFlowEstimator` (dataclass): Lazy-loaded RAFT estimator that produces backward flow tensors `[1,2,H,W]`.
+- `warp_frame` (function): Warps a PIL frame using a backward flow tensor (torch grid sampling).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

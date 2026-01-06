@@ -1,7 +1,7 @@
 # apps Overview
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -32,3 +32,4 @@ Status: Active
 - 2025-12-03: BIOS DEBUG tab now exposes a "Force Native Sampler" toggle bound to `CODEX_SAMPLER_FORCE_NATIVE`, allowing operators to disable k-diffusion routing for diagnostics.
 - 2025-12-28: `apps/settings_values.json` and `apps/interface/{tabs,workflows}.json` are backend-managed runtime state files; they are created/overwritten locally and are intentionally ignored by Git.
 - 2025-12-29: Repo-root resolution across backend + launchers is now strict and `CODEX_ROOT`-anchored (no `__file__`/CWD fallbacks); launch via `run-webui.{bat,sh}` or set `CODEX_ROOT` explicitly.
+- 2026-01-03: Added standardized file header docstrings to the remaining low-core `apps/` entrypoints (`__init__.py`, `backend/__init__.py`, and WebUI entrypoints/config) (doc-only change; part of rollout).

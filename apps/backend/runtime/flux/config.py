@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed dataclasses describing Flux transformer architecture and embeddings.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FluxPositionalConfig` (dataclass): RoPE positional embedding configuration (patch_size/axes_dim/theta).
+- `FluxGuidanceConfig` (dataclass): Optional guidance embedding configuration.
+- `FluxArchitectureConfig` (dataclass): High-level transformer config (dims/blocks/positional/guidance).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -2,12 +2,12 @@
 <!-- tags: backend, package, exports, lazy-imports -->
 Date: 2025-10-28
 Owner: Backend Steward Team
-Last Review: 2025-11-30
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
 - Implements the Codex-native backend: engine orchestration, runtime components, services, registries, and vendor assets.
-- Provides a clean separation from legacy web UI code (no imports from `modules.*`, `backend.*`, or `.refs/Forge-A1111/`).
+- Provides a clean separation from legacy web UI code (no imports from `modules.*`, `backend.*`, or archived upstream snapshots).
 
 ## Subdirectories (Top-Level)
 - `core/` — Core orchestration (engine interface, device/state management, RNG stack, request handling, parameter schemas).
@@ -22,8 +22,7 @@ Status: Active
 - `gguf/` — GGUF-specific helpers and metadata.
 - `video/` — Shared video tooling (e.g., interpolation helpers).
 - `inventory/` — Machine-readable registries/inventories used during audits.
-- `codex/` — Codex-specific metadata and helpers (e.g., configuration defaults).
-- `debug/` — Temporary debugging utilities (e.g., legacy mimic/tracing) that may import from `.refs/Forge-A1111` strictly for diagnostics; safe to remove once parity is achieved.
+- `debug/` — Temporary debugging utilities for parity tracing and diagnosis; safe to remove once parity is achieved.
 
 ## Key Files
 - `__init__.py` — Package marker.
@@ -42,7 +41,8 @@ Status: Active
 - 2025-11-03: `RuntimeMemoryConfig.swap.pin_shared_memory` now maps to `--pin-shared-memory`/`CODEX_PIN_SHARED_MEMORY` and gates host pinning during smart offload.
  - 2025-11-20: SDXL txt2img now recomputa cond/uncond após o parse de prompt (inclui LoRA/pesos) e antes do hires, preservando metadados width/height/crop/target. Pipeline Runner loga shapes/normas quando `--debug-conditioning`/`CODEX_DEBUG_COND` está ativo.
  - 2025-11-03: Global call tracing added. Use `--trace-debug` (or `CODEX_TRACE_DEBUG=1`) to enable a process-wide function-call trace implemented via `sys.setprofile`. Every Python function call after activation is logged at `DEBUG` by `backend.calltrace` with indentation by depth. Logging is forced to `DEBUG` on activation; disable by removing the flag/env and restarting.
- - 2025-11-30: Package exports for WAN engines and text-processing are now lazy-loaded via `__getattr__`, preventing BIOS/API imports from pulling torch/Hugging Face dependencies until explicitly requested.
+- 2025-11-30: Package exports for WAN engines and text-processing are now lazy-loaded via `__getattr__`, preventing BIOS/API imports from pulling torch/Hugging Face dependencies until explicitly requested.
+- 2026-01-03: Added standardized file header docstrings to `apps/backend/__init__.py`, `apps/backend/debug/__init__.py`, and `apps/backend/huggingface/__init__.py` (doc-only change; part of rollout).
 
 ## Operator Communication Guidelines
 - Assuma expertise do operador. Não ofereça instruções "de iniciante" (ex.: "valide o par de TEs" ou "verifique se o modelo é SDXL") a menos que um verificador determinístico do backend tenha acusado incompatibilidade.

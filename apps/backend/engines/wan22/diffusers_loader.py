@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN 2.2 diffusers pipeline loader (prepare vendored dir + instantiate pipeline).
+Prepares a local diffusers directory (copy/link configs + weights) from an engine weights directory, resolves the pipeline class from
+`model_index.json`, and instantiates the diffusers pipeline with selected dtype/device defaults.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_torch_dtype` (function): Maps dtype strings (`fp16`/`bf16`/`fp32`) to torch dtypes.
+- `_read_model_index_class_name` (function): Reads `_class_name` from a diffusers `model_index.json`.
+- `_resolve_pipeline_class` (function): Resolves a diffusers pipeline class by name (errors with actionable message when missing).
+- `_copy_tree` (function): Copies a directory tree into a destination directory (preserving structure).
+- `_link_or_copy` (function): Hard-links (or copies) a file into a destination path.
+- `prepare_wan_diffusers_dir` (function): Builds a ready-to-load diffusers directory under the vendor cache for a WAN engine.
+- `load_wan_diffusers_pipeline` (function): Loads a WAN diffusers pipeline from a weights directory (calls `prepare_wan_diffusers_dir`).
+"""
+
 from __future__ import annotations
 
 import hashlib

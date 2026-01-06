@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA picker + token insertion modal.
+Fetches LoRAs via the backend API, filters by search query, and emits `<lora:name:weight>` tokens targeting either the positive or negative prompt.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LoraModal` (component): Modal for browsing LoRAs and emitting insertion tokens.
+- `filtered` (const): Filtered LoRA list based on the current search query.
+- `insert` (function): Emits a formatted LoRA token to be inserted into a prompt target.
+-->
+
 <template>
   <Modal v-model="open" title="LoRA Selector">
     <div class="form-grid">

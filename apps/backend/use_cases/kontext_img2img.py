@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux Kontext img2img use case (init image as conditioning tokens).
+Implements the Kontext img2img flow where the init image becomes conditioning (`image_latents`) and sampling starts from pure noise (no
+denoise-strength schedule), following the diffusers FluxKontext pipeline semantics.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_floor_multiple` (function): Floors a value to a positive multiple (used for resolution constraints).
+- `_pick_preferred_resolution` (function): Picks a recommended Kontext resolution based on init image aspect ratio.
+- `_compute_conditioning` (function): Builds conditional/unconditional conditioning using the engine's TE hooks.
+- `generate_kontext_img2img` (function): Runs Kontext img2img sampling and returns latent samples.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -8,19 +27,20 @@ from PIL import Image
 
 from apps.backend.runtime.processing.datatypes import ConditioningPayload
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
-from apps.backend.runtime.workflows import (
+from apps.backend.runtime.workflows.image_init import prepare_init_bundle
+from apps.backend.runtime.workflows.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
-    apply_sampling_overrides,
-    apply_tiling_if_requested,
     build_prompt_context,
+)
+from apps.backend.runtime.workflows.sampling_execute import execute_sampling
+from apps.backend.runtime.workflows.sampling_plan import (
+    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
-    execute_sampling,
-    finalize_tiling,
-    prepare_init_bundle,
-    run_process_scripts,
 )
+from apps.backend.runtime.workflows.scripts import run_process_scripts
+from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, finalize_tiling
 
 logger = logging.getLogger("backend.use_cases.kontext_img2img")
 

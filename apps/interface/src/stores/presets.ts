@@ -1,3 +1,21 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Local presets store backed by localStorage.
+Persists named parameter snapshots for txt2img/img2img (mode-scoped) and exposes helpers to list, upsert, and retrieve presets.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PresetDef` (interface): Preset definition (name + values object).
+- `usePresetsStore` (store): Pinia store for listing/saving/retrieving presets.
+- `loadList` (function): Loads a preset list from localStorage for a mode.
+- `saveList` (function): Persists a preset list to localStorage for a mode.
+*/
+
 import { defineStore } from 'pinia'
 
 type Mode = 'txt2img' | 'img2img'
@@ -35,4 +53,3 @@ export const usePresetsStore = defineStore('presets', () => {
   }
   return { names, upsert, get }
 })
-

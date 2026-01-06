@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Z-Image quicksettings selectors (model + assets).
+Renders Z-Image model, VAE, and Qwen3 text encoder selectors for Z-Image model tabs.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsZImage` (component): Z-Image quicksettings row used by the main quicksettings bar.
+- `truncatePath` (function): Truncates absolute paths for compact dropdown labels.
+- `textEncoderLabel` (function): Builds a compact `family/basename` label for text encoder values.
+-->
+
 <template>
   <!-- Z Image-specific quicksettings row -->
   <div class="quicksettings-group qs-group-checkpoint">
@@ -17,7 +34,8 @@
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="vae" @change="$emit('update:vae', ($event.target as HTMLSelectElement).value)">
-          <option v-for="v in vaeChoices" :key="v" :value="v">{{ v === 'Automatic' ? 'Flux VAE' : truncatePath(v) }}</option>
+          <option value="">Select VAE</option>
+          <option v-for="v in vaeChoices" :key="v" :value="v">{{ truncatePath(v) }}</option>
         </select>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
       </div>
@@ -29,7 +47,7 @@
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="textEncoder" @change="$emit('update:textEncoder', ($event.target as HTMLSelectElement).value)">
-          <option value="">Built-in</option>
+          <option value="">Select Text Encoder</option>
           <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>

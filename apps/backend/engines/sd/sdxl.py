@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SDXL diffusion engine implementation (base + refiner) for the backend orchestrator.
+Implements SDXL txt2img/img2img execution with smart cache integration, conditioning validation, and event emission for progress/results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_tensor_stats` (function): Computes basic tensor statistics for debug logging (shape/dtype/device + min/max/mean/std).
+- `_opts` (function): Builds an SDXL options namespace (crop defaults and related SDXL processing defaults).
+- `_validate_conditioning_payload` (function): Validates conditioning-related payload fields against the assembled runtime/spec.
+- `_SDXLPrompt` (class): Prompt marker type used for internal prompt/meta handling.
+- `_prompt_meta` (function): Computes metadata for a prompt batch (length/count flags) used in caching and diagnostics.
+- `_smart_cache_from_prompts` (function): Determines smart-cache behavior hints from prompt content and runtime settings.
+- `StableDiffusionXL` (class): Main SDXL engine (loads bundles, assembles runtime, runs inference, and emits `InferenceEvent` stream).
+- `StableDiffusionXLRefiner` (class): SDXL refiner engine (second-stage refinement runtime; similar lifecycle to the base engine).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -10,7 +32,8 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
-from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime, assemble_engine_runtime
+from apps.backend.engines.sd.factory import CodexSDFamilyFactory
+from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime
 from apps.backend.engines.util.adapters import build_txt2img_processing
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
@@ -28,13 +51,16 @@ import json
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent
 import secrets
 from apps.backend.runtime.processing.conditioners import decode_latent_batch
-from apps.backend.runtime.workflows.common import latents_to_pil
+from apps.backend.runtime.workflows.image_io import latents_to_pil
 from apps.backend.runtime.text_processing import last_extra_generation_params
 
 
 # note: no extra device assertions here; diagnostics should be captured upstream
 
 logger = logging.getLogger("backend.engines.sd.sdxl")
+
+_SDXL_FACTORY = CodexSDFamilyFactory(spec=SDXL_SPEC)
+_SDXL_REFINER_FACTORY = CodexSDFamilyFactory(spec=SDXL_REFINER_SPEC)
 
 
 def _tensor_stats(tensor: torch.Tensor) -> dict[str, object]:
@@ -224,7 +250,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_engine_runtime(SDXL_SPEC, bundle.estimated_config, bundle.components)
+        assembly = _SDXL_FACTORY.assemble(bundle, options=dict(options))
+        runtime = assembly.runtime
         self._runtime = runtime
         self.register_model_family("sdxl")
         # New runtime / weights invalidate any cached conditioning.
@@ -244,12 +271,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             runtime.classic_engine("clip_l").clip_skip,
         )
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None
@@ -266,7 +288,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
         except Exception as exc:  # noqa: BLE001
             raise TypeError("clip_skip must be an integer") from exc
 
-        # SDXL is locked to clip_skip=2 (Forge/A1111 parity).
+        # SDXL is locked to clip_skip=2 (reference pipeline parity).
         if requested != 2:
             logger.info("SDXL clip_skip is locked to 2 (requested %s); overriding.", requested)
         runtime.set_clip_skip(2)
@@ -696,7 +718,8 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        runtime = assemble_engine_runtime(SDXL_REFINER_SPEC, bundle.estimated_config, bundle.components)
+        assembly = _SDXL_REFINER_FACTORY.assemble(bundle, options=dict(options))
+        runtime = assembly.runtime
         self._runtime = runtime
         self.register_model_family("sdxl")
         self._cond_cache.clear()
@@ -707,12 +730,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             runtime.classic_engine("clip_g").clip_skip,
         )
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"clip": runtime.clip},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     def _on_unload(self) -> None:
         self._runtime = None

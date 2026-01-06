@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Video generation settings (frames + FPS).
+Renders sliders for video frame count and FPS and derives an approximate duration label.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `VideoSettingsCard` (component): Video settings card for video generation parameters.
+- `durationLabel` (const): Computed duration label derived from frames/fps.
+-->
+
 <template>
   <div :class="['vid-card', { 'vid-card--embedded': embedded }]">
     <div class="vc-grid">

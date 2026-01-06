@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed specs for supported CLIP vision encoder variants.
+Defines dataclass-driven configs used to instantiate HF `CLIPVisionConfig` and to validate checkpoint compatibility.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ClipVisionPreprocessSpec` (dataclass): Image preprocessing spec (image size + mean/std normalization).
+- `ClipVisionVariantSpec` (dataclass): Full model spec for a supported CLIP vision variant.
+- `ClipVisionVariant` (enum): Supported CLIP vision variant identifiers.
+- `_VARIANT_SPECS` (constant): Canonical mapping of variant → spec used by the registry.
+- `get_variant_spec` (function): Returns the canonical spec for a given variant (raises on unknown variants).
+- `list_supported_variants` (function): Returns all supported variants.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,3 +1,18 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Workflows list and snapshot management view.
+Lists saved workflows from the backend and provides actions to open the source tab or delete a workflow snapshot.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WorkflowsList` (component): Workflows route view component.
+-->
+
 <template>
   <section class="panel-stack">
     <div class="panel">

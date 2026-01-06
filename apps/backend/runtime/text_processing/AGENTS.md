@@ -10,7 +10,7 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 
 ## Design Guidelines
 - No legacy imports. Keep APIs Codex-native, clear, and typed.
-- Preserve A1111/Comfy behaviour (chunking, emphasis, TI) while modernising structure.
+- Preserve common WebUI behaviour (chunking, emphasis, TI) while modernising structure.
 - Avoid hard dependencies on upstream internals that drift between HF releases.
 
 ## 2025-11-03 Update — CLIP TE Forward
@@ -41,3 +41,4 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 
 ## 2026-01-02 — Notes
 - Prompt token-merging tags (`<merge:...>` / `<tm:...>`) are stripped during parsing but intentionally have no effect in Codex.
+- 2026-01-02: Added standardized file header docstrings to `__init__.py`, `emphasis.py`, `extra_nets.py`, `parsing.py`, and `textual_inversion.py` (doc-only change; part of rollout).

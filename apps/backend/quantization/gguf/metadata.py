@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: GGUF metadata extraction and normalization (HF model card + overrides → GGUF KV store).
+Collects authorship/licensing/model provenance metadata from a model directory, applies heuristics, supports user overrides,
+and writes the normalized fields into a `GGUFWriter` metadata KV set.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Metadata` (dataclass): Metadata container + extractor/writer for GGUF (contains static loaders for model cards/parameters,
+  heuristic normalization, and `set_gguf_meta_model` writer integration).
+"""
+
 from __future__ import annotations
 
 import re

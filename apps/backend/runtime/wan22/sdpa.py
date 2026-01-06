@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SDPA backend selection helpers for WAN runtimes.
+Provides a configurable `sdpa(...)` wrapper with optional chunking and an env/config-driven backend policy.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_SDPA_SETTINGS` (constant): Mutable config dict storing current SDPA policy and chunk size.
+- `set_sdpa_settings` (function): Applies policy/chunk settings (explicit args override env overrides).
+- `sdpa` (function): Calls PyTorch SDPA using the configured backend policy and optional chunking.
+"""
+
 from __future__ import annotations
 
 import os
@@ -118,4 +135,3 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
             return torch.cat(out_chunks, dim=2)
     with ctx:
         return torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=causal)
-

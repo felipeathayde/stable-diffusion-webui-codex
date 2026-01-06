@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Tiptap-based prompt editor with token insertion.
+Provides a rich prompt editor backed by Tiptap, serializing `PromptToken` nodes back into the legacy prompt string format and exposing `insertToken(...)` for UI actions.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptEditor` (component): Prompt editor that emits serialized prompt strings and exposes token insertion.
+- `insertToken` (function): Inserts a `promptToken` node into the editor (LoRA/TI/style) with a weight.
+-->
+
 <template>
   <div class="prompt-editor">
     <EditorContent :editor="editor" />
@@ -39,4 +55,3 @@ function insertToken(kind: 'lora'|'ti'|'style', name: string, weight = 1.0): voi
 
 defineExpose({ insertToken })
 </script>
-

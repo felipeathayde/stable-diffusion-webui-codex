@@ -1,4 +1,25 @@
-# Auto-generated from settings_schema.json. Do not edit by hand.
+# Auto-generated from settings_schema.json. Do not edit schema content by hand; update the JSON schema and regenerate.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Generated Python registry of UI settings schema (categories/sections/fields + IDs).
+Used by the backend API to serve stable settings schema/values to the WebUI; source of truth is `settings_schema.json`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SettingType` (enum): Enumerates supported settings field types (checkbox/slider/radio/dropdown/etc).
+- `CategoryDef` (dataclass): Category metadata (id + label) for grouping sections in the UI.
+- `SectionDef` (dataclass): Section metadata (key + label + optional category id) for grouping fields.
+- `FieldDef` (dataclass): Field schema (type/label/default/min/max/choices) describing one UI setting input.
+- `schema_to_json` (function): Converts the registry into a JSON-serializable dict (used by schema endpoints).
+- `field_index` (function): Builds `{field_key → FieldDef}` mapping for quick lookup/validation.
+- `CategoryId` (enum): Stable category identifiers used by the schema.
+- `SectionId` (enum): Stable section identifiers used by the schema.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict

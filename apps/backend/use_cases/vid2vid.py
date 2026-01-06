@@ -1,3 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Backend vid2vid use-case orchestration (WAN pipeline + optional flow guidance + interpolation/export).
+Takes an input video (or frames), runs a chosen vid2vid method (native WAN pipeline or WAN animate), optionally applies optical-flow-based
+warping/guidance and frame interpolation, and returns task events/results.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_blend` (function): Alpha-blends two PIL images (resizes `b` to `a` when needed).
+- `_load_pil_images` (function): Loads a list of image paths into PIL images (copies + closes file handles).
+- `_extract_vid2vid_options` (function): Extracts `vid2vid` dict options from request extras.
+- `_extract_flow_options` (function): Extracts `vid2vid_flow` dict options from request extras.
+- `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
+- `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
+- `_run_native_pipeline` (function): Runs the native WAN diffusers pipeline path for vid2vid (requires `comp.pipeline`).
+- `_run_wan_animate` (function): Runs the WAN “animate” path (stage planning + prompt/text guidance; includes nested option handling).
+- `_run_flow_chunks` (function): Applies flow-guided warping in chunks using RAFT and per-frame options (nested loop over frames).
+- `run_vid2vid` (function): Main use-case entrypoint; parses input, dispatches method, emits progress/result events, and exports video.
+"""
+
 from __future__ import annotations
 
 import time

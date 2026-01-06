@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-05
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 ## Notes
 - Keep schemas in sync with the frontend API client (`apps/interface/src/api`).
 - Avoid embedding business logic here—delegate to services/use cases and focus on validation and serialization.
+- Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` captures the “how assets are listed + selected” contract (inventory → SHA selection → backend resolution).
 - API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/run_api.py` (`_ORCH` singleton).
 - 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.highres`) but still tolerates compatibility keys (`codex_engine`, `codex_diffusion_device`, `sd_model_checkpoint`) while downstream clients migrate; prompts may be empty to support negative-only runs.
 - 2025-11-21: SPA static mount now registers after all `/api/*` routes to prevent POSTs from being intercepted by the UI fallback; invalid txt2/img2/video payloads raise HTTP errors instead of returning 200 with a background error.
@@ -44,5 +45,8 @@ Status: Active
 - 2026-01-01: `/api/{txt2img,img2img}` now supports live preview streaming: backend reads UI settings (`show_progress_every_n_steps`, `show_progress_type`, `live_previews_image_format`) and attaches `preview_image`/`preview_step` to task `progress` SSE events when a new preview is available.
 - 2026-01-01: Live preview config parsing + payload encoding/attachment now live in `apps/backend/services/live_preview_service.py` so `api/run_api.py` doesn’t duplicate preview logic.
 - 2026-01-01: Added `--debug-preview-factors` (launcher arg) so the runtime can log best-fit latent→RGB preview factors (`[preview-factors]`) for deriving new `Approx cheap` mappings.
-- 2026-01-02: `/api/{txt2img,img2img}` now accepts checkpoint selection by SHA (10-char short hash or 64-char sha256) via `model`/`sd_model_checkpoint` or `extras.model_sha`; SDXL ignores global VAE/TE overrides (`forge_selected_vae`, `forge_additional_modules`) unless explicit `extras.vae_path`/`extras.tenc_path` are supplied.
+- 2026-01-02: `/api/{txt2img,img2img}` now accepts checkpoint selection by SHA (10-char short hash or 64-char sha256) via `model`/`sd_model_checkpoint` or `extras.model_sha`; SDXL ignores global VAE/TE overrides (`sd_vae`, `text_encoder_overrides`) unless explicit `extras.vae_path`/`extras.tenc_path` are supplied.
 - 2026-01-01: `/api/models` now accepts `?refresh=1` to re-scan checkpoint roots so the UI can pick up newly copied weights without restarting the backend.
+- 2026-01-02: Added standardized file header docstrings to interface modules (doc-only change; part of rollout).
+- 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); `run_api.py` resolves engine keys via the registry and rejects unknown keys with HTTP 400.
+- 2026-01-04: `/api/text-encoders` now mirrors inventory-derived TE file labels for Flux.1/ZImage to reduce “exists in inventory but not in dropdown” drift; tooling guardrail added to prevent direct `apps/paths.json` reads outside `infra/config/paths.py`.

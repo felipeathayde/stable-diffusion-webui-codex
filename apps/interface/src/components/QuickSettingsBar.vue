@@ -1,3 +1,50 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/ZImage/WAN).
+Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
+and emits/commits overrides (device/engine/memory flags) used by generation payload builders.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
+- `cancelAdvancedAnimation` (function): Cancels in-flight advanced-row animations (used by toggling/resize logic).
+- `easeOutCubic` (function): Easing helper used for advanced-row animations.
+- `syncAdvancedHeight` (function): Measures/synchronizes advanced-row height for smooth expand/collapse transitions.
+- `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
+- `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
+- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux1`/`wan`/`zimage`).
+- `normalizeTabFamily` (function): Normalizes unknown inputs to a `TabFamily` (or `null`).
+- `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
+- `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
+- `fileInPaths` (function): Checks whether a file path belongs to the configured roots for a key from `/api/paths` (drives selector filtering).
+- `modelMatchesFamily` (function): Determines whether a checkpoint/inventory entry matches a given family (combines heuristics + `fileInPaths`).
+- `isVaeForFamily` (function): Filters VAE entries to those relevant for the current family.
+- `normalizeTextEncoderLabels` (function): Normalizes raw TE values into a stable label list (used for Flux/WAN multi-TE cases).
+- `WanAssetsParams` (type): Minimal WAN assets triple used for payload building (metadata dir + TE + VAE).
+- `currentWanAssets` (function): Builds `WanAssetsParams` from current UI selections (used by WAN payload generation).
+- `textEncoderLabel` (function): Converts raw TE selector values into a canonical label (handles WAN-style prefixes).
+- `onPrimaryTextEncoderChange` (function): Applies primary text-encoder selection changes (and triggers dependent updates).
+- `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (Flux/Kontext dual-encoder workflows).
+- `onUnetDtypeChange` (function): Updates UNet dtype selection in quicksettings/store.
+- `onGpuWeightsChange` (function): Updates GPU weights slider value for relevant engines.
+- `onAttentionChange` (function): Updates attention implementation selection (backend/runtime policy).
+- `onSmartOffloadChange` (function): Updates Smart Offload toggle (impacts per-request memory behavior).
+- `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
+- `onSmartCacheChange` (function): Updates Smart Cache toggle (conditioning caching behavior).
+- `onCoreStreamingChange` (function): Updates core streaming toggle (runtime streaming behavior).
+- `onWanModeChange` (function): Updates WAN mode selection and derived controls.
+- `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
+- `enginePrefixForFamily` (function): Maps a `TabFamily` to the engine prefix used in options/labels.
+- `dedupePaths` (function): Deduplicates path lists for selector options.
+- `promptForPath` (function): Prompts the user for a path update when needed (path config UX).
+- `openOverrides` (function): Opens the overrides UI surface (advanced controls entrypoint).
+-->
+
 <template>
   <section :class="['quicksettings', { 'quicksettings-loading': isLoadingQuicksettings }]">
     <div class="quicksettings-row quicksettings-row--main">
@@ -58,15 +105,15 @@
         />
       </template>
 
-      <!-- Flux-specific quicksettings -->
-      <template v-else-if="activeFamily === 'flux'">
+      <!-- FLUX.1-specific quicksettings -->
+      <template v-else-if="activeFamily === 'flux1'">
         <QuickSettingsFlux
           :checkpoint="effectiveCheckpoint"
           :checkpoints="filteredModelTitles"
           :vae="store.currentVae"
           :vae-choices="filteredVaeChoices"
-          :text-encoder-primary="fluxTextEncoderPrimary"
-          :text-encoder-secondary="fluxTextEncoderSecondary"
+          :text-encoder-primary="flux1TextEncoderPrimary"
+          :text-encoder-secondary="flux1TextEncoderSecondary"
           :text-encoder-choices="filteredTextEncoderChoices"
           @update:checkpoint="onModelChange"
           @update:vae="onVaeChange"
@@ -306,12 +353,12 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-type TabFamily = 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'
+type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'wan' | 'zimage'
 
 function normalizeTabFamily(value: unknown): TabFamily | null {
   const raw = String(value || '').trim().toLowerCase()
   if (raw === 'wan22' || raw === 'wan22_14b' || raw === 'wan22_5b') return 'wan'
-  if (raw === 'sd15' || raw === 'sdxl' || raw === 'flux' || raw === 'wan' || raw === 'zimage') return raw as TabFamily
+  if (raw === 'sd15' || raw === 'sdxl' || raw === 'flux1' || raw === 'wan' || raw === 'zimage') return raw as TabFamily
   return null
 }
 
@@ -364,7 +411,7 @@ const activeFamily = computed<TabFamily>(() => {
 
   // Fallback to global engine selection
   const eng = (store.currentEngine || '').toLowerCase()
-  if (eng.startsWith('flux')) return 'flux'
+  if (eng.startsWith('flux1')) return 'flux1'
   if (eng.startsWith('sdxl')) return 'sdxl'
   if (eng.startsWith('wan')) return 'wan'
   if (eng.startsWith('zimage')) return 'zimage'
@@ -421,7 +468,7 @@ function fileInPaths(file: string, key: string): boolean {
     if (!rNorm) continue
     // Absolute root: direct prefix match.
     if (fNorm === rNorm || fNorm.startsWith(rNorm + '/')) return true
-    // Repo-relative root (e.g. 'models/flux-tenc'): match by suffix segment.
+    // Repo-relative root (e.g. 'models/*-tenc'): match by suffix segment.
     const rel = rNorm.startsWith('/') ? rNorm.slice(1) : rNorm
     if (fNorm.includes('/' + rel + '/') || fNorm.endsWith('/' + rel)) return true
   }
@@ -432,7 +479,7 @@ function modelMatchesFamily(
   meta: Record<string, unknown> | undefined,
   title: string,
   file: string,
-  family: 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage',
+  family: 'sd15' | 'sdxl' | 'flux1' | 'wan' | 'zimage',
 ): boolean {
   const prefix = enginePrefixForFamily(family)
   const key = `${prefix}_ckpt`
@@ -444,7 +491,7 @@ function modelMatchesFamily(
   if (fam) return fam.includes(family)
   if (family === 'sdxl') return t.includes('sdxl') || f.includes('sdxl')
   if (family === 'sd15') return t.includes('1.5') || t.includes('sd15') || f.includes('sd15') || f.includes('v1-5')
-  if (family === 'flux') return t.includes('flux') || f.includes('flux')
+  if (family === 'flux1') return false
   if (family === 'wan') return t.includes('wan') || f.includes('wan')
   if (family === 'zimage') return t.includes('zimage') || t.includes('z-image') || t.includes('z_image') || f.includes('zimage') || f.includes('z-image') || f.includes('z_image')
   return true
@@ -462,13 +509,23 @@ function isVaeForFamily(name: string, fam: string): boolean {
   const path = rec?.path ?? ''
   if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
   if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
-  if (fam === 'flux') return fileInPaths(path, 'flux_vae')
-  if (fam === 'zimage') return fileInPaths(path, 'zimage_vae') || fileInPaths(path, 'flux_vae')  // Z Image uses same VAE as Flux
+  if (fam === 'flux1') return fileInPaths(path, 'flux1_vae')
+  if (fam === 'zimage') return fileInPaths(path, 'zimage_vae') || fileInPaths(path, 'flux1_vae')  // Z Image uses same VAE as Flux.1
   return true
 }
 
 const filteredVaeChoices = computed(() => {
   const fam = activeFamily.value
+  if (fam === 'flux1') {
+    return inventoryVaes.value
+      .filter((v) => typeof v.path === 'string' && fileInPaths(v.path, 'flux1_vae'))
+      .map((v) => String(v.path || ''))
+  }
+  if (fam === 'zimage') {
+    return inventoryVaes.value
+      .filter((v) => typeof v.path === 'string' && (fileInPaths(v.path, 'zimage_vae') || fileInPaths(v.path, 'flux1_vae')))
+      .map((v) => String(v.path || ''))
+  }
   return (store.vaeChoices.length ? store.vaeChoices : ['Automatic']).filter(v => v === 'Automatic' || isVaeForFamily(v, fam))
 })
 
@@ -477,24 +534,24 @@ const filteredModeChoices = computed(() => {
   const base = store.modeChoices
   if (fam === 'sdxl') return base.filter(m => ['Normal','Lightning','Turbo'].includes(m))
   if (fam === 'sd15') return base.filter(m => ['Normal','LCM','Turbo'].includes(m))
-  if (fam === 'flux') return base.filter(m => ['Normal'].includes(m))
+  if (fam === 'flux1') return base.filter(m => ['Normal'].includes(m))
   return base
 })
 
 const filteredUnetDtypeChoices = computed(() => {
   const fam = activeFamily.value
   const base = store.unetDtypeChoices
-  if (fam === 'flux') return base.filter(x => /Automatic|float8|fp16/i.test(x))
+  if (fam === 'flux1') return base.filter(x => /Automatic|float8|fp16/i.test(x))
   return base
 })
 
 const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
-  if (fam === 'flux') {
-    // For Flux, derive choices from inventory.text_encoders constrained by flux_tenc paths.
+  if (fam === 'flux1') {
+    // For FLUX.1, derive choices from inventory.text_encoders constrained by flux1_tenc paths.
     return inventoryTextEncoders.value
-      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux_tenc'))
-      .map((item) => `flux/${item.path}`)
+      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux1_tenc'))
+      .map((item) => `flux1/${item.path}`)
   }
   if (fam === 'zimage') {
     // For Z Image, derive choices from inventory.text_encoders constrained by zimage_tenc paths.
@@ -527,9 +584,9 @@ const effectiveTextEncoders = computed(() => {
 
 const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
 
-const fluxTextEncoders = computed(() => effectiveTextEncoders.value.filter((label) => typeof label === 'string' && label.startsWith('flux/')))
-const fluxTextEncoderPrimary = computed(() => fluxTextEncoders.value[0] ?? '')
-const fluxTextEncoderSecondary = computed(() => fluxTextEncoders.value[1] ?? '')
+const flux1TextEncoders = computed(() => effectiveTextEncoders.value.filter((label) => typeof label === 'string' && label.startsWith('flux1/')))
+const flux1TextEncoderPrimary = computed(() => flux1TextEncoders.value[0] ?? '')
+const flux1TextEncoderSecondary = computed(() => flux1TextEncoders.value[1] ?? '')
 
 const primaryTeAutomaticLabel = 'Built-in'
 const secondaryTeAutomaticLabel = 'Secondary (optional)'
@@ -592,20 +649,14 @@ async function refreshAll(): Promise<void> {
   await initQuicksettings({ forceInventoryRefresh: true, forceModelsRefresh: true })
 }
 
-// WAN-specific helpers (directories derived from inventory)
-function parentDir(path: string): string {
-  const norm = path.replace(/\\/g, '/')
-  const idx = norm.lastIndexOf('/')
-  return idx >= 0 ? norm.slice(0, idx) : norm
-}
-
 const wanHighDirChoices = computed(() => {
   const seen = new Set<string>()
   const out: string[] = []
   for (const g of inventoryWan.value) {
     if (g.stage !== 'high') continue
-    const dir = parentDir(g.path)
-    if (!seen.has(dir)) { seen.add(dir); out.push(dir) }
+    const path = String(g.path || '').trim()
+    if (!path) continue
+    if (!seen.has(path)) { seen.add(path); out.push(path) }
   }
   return out
 })
@@ -615,8 +666,9 @@ const wanLowDirChoices = computed(() => {
   const out: string[] = []
   for (const g of inventoryWan.value) {
     if (g.stage !== 'low') continue
-    const dir = parentDir(g.path)
-    if (!seen.has(dir)) { seen.add(dir); out.push(dir) }
+    const path = String(g.path || '').trim()
+    if (!path) continue
+    if (!seen.has(path)) { seen.add(path); out.push(path) }
   }
   return out
 })
@@ -725,7 +777,7 @@ function textEncoderLabel(raw: unknown): string {
   return `${family}/${basename}`
 }
 
-async function updateFluxTextEncoders(primary: string, secondary: string): Promise<void> {
+async function updateFlux1TextEncoders(primary: string, secondary: string): Promise<void> {
   const tab = activeImageTab.value
   const fluxLabels: string[] = []
   const p = primary.trim()
@@ -737,17 +789,17 @@ async function updateFluxTextEncoders(primary: string, secondary: string): Promi
     return
   }
   const all = store.currentTextEncoders.slice()
-  const other = all.filter((label) => !String(label).startsWith('flux/'))
+  const other = all.filter((label) => !String(label).startsWith('flux1/'))
   const next = [...other, ...fluxLabels]
   await store.setTextEncoders(next)
 }
 
 function onPrimaryTextEncoderChange(value: string): void {
   const fam = activeFamily.value
-  if (fam === 'flux') {
+  if (fam === 'flux1') {
     const primary = value || ''
-    const secondary = fluxTextEncoderSecondary.value || ''
-    void updateFluxTextEncoders(primary, secondary)
+    const secondary = flux1TextEncoderSecondary.value || ''
+    void updateFlux1TextEncoders(primary, secondary)
   } else {
     const tab = activeImageTab.value
     const payload = value ? [value] : []
@@ -761,10 +813,10 @@ function onPrimaryTextEncoderChange(value: string): void {
 
 function onSecondaryTextEncoderChange(value: string): void {
   const fam = activeFamily.value
-  if (fam !== 'flux') return
-  const primary = fluxTextEncoderPrimary.value || ''
+  if (fam !== 'flux1') return
+  const primary = flux1TextEncoderPrimary.value || ''
   const secondary = value || ''
-  void updateFluxTextEncoders(primary, secondary)
+  void updateFlux1TextEncoders(primary, secondary)
 }
 
 function onUnetDtypeChange(value: string): void {
@@ -851,7 +903,7 @@ function onWanGuidedGen(): void {
   window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
 
-function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux' | 'wan' | 'zimage'): 'sd15' | 'sdxl' | 'flux' | 'wan22' | 'zimage' {
+function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux1' | 'wan' | 'zimage'): 'sd15' | 'sdxl' | 'flux1' | 'wan22' | 'zimage' {
   if (fam === 'wan') return 'wan22'
   return fam
 }

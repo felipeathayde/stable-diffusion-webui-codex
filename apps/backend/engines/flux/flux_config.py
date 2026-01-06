@@ -1,11 +1,25 @@
-"""Flux configuration schema shared between UI presets and backend engines.
-
-This module centralises metadata about Flux-specific UI toggles so both the
-frontend and backend can reference a single source of truth. The schema keeps
-track of default values, control types, and slider/dropdown ranges. Consumers
-can turn the metadata into Gradio ``OptionInfo`` objects to wire presets or
-validate runtime payloads.
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux configuration schema shared between UI presets and backend engines.
+Centralizes Flux-specific UI toggle metadata (defaults + control types + ranges) so frontend and backend share a single source of truth, and
+can materialize Gradio `OptionInfo` entries for presets and runtime validation.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FluxFieldSpec` (dataclass): Describes one Flux config field exposed in the UI (label/control/scope + default/min/max factories).
+- `_total_vram_default` (function): Computes default Flux GPU weight slider value from context (`total_vram - 1024`).
+- `FLUX_FIELD_SPECS` (constant): Ordered tuple of `FluxFieldSpec` entries defining the schema.
+- `FLUX_SLIDER_KEYS` (constant): Tuple of schema keys where control is `slider`.
+- `FLUX_DROPDOWN_KEYS` (constant): Tuple of schema keys where control is `dropdown`.
+- `iter_flux_field_specs` (function): Iterates schema specs (optionally filtered) and errors on unknown keys.
+- `build_flux_option_info` (function): Builds `{key: OptionInfo}` mappings using Gradio component types and the provided factories.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

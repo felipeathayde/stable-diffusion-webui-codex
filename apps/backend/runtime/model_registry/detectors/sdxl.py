@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stable Diffusion XL (base/refiner) model detectors for the model registry.
+Detects SDXL base vs refiner checkpoints by key patterns (dual vs single embedder) and builds a `ModelSignature` describing UNet + text encoder composition.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SDXL_REQUIRED_KEYS` (constant): Keys required to identify SDXL base checkpoints.
+- `SDXL_REFINER_REQUIRED_KEYS` (constant): Keys required to identify SDXL refiner checkpoints.
+- `_shape` (function): Helper to read a bundle shape dimension with an optional default.
+- `StableDiffusionXLDetector` (class): Detector for SDXL base checkpoints (CLIP-L + CLIP-G).
+- `StableDiffusionXLRefinerDetector` (class): Detector for SDXL refiner checkpoints (CLIP-G only).
+"""
+
 from __future__ import annotations
 
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY

@@ -1,3 +1,21 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Root WebUI layout and router shell.
+Renders the global header + navigation tabs + router outlet, and computes `--sticky-offset` from the header height so sticky result headers stay aligned.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `App` (component): Root application component and layout shell.
+- `setStickyOffset` (function): Computes and sets CSS `--sticky-offset` based on the header height.
+- `requestStickyOffsetRecalc` (function): Schedules a sticky-offset recalculation via `requestAnimationFrame`.
+- `enabledTabs` (const): Computed list of enabled model tabs used to render the nav.
+-->
+
 <template>
   <div class="layout">
     <div class="main-shell">

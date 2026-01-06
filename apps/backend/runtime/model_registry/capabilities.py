@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Semantic engine capability surfaces exposed to the UI layer.
+Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections are expected to be used for each engine.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler allow-lists).
+- `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
+- `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -14,7 +32,7 @@ class SemanticEngine(str, Enum):
 
     SD15 = "sd15"
     SDXL = "sdxl"
-    FLUX = "flux"
+    FLUX = "flux1"
     WAN22 = "wan22"
     HUNYUAN_VIDEO = "hunyuan_video"
     SVD = "svd"
@@ -66,7 +84,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,
         supports_controlnet=False,
     ),
-    # Flux (flow-based image diffusion).
+    # Flux.1 (flow-based image diffusion).
     SemanticEngine.FLUX: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,

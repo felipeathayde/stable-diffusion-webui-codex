@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Classic (legacy-style) text processing engine for prompt parsing and conditioning assembly.
+Implements emphasis parsing, textual inversion embedding injection, and token chunking for CLIP-based text encoders, integrating with
+Codex runtime memory management for device placement and safe execution.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PromptChunkFix` (namedtuple): Single embedding “fix” applied at a specific token offset (used by textual inversion).
+- `PromptChunk` (class): Container for tokens, multipliers, and embedding fixes produced by parsing/chunking.
+- `CLIPEmbeddingForTextualInversion` (class): Wrapper module that intercepts CLIP embedding lookups and injects textual inversion vectors
+  (contains nested logic for batching fixes and restoring state).
+- `ClassicTextProcessingEngine` (class): Main text processing engine; parses prompts (including negative/emphasis), manages embeddings DB,
+  and produces encoder inputs/embeddings for downstream diffusion runtimes (contains nested helpers for chunking and extra params tracking).
+"""
+
 import logging
 import math
 import torch

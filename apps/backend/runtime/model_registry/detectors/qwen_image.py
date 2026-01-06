@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Qwen Image model detector for the model registry.
+Detects Qwen Image checkpoints (flow transformer + text encoder + VAE) and builds a `ModelSignature` used by the loader/UI inventory.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `QWEN_IMAGE_REQUIRED_KEYS` (constant): Key set used to identify Qwen Image checkpoints.
+- `QwenImageDetector` (class): Detector that builds a `ModelSignature` for Qwen Image checkpoints.
+- `_shape` (function): Helper to fetch a tensor shape from a bundle/state dict (best-effort).
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Tuple
@@ -93,4 +110,3 @@ def _shape(bundle: SignalBundle, key: str) -> Optional[Tuple[int, ...]]:
 
 
 REGISTRY.register(QwenImageDetector())
-

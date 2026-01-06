@@ -1,16 +1,30 @@
-from __future__ import annotations
-
-"""Codex launcher public surface.
-
-This package exposes the launcher infrastructure used by the BIOS/TUI and
-other entrypoints.  Modules are organised for clarity:
-
-- ``paths``: canonical path resolution helpers.
-- ``log_buffer``: reusable in-memory log ring buffer.
-- ``checks``: environment validation (Python, Node, Vite).
-- ``services``: service supervision primitives.
-- ``profiles``: segmented profile persistence (areas/models/meta).
 """
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Launcher package public facade.
+Re-exports path resolution, log buffering, environment checks, service supervision, and profile persistence used by TUI/BIOS and other entrypoints.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CodexPaths` (dataclass): Resolved runtime path container (re-export).
+- `resolve_paths` (function): Resolves canonical paths with strict normalization (re-export).
+- `CodexLogBuffer` (dataclass): Thread-safe ring buffer for launcher logs (re-export).
+- `CodexLaunchCheck` (dataclass): Structured launcher preflight check result (re-export).
+- `run_launch_checks` (function): Runs launcher environment preflight checks (re-export).
+- `CodexServiceHandle` (dataclass): Handle for a supervised service process (re-export).
+- `CodexServiceSpec` (dataclass): Service definition used by the launcher supervisor (re-export).
+- `ServiceStatus` (enum): Service lifecycle status values (re-export).
+- `default_services` (function): Constructs the default launcher service set (re-export).
+- `LauncherMeta` (dataclass): Launcher metadata persisted alongside profiles (re-export).
+- `LauncherProfileStore` (class): Profile store for launcher settings and selections (re-export).
+- `__all__` (constant): Explicit export list for this facade.
+"""
+
+from __future__ import annotations
 
 from .paths import CodexPaths, resolve_paths
 from .log_buffer import CodexLogBuffer

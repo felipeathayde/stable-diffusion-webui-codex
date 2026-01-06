@@ -1,3 +1,31 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
+Owns the list of engine tabs, persists tab CRUD/reorder via `/api/tabs`, normalizes/validates tab payloads from the backend, and provides
+default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
+- `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
+- `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
+- `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
+- `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
+- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/ZImage.
+- `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
+- `uuid` (function): Generates a random tab id (client-side).
+- `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
+- `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
+- `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
+- `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
+- `useModelTabsStore` (store): Pinia store for tabs; loads/syncs with backend, provides CRUD/reorder actions, and exposes computed helpers.
+*/
+
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
@@ -164,7 +192,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     return { high: stage(), low: stage(), video, assets, lightx2v: false, lowFollowsHigh: false }
   }
 
-  // Image tabs (SD15, SDXL, Flux)
+  // Image tabs (SD15, SDXL, FLUX.1)
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
@@ -224,7 +252,7 @@ function normalizeTabType(type: unknown): BaseTabType {
   if (!raw) return 'sd15'
   const value = raw.toLowerCase()
   if (value === 'wan22' || value === 'wan22_14b' || value === 'wan22_5b') return 'wan'
-  if (value === 'sd15' || value === 'sdxl' || value === 'flux' || value === 'zimage' || value === 'wan') return value as BaseTabType
+  if (value === 'sd15' || value === 'sdxl' || value === 'flux1' || value === 'zimage' || value === 'wan') return value as BaseTabType
   // Fail closed: unknown tab types fall back to a safe image tab.
   return 'sd15'
 }
@@ -267,7 +295,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
 
-  const requiredTypes: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'zimage', 'wan']
+  const requiredTypes: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'zimage', 'wan']
 
   function save(): void {
     const payload = { tabs: tabs.value, activeId: activeId.value }
@@ -347,7 +375,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   function bootstrap(): void {
     // Create minimal default tabs when backend persistence is unavailable.
     const createdAt = nowIso()
-    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux', 'zimage', 'wan']
+    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'zimage', 'wan']
     tabs.value = types.map((type, idx) => ({
       id: uuid(),
       type,

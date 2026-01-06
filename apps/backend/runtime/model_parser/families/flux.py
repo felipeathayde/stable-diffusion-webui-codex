@@ -1,3 +1,26 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux parser plan builder (GGUF core-only vs full checkpoints).
+Defines a `ParserPlan` for Flux-family models, handling GGUF core-only checkpoints (transformer-only with external CLIP/T5/VAE) and full
+checkpoints that embed both text encoders. Registers stable text-encoder aliases for override resolution and validates core presence.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_FLUX_CORE_PREFIXES` (constant): Accepted prefixes for Flux core weights in non-GGUF checkpoints.
+- `_register_flux_text_encoders` (function): Registers `clip_l`/`t5xxl` aliases in the parser context for core-only checkpoints.
+- `build_plan` (function): Builds and returns the Flux `ParserPlanBundle` (splits + converters + validations).
+- `_convert_clip_l` (function): Converts CLIP-L tensors and registers the text encoder alias mapping.
+- `_convert_t5` (function): Converts T5-XXL tensors and registers the text encoder alias mapping.
+- `_validate_transformer_core` (function): Validates presence of required Flux core keys.
+- `_validate_clip_l` (function): Validates CLIP-L conversion output keys.
+- `_validate_t5` (function): Validates T5 conversion output keys.
+"""
+
 from __future__ import annotations
 
 from typing import Dict

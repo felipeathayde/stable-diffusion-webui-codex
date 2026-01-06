@@ -1,6 +1,20 @@
-"""Execution plan tracer for Flux transformer blocks.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Uses forward hooks to discover block execution order without parsing model code.
+Purpose: Flux core streaming execution-plan tracer (block enumeration + hook validation).
+Builds an `ExecutionPlan` by enumerating Flux transformer blocks and grouping them into segments, with an optional hook-based trace mode to
+validate real forward execution order.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_enumerate_blocks` (function): Enumerates double/single transformer blocks from a Flux core model into `BlockInfo` lists.
+- `_group_blocks_into_segments` (function): Groups consecutive blocks into `Segment` objects based on `blocks_per_segment`.
+- `trace_execution_plan` (function): Builds an `ExecutionPlan` via static enumeration (fast/default).
+- `trace_execution_plan_with_hooks` (function): Validates execution order by registering forward hooks and running a dummy forward pass.
 """
 
 from __future__ import annotations

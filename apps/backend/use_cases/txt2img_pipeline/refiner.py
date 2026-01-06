@@ -1,4 +1,19 @@
-"""Latent refiner stages for the txt2img pipeline."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Latent refiner stages for the txt2img pipeline.
+Implements SDXL refiner sampling stages (global + hires) that load a refiner engine, rebuild conditioning, and run an additional sampling pass over existing latents.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `RefinerStage` (dataclass): Executable refiner stage implementing shared refiner sampling logic and engine loading.
+- `GlobalRefinerStage` (class): Refiner stage for the global (base) scope.
+- `HiresRefinerStage` (class): Refiner stage for the hires scope.
+"""
 # // tags: refiner, pipeline, sdxl, hires
 
 from __future__ import annotations
@@ -10,10 +25,11 @@ from typing import Callable
 
 import torch
 
-from apps.backend.codex.loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
-from apps.backend.runtime.workflows import build_sampling_plan, ensure_sampler_and_rng, execute_sampling
+from apps.backend.runtime.workflows.sampling_execute import execute_sampling
+from apps.backend.runtime.workflows.sampling_plan import build_sampling_plan, ensure_sampler_and_rng
 
 
 RefinerConditioningFn = Callable[[CodexProcessingTxt2Img, PromptContext], tuple[object, object]]

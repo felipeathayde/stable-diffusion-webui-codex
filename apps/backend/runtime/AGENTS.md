@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-04
 Status: Active
 
 ## Purpose
@@ -23,7 +23,7 @@ Status: Active
 - `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
-- `modules/` — Compatibility wrappers expected by legacy callers (will shrink over time).
+- `modules/` — K-diffusion-style wrappers used by samplers/patchers (candidate for future consolidation/rename).
 - `kernels/` — Custom CUDA/C++ kernels where required.
 
 ## Notes
@@ -41,4 +41,8 @@ Status: Active
 - 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).
+- 2026-01-04: Added `runtime.utils.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).
 - 2026-01-01: Live preview utilities now live in `runtime/live_preview.py` (method enum, preview decode helper, and debug preview-factor fitting/logging) so workflows and API layers don’t duplicate preview logic.
+- 2026-01-02: Added standardized file header docstrings to runtime modules (doc-only change; part of rollout).
+- 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py`, `pipeline_debug.py`, `trace.py`) (doc-only change; part of rollout).
+- 2026-01-03: Standardized upstream references in runtime docs/comments to prefer Hugging Face Diffusers as the behaviour baseline.

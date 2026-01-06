@@ -1,3 +1,30 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Attention backend implementations (basic / chunked / xFormers / PyTorch SDPA) + diffusers processor adapter.
+Provides multiple attention implementations for different memory/performance tradeoffs, plus helpers for precision upcasting and
+single-head spatial attention variants used by legacy SD/UNet code paths.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `get_attn_precision` (function): Resolves attention precision policy (handles global upcast and disable flags).
+- `exists` (function): Small helper (`val is not None`) used across attention functions.
+- `attention_basic` (function): Baseline attention (einsum) with optional mask handling and precision upcast.
+- `attention_sub_quad` (function): Memory-saving attention variant (sub-quadratic/chunked) for long sequences.
+- `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
+- `attention_xformers` (function): xFormers attention path (when available and not broken).
+- `attention_pytorch` (function): PyTorch SDPA attention path (uses `efficient_dot_product_attention`).
+- `slice_attention_single_head_spatial` (function): Single-head spatial attention variant using slicing/chunking.
+- `normal_attention_single_head_spatial` (function): Baseline single-head spatial attention.
+- `xformers_attention_single_head_spatial` (function): xFormers-backed single-head spatial attention.
+- `pytorch_attention_single_head_spatial` (function): PyTorch SDPA-backed single-head spatial attention.
+- `AttentionProcessorCodex` (class): Diffusers-style attention processor adapter that dispatches to the selected attention backend.
+"""
+
 import logging
 import math
 import torch

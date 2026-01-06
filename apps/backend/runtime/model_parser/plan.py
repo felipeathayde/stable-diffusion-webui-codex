@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Model parser plan execution (component materialization + keymap logging).
+Executes a `ParserPlan` against a state dict by materializing component tensors (including lazy views), recording key-map diagnostics, and
+returning a `ParserContext` used by loaders to wire component modules.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_keymap_paths` (function): Resolves the keymap log directory/file path under `CODEX_ROOT/logs/`.
+- `_append_keymap_record` (function): Appends a JSON record to the parser keymap log (best-effort).
+- `_materialize_component` (function): Materializes one component tensor mapping (supports lazy `.materialize(...)`) and emits trace events.
+- `execute_plan` (function): Executes a parser plan over a state dict and returns a populated `ParserContext`.
+"""
+
 from __future__ import annotations
 
 from collections.abc import MutableMapping

@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Experimental WAN UMT5-XXL FP8 text encoder (CUDA-backed) for WAN22 runtime paths.
+Wires FP8 weights (uint8+scale) with the WAN22 CUDA extension for FP8 linear projections and (optional) FP8 attention, using PyTorch SDPA
+as the default attention implementation. Fails fast with explicit errors on missing tensors/unsupported shapes; no silent fallbacks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_rms_norm` (function): RMS norm helper used by the encoder blocks.
+- `_embedding_fp8` (function): Embedding gather + (optional) pinned-host async copy + dequantization for FP8 token embeddings.
+- `_proj_fp8` (function): FP8 linear projection wrapper (delegates tile-dequant + GEMM to CUDA extension).
+- `_attn` (function): Attention dispatcher (CUDA extension when available/selected; otherwise torch SDPA).
+- `encode_fp8` (function): Runs the FP8 text encoder forward pass and returns the last hidden state `[B,L,C]`.
+"""
+
 from __future__ import annotations
 
 from typing import Optional, Tuple
@@ -7,16 +27,6 @@ import torch
 
 from apps.backend.runtime.nn.wan_te_loader import load_umt5_xxl_fp8, WanTEFp8Weights
 from .wan_te_cuda import linear_fp8, attn_fp8, available as te_ext_available
-
-"""
-Experimental WAN T5 FP8 encoder (CUDA-backed)
-
-This module wires the FP8 weights (uint8+scale) with our CUDA extension:
-- Linear FP8 (tile dequant + GEMM)
-- Attention: first pass uses PyTorch SDPA (compute fp16/bf16); projections in FP8
-
-Strict: raises explicit errors on missing tensors or unsupported shapes. No silent fallback.
-"""
 
 log = logging.getLogger("wan22.te.encoder")
 if not log.handlers:

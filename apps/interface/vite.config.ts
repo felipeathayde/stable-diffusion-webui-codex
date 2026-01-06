@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Vite configuration for the Codex WebUI frontend.
+Configures dev server host/ports + API proxy/HMR, Vitest settings, and a small plugin that watches root env/Tailwind/PostCSS files to trigger a restart on change.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `watchRootConfigs` (function): Vite plugin that watches root config files and restarts the dev server on change.
+- `default` (function): Vite config factory that loads env from repo root and returns server/test settings.
+*/
+
 // tags: vite-config, frontend-build
 import { defineConfig, loadEnv } from 'vite'
 import path from 'node:path'

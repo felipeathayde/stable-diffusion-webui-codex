@@ -1,5 +1,19 @@
-# CodexQuantization - Kernels package
-# Registers all quantization types using dequant.py (ported from ComfyUI-GGUF)
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Kernel registry bootstrap for GGUF quantization types.
+Registers dequantization kernels (and optional NumPy quantizers) into the global quant registry at import time.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_make_dequantize_wrapper` (function): Wraps `dequantize_blocks_*` kernels to match the registry signature.
+- `_noop_bake` (function): No-op bake function for kernels that don't require pre-processing.
+- `_register_all` (function): Registers all supported quantization types into the registry.
+"""
 
 from __future__ import annotations
 
@@ -41,12 +55,12 @@ def _make_dequantize_wrapper(dequant_fn, block_size: int, type_size: int):
     This wrapper binds block_size and type_size, and reshapes the tensor
     to (n_blocks, type_size) as expected by dequant functions.
     
-    Reference: city96/ComfyUI-GGUF dequant.py::dequantize()
+    Reference: city96 GGUF dequant.py::dequantize()
     """
     @functools.wraps(dequant_fn)
     def wrapper(blocks: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
         # Reshape to (n_blocks, type_size) as expected by dequant functions
-        # Reference: ComfyUI-GGUF dequant.py lines 28-32
+        # Reference: upstream dequant.py lines 28-32
         rows = blocks.reshape((-1, blocks.shape[-1])).view(torch.uint8)
         n_blocks = rows.numel() // type_size
         reshaped = rows.reshape((n_blocks, type_size))

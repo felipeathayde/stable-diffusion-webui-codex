@@ -1,3 +1,29 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Live preview helpers (decode strategies + preview-factor fitting/logging).
+Provides live preview decoding (full VAE vs cheap approximation) and an optional least-squares fitting tool to derive latent→RGB factors for
+debugging preview quality.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_truthy` (function): Parses common truthy strings for env flag checks.
+- `debug_preview_factors_enabled` (function): Indicates whether preview factor fitting logs are enabled.
+- `debug_preview_factors_sample_limit` (function): Returns the pixel sample cap used for factor fitting.
+- `LivePreviewMethod` (enum): Preview decode strategy (`Full` VAE vs `Approx cheap`).
+- `live_preview_method_from_env` (function): Reads `CODEX_LIVE_PREVIEW_METHOD` into a `LivePreviewMethod`.
+- `live_preview_method_to_env` (function): Converts a `LivePreviewMethod` into an env-friendly string.
+- `_tensor_to_pil_rgb` (function): Converts a tensor image into a PIL RGB image.
+- `decode_preview_image` (function): Decodes a denoised latent into a preview image using the selected method.
+- `PreviewFactorsFit` (dataclass): Fit result container for latent→RGB factors and bias (with MSE and VAE metadata).
+- `fit_preview_factors` (function): Fits latent→RGB factors via least squares against a decoded VAE image (debug tool).
+- `maybe_log_preview_factors` (function): Logs preview-factor fits once per job when enabled.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -263,4 +289,3 @@ __all__ = [
     "live_preview_method_to_env",
     "maybe_log_preview_factors",
 ]
-

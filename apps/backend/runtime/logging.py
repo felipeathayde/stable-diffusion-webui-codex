@@ -1,13 +1,21 @@
-"""Centralized logging configuration for WebUI Codex backend.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Reads level and basic settings from environment and configures root logging
-once per interpreter. Defaults to DEBUG as requested.
+Purpose: Centralized backend logging setup (env-driven level, optional rich/tqdm integration).
+Configures root logging once per interpreter, supports console/file handlers, and can wrap stream handlers to cooperate with tqdm progress
+bars. Level filtering can also be controlled per-level via `CODEX_LOG_*` env vars.
 
-Environment variables (settable via webui.settings.bat / webui-user.bat):
- - CODEX_LOG_LEVEL / SDWEBUI_LOG_LEVEL / WEBUI_LOG_LEVEL: logging level name
-   e.g. DEBUG, INFO, WARNING, ERROR, CRITICAL (case-insensitive). Defaults DEBUG.
- - CODEX_LOG_FILE: optional path to append logs (disabled if empty).
- - CODEX_LOG_FORMAT: optional logging format string.
+Symbols (top-level; keep in sync; no ghosts):
+- `TqdmAwareHandler` (class): Proxy handler that cooperates with tqdm-managed progress bars.
+- `_is_stream_handler` (function): Detects stream handlers including wrapped `TqdmAwareHandler`.
+- `_parse_level` (function): Parses level names (including TRACE=5) and returns a logging level.
+- `LevelFilter` (class): Env-driven log-level filter (CODEX_LOG_DEBUG/INFO/WARNING/ERROR).
+- `setup_logging` (function): Idempotent root logger setup using env vars (level/format/file, optional Rich handler).
 """
 
 from __future__ import annotations

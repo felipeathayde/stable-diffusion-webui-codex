@@ -23,16 +23,16 @@
   "sdxl_loras": [
     "models/sdxl-loras"
   ],
-  "flux_ckpt": [
+  "flux1_ckpt": [
     "models/flux"
   ],
-  "flux_tenc": [
+  "flux1_tenc": [
     "models/flux-tenc"
   ],
-  "flux_vae": [
+  "flux1_vae": [
     "models/flux-vae"
   ],
-  "flux_loras": [
+  "flux1_loras": [
     "models/flux-loras"
   ],
   "wan22_ckpt": [

@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Canonical path resolution helpers for the launcher.
+Normalizes optional path overrides and computes canonical runtime directories (data/models/output/configs) rooted at `CODEX_ROOT`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LOGGER` (constant): Module logger for launcher path resolution.
+- `_normalize_path` (function): Normalizes optional paths and raises explicit errors on failure.
+- `CodexPaths` (dataclass): Resolved canonical paths for the runtime.
+- `resolve_paths` (function): Resolves launcher paths with strict normalization.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

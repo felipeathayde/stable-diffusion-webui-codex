@@ -1,7 +1,21 @@
-"""WAN 2.2 engine runtime specification (analogous to Flux spec.py).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This module provides the abstraction layer between the engine and runtime,
-mirroring the Flux pattern with centralized runtime assembly.
+Purpose: WAN 2.2 engine runtime specification (analogous to Flux `spec.py`).
+Defines the engine-facing `WanEngineSpec`/`WanEngineRuntime` containers and centralized runtime assembly used by WAN engines, delegating
+defaults to `FamilyRuntimeSpec` and wiring the T5 text pipeline + denoiser/VAE patchers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanTextPipelines` (dataclass): Text processing pipelines for WAN (T5 only; no CLIP).
+- `WanEngineRuntime` (dataclass): Runtime container for WAN components (VAE, denoiser patcher, text pipelines, device/dtype).
+- `WanEngineSpec` (dataclass): Engine spec wrapper that delegates defaults to `FamilyRuntimeSpec` with per-variant overrides.
+- `_k_predictor` (function): Builds the WAN flow predictor configured from the spec.
+- `assemble_wan_runtime` (function): Assembles a `WanEngineRuntime` from a model family spec + loaded components.
 """
 
 from __future__ import annotations
@@ -12,7 +26,7 @@ from typing import Any, Mapping, Optional
 
 import torch
 
-from apps.backend.patchers.unet import UnetPatcher
+from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
@@ -35,7 +49,7 @@ class WanEngineRuntime:
     Analogous to FluxEngineRuntime, holds the assembled components.
     """
     vae: VAE
-    unet: UnetPatcher  # wraps WanTransformer2DModel
+    denoiser: DenoiserPatcher  # wraps WanTransformer2DModel
     text: WanTextPipelines
     device: str = "cuda"
     dtype: str = "bf16"
@@ -132,13 +146,13 @@ def assemble_wan_runtime(
         raise ValueError("WAN runtime requires 'vae' component")
     vae = VAE(model=vae_model, family=ModelFamily.WAN22)
     
-    # Transformer -> UnetPatcher
+    # Transformer -> DenoiserPatcher
     transformer = codex_components.get("transformer")
     if transformer is None:
         raise ValueError("WAN runtime requires 'transformer' component")
     
     k_predictor = _k_predictor(spec)
-    unet = UnetPatcher.from_model(
+    denoiser = DenoiserPatcher.from_model(
         model=transformer,
         diffusers_scheduler=None,
         k_predictor=k_predictor,
@@ -165,7 +179,7 @@ def assemble_wan_runtime(
     
     return WanEngineRuntime(
         vae=vae,
-        unet=unet,
+        denoiser=denoiser,
         text=WanTextPipelines(t5_text=t5_engine),
         device=device,
         dtype=dtype,

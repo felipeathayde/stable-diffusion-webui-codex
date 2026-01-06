@@ -1,4 +1,21 @@
-"""Memory controller for Flux streaming with pluggable policies."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux core streaming controller (segment device placement + transfer stats).
+Tracks which `Segment`s are placed on GPU, loads/evicts segments according to a streaming policy, and records transfer statistics for
+diagnostics and tuning.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `StreamingPolicy` (enum): High-level streaming policy for segment load/eviction behavior.
+- `TransferStats` (dataclass): Aggregated CPU↔GPU transfer counters and timing.
+- `CoreController` (dataclass): Controller managing `Segment` placement based on policy (LRU/windowing + optional prefetch).
+- `create_controller` (function): Factory that builds a `CoreController` from simple config values.
+"""
 
 from __future__ import annotations
 

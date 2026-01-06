@@ -1,3 +1,36 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Sampling context + sigma schedule construction utilities for diffusion samplers.
+Defines the canonical scheduler names and builds sigma schedules (Karras, exponential, DDIM, align-your-steps, etc.), then packages
+per-run sampling state (sampler kind, noise settings, scheduler config) into a `SamplingContext`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (alias-aware, no silent fallback).
+- `_append_zero` (function): Appends a terminal sigma=0 to a sigma schedule tensor.
+- `_karras_schedule` (function): Builds a Karras sigma schedule.
+- `_polyexponential_schedule` (function): Builds a polyexponential sigma schedule.
+- `_exponential_schedule` (function): Builds an exponential sigma schedule.
+- `_uniform_schedule_from_predictor` (function): Builds a uniform schedule from a predictor function.
+- `_simple_schedule_from_predictor` (function): Builds a simple schedule from a predictor function.
+- `_sgm_uniform_schedule` (function): Builds an SGM-uniform schedule (SGM-style).
+- `_ddim_uniform_schedule` (function): Builds a DDIM-uniform schedule.
+- `_normal_schedule` (function): Builds a normal/beta-derived schedule (optionally SGM variant).
+- `_beta_schedule` (function): Builds a beta schedule.
+- `_linear_quadratic_schedule` (function): Builds a linear-quadratic schedule.
+- `_kl_optimal_schedule` (function): Builds a KL-optimal schedule.
+- `_align_your_steps_schedule` (function): Builds the “align your steps” schedule variants (SDXL aware).
+- `_turbo_schedule` (function): Builds a turbo schedule.
+- `build_sigma_schedule` (function): Main scheduler entrypoint; selects the schedule builder and returns the sigma tensor.
+- `SamplingContext` (dataclass): Bundles sampling configuration/state for one run (sampler kind, scheduler, noise settings, etc.).
+- `build_sampling_context` (function): Builds a `SamplingContext` from inputs (engine/runtime settings + request payload).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -12,6 +45,7 @@ import torch
 from apps.backend.core.rng import NoiseSettings, NoiseSourceKind
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.sampling.catalog import SCHEDULER_ALIAS_TO_CANONICAL
+from apps.backend.infra.config.env_flags import env_flag
 
 
 _LOGGER = logging.getLogger(__name__ + ".context")
@@ -121,9 +155,9 @@ def _uniform_schedule_from_predictor(steps: int, predictor, *, device: torch.dev
 
 
 def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    """Forge-style 'simple' schedule built via predictor sigma/timestep.
+    """Predictor-ladder 'simple' schedule built via predictor sigma/timestep.
 
-    Mirrors `ForgeScheduleLinker.get_sigmas(n)`:
+    Mirrors the reference schedule-linker `get_sigmas(n)` behavior:
     - Construct a linear ladder of timesteps from high→low over the predictor domain.
     - Map timesteps back to sigmas via `predictor.sigma(t)`.
     - Append a terminal 0 as the last sigma.
@@ -246,7 +280,7 @@ def _kl_optimal_schedule(steps: int, sigma_min: float, sigma_max: float, *, devi
 
 
 def _align_your_steps_schedule(kind: SchedulerName, steps: int, *, is_sdxl: bool, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    # Tables mirrored from Forge sd_schedulers; trailing zero will be appended separately
+    # Tables mirrored from the reference sd_schedulers tables; trailing zero will be appended separately
     if kind is SchedulerName.ALIGN_YOUR_STEPS:
         sigmas = [14.615, 6.315, 3.771, 2.181, 1.342, 0.862, 0.555, 0.380, 0.234, 0.113, 0.029] if is_sdxl else [14.615, 6.475, 3.861, 2.697, 1.886, 1.396, 0.963, 0.652, 0.399, 0.152, 0.029]
     elif kind is SchedulerName.ALIGN_YOUR_STEPS_GITS:
@@ -342,13 +376,6 @@ def build_sigma_schedule(
     raise ValueError(f"Unsupported scheduler '{scheduler_name}' after normalization")
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass
 class SamplingContext:
     sampler_kind: SamplerKind
@@ -382,7 +409,7 @@ def build_sampling_context(
     is_sdxl: bool = False,
 ) -> SamplingContext:
     sampler_kind = SamplerKind.from_string(sampler_name or "automatic")
-    predictor_container = predictor or getattr(sd_model.codex_objects.unet, "model", None)
+    predictor_container = predictor or getattr(sd_model.codex_objects.denoiser, "model", None)
     if predictor_container is None or getattr(predictor_container, "predictor", None) is None:
         raise RuntimeError("sd_model does not expose a predictor for sigma bounds")
 
@@ -432,7 +459,7 @@ def build_sampling_context(
         steps=steps,
         noise_settings=noise_settings,
         preview_interval=int(os.getenv("CODEX_PREVIEW_INTERVAL", "0") or 0),
-        enable_progress=_env_flag("CODEX_PROGRESS_BAR", default=False),
+        enable_progress=env_flag("CODEX_PROGRESS_BAR", default=False),
         prediction_type=prediction_type,
         sigma_min=sigma_min,
         sigma_max=sigma_max,

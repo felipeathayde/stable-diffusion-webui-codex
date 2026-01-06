@@ -1,4 +1,25 @@
-"""Codex-native memory management service."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
+Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during
+engine orchestration.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
+- `_detect_oom_exception` (function): Detects the appropriate OOM exception class for the active backend/runtime.
+- `_normalize_device_name` (function): Normalizes device name strings for stable matching and policy decisions.
+- `_device_has_native_bf16` (function): Heuristic for whether a device likely supports native BF16 (name + compute capability).
+- `_probe_hardware` (function): Performs hardware probing and returns a `HardwareProbe` (raises `HardwareProbeError` on failure).
+- `_LoadedModelRecord` (dataclass): Tracks one loaded model/component (name/path/device/dtype) for introspection and unload decisions.
+- `CodexMemoryManager` (class): Main memory manager; owns runtime config, budget calculation, model registry, and policy decisions
+  (contains many methods for load/unload bookkeeping, swap/offload behavior, and “best defaults” selection).
+"""
 
 from __future__ import annotations
 

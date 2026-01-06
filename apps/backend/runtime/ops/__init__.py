@@ -1,7 +1,19 @@
-"""Operational helpers (bnb, gguf, swap) for backend runtime (lazy exports).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Do not import heavy submodules at package import time; expose attributes
-on-demand to avoid circular imports (e.g., when `utils` imports `ops.operations_gguf`).
+Purpose: Runtime ops facade exposing operational helpers (bnb/gguf/swap) via lazy attribute lookup.
+Avoids importing heavy submodules at package import time and helps prevent circular imports (e.g. when `utils` imports `ops.operations_gguf`).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_SUBMODULES` (constant): Ordered list of candidate module paths searched for requested attributes.
+- `_CACHE` (constant): Cache mapping attribute name -> resolved object.
+- `__getattr__` (function): Import-time indirection that searches `_SUBMODULES` for the requested name.
+- `__all__` (constant): Explicit export list (intentionally empty; exports are discovered dynamically).
 """
 
 _SUBMODULES = (

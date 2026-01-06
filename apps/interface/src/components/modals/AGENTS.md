@@ -2,7 +2,7 @@
 # apps/interface/src/components/modals Overview
 Date: 2025-12-04
 Owner: Frontend Maintainers
-Last Review: 2025-12-26
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - Avoid `style="..."` in templates; prefer shared primitives and CSS in `apps/interface/src/styles/**`.
 - `LoraModal.vue` inserts `<lora:name:weight>` tokens via buttons targeting the positive/negative prompt; `PromptCard.vue` handles the `target` payload for the main prompt UX (views may still handle it when using the modal directly).
 - Keep modals presentational; stores and routing decisions live in views/stores.
+- 2026-01-03: Added standardized file header blocks to modal components (doc-only change; part of rollout).

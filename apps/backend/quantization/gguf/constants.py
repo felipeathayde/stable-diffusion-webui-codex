@@ -1,3 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: GGUF/GGML constant and enum catalogue used by the quantization/writer/reader stack.
+Defines GGUF magic/version/alignment constants plus the canonical metadata keys and enum IDs for architectures, tensor keys, and quantization types.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Keys` (class): Namespaced GGUF metadata key strings (nested categories like `General`, `Architecture`, etc.).
+- `GGUFType` (class): Namespaced “general.type” values and related GGUF type identifiers.
+- `MODEL_ARCH` (enum): GGUF architecture identifiers (IntEnum).
+- `MODEL_TENSOR` (enum): GGUF tensor key identifiers (IntEnum).
+- `TokenType` (enum): Token type identifiers used in tokenizer metadata (IntEnum).
+- `RopeScalingType` (enum): RoPE scaling strategy identifiers (Enum).
+- `PoolingType` (enum): Pooling strategy identifiers (IntEnum).
+- `GGMLQuantizationType` (enum): GGML quantization type IDs (IntEnum; drives block format/layout).
+- `LlamaFileType` (enum): LLaMA file type identifiers (IntEnum; GGUF compatibility metadata).
+- `GGUFEndian` (enum): Endianness identifiers for GGUF serialization (IntEnum).
+- `GGUFValueType` (enum): GGUF value type identifiers for key/value storage (IntEnum).
+"""
+
 from __future__ import annotations
 
 from enum import Enum, IntEnum, auto

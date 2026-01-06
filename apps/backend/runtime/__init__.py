@@ -1,15 +1,24 @@
-"""Runtime-level helpers for backend execution (lazy export).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Avoid importing heavy modules (e.g., torch via `utils`) at package import time.
-Modules are exposed lazily via ``__getattr__`` to break cycles and reduce early
-memory pressure during tools like the TUI BIOS.
+Purpose: Runtime package facade with lazy exports for backend execution.
+Avoids importing heavy dependencies at package import time by exposing runtime submodules via a `__getattr__` lazy import hook.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_EXPORTS` (constant): Mapping `{name: module_path}` for runtime submodules exposed via the lazy import hook.
+- `__getattr__` (function): Lazy import hook resolving runtime submodules on first access.
+- `__all__` (constant): List of exported runtime submodule names (keys of `_EXPORTS`).
 """
 
 _EXPORTS = {
     # Core utilities / small helpers
     "utils": "apps.backend.runtime.utils",
     "trace": "apps.backend.runtime.trace",
-    "shared": "apps.backend.runtime.shared",
     # Memory stack
     "memory_management": "apps.backend.runtime.memory.memory_management",
     "stream": "apps.backend.runtime.memory.stream",

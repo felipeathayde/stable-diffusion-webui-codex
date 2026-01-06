@@ -1,3 +1,24 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Img2img generation store (init image + model/sampler/scheduler selection + SSE task updates).
+Holds img2img form state, loads model/sampler/scheduler lists, starts `/api/img2img` jobs, and consumes task events to update progress and
+gallery state.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Status` (type): Store status enum (`idle`/`running`/`error`/`done`).
+- `ProgressState` (interface): Progress payload shape tracked during generation.
+- `DEFAULT_PROGRESS` (constant): Default progress state for resets.
+- `useImg2ImgStore` (store): Pinia store for img2img; owns form state, init-image selection, API calls, SSE subscription, and progress/gallery.
+- `readFileAsDataURL` (function): Reads a File into a data URL for preview/upload.
+- `readImageDimensions` (function): Extracts width/height from a data URL image.
+*/
+
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'

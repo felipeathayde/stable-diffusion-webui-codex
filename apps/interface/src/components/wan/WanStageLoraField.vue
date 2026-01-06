@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN stage LoRA selector + weight field.
+Renders a LoRA dropdown (from WAN LoRA inventory choices) and an optional weight input, emitting updates to the parent stage panel.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WanStageLoraField` (component): Stage-level LoRA path + weight inputs for WAN generation.
+- `onPathChange` (function): Emits an updated LoRA path selection.
+- `onWeightChange` (function): Emits an updated LoRA weight value.
+-->
+
 <template>
   <div class="gc-row">
     <div class="gc-col gc-col--wide field">
@@ -41,4 +58,3 @@ function onWeightChange(event: Event): void {
   emit('update:loraWeight', v)
 }
 </script>
-

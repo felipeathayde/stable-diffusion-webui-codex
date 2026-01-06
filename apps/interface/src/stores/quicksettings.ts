@@ -1,3 +1,20 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: QuickSettings global store (models/samplers/schedulers/options + asset SHA selection).
+Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
+resolve to backend SHA-based assets (no raw-path inputs).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
+  setters that call API updates, and resolvers that map UI labels → inventory SHA (`resolve*Sha` helpers).
+*/
+
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo } from '../api/types'
@@ -20,6 +37,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   // SHA256 lookup maps for text encoders and VAEs (populated from inventory)
   const textEncoderShaMap = ref<Map<string, string>>(new Map())
   const vaeShaMap = ref<Map<string, string>>(new Map())
+  const wanGgufShaMap = ref<Map<string, string>>(new Map())
   const attentionChoices = ref<{ value: string; label: string }[]>([
     { value: 'torch-sdpa', label: 'Torch (SDPA)' },
     { value: 'xformers', label: 'xFormers' },
@@ -61,9 +79,27 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const smartCache = ref<boolean>(true)
   const coreStreaming = ref<boolean>(false)
 
-  // Basic engine/mode options (sync with legacy fallback)
-  const engineChoices = ref<string[]>(['sd15', 'sdxl', 'flux', 'kontext', 'svd', 'hunyuan_video', 'wan22'])
+  // Basic engine/mode options
+  const engineChoices = ref<string[]>([
+    'sd15',
+    'sdxl',
+    'flux1',
+    'flux1_kontext',
+    'flux1_chroma',
+    'zimage',
+    'svd',
+    'hunyuan_video',
+    'wan22',
+  ])
   const modeChoices = ref<string[]>(['Normal', 'LCM', 'Turbo', 'Lightning'])
+
+  function normalizeEngineKey(value: string): string {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    const key = raw.toLowerCase()
+    if (!engineChoices.value.includes(key)) return ''
+    return key
+  }
 
   async function init(): Promise<void> {
     await Promise.all([
@@ -125,23 +161,26 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       currentSeed.value = opts.seed
     }
     if (typeof opts.codex_engine === 'string') {
-      currentEngine.value = opts.codex_engine
-      if (!engineChoices.value.includes(opts.codex_engine)) engineChoices.value.push(opts.codex_engine)
+      const engine = normalizeEngineKey(opts.codex_engine)
+      if (engine) {
+        currentEngine.value = engine
+        if (!engineChoices.value.includes(engine)) engineChoices.value.push(engine)
+      }
     }
     if (typeof opts.codex_mode === 'string') {
       currentMode.value = opts.codex_mode
       if (!modeChoices.value.includes(opts.codex_mode)) modeChoices.value.push(opts.codex_mode)
     }
-    if (typeof opts.forge_selected_vae === 'string') {
-      currentVae.value = opts.forge_selected_vae || 'Automatic'
+    if (typeof (opts as any).sd_vae === 'string') {
+      currentVae.value = (opts as any).sd_vae || 'Automatic'
     }
-    if (Array.isArray(opts.forge_additional_modules)) {
-      currentTextEncoders.value = (opts.forge_additional_modules as unknown[])
+    if (Array.isArray((opts as any).text_encoder_overrides)) {
+      currentTextEncoders.value = ((opts as any).text_encoder_overrides as unknown[])
         .map((entry) => String(entry).trim())
         .filter((entry) => entry.length > 0)
     }
-    if (typeof opts.forge_unet_storage_dtype === 'string') {
-      currentUnetDtype.value = opts.forge_unet_storage_dtype
+    if (typeof (opts as any).codex_unet_storage_dtype === 'string') {
+      currentUnetDtype.value = (opts as any).codex_unet_storage_dtype
     }
     if (typeof (opts as any).codex_attention_backend === 'string') {
       currentAttention.value = (opts as any).codex_attention_backend
@@ -162,8 +201,8 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_core_dtype === 'string') coreDtype.value = (opts as any).codex_core_dtype
     if (typeof (opts as any).codex_te_dtype === 'string') teDtype.value = (opts as any).codex_te_dtype
     if (typeof (opts as any).codex_vae_dtype === 'string') vaeDtype.value = (opts as any).codex_vae_dtype
-    if (typeof opts.forge_inference_memory === 'number') {
-      gpuWeightsMb.value = opts.forge_inference_memory
+    if (typeof (opts as any).codex_inference_memory_mb === 'number') {
+      gpuWeightsMb.value = (opts as any).codex_inference_memory_mb
     }
     if (typeof (opts as any).codex_smart_offload === 'boolean') {
       smartOffload.value = (opts as any).codex_smart_offload
@@ -200,8 +239,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   async function setEngine(name: string): Promise<void> {
-    currentEngine.value = name
-    await updateOptions({ codex_engine: name })
+    const engine = normalizeEngineKey(name)
+    if (!engine) return
+    currentEngine.value = engine
+    await updateOptions({ codex_engine: engine })
   }
 
   async function setMode(name: string): Promise<void> {
@@ -231,7 +272,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       try {
         const inv = await fetchModelInventory()
         const shaMap = new Map<string, string>()
-        const prefixes = ['sd15', 'sdxl', 'flux', 'wan22', 'zimage']
+        const prefixes = ['sd15', 'sdxl', 'flux1', 'wan22', 'zimage']
         for (const te of inv.text_encoders || []) {
           const sha = typeof te.sha256 === 'string' ? te.sha256 : ''
           if (!sha) continue
@@ -257,11 +298,49 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
         // Also populate VAE SHA map
         const vaeMap = new Map<string, string>()
         for (const v of inv.vaes || []) {
-          if (v.name && v.sha256) {
-            vaeMap.set(v.name, v.sha256)
+          const sha = typeof v.sha256 === 'string' ? v.sha256 : ''
+          if (!sha) continue
+          const name = typeof v.name === 'string' ? v.name : ''
+          const rawPath = typeof v.path === 'string' ? v.path : ''
+          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+          const keys = new Set<string>()
+          if (name) keys.add(name)
+          if (rawPath) keys.add(rawPath)
+          if (normPath) keys.add(normPath)
+          const basename = normPath ? normPath.split('/').pop() : name
+          if (basename) keys.add(basename)
+          if (normPath) {
+            for (const prefix of prefixes) {
+              keys.add(`${prefix}/${normPath}`)
+            }
+          }
+          for (const key of keys) {
+            vaeMap.set(key, sha)
           }
         }
         vaeShaMap.value = vaeMap
+
+        const wanMap = new Map<string, string>()
+        const wanFiles = (inv as any)?.wan22?.gguf
+        if (Array.isArray(wanFiles)) {
+          for (const w of wanFiles) {
+            const sha = typeof w?.sha256 === 'string' ? w.sha256 : ''
+            if (!sha) continue
+            const name = typeof w?.name === 'string' ? w.name : ''
+            const rawPath = typeof w?.path === 'string' ? w.path : ''
+            const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+            const keys = new Set<string>()
+            if (name) keys.add(name)
+            if (rawPath) keys.add(rawPath)
+            if (normPath) keys.add(normPath)
+            const basename = normPath ? normPath.split('/').pop() : name
+            if (basename) keys.add(basename)
+            for (const key of keys) {
+              wanMap.set(key, sha)
+            }
+          }
+        }
+        wanGgufShaMap.value = wanMap
       } catch (_) {
         // Non-critical - SHA lookup will just be empty
       }
@@ -324,6 +403,42 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     return sha || undefined
   }
 
+  function resolveVaeSha(label: string | null | undefined): string | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+
+    const lower = raw.toLowerCase()
+    if (lower === 'automatic' || lower === 'built in' || lower === 'built-in' || lower === 'none') {
+      return undefined
+    }
+    if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
+    const normalized = raw.replace(/\\+/g, '/')
+    const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
+    const tail = normalized.split('/').pop() || ''
+    return (
+      vaeShaMap.value.get(normalized) ||
+      vaeShaMap.value.get(withoutPrefix) ||
+      vaeShaMap.value.get(tail)
+    )
+  }
+
+  function resolveWanGgufSha(label: string | null | undefined): string | undefined {
+    const raw = String(label || '').trim()
+    if (!raw) return undefined
+
+    const lower = raw.toLowerCase()
+    if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
+    const normalized = raw.replace(/\\+/g, '/')
+    const tail = normalized.split('/').pop() || ''
+    return wanGgufShaMap.value.get(normalized) || wanGgufShaMap.value.get(tail)
+  }
+
   function isModelGguf(label: string | null | undefined): boolean {
     const raw = String(label || '').trim()
     if (!raw) return false
@@ -339,7 +454,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setVae(label: string): Promise<void> {
     currentVae.value = label
-    await updateOptions({ forge_selected_vae: label })
+    await updateOptions({ sd_vae: label })
   }
 
   async function setTextEncoders(labels: string[]): Promise<void> {
@@ -353,9 +468,9 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     // Labels may be backend text encoder roots or direct file paths; they are
     // persisted as-is so future overrides can resolve them centrally.
     // Also send SHA256 values for direct backend resolution.
-    const opts: Record<string, unknown> = { forge_additional_modules: labels }
+    const opts: Record<string, unknown> = { text_encoder_overrides: labels }
     if (shas.length > 0) {
-      opts.forge_additional_modules_sha = shas
+      opts.text_encoder_overrides_sha = shas
     }
     await updateOptions(opts)
   }
@@ -374,7 +489,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setUnetDtype(name: string): Promise<void> {
     currentUnetDtype.value = name
-    await updateOptions({ forge_unet_storage_dtype: name })
+    await updateOptions({ codex_unet_storage_dtype: name })
   }
 
   async function setAttentionBackend(value: string): Promise<void> {
@@ -420,7 +535,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setGpuWeightsMb(value: number): Promise<void> {
     gpuWeightsMb.value = value
-    await updateOptions({ forge_inference_memory: value })
+    await updateOptions({ codex_inference_memory_mb: value })
   }
 
   async function setSmartOffload(value: boolean): Promise<void> {
@@ -506,7 +621,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     textEncoderShaMap,
     resolveTextEncoderSha,
     resolveModelSha,
+    resolveVaeSha,
+    resolveWanGgufSha,
     isModelGguf,
     vaeShaMap,
+    wanGgufShaMap,
   }
 })

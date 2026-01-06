@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: AuraFlow model detector for the model registry.
+Detects AuraFlow checkpoints via key signatures and builds a `ModelSignature` describing the core architecture, text encoders, and optional VAE.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `AURA_KEYS` (constant): Key set used to identify AuraFlow checkpoints.
+- `AuraFlowDetector` (class): Detector that builds a `ModelSignature` for AuraFlow checkpoints.
+"""
+
 from __future__ import annotations
 
 from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY

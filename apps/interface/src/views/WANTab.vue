@@ -1,3 +1,72 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
+Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
+renders progress/results via task events.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
+- `WanAssetsParams` (interface): Minimal WAN assets triple (metadata dir + text encoder + VAE) used for validation and payload building.
+- `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
+- `AspectMode` (type): Aspect ratio mode presets for width/height controls.
+- `normalizePath` (function): Normalizes paths for stable comparisons (used by root filtering and UI label handling).
+- `fileInRoots` (function): Checks whether a file path is under any configured root (used to constrain selectable WAN assets).
+- `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
+- `defaultVideo` (function): Returns default video params (prompt/dims/init media fields) for new tabs/resets.
+- `defaultAssets` (function): Returns default (empty) assets selection.
+- `setVideo` (function): Applies partial updates to the video params in state (triggers dependent sync where needed).
+- `setHigh` (function): Applies partial updates to the high stage (and can drive low-stage sync when enabled).
+- `setLow` (function): Applies partial updates to the low stage.
+- `syncLowFromHighIfNeeded` (function): Keeps low stage params aligned with high stage when the “low follows high” toggle is enabled.
+- `onLowFollowsHighChange` (function): Toggles low-follow behavior and applies an immediate sync.
+- `toggleLowNoise` (function): Toggles low-stage noise-related behavior/flags.
+- `toInt` (function): Parses an integer from an `<input>` event with fallback.
+- `onInitImageFile` (function): Reads an init image file into a data URL and stores name/data for img2vid (async).
+- `clearInit` (function): Clears init image fields.
+- `onGenerateClick` (function): Starts a generation run for the current input mode (builds payload, submits, and wires streaming) (async).
+- `onInitVideoFile` (function): Handles vid2vid init-video selection and preview state.
+- `clearInitVideo` (function): Clears init video selection/preview state.
+- `clampNumber` (function): Clamps a numeric value to `[min, max]`.
+- `computeGuidedTooltipPosition` (function): Computes tooltip position for guided-generation overlay based on current highlight rect.
+- `isFocusable` (function): Type guard for focusable DOM elements.
+- `findFocusTarget` (function): Resolves the element to focus for a guided step (selector + fallbacks).
+- `clearGuidedHighlight` (function): Clears guided highlight/tooltip state.
+- `updateGuidedRect` (function): Recomputes the guided highlight rectangle from DOM measurements.
+- `scheduleGuidedRectUpdate` (function): Schedules highlight-rect recomputation (debounced via timers/rAF).
+- `scheduleGuidedSettleUpdate` (function): Schedules a “settle” recompute after layout/scroll changes.
+- `stopGuided` (function): Stops the guided-generation flow and removes transient UI state/listeners.
+- `focusGuided` (function): Scrolls/focuses the UI control for a guided step.
+- `startGuided` (function): Starts guided-generation flow (initial step + listeners + rect scheduling).
+- `onGuidedGenEvent` (function): Handles guided-generation events emitted by other UI surfaces.
+- `onWanModeChangeEvent` (function): Handles WAN mode change events (syncs tab input mode/state).
+- `setInputMode` (function): Sets the tab input mode and resets/validates init-media state for that mode.
+- `buildCurrentSnapshot` (function): Builds a JSON-serializable snapshot of current params (used for history/clipboard/workflows).
+- `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
+- `copyInfo` (function): Copies current run info/metadata to clipboard (async).
+- `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
+- `queueNext` (function): Queues a next run based on current params/history (async).
+- `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
+- `reuseLast` (function): Convenience helper to reuse the most recent history entry.
+- `isRecord` (function): Type guard for `Record<string, unknown>`.
+- `formatDiffValue` (function): Formats values for the “params diff” UI.
+- `diffObjects` (function): Recursively diffs two objects into `{path, before, after}` entries (used for history diff).
+- `snapDim` (function): Snaps a dimension to model constraints (e.g., multiple-of-8).
+- `ratioForMode` (function): Returns the target aspect ratio for a given `AspectMode` preset.
+- `onAspectModeChange` (function): Applies aspect-mode changes and updates width/height accordingly.
+- `applyWidth` (function): Applies width updates (snapping + aspect-mode handling).
+- `applyHeight` (function): Applies height updates (snapping + aspect-mode handling).
+- `sendToWorkflows` (function): Sends the current snapshot into the workflows subsystem (async).
+- `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
+- `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
+- `readFileAsDataURL` (function): Reads a File into a data URL (used by init-image handling).
+-->
+
 <template>
   <section v-if="tab" class="panels wan-panels">
     <div class="panel-stack">

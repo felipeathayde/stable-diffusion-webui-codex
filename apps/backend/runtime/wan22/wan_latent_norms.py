@@ -1,15 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN latent normalization helpers.
+Provides per-channel mean/std normalization utilities for WAN latent formats (Wan21 16ch and Wan22 48ch).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LatentNorm` (class): Base normalizer interface with `process_in`/`process_out` hooks.
+- `Wan21Norm` (class): Per-channel normalization for 16-channel WAN latents.
+- `Wan22Norm` (class): Per-channel normalization for 48-channel WAN latents.
+- `IdentityNorm` (class): No-op normalization implementation for arbitrary channel counts.
+- `resolve_norm` (function): Resolves the appropriate normalizer based on requested kind and latent channel count.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple
+
 import torch
-
-
-"""WAN latent normalization helpers (ComfyUI-inspired).
-
-Provides simple per-channel mean/std normalization for WAN latent formats.
-Defaults to Wan21 (16ch). No SD15 fallback here by design.
-"""
 
 
 @dataclass
@@ -25,11 +38,11 @@ class LatentNorm:
 
 
 class Wan21Norm(LatentNorm):
-    """Per-channel mean/std normalization for 16-channel WAN latent (Comfy Wan21)."""
+    """Per-channel mean/std normalization for 16-channel WAN latent (Wan21)."""
 
     def __init__(self) -> None:
         super().__init__(name='wan21', channels=16)
-        # Values from ComfyUI comfy/latent_formats.py (Wan21)
+        # Values from the Wan21 latent format reference.
         self._mean = torch.tensor([
             -0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508,
             0.4134, -0.0715, 0.5517, -0.3632, -0.1922, -0.9497, 0.2503, -0.2921
@@ -64,7 +77,7 @@ class Wan22Norm(LatentNorm):
 
     def __init__(self) -> None:
         super().__init__(name='wan22', channels=48)
-        # Values sourced from Wan22 latent statistics (ComfyUI reference)
+        # Values sourced from Wan22 latent statistics (reference values).
         self._mean = torch.tensor([
             -0.2289, -0.0052, -0.1323, -0.2339, -0.2799, 0.0174, 0.1838, 0.1557,
             -0.1382, 0.0542, 0.2813, 0.0891, 0.1570, -0.0098, 0.0375, -0.1825,

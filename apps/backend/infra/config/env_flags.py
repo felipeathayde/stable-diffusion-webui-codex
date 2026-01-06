@@ -1,0 +1,77 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Shared environment flag parsing helpers for backend/runtime modules.
+Centralizes env parsing semantics (truthy/falsy sets, defaults, and numeric clamping) so subsystems don't drift on debug/feature toggles.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_TRUE` (constant): Truthy token set for env flags.
+- `_FALSE` (constant): Falsy token set for env flags.
+- `env_flag` (function): Reads a boolean env var with consistent truthiness and default fallback.
+- `env_int` (function): Reads an integer env var with default fallback and optional clamping.
+- `__all__` (constant): Explicit export list for env flag helpers.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Optional
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    """Return a boolean env flag.
+
+    Semantics:
+    - missing → default
+    - truthy tokens → True
+    - falsy tokens → False
+    - unknown/empty → default
+    """
+
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    value = str(raw).strip().lower()
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    return bool(default)
+
+
+def env_int(name: str, default: int, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    """Return an int env var with optional clamping.
+
+    - missing/invalid/empty → default
+    - min_value/max_value apply after parsing.
+    """
+
+    raw = os.getenv(name)
+    if raw is None:
+        value = int(default)
+    else:
+        s = str(raw).strip()
+        if not s:
+            value = int(default)
+        else:
+            try:
+                value = int(s)
+            except Exception:
+                value = int(default)
+
+    if min_value is not None:
+        value = max(int(min_value), value)
+    if max_value is not None:
+        value = min(int(max_value), value)
+    return value
+
+
+__all__ = ["env_flag", "env_int"]

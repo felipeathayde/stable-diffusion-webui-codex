@@ -1,7 +1,7 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
 Owner: Engine Maintainers
-Last Review: 2026-01-01
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -9,6 +9,7 @@ Status: Active
 
 ## Key Files
 - `apps/backend/engines/zimage/spec.py` — Runtime assembly (external VAE/Qwen3 for core-only checkpoints) + flow predictor defaults.
+- `apps/backend/engines/zimage/factory.py` — Factory seam returning `(runtime, CodexObjects)` for consistent engine assembly.
 - `apps/backend/engines/zimage/zimage.py` — `ZImageEngine` implementation (prompt formatting, conditioning, VAE encode/decode semantics).
 - `apps/backend/engines/zimage/__init__.py` — Engine exports.
 
@@ -23,3 +24,6 @@ Status: Active
 - **Diffusers-math sampler:** `standalone_sampler.sample_zimage_diffusers_math(...)` mirrors diffusers scheduler behavior (`shift=3.0`, `sigma_min=0.0`) and avoids double-negating the model output (core already returns `noise_pred=-v`).
 - **Debugging:** set `CODEX_ZIMAGE_DEBUG_PROMPT=1` to log the formatted prompt string and `distilled_cfg_scale` used for the run.
 - 2026-01-01: ZImage prompt conditioning now participates in `smart_cache` (`zimage.conditioning`) so repeated prompts don’t re-encode Qwen3 each time; `get_learned_conditioning(...)` returns the cross-attn tensor directly (no placeholder `vector/guidance` allocations).
+- 2026-01-02: Added standardized file header docstrings to Z Image engine modules (doc-only change; part of rollout).
+- 2026-01-03: Z Image runtime core is now stored as `ZImageEngineRuntime.denoiser` via `DenoiserPatcher` (no ControlNet graph).
+- 2026-01-03: `ZImageEngine` now assembles via `CodexZImageFactory` (factory-first seam; reduces drift in `_build_components`).

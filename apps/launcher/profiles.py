@@ -1,3 +1,34 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Launcher profile persistence (meta + env areas + per-model env overlays).
+Implements the profile store used by the TUI/GUI launchers to load/save settings under `.sangoi/launcher/` (meta/areas/models) and to
+expose a mapping-like interface for editing environment variables with per-area routing and migrations.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_default_area_env` (function): Builds default per-area env maps (core/wan), hydrating from current env and best-effort settings snapshot.
+- `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
+- `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
+- `LauncherProfileStore` (dataclass): Main profile store; loads/saves meta/env maps, resolves key routing, and provides lookup helpers
+  (contains nested helpers for container resolution and file IO).
+- `_default_root` (function): Returns the default launcher storage root under repo `.sangoi/launcher/`.
+- `_ensure_tree` (function): Ensures launcher storage directories exist.
+- `_load_meta` (function): Loads `LauncherMeta` from disk (or defaults).
+- `_write_meta` (function): Writes `LauncherMeta` to disk.
+- `_load_areas` (function): Loads area env files from disk.
+- `_load_models` (function): Loads per-model env files from disk.
+- `_write_env_maps` (function): Writes env maps to disk (one file per map).
+- `_read_env_file` (function): Reads a single env JSON file with optional defaults merge.
+- `_stringify_dict` (function): Normalizes mapping values to strings for env storage.
+- `_maybe_migrate_legacy` (function): Migrates legacy launcher layouts/keys when present.
+- `_resolve_container_static` (function): Static resolution helper for routing an env key to an area/model container.
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
-from apps.backend.codex import options as codex_options
+from apps.backend.services import options_store
 from apps.backend.infra.config.repo_root import get_repo_root
 
 LOGGER = logging.getLogger("codex.launcher.profiles")
@@ -57,7 +88,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "WAN_LOG_DEBUG": os.getenv("WAN_LOG_DEBUG", "0"),
     }
     try:
-        snap = codex_options.get_snapshot()
+        snap = options_store.get_snapshot()
 
         def _set_core(key: str, value: str | None) -> None:
             if value is None:
@@ -246,7 +277,7 @@ class LauncherProfileStore:
                 continue
             updates[settings_key] = text
         if updates:
-            codex_options.set_values(updates)
+            options_store.set_values(updates)
 
     def _migrate_device_dtype_flags(self) -> None:
         def _canonical_device(value: str | None) -> str:

@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Launcher environment validation helpers.
+Runs preflight checks for Python, Node/npm, and Vite installation, returning structured results for UI display and diagnostics.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LOGGER` (constant): Module logger for launcher checks.
+- `MIN_NODE_MAJOR` (constant): Minimum supported Node.js major version.
+- `CodexLaunchCheck` (dataclass): Structured check result (name/ok/detail).
+- `_parse_semver` (function): Parses a semver string into integer tuples for comparison.
+- `_check_python_version` (function): Validates the running Python version against supported majors/minors.
+- `_check_node` (function): Validates node/npm availability and minimum version.
+- `_vite_requirement_satisfied` (function): Checks if an installed Vite version satisfies a package.json requirement string.
+- `_codex_root` (function): Resolves the repo root used for frontend checks.
+- `_check_vite` (function): Validates installed Vite version vs `apps/interface/package.json` requirement.
+- `run_launch_checks` (function): Executes all launcher checks and returns results.
+"""
+
 from __future__ import annotations
 
 import json

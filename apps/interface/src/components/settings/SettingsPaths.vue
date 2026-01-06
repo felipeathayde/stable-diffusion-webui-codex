@@ -1,3 +1,21 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Settings panel for model search paths (`/api/paths`).
+Edits engine-specific checkpoint/VAE/LoRA/text-encoder roots and persists them via the backend paths API, using `PathList` to manage per-key lists.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SettingsPaths` (component): Settings panel for model and asset path roots.
+- `getList` (function): Normalizes a raw key list from the backend paths payload.
+- `reload` (function): Fetches and populates current paths from the backend.
+- `save` (function): Persists the edited paths back to the backend.
+-->
+
 <template>
   <div class="space-y-4">
     <div class="panel-section">
@@ -45,23 +63,23 @@
     </div>
 
     <div class="panel-section">
-      <h3 class="label-muted">Flux</h3>
+      <h3 class="label-muted">FLUX.1</h3>
       <div class="space-y-2">
         <div>
           <label class="label-muted">Checkpoints</label>
-          <PathList v-model="paths.flux.ckpt" />
+          <PathList v-model="paths.flux1.ckpt" />
         </div>
         <div>
           <label class="label-muted">VAE</label>
-          <PathList v-model="paths.flux.vae" />
+          <PathList v-model="paths.flux1.vae" />
         </div>
         <div>
           <label class="label-muted">LoRA</label>
-          <PathList v-model="paths.flux.loras" />
+          <PathList v-model="paths.flux1.loras" />
         </div>
         <div>
           <label class="label-muted">Text Encoders</label>
-          <PathList v-model="paths.flux.tenc" />
+          <PathList v-model="paths.flux1.tenc" />
         </div>
       </div>
     </div>
@@ -100,7 +118,7 @@ import { onMounted, reactive } from 'vue'
 import { fetchPaths, updatePaths } from '../../api/client'
 import PathList from './widgets/PathList.vue'
 
-type EngineId = 'sd15' | 'sdxl' | 'flux' | 'wan22'
+type EngineId = 'sd15' | 'sdxl' | 'flux1' | 'wan22'
 type EnginePaths = { ckpt: string[]; vae: string[]; loras: string[]; tenc: string[] }
 type EnginePathsState = Record<EngineId, EnginePaths>
 type RawPaths = Record<string, string[]>
@@ -108,7 +126,7 @@ type RawPaths = Record<string, string[]>
 const paths = reactive<EnginePathsState>({
   sd15: { ckpt: [], vae: [], loras: [], tenc: [] },
   sdxl: { ckpt: [], vae: [], loras: [], tenc: [] },
-  flux: { ckpt: [], vae: [], loras: [], tenc: [] },
+  flux1: { ckpt: [], vae: [], loras: [], tenc: [] },
   wan22: { ckpt: [], vae: [], loras: [], tenc: [] },
 })
 
@@ -142,10 +160,10 @@ async function reload(): Promise<void> {
     paths.sdxl.loras = getList(loaded, 'sdxl_loras')
     paths.sdxl.tenc = getList(loaded, 'sdxl_tenc')
 
-    paths.flux.ckpt = getList(loaded, 'flux_ckpt')
-    paths.flux.vae = getList(loaded, 'flux_vae')
-    paths.flux.loras = getList(loaded, 'flux_loras')
-    paths.flux.tenc = getList(loaded, 'flux_tenc')
+    paths.flux1.ckpt = getList(loaded, 'flux1_ckpt')
+    paths.flux1.vae = getList(loaded, 'flux1_vae')
+    paths.flux1.loras = getList(loaded, 'flux1_loras')
+    paths.flux1.tenc = getList(loaded, 'flux1_tenc')
 
     paths.wan22.ckpt = getList(loaded, 'wan22_ckpt')
     paths.wan22.vae = getList(loaded, 'wan22_vae')
@@ -175,10 +193,10 @@ async function save(): Promise<void> {
   next.sdxl_loras = [...paths.sdxl.loras]
   next.sdxl_tenc = [...paths.sdxl.tenc]
 
-  next.flux_ckpt = [...paths.flux.ckpt]
-  next.flux_vae = [...paths.flux.vae]
-  next.flux_loras = [...paths.flux.loras]
-  next.flux_tenc = [...paths.flux.tenc]
+  next.flux1_ckpt = [...paths.flux1.ckpt]
+  next.flux1_vae = [...paths.flux1.vae]
+  next.flux1_loras = [...paths.flux1.loras]
+  next.flux1_tenc = [...paths.flux1.tenc]
 
   next.wan22_ckpt = [...paths.wan22.ckpt]
   next.wan22_vae = [...paths.wan22.vae]

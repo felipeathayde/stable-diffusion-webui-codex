@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Video frame interpolation orchestration helpers.
+Provides a single `maybe_interpolate(...)` wrapper that applies frame interpolation (currently RIFE) when requested and available, otherwise raising explicit errors for unsupported configurations.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `maybe_interpolate` (function): Applies video frame interpolation when enabled and configured, returning `(frames_out, meta)`.
+"""
+
 from __future__ import annotations
 
 from typing import List, Tuple, Sequence, Optional, Dict, Any

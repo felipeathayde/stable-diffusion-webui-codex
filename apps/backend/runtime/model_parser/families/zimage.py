@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Z Image parser plan builder (core-only DiT checkpoints).
+Builds split/validation steps for Z Image core checkpoints, including GGUF core-only and prefixed SafeTensors exports, and registers a stable
+Qwen3 text-encoder alias mapping for override resolution.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_ZIMAGE_CORE_PREFIXES` (constant): Accepted prefixes for Z Image core weights.
+- `_register_zimage_text_encoders` (function): Registers the `qwen3_4b` alias mapping in the parser context.
+- `build_plan` (function): Builds and returns the Z Image `ParserPlanBundle`.
+- `_validate_transformer_core` (function): Validates presence of key transformer tensors for Z Image.
+"""
+
 from __future__ import annotations
 
 from typing import Dict

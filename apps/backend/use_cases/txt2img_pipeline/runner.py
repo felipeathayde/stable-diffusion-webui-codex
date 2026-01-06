@@ -1,4 +1,20 @@
-"""Stage-based txt2img pipeline orchestrator."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
+Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
+- `SamplingOutput` (dataclass): Sampling result container (latents/images + metadata) passed between pipeline stages.
+- `Txt2ImgPipelineRunner` (class): Main orchestrator; owns the stage pipeline (conditioning/sampling/hires/refiner) and calls the runtime helpers
+  (contains nested stage methods and integrates smart cache + pipeline tracing).
+"""
 # // tags: txt2img, pipeline, sdxl, hires, refiner
 
 from __future__ import annotations
@@ -13,7 +29,6 @@ import numpy as np
 import torch
 from PIL import Image
 
-from apps.backend.codex import main as codex_main
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.infra.config import args as backend_args
@@ -36,22 +51,21 @@ from apps.backend.runtime.processing.datatypes import (
 )
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
-from apps.backend.runtime.workflows import (
+from apps.backend.runtime.workflows.image_io import latents_to_pil, maybe_decode_for_hr, pil_to_tensor
+from apps.backend.runtime.workflows.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
-    apply_sampling_overrides,
-    apply_tiling_if_requested,
     build_prompt_context,
+)
+from apps.backend.runtime.workflows.sampling_execute import execute_sampling
+from apps.backend.runtime.workflows.sampling_plan import (
+    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
-    execute_sampling,
-    finalize_tiling,
-    latents_to_pil,
-    maybe_decode_for_hr,
-    pil_to_tensor,
-    run_process_scripts,
 )
-from apps.backend.codex.loader import EngineLoadOptions, load_engine as _load_engine
+from apps.backend.runtime.workflows.scripts import run_process_scripts
+from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, finalize_tiling
+from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.use_cases.txt2img_pipeline.refiner import GlobalRefinerStage, HiresRefinerStage, RefinerStage
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
@@ -348,7 +362,7 @@ class Txt2ImgPipelineRunner:
                     seed=seed,
                 )
                 # Convert PIL images to tensor format expected by pipeline
-                from apps.backend.runtime.workflows import pil_to_tensor
+                from apps.backend.runtime.workflows.image_io import pil_to_tensor
                 if images:
                     # pil_to_tensor returns decoded RGB tensor
                     decoded_tensor = pil_to_tensor(images)
@@ -511,50 +525,22 @@ class Txt2ImgPipelineRunner:
     @pipeline_trace
     def _reload_for_hires(self, processing: CodexProcessingTxt2Img, state: PrepareState) -> None:
         assert state.hires_plan is not None
-        checkpoint_before = getattr(codex_main._SELECTIONS, "checkpoint_name")
-        modules_before = list(getattr(codex_main._SELECTIONS, "additional_modules"))
+        model_name = getattr(processing, "hr_checkpoint_name", None)
+        if not model_name or model_name == "Use same checkpoint":
+            return
 
-        reload_required = False
-        if (
-            getattr(processing, "hr_additional_modules", None) is not None
-            and "Use same choices" not in processing.hr_additional_modules
-        ):
-            modules_changed = codex_main.modules_change(
-                processing.hr_additional_modules, save=False, refresh=False
-            )
-            reload_required = reload_required or modules_changed
-
-        if (
-            processing.hr_checkpoint_name
-            and processing.hr_checkpoint_name != "Use same checkpoint"
-        ):
-            checkpoint_changed = codex_main.checkpoint_change(
-                processing.hr_checkpoint_name, save=False, refresh=False
-            )
-            if checkpoint_changed:
-                processing.firstpass_use_distilled_cfg_scale = processing.sd_model.use_distilled_cfg_scale
-                reload_required = True
-
-        if reload_required:
-            try:
-                codex_main.refresh_model_loading_parameters()
-                load_opts = EngineLoadOptions(
-                    device=None,
-                    dtype=None,
-                    attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
-                    accelerator=os.getenv("CODEX_ACCELERATOR"),
-                    vae_path=None,
-                )
-                new_engine = _load_engine(processing.hr_checkpoint_name, options=load_opts)
-                processing.sd_model = new_engine
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"Failed to load hires checkpoint '{processing.hr_checkpoint_name}': {exc}"
-                ) from exc
-            finally:
-                codex_main.modules_change(modules_before, save=False, refresh=False)
-                codex_main.checkpoint_change(checkpoint_before, save=False, refresh=False)
-                codex_main.refresh_model_loading_parameters()
+        processing.firstpass_use_distilled_cfg_scale = processing.sd_model.use_distilled_cfg_scale
+        load_opts = EngineLoadOptions(
+            device=None,
+            dtype=None,
+            attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
+            accelerator=os.getenv("CODEX_ACCELERATOR"),
+            vae_path=None,
+        )
+        try:
+            processing.sd_model = _load_engine(str(model_name), options=load_opts)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Failed to load hires checkpoint '{model_name}': {exc}") from exc
 
         if processing.sd_model.use_distilled_cfg_scale:
             processing.extra_generation_params["Hires Distilled CFG Scale"] = processing.hr_distilled_cfg

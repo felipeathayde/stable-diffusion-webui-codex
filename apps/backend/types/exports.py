@@ -1,4 +1,19 @@
-"""Lazy export group definitions for backend __init__.py."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lazy export name groups for backend package facades.
+Defines frozen export sets used by backend `__getattr__`/`__all__` wiring to expose large subsystems on demand without heavy imports during startup.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LazyExports` (dataclass): Frozen sets of export names grouped by subsystem (engines/runtime/patchers/services/etc.).
+- `LAZY_EXPORTS` (constant): Singleton instance of `LazyExports`.
+- `__all__` (constant): Explicit export list for this module.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +49,6 @@ class LazyExports:
         "models",
         "nn",
         "ops",
-        "shared",
         "stream",
         "text_processing",
         "utils",

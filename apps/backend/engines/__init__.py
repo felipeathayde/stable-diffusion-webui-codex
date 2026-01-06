@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Engine package facade and default registration entry points.
+Exposes `register_default_engines(...)` and lazily resolves optional/large engine classes to avoid heavy imports during startup.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `EngineLoadError` (class): Error raised when an engine fails to load required resources.
+- `EngineExecutionError` (class): Error raised when an engine fails during inference execution.
+- `register_default_engines` (function): Registers the canonical engine set into the registry.
+- `_ENGINE_EXPORTS` (constant): Lazy export map `{name: (module_path, attr)}` for optional engines.
+- `__getattr__` (function): Lazy import hook for engine class exports.
+- `__all__` (constant): Explicit export list for the engine facade.
+"""
+
 from __future__ import annotations
 
 # tags: backend, engines, lazy-imports

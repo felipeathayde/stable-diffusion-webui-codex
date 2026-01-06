@@ -1,3 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Dataclasses for the Codex model parser (plans, context, and estimated config).
+Defines the declarative parser plan model (splits/converters/validations) plus the `ParserContext` and `CodexEstimatedConfig` structures used
+to return a normalized view of checkpoint components to loaders/adapters.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SplitSpec` (dataclass): Declares how to split a state dict into one component by key prefix.
+- `ConverterSpec` (dataclass): Declares a component conversion step (function + target component name).
+- `ValidationSpec` (dataclass): Declares a validation step over the `ParserContext`.
+- `ParserPlan` (dataclass): Full plan (splits + converters + validations) with safety checks for converter references.
+- `ParserPlanBundle` (dataclass): `ParserPlan` plus a `build_config(...)` function that returns `CodexEstimatedConfig`.
+- `ComponentState` (dataclass): Mutable component tensor mapping extracted from the root state dict.
+- `ParserArtifacts` (dataclass): Plan execution output (components + leftovers).
+- `ParserContext` (dataclass): Execution context passed through converters/validators (root state + signature + component states + metadata).
+- `CodexComponent` (dataclass): Immutable component mapping used in `CodexEstimatedConfig`.
+- `CodexEstimatedConfig` (dataclass): Normalized parse result returned to loaders (signature + repo id + components + extras + core config).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace

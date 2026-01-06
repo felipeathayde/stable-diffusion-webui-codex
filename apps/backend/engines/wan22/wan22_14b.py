@@ -1,7 +1,18 @@
-"""WAN 2.2 14B Engine (Clean implementation matching Flux pattern).
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-This is a complete rewrite using the WanTransformer2DModel and
-centralized runtime assembly pattern.
+Purpose: WAN 2.2 14B engine (Codex runtime assembly) for txt2vid/img2vid.
+Resolves the model bundle, assembles a `WanEngineRuntime` via `CodexWan22Factory`, and executes video requests with optional core
+streaming settings (Flux-like engine pattern).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Wan2214BEngine` (class): Codex diffusion engine for WAN22 14B; assembles runtime, handles txt2vid/img2vid runs, and streams progress/events
+  (contains nested helpers for core streaming and bundle resolution).
 """
 
 from __future__ import annotations
@@ -19,9 +30,12 @@ from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 
-from .spec import WAN_14B_SPEC, WanEngineRuntime, assemble_wan_runtime
+from .factory import CodexWan22Factory
+from .spec import WAN_14B_SPEC, WanEngineRuntime
 
 logger = logging.getLogger("backend.engines.wan22.wan22_14b")
+
+_WAN14B_FACTORY = CodexWan22Factory(spec=WAN_14B_SPEC)
 
 
 class Wan2214BEngine(CodexDiffusionEngine):
@@ -52,17 +66,11 @@ class Wan2214BEngine(CodexDiffusionEngine):
         options: Mapping[str, Any],
     ) -> CodexObjects:
         """Build engine components using centralized runtime assembly."""
-        self._device = str(options.get("device", "cuda"))
-        self._dtype = str(options.get("dtype", "bf16"))
-
-        runtime = assemble_wan_runtime(
-            spec=WAN_14B_SPEC,
-            codex_components=bundle.components,
-            estimated_config=bundle.estimated_config,
-            device=self._device,
-            dtype=self._dtype,
-        )
+        assembly = _WAN14B_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         self._runtime = runtime
+        self._device = str(getattr(runtime, "device", "cuda"))
+        self._dtype = str(getattr(runtime, "dtype", "bf16"))
         logger.info("WAN runtime assembled for %s", WAN_14B_SPEC.name)
 
         # Streaming configuration
@@ -82,8 +90,10 @@ class Wan2214BEngine(CodexDiffusionEngine):
                     WanStreamingPolicy,
                     StreamedWanTransformer,
                 )
-                # Get transformer from patcher
-                core_model = runtime.unet.model
+                # Get transformer core from KModel wrapper
+                core_model = getattr(runtime.denoiser.model, "diffusion_model", None)
+                if core_model is None:
+                    raise RuntimeError("WAN denoiser wrapper does not expose diffusion_model; cannot enable streaming.")
                 plan = build_execution_plan(core_model, blocks_per_segment=blocks_per_segment)
                 controller = WanCoreController(
                     storage_device="cpu",
@@ -91,7 +101,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
                     policy=WanStreamingPolicy(streaming_policy),
                 )
                 streamed_core = StreamedWanTransformer(core_model, plan, controller)
-                runtime.unet.model = streamed_core
+                runtime.denoiser.model.diffusion_model = streamed_core
                 self._streaming_controller = controller
                 logger.info(
                     "WAN streaming active: %d segments, %.2f MB total",
@@ -104,12 +114,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         else:
             self._streaming_controller = None
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"t5": runtime.text.t5_text},  # WAN uses T5 only
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     @property
     def required_text_encoders(self) -> tuple[str, ...]:
@@ -214,12 +219,12 @@ class Wan2214BEngine(CodexDiffusionEngine):
         dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
         dtype = dtype_map.get(self._dtype, torch.bfloat16)
         
-        # Get transformer from unet patcher
-        transformer = self.codex_objects.unet.model
+        # Get transformer core from the KModel wrapper
+        transformer = getattr(self.codex_objects.denoiser.model, "diffusion_model", self.codex_objects.denoiser.model)
         vae = runtime.vae
         
         # Load models to GPU
-        memory_management.load_model_gpu(self.codex_objects.unet)
+        memory_management.load_model_gpu(self.codex_objects.denoiser)
         
         # Progress tracking for yield
         progress_events = []

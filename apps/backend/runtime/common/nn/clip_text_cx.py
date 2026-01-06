@@ -1,3 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Codex-native CLIP text model implementation (lightweight, state-dict friendly).
+Defines a minimal CLIP text encoder stack compatible with our converted state dicts and downstream expectations (HF-like `.text_model`),
+including pooled output selection and optional hidden-state capture.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ClipActivation` (enum): Supported activation functions for MLP blocks.
+- `_act` (function): Maps `ClipActivation` values to callable implementations.
+- `CodexCLIPTextConfig` (dataclass): Minimal CLIP text config used to build the model.
+- `_CLIPAttention` (class): Multi-head self-attention block.
+- `_CLIPMLP` (class): MLP block (`fc1`/`fc2` + activation).
+- `_CLIPLayer` (class): Encoder layer (self-attn + MLP) with residuals and layer norms.
+- `_CLIPEncoder` (class): Stack of `_CLIPLayer` blocks (optionally returning hidden states).
+- `_CLIPEmbeddings` (class): Token+position embeddings.
+- `_CLIPOutput` (class): HF-like output container (`last_hidden_state`, `hidden_states`, `pooler_output`).
+- `CodexCLIPTextModel` (class): Top-level text model wrapper exposing `.text_model` for API parity.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

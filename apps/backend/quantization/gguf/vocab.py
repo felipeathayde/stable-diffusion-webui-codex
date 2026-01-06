@@ -1,3 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Tokenizer/vocabulary loaders for GGUF conversion (BPE + SentencePiece + HF LLaMA tokenizers).
+Provides vocabulary adapters that enumerate tokens/scores/types and write them into GGUF format, plus helpers to add special tokens,
+merges, and chat templates into the GGUF metadata.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `SpecialVocab` (class): Loads special tokens/merges/chat template from tokenizer/config files and writes them to `GGUFWriter`
+  (contains nested loaders for `tokenizer.json`, `config.json`, and `merges.txt`).
+- `BaseVocab` (protocol): Minimal protocol for vocab implementations (declares `tokenizer_model` and `name`).
+- `Vocab` (protocol): Full vocab protocol used by converters (`vocab_size`, added tokens, tokenizer path, and `all_tokens()` iterator).
+- `NoVocab` (class): Placeholder vocab for models without an integrated vocabulary.
+- `BpeVocab` (class): GPT-2 style BPE vocab loader supporting “slow” (`vocab.json` + optional `added_tokens.json`) and “fast”
+  (`tokenizer.json`) tokenizers; yields normal/control tokens for GGUF.
+- `SentencePieceVocab` (class): SentencePiece vocab loader (`tokenizer.model`), maps sentencepiece token types to GGUF `TokenType`,
+  and supports sequential added tokens.
+- `LlamaHfVocab` (class): Hugging Face LLaMA tokenizer adapter using `transformers.AutoTokenizer` to enumerate tokens and added tokens.
+"""
+
 from __future__ import annotations
 
 import re

@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Flux-family model detectors for the model registry.
+Detects full Flux checkpoints (dev/schnell) and core-only GGUF Flux checkpoints, building `ModelSignature` metadata for inventory/UI and
+registering detectors into the shared `REGISTRY` at import time.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `FLUX_CORE_KEYS` (constant): Key set used to identify full Flux core checkpoints.
+- `_FluxBaseDetector` (class): Shared detector logic for full Flux variants (guidance vs schnell gating).
+- `FluxDetector` (class): Detector for FLUX.1-dev (guidance expected).
+- `FluxSchnellDetector` (class): Detector for FLUX.1-schnell (no guidance).
+- `FluxCoreGGUFDetector` (class): Detector for core-only GGUF Flux checkpoints (transformer + guidance only).
+- `_shape_at` (function): Helper to read a shape dimension from bundle metadata/state dict.
+"""
+
 from __future__ import annotations
 
 from typing import Optional

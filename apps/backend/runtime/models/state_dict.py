@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: State dict loading and key-mapping helpers with trace/keymap logging.
+Provides relaxed load helpers that log missing/unexpected keys and write diagnostics to `logs/parser_keymap.log`, plus utilities for
+filtering and renaming keys (including transformer-style conversions) without eagerly materializing tensors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_append_key_record` (function): Appends a JSON record to the parser keymap log.
+- `load_state_dict` (function): Loads a state dict with strict=False and logs missing/unexpected keys.
+- `state_dict_has` (function): Returns True if any state-dict key starts with a prefix.
+- `filter_state_dict_with_prefix` (function): Returns a lazy `FilterPrefixView` filtered by prefix (optional re-prefix).
+- `try_filter_state_dict` (function): Tries multiple prefixes and returns the first matching lazy view (or empty view).
+- `transformers_convert` (function): Renames legacy transformer keys to HF-style encoder keys (incl. Q/K/V split).
+- `state_dict_key_replace` (function): Applies a direct `{old: new}` key replacement mapping.
+- `state_dict_prefix_replace` (function): Rewrites keys using multiple prefix replacements (optionally into a new dict).
+- `safe_load_state_dict` (function): Conservative loader that copies tensors key-by-key and returns (missing, unexpected).
+"""
+
 import torch
 import logging
 import json

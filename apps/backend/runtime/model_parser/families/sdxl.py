@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SDXL parser plan builder (UNet + optional VAE + CLIP-L/CLIP-G).
+Defines split/conversion/validation steps for SDXL base and refiner checkpoints, converting embedded CLIP encoders, normalizing label-embedding
+keys for nested label-embedding variants, and validating required UNet/CLIP tensors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `build_plan` (function): Builds and returns the SDXL `ParserPlanBundle` (also used for SDXL refiner).
+- `_CLIP_L_REQUIRED` (constant): Required CLIP-L keys checked after conversion.
+- `_CLIP_G_REQUIRED` (constant): Required CLIP-G keys checked after conversion.
+- `_convert_clip_l` (function): Converts CLIP-L tensors and registers the `clip_l` alias mapping.
+- `_convert_clip_g` (function): Converts CLIP-G tensors and registers the `clip_g` alias mapping.
+- `_validate_unet_channels` (function): Validates UNet `channels_in` vs the `ModelSignature` expectation.
+- `_validate_clip_l` (function): Validates CLIP-L required keys exist after conversion.
+- `_validate_clip_g` (function): Validates CLIP-G required keys exist after conversion.
+- `_normalize_unet_label_embeddings` (function): Normalizes nested SDXL label-embedding keys on the UNet component.
+"""
+
 from __future__ import annotations
 
 from typing import Dict
@@ -57,7 +81,7 @@ _CLIP_G_REQUIRED = (
 )
 
 # text_projection.weight is optional: IntegratedCLIP always creates the layer,
-# and the loader tolerates missing projection weights (Forge-compatible).
+# and the loader tolerates missing projection weights for some exported checkpoints.
 
 
 def _convert_clip_l(tensors: Dict[str, torch.Tensor], context):

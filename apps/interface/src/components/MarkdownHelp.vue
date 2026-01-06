@@ -1,3 +1,19 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Help content loader for small markdown/text docs.
+Fetches the provided `src` URL and displays the raw content (or an error/loading state) inside views and panels.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `MarkdownHelp` (component): Help content loader component.
+- `load` (function): Fetches the help content for the current `src` prop and updates state.
+-->
+
 <template>
   <div class="help-markdown">
     <pre v-if="error" class="muted">Failed to load help: {{ error }}</pre>
@@ -34,4 +50,3 @@ async function load(): Promise<void> {
 onMounted(() => { void load() })
 watch(() => props.src, () => { void load() })
 </script>
-

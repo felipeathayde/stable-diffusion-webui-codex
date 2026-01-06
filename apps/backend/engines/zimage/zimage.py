@@ -1,6 +1,19 @@
-"""Z Image Turbo Engine.
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-Alibaba Z Image Turbo (6B) txt2img engine following Flux pattern.
+Purpose: Z Image Turbo txt2img engine (Flux-like “core-only” checkpoint + external VAE/Qwen3 TE).
+Implements prompt formatting, conditioning, and execution for Z Image Turbo by assembling a runtime from a core transformer checkpoint
+and external assets (text encoder + Flow16 VAE), with strict asset selection and smart-cache/timeline integration.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_ZImagePromptList` (class): List-like prompt wrapper that carries per-run metadata (CFG scale, smart-cache policy, negative marker).
+- `ZImageEngine` (class): `CodexDiffusionEngine` implementation for Z Image txt2img; loads/keeps runtime, formats prompts, builds conditioning,
+  runs the shared txt2img pipeline, and records cache/timeline telemetry (contains nested helpers for prompt metadata and capability gating).
 """
 
 from __future__ import annotations
@@ -22,9 +35,12 @@ from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.timeline import timeline_node
 from apps.backend.runtime.zimage.debug import env_flag, env_int, truncate_text
 
-from .spec import ZIMAGE_SPEC, ZImageEngineRuntime, assemble_zimage_runtime
+from .factory import CodexZImageFactory
+from .spec import ZIMAGE_SPEC, ZImageEngineRuntime
 
 logger = logging.getLogger("backend.engines.zimage.zimage")
+
+_ZIMAGE_FACTORY = CodexZImageFactory(spec=ZIMAGE_SPEC)
 
 
 class _ZImagePromptList(list[str]):
@@ -71,18 +87,8 @@ class ZImageEngine(CodexDiffusionEngine):
         options: Mapping[str, Any],
     ) -> CodexObjects:
         """Build engine components."""
-        self._device = str(options.get("device", "cuda"))
-        self._dtype = str(options.get("dtype", "bf16"))
-
-        runtime = assemble_zimage_runtime(
-            spec=ZIMAGE_SPEC,
-            codex_components=bundle.components,
-            estimated_config=bundle.estimated_config,
-            device=self._device,
-            dtype=self._dtype,
-            external_vae_path=options.get("vae_path"),
-            external_tenc_path=options.get("tenc_path"),
-        )
+        assembly = _ZIMAGE_FACTORY.assemble(bundle, options=options)
+        runtime = assembly.runtime
         logger.info(
             "Z Image build: vae_path=%s tenc_path=%s all_options=%s",
             options.get("vae_path"),
@@ -90,17 +96,14 @@ class ZImageEngine(CodexDiffusionEngine):
             list(options.keys()),
         )
         self._runtime = runtime
+        self._device = str(getattr(runtime, "device", "cuda"))
+        self._dtype = str(getattr(runtime, "dtype", "bf16"))
         logger.info("Z Image runtime assembled")
 
         # Turbo models use distilled guidance; disable CFG/uncond conditioning.
         self.use_distilled_cfg_scale = True
 
-        return CodexObjects(
-            unet=runtime.unet,
-            vae=runtime.vae,
-            text_encoders={"qwen3": runtime.text.qwen3_text},
-            clipvision=None,
-        )
+        return assembly.codex_objects
 
     @property
     def required_text_encoders(self) -> tuple[str, ...]:
@@ -278,10 +281,10 @@ class ZImageEngine(CodexDiffusionEngine):
         logger.info("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
         
         # Step 2: Get transformer (raw model, not wrapped)
-        transformer_model = runtime.unet.model.diffusion_model
+        transformer_model = runtime.denoiser.model.diffusion_model
         
         # Load transformer to GPU
-        memory_management.load_model_gpu(runtime.unet)
+        memory_management.load_model_gpu(runtime.denoiser)
         
         try:
             # Step 3: Sample using Diffusers scheduler + negation
@@ -308,7 +311,7 @@ class ZImageEngine(CodexDiffusionEngine):
             
         finally:
             if self.smart_offload_enabled:
-                memory_management.unload_model(runtime.unet)
+                memory_management.unload_model(runtime.denoiser)
         
         # Step 4: Decode latents to images
         memory_management.load_model_gpu(self.codex_objects.vae)

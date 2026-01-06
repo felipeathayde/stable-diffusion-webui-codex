@@ -2,7 +2,7 @@
 # apps/interface/src/components/prompt Overview
 Date: 2025-12-03
 Owner: Frontend Maintainers
-Last Review: 2025-12-27
+Last Review: 2026-01-03
 Status: Active
 
 ## Purpose
@@ -16,3 +16,4 @@ Status: Active
 - 2025-12-25: `PromptCard.vue` centralizes the prompt panel header (TI/LoRA/Styles) and negative-prompt visibility; most views default to hidden negative, while SDXL opts in to show it by default.
 - 2025-12-26: `PromptCard.vue` panel header now renders the title as plain text (no wrapper `<span>`), consistent with the global panel header convention.
 - 2025-12-27: Removed the redundant Checkpoints button from `PromptCard.vue` (checkpoint selection lives in QuickSettings); Styles “New/Apply” are now rendered as input-inline actions.
+- 2026-01-03: Added standardized file header blocks to prompt components (non-test files) as part of the rollout (doc-only change).

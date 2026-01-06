@@ -1,6 +1,35 @@
-# CodexQuantization - GGUF Dequantization Functions
-# Ported from city96/ComfyUI-GGUF (Apache-2.0 License)
-# https://github.com/city96/ComfyUI-GGUF/blob/main/dequant.py
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0 (repo); Apache-2.0 (upstream portions)
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 AND Apache-2.0
+Required Notice: see NOTICE
+
+Purpose: GGUF/GGML dequantization kernels (torch) for runtime decoding of quantized blocks.
+Ported/adapted from a city96 GGUF dequantization reference (Apache-2.0).
+
+Symbols (top-level; keep in sync; no ghosts):
+- `split_block_dims` (function): Splits a block tensor into the requested per-field shapes used by quant formats.
+- `to_uint32` (function): Reinterprets tensor bytes as `uint32` view for bit operations.
+- `to_uint16` (function): Reinterprets tensor bytes as `uint16` view for bit operations.
+- `dequantize_blocks_BF16` (function): Dequantizes BF16 blocks to float tensor.
+- `dequantize_blocks_Q8_0` (function): Dequantizes Q8_0 blocks to float tensor.
+- `dequantize_blocks_Q5_1` (function): Dequantizes Q5_1 blocks to float tensor.
+- `dequantize_blocks_Q5_0` (function): Dequantizes Q5_0 blocks to float tensor.
+- `dequantize_blocks_Q4_1` (function): Dequantizes Q4_1 blocks to float tensor.
+- `dequantize_blocks_Q4_0` (function): Dequantizes Q4_0 blocks to float tensor.
+- `get_scale_min` (function): Extracts `(scale, min)` pairs for K-quant blocks from the packed header.
+- `dequantize_blocks_Q6_K` (function): Dequantizes Q6_K blocks to float tensor.
+- `dequantize_blocks_Q5_K` (function): Dequantizes Q5_K blocks to float tensor.
+- `dequantize_blocks_Q4_K` (function): Dequantizes Q4_K blocks to float tensor.
+- `dequantize_blocks_Q3_K` (function): Dequantizes Q3_K blocks to float tensor.
+- `dequantize_blocks_Q2_K` (function): Dequantizes Q2_K blocks to float tensor.
+- `dequantize_blocks_IQ4_NL` (function): Dequantizes IQ4_NL blocks to float tensor.
+- `dequantize_blocks_IQ4_XS` (function): Dequantizes IQ4_XS blocks to float tensor.
+- `QK_K` (constant): K-quant block size constant.
+- `K_SCALE_SIZE` (constant): Packed scale/min header size constant for K-quant formats.
+"""
 
 from __future__ import annotations
 

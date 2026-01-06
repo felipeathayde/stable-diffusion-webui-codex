@@ -1,3 +1,24 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Image-to-image use case orchestration (init image + optional hires pass).
+Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally
+performs a hires second pass.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `_build_hires_plan` (function): Builds a `HiResPlan` from the processing config (or returns `None` when disabled).
+- `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
+- `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples.
+- `_derive_seeds` (function): Normalizes seed/subseed inputs from processing config.
+- `generate_img2img` (function): Core img2img implementation; applies overrides, computes conditioning/init bundle, executes sampling, and returns samples.
+- `run_img2img` (function): Thin wrapper used by orchestrators to run img2img with an engine + prepared processing object.
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -20,21 +41,21 @@ from apps.backend.runtime.processing.datatypes import (
 )
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
-from apps.backend.runtime.workflows import (
+from apps.backend.runtime.workflows.image_init import prepare_init_bundle
+from apps.backend.runtime.workflows.image_io import latents_to_pil, pil_to_tensor
+from apps.backend.runtime.workflows.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
-    apply_sampling_overrides,
-    apply_tiling_if_requested,
     build_prompt_context,
+)
+from apps.backend.runtime.workflows.sampling_execute import execute_sampling
+from apps.backend.runtime.workflows.sampling_plan import (
+    apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
-    execute_sampling,
-    finalize_tiling,
-    latents_to_pil,
-    pil_to_tensor,
-    run_process_scripts,
-    prepare_init_bundle,
 )
+from apps.backend.runtime.workflows.scripts import run_process_scripts
+from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, finalize_tiling
 from PIL import Image
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS

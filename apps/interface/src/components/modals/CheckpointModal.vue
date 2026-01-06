@@ -1,3 +1,20 @@
+<!--
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Checkpoint picker modal (QuickSettings models list).
+Provides a searchable checkpoint list sourced from the quicksettings store and applies the selected checkpoint before closing.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `CheckpointModal` (component): Modal for selecting a checkpoint from the known models list.
+- `filtered` (const): Filtered model list based on the current search query.
+- `apply` (function): Applies the selected model via the quicksettings store and closes the modal.
+-->
+
 <template>
   <Modal v-model="open" title="Choose Checkpoint">
     <div class="form-grid">
@@ -48,4 +65,3 @@ async function apply(title: string): Promise<void> {
   open.value = false
 }
 </script>
-

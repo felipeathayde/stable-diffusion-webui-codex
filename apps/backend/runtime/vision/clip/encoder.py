@@ -26,6 +26,7 @@ from transformers import CLIPVisionConfig, CLIPVisionModelWithProjection, modeli
 from apps.backend.patchers.base import ModelPatcher
 from apps.backend.runtime import ops as runtime_ops
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 
 from .errors import ClipVisionInputError, ClipVisionLoadError
 from .preprocess import preprocess_image
@@ -41,9 +42,9 @@ class ClipVisionEncoder:
 
     def __init__(self, spec: ClipVisionVariantSpec):
         self.spec = spec
-        self.load_device = memory_management.text_encoder_device()
-        self.offload_device = memory_management.text_encoder_offload_device()
-        self.runtime_dtype = memory_management.text_encoder_dtype(self.load_device)
+        self.load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+        self.offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
+        self.runtime_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
         logger.debug(
             "Initialising clip vision encoder variant=%s load_device=%s offload_device=%s dtype=%s",
             spec.variant.value,
@@ -93,7 +94,7 @@ class ClipVisionEncoder:
         if not isinstance(image, torch.Tensor):
             raise ClipVisionInputError("ClipVisionEncoder.encode expects a torch.Tensor input.")
         start = time.perf_counter()
-        memory_management.load_model_gpu(self.patcher)
+        memory_management.manager.load_model(self.patcher)
         processed = preprocess_image(image.to(self.load_device), self.spec.preprocess, crop=crop)
         outputs = self.model(
             pixel_values=processed,
@@ -104,7 +105,7 @@ class ClipVisionEncoder:
         if len(hidden_states) < 1:
             raise ClipVisionLoadError("Vision model did not return hidden states.")
         penultimate_index = -2 if len(hidden_states) >= 2 else -1
-        intermediate_device = memory_management.intermediate_device()
+        intermediate_device = memory_management.manager.get_device(DeviceRole.INTERMEDIATE)
         last_hidden = outputs.last_hidden_state.to(intermediate_device)
         penultimate = hidden_states[penultimate_index].to(intermediate_device)
         embeds = outputs.image_embeds.to(intermediate_device)

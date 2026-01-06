@@ -75,7 +75,7 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.text_encoders["clip"].patcher)
+        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
         unload_clip = self.smart_offload_enabled
         try:
             conditioning = runtime.primary_classic()(prompt)
@@ -83,7 +83,7 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
             return conditioning
         finally:
             if unload_clip:
-                memory_management.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -95,7 +95,7 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
@@ -103,11 +103,11 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.first_stage_model.process_out(x)
@@ -115,5 +115,4 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.unload_model(self.codex_objects.vae)
-
+                memory_management.manager.unload_model(self.codex_objects.vae)

@@ -288,10 +288,9 @@ def load_torch_file(ckpt, safe_load=True, device=None):
     if isinstance(device, str):
         device = torch.device(device)
     if device is None:
-        try:
-            device = _mm.core_initial_load_device(parameters=0, dtype=None)
-        except Exception:
-            device = torch.device("cpu")
+        from apps.backend.runtime.memory.config import DeviceRole
+
+        device = _mm.manager.get_offload_device(DeviceRole.CORE)
 
     checkpoint_path = str(ckpt)
     suffix = os.path.splitext(checkpoint_path)[1].lower()

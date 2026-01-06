@@ -6,6 +6,7 @@ import torch
 
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.sd.cnets import cldm
 from apps.backend.runtime.ops.operations import using_codex_operations
 
@@ -44,7 +45,7 @@ class ControlLora(ControlModuleBase):
         ):
             self.control_model = cldm.ControlNet(**controlnet_config)
 
-        self.control_model.to(device=memory_management.get_torch_device(), dtype=dtype)
+        self.control_model.to(device=memory_management.manager.get_device(DeviceRole.CORE), dtype=dtype)
         diffusion_model = model.diffusion_model
         state_dict = diffusion_model.state_dict()
 
@@ -57,13 +58,17 @@ class ControlLora(ControlModuleBase):
         for key, weight in self.control_weights.items():
             if key == "lora_controlnet":
                 continue
-            utils.set_attr(self.control_model, key, weight.to(dtype).to(memory_management.get_torch_device()))
+            utils.set_attr(
+                self.control_model,
+                key,
+                weight.to(dtype).to(memory_management.manager.get_device(DeviceRole.CORE)),
+            )
 
         self.control_proxy = ControlNet(
             self.control_model,
             global_average_pooling=self.global_average_pooling,
             device=self.device,
-            load_device=memory_management.get_torch_device(),
+            load_device=memory_management.manager.get_device(DeviceRole.CORE),
             manual_cast_dtype=self.manual_cast_dtype,
         )
         self.control_proxy.previous_control = self.previous_control
@@ -107,4 +112,7 @@ class ControlLora(ControlModuleBase):
         return ControlLora(self.control_weights, global_average_pooling=self.global_average_pooling, device=self.device)
 
     def inference_memory_requirements(self, dtype):
-        return utils.calculate_parameters(self.control_weights) * memory_management.dtype_size(dtype) + super().inference_memory_requirements(dtype)
+        return (
+            utils.calculate_parameters(self.control_weights) * torch.empty((), dtype=dtype).element_size()
+            + super().inference_memory_requirements(dtype)
+        )

@@ -165,12 +165,12 @@ class ClassicTextProcessingEngine:
         """
         import inspect
 
-        target_device = memory_management.text_encoder_device()
+        target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
 
         force_fp32 = str(os.getenv("CODEX_TE_FORCE_FP32", "")).lower() in ("1", "true", "yes", "on")
 
         while True:
-            desired_dtype = torch.float32 if force_fp32 else memory_management.text_encoder_dtype(device=target_device)
+            desired_dtype = torch.float32 if force_fp32 else memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
             self._apply_precision(target_device, desired_dtype)
 
             # Ensure embedding weights use a stable compute dtype to avoid overflow
@@ -227,18 +227,18 @@ class ClassicTextProcessingEngine:
                     target_device,
                     str(desired_dtype),
                 )
-                next_dtype = memory_management.report_precision_failure(
+                next_dtype = memory_management.manager.report_precision_failure(
                     DeviceRole.TEXT_ENCODER,
                     location="clip.encode",
                     reason="NaN detected in CLIP output",
                 )
                 if next_dtype is None:
-                    hint = memory_management.precision_hint(DeviceRole.TEXT_ENCODER)
+                    hint = memory_management.manager.precision_hint(DeviceRole.TEXT_ENCODER)
                     raise RuntimeError(
                         f"Text encoder produced NaNs on {target_device} with dtype {desired_dtype}. {hint}"
                     )
                 self._apply_precision(target_device, next_dtype)
-                memory_management.soft_empty_cache(force=True)
+                memory_management.manager.soft_empty_cache(force=True)
                 continue
 
             return z

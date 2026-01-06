@@ -37,6 +37,7 @@ from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineR
 from apps.backend.engines.util.adapters import build_txt2img_processing
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import (
     smart_cache_enabled,
     record_smart_cache_hit,
@@ -308,7 +309,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
         if not self.smart_offload_enabled:
             return
         try:
-            memory_management.soft_empty_cache(force=True)
+            memory_management.manager.soft_empty_cache(force=True)
         except Exception:  # pragma: no cover - diagnostics only
             logger.debug("SDXL post-job cleanup failed", exc_info=True)
 
@@ -540,7 +541,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.text_encoders["clip"].patcher)
+        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
         unload_clip = self.smart_offload_enabled
         try:
             texts = tuple(str(x or "") for x in prompt)
@@ -555,7 +556,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 cached = self._cond_cache.get(cache_key)
                 if cached is not None:
                     cached_cond_l, cached_pooled_l, cached_cond_g, cached_pooled_g = cached
-                    target_device = memory_management.text_encoder_device()
+                    target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
                     cond_l = cached_cond_l.to(target_device) if cached_cond_l is not None else None
                     pooled_l = cached_pooled_l.to(target_device) if cached_pooled_l is not None else None
                     cond_g = cached_cond_g.to(target_device)
@@ -649,7 +650,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             return cond
         finally:
             if unload_clip:
-                memory_management.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -661,7 +662,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
@@ -669,11 +670,11 @@ class StableDiffusionXL(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
             logger.info("[decode] latents stats=%s", _tensor_stats(x))
@@ -684,7 +685,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
 
 
@@ -760,7 +761,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.text_encoders["clip"].patcher)
+        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
         unload_clip = self.smart_offload_enabled
         try:
             texts = tuple(str(x or "") for x in prompt)
@@ -775,7 +776,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
                 cached = self._cond_cache.get(cache_key)
                 if cached is not None:
                     cached_cond_g, cached_pooled = cached
-                    target_device = memory_management.text_encoder_device()
+                    target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
                     cond_g = cached_cond_g.to(target_device)
                     pooled = cached_pooled.to(target_device)
                     record_smart_cache_hit("sdxl.refiner.text")
@@ -841,7 +842,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             return cond
         finally:
             if unload_clip:
-                memory_management.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -853,7 +854,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
@@ -861,11 +862,11 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload_vae = self.smart_offload_enabled
         try:
             sample = self.codex_objects.vae.first_stage_model.process_out(x)
@@ -873,4 +874,4 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload_vae:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)

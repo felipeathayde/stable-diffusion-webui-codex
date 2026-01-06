@@ -464,6 +464,11 @@ class CodexMemoryManager:
 
     # --------------------------------------------------------------------- public accessors
     @property
+    def config(self) -> RuntimeMemoryConfig:
+        """Return the active runtime memory configuration (treat as read-only)."""
+        return self._config
+
+    @property
     def oom_exception(self) -> type[BaseException]:
         return self._oom_exception
 

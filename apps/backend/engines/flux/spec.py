@@ -44,6 +44,7 @@ from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.infra.config.args import dynamic_args
 
 logger = logging.getLogger("backend.engines.flux.spec")
@@ -124,12 +125,10 @@ def _maybe_enable_streaming_core(
     options = dict(engine_options or {})
     streaming_config = StreamingConfig.from_options(options)
 
-    from apps.backend.runtime.memory import memory_management
-
-    core_device = memory_management.get_torch_device()
+    core_device = memory_management.manager.get_device(DeviceRole.CORE)
     free_mb: int | None = None
     try:
-        free_bytes = memory_management.get_free_memory(core_device)
+        free_bytes = memory_management.manager.get_free_memory(core_device)
         free_mb = int(free_bytes // (1024 * 1024))
     except Exception as exc:  # noqa: BLE001
         logger.debug("Flux streaming: failed to probe free memory (%s)", exc)
@@ -165,7 +164,7 @@ def _maybe_enable_streaming_core(
 
     try:
         plan = trace_execution_plan(base_core, blocks_per_segment=streaming_config.blocks_per_segment)
-        storage_device = memory_management.core_offload_device()
+        storage_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
 
         controller = CoreController(
             storage_device=storage_device,

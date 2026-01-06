@@ -267,7 +267,7 @@ def _expect_tensor(obj: object, key: str, label: str) -> torch.Tensor:
 
 
 def _cast_tensor(tensor: torch.Tensor, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    return memory_management.cast_to_device(tensor, device, dtype)
+    return memory_management.manager.cast_to_device(tensor, device, dtype)
 
 
 def _reshape_like(tensor: torch.Tensor, reference: torch.Tensor, *, key: str) -> torch.Tensor:
@@ -717,7 +717,7 @@ class CodexLoraLoader:
             return
 
         grouped = self._group_patches(lora_patches)
-        memory_management.signal_empty_cache = True
+        memory_management.manager.signal_empty_cache = True
         parameter_devices = get_parameter_devices(self.model)
 
         self._restore_backups(parameter_devices)
@@ -782,7 +782,7 @@ class CodexLoraLoader:
                         raise
                     logger.warning("LoRA merge OOM on %s; offloading to %s and retrying", param_key, offload_device)
                     self._offload_model(parameter_devices, offload_device)
-                    memory_management.soft_empty_cache()
+                    memory_management.manager.soft_empty_cache()
                     merged = merge_lora_to_weight(
                         entries,
                         tensor,

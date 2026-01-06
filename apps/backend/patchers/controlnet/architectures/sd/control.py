@@ -6,6 +6,7 @@ import torch
 
 from apps.backend.runtime.misc import adaptive_resize
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.patchers.base import ModelPatcher
 from ...base import ControlModuleBase
 from ...weighting import broadcast_image_to
@@ -26,13 +27,13 @@ class ControlNet(ControlModuleBase):
         super().__init__(device=device, global_average_pooling=global_average_pooling)
 
         self.control_model = control_model
-        self.load_device = load_device or memory_management.get_torch_device()
+        self.load_device = load_device or memory_management.manager.get_device(DeviceRole.CORE)
         self.manual_cast_dtype = manual_cast_dtype
 
         self.control_model_wrapped = ModelPatcher(
             self.control_model,
             load_device=self.load_device,
-            offload_device=memory_management.core_offload_device(),
+            offload_device=memory_management.manager.get_offload_device(DeviceRole.CORE),
         )
 
         self.model_sampling_current = None

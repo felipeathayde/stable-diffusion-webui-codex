@@ -188,7 +188,7 @@ class KModel(torch.nn.Module):
 
     def memory_required(self, input_shape):
         area = input_shape[0] * input_shape[2] * input_shape[3]
-        dtype_size = memory_management.dtype_size(self.computation_dtype)
+        dtype_size = torch.empty((), dtype=self.computation_dtype).element_size()
 
         if attention.attention_function in [attention.attention_pytorch, attention.attention_xformers]:
             scaler = 1.28

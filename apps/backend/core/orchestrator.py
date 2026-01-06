@@ -123,8 +123,8 @@ class InferenceOrchestrator:
         try:
             from apps.backend.runtime.memory import memory_management as _mem
 
-            _mem.unload_all_models()
-            _mem.soft_empty_cache(force=True)
+            _mem.manager.unload_all_models()
+            _mem.manager.soft_empty_cache(force=True)
         except Exception as exc:  # noqa: BLE001
             logger.warning("VRAM purge via memory manager failed: %s", exc, exc_info=True)
 

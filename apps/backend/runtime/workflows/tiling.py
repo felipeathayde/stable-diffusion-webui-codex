@@ -23,10 +23,10 @@ from apps.backend.runtime.memory import memory_management
 
 def apply_tiling_if_requested(processing: Any, controls: Mapping[str, Any]) -> tuple[bool, bool]:
     """Enable VAE tiling temporarily when prompts request it."""
-    old_value = memory_management.VAE_ALWAYS_TILED
+    old_value = memory_management.manager.vae_always_tiled
     applied = False
     if controls.get("tiling") is True:
-        memory_management.VAE_ALWAYS_TILED = True
+        memory_management.manager.vae_always_tiled = True
         applied = True
     return applied, old_value
 
@@ -34,5 +34,4 @@ def apply_tiling_if_requested(processing: Any, controls: Mapping[str, Any]) -> t
 def finalize_tiling(applied: bool, previous: bool) -> None:
     """Restore VAE tiling flag."""
     if applied:
-        memory_management.VAE_ALWAYS_TILED = previous
-
+        memory_management.manager.vae_always_tiled = previous

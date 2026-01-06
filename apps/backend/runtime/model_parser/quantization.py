@@ -12,6 +12,7 @@ validation helper to catch mis-detections where a component contains no floating
 
 Symbols (top-level; keep in sync; no ghosts):
 - `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/NF4/FP4/none).
+- `detect_state_dict_dtype` (function): Best-effort dtype / quantization hint for a state dict (returns a torch dtype or `"gguf"`).
 - `detect_quantization_from_component` (function): Infers quantization from one component mapping (prefers GGUF tensor markers).
 - `detect_quantization` (function): Infers quantization for a full parser context (UNet/transformer prioritized).
 - `validate_component_dtypes` (function): Fails fast when a component has no floating-point tensors (likely a wrong split/prefix).
@@ -46,6 +47,32 @@ def detect_quantization_from_tensors(tensors: Iterable[object]) -> QuantizationH
     if has_fp4:
         return QuantizationHint(kind=QuantizationKind.FP4)
     return QuantizationHint()
+
+
+def detect_state_dict_dtype(state_dict: Mapping[str, object]) -> torch.dtype | str:
+    """Best-effort dtype / quantization hint for a state dict.
+
+    - Returns ``"gguf"`` when the mapping contains CodexParameter packed weights.
+    - Otherwise returns the first encountered torch dtype (defaults to fp32).
+    """
+
+    materialize = getattr(state_dict, "materialize", None)
+    if callable(materialize):
+        for value in state_dict.values():
+            if isinstance(value, torch.Tensor):
+                return value.dtype
+        return torch.float32
+
+    first_dtype: torch.dtype | None = None
+    for idx, value in enumerate(state_dict.values()):
+        if isinstance(value, CodexParameter) and value.qtype is not None:
+            return "gguf"
+        if first_dtype is None and isinstance(value, torch.Tensor):
+            first_dtype = value.dtype
+        # Defensive cap: most GGUF dicts reveal themselves quickly.
+        if idx >= 4096 and first_dtype is not None:
+            break
+    return first_dtype or torch.float32
 
 
 def detect_quantization_from_component(component_state: Mapping[str, object]) -> QuantizationHint:
@@ -107,5 +134,6 @@ def validate_component_dtypes(context) -> None:
 __all__ = [
     "detect_quantization",
     "detect_quantization_from_component",
+    "detect_state_dict_dtype",
     "validate_component_dtypes",
 ]

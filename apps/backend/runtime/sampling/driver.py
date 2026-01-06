@@ -306,7 +306,7 @@ class CodexSampler:
             if noise.ndim != 4:
                 raise ValueError(f"noise must be BCHW; got shape={tuple(noise.shape)}")
 
-            target_dtype = memory_management.core_dtype()
+            target_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
             # Diffusers flow pipelines (Flux/Z-Image) keep latents in fp32 for the
             # scheduler integration even when the core runs in bf16/fp16. Keeping
             # x/eps in low precision can destabilize the tail and produce "noise soup".
@@ -608,13 +608,13 @@ class CodexSampler:
                             i + 1,
                             str(getattr(model, "computation_dtype", x.dtype)),
                         )
-                        next_dtype = memory_management.report_precision_failure(
+                        next_dtype = memory_management.manager.report_precision_failure(
                             DeviceRole.CORE,
                             location=f"sampler.step_{i + 1}",
                             reason=reason,
                         )
                         if next_dtype is None:
-                            hint = memory_management.precision_hint(DeviceRole.CORE)
+                            hint = memory_management.manager.precision_hint(DeviceRole.CORE)
                             raise RuntimeError(
                                 f"Diffusion core produced NaNs at step {i + 1} on {noise.device} with dtype {getattr(model, 'computation_dtype', x.dtype)}. {hint}"
                             )
@@ -789,7 +789,7 @@ class CodexSampler:
                 backend_state.clear_flags()
 
             if retry:
-                memory_management.soft_empty_cache(force=True)
+                memory_management.manager.soft_empty_cache(force=True)
                 continue
 
 

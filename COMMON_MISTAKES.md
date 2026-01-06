@@ -1,3 +1,7 @@
+**Wrong command:** `ls -লা .sangoi/handoffs | head`
+**Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
+**Correct command:** `ls -la .sangoi/handoffs | head`
+
 **Wrong command:** `ls -λα apps/interface/src/stores`
 **Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
 **Correct command:** `ls -la apps/interface/src/stores`

@@ -9,6 +9,7 @@ import torch
 
 from apps.backend.runtime.controlnet import ControlMaskConfig, ControlWeightSchedule
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from .weighting import merge_control_signals
 
 logger = logging.getLogger("backend.patchers.controlnet.base")
@@ -30,7 +31,7 @@ class ControlModuleBase(ABC):
 
     def __init__(self, *, device: Optional[torch.device] = None, global_average_pooling: bool = False) -> None:
         if device is None:
-            device = memory_management.get_torch_device()
+            device = memory_management.manager.get_device(DeviceRole.CORE)
 
         self.device = device
         self.global_average_pooling = global_average_pooling

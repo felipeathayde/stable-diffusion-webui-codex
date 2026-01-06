@@ -2183,6 +2183,21 @@ def build_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Unknown engine key: {key}") from exc
 
+    def _is_gguf_checkpoint(_models_api: Any, model_ref: object) -> bool:
+        raw = str(model_ref or "").strip()
+        if not raw:
+            return False
+        if Path(raw).suffix.lower() == ".gguf":
+            return True
+        try:
+            record = _models_api.find_checkpoint(raw)
+        except Exception:
+            record = None
+        if record is None:
+            return False
+        filename = str(getattr(record, "filename", "") or "")
+        return Path(filename).suffix.lower() == ".gguf"
+
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
@@ -2268,8 +2283,13 @@ def build_app() -> FastAPI:
             model_override = record.filename
             extras["model_path"] = record.filename
 
-        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage")
-        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage")
+        # Asset requirements depend on checkpoint format:
+        # - GGUF checkpoints are core-only (denoiser-only) and require external VAE + text encoder(s).
+        # - Full checkpoints (e.g. safetensors) may embed VAE/text encoders; external assets become optional overrides.
+        model_ref_for_detection = model_override or snap.sd_model_checkpoint
+        model_is_gguf = _is_gguf_checkpoint(_models_api, model_ref_for_detection)
+        requires_external_vae = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
+        requires_external_tenc = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
 
         if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.vae_sha' (sha256)")
@@ -2302,11 +2322,19 @@ def build_app() -> FastAPI:
             else:
                 raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
 
+        if engine_id == "zimage" and len(tenc_shas) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Engine 'zimage' supports exactly 1 text encoder via 'extras.tenc_sha'",
+            )
+
         if requires_external_tenc:
+            if len(tenc_shas) == 0:
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.tenc_sha' (sha256)")
             if engine_id in ("flux1", "flux1_kontext"):
                 if len(tenc_shas) != 2:
                     raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'extras.tenc_sha'")
-            elif len(tenc_shas) != 1:
+            elif engine_id == "zimage" and len(tenc_shas) != 1:
                 raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 1 text encoder via 'extras.tenc_sha'")
 
         if tenc_shas:
@@ -2459,6 +2487,7 @@ def build_app() -> FastAPI:
                 vae_path_from_extras = extras.get("vae_path")
                 if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
                     engine_options["vae_path"] = vae_path_from_extras.strip()
+                engine_options["vae_source"] = "external" if "vae_path" in engine_options else "built_in"
 
                 tenc_path_from_extras = extras.get("tenc_path")
                 if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
@@ -2470,6 +2499,11 @@ def build_app() -> FastAPI:
                             resolved.append(item.strip())
                     if resolved:
                         engine_options["tenc_path"] = resolved
+                engine_options["tenc_source"] = (
+                    "external"
+                    if ("tenc_path" in engine_options or "text_encoder_override" in engine_options)
+                    else "built_in"
+                )
 
                 # Pass streaming option from settings to engine (no model-part fallbacks).
                 snap = _opts_snapshot()
@@ -2704,8 +2738,9 @@ def build_app() -> FastAPI:
             model_ref = record.filename
             extras["model_path"] = record.filename
 
-        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage")
-        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage")
+        model_is_gguf = _is_gguf_checkpoint(_models_api, model_ref)
+        requires_external_vae = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
+        requires_external_tenc = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
 
         if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.vae_sha' (sha256)")
@@ -2738,11 +2773,19 @@ def build_app() -> FastAPI:
             else:
                 raise HTTPException(status_code=400, detail="'img2img_extras.tenc_sha' must be a string or array of strings")
 
+        if engine_id == "zimage" and len(tenc_shas) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Engine 'zimage' supports exactly 1 text encoder via 'img2img_extras.tenc_sha'",
+            )
+
         if requires_external_tenc:
+            if len(tenc_shas) == 0:
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.tenc_sha' (sha256)")
             if engine_id in ("flux1", "flux1_kontext"):
                 if len(tenc_shas) != 2:
                     raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'img2img_extras.tenc_sha'")
-            elif len(tenc_shas) != 1:
+            elif engine_id == "zimage" and len(tenc_shas) != 1:
                 raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 1 text encoder via 'img2img_extras.tenc_sha'")
 
         if tenc_shas:
@@ -2844,6 +2887,7 @@ def build_app() -> FastAPI:
                 vae_path_from_extras = extras.get("vae_path")
                 if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
                     engine_options["vae_path"] = vae_path_from_extras.strip()
+                engine_options["vae_source"] = "external" if "vae_path" in engine_options else "built_in"
 
                 tenc_path_from_extras = extras.get("tenc_path")
                 if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
@@ -2855,6 +2899,11 @@ def build_app() -> FastAPI:
                             resolved.append(item.strip())
                     if resolved:
                         engine_options["tenc_path"] = resolved
+                engine_options["tenc_source"] = (
+                    "external"
+                    if ("tenc_path" in engine_options or "text_encoder_override" in engine_options)
+                    else "built_in"
+                )
 
                 # Pass streaming option from settings to engine (no model-part fallbacks).
                 snap = _opts_snapshot()

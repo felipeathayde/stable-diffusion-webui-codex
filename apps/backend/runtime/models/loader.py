@@ -1654,6 +1654,7 @@ def codex_loader(
     additional_state_dicts=None,
     text_encoder_override: TextEncoderOverrideConfig | None = None,
     vae_path: str | None = None,
+    tenc_path: str | list[str] | None = None,
 ) -> DiffusionModelBundle:
     try:
         parsed = _parse_checkpoint(sd_path, additional_state_dicts or [])
@@ -1671,7 +1672,6 @@ def codex_loader(
         and getattr(quant, "kind", None) is QuantizationKind.GGUF
         and bool(extras.get("gguf_core_only"))
     )
-    external_vae_used: str | None = None
     if is_flux_core_gguf:
         if not isinstance(vae_path, str) or not vae_path.strip():
             raise RuntimeError(
@@ -1682,11 +1682,47 @@ def codex_loader(
         if not os.path.isfile(vae_path):
             raise RuntimeError(f"Flux GGUF core-only VAE path not found: {vae_path}")
 
+    te_override_cfg = text_encoder_override
+    if te_override_cfg is None and tenc_path is not None and parsed.signature.family is not ModelFamily.ZIMAGE:
+        # Shorthand: map `tenc_path` entries onto the signature-declared text encoders in order.
+        if isinstance(tenc_path, str):
+            paths = [tenc_path.strip()] if tenc_path.strip() else []
+        elif isinstance(tenc_path, list):
+            paths = []
+            for entry in tenc_path:
+                if not isinstance(entry, str):
+                    raise TypeError("tenc_path must be a string or list[str] when provided.")
+                item = entry.strip()
+                if item:
+                    paths.append(item)
+        else:
+            raise TypeError("tenc_path must be a string or list[str] when provided.")
+        if not paths:
+            raise RuntimeError("tenc_path was provided but empty after trimming.")
+
+        aliases = tuple(te.name for te in parsed.signature.text_encoders)
+        if not aliases:
+            raise RuntimeError(
+                "tenc_path override was provided, but this checkpoint declares no text encoders in the signature."
+            )
+        if len(paths) != len(aliases):
+            raise RuntimeError(
+                "tenc_path override expects exactly %d paths for this checkpoint (encoders=%s); got %d."
+                % (len(aliases), ", ".join(aliases), len(paths))
+            )
+
+        te_override_cfg = TextEncoderOverrideConfig(
+            family=_canonical_override_family(parsed.signature.family),
+            root_label="tenc_path",
+            components=aliases,
+            explicit_paths={alias: path for alias, path in zip(aliases, paths, strict=True)},
+        )
+
     try:
         te_override_paths = resolve_text_encoder_override_paths(
             signature=parsed.signature,
             estimated_config=config,
-            override=text_encoder_override,
+            override=te_override_cfg,
         )
     except TextEncoderOverrideError as exc:
         # Keep the surface error explicit and actionable; do not fall back silently.
@@ -1714,7 +1750,6 @@ def codex_loader(
 
         if component_sd is None and is_flux_core_gguf and cls_name == "AutoencoderKL":
             component_sd = _load_state_dict(vae_path)
-            external_vae_used = vae_path
 
         override_path = te_override_paths.get(component_name)
         if override_path is not None:
@@ -1776,8 +1811,7 @@ def codex_loader(
     metadata = {"repo_id": repo_name}
     if yaml_prediction:
         metadata["prediction_type"] = yaml_prediction
-    if external_vae_used:
-        metadata["vae_external_path"] = external_vae_used
+    # Note: VAE selection is expressed via engine options (`vae_path` + `vae_source`).
 
     return _build_diffusion_bundle(
         model_ref=sd_path,
@@ -1874,6 +1908,7 @@ def resolve_diffusion_bundle(
     additional_state_dicts: Optional[list[str]] = None,
     text_encoder_override: TextEncoderOverrideConfig | None = None,
     vae_path: str | None = None,
+    tenc_path: str | list[str] | None = None,
 ) -> DiffusionModelBundle:
     """Resolve a diffusion model reference into a fully loaded bundle."""
     if os.path.isdir(model_ref):
@@ -1888,6 +1923,7 @@ def resolve_diffusion_bundle(
             additional_state_dicts=additional_state_dicts,
             text_encoder_override=text_encoder_override,
             vae_path=vae_path,
+            tenc_path=tenc_path,
         )
 
     record = model_api.find_checkpoint(model_ref)
@@ -1907,4 +1943,5 @@ def resolve_diffusion_bundle(
         additional_state_dicts=additional_state_dicts,
         text_encoder_override=text_encoder_override,
         vae_path=vae_path,
+        tenc_path=tenc_path,
     )

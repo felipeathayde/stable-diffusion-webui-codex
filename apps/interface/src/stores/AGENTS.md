@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2026-01-02: `quicksettings.ts` now exposes `resolveModelSha` + `isModelGguf` so callers can send checkpoint selection as a hash (instead of titles/paths) and still enforce GGUF requirements.
 - 2026-01-03: Added standardized file header blocks to stores (doc-only change; part of rollout).
 - 2026-01-04: Flux family backend engine keys moved to `flux1*`; stores route Flux.1 runs to the canonical keys and ignore legacy `codex_engine` values (`kontext`/`chroma`) instead of normalizing them.
+- 2026-01-06: `engine_config.ts` treats ZImage external assets as optional by default (`requiresTenc/requiresVae=false`); `.gguf` requirements are enforced by `quicksettings.isModelGguf(...)` in payload builders.

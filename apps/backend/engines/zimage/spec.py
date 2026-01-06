@@ -136,7 +136,7 @@ def _k_predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
 
 
 def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
-    """Load VAE from external path for GGUF models.
+    """Load VAE from external path for core-only checkpoints.
     
     Uses the shared Flow16 VAE loader since Z Image uses the same
     16-channel latent space as Flux.
@@ -148,7 +148,7 @@ def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
     
     if vae_path is None or not str(vae_path).strip():
         raise ValueError(
-            "Z Image GGUF requires external VAE. "
+            "Z Image core-only checkpoint requires an external VAE. "
             "Please select a VAE so the request can include 'vae_sha' (sha256)."
         )
     
@@ -156,14 +156,13 @@ def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
 
 
 def _load_external_text_encoder(tenc_path: str | None, dtype: str = "bf16") -> object:
-    """Load Qwen3 text encoder from external path for GGUF models."""
-    import os
+    """Load Qwen3 text encoder from external path for core-only checkpoints."""
     import torch
     
     # Text encoder path is required - no automatic fallback
     if tenc_path is None:
         raise ValueError(
-            "Z Image GGUF requires external text encoder (Qwen3-4B). "
+            "Z Image core-only checkpoint requires external text encoder (Qwen3-4B). "
             "Please select one in the UI or place it in models/zimage-tenc/"
         )
     
@@ -192,8 +191,8 @@ def assemble_zimage_runtime(
     estimated_config: Any,
     device: str = "cuda",
     dtype: str = "bf16",
-    external_vae_path: str | None = None,
-    external_tenc_path: str | None = None,
+    vae_path: str | None = None,
+    tenc_path: str | None = None,
 ) -> ZImageEngineRuntime:
     """Assemble Z Image runtime from components.
     
@@ -203,8 +202,8 @@ def assemble_zimage_runtime(
         estimated_config: Model config.
         device: Target device.
         dtype: Target dtype.
-        external_vae_path: Path to external VAE (for GGUF models).
-        external_tenc_path: Path to external text encoder (for GGUF models).
+        vae_path: Optional external VAE path (required when the checkpoint is core-only).
+        tenc_path: Optional external text encoder path (required when the checkpoint is core-only).
     
     Returns:
         Assembled ZImageEngineRuntime.
@@ -227,24 +226,36 @@ def assemble_zimage_runtime(
     
     _log_vram("AFTER get transformer")
     
-    # Detect if this is a GGUF/core-only model (no VAE or text encoder in components)
-    vae_model = codex_components.get("vae")
-    text_encoder = codex_components.get("text_encoder")
-    
-    is_core_only = vae_model is None or text_encoder is None
-    
-    if is_core_only:
-        logger.info("Detected GGUF/core-only model - loading external VAE and text encoder")
-        
-        # Load external VAE
-        if vae_model is None:
-            vae_model = _load_external_vae(external_vae_path, dtype=dtype)
-            _log_vram("AFTER load external VAE")
-        
-        # Load external text encoder
-        if text_encoder is None:
-            text_encoder = _load_external_text_encoder(external_tenc_path, dtype=dtype)
-            _log_vram("AFTER load external TEnc")
+    # Detect core-only checkpoints (no VAE or text encoder embedded in components).
+    base_vae = codex_components.get("vae")
+    base_text_encoder = codex_components.get("text_encoder")
+    is_core_only = base_vae is None or base_text_encoder is None
+
+    vae_model = base_vae
+    text_encoder = base_text_encoder
+
+    external_vae = str(vae_path or "").strip() or None
+    external_tenc = str(tenc_path or "").strip() or None
+
+    # External assets are opt-in for full checkpoints, and required for core-only
+    # checkpoints (GGUF / transformer-only exports).
+    if external_vae is not None:
+        logger.info("Z Image: loading external VAE (vae_path=%s)", external_vae)
+        vae_model = _load_external_vae(external_vae, dtype=dtype)
+        _log_vram("AFTER load external VAE")
+    if vae_model is None:
+        if is_core_only:
+            _load_external_vae(None, dtype=dtype)  # raises with an actionable message
+        raise ValueError("Z Image checkpoint did not include a VAE; provide an external VAE via 'vae_sha'.")
+
+    if external_tenc is not None:
+        logger.info("Z Image: loading external text encoder (tenc_path=%s)", external_tenc)
+        text_encoder = _load_external_text_encoder(external_tenc, dtype=dtype)
+        _log_vram("AFTER load external TEnc")
+    if text_encoder is None:
+        if is_core_only:
+            _load_external_text_encoder(None, dtype=dtype)  # raises with an actionable message
+        raise ValueError("Z Image checkpoint did not include a text encoder; provide one via 'tenc_sha'.")
     
     # Wrap VAE
     vae = VAE(model=vae_model, family=ModelFamily.ZIMAGE)

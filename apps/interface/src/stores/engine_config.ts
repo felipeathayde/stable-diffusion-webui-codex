@@ -140,8 +140,8 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,
-      requiresTenc: true,  // GGUF requires text encoder
-      requiresVae: true,   // GGUF core-only requires external VAE
+      requiresTenc: false, // Required only for core-only (GGUF) checkpoints
+      requiresVae: false,  // Required only for core-only (GGUF) checkpoints
       isVideoEngine: false,
     },
     defaults: {

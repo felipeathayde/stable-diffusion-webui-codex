@@ -18,3 +18,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to shared engine modules (doc-only change; part of rollout).
 - 2026-01-04: `CodexObjects` renamed `unet` → `denoiser`; engines store their sampling core patcher under `codex_objects.denoiser` (UNet for SD-family; transformer/DiT for Flux/Z-Image/WAN).
 - 2026-01-06: VAE override (`vae_path`) now unwraps wrapper VAEs via `first_stage_model` before calling `safe_load_state_dict` (fixes `'VAE' object has no attribute 'state_dict'`).
+- 2026-01-06: VAE/TE selection is explicit via `vae_source`/`tenc_source` + paths; core-only `.gguf` checkpoints never treat these paths as state-dict overrides, and ZImage always treats them as external selection (may be dir/gguf).

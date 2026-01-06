@@ -319,6 +319,48 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         raw_options: dict[str, Any] = dict(options)
         te_override_raw = raw_options.pop("text_encoder_override", None)
         bundle_obj = raw_options.pop("_bundle", None)
+
+        # Text encoder selection/override is explicit via `tenc_source` + `tenc_path` (engine-side) or
+        # `text_encoder_override` (loader-side). GGUF checkpoints are core-only and therefore require
+        # external text encoder weights; full checkpoints default to built-in unless overridden.
+        raw_tenc_path = raw_options.get("tenc_path")
+        tenc_path: str | list[str] | None = None
+        if isinstance(raw_tenc_path, str):
+            tenc_path = raw_tenc_path.strip() or None
+        elif isinstance(raw_tenc_path, (list, tuple)):
+            cleaned: list[str] = []
+            for entry in raw_tenc_path:
+                if not isinstance(entry, str):
+                    raise TypeError("tenc_path must be a string or array of strings when provided.")
+                item = entry.strip()
+                if item:
+                    cleaned.append(item)
+            tenc_path = cleaned or None
+        elif raw_tenc_path is not None:
+            raise TypeError("tenc_path must be a string or array of strings when provided.")
+
+        if tenc_path is None:
+            raw_options.pop("tenc_path", None)
+        else:
+            raw_options["tenc_path"] = tenc_path
+
+        raw_tenc_source = raw_options.get("tenc_source")
+        tenc_source = raw_tenc_source.strip().lower() if isinstance(raw_tenc_source, str) and raw_tenc_source.strip() else None
+        external_tenc_config_present = (te_override_raw is not None) or (tenc_path is not None)
+        if tenc_source is None:
+            tenc_source = "external" if external_tenc_config_present else "built_in"
+        if tenc_source not in {"built_in", "external"}:
+            raise RuntimeError("tenc_source must be 'built_in' or 'external' when provided.")
+        raw_options["tenc_source"] = tenc_source
+        if tenc_source == "built_in":
+            if external_tenc_config_present:
+                raise RuntimeError(
+                    "tenc_source='built_in' does not allow tenc_path/text_encoder_override; "
+                    "remove them or set tenc_source='external'."
+                )
+        else:
+            if not external_tenc_config_present:
+                raise RuntimeError("tenc_source='external' requires tenc_path or text_encoder_override.")
         te_override_cfg: TextEncoderOverrideConfig | None = None
         if te_override_raw is not None:
             if not isinstance(te_override_raw, dict):
@@ -380,11 +422,25 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 model_ref,
                 text_encoder_override=te_override_cfg,
                 vae_path=vae_path_for_bundle,
+                tenc_path=tenc_path,
             )
         elif isinstance(bundle_obj, DiffusionModelBundle):
             bundle = bundle_obj
         else:
             raise TypeError("_bundle must be a DiffusionModelBundle when provided.")
+
+        # Per-family invariants for text encoder override payloads.
+        if bundle.family is ModelFamily.ZIMAGE and isinstance(tenc_path, list):
+            raise RuntimeError("Z Image supports exactly 1 text encoder; tenc_path must be a string.")
+
+        checkpoint_suffix = os.path.splitext(str(getattr(bundle, "model_ref", "") or ""))[1].lower()
+        is_core_only_gguf = checkpoint_suffix == ".gguf"
+        if is_core_only_gguf and self.required_text_encoders and tenc_source != "external":
+            raise RuntimeError(
+                "Core-only GGUF checkpoint requires external text encoder(s). "
+                "Provide them via engine option 'tenc_path' or 'text_encoder_override' "
+                "(or via the API 'extras.tenc_sha' selector)."
+            )
 
         try:
             comp_keys = sorted(getattr(bundle, "components", {}).keys())  # type: ignore[arg-type]
@@ -411,29 +467,62 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
         components = self._build_components(bundle, options=self._load_options)
 
-        # Optional VAE override: explicit user path has priority over bundled VAE.
-        override_vae_path = self._load_options.get("vae_path")
-        try:
-            external_vae_path = (getattr(bundle, "metadata", {}) or {}).get("vae_external_path")
-        except Exception:
-            external_vae_path = None
-        if override_vae_path and external_vae_path:
-            try:
-                if os.path.samefile(str(override_vae_path), str(external_vae_path)):
-                    override_vae_path = None
-            except Exception:
-                if str(override_vae_path) == str(external_vae_path):
-                    override_vae_path = None
-        if override_vae_path:
-            if not os.path.isfile(override_vae_path):
-                raise FileNotFoundError(f"vae_path '{override_vae_path}' does not exist.")
+        # For GGUF checkpoints, text encoders are never embedded; fail fast with a clear message.
+        if is_core_only_gguf:
+            te_map = getattr(components, "text_encoders", None)
+            if not isinstance(te_map, dict):
+                te_map = {}
+            missing_tenc = [name for name in self.required_text_encoders if not te_map.get(name)]
+            if missing_tenc:
+                raise RuntimeError(
+                    "Core-only GGUF checkpoint requires external text encoder(s). "
+                    f"Missing: {', '.join(missing_tenc)}. "
+                    "Provide them via engine option 'tenc_path' or 'text_encoder_override' "
+                    "(or via the API 'extras.tenc_sha' selector)."
+                )
+
+        # VAE selection/override
+        #
+        # Rule of thumb:
+        # - For core-only GGUF checkpoints, `vae_path` is an *external asset selection*,
+        #   not a state-dict override. It must be handled during bundle resolution or
+        #   engine-specific assembly.
+        # - For full checkpoints, engines may treat `vae_path` as an optional state-dict
+        #   override (SD/SDXL/Flux/etc). ZImage always treats it as external selection.
+        raw_vae_path = self._load_options.get("vae_path")
+        vae_path = raw_vae_path.strip() if isinstance(raw_vae_path, str) and raw_vae_path.strip() else None
+
+        raw_vae_source = self._load_options.get("vae_source")
+        vae_source = raw_vae_source.strip().lower() if isinstance(raw_vae_source, str) and raw_vae_source.strip() else None
+        if vae_source is None:
+            vae_source = "external" if vae_path else "built_in"
+        if vae_source not in {"built_in", "external"}:
+            raise RuntimeError("vae_source must be 'built_in' or 'external' when provided.")
+        if vae_source == "built_in":
+            if vae_path is not None:
+                raise RuntimeError("vae_source='built_in' does not allow vae_path; remove vae_path or set vae_source='external'.")
+        else:
+            if vae_path is None:
+                raise RuntimeError("vae_source='external' requires vae_path.")
+
+        # For GGUF checkpoints, VAE is never embedded; fail fast if the assembly stage didn't supply one.
+        if is_core_only_gguf and getattr(components, "vae", None) is None:
+            raise RuntimeError(
+                "Core-only GGUF checkpoint requires an external VAE. "
+                "Provide one via engine option 'vae_path' (or via the API 'extras.vae_sha' selector)."
+            )
+
+        # ZImage treats `vae_path` as external selection (may be a directory or GGUF); do not apply a state-dict override here.
+        if vae_source == "external" and vae_path and (bundle.family is not ModelFamily.ZIMAGE) and (not is_core_only_gguf):
+            if not os.path.isfile(vae_path):
+                raise FileNotFoundError(f"vae_path '{vae_path}' does not exist.")
             if getattr(components, "vae", None) is None:
                 raise RuntimeError(
                     "vae_path was provided, but no VAE component was built from the checkpoint; "
                     "cannot apply override."
                 )
             vae_device = getattr(components.vae, "device", None) or getattr(components.vae, "load_device", None)
-            state_dict = load_torch_file(override_vae_path, device=vae_device)
+            state_dict = load_torch_file(vae_path, device=vae_device)
             vae_target = getattr(components.vae, "first_stage_model", components.vae)
             if not hasattr(vae_target, "state_dict"):
                 raise TypeError(
@@ -443,9 +532,15 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             missing, unexpected = safe_load_state_dict(vae_target, state_dict, log_name="VAE override")
             if missing:
                 sample = missing[:10]
+                family = getattr(bundle, "family", None)
+                family_hint = None
+                try:
+                    family_hint = family.value  # type: ignore[attr-defined]
+                except Exception:
+                    family_hint = str(family) if family is not None else None
                 raise RuntimeError(
                     f"VAE override is missing {len(missing)} keys; sample={sample}. "
-                    "Ensure the override matches the SDXL VAE architecture."
+                    f"Ensure the override matches the expected VAE architecture for {family_hint or 'this checkpoint'}."
                 )
             if unexpected:
                 logger.warning("VAE override: unexpected %d keys (sample=%s)", len(unexpected), unexpected[:10])

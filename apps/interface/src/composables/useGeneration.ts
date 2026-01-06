@@ -217,60 +217,64 @@ export function useGeneration(tabId: string) {
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
 
-	    const teOverride = engineType.value === 'flux1'
-	      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
-	      : undefined
-	    
-	    // Build extras based on engine capabilities (e.g. tenc_sha)
-	    const extras: Record<string, unknown> = {}
+    const teOverride = engineType.value === 'flux1'
+      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
+      : undefined
+    
+    // Build extras based on engine capabilities (e.g. tenc_sha)
+    const extras: Record<string, unknown> = {}
 
-	    const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
-	    if (needsTencSha) {
-	      const shas: string[] = []
-	      for (const label of textEncoders) {
-	        const sha = quicksettings.resolveTextEncoderSha(label)
-	        if (!sha) {
-	          state.value.status = 'error'
-	          state.value.errorMessage = `Text encoder SHA not found for '${label}'.`
-	          return
-	        }
-	        shas.push(sha)
-	      }
-	      if (shas.length === 0) {
-	        state.value.status = 'error'
-	        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
-	        return
-	      }
-        if (engineType.value === 'flux1' && shas.length !== 2) {
+    const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
+    const wantsOptionalTencSha = engineType.value === 'zimage' && textEncoders.length > 0
+    if (needsTencSha || wantsOptionalTencSha) {
+      const shas: string[] = []
+      for (const label of textEncoders) {
+        const sha = quicksettings.resolveTextEncoderSha(label)
+        if (!sha) {
           state.value.status = 'error'
-          state.value.errorMessage = 'FLUX.1 requires exactly 2 text encoders (CLIP + T5).'
+          state.value.errorMessage = `Text encoder SHA not found for '${label}'.`
           return
         }
-        if (engineType.value === 'zimage' && shas.length !== 1) {
-          state.value.status = 'error'
-          state.value.errorMessage = 'Z Image requires exactly 1 text encoder (Qwen3).'
-          return
-        }
-	      extras.tenc_sha = shas.length === 1 ? shas[0] : shas
-	    }
-
-      const selectedVae = String(quicksettings.currentVae || '').trim()
-      const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
-      if (config.capabilities.requiresVae) {
-        if (!resolvedVaeSha) {
-          state.value.status = 'error'
-          state.value.errorMessage = 'Select a VAE so the request can include vae_sha.'
-          return
-        }
-        extras.vae_sha = resolvedVaeSha
-      } else if (resolvedVaeSha) {
-        // Optional override for SD/SDXL families: if user picked an explicit VAE, include its sha.
-        extras.vae_sha = resolvedVaeSha
+        shas.push(sha)
       }
-	    
-	    const device = (quicksettings.currentDevice || 'cpu') as any
-	    const tabType = String(engineType.value)
-	    let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
+      if (needsTencSha && shas.length === 0) {
+        state.value.status = 'error'
+        state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
+        return
+      }
+      if (engineType.value === 'flux1' && shas.length !== 2) {
+        state.value.status = 'error'
+        state.value.errorMessage = 'FLUX.1 requires exactly 2 text encoders (CLIP + T5).'
+        return
+      }
+      if (engineType.value === 'zimage' && shas.length !== 1) {
+        state.value.status = 'error'
+        state.value.errorMessage = 'Z Image requires exactly 1 text encoder (Qwen3).'
+        return
+      }
+      if (shas.length > 0) {
+        extras.tenc_sha = shas.length === 1 ? shas[0] : shas
+      }
+    }
+
+    const selectedVae = String(quicksettings.currentVae || '').trim()
+    const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
+    const needsVaeSha = config.capabilities.requiresVae || modelIsGguf
+    if (needsVaeSha) {
+      if (!resolvedVaeSha) {
+        state.value.status = 'error'
+        state.value.errorMessage = 'Select a VAE so the request can include vae_sha.'
+        return
+      }
+      extras.vae_sha = resolvedVaeSha
+    } else if (resolvedVaeSha) {
+      // Optional override: if user picked an explicit VAE, include its sha.
+      extras.vae_sha = resolvedVaeSha
+    }
+    
+    const device = (quicksettings.currentDevice || 'cpu') as any
+    const tabType = String(engineType.value)
+    let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
     // Flux.1 img2img should run via the Kontext workflow engine.
     if (p.useInitImage && engineOverrideForRequest === 'flux1') {
       engineOverrideForRequest = 'flux1_kontext'

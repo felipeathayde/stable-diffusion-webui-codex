@@ -7,13 +7,15 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
-Defines the shared “engine core” container for denoiser/VAE/text encoders and an abstract base engine with model-load/validate semantics.
+Defines `CodexObjects` and the shared engine load/unload path, including fail-fast `.gguf` core-only validation and explicit `vae_source`/`tenc_source`
+selection.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
 - `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration and runtime helpers
-  (subclasses implement task-specific inference behavior and required component sets).
+  including explicit asset-source selection (`vae_source`/`tenc_source`) and fail-fast validation for core-only `.gguf` checkpoints (subclasses implement
+  task-specific inference behavior and required component sets).
 """
 
 from __future__ import annotations

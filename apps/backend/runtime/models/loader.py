@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
-This module resolves TE/VAE overrides, normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
+This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
 ready for orchestrator/engine execution (with memory-management hooks).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -32,8 +32,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
 - `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory.
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
-- `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution, VAE layout handling,
-  dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
+- `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),
+  VAE layout handling, dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
 - `_SimpleEstimated` (class): Minimal estimate container used for config detection/compat when only partial metadata is available.
 - `_detect_engine_from_config` (function): Detects engine identifier from a diffusers config dict.
 - `load_engine_from_diffusers` (function): Loads a `DiffusionModelBundle` directly from a diffusers repo directory.

@@ -28,3 +28,4 @@ Status: Active
 - 2026-01-03: Z Image runtime core is now stored as `ZImageEngineRuntime.denoiser` via `DenoiserPatcher` (no ControlNet graph).
 - 2026-01-03: `ZImageEngine` now assembles via `CodexZImageFactory` (factory-first seam; reduces drift in `_build_components`).
 - 2026-01-06: Z Image uses `vae_path`/`tenc_path` as **external asset selection** (not state-dict overrides); core-only (`.gguf`) checkpoints require them, and full checkpoints may optionally override embedded assets by providing them.
+- 2026-01-06: Refreshed `spec.py` header block wording to reflect optional external overrides for full checkpoints (doc-only change).

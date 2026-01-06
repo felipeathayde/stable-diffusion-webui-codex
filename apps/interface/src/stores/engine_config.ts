@@ -44,8 +44,8 @@ export interface EngineCapabilities {
   usesNegativePrompt: boolean
   
   // Model requirements
-  requiresTenc: boolean  // GGUF models require external text encoder
-  requiresVae: boolean   // Some engines need explicit VAE
+  requiresTenc: boolean  // If true, UI requires selecting text encoder(s) even for non-GGUF; GGUF core-only rules are enforced via `modelIsGguf`
+  requiresVae: boolean   // If true, UI requires selecting VAE even for non-GGUF; GGUF core-only rules are enforced via `modelIsGguf`
   
   // Video specific
   isVideoEngine: boolean

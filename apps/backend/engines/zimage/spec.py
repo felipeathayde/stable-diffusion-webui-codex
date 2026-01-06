@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Z Image engine specification and runtime assembly (analogous to Flux `spec.py`).
-Builds a `ZImageEngineRuntime` from parsed components, optionally loading external VAE/text-encoder assets when the checkpoint is core-only.
+Builds a `ZImageEngineRuntime` from parsed components, loading external VAE/text-encoder assets when required (core-only checkpoints) and supporting
+optional external overrides for full checkpoints.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
@@ -15,8 +16,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/denoiser/text pipelines/clip wrapper/device/dtype).
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
 - `_k_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
-- `_load_external_vae` (function): Loads an external VAE asset for core-only checkpoints.
-- `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder asset for core-only checkpoints.
+- `_load_external_vae` (function): Loads an external Flow16 VAE from a path (required for core-only; optional override for full checkpoints).
+- `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder from a path (required for core-only; optional override for full checkpoints).
 - `assemble_zimage_runtime` (function): Assembles the runtime (including external assets when required) and returns a `ZImageEngineRuntime`.
 - `ZIMAGE_SPEC` (constant): Default Z Image engine spec instance.
 - `__all__` (constant): Public export list for this module.

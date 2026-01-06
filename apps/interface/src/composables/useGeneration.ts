@@ -15,7 +15,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `GenerationState` (interface): Per-tab reactive runtime state (status/progress/preview/gallery/history selection).
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
-- `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates (includes nested handlers).
+- `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
+  `vae_sha`/`tenc_sha` and sending optional ZImage `tenc_sha` overrides when a text encoder is explicitly selected.
 */
 
 import { computed, ref } from 'vue'

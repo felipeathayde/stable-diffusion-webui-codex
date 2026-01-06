@@ -56,4 +56,5 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-04: `ModelRegistry` now exposes public `hash_for(...)` + `flush_hash_cache()` so inventory and other subsystems can request hashes without importing private cache internals.
 - 2026-01-06: VAE selection is expressed via engine options (`vae_source` + `vae_path`); the loader does not persist a separate `external_vae_path` metadata key.
 - 2026-01-06: Loader now supports `tenc_path` (string or ordered list) as a shorthand for text encoder overrides: paths are mapped onto `ModelSignature.text_encoders` in order and loaded via the existing `TextEncoderOverrideConfig` pipeline (fail-fast on count/alias mismatch).
+- 2026-01-06: Refreshed `loader.py` header block to document `tenc_path` shorthand semantics (doc-only change).
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `api.py`, and `types.py` (doc-only change; part of rollout).

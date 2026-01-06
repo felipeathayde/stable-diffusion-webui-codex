@@ -12,7 +12,7 @@ typed progress events back to API callers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InferenceOrchestrator` (class): Routes typed requests to engines; caches loaded engines with option fingerprinting, reloads when overrides
-  change, and manages VRAM hygiene across generations (contains nested helpers for option freezing and cache purges).
+  change (incl. `vae_source`/`tenc_source`), and manages VRAM hygiene across generations (contains nested helpers for option freezing and cache purges).
 """
 
 from __future__ import annotations

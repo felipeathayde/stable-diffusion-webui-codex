@@ -50,8 +50,8 @@ class CodexZImageFactory:
             estimated_config=bundle.estimated_config,
             device=device,
             dtype=dtype,
-            external_vae_path=options.get("vae_path"),
-            external_tenc_path=options.get("tenc_path"),
+            vae_path=options.get("vae_path"),
+            tenc_path=options.get("tenc_path"),
         )
         codex_objects = CodexObjects(
             denoiser=runtime.denoiser,
@@ -60,4 +60,3 @@ class CodexZImageFactory:
             clipvision=None,
         )
         return CodexZImageAssembly(runtime=runtime, codex_objects=codex_objects)
-

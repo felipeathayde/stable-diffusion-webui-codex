@@ -8,11 +8,11 @@ Required Notice: see NOTICE
 
 Purpose: Shared Flow16 VAE utilities (16-channel latent AutoencoderKL) for Flux/Z Image families.
 Defines the canonical Flow16 VAE config parity used by diffusers (no quant/post-quant conv), plus helpers to locate and load a Flow16 VAE
-from either a diffusers directory or a single `.safetensors` file.
+from either a diffusers directory or a single weights file.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FLOW16_VAE_CONFIG` (constant): Canonical diffusers-like config dict for Flow16 VAEs (16 latent channels, scaling/shift factors).
-- `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or `.safetensors` file with strict latent-channel validation.
+- `load_flow16_vae` (function): Loads a Flow16 VAE from a directory or weights file with strict latent-channel validation.
 - `find_flow16_vae` (function): Searches candidate directories for a valid Flow16 VAE path.
 """
 
@@ -74,7 +74,7 @@ def load_flow16_vae(
     """Load a 16-channel flow VAE from a path.
     
     This function handles loading from:
-    - Single .safetensors file
+    - Single weights file (.safetensors/.gguf/.ckpt/.pt)
     - Diffusers directory format
     
     Args:
@@ -127,9 +127,19 @@ def load_flow16_vae(
             # Diffusers directory format
             vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=dtype)
         else:
-            # Single safetensors file - create with correct config
-            from safetensors.torch import load_file
-            state_dict = load_file(vae_path)
+            suffix = os.path.splitext(vae_path)[1].lower()
+            if suffix == ".gguf":
+                # VAE GGUFs are small enough to safely dequantize upfront; this also avoids
+                # requiring quantized Conv2d ops in the VAE graph.
+                from apps.backend.quantization.gguf_loader import load_gguf_state_dict
+
+                state_dict = load_gguf_state_dict(vae_path, dequantize=True, computation_dtype=dtype)
+            else:
+                # Single-file weights (safetensors/ckpt/pt)
+                from apps.backend.runtime.utils import load_torch_file
+
+                state_dict = load_torch_file(vae_path, device="cpu")
+
             if isinstance(state_dict, Mapping):
                 state_dict = _strip_known_prefixes(state_dict)
                 # Normalize LDM-style Flow16 VAEs (same conversion as SDXL/Flux).
@@ -199,12 +209,12 @@ def find_flow16_vae(search_paths: list[str]) -> Optional[str]:
             
             # Check for safetensors files
             for f in os.listdir(path):
-                if f.endswith(".safetensors"):
+                if f.endswith(".safetensors") or f.endswith(".gguf"):
                     vae_path = os.path.join(path, f)
                     logger.info("Found VAE file: %s", vae_path)
                     return vae_path
                     
-        elif os.path.isfile(path) and path.endswith(".safetensors"):
+        elif os.path.isfile(path) and (path.endswith(".safetensors") or path.endswith(".gguf")):
             logger.info("Found VAE file: %s", path)
             return path
     

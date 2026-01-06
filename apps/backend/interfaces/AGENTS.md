@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -50,3 +50,5 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to interface modules (doc-only change; part of rollout).
 - 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); `run_api.py` resolves engine keys via the registry and rejects unknown keys with HTTP 400.
 - 2026-01-04: `/api/text-encoders` now mirrors inventory-derived TE file labels for Flux.1/ZImage to reduce “exists in inventory but not in dropdown” drift; tooling guardrail added to prevent direct `apps/paths.json` reads outside `infra/config/paths.py`.
+- 2026-01-06: `/api/{txt2img,img2img}` now treats `.gguf` checkpoints as core-only: requires `vae_sha` + `tenc_sha` (tenc accepts arrays for multi-encoder models); ZImage enforces exactly 1 (Qwen3) and Flux.1 enforces exactly 2 (CLIP + T5).
+- 2026-01-06: API workers now set `engine_options.vae_source`/`engine_options.tenc_source` (`built_in` vs `external`) to make asset selection explicit (pairs with `engine_options.vae_path`/`engine_options.tenc_path` when external).

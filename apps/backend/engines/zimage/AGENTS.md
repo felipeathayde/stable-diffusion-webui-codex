@@ -1,7 +1,7 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
 Owner: Engine Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to Z Image engine modules (doc-only change; part of rollout).
 - 2026-01-03: Z Image runtime core is now stored as `ZImageEngineRuntime.denoiser` via `DenoiserPatcher` (no ControlNet graph).
 - 2026-01-03: `ZImageEngine` now assembles via `CodexZImageFactory` (factory-first seam; reduces drift in `_build_components`).
+- 2026-01-06: Z Image uses `vae_path`/`tenc_path` as **external asset selection** (not state-dict overrides); core-only (`.gguf`) checkpoints require them, and full checkpoints may optionally override embedded assets by providing them.

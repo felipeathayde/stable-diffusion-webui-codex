@@ -76,7 +76,9 @@ class InferenceOrchestrator:
 
         te_override = engine_options.get("text_encoder_override")
         vae_path = engine_options.get("vae_path")
+        vae_source = engine_options.get("vae_source")
         tenc_path = engine_options.get("tenc_path")
+        tenc_source = engine_options.get("tenc_source")
 
         # Normalize streaming option key to a single boolean or None.
         streaming_val: object | None
@@ -89,7 +91,9 @@ class InferenceOrchestrator:
         relevant = {
             "text_encoder_override": te_override,
             "vae_path": vae_path,
+            "vae_source": vae_source,
             "tenc_path": tenc_path,
+            "tenc_source": tenc_source,
             "core_streaming_enabled": streaming_val,
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)

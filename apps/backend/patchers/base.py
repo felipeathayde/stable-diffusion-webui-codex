@@ -269,7 +269,7 @@ class ModelPatcher:
     def model_size(self):
         if self.size > 0:
             return self.size
-        self.size = memory_management.module_size(self.model)
+        self.size = memory_management.manager.module_size(self.model)
         return self.size
 
     def clone(self):
@@ -468,7 +468,7 @@ class ModelPatcher:
             return self.model.get_dtype()
 
     def get_key_patches(self, filter_prefix=None):
-        memory_management.unload_model_clones(self)
+        memory_management.manager.unload_model_clones(self)
         model_sd = self.model_state_dict()
         patches_dict = self.patches
         p = {}
@@ -513,11 +513,8 @@ class ModelPatcher:
         # If we're offloading to CPU under smart-offload, pin host memory buffers
         should_pin = False
         if target_device is not None and getattr(target_device, "type", "") == "cpu" and smart_offload_enabled():
-            try:
-                cfg = memory_management.memory_config
-                should_pin = bool(getattr(getattr(cfg, "swap", None), "pin_shared_memory", False))
-            except Exception:
-                should_pin = False
+            cfg = memory_management.manager.config
+            should_pin = bool(cfg.swap.pin_shared_memory)
 
         if should_pin:
             pinned_params = 0

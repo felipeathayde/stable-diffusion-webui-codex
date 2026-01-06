@@ -53,7 +53,7 @@ def cast_tensor(tensor: torch.Tensor, device: torch.device | None, dtype: torch.
     """Move tensor to the requested device / dtype."""
     target_device = device or tensor.device
     target_dtype = dtype or tensor.dtype
-    return memory_management.cast_to_device(tensor, target_device, target_dtype)
+    return memory_management.manager.cast_to_device(tensor, target_device, target_dtype)
 
 
 def ensure_same_shape(tensor: torch.Tensor, shape: Iterable[int]) -> torch.Tensor:

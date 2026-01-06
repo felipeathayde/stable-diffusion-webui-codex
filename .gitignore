@@ -1,91 +1,43 @@
-huggingface_space_mirror/
-random_test.py
-__pycache__
-*.ckpt
-*.safetensors
-*.pth
-*.dev.js
-*_s.py
-*_u.py
-*_m.py
-*_i.py
-!apps/backend/gguf/quants/kernels/iq_family/forge_*.py
-.refs
+# Stable Diffusion WebUI Codex — ignore policy lives in `gitignore.md`.
+
+# OS / editors
 .DS_Store
 *:Zone.Identifier
-/output/
-/outputs/
-/ESRGAN/*
-/SwinIR/*
-/repositories
-/.venv
-/venv
-/venv1
-/tmp
-/output
-/model.ckpt
-/GFPGANv1.3.pth
-/gfpgan/weights/*.pth
-/ui-config.json
-/outputs
-/config.json
-/log
-/logs/
-/webui.settings.bat
-/embeddings
-/styles.csv
-/params.txt
-/styles.csv.bak
-/webui-user.bat
-/webui-user.sh
-/interrogate
-/user.css
-/.idea
-notification.mp3
-/SwinIR
-/textual_inversion
-.vscode
-/extensions
-/test/stdout.txt
-/test/stderr.txt
-/cache.json*
-/config_states/
-# Hash cache for model registry (computed per-machine)
-.hashes.json
-/node_modules
-/package-lock.json
-/.coverage*
-/test/test_outputs
-/cache
-trace.json
-/sysinfo-????-??-??-??-??.json
-/test/results.xml
-coverage.xml
-**/tests/**/expectations
-# Local SDXL debug renders at repo root
+.vscode/
+.idea/
 
-# Keep repository tests under version control; ignore only pytest caches.
+# Python
+__pycache__/
 .pytest_cache/
-snapshotLegacy.py
+/.venv/
 
-# Local build caches and typecheck outputs
+# uv (repo-local installer + managed CPython installs)
+/.uv/
+
+# Local dev caches (do not commit)
 /.tmp/
+/tmp/
 /.npm-cache/
-/.typecheck.out
 /.ts-out/
-/.puppeteer-cache
-/.pw-browsers
-/artifacts
+/artifacts/
 
-# Local caches/logs (do not commit)
-/.mplconfig/
+# Reference snapshots (kept local; not in Git)
+/.refs/
+
+# Backend runtime state / outputs (do not commit)
+/output/
+/logs/
 .webui-*.log
 .webui-*.pid
-*.har
-analise-codigo-deepresearch.json
+/trace.json
 
-# Vite/Vue interface app artifacts
-apps/interface/node_modules/
+# Root scratch (do not commit)
+/*.png
+!/logo.png
+/*.txt
+
+# Frontend artifacts (Vue/Vite)
+node_modules/
 apps/interface/dist/
 apps/interface/.vite/
 apps/interface/.eslintcache
@@ -96,18 +48,21 @@ apps/interface/tabs.json
 apps/interface/workflows.json
 apps/settings_values.json
 
-# Local reference snapshots and scratch branches
-*.png
-!logo.png
-*.txt
-!requirements*.txt
+# No binary office docs
 *.docx
-.sangoi/reports/tooling/pyright/*
-# Codex session reasoning extracts (local artifacts; do not commit)
+
+# Tooling outputs
+.sangoi/reports/tooling/pyright/
 .sangoi/backups/webui_reasoning.jsonl
 .sangoi/backups/webui_reasoning_report.md
-# Model weights at repo root (do not ignore */models/ code folders).
-/models/
 
-# uv (repo-local installer + managed CPython installs)
-/.uv/
+# Model weights / large artifacts (never commit)
+/models/
+*.ckpt
+*.safetensors
+*.pth
+
+# Guardrails
+# If you add broad ignores like `*.txt`/`*.png`, keep them above this block.
+!apps/**/*.txt
+!apps/**/*.png

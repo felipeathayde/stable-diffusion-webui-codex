@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
 Owner: Engine Maintainers
-Last Review: 2026-01-04
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -26,3 +26,4 @@ Status: Active
 - 2025-12-05: `common.base.BaseInferenceEngine.load()` now accepts an optional `text_encoder_override` option (family + `/api/text-encoders` label [+ optional components]) and forwards it to `runtime.models.resolve_diffusion_bundle`, so text encoder overrides are applied centrally by the loader instead of por-engine shims.
 - 2026-01-02: Added standardized file header docstrings to engine facade/registration modules (doc-only change; part of rollout).
 - 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases) to make room for a future Flux.2.
+- 2026-01-06: `common.base` VAE overrides (`vae_path`) now unwrap wrapper VAEs via `first_stage_model` before applying state dicts.

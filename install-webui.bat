@@ -63,6 +63,11 @@ if "%PYTHON_VERSION%"=="" set "PYTHON_VERSION=3.12.10"
 
 set "VENV=%ROOT%.venv"
 
+set "UV_CACHE_DIR=%ROOT%.uv\cache"
+set "NPM_CONFIG_CACHE=%ROOT%.npm-cache"
+if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
+if not exist "%NPM_CONFIG_CACHE%" mkdir "%NPM_CONFIG_CACHE%"
+
 set "TORCH_MODE=%CODEX_TORCH_MODE%"
 if "%TORCH_MODE%"=="" set "TORCH_MODE=auto"
 set "TORCH_BACKEND=%CODEX_TORCH_BACKEND%"
@@ -70,11 +75,13 @@ set "CUDA_VARIANT=%CODEX_CUDA_VARIANT%"
 
 echo [install] Repo: %ROOT%
 echo [install] uv: %UV_BIN%  version pin: %UV_VERSION%
+echo [install] uv cache: %UV_CACHE_DIR%
 echo [install] Python: %PYTHON_VERSION%  managed by uv
 echo [install] Venv: %VENV%  created by uv; uses the managed Python
 echo [install] Torch mode: %TORCH_MODE%  CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip
 if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND%  CODEX_TORCH_BACKEND
 if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT%  CODEX_CUDA_VARIANT
+echo [install] npm cache: %NPM_CONFIG_CACHE%
 
 if exist "%UV_BIN%" goto :uv_ok
 if not exist "%UV_DIR%" mkdir "%UV_DIR%"
@@ -239,12 +246,25 @@ if errorlevel 1 goto :frontend_missing_npm
 echo [install] node: 
 node -v
 echo [install] npm:
-npm -v
+call npm -v
 pushd "%ROOT%apps\\interface"
-npm install
-if not errorlevel 1 goto :frontend_install_ok
+call npm install --cache "%NPM_CONFIG_CACHE%"
+if errorlevel 1 goto :frontend_install_failed
+if not exist "node_modules\\vite\\package.json" goto :frontend_install_missing_vite
+goto :frontend_install_ok
+
+:frontend_install_failed
 popd
 echo Error: npm install failed.>&2
+exit /b 1
+
+:frontend_install_missing_vite
+popd
+echo Error: npm install completed, but frontend deps are missing.>&2
+echo [install] Expected: apps\\interface\\node_modules\\vite\\package.json.>&2
+echo [install] Try running:>&2
+echo [install]   cd apps\\interface>&2
+echo [install]   npm install>&2
 exit /b 1
 
 :frontend_install_ok

@@ -219,10 +219,10 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         to_batch_temp.reverse()
         to_batch = to_batch_temp[:1]
 
-        if memory_management.signal_empty_cache:
-            memory_management.soft_empty_cache()
+        if memory_management.manager.signal_empty_cache:
+            memory_management.manager.soft_empty_cache()
 
-        free_memory = memory_management.get_free_memory(x_in.device)
+        free_memory = memory_management.manager.get_free_memory(x_in.device)
 
         for i in range(1, len(to_batch_temp) + 1):
             batch_amount = to_batch_temp[:len(to_batch_temp) // i]
@@ -474,7 +474,7 @@ def sampling_prepare(denoiser, x):
         additional_inference_memory += lora_memory
 
     models_to_load = [denoiser] + additional_model_patchers
-    memory_management.load_models_gpu(
+    memory_management.manager.load_models(
         models=models_to_load,
         memory_required=denoiser_inference_memory,
         hard_memory_preservation=additional_inference_memory
@@ -515,7 +515,7 @@ def sampling_cleanup(denoiser):
     if smart_offload_enabled():
         models_to_unload = getattr(denoiser, "_codex_smart_offload_models", [])
         for model in models_to_unload:
-            memory_management.unload_model(model)
+            memory_management.manager.unload_model(model)
         setattr(denoiser, "_codex_smart_offload_models", [])
     from apps.backend.runtime.ops import cleanup_cache
     cleanup_cache()

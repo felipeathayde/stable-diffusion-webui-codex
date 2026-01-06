@@ -434,7 +434,13 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 )
             vae_device = getattr(components.vae, "device", None) or getattr(components.vae, "load_device", None)
             state_dict = load_torch_file(override_vae_path, device=vae_device)
-            missing, unexpected = safe_load_state_dict(components.vae, state_dict, log_name="VAE override")
+            vae_target = getattr(components.vae, "first_stage_model", components.vae)
+            if not hasattr(vae_target, "state_dict"):
+                raise TypeError(
+                    "VAE override target does not expose state_dict(); "
+                    f"got {type(vae_target).__name__} (from {type(components.vae).__name__})."
+                )
+            missing, unexpected = safe_load_state_dict(vae_target, state_dict, log_name="VAE override")
             if missing:
                 sample = missing[:10]
                 raise RuntimeError(
@@ -507,7 +513,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             return
 
         targets: list[object] = []
-        # These wrappers are passed directly into memory_management.load_model_gpu(...)
+        # These wrappers are passed directly into memory_management.manager.load_model(...)
         targets.append(getattr(components, "denoiser", None))
         targets.append(getattr(components, "vae", None))
         targets.append(getattr(components, "clipvision", None))
@@ -525,13 +531,13 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             if target is None:
                 continue
             try:
-                memory_management.unload_model_clones(target)
-            except Exception:
-                pass
+                memory_management.manager.unload_model_clones(target)
+            except Exception:  # noqa: BLE001
+                self._logger.debug("Failed to unload model clones for %s", type(target).__name__, exc_info=True)
             try:
-                memory_management.unload_model(target)
-            except Exception:
-                pass
+                memory_management.manager.unload_model(target)
+            except Exception:  # noqa: BLE001
+                self._logger.debug("Failed to unload model for %s", type(target).__name__, exc_info=True)
 
     def _reset_state(self) -> None:
         self._component_tracker = _ComponentTracker(logger=self._logger)
@@ -963,7 +969,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             return
         try:
             from apps.backend.runtime.memory import memory_management
-            memory_management.soft_empty_cache(force=True)
+            memory_management.manager.soft_empty_cache(force=True)
         except Exception:  # pragma: no cover - diagnostics only
             self._logger.debug("Post-job cleanup failed", exc_info=True)
 

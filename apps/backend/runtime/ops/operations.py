@@ -1092,9 +1092,9 @@ def shift_manual_cast(model, enabled):
 
 @contextlib.contextmanager
 def automatic_memory_management():
-    memory_management.free_memory(
+    memory_management.manager.free_memory(
         memory_required=3 * 1024 * 1024 * 1024,
-        device=memory_management.get_torch_device(),
+        device=memory_management.manager.primary_device(),
     )
 
     module_list = []
@@ -1124,7 +1124,7 @@ def automatic_memory_management():
     for module in module_list:
         module.cpu()
 
-    memory_management.soft_empty_cache()
+    memory_management.manager.soft_empty_cache()
     elapsed = time.perf_counter() - start
     logger.info("Automatic Memory Management: %d Modules in %.2f seconds.", len(module_list), elapsed)
 

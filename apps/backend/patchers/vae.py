@@ -263,8 +263,12 @@ class VAE:
         if no_init:
             return
 
-        self.memory_used_encode = lambda shape, dtype: (1767 * shape[2] * shape[3]) * memory_management.dtype_size(dtype)
-        self.memory_used_decode = lambda shape, dtype: (2178 * shape[2] * shape[3] * 64) * memory_management.dtype_size(dtype)
+        self.memory_used_encode = (
+            lambda shape, dtype: (1767 * shape[2] * shape[3]) * torch.empty((), dtype=dtype).element_size()
+        )
+        self.memory_used_decode = (
+            lambda shape, dtype: (2178 * shape[2] * shape[3] * 64) * torch.empty((), dtype=dtype).element_size()
+        )
         self.downscale_ratio = int(2 ** (len(model.config.down_block_types) - 1))
         self.latent_channels = int(model.config.latent_channels)
 
@@ -272,18 +276,18 @@ class VAE:
         self.first_stage_model = _NormalizingFirstStage.wrap(model.eval(), family=family)
 
         if device is None:
-            device = memory_management.vae_device()
+            device = memory_management.manager.get_device(DeviceRole.VAE)
 
         self.device = device
-        offload_device = memory_management.vae_offload_device()
+        offload_device = memory_management.manager.get_offload_device(DeviceRole.VAE)
 
         if dtype is None:
-            dtype = memory_management.vae_dtype(device=device)
+            dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
 
         self.vae_dtype: torch.dtype | None = None
         self._pending_dtype = dtype  # Will be applied lazily when VAE is first used
         self.offload_device = offload_device
-        self.output_device = memory_management.intermediate_device()
+        self.output_device = memory_management.manager.get_device(DeviceRole.INTERMEDIATE)
 
         self.patcher = ModelPatcher(
             self.first_stage_model,
@@ -362,7 +366,7 @@ class VAE:
                 orig_device = None
                 orig_dtype = None
 
-            cpu_device = memory_management.cpu
+            cpu_device = memory_management.manager.cpu_device
             base.to(device=cpu_device, dtype=torch.float32)
 
             with torch.no_grad():
@@ -399,7 +403,7 @@ class VAE:
                 orig_device = None
                 orig_dtype = None
 
-            cpu_device = memory_management.cpu
+            cpu_device = memory_management.manager.cpu_device
             base.to(device=cpu_device, dtype=torch.float32)
 
             with torch.no_grad():
@@ -430,17 +434,17 @@ class VAE:
 
     def decode_inner(self, samples_in):
         _tensor_stats("decode_inner.latents", samples_in)
-        if memory_management.VAE_ALWAYS_TILED:
+        if memory_management.manager.vae_always_tiled:
             return self.decode_tiled(samples_in).to(self.output_device)
 
         while True:
-            desired_dtype = memory_management.vae_dtype(device=self.device)
+            desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
             self._apply_precision(desired_dtype)
 
             try:
                 memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)
-                memory_management.load_models_gpu([self.patcher], memory_required=memory_used)
-                free_memory = memory_management.get_free_memory(self.device)
+                memory_management.manager.load_models([self.patcher], memory_required=memory_used)
+                free_memory = memory_management.manager.get_free_memory(self.device)
                 batch_number = max(1, int(free_memory / memory_used))
 
                 pixel_samples = torch.empty(
@@ -458,12 +462,12 @@ class VAE:
                     decoded = _unwrap_decode_output(decoded_raw).to(self.output_device).float()
                     pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
                     _tensor_stats("decode_inner.batch_decoded", decoded)
-            except memory_management.OOM_EXCEPTION:
+            except memory_management.manager.oom_exception:
                 if smart_fallback_enabled():
                     logger.warning(
                         "VAE decode OOM on %s with tiled=%s; attempting CPU fallback.",
                         self.device,
-                        bool(memory_management.VAE_ALWAYS_TILED),
+                        bool(memory_management.manager.vae_always_tiled),
                     )
                     pixel_samples = self._decode_cpu_fallback(samples_in)
                 else:
@@ -481,20 +485,20 @@ class VAE:
                     self.device,
                     str(self.vae_dtype),
                 )
-                next_dtype = memory_management.report_precision_failure(
+                next_dtype = memory_management.manager.report_precision_failure(
                     DeviceRole.VAE,
                     location="vae.decode",
                     reason="NaN detected in decoded output",
                 )
                 if next_dtype is None:
-                    hint = memory_management.precision_hint(DeviceRole.VAE)
+                    hint = memory_management.manager.precision_hint(DeviceRole.VAE)
                     raise RuntimeError(
                         f"VAE decode produced NaNs on {self.device} with dtype {self.vae_dtype}. {hint}"
                     )
                 del pixel_samples
                 del result
                 self._apply_precision(next_dtype)
-                memory_management.soft_empty_cache(force=True)
+                memory_management.manager.soft_empty_cache(force=True)
                 continue
 
             return result
@@ -507,13 +511,13 @@ class VAE:
             return wrapper(self.decode_inner, samples_in)
 
     def decode_tiled(self, samples, tile_x=64, tile_y=64, overlap=16):
-        memory_management.load_model_gpu(self.patcher)
+        memory_management.manager.load_model(self.patcher)
         output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
         # Return BCHW format in [-1, 1] range like decode_inner
         return output * 2.0 - 1.0
 
     def encode_inner(self, pixel_samples):
-        if memory_management.VAE_ALWAYS_TILED:
+        if memory_management.manager.vae_always_tiled:
             return self.encode_tiled(pixel_samples)
 
         regulation = self.patcher.model_options.get("model_vae_regulation", None)
@@ -521,13 +525,13 @@ class VAE:
         pixel_samples = pixel_samples.movedim(-1, 1)
 
         while True:
-            desired_dtype = memory_management.vae_dtype(device=self.device)
+            desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
             self._apply_precision(desired_dtype)
 
             try:
                 memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)
-                memory_management.load_models_gpu([self.patcher], memory_required=memory_used)
-                free_memory = memory_management.get_free_memory(self.device)
+                memory_management.manager.load_models([self.patcher], memory_required=memory_used)
+                free_memory = memory_management.manager.get_free_memory(self.device)
                 batch_number = max(1, int(free_memory / memory_used))
                 samples = torch.empty(
                     (
@@ -556,12 +560,12 @@ class VAE:
                         encoded_raw = encoded_raw[0]
                     encoded = _unwrap_encode_output(encoded_raw).to(self.output_device).float()
                     samples[x:x + batch_number] = encoded
-            except memory_management.OOM_EXCEPTION:
+            except memory_management.manager.oom_exception:
                 if smart_fallback_enabled():
                     logger.warning(
                         "VAE encode OOM on %s with tiled=%s; attempting CPU fallback.",
                         self.device,
-                        bool(memory_management.VAE_ALWAYS_TILED),
+                        bool(memory_management.manager.vae_always_tiled),
                     )
                     samples = self._encode_cpu_fallback(pixel_samples, regulation)
                 else:
@@ -574,19 +578,19 @@ class VAE:
                     self.device,
                     str(self.vae_dtype),
                 )
-                next_dtype = memory_management.report_precision_failure(
+                next_dtype = memory_management.manager.report_precision_failure(
                     DeviceRole.VAE,
                     location="vae.encode",
                     reason="NaN detected in encoded output",
                 )
                 if next_dtype is None:
-                    hint = memory_management.precision_hint(DeviceRole.VAE)
+                    hint = memory_management.manager.precision_hint(DeviceRole.VAE)
                     raise RuntimeError(
                         f"VAE encode produced NaNs on {self.device} with dtype {self.vae_dtype}. {hint}"
                     )
                 del samples
                 self._apply_precision(next_dtype)
-                memory_management.soft_empty_cache(force=True)
+                memory_management.manager.soft_empty_cache(force=True)
                 continue
 
             return samples
@@ -599,7 +603,7 @@ class VAE:
             return wrapper(self.encode_inner, pixel_samples)
 
     def encode_tiled(self, pixel_samples, tile_x=512, tile_y=512, overlap=64):
-        memory_management.load_model_gpu(self.patcher)
+        memory_management.manager.load_model(self.patcher)
         pixel_samples = pixel_samples.movedim(-1, 1)
         samples = self.encode_tiled_(pixel_samples, tile_x=tile_x, tile_y=tile_y, overlap=overlap)
         return samples

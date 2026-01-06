@@ -40,7 +40,7 @@ _LOGGER = logging.getLogger("backend.attention")
 
 
 BROKEN_XFORMERS = False
-if memory_management.xformers_enabled():
+if memory_management.manager.xformers_enabled():
     import xformers
     import xformers.ops
 
@@ -48,7 +48,7 @@ if memory_management.xformers_enabled():
     BROKEN_XFORMERS = x_vers.startswith("0.0.2") and not x_vers.startswith("0.0.20")
 
 
-FORCE_UPCAST_ATTENTION_DTYPE = memory_management.force_upcast_attention_dtype()
+FORCE_UPCAST_ATTENTION_DTYPE = memory_management.manager.force_upcast_attention_dtype()
 
 __all__ = [name for name in globals() if not name.startswith("_")]
 
@@ -154,7 +154,7 @@ def attention_sub_quad(query, key, value, heads, mask=None, attn_precision=None,
     _, _, k_tokens = key.shape
     qk_matmul_size_bytes = batch_x_heads * bytes_per_token * q_tokens * k_tokens
 
-    mem_free_total, mem_free_torch = memory_management.get_free_memory(query.device, True)
+    mem_free_total, mem_free_torch = memory_management.manager.get_free_memory(query.device, return_torch_stats=True)
 
     kv_chunk_size_min = None
     kv_chunk_size = None
@@ -224,7 +224,7 @@ def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
 
     r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2], device=q.device, dtype=q.dtype)
 
-    mem_free_total = memory_management.get_free_memory(q.device)
+    mem_free_total = memory_management.manager.get_free_memory(q.device)
 
     if attn_precision == torch.float32:
         element_size = 4
@@ -354,7 +354,7 @@ def slice_attention_single_head_spatial(q, k, v):
     r1 = torch.zeros_like(k, device=q.device)
     scale = (int(q.shape[-1]) ** (-0.5))
 
-    mem_free_total = memory_management.get_free_memory(q.device)
+    mem_free_total = memory_management.manager.get_free_memory(q.device)
 
     gb = 1024 ** 3
     tensor_size = q.shape[0] * q.shape[1] * k.shape[2] * q.element_size()
@@ -378,8 +378,8 @@ def slice_attention_single_head_spatial(q, k, v):
                 r1[:, :, i:end] = torch.bmm(v, s2)
                 del s2
             break
-        except memory_management.OOM_EXCEPTION as e:
-            memory_management.soft_empty_cache(True)
+        except memory_management.manager.oom_exception as e:
+            memory_management.manager.soft_empty_cache(force=True)
             steps *= 2
             if steps > 128:
                 raise e
@@ -429,10 +429,10 @@ def pytorch_attention_single_head_spatial(q, k, v):
     return out
 
 
-if memory_management.xformers_enabled():
+if memory_management.manager.xformers_enabled():
     _LOGGER.info("using xformers cross attention")
     attention_function = attention_xformers
-elif memory_management.pytorch_attention_enabled():
+elif memory_management.manager.pytorch_attention_enabled():
     _LOGGER.info("using pytorch cross attention")
     attention_function = attention_pytorch
 elif args.attention_split:
@@ -442,10 +442,10 @@ else:
     _LOGGER.info("using sub quadratic optimization for cross attention")
     attention_function = attention_sub_quad
 
-if memory_management.xformers_enabled_vae():
+if memory_management.manager.xformers_enabled_vae():
     _LOGGER.info("using xformers attention for VAE")
     attention_function_single_head_spatial = xformers_attention_single_head_spatial
-elif memory_management.pytorch_attention_enabled():
+elif memory_management.manager.pytorch_attention_enabled():
     _LOGGER.info("using pytorch attention for VAE")
     attention_function_single_head_spatial = pytorch_attention_single_head_spatial
 else:

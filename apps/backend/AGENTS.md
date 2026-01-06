@@ -2,7 +2,7 @@
 <!-- tags: backend, package, exports, lazy-imports -->
 Date: 2025-10-28
 Owner: Backend Steward Team
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -43,6 +43,7 @@ Status: Active
  - 2025-11-03: Global call tracing added. Use `--trace-debug` (or `CODEX_TRACE_DEBUG=1`) to enable a process-wide function-call trace implemented via `sys.setprofile`. Every Python function call after activation is logged at `DEBUG` by `backend.calltrace` with indentation by depth. Logging is forced to `DEBUG` on activation; disable by removing the flag/env and restarting.
 - 2025-11-30: Package exports for WAN engines and text-processing are now lazy-loaded via `__getattr__`, preventing BIOS/API imports from pulling torch/Hugging Face dependencies until explicitly requested.
 - 2026-01-03: Added standardized file header docstrings to `apps/backend/__init__.py`, `apps/backend/debug/__init__.py`, and `apps/backend/huggingface/__init__.py` (doc-only change; part of rollout).
+- 2026-01-06: Engine VAE overrides (`vae_path`) now unwrap Codex VAE wrappers (`first_stage_model`) before applying state dicts; Hugging Face vendored assets rely on `.gitignore` not dropping `.txt` sidecars (e.g. `merges.txt`).
 
 ## Operator Communication Guidelines
 - Assuma expertise do operador. Não ofereça instruções "de iniciante" (ex.: "valide o par de TEs" ou "verifique se o modelo é SDXL") a menos que um verificador determinístico do backend tenha acusado incompatibilidade.

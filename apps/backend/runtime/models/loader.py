@@ -60,8 +60,9 @@ from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet import UNet2DConditionModel  # legacy UNet (SD15/20)
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.config import SwapPolicy
+from apps.backend.runtime.memory.config import DeviceRole, SwapPolicy
 from apps.backend.runtime.model_parser import parse_state_dict
+from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
 from apps.backend.runtime.model_registry import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.errors import ModelRegistryError
@@ -600,7 +601,7 @@ def _prediction_type_value(prediction: PredictionKind) -> str:
 def _load_state_dict(path: str) -> Mapping[str, Any]:
     _trace.event("load_torch_file_start", path=str(path))
     # Resolve the initial load device explicitly (no 'auto' fallback)
-    initial_device = memory_management.core_initial_load_device(parameters=0, dtype=None)
+    initial_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
     sd = load_torch_file(path, device=initial_device)
     try:
         tensor_count = len(sd.keys())  # type: ignore[attr-defined]
@@ -990,8 +991,8 @@ def _load_huggingface_component(
             config_json = vae_cls.load_config(component_path)
         except Exception:
             config_json = _load_component_config(component_path)
-        vae_device = memory_management.vae_device()
-        vae_dtype = memory_management.vae_dtype(device=vae_device)
+        vae_device = memory_management.manager.get_device(DeviceRole.VAE)
+        vae_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
         _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype), cls=vae_cls.__name__)
 
         with using_codex_operations(device=vae_device, dtype=vae_dtype, manual_cast_enabled=True):
@@ -1054,8 +1055,8 @@ def _load_huggingface_component(
                 parsed, component_name, lib_name, "T5EncoderModel", repo_path, state_dict
             )
         # Build native Codex CLIP instead of HF; normalise state dict beforehand
-        te_device = memory_management.text_encoder_device()
-        te_dtype = memory_management.text_encoder_dtype(device=te_device)
+        te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+        te_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
         to_args = dict(device=te_device, dtype=te_dtype)
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
@@ -1357,9 +1358,9 @@ def _load_huggingface_component(
                     component_path
                 )
                 t5_config = _T5_XXL_DEFAULT_CONFIG
-        te_device = memory_management.text_encoder_device()
-        storage_dtype = memory_management.text_encoder_dtype(device=te_device)
-        state_dict_dtype = memory_management.state_dict_dtype(state_dict)
+        te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+        storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        state_dict_dtype = detect_state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
             LOGGER.info("Using Detected T5 Data Type: %s", state_dict_dtype)
             storage_dtype = state_dict_dtype
@@ -1374,7 +1375,7 @@ def _load_huggingface_component(
             with modeling_utils.no_init_weights():
                 with using_codex_operations(
                     device=te_device,
-                    dtype=memory_management.text_encoder_dtype(device=te_device),
+                    dtype=memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER),
                     manual_cast_enabled=False,
                     bnb_dtype=storage_dtype,
                 ):
@@ -1469,7 +1470,7 @@ def _load_huggingface_component(
 
         supported_dtypes = _supported_inference_dtypes(family)
         quant_kind = config.quantization.kind
-        storage_dtype = memory_management.core_dtype(supported_dtypes=supported_dtypes)
+        storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
         if quant_kind == QuantizationKind.NF4:
             storage_dtype = "nf4"
         elif quant_kind == QuantizationKind.FP4:
@@ -1477,17 +1478,17 @@ def _load_huggingface_component(
         elif quant_kind == QuantizationKind.GGUF:
             storage_dtype = "gguf"
 
-        load_device = memory_management.get_torch_device()
-        offload_device = memory_management.core_offload_device()
+        load_device = memory_management.manager.get_device(DeviceRole.CORE)
+        offload_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
 
-        mem_config = memory_management.memory_config
+        mem_config = memory_management.manager.config
 
         if storage_dtype in ["nf4", "fp4", "gguf"]:
             # For quantized models, compute computation_dtype based on the actual load device
             # This will be the GPU device where computations happen
-            computation_dtype = memory_management.get_computation_dtype(load_device, parameters=0, supported_dtypes=supported_dtypes)
+            computation_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
             
-            initial_device = memory_management.core_initial_load_device(parameters=0, dtype=computation_dtype)
+            initial_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
             # Smart offload: load transformers to CPU to prevent OOM
             # The engine will move it to GPU on demand via streaming or memory management
             from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
@@ -1503,19 +1504,19 @@ def _load_huggingface_component(
             
             # For GGUF on CPU, use bfloat16 for storage to avoid unnecessary upcasting
             # The model will automatically cast to appropriate dtype during forward pass on GPU
-            construct_dtype = torch.bfloat16 if memory_management.is_device_cpu(initial_device) else computation_dtype
+            construct_dtype = torch.bfloat16 if initial_device.type == "cpu" else computation_dtype
             
             with using_codex_operations(device=initial_device, dtype=construct_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
                 model = model_ctor(config_json)
         else:
             # Non-quantized models: compute computation_dtype for non-quantized path
-            computation_dtype = memory_management.get_computation_dtype(load_device, parameters=0, supported_dtypes=supported_dtypes)
+            computation_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
             
             prefer_gpu = bool(getattr(mem_config, "gpu_prefer_construct", False))
-            construct_device = load_device if prefer_gpu else memory_management.core_initial_load_device(parameters=0, dtype=storage_dtype)
+            construct_device = load_device if prefer_gpu else memory_management.manager.get_offload_device(DeviceRole.CORE)
             initial_device = construct_device
             construct_dtype = storage_dtype
-            if memory_management.is_device_cpu(construct_device) and construct_dtype in (torch.bfloat16, torch.float16):
+            if construct_device.type == "cpu" and construct_dtype in (torch.bfloat16, torch.float16):
                 _trace.event(
                     "construct_cpu_cast_override",
                     dtype=str(construct_dtype),
@@ -1538,7 +1539,7 @@ def _load_huggingface_component(
             try:
                 with using_codex_operations(**to_args, manual_cast_enabled=need_manual_cast):
                     model = model_ctor(config_json).to(**to_args)
-            except memory_management.OOM_EXCEPTION as exc:
+            except memory_management.manager.oom_exception as exc:
                 policy = getattr(mem_config.swap, "policy", None)
                 if hasattr(policy, "value"):
                     policy_value = policy.value
@@ -1742,7 +1743,7 @@ def codex_loader(
             if smart_offload_enabled() and component_name in ("text_encoder", "text_encoder_2"):
                 try:
                     component_obj.to("cpu")
-                    memory_management.soft_empty_cache(force=True)
+                    memory_management.manager.soft_empty_cache(force=True)
                     LOGGER.info("[loader] Smart offload: moved %s to CPU after load", component_name)
                 except Exception as e:
                     LOGGER.warning("[loader] Smart offload: failed to move %s to CPU: %s", component_name, e)

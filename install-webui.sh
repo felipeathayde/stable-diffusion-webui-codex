@@ -23,8 +23,15 @@ if [[ "${TRACE}" == "1" ]]; then
   set -x
 fi
 
+UV_CACHE_DIR="${UV_CACHE_DIR:-${ROOT_DIR}/.uv/cache}"
+NPM_CACHE_DIR="${NPM_CONFIG_CACHE:-${ROOT_DIR}/.npm-cache}"
+export UV_CACHE_DIR
+export NPM_CONFIG_CACHE="${NPM_CACHE_DIR}"
+mkdir -p "${UV_CACHE_DIR}" "${NPM_CACHE_DIR}"
+
 log "Repo: ${ROOT_DIR}"
 log "uv: ${UV_BIN} (version pin: ${UV_VERSION})"
+log "uv cache: ${UV_CACHE_DIR}"
 log "Python: ${PYTHON_VERSION} (managed by uv)"
 log "Venv: ${VENV_DIR} (created by uv; uses the managed Python)"
 log "Torch mode: ${TORCH_MODE} (override via CODEX_TORCH_MODE=auto|cpu|cuda|rocm|skip)"
@@ -34,6 +41,7 @@ fi
 if [[ -n "${CUDA_VARIANT}" ]]; then
   log "CUDA variant override: ${CUDA_VARIANT} (CODEX_CUDA_VARIANT)"
 fi
+log "npm cache: ${NPM_CACHE_DIR}"
 log "Host: $(uname -a)"
 
 bootstrap_uv() {
@@ -225,7 +233,10 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
 fi
 
 log "node: $(node -v)  npm: $(npm -v)"
-(cd "${ROOT_DIR}/apps/interface" && npm install)
+(cd "${ROOT_DIR}/apps/interface" && npm install --cache "${NPM_CACHE_DIR}")
+if [[ ! -f "${ROOT_DIR}/apps/interface/node_modules/vite/package.json" ]]; then
+  die "npm install completed, but apps/interface/node_modules/vite/package.json is missing. Run: (cd apps/interface && npm install)"
+fi
 
 echo ""
 log "Done."

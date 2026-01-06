@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MIN_NODE_MAJOR` (constant): Minimum supported Node.js major version.
 - `CodexLaunchCheck` (dataclass): Structured check result (name/ok/detail).
 - `_parse_semver` (function): Parses a semver string into integer tuples for comparison.
+- `_expected_python_version` (function): Reads the repo-pinned Python version from `.python-version` when available.
 - `_check_python_version` (function): Validates the running Python version against supported majors/minors.
 - `_check_node` (function): Validates node/npm availability and minimum version.
 - `_vite_requirement_satisfied` (function): Checks if an installed Vite version satisfies a package.json requirement string.
@@ -61,12 +62,33 @@ def _parse_semver(version: str, components: int = 3) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def _expected_python_version(codex_root: Path) -> str | None:
+    candidate = codex_root / ".python-version"
+    if not candidate.exists():
+        return None
+    try:
+        raw = candidate.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    return raw or None
+
+
 def _check_python_version() -> CodexLaunchCheck:
-    major, minor = sys.version_info[:2]
-    supported = (major == 3) and (minor in (10, 11))
-    detail = f"Detected Python {major}.{minor}"
+    major, minor, micro = sys.version_info[:3]
+    codex_root = _codex_root()
+    expected = _expected_python_version(codex_root)
+    if expected is None:
+        supported = (major == 3) and (minor == 12)
+        detail = f"Detected Python {major}.{minor}.{micro}"
+        if not supported:
+            detail += " (expected 3.12.x)"
+        return CodexLaunchCheck(name="python-version", ok=supported, detail=detail)
+
+    expected_tuple = _parse_semver(expected, components=3)
+    supported = (major, minor, micro) == expected_tuple
+    detail = f"Detected Python {major}.{minor}.{micro}"
     if not supported:
-        detail += " (expected 3.10 or 3.11)"
+        detail += f" (expected {expected})"
     return CodexLaunchCheck(name="python-version", ok=supported, detail=detail)
 
 

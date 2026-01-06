@@ -12,7 +12,6 @@ dependencies = [
   "pydantic==2.11.10",
   "httpx==0.28.1",
   "python-multipart==0.0.20",
-
   # Core utilities
   "requests==2.32.5",
   "rich==14.2.0",
@@ -20,7 +19,6 @@ dependencies = [
   "psutil==7.1.0",
   "PyYAML==6.0.2",
   "piexif==1.1.3",
-
   # Model stack (Hugging Face / Diffusers)
   "accelerate==1.10.1",
   "diffusers==0.36.0",
@@ -31,43 +29,53 @@ dependencies = [
   "safetensors==0.7.0",
   "einops==0.8.1",
   "sentencepiece==0.2.1",
-
   # Imaging / numerics
   "numpy==1.26.4",
   "Pillow==10.4.0",
-
   # Small pins to keep resolver stable across platforms
   "filelock==3.20.1",
   "packaging==25.0",
   "regex==2025.9.18",
   "typing-extensions==4.15.0",
-
   # Windows-only niceties (optional in code, but improves console UX)
   "colorama==0.4.6; platform_system == 'Windows'",
+  "protobuf==6.33.2",
 ]
 
 [project.optional-dependencies]
 # PyTorch is intentionally optional and selected by install scripts.
 # Pick exactly one: cpu / cu126 / cu128 / cu130 / rocm64.
 cpu = [
-  "torch==2.9.1",
-  "torchvision==0.24.1",
+  "torch==2.9.1; sys_platform == 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'darwin'",
+  "torch==2.9.1+cpu; sys_platform != 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "torchvision==0.24.1+cpu; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 ]
 cu126 = [
-  "torch==2.9.1",
-  "torchvision==0.24.1",
+  "torch==2.9.1; sys_platform == 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'darwin'",
+  "torch==2.9.1+cu126; sys_platform != 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "torchvision==0.24.1+cu126; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 ]
 cu128 = [
-  "torch==2.9.1",
-  "torchvision==0.24.1",
+  "torch==2.9.1; sys_platform == 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'darwin'",
+  "torch==2.9.1+cu128; sys_platform != 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "torchvision==0.24.1+cu128; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 ]
 cu130 = [
-  "torch==2.9.1",
-  "torchvision==0.24.1",
+  "torch==2.9.1; sys_platform == 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'darwin'",
+  "torch==2.9.1+cu130; sys_platform != 'darwin'",
+  "torchvision==0.24.1; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "torchvision==0.24.1+cu130; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 ]
 rocm64 = [
-  "torch==2.9.1; sys_platform == 'linux'",
-  "torchvision==0.24.1; sys_platform == 'linux'",
+  "torch==2.9.1+rocm6.4; sys_platform == 'linux'",
+  "torchvision==0.24.1+rocm6.4; sys_platform == 'linux'",
   "pytorch-triton-rocm==3.5.1; sys_platform == 'linux'",
 ]
 

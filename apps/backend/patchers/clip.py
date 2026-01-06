@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from .base import ModelPatcher
 from apps.backend.runtime.nn import ModuleDict, ObjectDict
 
@@ -30,8 +31,8 @@ class CLIP:
         if no_init:
             return
 
-        load_device = memory_management.text_encoder_device()
-        offload_device = memory_management.text_encoder_offload_device()
+        load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+        offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
 
         self.cond_stage_model = JointTextEncoder(model_dict)
         if model_config is not None:

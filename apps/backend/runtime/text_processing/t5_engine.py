@@ -27,6 +27,7 @@ import torch
 
 from apps.backend.infra.config.args import dynamic_args
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from . import emphasis, parsing
 
 logger = logging.getLogger("backend.runtime.text_processing.t5_engine")
@@ -119,8 +120,8 @@ class T5TextProcessingEngine:
         return result
 
     def encode_with_transformers(self, tokens: torch.Tensor) -> torch.Tensor:
-        device = memory_management.text_encoder_device()
-        dtype = memory_management.text_encoder_dtype(device=device)
+        device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+        dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
         tokens = tokens.to(device=device, dtype=torch.long)
         if hasattr(self.text_encoder, "shared"):
             self.text_encoder.shared.to(device=device, dtype=dtype)

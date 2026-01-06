@@ -2,7 +2,7 @@
 Date: 2025-10-28
 Owner: Repository Maintainers
 Status: Active
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -26,3 +26,4 @@ Last Review: 2026-01-03
 - 2025-12-29: Launcher UI service now always receives `API_PORT` (prevents Vite proxy/API_PORT derivation from a fallback WEB_PORT), and the API service performs a strict preflight port check across IPv4/IPv6 localhost (helps diagnose WSL/Windows double-run and “localhost” split-brain).
 - 2026-01-02: Added standardized file header docstrings to launcher modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining launcher modules (`__init__.py`, `checks.py`, `log_buffer.py`, `paths.py`) (doc-only change; part of rollout).
+- 2026-01-06: Launcher Python preflight now matches `.python-version` (3.12.10) instead of allowing stale 3.10/3.11.

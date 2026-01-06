@@ -92,7 +92,7 @@ class CodexParams4bit(Params4bit):
         self._quant_config = quant_config
 
     def _quantize(self, device):
-        memory_management.signal_empty_cache = True
+        memory_management.manager.signal_empty_cache = True
         return super()._quantize(device)
 
     def to(self, *args, **kwargs):

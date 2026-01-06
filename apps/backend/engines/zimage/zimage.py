@@ -26,6 +26,7 @@ import torch
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
     record_smart_cache_miss,
@@ -162,12 +163,12 @@ class ZImageEngine(CodexDiffusionEngine):
             cached = self._cond_cache.get(cache_key)
             if isinstance(cached, torch.Tensor):
                 record_smart_cache_hit("zimage.conditioning")
-                target_device = memory_management.text_encoder_device()
+                target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
                 return cached.to(target_device)
             record_smart_cache_miss("zimage.conditioning")
 
         # Load text encoder to GPU using memory management (same pattern as Flux)
-        memory_management.load_model_gpu(runtime.clip.patcher)
+        memory_management.manager.load_model(runtime.clip.patcher)
         unload_clip = self.smart_offload_enabled
         
         # Per diffusers reference: pass prompts directly - the tokenizer's
@@ -187,7 +188,7 @@ class ZImageEngine(CodexDiffusionEngine):
                 self._cond_cache[cache_key] = cond.detach().to("cpu")
         finally:
             if unload_clip:
-                memory_management.unload_model(runtime.clip.patcher)
+                memory_management.manager.unload_model(runtime.clip.patcher)
 
         raw_cfg = getattr(prompts, "distilled_cfg_scale", None)
         distilled_cfg = float(raw_cfg) if raw_cfg is not None else float(ZIMAGE_SPEC.default_cfg_scale)
@@ -207,7 +208,7 @@ class ZImageEngine(CodexDiffusionEngine):
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         try:
             # Match Flux/Z-Image Flow16 VAE semantics:
             # - VAE wrapper expects pixel samples as BHWC in [0, 1]
@@ -217,13 +218,13 @@ class ZImageEngine(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if self.smart_offload_enabled:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     @timeline_node("vae", "decode_first_stage")
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         try:
             # Match Flux/Z-Image Flow16 VAE semantics:
             # - Model operates in normalized latent space
@@ -233,7 +234,7 @@ class ZImageEngine(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if self.smart_offload_enabled:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def sample_with_diffusers(
@@ -284,7 +285,7 @@ class ZImageEngine(CodexDiffusionEngine):
         transformer_model = runtime.denoiser.model.diffusion_model
         
         # Load transformer to GPU
-        memory_management.load_model_gpu(runtime.denoiser)
+        memory_management.manager.load_model(runtime.denoiser)
         
         try:
             # Step 3: Sample using Diffusers scheduler + negation
@@ -311,10 +312,10 @@ class ZImageEngine(CodexDiffusionEngine):
             
         finally:
             if self.smart_offload_enabled:
-                memory_management.unload_model(runtime.denoiser)
+                memory_management.manager.unload_model(runtime.denoiser)
         
         # Step 4: Decode latents to images
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         try:
             images_tensor = decode_latents(runtime.vae, latents)
             
@@ -330,4 +331,4 @@ class ZImageEngine(CodexDiffusionEngine):
             
         finally:
             if self.smart_offload_enabled:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)

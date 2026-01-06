@@ -1,7 +1,7 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -17,3 +17,4 @@ Status: Active
 - 2026-01-01: Engine docs note that `get_learned_conditioning(...)` may return either a dict or a cross-attn tensor (both supported by `compile_conditions`).
 - 2026-01-02: Added standardized file header docstrings to shared engine modules (doc-only change; part of rollout).
 - 2026-01-04: `CodexObjects` renamed `unet` → `denoiser`; engines store their sampling core patcher under `codex_objects.denoiser` (UNet for SD-family; transformer/DiT for Flux/Z-Image/WAN).
+- 2026-01-06: VAE override (`vae_path`) now unwraps wrapper VAEs via `first_stage_model` before calling `safe_load_state_dict` (fixes `'VAE' object has no attribute 'state_dict'`).

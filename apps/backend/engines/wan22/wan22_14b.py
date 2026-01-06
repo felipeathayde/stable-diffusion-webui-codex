@@ -153,7 +153,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         """Encode video frames to latents."""
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload = self.smart_offload_enabled
         try:
             # WAN VAE expects [B, C, T, H, W]
@@ -161,20 +161,20 @@ class Wan2214BEngine(CodexDiffusionEngine):
             return sample.to(x)
         finally:
             if unload:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
         """Decode latents to video frames."""
         runtime = self._require_runtime()
-        memory_management.load_model_gpu(self.codex_objects.vae)
+        memory_management.manager.load_model(self.codex_objects.vae)
         unload = self.smart_offload_enabled
         try:
             sample = runtime.vae.decode(x)
             return sample.to(x)
         finally:
             if unload:
-                memory_management.unload_model(self.codex_objects.vae)
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     # ------------------------------------------------------------------ Tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:
@@ -224,7 +224,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         vae = runtime.vae
         
         # Load models to GPU
-        memory_management.load_model_gpu(self.codex_objects.denoiser)
+        memory_management.manager.load_model(self.codex_objects.denoiser)
         
         # Progress tracking for yield
         progress_events = []

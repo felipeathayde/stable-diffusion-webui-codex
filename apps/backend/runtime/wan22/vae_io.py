@@ -69,12 +69,12 @@ def vae_encode_init(
     # Force tiled VAE decode/encode for WAN (legacy global switch, scoped).
     from apps.backend.runtime.memory import memory_management as _mm
 
-    old_tiled = getattr(_mm, "VAE_ALWAYS_TILED", False)
+    old_tiled = _mm.manager.vae_always_tiled
     try:
-        _mm.VAE_ALWAYS_TILED = True
+        _mm.manager.vae_always_tiled = True
         vae = vae.to(device=target, dtype=torch_dtype)
     finally:
-        _mm.VAE_ALWAYS_TILED = old_tiled
+        _mm.manager.vae_always_tiled = old_tiled
 
     # Preprocess init image into [-1,1] tensor [B,C,T,H,W] with T=1
     if not hasattr(init_image, "to"):
@@ -270,4 +270,3 @@ def decode_latents_to_frames(
         vae_dir=cfg.vae_dir,
         logger=logger,
     )
-

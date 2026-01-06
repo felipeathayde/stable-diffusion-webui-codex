@@ -35,6 +35,7 @@ from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 
 logger = logging.getLogger("backend.engines.zimage.spec")
 
@@ -55,8 +56,8 @@ class ZImageCLIP:
         self.text_encoder = text_encoder
         
         # Create ModelPatcher for memory management integration
-        load_device = memory_management.text_encoder_device()
-        offload_device = memory_management.text_encoder_offload_device()
+        load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+        offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
         
         # The patcher wraps the underlying model, enabling load_model_gpu/unload_model
         self.patcher = ModelPatcher(

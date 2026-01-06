@@ -15,7 +15,7 @@ Optional:
 ## Quick install (recommended)
 
 ### Windows (PowerShell or CMD)
-1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bat
 install-webui.bat
 ```
@@ -29,7 +29,7 @@ run-webui.bat
 ```
 
 ### Linux / WSL
-1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bash
 bash install-webui.sh
 ```

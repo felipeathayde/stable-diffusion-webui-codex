@@ -1,7 +1,7 @@
 # gitignore Policy — Stable Diffusion WebUI Codex
 Date: 2025-12-04
 Owner: Repository Maintainers
-Last Review: 2025-12-28
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -13,10 +13,32 @@ Status: Active
 
 ## Principles
 - **No models in Git:** model weights, checkpoints, and large binary artefacts (e.g., `models/`, `*.ckpt`, `*.safetensors`) must remain untracked.
-- **No caches or build outputs:** bytecode caches (`__pycache__/`), node modules (`node_modules/`), frontend bundles (`apps/interface/dist/`), and temporary directories (`tmp/`, `.pytest_cache/`) stay ignored.
+- **No caches or build outputs:** bytecode caches (`__pycache__/`), node modules (`node_modules/`), frontend bundles (`apps/interface/dist/`), and temporary directories (repo-root `tmp/`, `.tmp/`, plus `.pytest_cache/`) stay ignored.
 - **Docs and configs are tracked:** Markdown docs under `.sangoi/**`, configuration files (`*.json`, `*.toml`, `*.yaml`), and source code are always included — except for runtime state JSON files that are created/overwritten locally (see below).
 - **Tests are tracked:** repository test sources under `tests/` are kept in version control; only test caches/outputs are ignored.
 - **No binary office docs:** keep office exports like `*.docx` local; prefer Markdown under `.sangoi/**`.
+
+## WebUI runtime outputs (tracked? no)
+- `output/` — generated images/video artifacts.
+- `logs/` — local runtime logs.
+- `.webui-*.pid` — dev helper PID files (e.g. UI port guard).
+- `.webui-*.log` — local runtime logs.
+- `trace.json` — profiler output filename default.
+
+## Local dev caches (tracked? no)
+- `.uv/` — repo-local `uv` installer state + managed CPython installs.
+- `.npm-cache/` — repo-local npm cache (installer sets `NPM_CONFIG_CACHE`).
+- `.ts-out/` — TypeScript output folder (root `tsconfig.json` `outDir`).
+- `.refs/` — local upstream/reference snapshots (read-only; never committed).
+
+## Root scratch (tracked? no)
+- Repo-root `/*.png` and `/*.txt` — ad-hoc outputs/notes. If you need to version images, place them under `.sangoi/assets/` (or another tracked docs folder) instead.
+- `/logo.png` is explicitly tracked as a repo asset.
+
+## Tooling outputs (tracked? no)
+- `.sangoi/reports/tooling/pyright/` — type-check reports.
+- `.sangoi/backups/webui_reasoning.jsonl` — Codex session artifacts.
+- `.sangoi/backups/webui_reasoning_report.md` — Codex session artifacts.
 
 ## Runtime state (tracked? no)
 - `apps/interface/tabs.json` — backend-managed persisted tab state (created if missing).

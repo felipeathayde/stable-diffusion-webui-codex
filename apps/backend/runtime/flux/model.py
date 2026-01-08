@@ -18,14 +18,12 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from typing import Optional
 
 import torch
 from einops import rearrange, repeat
 from torch import nn
 
-from apps.backend.runtime import utils
 from .config import FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
 from .geometry import timestep_embedding
 from .embed import EmbedND, MLPEmbedder

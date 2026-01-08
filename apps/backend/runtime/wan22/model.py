@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -401,8 +401,7 @@ class WanTransformer2DModel(nn.Module):
 
         # Patch embed: [B, C, T, H, W] -> [B, d_model, T', H', W'] -> [B, T'*H'*W', d_model]
         tokens = self.patch_embed(x)
-        _, _, T2, H2, W2 = tokens.shape
-        grid = (T2, H2, W2)
+        _, _, t_grid, h_grid, w_grid = tokens.shape
         tokens = tokens.flatten(2).transpose(1, 2)  # [B, L, d_model]
 
         # Apply transformer blocks
@@ -429,9 +428,9 @@ class WanTransformer2DModel(nn.Module):
 
         # Unpatchify: [B, L, patch_dim] -> [B, C, T, H, W]
         kT, kH, kW = self.config.patch_size
-        out = patches.view(B, T2, H2, W2, kT, kH, kW, self.config.latent_channels)
+        out = patches.view(B, t_grid, h_grid, w_grid, kT, kH, kW, self.config.latent_channels)
         out = out.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous()
-        out = out.view(B, self.config.latent_channels, T2 * kT, H2 * kH, W2 * kW)
+        out = out.view(B, self.config.latent_channels, t_grid * kT, h_grid * kH, w_grid * kW)
 
         return out
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import torch
 

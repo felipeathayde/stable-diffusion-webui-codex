@@ -127,8 +127,8 @@ def unet_to_diffusers(unet_config):
     num_res_blocks = list(reversed(num_res_blocks))
     for x in range(num_blocks):
         n = (num_res_blocks[x] + 1) * x
-        l = num_res_blocks[x] + 1
-        for i in range(l):
+        block_len = num_res_blocks[x] + 1
+        for i in range(block_len):
             c = 0
             for b in UNET_MAP_RESNET:
                 diffusers_unet_map["up_blocks.{}.resnets.{}.{}".format(x, i, UNET_MAP_RESNET[b])] = "output_blocks.{}.0.{}".format(n, b)
@@ -141,7 +141,7 @@ def unet_to_diffusers(unet_config):
                 for t in range(num_transformers):
                     for b in TRANSFORMER_BLOCKS:
                         diffusers_unet_map["up_blocks.{}.attentions.{}.transformer_blocks.{}.{}".format(x, i, t, b)] = "output_blocks.{}.1.transformer_blocks.{}.{}".format(n, t, b)
-            if i == l - 1:
+            if i == block_len - 1:
                 for k in ["weight", "bias"]:
                     diffusers_unet_map["up_blocks.{}.upsamplers.0.conv.{}".format(x, k)] = "output_blocks.{}.{}.conv.{}".format(n, c, k)
             n += 1

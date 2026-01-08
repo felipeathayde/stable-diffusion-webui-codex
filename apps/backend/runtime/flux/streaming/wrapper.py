@@ -24,7 +24,7 @@ import torch
 from einops import rearrange, repeat
 from torch import nn
 
-from .specs import BlockType, ExecutionPlan, Segment
+from .specs import BlockType, ExecutionPlan
 from .controller import CoreController
 
 if TYPE_CHECKING:

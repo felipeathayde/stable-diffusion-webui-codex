@@ -441,11 +441,6 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 "(or via the API 'extras.tenc_sha' selector)."
             )
 
-        try:
-            comp_keys = sorted(getattr(bundle, "components", {}).keys())  # type: ignore[arg-type]
-        except Exception:
-            comp_keys = []
-
         self._logger.info("[engine] Loading %s (ref=%s, source=%s)", self.engine_id, model_ref, bundle.source)
         self._reset_state()
 

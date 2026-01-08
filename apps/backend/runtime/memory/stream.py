@@ -18,7 +18,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `mover_stream` (constant): Best-effort mover stream object (or None).
 """
 
-import platform
 import torch
 from apps.backend.infra.config.args import args
 
@@ -52,7 +51,7 @@ def get_current_stream():
                 torch.zeros((1, 1)).to(device, torch.float32)
             stream.synchronize()
             return stream
-    except:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -74,7 +73,7 @@ def get_new_stream():
                 torch.zeros((1, 1)).to(device, torch.float32)
             stream.synchronize()
             return stream
-    except:
+    except Exception:  # noqa: BLE001
         return None
 
 

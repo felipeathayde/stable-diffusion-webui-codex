@@ -44,7 +44,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import torch
 from tqdm.auto import tqdm

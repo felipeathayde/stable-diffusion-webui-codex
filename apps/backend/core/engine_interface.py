@@ -21,7 +21,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 from .exceptions import UnsupportedTaskError
 

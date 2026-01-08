@@ -19,7 +19,7 @@ from typing import Mapping, Any, List
 
 from apps.backend.runtime.model_registry.detectors.base import REGISTRY, ModelDetector
 from apps.backend.runtime.model_registry.errors import AmbiguousModelError, UnknownModelError
-from apps.backend.runtime.model_registry.signals import SignalBundle, build_bundle
+from apps.backend.runtime.model_registry.signals import build_bundle
 from apps.backend.runtime.model_registry.specs import ModelSignature
 
 

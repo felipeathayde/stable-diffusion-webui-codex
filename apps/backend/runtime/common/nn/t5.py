@@ -210,8 +210,8 @@ class T5Stack(torch.nn.Module):
 
         past_bias = None
 
-        for i, l in enumerate(self.block):
-            x, past_bias = l(x, mask, past_bias)
+        for block in self.block:
+            x, past_bias = block(x, mask, past_bias)
 
         x = self.final_layer_norm(x)
         return x

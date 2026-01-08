@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import functools
 import torch
-from typing import Optional
 
 from ..core import QuantType, register_quant, BLOCK_SIZES
 from ..dequant import (

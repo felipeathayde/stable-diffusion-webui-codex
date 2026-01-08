@@ -16,7 +16,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
 
 from apps.backend.runtime.flux.config import FluxPositionalConfig
 

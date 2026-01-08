@@ -40,15 +40,15 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-logger = logging.getLogger("backend.runtime.zimage.model")
-
 from .debug import env_flag, env_int, tensor_stats
+
+logger = logging.getLogger("backend.runtime.zimage.model")
 
 _DEFAULT_ZIMAGE_AXES_DIMS: tuple[int, int, int] = (32, 48, 48)
 _SEQ_MULTI_OF = 32

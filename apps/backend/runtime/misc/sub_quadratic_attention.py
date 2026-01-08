@@ -40,7 +40,6 @@ from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 import math
 
-from torch import Tensor
 from typing import List
 
 from apps.backend.runtime.memory import memory_management
@@ -203,7 +202,6 @@ def _get_attention_scores_no_kv_chunking(
         attn_scores += mask
     try:
         attn_probs = attn_scores.softmax(dim=-1)
-        del attn_scores
     except memory_management.manager.oom_exception:
         _log.warning("ran out of memory while running softmax in _get_attention_scores_no_kv_chunking, trying slower in place softmax instead")
         attn_scores -= attn_scores.max(dim=-1, keepdim=True).values
@@ -211,6 +209,8 @@ def _get_attention_scores_no_kv_chunking(
         summed = torch.sum(attn_scores, dim=-1, keepdim=True)
         attn_scores /= summed
         attn_probs = attn_scores
+    else:
+        del attn_scores
 
     hidden_states_slice = torch.bmm(attn_probs.to(value.dtype), value)
     return hidden_states_slice

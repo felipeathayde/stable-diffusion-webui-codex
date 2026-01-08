@@ -41,9 +41,8 @@ import logging
 import os
 
 from collections.abc import MutableMapping
-from typing import Dict, Tuple
+from typing import Dict
 
-import safetensors.torch
 import torch
 from safetensors.torch import safe_open
 

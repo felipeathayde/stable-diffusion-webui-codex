@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Mapping, MutableMapping, Tuple
 
 from apps.backend.infra.config.args import dynamic_args

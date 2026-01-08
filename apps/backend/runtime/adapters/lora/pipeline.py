@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Mapping, Set
+from typing import Dict, Mapping, Set
 
 import torch
 

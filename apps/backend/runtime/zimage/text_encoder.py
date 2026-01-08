@@ -21,16 +21,16 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 import torch
 import torch.nn as nn
 
 from apps.backend.infra.config.repo_root import get_repo_root
 
-logger = logging.getLogger("backend.runtime.zimage.text_encoder")
-
 from .debug import env_flag, env_int, find_indices, summarize_ints, tensor_stats, truncate_text
+
+logger = logging.getLogger("backend.runtime.zimage.text_encoder")
 
 # Chat template for Qwen3 (reference template)
 QWEN3_TEMPLATE = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"

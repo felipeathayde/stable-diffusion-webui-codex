@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 import logging
 
 from apps.backend.core.requests import Img2ImgRequest, Txt2ImgRequest

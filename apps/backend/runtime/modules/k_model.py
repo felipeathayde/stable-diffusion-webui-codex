@@ -17,11 +17,9 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import torch
 import logging
-import os
 
 from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.runtime import attention
-from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.modules.k_prediction import k_prediction_from_diffusers_scheduler
 
 

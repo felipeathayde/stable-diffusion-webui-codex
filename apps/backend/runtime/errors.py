@@ -35,7 +35,7 @@ import sys
 import threading
 import traceback
 from types import TracebackType
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 
 _LOGGER = logging.getLogger("backend.errors")

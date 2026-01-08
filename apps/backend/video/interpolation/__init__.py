@@ -11,6 +11,8 @@ Provides a single `maybe_interpolate(...)` wrapper that applies frame interpolat
 
 Symbols (top-level; keep in sync; no ghosts):
 - `maybe_interpolate` (function): Applies video frame interpolation when enabled and configured, returning `(frames_out, meta)`.
+- `RIFEUnavailableError` (class): Raised when RIFE interpolation is requested but unavailable.
+- `__all__` (constant): Explicit export list for the interpolation facade.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from __future__ import annotations
 from typing import List, Tuple, Sequence, Optional, Dict, Any
 
 from .rife import RIFEUnavailableError, maybe_interpolate_rife
+
+__all__ = ["RIFEUnavailableError", "maybe_interpolate"]
 
 
 def maybe_interpolate(

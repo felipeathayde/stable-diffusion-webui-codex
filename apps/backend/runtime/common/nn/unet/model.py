@@ -29,7 +29,6 @@ from .layers import (
     Downsample,
     ResBlock,
     SpatialTransformer,
-    Timestep,
     TimestepEmbedSequential,
     Upsample,
 )

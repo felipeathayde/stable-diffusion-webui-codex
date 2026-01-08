@@ -89,12 +89,6 @@ except Exception:
     # Never block startup because of tracing/logging issues
     pass
 
-from apps.backend.services import options_store
-from apps.backend.infra.config import args as config_args
-from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
-from apps.backend.runtime.memory import memory_management as mem_management
-from apps.backend.core.state import state as backend_state
-
 try:
     from colorama import Fore, Style  # type: ignore
 
@@ -350,7 +344,10 @@ def build_app() -> FastAPI:
         print(color_red(f"[settings] registry not available: {_e}"))
         _settings_registry_ok = False
         _schema_hardcoded = None
-        _field_index = lambda: {}
+
+        def _field_index() -> dict[str, Any]:
+            return {}
+
         _SettingType = None
 
     # Load saved settings on startup and apply to shared.opts with validation
@@ -439,7 +436,7 @@ def build_app() -> FastAPI:
         live_preview=live_preview,
         opts_get=_opts_get,
         opts_snapshot=_opts_snapshot,
-        generation_provenance=_GENERATION_PROVENANCE,
+        generation_provenance=_generation_provenance,
         save_generated_images=_save_generated_images,
         param_utils=_p,
     ))

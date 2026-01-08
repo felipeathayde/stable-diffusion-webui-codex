@@ -24,8 +24,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
-import torch
-
 from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir

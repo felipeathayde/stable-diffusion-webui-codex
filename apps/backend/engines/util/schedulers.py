@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import List, Union
 
 from apps.backend.types.samplers import SamplerKind, ApplyOutcome
 

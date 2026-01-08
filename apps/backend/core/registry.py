@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Type, TypeVar
+from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple, Type, TypeVar
 
 from .engine_interface import BaseInferenceEngine
 from .exceptions import EngineNotFoundError, EngineRegistrationError

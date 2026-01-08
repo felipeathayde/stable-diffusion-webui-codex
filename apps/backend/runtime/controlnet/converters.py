@@ -196,9 +196,6 @@ UNET_MAP_RESNET = {
 def build_diffusers_key_map(unet_config: Dict[str, object]) -> Dict[str, str]:
     num_res_blocks = list(unet_config.get("num_res_blocks", []))
     channel_mult = list(unet_config.get("channel_mult", []))
-    transformer_depth = list(unet_config.get("transformer_depth", []))
-    transformer_depth_output = list(unet_config.get("transformer_depth_output", transformer_depth))
-    transformer_depth_middle = unet_config.get("transformer_depth_middle", 0)
 
     diffusers_unet_map: Dict[str, str] = {}
 

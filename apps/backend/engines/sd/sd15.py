@@ -15,12 +15,11 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import Any, Mapping
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.classic_base import CodexSDClassicEngineBase
-from apps.backend.engines.sd.spec import SD15_SPEC, SDEngineRuntime
+from apps.backend.engines.sd.spec import SD15_SPEC
 
 _SD15_FACTORY = CodexSDFamilyFactory(spec=SD15_SPEC)
 

@@ -28,12 +28,12 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
+from pathlib import Path
 from typing import Any, Callable, List, Optional, TypeVar
 
 import torch
@@ -429,9 +429,8 @@ def enable_from_env() -> None:
         timeline.enable()
 
 
-def get_logs_dir() -> "Path":
+def get_logs_dir() -> Path:
     """Get the logs/timeline directory, creating if needed."""
-    from pathlib import Path
     from apps.backend.infra.config.repo_root import get_repo_root
 
     base = get_repo_root()
@@ -450,7 +449,6 @@ def save_to_logs(capture: Optional[TimelineCapture] = None) -> Optional[str]:
         Path to the saved ASCII file, or None if no capture.
     """
     import json
-    from pathlib import Path
     import datetime
     
     if capture is None:
@@ -476,7 +474,7 @@ def save_to_logs(capture: Optional[TimelineCapture] = None) -> Optional[str]:
     
     _log.info(f"[timeline] Saved trace to: {txt_path}")
     _log.info(f"[timeline] Chrome trace: {json_path}")
-    _log.info(f"[timeline] View at: https://ui.perfetto.dev/ (drag & drop the JSON)")
+    _log.info("[timeline] View at: https://ui.perfetto.dev/ (drag & drop the JSON)")
     
     return str(txt_path)
 

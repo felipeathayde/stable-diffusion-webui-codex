@@ -30,7 +30,6 @@ import math
 import torch
 import numpy as np
 
-from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.pipelines.flux.pipeline_flux import calculate_shift
 
 

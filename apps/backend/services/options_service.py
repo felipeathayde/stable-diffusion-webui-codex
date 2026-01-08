@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from .options_store import SETTINGS_PATH, load_values, save_values
+from .options_store import load_values, save_values
 
 
 class OptionsService:

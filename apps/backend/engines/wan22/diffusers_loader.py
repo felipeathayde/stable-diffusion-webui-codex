@@ -182,7 +182,6 @@ def load_wan_diffusers_pipeline(
     logger: Any | None = None,
 ):
     """Load a WAN diffusers pipeline, using vendor_dir configs when needed."""
-    import torch  # type: ignore
 
     base_dir = weights_dir
     if not (weights_dir / "model_index.json").is_file():

@@ -23,7 +23,7 @@ from typing import Optional, TYPE_CHECKING
 import torch
 from torch import nn
 
-from .specs import WanExecutionPlan, WanSegment, build_execution_plan
+from .specs import WanExecutionPlan, build_execution_plan
 from .controller import WanCoreController
 
 if TYPE_CHECKING:

@@ -49,9 +49,8 @@ from apps.backend.infra.config.args import args
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
-from apps.backend.runtime.common.nn.unet import UNet2DConditionModel  # legacy UNet (SD15/20)
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.config import DeviceRole, SwapPolicy
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
@@ -75,7 +74,6 @@ from apps.backend.runtime.models.text_encoder_overrides import (
 from apps.backend.runtime.models.state_dict import load_state_dict, transformers_convert
 from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.utils import (
-    RemapKeysView,
     beautiful_print_gguf_state_dict_statics,
     load_torch_file,
     read_arbitrary_config,
@@ -180,10 +178,6 @@ def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> 
     base_state = _load_state_dict(primary_path)
     signature = registry_detect(base_state)
     config = parse_state_dict(base_state, signature)
-    try:
-        comp_names = list(getattr(config, 'components', {}).keys())
-    except Exception:
-        comp_names = []
 
     if additional_paths:
         replacements: Dict[str, Mapping[str, Any]] = {}
@@ -1019,20 +1013,35 @@ def _load_huggingface_component(
         if cls_name == "UNet2DConditionModel":
             # For SD15/SD20/SDXL families use Codex legacy UNet with LDM-style config
             from apps.backend.runtime.common.nn.unet import UNet2DConditionModel as _CodexUNet
-            model_ctor = lambda cfg: _CodexUNet.from_config(cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return _CodexUNet.from_config(cfg)
+
         elif cls_name == "FluxTransformer2DModel":
             from apps.backend.runtime.flux.flux import FluxTransformer2DModel
-            model_ctor = lambda cfg: FluxTransformer2DModel(**cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return FluxTransformer2DModel(**dict(cfg))
+
         elif cls_name == "ChromaTransformer2DModel":
             from apps.backend.runtime.chroma.chroma import ChromaTransformer2DModel
-            model_ctor = lambda cfg: ChromaTransformer2DModel(**cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return ChromaTransformer2DModel(**dict(cfg))
+
         elif cls_name == "ZImageTransformer2DModel":
             from apps.backend.runtime.zimage.model import ZImageTransformer2DModel
             # Filter out HuggingFace metadata keys (starting with _)
-            model_ctor = lambda cfg: ZImageTransformer2DModel(**{k: v for k, v in cfg.items() if not k.startswith("_")})
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                filtered = {k: v for k, v in cfg.items() if not k.startswith("_")}
+                return ZImageTransformer2DModel(**filtered)
+
         else:
             from apps.backend.runtime.sd.mmditx import SD3Transformer2DModel
-            model_ctor = lambda cfg: SD3Transformer2DModel(**cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return SD3Transformer2DModel(**dict(cfg))
 
         supported_dtypes = _supported_inference_dtypes(family)
         quant_kind = config.quantization.kind

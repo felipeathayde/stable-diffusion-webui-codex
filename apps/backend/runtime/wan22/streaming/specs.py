@@ -26,7 +26,7 @@ import torch
 from torch import nn
 
 if TYPE_CHECKING:
-    from apps.backend.runtime.wan22.model import WanTransformerBlock
+    pass
 
 
 @dataclass

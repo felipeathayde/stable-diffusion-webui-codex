@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from apps.backend.runtime.model_registry.specs import ModelSignature, QuantizationHint, QuantizationKind, ModelFamily
+from apps.backend.runtime.model_registry.specs import ModelSignature, QuantizationKind, ModelFamily
 
 from .errors import ValidationError
 from .specs import CodexComponent, CodexEstimatedConfig, ParserContext

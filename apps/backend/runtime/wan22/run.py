@@ -511,6 +511,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
     sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
     latents_hi = sample_stage_latents(
         model=hi_model,

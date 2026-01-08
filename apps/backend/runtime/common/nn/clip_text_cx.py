@@ -132,8 +132,8 @@ class _CLIPEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, output_hidden_states: bool = False):
         hidden: List[torch.Tensor] = []
-        for l in self.layers:
-            x = l(x, mask)
+        for layer in self.layers:
+            x = layer(x, mask)
             if output_hidden_states:
                 hidden.append(x)
         return x, hidden

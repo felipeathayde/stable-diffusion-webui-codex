@@ -22,7 +22,6 @@ from __future__ import annotations
 
 # tags: backend, engines, lazy-imports
 
-import sys
 from importlib import import_module
 
 from apps.backend.core.exceptions import EngineExecutionError, EngineLoadError

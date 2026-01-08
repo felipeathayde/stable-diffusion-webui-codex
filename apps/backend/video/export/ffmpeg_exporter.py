@@ -25,6 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -32,7 +33,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from apps.backend.infra.config.repo_root import get_repo_root
 

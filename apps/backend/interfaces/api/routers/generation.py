@@ -22,10 +22,8 @@ import json
 import logging
 import os
 import threading
-import time
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
@@ -54,6 +52,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Img2VidRequest,
         Vid2VidRequest,
     )
+    from apps.backend.runtime.memory import memory_management as mem_management
 
     from apps.backend.types.payloads import TXT2IMG_KEYS, EXTRAS_KEYS
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
@@ -193,7 +192,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if highres is not None:
             if not isinstance(highres, dict):
                 raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
-            _reject_unknown_keys(highres, _TXT2IMG_HIGHRES_KEYS | {"enable"}, "extras.highres")
+            _reject_unknown_keys(highres, _TXT2IMG_HIRES_KEYS | {"enable"}, "extras.highres")
             if bool(highres.get('enable')):
                 required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
                 for key in required:
@@ -622,8 +621,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
         try:
             mem_management.switch_primary_device(dev)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         return dev
 
     _ORCH = InferenceOrchestrator()

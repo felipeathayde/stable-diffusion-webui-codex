@@ -26,7 +26,7 @@ import logging
 from types import SimpleNamespace
 import threading
 import time
-from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
@@ -35,7 +35,6 @@ from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime
 from apps.backend.engines.util.adapters import build_txt2img_processing
-from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import (
@@ -49,7 +48,7 @@ from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
 import json
-from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent
+from apps.backend.core.requests import ProgressEvent, ResultEvent
 import secrets
 from apps.backend.runtime.processing.conditioners import decode_latent_batch
 from apps.backend.runtime.workflows.image_io import latents_to_pil

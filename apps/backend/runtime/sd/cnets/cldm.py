@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 
 from apps.backend.runtime.common.nn.unet import (
@@ -257,7 +256,6 @@ class ControlNet(nn.Module):
 
         outs = []
 
-        hs = []
         if self.num_classes is not None:
             assert y.shape[0] == x.shape[0]
             emb = emb + self.label_emb(y)

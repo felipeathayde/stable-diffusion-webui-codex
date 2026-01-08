@@ -21,11 +21,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, asdict
-from pathlib import Path
 from typing import Any, Dict, Optional, List
 
-from apps.backend.infra.config.paths import get_paths_for
-from apps.backend.infra.config.repo_root import get_repo_root
 
 
 @dataclass

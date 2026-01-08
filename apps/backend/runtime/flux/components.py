@@ -23,15 +23,13 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
 
 import torch
-from einops import rearrange
 from torch import nn
 
 from apps.backend.runtime.attention import attention_function
 from apps.backend.runtime import utils
-from .geometry import apply_rotary_embeddings, build_rotary_frequencies
+from .geometry import apply_rotary_embeddings
 
 logger = logging.getLogger("backend.runtime.flux")
 

@@ -167,7 +167,6 @@ def safe_load_state_dict(model, sd, *, log_name=None):
     Avoids materializing all tensors and reduces device/dtype edge cases.
     Emits periodic trace events. Returns (missing, unexpected) like nn.Module.load_state_dict.
     """
-    import torch
     from collections.abc import Mapping
     log_name = log_name or type(model).__name__
 

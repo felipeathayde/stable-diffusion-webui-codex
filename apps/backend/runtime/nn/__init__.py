@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `IntegratedCLIP` (class): Integrated CLIP wrapper exposing expected `logit_scale`/projection fields.
 - `IntegratedT5` (class): Integrated T5 wrapper used by native pipelines.
 - `UNet2DConditionModel` (class): Native UNet implementation used by SD-family engines.
+- `timestep_embedding` (function): UNet timestep embedding helper (re-export).
 - `FluxTransformer2DModel` (class): Native Flux transformer core.
 - `ChromaTransformer2DModel` (class): Native Chroma transformer core.
 - `AutoencoderKLWan` (class): WAN22-specific VAE implementation.
@@ -84,4 +85,5 @@ __all__ = [
     "flux_timestep_embedding",
     "rope",
     "t2i_adapter",
+    "timestep_embedding",
 ]

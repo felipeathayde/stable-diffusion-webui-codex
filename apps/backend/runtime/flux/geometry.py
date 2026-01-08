@@ -17,8 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import math
-from functools import lru_cache
-from typing import Optional
 
 import torch
 

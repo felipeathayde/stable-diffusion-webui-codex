@@ -16,7 +16,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict
 
@@ -102,7 +101,7 @@ def build_router(
         tab_id = str(payload.get("tab_id") or "")
         if not tab_id:
             raise HTTPException(status_code=400, detail="tab_id required")
-        print(f"[models] load requested for tab {tab_id}")
+        log.info("[models] load requested for tab %s", tab_id)
         return {"ok": True}
 
     @router.post("/api/models/unload")
@@ -110,7 +109,7 @@ def build_router(
         tab_id = str(payload.get("tab_id") or "")
         if not tab_id:
             raise HTTPException(status_code=400, detail="tab_id required")
-        print(f"[models] unload requested for tab {tab_id}")
+        log.info("[models] unload requested for tab %s", tab_id)
         return {"ok": True}
 
     @router.get("/api/engines/capabilities")

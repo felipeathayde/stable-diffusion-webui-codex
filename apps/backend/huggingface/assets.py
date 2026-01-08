@@ -26,7 +26,7 @@ import json
 import os
 import shutil
 import time
-from typing import Iterable
+from typing import Iterable, Union
 
 
 def _expected_config_files_from_model_index(model_index_path: str) -> list[str]:
@@ -120,9 +120,6 @@ def _has_scheduler(local_path: str) -> bool:
         if entry.endswith(".json"):
             return True
     return False
-
-
-from typing import Union
 
 
 def ensure_repo_minimal_files(

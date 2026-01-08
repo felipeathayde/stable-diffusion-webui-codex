@@ -102,12 +102,12 @@ def infer_patch_geometry(model: Any, *, t: int, h_lat: int, w_lat: int) -> Patch
     gT = int(t - kT + 1)
     gH = int(((h_lat - kH) // kH) + 1)
     gW = int(((w_lat - kW) // kW) + 1)
-    l = int(gT * gH * gW)
+    token_count = int(gT * gH * gW)
     c_out = int(getattr(cfg, "d_model", 0) or 0)
     c_in = int(getattr(cfg, "in_channels", 0) or 0)
     return PatchGeometry(
         grid=(gT, gH, gW),
-        token_count=l,
+        token_count=token_count,
         token_dim=c_out,
         latent_channels=c_in,
         patch_kernel=(kT, kH, kW),

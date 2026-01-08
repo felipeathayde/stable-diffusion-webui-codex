@@ -21,12 +21,12 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
-from .core import get_quant_spec, QuantType, QUANT_REGISTRY
+from .core import get_quant_spec, QuantType
 
 if TYPE_CHECKING:
     from .tensor import CodexParameter

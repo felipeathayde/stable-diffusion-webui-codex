@@ -20,8 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import math
-from typing import Any, Callable, Iterator, Optional
+from typing import Callable, Optional
 
 import torch
 from torch import nn

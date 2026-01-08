@@ -21,7 +21,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
@@ -272,7 +271,7 @@ class Wan225BEngine(BaseVideoEngine):
 
     # ------------------------------ lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função load')
+        self._logger.debug("[wan22_5b] before load()")
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
         self._opts = EngineOpts(device=dev, dtype=dty)
@@ -385,18 +384,18 @@ class Wan225BEngine(BaseVideoEngine):
             self._logger.info("WAN22 5B GGUF runtime selected for %s (device=%s dtype=%s)", p, comp.device, dty)
 
         self._comp = comp
-        self._logger.info('[wan22_5b] DEBUG: depois de função load')
+        self._logger.debug("[wan22_5b] after load()")
         self.mark_loaded()
 
     def unload(self) -> None:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função unload')
+        self._logger.debug("[wan22_5b] before unload()")
         self._comp = None
-        self._logger.info('[wan22_5b] DEBUG: depois de função unload')
+        self._logger.debug("[wan22_5b] after unload()")
         self.mark_unloaded()
 
     # ------------------------------ tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função txt2vid')
+        self._logger.debug("[wan22_5b] before txt2vid()")
         self.ensure_loaded()
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
@@ -414,7 +413,9 @@ class Wan225BEngine(BaseVideoEngine):
             for ev in stream_run(gguf.run_txt2vid, cfg=cfg, logger=self._logger):
                 if isinstance(ev, dict) and ev.get('type') == 'progress':
                     st = str(ev.get('stage', ''))
-                    step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
+                    step = int(ev.get("step", 0))
+                    total = int(ev.get("total", 0))
+                    pct = float(ev.get("percent", 0.0))
                     pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
                     try:
                         self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct_out)
@@ -431,11 +432,11 @@ class Wan225BEngine(BaseVideoEngine):
                     except Exception:
                         pass
                     raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
-            self._logger.info('[wan22_5b] DEBUG: depois de função txt2vid')
+            self._logger.debug("[wan22_5b] after txt2vid()")
             return
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função img2vid')
+        self._logger.debug("[wan22_5b] before img2vid()")
         self.ensure_loaded()
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
@@ -455,7 +456,9 @@ class Wan225BEngine(BaseVideoEngine):
             for ev in stream_run(gguf.run_img2vid, cfg=cfg, logger=self._logger):
                 if isinstance(ev, dict) and ev.get('type') == 'progress':
                     st = str(ev.get('stage', ''))
-                    step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
+                    step = int(ev.get("step", 0))
+                    total = int(ev.get("total", 0))
+                    pct = float(ev.get("percent", 0.0))
                     pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
                     try:
                         self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct_out)
@@ -472,15 +475,15 @@ class Wan225BEngine(BaseVideoEngine):
                     except Exception:
                         pass
                     raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
-            self._logger.info('[wan22_5b] DEBUG: depois de função img2vid')
+            self._logger.debug("[wan22_5b] after img2vid()")
             return
 
     def vid2vid(self, request: Vid2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função vid2vid')
+        self._logger.debug("[wan22_5b] before vid2vid()")
         self.ensure_loaded()
         assert self._comp is not None
         yield from _run_v2v(engine=self, comp=self._comp, request=request)
-        self._logger.info('[wan22_5b] DEBUG: depois de função vid2vid')
+        self._logger.debug("[wan22_5b] after vid2vid()")
         return
 
     # ------------------------------ helpers

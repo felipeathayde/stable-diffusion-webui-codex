@@ -109,7 +109,7 @@ def get_gguf_metadata(gguf_path: str) -> Dict[str, Any]:
         if isinstance(value, bytes):
             try:
                 value = value.decode('utf-8')
-            except:
+            except Exception:  # noqa: BLE001
                 pass
         
         metadata[name] = value

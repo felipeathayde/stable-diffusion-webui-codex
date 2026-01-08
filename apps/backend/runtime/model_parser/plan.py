@@ -119,24 +119,17 @@ def execute_plan(plan: ParserPlan, state_dict: MutableMapping[str, Any], *, sign
             if split.required:
                 raise MissingComponentError(split.name, detail=f"prefixes {tuple(split.prefixes)} not found")
             continue
-        trace_event("parser_split", component=split.name, count=length)
+        dtype = None
+        device = None
         try:
-            # Probe a sample tensor to report dtype/device for this component lazily
-            sample_key = None
-            for k in view:
-                sample_key = k
-                break
-            dtype = None
-            device = None
+            sample_key = next(iter(view), None)
             if sample_key is not None:
-                try:
-                    t = view[sample_key]
-                    dtype = getattr(getattr(t, 'dtype', None), 'name', None)
-                    device = getattr(getattr(t, 'device', None), 'type', None)
-                except Exception:
-                    pass
+                t = view[sample_key]
+                dtype = getattr(getattr(t, "dtype", None), "name", None)
+                device = getattr(getattr(t, "device", None), "type", None)
         except Exception:
             pass
+        trace_event("parser_split", component=split.name, count=length, dtype=dtype, device=device)
         # Do NOT materialize the whole component here; keep the filtered mapping lazy.
         context.components[split.name] = ComponentState(name=split.name, tensors=view)
 

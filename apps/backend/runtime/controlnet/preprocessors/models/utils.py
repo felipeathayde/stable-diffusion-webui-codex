@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable
 
 from apps.backend.runtime.models.safety import safe_torch_load
 

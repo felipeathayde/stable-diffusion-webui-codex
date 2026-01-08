@@ -14,6 +14,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags + optional sampler/scheduler allow-lists).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
+- `serialize_engine_capabilities` (function): Returns engine capability surfaces as JSON-serializable dicts.
+- `serialize_family_capabilities` (function): Returns model family capability surfaces as JSON-serializable dicts.
 """
 
 from __future__ import annotations
@@ -190,12 +192,12 @@ def serialize_engine_capabilities() -> Dict[str, Dict[str, object]]:
 
 def serialize_family_capabilities() -> Dict[str, Dict[str, object]]:
     """Return FamilyCapabilities for all model families as JSON-serializable dicts.
-    
+
     Returns:
         Dict mapping family name (e.g. "FLUX", "SDXL") to capability dict.
     """
     from apps.backend.runtime.model_registry.family_runtime import FAMILY_RUNTIME_SPECS
-    
+
     result = {}
     for family, spec in FAMILY_RUNTIME_SPECS.items():
         result[family.value] = spec.capabilities.to_dict()
@@ -203,10 +205,10 @@ def serialize_family_capabilities() -> Dict[str, Dict[str, object]]:
 
 
 __all__ = [
-    "SemanticEngine", 
-    "EngineParamSurface", 
-    "ENGINE_SURFACES", 
-    "list_engine_capabilities", 
+    "SemanticEngine",
+    "EngineParamSurface",
+    "ENGINE_SURFACES",
+    "list_engine_capabilities",
     "serialize_engine_capabilities",
     "serialize_family_capabilities",
 ]

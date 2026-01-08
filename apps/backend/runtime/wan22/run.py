@@ -10,6 +10,10 @@ Purpose: WAN22 GGUF run entrypoints (txt2vid/img2vid; batch + streaming).
 Orchestrates text context, per-stage sampling, and VAE encode/decode while keeping GGUF support anchored in the shared quantization/ops layer.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
+- `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
+- `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
+- `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; encodes init image, runs stages, decodes frames.
@@ -191,7 +195,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
     sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
-    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
     log.info(
         "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",

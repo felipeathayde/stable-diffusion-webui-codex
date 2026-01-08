@@ -19,6 +19,7 @@ Status: Draft
 - 2025-12-14: `ModelFamily.ZIMAGE.flow_shift` re-aligned to `3.0` in `family_runtime.py` (HF scheduler_config parity).
 - 2026-01-06: Engine capability surfaces now default to model_index-derived sampler/scheduler pairs (SD15 `pndm`/`ddim`, SDXL `euler`/`euler_discrete`, WAN22 `uni-pc`/`simple`, Hunyuan `ddpm`/`beta`).
 - 2026-01-08: Added `flow_shift.py` as the canonical flow-shift resolver from diffusers `scheduler_config.json` (fixed + dynamic) and removed hard-coded `flow_shift` values from family runtime specs where the value is not a true family invariant (Flux/WAN22).
+- 2026-01-08: Refreshed file header blocks for `capabilities.py` and `flow_shift.py` to keep the Symbols lists in sync (doc-only change).
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

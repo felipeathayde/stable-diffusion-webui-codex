@@ -11,6 +11,7 @@ Enforces scheduler compatibility before sampling context creation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SamplerSpec` (dataclass): Canonical sampler specification (kind, default scheduler, allowed schedulers).
+- `_build_specs` (function): Build the canonical sampler spec map from catalog entries (strict validation + canonicalization).
 - `get_sampler_spec` (function): Resolve a sampler name to a validated `SamplerSpec`.
 - `__all__` (constant): Public export list for registry helpers.
 """

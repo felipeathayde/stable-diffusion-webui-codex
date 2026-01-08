@@ -37,6 +37,7 @@ Status: Active
 - 2026-01-04: Centralized WAN22 patch/head shape inference in `inference.py` so detector and runtime loaders agree on GGUF vs torch layout.
 - 2026-01-06: `sampling.make_scheduler` now recognizes canonical `uni-pc` and instantiates `UniPCMultistepScheduler` for WAN GGUF stage runs.
 - 2026-01-08: Removed the global `WAN_FLOW_SHIFT_DEFAULT`; `StageConfig.flow_shift` is required and defaults are resolved from the vendored diffusers `scheduler_config.json` (variant-correct, fail-fast if missing).
+- 2026-01-08: Refreshed `run.py` file header block to include new helpers and removed a duplicate `_require_flow_shift` call (no behavior change).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

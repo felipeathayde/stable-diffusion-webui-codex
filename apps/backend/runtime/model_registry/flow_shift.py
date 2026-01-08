@@ -15,6 +15,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FlowTimeShiftType` (enum): Time-shift transform kind for dynamic shifting (`exponential` vs `linear`).
 - `FlowShiftSource` (enum): Origin of the shift (scheduler_config or explicit override).
 - `FlowShiftSpec` (dataclass): Normalized shift metadata with a strict resolve() helper.
+- `_coerce_float` (function): Coerce a raw config value into a float with strict errors.
+- `_coerce_int` (function): Coerce a raw config value into an int with strict errors.
+- `_require_key` (function): Fetch a required key from scheduler config or raise a strict error.
+- `_read_scheduler_config` (function): Read + validate a scheduler_config.json file as a mapping.
+- `_flow_shift_spec_from_config` (function): Internal parser from scheduler config mapping to FlowShiftSpec.
+- `_flow_shift_spec_cached` (function): Cached flow shift spec loader keyed by scheduler_config.json path.
 - `scheduler_config_path_from_repo_dir` (function): Resolve the canonical scheduler config path under a diffusers repo dir.
 - `flow_shift_spec_from_scheduler_config` (function): Parse scheduler_config.json into FlowShiftSpec.
 - `flow_shift_spec_from_config` (function): Parse a scheduler config mapping into FlowShiftSpec.

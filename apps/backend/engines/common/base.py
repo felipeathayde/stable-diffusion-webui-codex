@@ -38,11 +38,8 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_miss,
 )
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.models.loader import (
-    DiffusionModelBundle,
-    TextEncoderOverrideConfig,
-    resolve_diffusion_bundle,
-)
+from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
+from apps.backend.runtime.models.text_encoder_overrides import TextEncoderOverrideConfig
 from apps.backend.runtime.utils import get_state_dict_after_quant
 from apps.backend.runtime.utils import load_torch_file
 from apps.backend.runtime.models.state_dict import safe_load_state_dict

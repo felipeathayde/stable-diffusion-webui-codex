@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-08
 Status: Active
 
 ## Purpose
@@ -16,7 +16,7 @@ Status: Active
 - Keep schemas in sync with the frontend API client (`apps/interface/src/api`).
 - Avoid embedding business logic here—delegate to services/use cases and focus on validation and serialization.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` captures the “how assets are listed + selected” contract (inventory → SHA selection → backend resolution).
-- API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/run_api.py` (`_ORCH` singleton).
+- API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/routers/generation.py` (`_ORCH` singleton).
 - 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.highres`) but still tolerates compatibility keys (`codex_engine`, `codex_diffusion_device`, `sd_model_checkpoint`) while downstream clients migrate; prompts may be empty to support negative-only runs.
 - 2025-11-21: SPA static mount now registers after all `/api/*` routes to prevent POSTs from being intercepted by the UI fallback; invalid txt2/img2/video payloads raise HTTP errors instead of returning 200 with a background error.
 - 2025-11-21: Module-level `app` remains available for ASGI servers, but the preferred entrypoint is the uvicorn factory `apps.backend.interfaces.api.run_api:create_api_app`. Factory and direct `:app` both build the same FastAPI instance.
@@ -54,3 +54,4 @@ Status: Active
 - 2026-01-06: API workers now set `engine_options.vae_source`/`engine_options.tenc_source` (`built_in` vs `external`) to make asset selection explicit (pairs with `engine_options.vae_path`/`engine_options.tenc_path` when external).
 - 2026-01-06: `/api/{samplers,schedulers}` now returns minimal entries; `/api/{txt2img,img2img}` validates canonical sampler/scheduler selection (including per-sampler scheduler compatibility) and fails fast with HTTP 400.
 - 2026-01-06: `/api/{txt2vid,img2vid}` default sampler now uses `uni-pc` (scheduler `simple`) to match WAN22 diffusers scheduler metadata.
+- 2026-01-08: `run_api.py` was modularized into router modules under `apps/backend/interfaces/api/routers` (composition-only entrypoint; route logic moved to focused router files).

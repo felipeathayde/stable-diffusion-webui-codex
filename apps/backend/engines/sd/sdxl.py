@@ -456,8 +456,8 @@ class StableDiffusionXL(CodexDiffusionEngine):
             "height": int(proc.height),
             "steps": int(proc.steps),
             "guidance_scale": float(proc.guidance_scale),
-            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
-            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
+            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
         }
         if primary_prompt:
             info["prompt"] = str(primary_prompt)

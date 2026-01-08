@@ -33,6 +33,8 @@ class SemanticEngine(str, Enum):
     SD15 = "sd15"
     SDXL = "sdxl"
     FLUX = "flux1"
+    ZIMAGE = "zimage"
+    CHROMA = "chroma"
     WAN22 = "wan22"
     HUNYUAN_VIDEO = "hunyuan_video"
     SVD = "svd"
@@ -59,6 +61,9 @@ class EngineParamSurface:
     # Optional: restrict UI to only these samplers/schedulers. None = allow all.
     samplers: tuple[str, ...] | None = None
     schedulers: tuple[str, ...] | None = None
+    # Optional: UI defaults for sampler/scheduler selection.
+    default_sampler: str | None = None
+    default_scheduler: str | None = None
 
 
 ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
@@ -72,6 +77,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
+        default_sampler="pndm",
+        default_scheduler="ddim",
     ),
     # SDXL image workflows (base + hires + refiner).
     SemanticEngine.SDXL: EngineParamSurface(
@@ -83,6 +90,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=True,
         supports_lora=True,
         supports_controlnet=False,
+        default_sampler="euler",
+        default_scheduler="euler_discrete",
     ),
     # Flux.1 (flow-based image diffusion).
     SemanticEngine.FLUX: EngineParamSurface(
@@ -94,8 +103,40 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
-        samplers=("euler", "euler_a", "ddim", "dpmpp_2m"),
+        samplers=("euler", "euler a", "ddim", "dpm++ 2m"),
         schedulers=("simple", "beta", "normal"),
+        default_sampler="euler",
+        default_scheduler="simple",
+    ),
+    # Z-Image Turbo (flow-based; tuned for simple predictor schedule).
+    SemanticEngine.ZIMAGE: EngineParamSurface(
+        supports_txt2img=True,
+        supports_img2img=False,
+        supports_txt2vid=False,
+        supports_img2vid=False,
+        supports_highres=False,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        samplers=("euler", "dpm++ 2m"),
+        schedulers=("simple",),
+        default_sampler="euler",
+        default_scheduler="simple",
+    ),
+    # Chroma (flow-based image generation).
+    SemanticEngine.CHROMA: EngineParamSurface(
+        supports_txt2img=True,
+        supports_img2img=False,
+        supports_txt2vid=False,
+        supports_img2vid=False,
+        supports_highres=False,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        samplers=("euler", "dpm++ 2m", "ddim"),
+        schedulers=("simple", "beta", "normal"),
+        default_sampler="euler",
+        default_scheduler="simple",
     ),
     # Wan 2.2 dual-stage video (txt2vid/img2vid).
     SemanticEngine.WAN22: EngineParamSurface(
@@ -107,6 +148,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=True,  # high/low LoRA slots in WAN22 panel
         supports_controlnet=False,
+        default_sampler="uni-pc",
+        default_scheduler="simple",
     ),
     # Hunyuan Video: video-only workflows.
     SemanticEngine.HUNYUAN_VIDEO: EngineParamSurface(
@@ -118,6 +161,8 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
+        default_sampler="ddpm",
+        default_scheduler="beta",
     ),
     # SVD (Stable Video Diffusion): image-to-video only today.
     SemanticEngine.SVD: EngineParamSurface(

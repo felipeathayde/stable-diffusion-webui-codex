@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampler and scheduler type definitions.
-Defines the canonical `SamplerKind` enum and an `ApplyOutcome` result container, including alias resolution for sampler strings.
+Defines the canonical `SamplerKind` enum and an `ApplyOutcome` result container.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ApplyOutcome` (dataclass): Result of applying sampler/scheduler selection to a pipeline/request.
-- `SamplerKind` (enum): Canonical sampler identifiers with alias resolution via `SAMPLER_ALIAS_TO_CANONICAL`.
+- `SamplerKind` (enum): Canonical sampler identifiers (no alias normalization; fail-fast on unknown values).
 - `__all__` (constant): Explicit export list for this module.
 """
 
@@ -20,8 +20,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import List
-
-from apps.backend.runtime.sampling.catalog import SAMPLER_ALIAS_TO_CANONICAL
 
 
 @dataclass
@@ -36,7 +34,6 @@ class ApplyOutcome:
 
 class SamplerKind(str, Enum):
     """Canonical sampler identifiers."""
-    AUTOMATIC = "automatic"
     EULER = "euler"
     EULER_A = "euler a"
     EULER_CFG_PP = "euler cfg++"
@@ -85,13 +82,17 @@ class SamplerKind(str, Enum):
 
     @staticmethod
     def from_string(name: str) -> "SamplerKind":
-        """Parse sampler name to enum, with alias resolution."""
-        key = (name or "automatic").strip().lower()
-        canonical = SAMPLER_ALIAS_TO_CANONICAL.get(key, key)
-        for member in SamplerKind:
-            if canonical == member.value:
-                return member
-        raise ValueError(f"Unsupported sampler '{name}'. Valid: {[m.value for m in SamplerKind]}")
+        """Parse sampler name to enum (strict, no alias resolution)."""
+        if not isinstance(name, str):
+            raise TypeError("sampler name must be a string")
+        if not name:
+            raise ValueError("sampler name must not be empty")
+        try:
+            return SamplerKind(name)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported sampler '{name}'. Valid: {[m.value for m in SamplerKind]}"
+            ) from exc
 
 
 __all__ = ["SamplerKind", "ApplyOutcome"]

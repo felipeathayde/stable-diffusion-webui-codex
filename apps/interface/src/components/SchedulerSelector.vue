@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
     <select class="select-md" :disabled="disabled" :value="modelValue" @change="onChange">
       <option v-if="allowEmpty" value="">{{ emptyLabelText }}</option>
       <option v-for="s in schedulers" :key="s.name" :value="s.name">
-        {{ s.label }}
+        {{ s.label ?? s.name }}
       </option>
     </select>
   </div>
@@ -45,7 +45,7 @@ const emit = defineEmits({
 
 const labelText = computed(() => props.label ?? 'Scheduler')
 const allowEmpty = computed(() => props.allowEmpty === true)
-const emptyLabelText = computed(() => props.emptyLabel ?? 'Automatic')
+const emptyLabelText = computed(() => props.emptyLabel ?? 'Select')
 const disabled = computed(() => props.disabled === true)
 
 function onChange(event: Event): void {

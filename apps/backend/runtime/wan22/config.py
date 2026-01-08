@@ -10,7 +10,6 @@ Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
 Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WAN_FLOW_SHIFT_DEFAULT` (constant): Default flow shift used when constructing timestep inputs for WAN flow sampling.
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
 - `StageConfig` (dataclass): Stage-level configuration (steps/cfg/seed/sampler/scheduler + stage model selection).
 - `RunConfig` (dataclass): Full run configuration (geometry, prompts, devices/dtypes, assets, and both stages).
@@ -27,7 +26,6 @@ from typing import Optional
 
 import torch
 
-WAN_FLOW_SHIFT_DEFAULT = 8.0
 WAN_FLOW_MULTIPLIER = 1000.0
 
 
@@ -38,7 +36,7 @@ class StageConfig:
     scheduler: str
     steps: int
     cfg_scale: Optional[float]
-    flow_shift: Optional[float] = None
+    flow_shift: float
 
 
 @dataclass(frozen=True)
@@ -106,4 +104,3 @@ def resolve_i2v_order() -> str:
 
     v = str(os.getenv("WAN_I2V_ORDER", "lat_first")).strip().lower()
     return "lat_last" if v in {"lat_last", "last", "cond_first"} else "lat_first"
-

@@ -26,7 +26,6 @@ import torch
 from .config import (
     RunConfig,
     WAN_FLOW_MULTIPLIER,
-    WAN_FLOW_SHIFT_DEFAULT,
     as_torch_dtype,
     resolve_device_name,
 )
@@ -88,6 +87,19 @@ def _resolve_offload_level(cfg: RunConfig) -> int:
         except Exception:
             return 0
     return 3 if bool(getattr(cfg, "aggressive_offload", True)) else 0
+
+
+def _require_flow_shift(stage: str, value: object | None) -> float:
+    if value is None:
+        raise RuntimeError(
+            f"WAN22 GGUF stage '{stage}' is missing flow_shift. "
+            "Provide an explicit stage override (extras.wan_high/wan_low.flow_shift) "
+            "or ensure the engine resolves the default from the model's scheduler_config.json."
+        )
+    try:
+        return float(value)
+    except Exception as exc:  # noqa: BLE001 - strict input validation
+        raise RuntimeError(f"WAN22 GGUF stage '{stage}' has invalid flow_shift: {value!r}") from exc
 
 
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
@@ -179,6 +191,8 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
     sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
     log.info(
         "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
         steps_hi,
@@ -204,7 +218,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         state_init=None,
         on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(flow_shift_hi) if flow_shift_hi is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_shift=flow_shift_hi_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="high",
     )
@@ -243,6 +257,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
     sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
     log.info(
         "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s",
         steps_lo,
@@ -267,7 +282,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         state_init=seed_latents,
         on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(flow_shift_lo) if flow_shift_lo is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_shift=flow_shift_lo_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="low",
     )
@@ -329,6 +344,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
     sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
     latents_hi = yield from sample_stage_latents_generator(
         model=hi_model,
@@ -345,7 +361,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         seed=cfg.seed,
         state_init=None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(flow_shift_hi) if flow_shift_hi is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_shift=flow_shift_hi_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="high",
         emit_logs=False,
@@ -378,6 +394,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
     sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
     latents_lo = yield from sample_stage_latents_generator(
         model=lo_model,
@@ -394,7 +411,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         seed=None,
         state_init=seed_latents,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(flow_shift_lo) if flow_shift_lo is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_shift=flow_shift_lo_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="low",
         emit_logs=False,
@@ -508,7 +525,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         state_init=seed_hi,
         on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(flow_shift_hi) if flow_shift_hi is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_shift=flow_shift_hi_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="high",
     )
@@ -540,6 +557,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
     sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
     latents_lo = sample_stage_latents(
         model=lo_model,
@@ -557,7 +575,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         state_init=seed_lo,
         on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(flow_shift_lo) if flow_shift_lo is not None else WAN_FLOW_SHIFT_DEFAULT,
+        flow_shift=flow_shift_lo_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="low",
     )
@@ -623,6 +641,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
 
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
+    flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
+    flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
     latents_hi = yield from sample_stage_latents_generator(
         model=hi_model,
@@ -639,7 +659,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         seed=None,
         state_init=seed_hi,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(getattr(cfg.high, "flow_shift", WAN_FLOW_SHIFT_DEFAULT) if cfg.high else WAN_FLOW_SHIFT_DEFAULT),
+        flow_shift=flow_shift_hi_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="high",
         emit_logs=False,
@@ -655,6 +675,8 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     lo_model = load_stage_model_from_gguf(lo_path, device=dev, dtype=dt, logger=log)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
+    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
     latents_lo = yield from sample_stage_latents_generator(
         model=lo_model,
@@ -671,7 +693,7 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         seed=None,
         state_init=seed_lo,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
-        flow_shift=float(getattr(cfg.low, "flow_shift", WAN_FLOW_SHIFT_DEFAULT) if cfg.low else WAN_FLOW_SHIFT_DEFAULT),
+        flow_shift=flow_shift_lo_value,
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="low",
         emit_logs=False,
@@ -682,4 +704,3 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
     yield {"type": "result", "frames": frames}
-

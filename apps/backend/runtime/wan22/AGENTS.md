@@ -3,7 +3,7 @@
 # apps/backend/runtime/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
-Last Review: 2026-01-04
+Last Review: 2026-01-08
 Status: Active
 
 ## Purpose
@@ -35,6 +35,8 @@ Status: Active
 - 2025-12-14: `sampler.py` (caminho experimental runtime/spec) agora escala o timestep passado ao core por `flow_multiplier` (default `1000.0`) e tem teste de regressão; `wan22.py` emite logs opt-in de paridade (sigma ladder + mapeamento de timestep) quando `CODEX_LOG_SIGMAS=1`/`WAN_LOG_SIGMAS=1`.
 - 2026-01-03: Removed upstream pipeline brand wording from WAN22 runtime comments; keep behaviour described directly and treat Diffusers as the baseline only for the HF asset path.
 - 2026-01-04: Centralized WAN22 patch/head shape inference in `inference.py` so detector and runtime loaders agree on GGUF vs torch layout.
+- 2026-01-06: `sampling.make_scheduler` now recognizes canonical `uni-pc` and instantiates `UniPCMultistepScheduler` for WAN GGUF stage runs.
+- 2026-01-08: Removed the global `WAN_FLOW_SHIFT_DEFAULT`; `StageConfig.flow_shift` is required and defaults are resolved from the vendored diffusers `scheduler_config.json` (variant-correct, fail-fast if missing).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

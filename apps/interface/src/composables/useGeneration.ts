@@ -109,8 +109,8 @@ export function useGeneration(tabId: string) {
   const engineConfig = computed(() => engineType.value ? getEngineConfig(engineType.value) : null)
 
   function buildRunSummary(p: ImageBaseParams): string {
-    const sampler = p.sampler || 'automatic'
-    const scheduler = p.scheduler || 'automatic'
+    const sampler = p.sampler
+    const scheduler = p.scheduler
     const seedLabel = p.seed === -1 ? 'seed random' : `seed ${p.seed}`
     const clipSkipLabel = Number.isFinite(p.clipSkip) && p.clipSkip > 0 && p.clipSkip !== 1 ? ` · clip-skip ${p.clipSkip}` : ''
     return `${p.width}×${p.height} px · ${p.steps} steps · cfg ${p.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel}${clipSkipLabel} · batch ${p.batchCount}×${p.batchSize}`
@@ -302,8 +302,8 @@ export function useGeneration(tabId: string) {
           img2img_denoising_strength: p.denoiseStrength,
           img2img_width: p.width,
           img2img_height: p.height,
-          img2img_sampling: p.sampler || 'automatic',
-          img2img_scheduler: p.scheduler || 'automatic',
+          img2img_sampling: p.sampler,
+          img2img_scheduler: p.scheduler,
           img2img_seed: p.seed,
           img2img_clip_skip: p.clipSkip,
           device,
@@ -326,8 +326,8 @@ export function useGeneration(tabId: string) {
             height: p.height,
             steps: p.steps,
             guidanceScale: p.cfgScale,
-            sampler: p.sampler || 'automatic',
-            scheduler: p.scheduler || 'automatic',
+            sampler: p.sampler,
+            scheduler: p.scheduler,
             seed: p.seed,
             clipSkip: p.clipSkip,
             batchSize,

@@ -189,11 +189,11 @@ Symbols (top-level; keep in sync; no ghosts):
             <div class="test-grid test-grid-three">
               <div>
                 <label class="label" for="sampler">Sampler</label>
-                <input id="sampler" class="ui-input" type="text" v-model="state.sampler" placeholder="Euler" />
+                <input id="sampler" class="ui-input" type="text" v-model="state.sampler" placeholder="euler" />
               </div>
               <div>
                 <label class="label" for="scheduler">Scheduler</label>
-                <input id="scheduler" class="ui-input" type="text" v-model="state.scheduler" placeholder="Automatic" />
+                <input id="scheduler" class="ui-input" type="text" v-model="state.scheduler" placeholder="simple" />
               </div>
               <div>
                 <label class="label" for="format">Format</label>
@@ -263,7 +263,7 @@ const state = reactive({
     steps: 2, cfgScale: 3,
     loraPath: '', loraWeight: 1.0,
   },
-  sampler: 'Euler', scheduler: 'Simple', wanFormat: 'gguf',
+  sampler: 'euler', scheduler: 'simple', wanFormat: 'gguf',
   // Offload level and TE kernel are controlled via env vars only
   seed: -1,
 })

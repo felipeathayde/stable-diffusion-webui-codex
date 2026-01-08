@@ -32,7 +32,7 @@ from typing import Any, Optional, Tuple
 
 import torch
 
-from .config import WAN_FLOW_MULTIPLIER, WAN_FLOW_SHIFT_DEFAULT, resolve_i2v_order
+from .config import WAN_FLOW_MULTIPLIER, resolve_i2v_order
 from .diagnostics import (
     get_logger,
     log_cuda_mem,
@@ -124,6 +124,7 @@ def make_scheduler(steps: int, *, sampler: Optional[str] = None, scheduler: Opti
         EulerDiscreteScheduler,
         LMSDiscreteScheduler,
         PNDMScheduler,
+        UniPCMultistepScheduler,
     )
 
     s = (sampler or "").strip().lower()
@@ -142,6 +143,8 @@ def make_scheduler(steps: int, *, sampler: Optional[str] = None, scheduler: Opti
         cls = LMSDiscreteScheduler
     elif s in ("pndm",):
         cls = PNDMScheduler
+    elif s in ("uni-pc",):
+        cls = UniPCMultistepScheduler
     else:
         # Fall back to scheduler hint, if provided
         if "euler a" in sch or "ancestral" in sch:
@@ -256,7 +259,7 @@ def sample_stage_latents(
     state_init: Optional[torch.Tensor] = None,
     on_progress: Optional[Any] = None,
     log_mem_interval: Optional[int] = None,
-    flow_shift: float = WAN_FLOW_SHIFT_DEFAULT,
+    flow_shift: float,
     flow_multiplier: float = WAN_FLOW_MULTIPLIER,
     stage_name: str = "stage",
 ) -> torch.Tensor:
@@ -310,7 +313,7 @@ def sample_stage_latents_generator(
     seed: Optional[int] = None,
     state_init: Optional[torch.Tensor] = None,
     log_mem_interval: Optional[int] = None,
-    flow_shift: float = WAN_FLOW_SHIFT_DEFAULT,
+    flow_shift: float,
     flow_multiplier: float = WAN_FLOW_MULTIPLIER,
     stage_name: str = "stage",
     emit_logs: bool = True,
@@ -433,4 +436,3 @@ def sample_stage_latents_generator(
         }
 
     return state
-

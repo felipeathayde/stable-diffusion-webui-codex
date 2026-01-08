@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, sdxl -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -22,6 +22,7 @@ Status: Active
 - 2025-12-05: SDXL base/refiner engines honor per-job Smart Cache (`smart_cache` on `Txt2ImgRequest`/`CodexProcessingTxt2Img`) via `_SDXLPrompt.smart_cache`, with fallback to the global option when unset. SDXL `txt2img` also preenche `info["timings_ms"]` com tempos aproximados de sampling/decode para apoiar profiling backend sem impactar o gentime da UI.
 - 2026-01-02: Fixed SDXL refiner embed cache correctness (cache hits no longer crash) and aligned refiner time-id embedding with `_prompt_meta` + `_validate_conditioning_payload` (fail-fast on malformed conditioning).
 - 2026-01-02: Added standardized file header docstrings to SD engine modules (doc-only change; part of rollout).
+- 2026-01-06: SDXL generation info no longer defaults sampler/scheduler to `"Automatic"`; missing values serialize as null to reflect strict canonical inputs.
 
 ### Event Emission
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.

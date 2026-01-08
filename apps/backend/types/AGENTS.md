@@ -3,7 +3,7 @@
 # apps/backend/types Overview
 Date: 2026-01-03
 Owner: Backend Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Active
 ## Notes
 - Keep these modules import-light to avoid bootstrap cycles; prefer simple dataclasses/enums and frozen sets.
 - 2026-01-03: Added standardized file header docstrings to `types/*` modules (doc-only change; part of rollout).
+- 2026-01-06: `samplers.py` parsing is strict (no alias/case normalization); empty values are invalid.

@@ -66,15 +66,14 @@ export interface ModelInfo {
 export interface SamplerInfo {
   name: string
   label?: string
-  aliases: string[]
   supported?: boolean
-  options: Record<string, unknown>
+  default_scheduler: string
+  allowed_schedulers: string[]
 }
 
 export interface SchedulerInfo {
   name: string
-  label: string
-  aliases: string[]
+  label?: string
   supported?: boolean
 }
 
@@ -169,6 +168,8 @@ export interface EngineCapabilities {
   // Optional: restrict UI to only these samplers/schedulers. Null/undefined = allow all.
   samplers?: string[] | null
   schedulers?: string[] | null
+  default_sampler?: string | null
+  default_scheduler?: string | null
 }
 
 export interface EngineCapabilitiesResponse {

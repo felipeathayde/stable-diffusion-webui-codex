@@ -124,6 +124,27 @@ def _build_wan22_gguf_run_config(
     hi_opts = WanStageOptions.from_mapping(wh_raw, default_steps=default_steps, default_cfg=default_cfg)
     lo_opts = WanStageOptions.from_mapping(wl_raw, default_steps=default_steps, default_cfg=default_cfg)
 
+    # Flow-shift defaults are sourced from the canonical vendored diffusers scheduler_config.json.
+    # This is intentionally strict (no silent fallback): if stages omit flow_shift, we must be able
+    # to resolve a default from comp.hf_repo_dir (prepared during engine.load()).
+    hi_flow_shift = _coerce_float(wh_raw.get("flow_shift")) if isinstance(wh_raw, dict) else None
+    lo_flow_shift = _coerce_float(wl_raw.get("flow_shift")) if isinstance(wl_raw, dict) else None
+    if hi_flow_shift is None or lo_flow_shift is None:
+        vendor_dir = getattr(comp, "hf_repo_dir", None)
+        if not isinstance(vendor_dir, str) or not vendor_dir.strip():
+            raise RuntimeError(
+                "WAN22 GGUF requires flow_shift defaults from the vendored scheduler_config.json, "
+                "but comp.hf_repo_dir is missing. Ensure engine.load() prepared HF metadata."
+            )
+        from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+
+        spec = flow_shift_spec_from_repo_dir(vendor_dir)
+        default_flow_shift = spec.resolve()
+        if hi_flow_shift is None:
+            hi_flow_shift = default_flow_shift
+        if lo_flow_shift is None:
+            lo_flow_shift = default_flow_shift
+
     if not hi_opts.model_dir or not str(hi_opts.model_dir).strip():
         raise RuntimeError("WAN22 GGUF requires wan_high.model_dir (resolved from model_sha).")
     if not lo_opts.model_dir or not str(lo_opts.model_dir).strip():
@@ -144,11 +165,8 @@ def _build_wan22_gguf_run_config(
         if seed_override is not None:
             seed = seed_override
 
-    hi_flow_shift = _coerce_float(wh_raw.get("flow_shift")) if isinstance(wh_raw, dict) else None
-    lo_flow_shift = _coerce_float(wl_raw.get("flow_shift")) if isinstance(wl_raw, dict) else None
-
-    sampler_fallback = str(getattr(request, "sampler", "Automatic") or "Automatic")
-    scheduler_fallback = str(getattr(request, "scheduler", "Automatic") or "Automatic")
+    sampler_fallback = str(getattr(request, "sampler", "") or "").strip() or "uni-pc"
+    scheduler_fallback = str(getattr(request, "scheduler", "") or "").strip() or "simple"
 
     tokenizer_dir = str(ex.get("wan_tokenizer_dir")).strip() if ex.get("wan_tokenizer_dir") else None
 
@@ -222,7 +240,7 @@ def _build_wan22_gguf_run_config(
             scheduler=str(hi_opts.scheduler or scheduler_fallback),
             steps=max(1, int(hi_opts.steps)),
             cfg_scale=hi_opts.cfg_scale,
-            flow_shift=hi_flow_shift,
+            flow_shift=float(hi_flow_shift),
         ),
         low=gguf.StageConfig(
             model_dir=lo_dir,
@@ -230,7 +248,7 @@ def _build_wan22_gguf_run_config(
             scheduler=str(lo_opts.scheduler or scheduler_fallback),
             steps=max(1, int(lo_opts.steps)),
             cfg_scale=lo_opts.cfg_scale,
-            flow_shift=lo_flow_shift,
+            flow_shift=float(lo_flow_shift),
         ),
     )
 

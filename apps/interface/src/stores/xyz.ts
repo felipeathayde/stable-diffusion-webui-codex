@@ -115,6 +115,22 @@ export const useXyzStore = defineStore('xyz', () => {
     const checkpoint = String((params as any)?.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
     const resolvedModelSha = quick.resolveModelSha(modelLabel)
+    const samplingDefaults = (() => {
+      if (activeTab?.type === 'sd15') return { sampler: 'pndm', scheduler: 'ddim' }
+      if (activeTab?.type === 'sdxl') return { sampler: 'euler', scheduler: 'euler_discrete' }
+      if (activeTab?.type === 'flux1' || activeTab?.type === 'zimage' || activeTab?.type === 'chroma') {
+        return { sampler: 'euler', scheduler: 'simple' }
+      }
+      return { sampler: 'dpm++ 2m', scheduler: 'karras' }
+    })()
+    const sampler =
+      (typeof params?.sampler === 'string' && params.sampler.trim())
+        ? params.sampler
+        : samplingDefaults.sampler
+    const scheduler =
+      (typeof params?.scheduler === 'string' && params.scheduler.trim())
+        ? params.scheduler
+        : samplingDefaults.scheduler
     
     return {
       prompt: params?.prompt ?? '',
@@ -123,8 +139,8 @@ export const useXyzStore = defineStore('xyz', () => {
       height: params?.height ?? 1024,
       steps: params?.steps ?? 30,
       guidanceScale: params?.cfgScale ?? 7,
-      sampler: params?.sampler || 'automatic',
-      scheduler: params?.scheduler || 'automatic',
+      sampler,
+      scheduler,
       seed: params?.seed ?? -1,
       batchSize: 1,
       batchCount: 1,

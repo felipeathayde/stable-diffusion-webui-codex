@@ -893,8 +893,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             "height": int(proc.height),
             "steps": int(proc.steps),
             "guidance_scale": float(proc.guidance_scale),
-            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
-            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
+            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
         }
         if primary_prompt:
             info["prompt"] = str(primary_prompt)
@@ -1032,8 +1032,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             "steps": int(proc.steps),
             "guidance_scale": float(proc.guidance_scale),
             "denoise_strength": float(getattr(proc, "denoising_strength", 0.0) or 0.0),
-            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
-            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
+            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
         }
         if getattr(proc, "prompt", None):
             info["prompt"] = str(getattr(proc, "prompt", ""))

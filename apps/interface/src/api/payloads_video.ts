@@ -246,9 +246,19 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
   const modelDir = String(stage.modelDir || '').trim()
   if (modelDir) payload.model_dir = modelDir
   const sampler = String(stage.sampler || '').trim()
-  if (sampler) payload.sampler = sampler
+  if (sampler) {
+    if (sampler !== sampler.toLowerCase()) {
+      throw new Error(`WAN sampler must be canonical lowercase, got '${sampler}'`)
+    }
+    payload.sampler = sampler
+  }
   const scheduler = String(stage.scheduler || '').trim()
-  if (scheduler) payload.scheduler = scheduler
+  if (scheduler) {
+    if (scheduler !== scheduler.toLowerCase()) {
+      throw new Error(`WAN scheduler must be canonical lowercase, got '${scheduler}'`)
+    }
+    payload.scheduler = scheduler
+  }
   const loraPath = String(stage.loraPath || '').trim()
   if (loraPath) {
     payload.lora_path = loraPath

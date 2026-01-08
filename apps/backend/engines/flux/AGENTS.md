@@ -1,7 +1,7 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - 2026-01-03: Flux/Chroma/Kontext engines now assemble runtimes via `CodexFluxFamilyFactory` (keeps `_build_components` consistent and reduces drift).
 - 2026-01-04: Flux Kontext is treated as a Flux.1 variant (`Flux.1-Kontext-dev`) and is co-located with the Flux family under `apps/backend/engines/flux/kontext.py`.
 - 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); clients must use canonical keys.
+- 2026-01-06: Flux sampler allow-lists now use canonical `SamplerKind` strings (e.g. `euler a`, `dpm++ 2m`).

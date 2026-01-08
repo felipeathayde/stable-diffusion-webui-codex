@@ -7,10 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampling plan construction helpers for workflow orchestration.
-Normalizes scheduler names/aliases, resolves noise settings, builds/overrides a `SamplingPlan`, and prepares the sampler + RNG.
+Validates sampler/scheduler selection, resolves noise settings, builds/overrides a `SamplingPlan`, and prepares the sampler + RNG.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_normalize_scheduler_name` (function): Normalize scheduler aliases and auto-tokens into a supported canonical scheduler name.
+- `_normalize_scheduler_name` (function): Validate a scheduler name for the given sampler.
 - `resolve_noise_settings` (function): Derive `NoiseSettings` for a run from processing overrides and env.
 - `build_sampling_plan` (function): Build a `SamplingPlan` from processing state and explicit seeds/subseeds.
 - `apply_sampling_overrides` (function): Apply prompt-derived overrides to a `SamplingPlan` (and reflect them into processing state).
@@ -26,29 +26,25 @@ from typing import Any, Mapping, Sequence
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
 from apps.backend.runtime.processing.datatypes import SamplingPlan
 from apps.backend.runtime.sampling.catalog import (
-    AUTO_TOKENS,
-    SAMPLER_DEFAULT_SCHEDULER,
-    SCHEDULER_ALIAS_TO_CANONICAL,
     SUPPORTED_SCHEDULERS,
 )
 from apps.backend.runtime.sampling.context import SchedulerName
 from apps.backend.runtime.sampling.driver import CodexSampler
+from apps.backend.runtime.sampling.registry import get_sampler_spec
 
 logger = logging.getLogger(__name__)
 
 
-def _normalize_scheduler_name(sampler: str | None, scheduler: str | None) -> str:
-    sampler_key = (sampler or "").strip().lower()
-    raw = (scheduler or "").strip().lower()
-    if raw in AUTO_TOKENS:
-        raw = SAMPLER_DEFAULT_SCHEDULER.get(sampler_key, "automatic")
-    canonical = SCHEDULER_ALIAS_TO_CANONICAL.get(raw, raw)
-    if canonical not in SUPPORTED_SCHEDULERS:
-        raise ValueError(f"Scheduler '{canonical}' is not supported")
+def _normalize_scheduler_name(sampler: str, scheduler: str) -> str:
+    if scheduler not in SUPPORTED_SCHEDULERS:
+        raise ValueError(f"Scheduler '{scheduler}' is not supported")
     try:
-        canonical_enum = SchedulerName.from_string(canonical)
+        canonical_enum = SchedulerName.from_string(scheduler)
     except ValueError as exc:
-        raise ValueError(f"Unsupported scheduler '{scheduler}' for sampler '{sampler}'") from exc
+        raise ValueError(f"Unsupported scheduler '{scheduler}'") from exc
+    spec = get_sampler_spec(sampler)
+    if not spec.is_supported_scheduler(canonical_enum.value):
+        raise ValueError(f"Scheduler '{scheduler}' is not supported for sampler '{sampler}'")
     return canonical_enum.value
 
 
@@ -94,15 +90,11 @@ def build_sampling_plan(
     steps = int(getattr(processing, "steps", 20) or 20)
     sampler_name = getattr(processing, "sampler_name", None)
     scheduler_name = getattr(processing, "scheduler", None)
-    try:
-        normalized_scheduler = _normalize_scheduler_name(sampler_name, scheduler_name)
-    except ValueError:
-        logger.warning(
-            "Invalid scheduler '%s' for sampler '%s'; falling back to automatic.",
-            scheduler_name,
-            sampler_name,
-        )
-        normalized_scheduler = SchedulerName.AUTOMATIC.value
+    if not isinstance(sampler_name, str) or not sampler_name:
+        raise ValueError("processing.sampler_name must be set to a non-empty sampler name")
+    if not isinstance(scheduler_name, str) or not scheduler_name:
+        raise ValueError("processing.scheduler must be set to a non-empty scheduler name")
+    normalized_scheduler = _normalize_scheduler_name(sampler_name, scheduler_name)
     processing.scheduler = normalized_scheduler
     return SamplingPlan(
         sampler_name=sampler_name,
@@ -122,10 +114,22 @@ def apply_sampling_overrides(
     plan: SamplingPlan,
 ) -> SamplingPlan:
     """Apply prompt-derived overrides to the sampling plan."""
-    sampler_name = controls.get("sampler")
-    if sampler_name:
-        processing.sampler_name = str(sampler_name)
-        plan.sampler_name = str(sampler_name)
+    sampler_raw = controls.get("sampler")
+    scheduler_raw = controls.get("scheduler")
+    sampler_changed = False
+    scheduler_changed = False
+    if sampler_raw:
+        processing.sampler_name = str(sampler_raw)
+        plan.sampler_name = str(sampler_raw)
+        sampler_changed = True
+    if scheduler_raw:
+        processing.scheduler = str(scheduler_raw)
+        plan.scheduler_name = str(scheduler_raw)
+        scheduler_changed = True
+    if sampler_changed and not scheduler_changed:
+        spec = get_sampler_spec(str(plan.sampler_name))
+        processing.scheduler = spec.default_scheduler
+        plan.scheduler_name = spec.default_scheduler
 
     try:
         if "cfg" in controls:
@@ -177,4 +181,3 @@ def ensure_sampler_and_rng(
     )
     processing.rng = rng
     return rng
-

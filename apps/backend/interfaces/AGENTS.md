@@ -52,3 +52,5 @@ Status: Active
 - 2026-01-04: `/api/text-encoders` now mirrors inventory-derived TE file labels for Flux.1/ZImage to reduce “exists in inventory but not in dropdown” drift; tooling guardrail added to prevent direct `apps/paths.json` reads outside `infra/config/paths.py`.
 - 2026-01-06: `/api/{txt2img,img2img}` now treats `.gguf` checkpoints as core-only: requires `vae_sha` + `tenc_sha` (tenc accepts arrays for multi-encoder models); ZImage enforces exactly 1 (Qwen3) and Flux.1 enforces exactly 2 (CLIP + T5).
 - 2026-01-06: API workers now set `engine_options.vae_source`/`engine_options.tenc_source` (`built_in` vs `external`) to make asset selection explicit (pairs with `engine_options.vae_path`/`engine_options.tenc_path` when external).
+- 2026-01-06: `/api/{samplers,schedulers}` now returns minimal entries; `/api/{txt2img,img2img}` validates canonical sampler/scheduler selection (including per-sampler scheduler compatibility) and fails fast with HTTP 400.
+- 2026-01-06: `/api/{txt2vid,img2vid}` default sampler now uses `uni-pc` (scheduler `simple`) to match WAN22 diffusers scheduler metadata.

@@ -73,7 +73,7 @@ class Flux(CodexDiffusionEngine):
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
             extras={
-                "samplers": ("euler", "euler_a", "ddim", "dpmpp_2m"),
+                "samplers": ("euler", "euler a", "ddim", "dpm++ 2m"),
                 "schedulers": ("simple", "beta", "normal"),
             },
         )

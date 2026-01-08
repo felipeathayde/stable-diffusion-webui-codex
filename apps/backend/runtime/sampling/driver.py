@@ -331,9 +331,10 @@ class CodexSampler:
                 prepared = True
 
                 scheduler_name = getattr(processing, "scheduler", None)
-                if scheduler_name in (None, "") and spec.default_scheduler:
+                if scheduler_name in (None, ""):
                     scheduler_name = spec.default_scheduler
-
+                if not isinstance(scheduler_name, str) or not scheduler_name:
+                    raise ValueError("Scheduler name must be a non-empty string")
                 if not spec.is_supported_scheduler(scheduler_name):
                     raise ValueError(
                         f"Scheduler '{scheduler_name}' is not supported by sampler '{spec.name}'. "
@@ -347,6 +348,8 @@ class CodexSampler:
                         steps=steps,
                         noise_source=os.getenv("CODEX_NOISE_SOURCE"),
                         eta_noise_seed_delta=int(getattr(processing, "eta_noise_seed_delta", 0) or 0),
+                        height=(int(getattr(processing, "height", 0) or 0) or None),
+                        width=(int(getattr(processing, "width", 0) or 0) or None),
                         device=noise.device,
                         dtype=noise.dtype,
                         predictor=model,
@@ -449,8 +452,6 @@ class CodexSampler:
                     progress_bar = tqdm(total=steps - start_idx, desc="sampling", leave=False)
 
                 sampler_kind = active_context.sampler_kind
-                if sampler_kind is SamplerKind.AUTOMATIC:
-                    sampler_kind = SamplerKind.EULER_A
 
                 # Default to native sampler; enable k-diffusion only when explicitly requested.
                 use_kd = str(os.getenv("CODEX_SAMPLER_ENABLE_KDIFFUSION", "0")).strip().lower() in {"1", "true", "yes", "on"}

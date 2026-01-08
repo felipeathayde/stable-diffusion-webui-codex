@@ -33,7 +33,7 @@ WAN_FLOW_MULTIPLIER_DEFAULT = 1000.0
 
 def get_flow_sigmas(
     num_steps: int,
-    shift: float = 8.0,
+    shift: float,
     device: torch.device = torch.device("cpu"),
     dtype: torch.dtype = torch.float32,
 ) -> torch.Tensor:
@@ -43,7 +43,7 @@ def get_flow_sigmas(
     
     Args:
         num_steps: Number of sampling steps.
-        shift: Flow shift parameter (WAN uses 8.0 for 14B).
+        shift: Flow shift parameter (mu) from the model's scheduler_config.json.
         device: Target device.
         dtype: Target dtype.
     
@@ -86,7 +86,7 @@ class WanVideoSampler:
         uncond: Optional[torch.Tensor] = None,  # [B, L, D] negative conditioning
         num_steps: int = 20,
         cfg_scale: float = 7.5,
-        flow_shift: float = 8.0,
+        flow_shift: float,
         flow_multiplier: float = WAN_FLOW_MULTIPLIER_DEFAULT,
         seed: Optional[int] = None,
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
@@ -186,13 +186,13 @@ def sample_txt2vid(
     height: int = 432,
     num_frames: int = 16,
     num_steps: int = 20,
-        cfg_scale: float = 7.5,
-        flow_shift: float = 8.0,
-        flow_multiplier: float = WAN_FLOW_MULTIPLIER_DEFAULT,
-        seed: Optional[int] = None,
-        device: torch.device = torch.device("cuda"),
-        dtype: torch.dtype = torch.bfloat16,
-        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+    cfg_scale: float = 7.5,
+    flow_shift: float,
+    flow_multiplier: float = WAN_FLOW_MULTIPLIER_DEFAULT,
+    seed: Optional[int] = None,
+    device: torch.device = torch.device("cuda"),
+    dtype: torch.dtype = torch.bfloat16,
+    callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
 ) -> torch.Tensor:
     """High-level txt2vid sampling function.
     

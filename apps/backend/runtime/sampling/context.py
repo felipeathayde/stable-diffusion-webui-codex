@@ -11,7 +11,7 @@ Defines the canonical scheduler names and builds sigma schedules (Karras, expone
 per-run sampling state (sampler kind, noise settings, scheduler config) into a `SamplingContext`.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (alias-aware, no silent fallback).
+- `SchedulerName` (enum): Canonical scheduler names for sigma schedule construction (strict, no silent fallback).
 - `_append_zero` (function): Appends a terminal sigma=0 to a sigma schedule tensor.
 - `_karras_schedule` (function): Builds a Karras sigma schedule.
 - `_polyexponential_schedule` (function): Builds a polyexponential sigma schedule.
@@ -44,7 +44,6 @@ import torch
 
 from apps.backend.core.rng import NoiseSettings, NoiseSourceKind
 from apps.backend.engines.util.schedulers import SamplerKind
-from apps.backend.runtime.sampling.catalog import SCHEDULER_ALIAS_TO_CANONICAL
 from apps.backend.infra.config.env_flags import env_flag
 
 
@@ -57,11 +56,9 @@ class SchedulerName(str, Enum):
     Notes
     - This controls ONLY the sigma schedule construction, not the integrator
       (which is selected via `SamplerKind`).
-    - We accept a limited set of aliases coming from UI/API or diffusers names,
-      but do not silently fallback: unknown values raise with a clear message.
+    - Values are strict and fail-fast: unknown scheduler names raise with a clear message.
     """
 
-    AUTOMATIC = "automatic"
     SIMPLE = "simple"
     KARRAS = "karras"
     EULER_DISCRETE = "euler_discrete"
@@ -82,15 +79,19 @@ class SchedulerName(str, Enum):
     ALIGN_YOUR_STEPS_32 = "align_your_steps_32"
 
     @staticmethod
-    def from_string(name: str | None) -> "SchedulerName":
-        key = (name or "automatic").strip().lower()
-        canonical = SCHEDULER_ALIAS_TO_CANONICAL.get(key, key)
+    def from_string(name: str) -> "SchedulerName":
+        if not isinstance(name, str):
+            raise TypeError("scheduler name must be a string")
+        if not name:
+            raise ValueError("scheduler name must not be empty")
         try:
-            return SchedulerName(canonical)
+            return SchedulerName(name)
         except ValueError as exc:
             raise ValueError(
                 f"Unsupported scheduler '{name}'. Supported: {[m.value for m in SchedulerName]}"
             ) from exc
+
+
 def _append_zero(sigmas: torch.Tensor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
     terminal = torch.zeros(1, device=device, dtype=dtype)
     return torch.cat([sigmas.to(device=device, dtype=dtype), terminal])
@@ -154,7 +155,14 @@ def _uniform_schedule_from_predictor(steps: int, predictor, *, device: torch.dev
     return _append_zero(ladder, device=device, dtype=dtype)
 
 
-def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+def _simple_schedule_from_predictor(
+    steps: int,
+    predictor,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    flow_shift: float | None = None,
+) -> torch.Tensor:
     """Predictor-ladder 'simple' schedule built via predictor sigma/timestep.
 
     Mirrors the reference schedule-linker `get_sigmas(n)` behavior:
@@ -170,19 +178,31 @@ def _simple_schedule_from_predictor(steps: int, predictor, *, device: torch.devi
     # - Because 0.0 is already present as the final inference sigma, the schedule
     #   ends with a double-zero tail (dt=0 for the last step). This matches the
     #   upstream recommendation `num_inference_steps=9` to get 8 effective steps.
-    mu = getattr(predictor, "mu", None)
-    pseudo = getattr(predictor, "pseudo_timestep_range", None)
-    if mu is not None and int(pseudo or 0) == 1000:
-        try:
-            mu_value = float(mu)
-        except Exception:  # noqa: BLE001 - defensive
-            mu_value = 0.0
-        if mu_value > 0.0:
-            base = torch.linspace(1.0, 0.0, int(steps), device=device, dtype=dtype)
-            if mu_value == 1.0:
+    pred_type = getattr(predictor, "prediction_type", None)
+    if isinstance(pred_type, str) and pred_type.lower() == "const":
+        shift_value: float | None
+        if flow_shift is not None:
+            shift_value = float(flow_shift)
+        else:
+            mu = getattr(predictor, "mu", None)
+            try:
+                shift_value = float(mu) if mu is not None else None
+            except Exception:  # noqa: BLE001 - defensive
+                shift_value = None
+
+        pseudo = getattr(predictor, "pseudo_timestep_range", None)
+        if shift_value is not None and shift_value > 0.0:
+            # Z Image Turbo parity: when pseudo_timestep_range=1000, diffusers forces
+            # sigma_min=0.0, yielding a double-zero tail after appending terminal 0.
+            include_zero = int(pseudo or 0) == 1000
+            if include_zero:
+                base = torch.linspace(1.0, 0.0, int(steps), device=device, dtype=dtype)
+            else:
+                base = torch.linspace(1.0, 1.0 / max(float(steps), 1.0), int(steps), device=device, dtype=dtype)
+            if shift_value == 1.0:
                 shifted = base
             else:
-                shifted = mu_value * base / (1.0 + (mu_value - 1.0) * base)
+                shifted = shift_value * base / (1.0 + (shift_value - 1.0) * base)
             return _append_zero(shifted, device=device, dtype=dtype)
 
     base_sigmas = getattr(predictor, "sigmas", None)
@@ -313,6 +333,7 @@ def build_sigma_schedule(
     device: torch.device,
     dtype: torch.dtype,
     predictor: Optional[object] = None,
+    flow_shift: float | None = None,
     is_sdxl: bool = False,
 ) -> torch.Tensor:
     if steps <= 0:
@@ -320,14 +341,10 @@ def build_sigma_schedule(
 
     kind = SchedulerName.from_string(scheduler_name)
 
-    if kind is SchedulerName.AUTOMATIC:
-        # Linear sigma ramp with a terminal 0 (matches sampler expectation).
-        sigmas = torch.linspace(sigma_max, sigma_min, steps, device=device, dtype=dtype)
-        return _append_zero(sigmas, device=device, dtype=dtype)
     if kind is SchedulerName.SIMPLE:
         if predictor is None:
             raise RuntimeError("predictor required for simple scheduler")
-        return _simple_schedule_from_predictor(steps, predictor, device=device, dtype=dtype)
+        return _simple_schedule_from_predictor(steps, predictor, device=device, dtype=dtype, flow_shift=flow_shift)
     if kind in (SchedulerName.KARRAS, SchedulerName.EULER_DISCRETE):
         return _karras_schedule(steps, sigma_min, sigma_max, device=device, dtype=dtype)
     if kind is SchedulerName.EXPONENTIAL:
@@ -398,17 +415,19 @@ class SamplingContext:
 def build_sampling_context(
     sd_model,
     *,
-    sampler_name: str | None,
-    scheduler_name: str | None,
+    sampler_name: str,
+    scheduler_name: str,
     steps: int,
     noise_source: str | None,
     eta_noise_seed_delta: int,
+    height: int | None = None,
+    width: int | None = None,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
     predictor: Optional[object] = None,
     is_sdxl: bool = False,
 ) -> SamplingContext:
-    sampler_kind = SamplerKind.from_string(sampler_name or "automatic")
+    sampler_kind = SamplerKind.from_string(sampler_name)
     predictor_container = predictor or getattr(sd_model.codex_objects.denoiser, "model", None)
     if predictor_container is None or getattr(predictor_container, "predictor", None) is None:
         raise RuntimeError("sd_model does not expose a predictor for sigma bounds")
@@ -441,20 +460,109 @@ def build_sampling_context(
     dev = device or predictor_container.diffusion_model.load_device
     dt = dtype or getattr(predictor_container.diffusion_model, "dtype", torch.float32)
 
+    flow_shift_value: float | None = None
+    if prediction_type == "const":
+        # Flow-match models must resolve flow_shift from the canonical scheduler_config.json.
+        from pathlib import Path
+
+        from apps.backend.infra.config.repo_root import get_repo_root
+        from apps.backend.runtime.model_registry.family_runtime import get_family_spec
+        from apps.backend.runtime.model_registry.flow_shift import (
+            FlowShiftMode,
+            FlowShiftSpec,
+            flow_shift_spec_from_repo_dir,
+        )
+        from apps.backend.runtime.model_registry.specs import ModelFamily
+
+        spec_obj: FlowShiftSpec | None = None
+        raw_spec = getattr(pred, "flow_shift_spec", None)
+        if isinstance(raw_spec, FlowShiftSpec):
+            spec_obj = raw_spec
+        else:
+            bundle = getattr(sd_model, "_current_bundle", None)
+            repo_ref = getattr(bundle, "model_ref", None)
+            if isinstance(repo_ref, str):
+                repo_path = Path(repo_ref)
+                if repo_path.is_dir():
+                    spec_obj = flow_shift_spec_from_repo_dir(repo_path)
+
+        if spec_obj is None:
+            # If the model isn't a diffusers directory, try resolving the canonical
+            # scheduler config from the vendored Hugging Face mirror using the
+            # detected repo_hint.
+            bundle = getattr(sd_model, "_current_bundle", None)
+            sig = getattr(bundle, "signature", None)
+            repo_hint = getattr(sig, "repo_hint", None) if sig is not None else None
+            if isinstance(repo_hint, str) and repo_hint.strip():
+                repo_root = get_repo_root()
+                vendor_root = repo_root / "apps" / "backend" / "huggingface"
+                vendor = vendor_root / repo_hint
+                if not vendor.is_dir():
+                    # Some detectors use a full HF repo id as repo_hint, but the vendored
+                    # mirror may be stored under a shorter directory name (e.g., "Chroma").
+                    vendor = vendor_root / Path(repo_hint).name
+                if vendor.is_dir():
+                    spec_obj = flow_shift_spec_from_repo_dir(vendor)
+
+        if spec_obj is None:
+            # Z-Image GGUF checkpoints are core-only; shift is defined by the vendored diffusers scheduler config.
+            bundle = getattr(sd_model, "_current_bundle", None)
+            family = getattr(bundle, "family", None)
+            if family is ModelFamily.ZIMAGE:
+                repo_root = get_repo_root()
+                zimage_repo = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo"
+                spec_obj = flow_shift_spec_from_repo_dir(zimage_repo)
+
+        if spec_obj is None:
+            raise RuntimeError(
+                "Flow-match sampling requires a scheduler_config.json to resolve flow_shift, but none was found. "
+                "Load a diffusers repo with scheduler/ configs or ensure the engine provides vendored HF assets."
+            )
+
+        if spec_obj.mode is FlowShiftMode.DYNAMIC:
+            if height is None or width is None:
+                raise RuntimeError("Dynamic flow_shift requires explicit height/width for seq_len calculation.")
+            bundle = getattr(sd_model, "_current_bundle", None)
+            family = getattr(bundle, "family", None)
+            if not isinstance(family, ModelFamily):
+                raise RuntimeError("Dynamic flow_shift requires a known ModelFamily on the loaded bundle.")
+            fam = get_family_spec(family)
+            scale = int(fam.latent_scale_factor)
+            patch = int(fam.patch_size)
+            if scale <= 0 or patch <= 0:
+                raise RuntimeError(f"Invalid latent_scale_factor/patch_size for family={family}: {scale}/{patch}")
+            step = scale * patch
+            if (int(height) % step) != 0 or (int(width) % step) != 0:
+                raise RuntimeError(
+                    f"Invalid size for dynamic flow shift: {int(width)}x{int(height)} (expected multiples of {step})."
+                )
+            seq_len = (int(height) // scale // patch) * (int(width) // scale // patch)
+            flow_shift_value = spec_obj.resolve_effective_shift(seq_len=seq_len)
+        else:
+            flow_shift_value = spec_obj.resolve_effective_shift()
+
     sigmas = build_sigma_schedule(
-        scheduler_name or "Automatic",
+        scheduler_name,
         steps,
         sigma_min=sigma_min,
         sigma_max=sigma_max,
         device=dev,
         dtype=dt,
         predictor=pred,
+        flow_shift=flow_shift_value,
         is_sdxl=is_sdxl or bool(getattr(sd_model, "is_sdxl", False)),
     )
 
+    if prediction_type == "const" and flow_shift_value is not None:
+        try:
+            sigma_max = float(sigmas[0].detach().cpu().item())
+            sigma_min = float(sigmas[-1].detach().cpu().item())
+        except Exception:
+            pass
+
     context = SamplingContext(
         sampler_kind=sampler_kind,
-        scheduler_name=scheduler_name or "Automatic",
+        scheduler_name=scheduler_name,
         sigmas=sigmas,
         steps=steps,
         noise_settings=noise_settings,

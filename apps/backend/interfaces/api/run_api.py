@@ -1429,8 +1429,6 @@ def build_app() -> FastAPI:
             samplers.append(
                 {
                     "name": entry["name"],
-                    "label": entry.get("label", str(entry["name"]).title()),
-                    "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
                     "supported": bool(entry.get("supported", True)),
                     "default_scheduler": spec.default_scheduler if spec else None,
                     "allowed_schedulers": sorted(spec.allowed_schedulers) if spec else [],
@@ -1447,8 +1445,6 @@ def build_app() -> FastAPI:
             schedulers.append(
                 {
                     "name": entry["name"],
-                    "label": entry.get("label", entry["name"].title()),
-                    "aliases": [alias.strip() for alias in entry.get("aliases", []) if isinstance(alias, str) and alias.strip()],
                     "supported": bool(entry.get("supported", True)),
                 }
             )
@@ -2221,6 +2217,24 @@ def build_app() -> FastAPI:
             distilled_cfg_scale = 3.5
         sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
         scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
+        try:
+            from apps.backend.runtime.sampling.registry import get_sampler_spec
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            spec = get_sampler_spec(str(sampler_name))
+            SchedulerName.from_string(str(scheduler_name))
+            if not spec.is_supported_scheduler(str(scheduler_name)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Scheduler '{scheduler_name}' is not supported by sampler '{sampler_name}'. "
+                        f"Allowed: {sorted(spec.allowed_schedulers)}"
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = _require_int_field(payload, 'seed')
         clip_skip = _require_int_field(payload, 'clip_skip', minimum=1) if 'clip_skip' in payload else None
         styles = _parse_styles(payload)
@@ -2643,6 +2657,24 @@ def build_app() -> FastAPI:
                 raise HTTPException(status_code=400, detail="'img2img_height' is required")
         sampler_name = _p.require(payload, 'img2img_sampling')
         scheduler_name = _p.require(payload, 'img2img_scheduler')
+        try:
+            from apps.backend.runtime.sampling.registry import get_sampler_spec
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            spec = get_sampler_spec(str(sampler_name))
+            SchedulerName.from_string(str(scheduler_name))
+            if not spec.is_supported_scheduler(str(scheduler_name)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Scheduler '{scheduler_name}' is not supported by sampler '{sampler_name}'. "
+                        f"Allowed: {sorted(spec.allowed_schedulers)}"
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = _p.as_int(payload, 'img2img_seed')
         clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
         noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
@@ -2980,8 +3012,16 @@ def build_app() -> FastAPI:
         steps_val = int(payload.get('txt2vid_steps', 30))
         fps_val = int(payload.get('txt2vid_fps', 24))
         frames_val = int(payload.get('txt2vid_num_frames', 16))
-        sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'Euler')))
-        scheduler_name = str(payload.get('txt2vid_scheduler', 'Automatic'))
+        sampler_name = str(payload.get('txt2vid_sampler', payload.get('txt2vid_sampling', 'uni-pc')))
+        scheduler_name = str(payload.get('txt2vid_scheduler', 'simple'))
+        try:
+            from apps.backend.types.samplers import SamplerKind
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            SamplerKind.from_string(sampler_name)
+            SchedulerName.from_string(scheduler_name)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = int(payload.get('txt2vid_seed', -1))
         cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
     
@@ -3129,8 +3169,16 @@ def build_app() -> FastAPI:
         steps_val = int(payload.get('img2vid_steps', 30))
         fps_val = int(payload.get('img2vid_fps', 24))
         frames_val = int(payload.get('img2vid_num_frames', 16))
-        sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'Euler')))
-        scheduler_name = str(payload.get('img2vid_scheduler', 'Automatic'))
+        sampler_name = str(payload.get('img2vid_sampler', payload.get('img2vid_sampling', 'uni-pc')))
+        scheduler_name = str(payload.get('img2vid_scheduler', 'simple'))
+        try:
+            from apps.backend.types.samplers import SamplerKind
+            from apps.backend.runtime.sampling.context import SchedulerName
+
+            SamplerKind.from_string(sampler_name)
+            SchedulerName.from_string(scheduler_name)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = int(payload.get('img2vid_seed', -1))
         cfg_val = float(payload.get('img2vid_cfg_scale', 7.0))
     
@@ -3311,6 +3359,17 @@ def build_app() -> FastAPI:
         frames_val = int(payload.get("vid2vid_num_frames", 16))
         sampler_name = str(payload.get("vid2vid_sampler", ""))
         scheduler_name = str(payload.get("vid2vid_scheduler", ""))
+        if sampler_name.strip() or scheduler_name.strip():
+            try:
+                from apps.backend.types.samplers import SamplerKind
+                from apps.backend.runtime.sampling.context import SchedulerName
+
+                if sampler_name.strip():
+                    SamplerKind.from_string(sampler_name.strip())
+                if scheduler_name.strip():
+                    SchedulerName.from_string(scheduler_name.strip())
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = int(payload.get("vid2vid_seed", -1))
         cfg_val = float(payload.get("vid2vid_cfg_scale", 7.0))
         strength_val = payload.get("vid2vid_strength")

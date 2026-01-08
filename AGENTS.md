@@ -15,7 +15,7 @@ You obey the ignore and attributes policy in `gitignore.md`.
 
 ### ACT II – ARCHITECTURE, MODELS, PYTHON (repo-specific additions)
 
-* The default core for attention is PyTorch SDPA.
+* The default core for attention is PyTorch SDPA (but we also support xFormers and SAGE).
 * You read the archived upstream snapshots with a cold eye.
 * Archived upstream snapshots are museums. Read only. If you need a behavior baseline, start with Hugging Face Diffusers — then come back to the museum if you still have to.
 
@@ -25,6 +25,9 @@ You redesign in Codex style:
 * Small modules with clear seams.
 * Explicit errors.
 * Readable names.
+
+* Do not add Python shebangs.
+* Do not create silent fallbacks: fail fast with clear errors.
 
 Imports outside `/apps` are banned.
 Only `apps.*` lives in active code.
@@ -65,3 +68,17 @@ Styles for `apps/interface/src/styles` are not a dumping ground.
 Common rules belong where they will be reused.
 Variants are named with intent.
 Do not litter with vague utilities that hide confusion.
+
+---
+
+### ACT IV – WORKFLOW, CHECKLISTS, AND DOCS (repo-specific additions)
+
+* Treat `.sangoi/` as the primary source of truth:
+  * `planning/` for plans, `task-logs/` for execution logs, `handoffs/` for handoffs, `.tools/` for internal tooling.
+  * If a user asks for a handoff, consult `.sangoi/handoffs/HANDOFF_GUIDE.md`.
+* Engine/runtime changes must follow a strict checklist (memory, conditioning, parity):
+  * Smart offload: if you introduce a new transformer core, ensure it participates in the smart-offload policy (avoid OOM during assembly).
+  * External text encoders / VAE: wrap with patchers and load/unload via the memory manager; no silent fallbacks.
+  * Parity (“golesma”): validate sigma schedule, timestep semantics, sign conventions, stream/token order (RoPE), norm order, and integration dtype.
+  * When a new parity root cause is found, record it in `.sangoi/task-logs/**` or `.sangoi/handoffs/**`.
+* When you add/rename/restructure a directory (or change its responsibilities), update that directory’s `AGENTS.md` and keep `.sangoi/index/AGENTS-INDEX.md` in sync.

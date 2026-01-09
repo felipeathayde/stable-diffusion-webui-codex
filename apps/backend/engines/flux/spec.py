@@ -367,13 +367,14 @@ def assemble_flux_runtime(
     t5_attr = "t5xxl"
     t5_encoder = getattr(clip.cond_stage_model, t5_attr)
     t5_tokenizer = getattr(clip.tokenizer, t5_attr)
-    
+
     # Get t5_min_length from family spec
-    from apps.backend.runtime.model_registry import FAMILY_RUNTIME_SPECS
+    from apps.backend.runtime.model_registry.family_runtime import FAMILY_RUNTIME_SPECS
+
     flux_family = ModelFamily.CHROMA if spec.name == "chroma" else ModelFamily.FLUX
     family_spec = FAMILY_RUNTIME_SPECS.get(flux_family)
     t5_min_len = family_spec.t5_min_length if family_spec and family_spec.t5_min_length else 256
-    
+
     t5_engine = T5TextProcessingEngine(
         text_encoder=t5_encoder,
         tokenizer=t5_tokenizer,

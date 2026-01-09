@@ -54,8 +54,8 @@ from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
-from apps.backend.runtime.model_registry import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.errors import ModelRegistryError
+from apps.backend.runtime.model_registry.loader import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,
     ModelFamily,
@@ -1012,7 +1012,7 @@ def _load_huggingface_component(
 
         if cls_name == "UNet2DConditionModel":
             # For SD15/SD20/SDXL families use Codex legacy UNet with LDM-style config
-            from apps.backend.runtime.common.nn.unet import UNet2DConditionModel as _CodexUNet
+            from apps.backend.runtime.common.nn.unet.model import UNet2DConditionModel as _CodexUNet
 
             def model_ctor(cfg: Mapping[str, Any]) -> Any:
                 return _CodexUNet.from_config(cfg)

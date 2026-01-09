@@ -14,15 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ConversionConfig` (dataclass): Conversion configuration (input/output paths, quantization choices, tensor overrides, and metadata inputs).
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
-- `_get_layer_key_mapping` (function): Builds layer-index key mapping for known architectures (used for tensor name remapping).
-- `build_key_mapping` (function): Builds the full key mapping for a model given number of layers.
 - `_TensorPlan` (dataclass): Planned tensor conversion entry (name/shape/type + strategy) used by the converter.
-- `_resolve_config_json_path` (function): Resolves a config path (file/dir/HF layout) to a concrete `config.json` path.
-- `_ShardedSafetensorsIndex` (dataclass): Parsed representation of a sharded SafeTensors index JSON.
-- `_load_sharded_safetensors_index` (function): Loads a sharded SafeTensors index and validates required fields.
-- `_pick_safetensors_index_path` (function): Picks an index JSON path from a weights directory (if sharded).
-- `_ShardedSafetensors` (class): Abstraction over sharded SafeTensors sources (opens the right shard for a tensor key).
-- `_open_safetensors_source` (function): Opens a SafeTensors source (single file or sharded directory/index) for reading.
 - `_requested_ggml_type` (function): Maps `QuantizationType` to the requested `GGMLQuantizationType`.
 - `_default_tensor_type_overrides` (function): Returns default per-tensor type overrides for a given quantization strategy.
 - `_compile_tensor_overrides` (function): Compiles user-provided overrides into normalized match rules.
@@ -38,7 +30,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import contextlib
 import datetime as _dt
 import hashlib
 import json
@@ -51,7 +42,6 @@ from typing import Any, Callable, Dict, Optional, Sequence
 
 import numpy as np
 import torch
-from safetensors import safe_open
 
 from apps.backend.quantization.api import dequantize_numpy, quantize_numpy
 from apps.backend.quantization.gguf import (
@@ -63,6 +53,8 @@ from apps.backend.quantization.gguf import (
 )
 from apps.backend.quantization.gguf.quant_shapes import quant_shape_to_byte_shape
 from apps.backend.infra.config.provenance import CODEX_GENERATED_BY, CODEX_REPO_URL, best_effort_git_commit
+from apps.backend.runtime.tools import gguf_converter_key_mapping as _key_mapping
+from apps.backend.runtime.tools import gguf_converter_safetensors_source as _safetensors_source
 
 logger = logging.getLogger("backend.runtime.tools.gguf_converter")
 
@@ -124,41 +116,6 @@ class GGUFVerificationError(Exception):
     pass
 
 
-# Key mappings: HuggingFace → GGUF
-HF_TO_GGUF_KEYS = {
-    "model.embed_tokens.weight": "token_embd.weight",
-    "model.norm.weight": "output_norm.weight",
-    "lm_head.weight": "output.weight",
-}
-
-def _get_layer_key_mapping(layer_idx: int) -> Dict[str, str]:
-    """Get key mappings for a specific layer."""
-    prefix_hf = f"model.layers.{layer_idx}"
-    prefix_gguf = f"blk.{layer_idx}"
-    
-    return {
-        f"{prefix_hf}.self_attn.q_proj.weight": f"{prefix_gguf}.attn_q.weight",
-        f"{prefix_hf}.self_attn.k_proj.weight": f"{prefix_gguf}.attn_k.weight",
-        f"{prefix_hf}.self_attn.v_proj.weight": f"{prefix_gguf}.attn_v.weight",
-        f"{prefix_hf}.self_attn.o_proj.weight": f"{prefix_gguf}.attn_output.weight",
-        f"{prefix_hf}.self_attn.q_norm.weight": f"{prefix_gguf}.attn_q_norm.weight",
-        f"{prefix_hf}.self_attn.k_norm.weight": f"{prefix_gguf}.attn_k_norm.weight",
-        f"{prefix_hf}.mlp.gate_proj.weight": f"{prefix_gguf}.ffn_gate.weight",
-        f"{prefix_hf}.mlp.up_proj.weight": f"{prefix_gguf}.ffn_up.weight",
-        f"{prefix_hf}.mlp.down_proj.weight": f"{prefix_gguf}.ffn_down.weight",
-        f"{prefix_hf}.input_layernorm.weight": f"{prefix_gguf}.attn_norm.weight",
-        f"{prefix_hf}.post_attention_layernorm.weight": f"{prefix_gguf}.ffn_norm.weight",
-    }
-
-
-def build_key_mapping(num_layers: int) -> Dict[str, str]:
-    """Build complete HuggingFace → GGUF key mapping."""
-    mapping = dict(HF_TO_GGUF_KEYS)
-    for i in range(num_layers):
-        mapping.update(_get_layer_key_mapping(i))
-    return mapping
-
-
 @dataclass(frozen=True, slots=True)
 class _TensorPlan:
     src_name: str
@@ -168,157 +125,6 @@ class _TensorPlan:
     stored_shape: tuple[int, ...]
     stored_dtype: np.dtype
     stored_nbytes: int
-
-
-def _resolve_config_json_path(config_path: str) -> Path:
-    path = Path(config_path)
-    if path.is_dir():
-        path = path / "config.json"
-    if not path.is_file():
-        raise FileNotFoundError(f"config.json not found at: {path}")
-    return path
-
-
-@dataclass(frozen=True, slots=True)
-class _ShardedSafetensorsIndex:
-    index_path: Path
-    tensor_to_shard: dict[str, Path]
-
-
-def _load_sharded_safetensors_index(index_path: Path) -> _ShardedSafetensorsIndex:
-    data = json.loads(index_path.read_text(encoding="utf-8"))
-    weight_map = data.get("weight_map")
-    if not isinstance(weight_map, dict) or not weight_map:
-        raise ValueError(f"Invalid safetensors index (missing weight_map): {index_path}")
-
-    base = index_path.parent
-    out: dict[str, Path] = {}
-    for k, v in weight_map.items():
-        if not isinstance(k, str) or not isinstance(v, str):
-            raise ValueError(f"Invalid safetensors index (non-string weight_map entry): {index_path}")
-        shard = (base / v).resolve()
-        if shard.suffix.lower() != ".safetensors":
-            raise ValueError(f"Unsupported shard type in {index_path}: {v!r} (expected .safetensors)")
-        if not shard.is_file():
-            raise FileNotFoundError(f"Shard referenced by {index_path} is missing: {shard}")
-        out[k] = shard
-
-    return _ShardedSafetensorsIndex(index_path=index_path.resolve(), tensor_to_shard=out)
-
-
-def _pick_safetensors_index_path(weights_dir: Path) -> Path | None:
-    preferred = weights_dir / "model.safetensors.index.json"
-    if preferred.is_file():
-        return preferred
-
-    candidates = sorted(weights_dir.glob("*.safetensors.index.json"))
-    if len(candidates) == 1:
-        return candidates[0]
-    if not candidates:
-        return None
-
-    # Common HF naming conventions; prefer the most specific.
-    for fname in (
-        "diffusion_pytorch_model.safetensors.index.json",
-        "pytorch_model.safetensors.index.json",
-    ):
-        p = weights_dir / fname
-        if p.is_file():
-            return p
-
-    names = ", ".join(p.name for p in candidates[:6])
-    more = "" if len(candidates) <= 6 else f" (+{len(candidates) - 6} more)"
-    raise ValueError(
-        f"Multiple safetensors index files found under {weights_dir}: {names}{more}. "
-        "Pass the desired '*.safetensors.index.json' path explicitly."
-    )
-
-
-class _ShardedSafetensors:
-    def __init__(self, index: _ShardedSafetensorsIndex) -> None:
-        self._index = index
-        self._handles: dict[Path, Any] = {}
-        self._stack: contextlib.ExitStack | None = None
-
-    def __enter__(self) -> "_ShardedSafetensors":
-        self._stack = contextlib.ExitStack()
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if self._stack is not None:
-            self._stack.close()
-        self._stack = None
-        self._handles.clear()
-
-    def keys(self):
-        return self._index.tensor_to_shard.keys()
-
-    def _handle_for(self, shard: Path):
-        if shard in self._handles:
-            return self._handles[shard]
-        if self._stack is None:
-            raise RuntimeError("Sharded safetensors handle is not open (missing context manager).")
-        handle = self._stack.enter_context(safe_open(str(shard), framework="pt", device="cpu"))
-        self._handles[shard] = handle
-        return handle
-
-    def get_slice(self, name: str):
-        shard = self._index.tensor_to_shard.get(name)
-        if shard is None:
-            raise KeyError(f"Tensor not found in sharded safetensors index: {name}")
-        return self._handle_for(shard).get_slice(name)
-
-    def get_tensor(self, name: str):
-        shard = self._index.tensor_to_shard.get(name)
-        if shard is None:
-            raise KeyError(f"Tensor not found in sharded safetensors index: {name}")
-        return self._handle_for(shard).get_tensor(name)
-
-
-@contextlib.contextmanager
-def _open_safetensors_source(path: str):
-    """Open a safetensors source from either:
-    - a single `.safetensors` file,
-    - a `.safetensors.index.json` file (sharded),
-    - or a directory containing either a single `.safetensors` or an index file.
-    """
-    p = Path(path).expanduser()
-    if p.is_dir():
-        index_path = _pick_safetensors_index_path(p)
-        if index_path is not None:
-            index = _load_sharded_safetensors_index(index_path)
-            with _ShardedSafetensors(index) as source:
-                yield source
-            return
-
-        candidates = sorted(p.glob("*.safetensors"))
-        if len(candidates) == 1:
-            with safe_open(str(candidates[0]), framework="pt", device="cpu") as source:
-                yield source
-            return
-        if not candidates:
-            raise FileNotFoundError(f"No .safetensors files found under: {p}")
-        names = ", ".join(c.name for c in candidates[:6])
-        more = "" if len(candidates) <= 6 else f" (+{len(candidates) - 6} more)"
-        raise ValueError(
-            f"Multiple .safetensors files found under {p}: {names}{more}. "
-            "Pass a single file path or the '*.safetensors.index.json' path explicitly."
-        )
-
-    # Explicit index file path.
-    if p.is_file() and p.name.endswith(".safetensors.index.json"):
-        index = _load_sharded_safetensors_index(p)
-        with _ShardedSafetensors(index) as source:
-            yield source
-        return
-
-    if p.suffix.lower() != ".safetensors":
-        raise ValueError(f"Expected a .safetensors file/dir/index.json, got: {p}")
-    if not p.is_file():
-        raise FileNotFoundError(f"Safetensors file not found: {p}")
-    with safe_open(str(p), framework="pt", device="cpu") as source:
-        yield source
-
 
 def _requested_ggml_type(quant: QuantizationType) -> GGMLQuantizationType:
     if quant == QuantizationType.F32:
@@ -631,7 +437,7 @@ def convert_safetensors_to_gguf(
     update_progress()
     
     # Load model config
-    config_path = _resolve_config_json_path(config.config_path)
+    config_path = _safetensors_source.resolve_config_json_path(config.config_path)
     with open(config_path, "r", encoding="utf-8") as f:
         model_config = json.load(f)
     
@@ -644,7 +450,7 @@ def convert_safetensors_to_gguf(
     overrides = _compile_tensor_overrides(config.quantization, config.tensor_type_overrides)
     
     # Build key mapping
-    key_mapping = build_key_mapping(num_layers)
+    key_mapping = _key_mapping.build_key_mapping(num_layers)
     
     # Load safetensors
     progress.status = "loading_weights"
@@ -655,7 +461,7 @@ def convert_safetensors_to_gguf(
     output_path = Path(config.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _open_safetensors_source(config.safetensors_path) as sf:
+    with _safetensors_source.open_safetensors_source(config.safetensors_path) as sf:
         tensor_names = list(sf.keys())
         progress.total_steps = len(tensor_names)
 
@@ -865,7 +671,7 @@ def _verify_gguf_file(
 
     # 2) Spot-check a few tensors against source.
     reverse_mapping = {v: k for k, v in key_mapping.items()}
-    with _open_safetensors_source(source_safetensors) as source:
+    with _safetensors_source.open_safetensors_source(source_safetensors) as source:
         for plan in tensor_plans[:3]:
             src_name = reverse_mapping.get(plan.gguf_name, plan.gguf_name)
             if src_name not in source.keys():

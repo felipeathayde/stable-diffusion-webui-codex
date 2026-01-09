@@ -8,10 +8,14 @@ Status: Active
 - Native sampling primitives for Codex engines: sigma schedule construction and sampling context used by the runtime samplers.
 
 ## Key Components
-- `context.py`
+- `sigma_schedules.py`
   - `SchedulerName` enum: canonical scheduler identifiers used to build sigma schedules (simple, karras/euler_discrete, exponential/polyexponential, uniform/sgm_uniform, ddim/ddim_uniform, normal, beta, linear_quadratic, kl_optimal, turbo, align-your-steps variants).
   - `build_sigma_schedule(...)`: returns a tensor of sigmas (length = steps + 1) ending with terminal 0; accepts a predictor to derive ladders for predictor-aware schedules (simple/uniform/normal/ddim/sgm_uniform/turbo) and an `is_sdxl` hint for AYS tables.
+- `flow_shift_resolver.py`
+  - `resolve_flow_shift_for_sampling(...)`: resolves the effective flow shift for flow-match predictors from diffusers `scheduler_config.json` (diffusers repo dir or vendored HF mirror).
+- `context.py`
   - `SamplingContext`: immutable inputs for the sampler loop (sampler kind, schedule, noise settings, prediction type/sigma bounds).
+  - `build_sampling_context(...)`: assembles per-run sampling state (sigma bounds, flow shift, noise settings) and delegates schedule building to `sigma_schedules.build_sigma_schedule`.
 - `registry.py`
   - `SamplerSpec` dataclass: canonical sampler name/kind, default scheduler, and allowed schedulers per sampler (UI surface).
   - `get_sampler_spec(name)`: resolves sampler name and validates scheduler compatibility before sampling context creation.

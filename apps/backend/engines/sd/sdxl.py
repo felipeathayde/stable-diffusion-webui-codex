@@ -43,7 +43,7 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_miss,
 )
 from apps.backend.core.state import state as backend_state
-from apps.backend.runtime.common.nn.unet import Timestep
+from apps.backend.runtime.common.nn.unet.layers import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img

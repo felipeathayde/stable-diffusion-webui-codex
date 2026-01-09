@@ -27,17 +27,9 @@ Symbols (top-level; keep in sync; no ghosts):
 from apps.backend.runtime.common.nn.base import ModuleDict, ObjectDict, Dummy
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
-from apps.backend.runtime.common.nn.unet import (
-    UNet2DConditionModel,
-    conv_nd,
-    avg_pool_nd,
-    ResBlock,
-    SpatialTransformer,
-    TimestepEmbedSequential,
-    timestep_embedding,
-    exists,
-    Downsample,
-)
+from apps.backend.runtime.common.nn.unet.layers import Downsample, ResBlock, SpatialTransformer, TimestepEmbedSequential
+from apps.backend.runtime.common.nn.unet.model import UNet2DConditionModel
+from apps.backend.runtime.common.nn.unet.utils import conv_nd, exists, timestep_embedding
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 from apps.backend.runtime.flux import FluxTransformer2DModel, FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
 from apps.backend.runtime.flux.flux import (
@@ -76,7 +68,6 @@ __all__ = [
     "SpatialTransformer",
     "TimestepEmbedSequential",
     "UNet2DConditionModel",
-    "avg_pool_nd",
     "attention",
     "cldm",
     "conv_nd",

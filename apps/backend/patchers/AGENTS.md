@@ -9,7 +9,10 @@ Status: Active
 
 ## Key Files
 - `base.py` — Core `ModelPatcher` with typed registries (LoRA/object patches) and lifecycle hooks.
-- `lora.py` — Implements `CodexLoraLoader` and variant-aware merge helpers backed by typed payloads, progress reporting, and strict validation.
+- `lora.py` — Public LoRA facade (re-exports loader/merge/state-dict helpers).
+- `lora_loader.py` — `CodexLoraLoader` transactional applier (backups, GGUF re-quantization, tqdm progress).
+- `lora_merge.py` — Variant-aware weight merge helpers (diff/set/lora/loha/lokr/glora) with strict validation.
+- `lora_state_dict.py` — LoRA tensor parsing + target-key mapping wrappers (backed by `runtime.adapters.lora`).
 - `lora_apply.py` — Applies native LoRA selections to loaded networks.
 - `unet.py` — Codex-native UNet patcher built on typed helpers (`SamplingReservation`, `ControlNetChain`) for deterministic sampling reservations, ControlNet chaining, and patch registration.
 - `denoiser.py` — Generic `DenoiserPatcher` wrapper (ControlNet-free) for non-UNet denoisers; wraps `KModel` and exposes the shared `ModelPatcher` surface.

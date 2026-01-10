@@ -23,7 +23,7 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.utils import _load_gguf_state_dict
+from apps.backend.runtime.checkpoint_io import _load_gguf_state_dict
 
 from .diagnostics import get_logger
 from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict
@@ -69,4 +69,3 @@ def load_stage_model_from_gguf(
     model.eval()
     log.info("[wan22.gguf] loaded stage model: %s", os.path.basename(gguf_path))
     return model
-

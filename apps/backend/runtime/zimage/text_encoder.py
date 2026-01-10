@@ -84,7 +84,7 @@ class ZImageTextEncoder(nn.Module):
         
         # Load GGUF state dict using our infrastructure
         from apps.backend.runtime.ops.operations import using_codex_operations
-        from apps.backend.runtime.utils import load_gguf_state_dict
+        from apps.backend.runtime.checkpoint_io import load_gguf_state_dict
         
         try:
             # Load GGUF file

@@ -73,11 +73,8 @@ from apps.backend.runtime.models.text_encoder_overrides import (
 )
 from apps.backend.runtime.models.state_dict import load_state_dict, transformers_convert
 from apps.backend.runtime.ops import using_codex_operations
-from apps.backend.runtime.utils import (
-    beautiful_print_gguf_state_dict_statics,
-    load_torch_file,
-    read_arbitrary_config,
-)
+from apps.backend.runtime.checkpoint_io import load_torch_file, read_arbitrary_config
+from apps.backend.runtime.state_dict_tools import beautiful_print_gguf_state_dict_statics
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 
 LOGGER = logging.getLogger(__name__)
@@ -516,7 +513,7 @@ def _load_huggingface_component(
             Uses RemapKeysView so tensors load on demand; avoids materialising
             the entire VAE just to rename keys (important for large XL VAEs).
             """
-            from apps.backend.runtime.utils import RemapKeysView
+            from apps.backend.runtime.state_dict_views import RemapKeysView
 
             prefixes = (
                 "first_stage_model.",

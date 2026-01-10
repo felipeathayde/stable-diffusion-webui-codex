@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Mapping
 
-from apps.backend.runtime.utils import RemapKeysView
+from apps.backend.runtime.state_dict_views import RemapKeysView
 
 UNET_LOG = logging.getLogger("apps.backend.runtime.models.loader.unet")
 

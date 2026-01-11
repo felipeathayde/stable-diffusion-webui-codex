@@ -21,20 +21,15 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag
+
 
 def log_sigmas_enabled() -> bool:
-    for key in ("WAN_LOG_SIGMAS", "CODEX_LOG_SIGMAS"):
-        v = os.getenv(key)
-        if v is None:
-            continue
-        if v.strip().lower() in ("1", "true", "yes", "on"):
-            return True
-    return False
+    return env_flag("WAN_LOG_SIGMAS", default=False) or env_flag("CODEX_LOG_SIGMAS", default=False)
 
 
 def summarize_tensor(t: object, *, window: int = 6) -> str:
@@ -129,4 +124,3 @@ def log_t_mapping(scheduler: Any, timesteps: Any, *, label: str, logger: Any) ->
         )
     except Exception:
         log.debug("[wan22.gguf] failed to log timestep mapping", exc_info=True)
-

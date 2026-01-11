@@ -23,6 +23,8 @@ from typing import Any, Optional
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag
+
 from .config import RunConfig, as_torch_dtype, resolve_device_name, resolve_i2v_order
 from .diagnostics import cuda_empty_cache, get_logger
 from .wan_latent_norms import resolve_norm
@@ -151,7 +153,7 @@ def vae_decode_video(
 
     b, c, t, h, w = video_latents.shape
 
-    if str(os.getenv("WAN_I2V_LAT_STATS", "0")).strip().lower() in ("1", "true", "yes", "on"):
+    if env_flag("WAN_I2V_LAT_STATS", default=False):
         vt = video_latents
         if torch.is_tensor(vt):
             vt_cpu = vt.detach().to(device="cpu", dtype=torch.float32)

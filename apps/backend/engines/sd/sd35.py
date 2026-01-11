@@ -17,7 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 from types import SimpleNamespace
 from typing import Any, List, Mapping, Optional
 
@@ -27,6 +26,7 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
@@ -37,7 +37,7 @@ _SD35_FACTORY = CodexSDFamilyFactory(spec=SD35_SPEC)
 
 
 def _opts():
-    enable_t5 = os.getenv("CODEX_SD3_ENABLE_T5", "1").lower() in ("1", "true", "yes", "on")
+    enable_t5 = env_flag("CODEX_SD3_ENABLE_T5", default=True)
     return SimpleNamespace(sd3_enable_t5=enable_t5)
 
 

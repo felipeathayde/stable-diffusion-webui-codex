@@ -11,7 +11,6 @@ Provides live preview decoding (full VAE vs cheap approximation) and an optional
 debugging preview quality.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_truthy` (function): Parses common truthy strings for env flag checks.
 - `debug_preview_factors_enabled` (function): Indicates whether preview factor fitting logs are enabled.
 - `debug_preview_factors_sample_limit` (function): Returns the pixel sample cap used for factor fitting.
 - `LivePreviewMethod` (enum): Preview decode strategy (`Full` VAE vs `Approx cheap`).
@@ -33,6 +32,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from apps.backend.core.state import state as backend_state
+from apps.backend.infra.config.env_flags import env_flag, env_int
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +53,12 @@ _LATENT_RGB_FACTORS_SDXL: tuple[tuple[float, float, float], ...] = (
 _DEBUG_PREVIEW_FACTORS_LAST_JOB_TS: str | None = None
 
 
-def _truthy(value: str | None) -> bool:
-    if not value:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def debug_preview_factors_enabled() -> bool:
-    return _truthy(os.getenv("CODEX_DEBUG_PREVIEW_FACTORS"))
+    return env_flag("CODEX_DEBUG_PREVIEW_FACTORS", default=False)
 
 
 def debug_preview_factors_sample_limit() -> int:
-    raw = os.getenv("CODEX_DEBUG_PREVIEW_FACTORS_SAMPLES", "4096")
-    try:
-        value = int(str(raw).strip())
-    except Exception:
-        value = 4096
-    return max(256, value)
+    return env_int("CODEX_DEBUG_PREVIEW_FACTORS_SAMPLES", default=4096, min_value=256)
 
 
 class LivePreviewMethod(str, Enum):

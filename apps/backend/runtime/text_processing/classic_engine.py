@@ -27,6 +27,7 @@ import os
 from collections import namedtuple
 from . import parsing, emphasis
 from .textual_inversion import EmbeddingDatabase
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.infra.config.args import dynamic_args
@@ -167,7 +168,7 @@ class ClassicTextProcessingEngine:
 
         target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
 
-        force_fp32 = str(os.getenv("CODEX_TE_FORCE_FP32", "")).lower() in ("1", "true", "yes", "on")
+        force_fp32 = env_flag("CODEX_TE_FORCE_FP32", default=False)
 
         while True:
             desired_dtype = torch.float32 if force_fp32 else memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)

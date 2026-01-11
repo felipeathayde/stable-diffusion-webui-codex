@@ -31,6 +31,7 @@ from PIL import Image
 
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
@@ -341,7 +342,7 @@ class Txt2ImgPipelineRunner:
         t_refiner_end: float | None = None
         
         # Z Image Diffusers bypass: route to Diffusers pipeline when flag is enabled
-        if os.environ.get("CODEX_ZIMAGE_DIFFUSERS_BYPASS", "").lower() in ("1", "true", "yes", "on"):
+        if env_flag("CODEX_ZIMAGE_DIFFUSERS_BYPASS", default=False):
             sd_model = getattr(processing, "sd_model", None)
             engine_id = getattr(sd_model, "engine_id", "") if sd_model else ""
             if engine_id == "zimage" and hasattr(sd_model, "sample_with_diffusers"):

@@ -27,6 +27,8 @@ from typing import Any, Optional
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
+
 from .config import (
     RunConfig,
     WAN_FLOW_MULTIPLIER,
@@ -53,10 +55,7 @@ def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> Non
 
     lim = int(limit_mb or 0)
     if lim <= 0:
-        try:
-            lim = int(os.getenv("CODEX_GGUF_CACHE_LIMIT_MB", "0") or 0)
-        except Exception:
-            lim = 0
+        lim = env_int("CODEX_GGUF_CACHE_LIMIT_MB", default=0, min_value=0)
 
     pol = (policy or "none").strip().lower()
     if pol in {"none", "", "off"} or lim <= 0:
@@ -226,7 +225,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         stage_name="high",
     )
 
-    if str(os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0")).strip().lower() in ("1", "true", "yes", "on"):
+    if env_flag("WAN_I2V_DEBUG_HI_DECODE", default=False):
         try:
             _ = decode_latents_to_frames(
                 latents=latents_hi,
@@ -370,7 +369,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         emit_logs=False,
     )
 
-    if str(os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0")).strip().lower() in ("1", "true", "yes", "on"):
+    if env_flag("WAN_I2V_DEBUG_HI_DECODE", default=False):
         try:
             _ = decode_latents_to_frames(
                 latents=latents_hi,
@@ -534,7 +533,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         stage_name="high",
     )
 
-    if str(os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0")).strip().lower() in ("1", "true", "yes", "on"):
+    if env_flag("WAN_I2V_DEBUG_HI_DECODE", default=False):
         try:
             _ = decode_latents_to_frames(
                 latents=latents_hi,

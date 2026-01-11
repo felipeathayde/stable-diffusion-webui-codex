@@ -32,6 +32,8 @@ import logging
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
+
 from .inner_loop import sampling_function_inner, sampling_prepare, sampling_cleanup
 from .condition import compile_conditions
 from .context import SamplingContext, build_sampling_context
@@ -237,8 +239,8 @@ class CodexSampler:
         self.sd_model = sd_model
         self.algorithm = (algorithm or "euler a").strip().lower()
         self._logger = logging.getLogger(__name__ + ".CodexSampler")
-        self._log_enabled = str(os.getenv("CODEX_LOG_SAMPLER", "0")).lower() in ("1","true","yes","on")
-        self._log_sigmas = str(os.getenv("CODEX_LOG_SIGMAS", "0")).lower() in ("1","true","yes","on")
+        self._log_enabled = env_flag("CODEX_LOG_SAMPLER", default=False)
+        self._log_sigmas = env_flag("CODEX_LOG_SIGMAS", default=False)
 
     def _summarize_sigmas(self, sigmas: torch.Tensor, *, window: int = 6) -> str:
         try:
@@ -410,18 +412,9 @@ class CodexSampler:
                 log_cfg_delta = False
                 cfg_delta_steps = 0
                 if self._log_enabled:
-                    log_cfg_delta = str(os.getenv("CODEX_LOG_CFG_DELTA", "0")).lower() in (
-                        "1",
-                        "true",
-                        "yes",
-                        "on",
-                    )
+                    log_cfg_delta = env_flag("CODEX_LOG_CFG_DELTA", default=False)
                     if log_cfg_delta:
-                        try:
-                            cfg_delta_steps = int(os.getenv("CODEX_LOG_CFG_DELTA_N", "2"))
-                        except Exception:
-                            cfg_delta_steps = 2
-                        cfg_delta_steps = max(0, cfg_delta_steps)
+                        cfg_delta_steps = env_int("CODEX_LOG_CFG_DELTA_N", default=2, min_value=0)
 
                 if isinstance(image_conditioning, torch.Tensor):
                     if (
@@ -440,7 +433,7 @@ class CodexSampler:
                 backend_state.start(job_count=1, sampling_steps=steps - start_idx)
                 state_started = True
 
-                strict = str(os.getenv("CODEX_SAMPLER_STRICT", "1")).lower() in ("1","true","yes","on")
+                strict = env_flag("CODEX_SAMPLER_STRICT", default=True)
                 import time as _time
 
                 preview_interval = active_context.preview_interval
@@ -454,7 +447,7 @@ class CodexSampler:
                 sampler_kind = active_context.sampler_kind
 
                 # Default to native sampler; enable k-diffusion only when explicitly requested.
-                use_kd = str(os.getenv("CODEX_SAMPLER_ENABLE_KDIFFUSION", "0")).strip().lower() in {"1", "true", "yes", "on"}
+                use_kd = env_flag("CODEX_SAMPLER_ENABLE_KDIFFUSION", default=False)
                 if use_kd and sampler_kind in _KD_MAPPING and _KD_SAMPLING is not None:
                     kd_name = _KD_MAPPING[sampler_kind]
 

@@ -23,6 +23,8 @@ from typing import Optional
 
 import torch
 
+from apps.backend.infra.config.env_flags import env_flag, env_int
+
 _LOG_ONCE = {
     "sdpa": False,
 }
@@ -90,14 +92,8 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
             ctx = nullcontext()
 
     global _LOG_ONCE, _SDPA_LOG_COUNT
-    try:
-        verbose = str(os.getenv("WAN_SDPA_DEBUG", "0")).strip().lower() in ("1", "true", "yes")
-    except Exception:
-        verbose = False
-    try:
-        every = max(1, int(os.getenv("WAN_SDPA_DEBUG_EVERY", "5")))
-    except Exception:
-        every = 5
+    verbose = env_flag("WAN_SDPA_DEBUG", default=False)
+    every = env_int("WAN_SDPA_DEBUG_EVERY", default=5, min_value=1)
     _SDPA_LOG_COUNT += 1
     should_log = False
     if verbose:

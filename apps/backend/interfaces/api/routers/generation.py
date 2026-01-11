@@ -277,7 +277,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
             family = family_raw.strip()
             label = label_raw.strip()
-            # Cheap sanity: labels from /api/text-encoders use the pattern '<family>/<abs_path>'.
+            # Cheap sanity: UI labels use the pattern '<family>/<path>' (paths.json via /api/paths).
             if "/" in label and not label.startswith(f"{family}/"):
                 raise HTTPException(
                     status_code=400,

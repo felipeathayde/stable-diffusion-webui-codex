@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: QuickSettings global store (models/samplers/schedulers/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
-resolve to backend SHA-based assets (no raw-path inputs).
+resolve to backend SHA-based assets (no raw-path inputs). Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo } from '../api/types'
-import { fetchModels, refreshModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchVaes, fetchTextEncoders, fetchMemory, fetchModelInventory } from '../api/client'
+import { fetchModels, refreshModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchMemory, fetchModelInventory, fetchPaths } from '../api/client'
 
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
@@ -252,9 +252,16 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function loadVaes(): Promise<void> {
     try {
-      const res = await fetchVaes()
-      vaeChoices.value = res.vaes
-      if (res.current && !currentVae.value) currentVae.value = res.current
+      const inv = await fetchModelInventory()
+      const seen = new Set<string>()
+      const out: string[] = ['Automatic', 'Built in', 'None']
+      for (const item of (inv as any)?.vaes || []) {
+        const name = String(item?.name || '').trim()
+        if (!name || seen.has(name)) continue
+        seen.add(name)
+        if (!out.includes(name)) out.push(name)
+      }
+      vaeChoices.value = out
     } catch (e) {
       // API may not expose this yet; keep defaults
       vaeChoices.value = vaeChoices.value.length ? vaeChoices.value : ['Automatic', 'Built in', 'None']
@@ -263,11 +270,25 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function loadTextEncoders(): Promise<void> {
     try {
-      const res = await fetchTextEncoders()
-      textEncoderChoices.value = res.text_encoders
-      if (Array.isArray(res.current) && currentTextEncoders.value.length === 0) {
-        currentTextEncoders.value = res.current
+      const res = await fetchPaths()
+      const paths = ((res as any)?.paths || {}) as Record<string, string[]>
+      const keys: Array<[string, string]> = [
+        ['sd15', 'sd15_tenc'],
+        ['sdxl', 'sdxl_tenc'],
+        ['flux1', 'flux1_tenc'],
+        ['wan22', 'wan22_tenc'],
+        ['zimage', 'zimage_tenc'],
+      ]
+      const labels: string[] = []
+      for (const [fam, key] of keys) {
+        const entries = Array.isArray(paths[key]) ? paths[key] : []
+        for (const raw of entries) {
+          const p = String(raw || '').trim().replace(/\\+/g, '/')
+          if (!p) continue
+          labels.push(`${fam}/${p}`)
+        }
       }
+      textEncoderChoices.value = Array.from(new Set(labels)).sort()
       // Also load inventory for SHA256 lookup
       try {
         const inv = await fetchModelInventory()

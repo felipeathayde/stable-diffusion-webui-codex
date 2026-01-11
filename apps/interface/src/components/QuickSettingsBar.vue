@@ -732,7 +732,7 @@ const wanMetadataChoices = computed(() => {
 
 const wanTextEncoderChoices = computed(() => {
   // WAN22 GGUF requires an explicit TE weights file (.safetensors). Prefer concrete
-  // files under the configured wan22_tenc roots rather than root labels from /api/text-encoders.
+  // files under the configured wan22_tenc roots (paths.json) rather than root labels from a dedicated endpoint.
   return inventoryTextEncoders.value
     .filter((item) => typeof item.path === 'string' && item.path.toLowerCase().endsWith('.safetensors') && fileInPaths(item.path, 'wan22_tenc'))
     .map((item) => `wan22/${item.path}`)

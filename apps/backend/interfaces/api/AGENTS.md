@@ -13,7 +13,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/system.py` — health/version/memory endpoints.
 - `apps/backend/interfaces/api/routers/settings.py` — settings schema + values endpoints.
 - `apps/backend/interfaces/api/routers/ui.py` — tabs/workflows/blocks/presets persistence endpoints.
-- `apps/backend/interfaces/api/routers/models.py` — model inventory + samplers/schedulers/VAEs/encoders/LoRA endpoints.
+- `apps/backend/interfaces/api/routers/models.py` — model inventory + samplers/schedulers/embeddings + engine capabilities endpoints.
 - `apps/backend/interfaces/api/routers/paths.py` — `apps/paths.json` endpoints.
 - `apps/backend/interfaces/api/routers/options.py` — options store read/update/validate endpoints.
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.

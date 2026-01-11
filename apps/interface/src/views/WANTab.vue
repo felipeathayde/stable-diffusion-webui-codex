@@ -470,10 +470,10 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
-import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
-import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
-import { fetchSamplers, fetchSchedulers, fetchLoras, fetchPaths } from '../api/client'
+	import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
+	import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
+	import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
+	import { fetchSamplers, fetchSchedulers, fetchModelInventory, fetchPaths } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import InitialVideoCard from '../components/InitialVideoCard.vue'
@@ -500,20 +500,20 @@ const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 const wanLoras = ref<Array<{ name: string; path: string }>>([])
 
-onMounted(async () => {
-  if (!store.tabs.length) store.load()
-  const [samp, sched, pathsRes, lorasRes] = await Promise.all([
-    fetchSamplers(),
-    fetchSchedulers(),
-    fetchPaths().catch(() => ({ paths: {} as Record<string, string[]> })),
-    fetchLoras().catch(() => ({ loras: [] as Array<{ name: string; path: string }> })),
-  ])
-  samplers.value = samp.samplers
-  schedulers.value = sched.schedulers
-
-  const roots = Array.isArray((pathsRes as any)?.paths?.wan22_loras) ? ((pathsRes as any).paths.wan22_loras as string[]) : []
-  wanLoras.value = (lorasRes.loras || []).filter((l) => fileInRoots(l.path, roots))
-})
+	onMounted(async () => {
+	  if (!store.tabs.length) store.load()
+	  const [samp, sched, pathsRes, inv] = await Promise.all([
+	    fetchSamplers(),
+	    fetchSchedulers(),
+	    fetchPaths().catch(() => ({ paths: {} as Record<string, string[]> })),
+	    fetchModelInventory().catch(() => ({ loras: [] as Array<{ name: string; path: string }> } as any)),
+	  ])
+	  samplers.value = samp.samplers
+	  schedulers.value = sched.schedulers
+	
+	  const roots = Array.isArray((pathsRes as any)?.paths?.wan22_loras) ? ((pathsRes as any).paths.wan22_loras as string[]) : []
+	  wanLoras.value = ((inv as any)?.loras || []).filter((l: any) => fileInRoots(String(l?.path || ''), roots))
+	})
 
 const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
 const lightx2v = computed<boolean>(() => Boolean((tab.value?.params as any)?.lightx2v))

@@ -46,10 +46,10 @@ Symbols (top-level; keep in sync; no ghosts):
   </Modal>
 </template>
 
-<script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
-import Modal from '../ui/Modal.vue'
-import { fetchLoras } from '../../api/client'
+  <script setup lang="ts">
+  import { computed, ref, onMounted } from 'vue'
+  import Modal from '../ui/Modal.vue'
+  import { fetchModelInventory } from '../../api/client'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e:'insert', payload: { token: string; target: 'positive' | 'negative' }): void }>()
@@ -65,14 +65,14 @@ const filtered = computed(() => {
   return items.value.filter(n => n.name.toLowerCase().includes(query))
 })
 
-onMounted(async () => {
-  try {
-    const res = await fetchLoras()
-    items.value = res.loras || []
-  } catch (e) {
-    items.value = []
-  }
-})
+  onMounted(async () => {
+    try {
+      const inv = await fetchModelInventory()
+      items.value = (inv.loras || []) as LoraItem[]
+    } catch (e) {
+      items.value = []
+    }
+  })
 
 function insert(name: string, target: 'positive' | 'negative'): void {
   const t = `<lora:${name}:${(weight.value ?? 1.0).toFixed(2)}>`

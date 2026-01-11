@@ -16,15 +16,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `requestForm` (function): Form POST helper for multipart endpoints.
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
-- `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
-- `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
-- `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
-- `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
-- `fetchVaes` (function): Fetches VAE list (`/vaes`).
-- `fetchTextEncoders` (function): Fetches text encoder list (`/text-encoders`).
-- `fetchOptions` (function): Fetches runtime options (`/options`).
-- `updateOptions` (function): Updates runtime options (`POST /options`).
-- `startTxt2Img` (function): Starts a txt2img task (`POST /txt2img`).
+ - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
+ - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
+ - `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
+ - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
+ - `fetchOptions` (function): Fetches runtime options (`/options`).
+ - `updateOptions` (function): Updates runtime options (`POST /options`).
+ - `startTxt2Img` (function): Starts a txt2img task (`POST /txt2img`).
 - `startImg2Img` (function): Starts an img2img task (`POST /img2img`).
 - `startTxt2Vid` (function): Starts a txt2vid task (`POST /txt2vid`).
 - `startImg2Vid` (function): Starts an img2vid task (`POST /img2vid`).
@@ -33,13 +31,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `cancelTask` (function): Requests task cancellation (`/tasks/:id/cancel`).
 - `subscribeTask` (function): Subscribes to task SSE events and returns an unsubscribe closure.
 - `fetchMemory` (function): Fetches memory stats (`/memory`).
-- `fetchVersion` (function): Fetches backend version (`/version`).
-- `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
-- `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
-- `fetchLoras` (function): Fetches LoRA list (`/loras`).
-- `fetchPaths` (function): Fetches configured paths (`/paths`).
-- `updatePaths` (function): Updates configured paths (`POST /paths`).
-- `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`) with a static fallback.
+ - `fetchVersion` (function): Fetches backend version (`/version`).
+ - `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
+ - `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
+ - `fetchPaths` (function): Fetches configured paths (`/paths`).
+ - `updatePaths` (function): Updates configured paths (`POST /paths`).
+ - `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`) with a static fallback.
 - `fetchUiBlocks` (function): Fetches UI blocks schema (`/ui/blocks`).
 - `fetchUiPresets` (function): Fetches UI presets (`/ui/presets`).
 - `applyUiPreset` (function): Applies a UI preset (`POST /ui/presets/apply`).
@@ -64,12 +61,9 @@ import type {
   Txt2ImgStartResponse,
   TaskResult,
   TaskEvent,
-  VaesResponse,
-  TextEncodersResponse,
   MemoryResponse,
   VersionResponse,
   EmbeddingsResponse,
-  LoraListResponse,
   PathsResponse,
   PathsUpdateResponse,
   SettingsSchemaResponse,
@@ -136,14 +130,6 @@ export async function fetchSchedulers(): Promise<SchedulersResponse> {
   const res = await requestJson<SchedulersResponse>('/schedulers')
   const supported = res.schedulers.filter((scheduler) => scheduler.supported !== false)
   return { schedulers: supported }
-}
-
-export function fetchVaes(): Promise<VaesResponse> {
-  return requestJson<VaesResponse>('/vaes')
-}
-
-export function fetchTextEncoders(): Promise<TextEncodersResponse> {
-  return requestJson<TextEncodersResponse>('/text-encoders')
 }
 
 export function fetchOptions(): Promise<OptionsResponse> {
@@ -242,10 +228,6 @@ export function fetchEmbeddings(): Promise<EmbeddingsResponse> {
 
 export function fetchEngineCapabilities(): Promise<EngineCapabilitiesResponse> {
   return requestJson<EngineCapabilitiesResponse>('/engines/capabilities')
-}
-
-export function fetchLoras(): Promise<LoraListResponse> {
-  return requestJson<LoraListResponse>('/loras')
 }
 
 export function fetchPaths(): Promise<PathsResponse> {

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
-Exposes checkpoints, inventories, samplers/schedulers, VAEs, text encoders, embeddings, and LoRA selections.
+Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
-from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api, _path_for_api
+from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api
 from apps.backend.interfaces.api.serializers import _serialize_checkpoint
 
 
@@ -170,61 +170,10 @@ def build_router(
             )
         return {"schedulers": schedulers}
 
-    @router.get("/api/vaes")
-    def list_vaes() -> Dict[str, Any]:
-        from apps.backend.infra.registry.vae import list_vaes as _list_vaes, describe_vaes as _describe_vaes
-        current = str(opts_get("sd_vae", "Automatic"))
-        try:
-            models_root = str(codex_root / "models")
-            hf_root = str(codex_root / "apps" / "backend" / "huggingface")
-            choices = _list_vaes(models_root=models_root, vendored_hf_root=hf_root)
-            info = _describe_vaes(models_root=models_root, vendored_hf_root=hf_root)
-            return {"vaes": choices, "current": current, "vaes_info": info}
-        except Exception:
-            return {"vaes": ["Automatic", "Built in", "None"], "current": current, "vaes_info": []}
-
-    @router.get("/api/text-encoders")
-    def list_text_encoders() -> Dict[str, Any]:
-        from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
-        try:
-            roots_by_family = list_text_encoder_roots_by_family()
-            entries: list[dict[str, object]] = []
-            labels: list[str] = []
-            for family, roots in roots_by_family.items():
-                for root in roots:
-                    label_path = _path_for_api(root.path)
-                    label = f"{family}/{label_path}"
-                    labels.append(label)
-                    entries.append(
-                        {
-                            "family": family,
-                            "name": root.name,
-                            "path": _path_for_api(root.path),
-                            "label": label,
-                        }
-                    )
-            labels_sorted = sorted(set(labels))
-            selected = opts_get("text_encoder_overrides", []) or []
-            if not isinstance(selected, list):
-                selected = []
-            selected_norm: list[str] = []
-            for raw in selected:
-                s = str(raw or "").strip()
-                if not s:
-                    continue
-                if "/" in s:
-                    fam, rest = s.split("/", 1)
-                    if fam and rest:
-                        selected_norm.append(f"{fam}/{_path_for_api(rest)}")
-                        continue
-                selected_norm.append(s)
-            return {"text_encoders": labels_sorted, "current": selected_norm, "text_encoders_info": entries}
-        except Exception:
-            return {"text_encoders": [], "current": [], "text_encoders_info": []}
-
     @router.get("/api/embeddings")
     def list_embeddings() -> Dict[str, Any]:
         from apps.backend.infra.registry.embeddings import describe_embeddings as _describe
+
         info = [e.__dict__ for e in _describe()]
         loaded = {
             e["name"]: {
@@ -247,26 +196,5 @@ def build_router(
             if not e.get("vectors")
         }
         return {"loaded": loaded, "skipped": skipped, "embeddings_info": info}
-
-    @router.get("/api/loras")
-    def list_loras() -> Dict[str, Any]:
-        from apps.backend.infra.registry.lora import list_loras as _list_loras, describe_loras as _describe_loras
-        items = _list_loras()
-        info = [e.__dict__ for e in _describe_loras()]
-        return {"loras": items, "loras_info": info}
-
-    @router.get("/api/loras/selections")
-    def get_lora_selections() -> Dict[str, Any]:
-        from apps.backend.runtime.adapters.lora.selections import get_selections
-        sels = get_selections()
-        return {"selections": [{"path": s.path, "weight": s.weight, "online": s.online} for s in sels]}
-
-    @router.post("/api/loras/apply")
-    def apply_lora_selections(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        if not isinstance(payload, dict) or "selections" not in payload or not isinstance(payload["selections"], list):
-            raise HTTPException(status_code=400, detail='payload must be {"selections": [...]}')
-        from apps.backend.runtime.adapters.lora.selections import get_selections, set_selections
-        set_selections(payload["selections"])
-        return {"ok": True, "count": len(get_selections())}
 
     return router

@@ -27,7 +27,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `sampling_cleanup` (function): Post-sampling hook; cleans up ControlNet, smart-offload state, unloads models, and triggers op cache cleanup.
 """
 
-import os
 import torch
 import math
 import collections
@@ -37,11 +36,10 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime import utils
 from apps.backend.infra.config.env_flags import env_flag, env_int
+from .condition import Condition, compile_conditions, compile_weighted_conditions
 
 
 logger = logging.getLogger("backend.runtime.sampling")
-from .condition import Condition, compile_conditions, compile_weighted_conditions
-from apps.backend.infra.config.args import dynamic_args, args
 
 _ZIMAGE_SAMPLING_DEBUG_COUNT = 0
 
@@ -138,11 +136,6 @@ def can_concat_cond(c1, c2):
 
 
 def cond_cat(c_list):
-    c_crossattn = []
-    c_concat = []
-    c_adm = []
-    crossattn_max_len = 0
-
     temp = {}
     for x in c_list:
         for k in x:
@@ -344,7 +337,7 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
 def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None, return_full=False):
     edit_strength = sum((item['strength'] if 'strength' in item else 1) for item in cond)
 
-    if math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+    if math.isclose(cond_scale, 1.0) and not model_options.get("disable_cfg1_optimization", False):
         uncond_ = None
     else:
         uncond_ = uncond
@@ -494,7 +487,8 @@ def sampling_prepare(denoiser, x):
 
     real_model = denoiser.model
 
-    percent_to_timestep_function = lambda p: real_model.predictor.percent_to_sigma(p)
+    def percent_to_timestep_function(p):  # type: ignore[no-untyped-def]
+        return real_model.predictor.percent_to_sigma(p)
 
     if control_runtime:
         control_runtime.prepare(real_model, percent_to_timestep_function)

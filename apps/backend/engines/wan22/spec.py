@@ -24,10 +24,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
-import torch
-
 from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
+from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
@@ -76,10 +75,31 @@ class WanEngineSpec:
     
     @property
     def flow_shift(self) -> float:
-        """Flow-match shift, delegating to FamilyRuntimeSpec if not overridden."""
+        """Flow-match shift (mu).
+
+        Source of truth is the WAN diffusers `scheduler/scheduler_config.json` shipped
+        with the official repos (vendored under `apps/backend/huggingface/Wan-AI/**`).
+        This avoids hard-coded drift between 5B/14B variants and keeps parity with
+        `.refs/diffusers` conversion scripts.
+        """
         if self._flow_shift_override is not None:
             return self._flow_shift_override
-        return self._get_family_spec().flow_shift or 8.0
+        from apps.backend.engines.wan22.wan22_common import resolve_wan_repo_candidates
+        from apps.backend.infra.config.repo_root import get_repo_root
+
+        repo_root = get_repo_root()
+        hf_root = repo_root / "apps" / "backend" / "huggingface"
+        for rid in resolve_wan_repo_candidates(self.name):
+            local_dir = hf_root / rid.replace("/", "/")
+            try:
+                spec = flow_shift_spec_from_repo_dir(local_dir)
+                return spec.resolve()
+            except Exception:
+                continue
+        raise RuntimeError(
+            f"WAN22: unable to resolve flow_shift from scheduler_config.json for spec={self.name!r}. "
+            "Ensure vendored HF assets exist under apps/backend/huggingface/Wan-AI/**."
+        )
     
     @property
     def default_steps(self) -> int:
@@ -189,13 +209,12 @@ def assemble_wan_runtime(
 # Pre-defined specs (using overrides only when different from FamilyRuntimeSpec)
 WAN_14B_SPEC = WanEngineSpec(
     name="wan22_14b",
-    # Uses defaults from FAMILY_RUNTIME_SPECS[WAN22]: flow_shift=8.0, default_steps=20, default_cfg=5.0
+    # Uses defaults from FamilyRuntimeSpec for steps/cfg and resolves flow_shift from the vendored scheduler_config.json.
 )
 
 WAN_5B_SPEC = WanEngineSpec(
     name="wan22_5b",
-    # Override flow_shift for 5B variant (6.0 instead of 8.0)
-    _flow_shift_override=6.0,
+    # 5B uses different defaults for steps/cfg; flow_shift is still resolved from scheduler_config.json.
     _default_steps_override=16,
     _default_cfg_override=6.0,
 )

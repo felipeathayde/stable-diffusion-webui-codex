@@ -72,9 +72,8 @@ class NoiseScheduleVP:
             return torch.interp(t.reshape((-1, 1)), self.t_array.to(t.device), self.log_alpha_array.to(t.device)).reshape((-1))
         if self.schedule == "linear":
             return -0.25 * t ** 2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
-        log_alpha_fn = lambda s: torch.log(torch.cos((s + self.cosine_s) / (1.0 + self.cosine_s) * math.pi / 2.0))
-        log_alpha_t = log_alpha_fn(t) - self.cosine_log_alpha_0
-        return log_alpha_t
+        log_alpha = torch.log(torch.cos((t + self.cosine_s) / (1.0 + self.cosine_s) * math.pi / 2.0))
+        return log_alpha - self.cosine_log_alpha_0
 
     def marginal_alpha(self, t):
         return torch.exp(self.marginal_log_mean_coeff(t))
@@ -193,7 +192,8 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
             if steps >= 36:
                 restart_steps = steps // 4
                 restart_times = 2
-            base = k_diffusion.sampling.get_sigmas_karras(
+            kd_sampling = _require_kd()
+            base = kd_sampling.get_sigmas_karras(
                 steps - restart_steps * restart_times, sigmas[-2].item(), sigmas[0].item(), device=sigmas.device
             )
             restart_list = {0.1: [restart_steps + 1, restart_times, 2]}

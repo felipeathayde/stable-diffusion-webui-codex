@@ -136,7 +136,7 @@ def load_flow16_vae(
                 state_dict = load_gguf_state_dict(vae_path, dequantize=True, computation_dtype=dtype)
             else:
                 # Single-file weights (safetensors/ckpt/pt)
-                from apps.backend.runtime.utils import load_torch_file
+                from apps.backend.runtime.checkpoint_io import load_torch_file
 
                 state_dict = load_torch_file(vae_path, device="cpu")
 

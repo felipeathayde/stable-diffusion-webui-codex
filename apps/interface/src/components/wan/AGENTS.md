@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -28,3 +28,4 @@ Status: Active
 - 2025-12-28: Added `WanSubHeader.vue` and made `WanVideoOutputPanel.vue` embeddable (so WANTab can compose “Video Output” without nested card borders); Interpolation (RIFE) is now a single toggle button.
 - 2025-12-29: `WanVideoOutputPanel.vue` renders the RIFE toggle inline with the other output toggles (Ping-pong/Save/Trim) for layout parity.
 - 2026-01-03: Added standardized file header blocks to WAN components (doc-only change; part of rollout).
+- 2026-01-06: `WanStagePanel.vue` now labels empty sampler/scheduler selections as “Inherit” (stage overrides are optional; no automatic token).

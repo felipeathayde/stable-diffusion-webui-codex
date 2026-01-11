@@ -132,7 +132,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :max-clip-skip="12"
             :show-init-image-dims="params.useInitImage && Boolean(params.initImageData)"
             :disabled="isRunning"
-            @update:sampler="(v: string) => setParams({ sampler: v })"
+            @update:sampler="onSamplerChange"
             @update:scheduler="(v: string) => setParams({ scheduler: v })"
             @update:steps="(v: number) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
             @update:width="(v: number) => setParams({ width: Math.max(64, Math.trunc(v)) })"
@@ -397,11 +397,38 @@ const filteredSamplers = computed(() => {
   return samplers.value.filter(s => allowed.includes(s.name))
 })
 
+const activeSamplerSpec = computed(() => samplers.value.find(s => s.name === params.value.sampler) ?? null)
+
 const filteredSchedulers = computed(() => {
+  let list = schedulers.value
   const allowed = engineSurface.value?.schedulers as string[] | null | undefined
-  if (!allowed || allowed.length === 0) return schedulers.value
-  return schedulers.value.filter(s => allowed.includes(s.name))
+  if (allowed && allowed.length > 0) list = list.filter(s => allowed.includes(s.name))
+  const allowedBySampler = activeSamplerSpec.value?.allowed_schedulers
+  if (Array.isArray(allowedBySampler) && allowedBySampler.length > 0) {
+    const set = new Set(allowedBySampler)
+    list = list.filter(s => set.has(s.name))
+  }
+  return list
 })
+
+function onSamplerChange(value: string): void {
+  const spec = samplers.value.find(s => s.name === value)
+  const scheduler = params.value.scheduler
+  if (spec && Array.isArray(spec.allowed_schedulers) && spec.allowed_schedulers.length > 0) {
+    if (!spec.allowed_schedulers.includes(scheduler)) {
+      setParams({ sampler: value, scheduler: spec.default_scheduler })
+      return
+    }
+  }
+  setParams({ sampler: value })
+}
+
+watch([() => params.value.sampler, () => params.value.scheduler, samplers], () => {
+  const spec = samplers.value.find(s => s.name === params.value.sampler)
+  if (!spec || !Array.isArray(spec.allowed_schedulers) || spec.allowed_schedulers.length === 0) return
+  if (spec.allowed_schedulers.includes(params.value.scheduler)) return
+  setParams({ scheduler: spec.default_scheduler })
+}, { immediate: true })
 
 const promptText = computed({
   get: () => params.value.prompt,
@@ -475,8 +502,8 @@ const resolutionPresets = computed((): [number, number][] => {
 })
 
 const runSummary = computed(() => {
-  const sampler = params.value.sampler || 'automatic'
-  const scheduler = params.value.scheduler || 'automatic'
+  const sampler = params.value.sampler || engineSurface.value?.default_sampler || ''
+  const scheduler = params.value.scheduler || engineSurface.value?.default_scheduler || ''
   const seedLabel = params.value.seed === -1 ? 'seed random' : `seed ${params.value.seed}`
   return `${params.value.width}×${params.value.height} px · ${params.value.steps} steps · ${cfgLabel.value} ${params.value.cfgScale} · ${sampler} / ${scheduler} · ${seedLabel} · batch ${params.value.batchCount}×${params.value.batchSize}`
 })

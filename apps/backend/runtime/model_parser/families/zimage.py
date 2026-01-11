@@ -19,9 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import Dict
 
-import torch
 
 from apps.backend.runtime.model_registry.specs import ModelSignature, QuantizationKind
 
@@ -31,7 +29,6 @@ from ..specs import (
     ParserPlan,
     ParserPlanBundle,
     SplitSpec,
-    ConverterSpec,
     ValidationSpec,
 )
 from ..quantization import validate_component_dtypes

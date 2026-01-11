@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple, Any
+from typing import Callable, Dict, Optional, Any
 
 import torch
 

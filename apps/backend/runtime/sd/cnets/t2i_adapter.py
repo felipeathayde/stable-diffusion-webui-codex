@@ -68,7 +68,7 @@ class ResnetBlock(nn.Module):
     def __init__(self, in_c, out_c, down, ksize=3, sk=False, use_conv=True):
         super().__init__()
         ps = ksize // 2
-        if in_c != out_c or sk == False:
+        if in_c != out_c or not sk:
             self.in_conv = nn.Conv2d(in_c, out_c, ksize, 1, ps)
         else:
             # print('n_in')
@@ -76,17 +76,17 @@ class ResnetBlock(nn.Module):
         self.block1 = nn.Conv2d(out_c, out_c, 3, 1, 1)
         self.act = nn.ReLU()
         self.block2 = nn.Conv2d(out_c, out_c, ksize, 1, ps)
-        if sk == False:
+        if not sk:
             self.skep = nn.Conv2d(in_c, out_c, ksize, 1, ps)
         else:
             self.skep = None
 
         self.down = down
-        if self.down == True:
+        if self.down:
             self.down_opt = Downsample(in_c, use_conv=use_conv)
 
     def forward(self, x):
-        if self.down == True:
+        if self.down:
             x = self.down_opt(x)
         if self.in_conv is not None:  # edit
             x = self.in_conv(x)
@@ -248,11 +248,11 @@ class extractor(nn.Module):
         self.body = nn.Sequential(*self.body)
         self.out_conv = nn.Conv2d(inter_c, out_c, 1, 1, 0)
         self.down = down
-        if self.down == True:
+        if self.down:
             self.down_opt = Downsample(in_c, use_conv=False)
 
     def forward(self, x):
-        if self.down == True:
+        if self.down:
             x = self.down_opt(x)
         x = self.in_conv(x)
         x = self.body(x)

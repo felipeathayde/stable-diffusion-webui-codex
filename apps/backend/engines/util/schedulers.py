@@ -15,21 +15,23 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import List, Union
 
 from apps.backend.types.samplers import SamplerKind, ApplyOutcome
 
-from apps.backend.runtime.sampling.catalog import SAMPLER_ALIAS_TO_CANONICAL
 
-
-def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: Optional[str]) -> ApplyOutcome:
+def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: str) -> ApplyOutcome:
     """Strict mapping of sampler/scheduler to Diffusers pipeline.
 
-    - Allowed: Euler a, Euler, DDIM, DPM++ 2M, DPM++ 2M SDE, PLMS, PNDM.
+    - Allowed: euler a, euler, ddim, dpm++ 2m, dpm++ 2m sde, plms, pndm, uni-pc.
     - On invalid or failed application, raises with the root cause; no fallbacks.
     """
-    wanted_sampler = sampler.value if isinstance(sampler, SamplerKind) else (sampler or "Automatic").strip()
-    wanted_scheduler = (scheduler or "Automatic").strip() if scheduler is not None else "Automatic"
+    wanted_sampler = sampler.value if isinstance(sampler, SamplerKind) else sampler
+    if not isinstance(wanted_sampler, str) or not wanted_sampler:
+        raise ValueError("sampler must be a non-empty string")
+    if not isinstance(scheduler, str) or not scheduler:
+        raise ValueError("scheduler must be a non-empty string")
+    wanted_scheduler = scheduler
     eff_sampler = wanted_sampler
     eff_scheduler = wanted_scheduler
     warnings: List[str] = []
@@ -56,13 +58,6 @@ def apply_sampler_scheduler(pipe, sampler: Union[str, SamplerKind], scheduler: O
     }
 
     kind = SamplerKind.from_string(wanted_sampler)
-    if kind is SamplerKind.AUTOMATIC:
-        sched = getattr(pipe, "scheduler", None)
-        if sched is None:
-            raise RuntimeError("Pipeline has no scheduler to keep for 'Automatic'")
-        eff_sampler = "Automatic"
-        eff_scheduler = type(sched).__name__
-        return ApplyOutcome(wanted_sampler, wanted_scheduler, eff_sampler, eff_scheduler, warnings)
 
     target_cls = allowed.get(kind)
     if target_cls is None:

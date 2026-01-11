@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Iterable, List, Dict, Any
+from typing import Iterable, List, Dict
 
-import json
 import torch
 import safetensors.torch as sf
 from PIL import Image
@@ -59,10 +58,12 @@ def _default_roots(models_root: str = "models") -> List[str]:
     for p in get_paths_for("embeddings"):
         if os.path.isdir(p):
             roots.append(p)
-    seen = set(); out: List[str] = []
+    seen: set[str] = set()
+    out: List[str] = []
     for r in roots:
         if r not in seen:
-            seen.add(r); out.append(r)
+            seen.add(r)
+            out.append(r)
     return out
 
 
@@ -104,7 +105,8 @@ def _load_meta(path: str) -> tuple[int | None, int | None, int | None]:
         elif ext in (".png", ".webp", ".jxl", ".avif"):
             img = Image.open(path)
             if hasattr(img, 'text') and 'sd-ti-embedding' in img.text:
-                import base64, json
+                import base64
+                import json
                 from apps.backend.runtime.text_processing.textual_inversion import EmbeddingDecoder
                 payload = base64.b64decode(img.text['sd-ti-embedding'])
                 data = json.loads(payload, cls=EmbeddingDecoder)

@@ -1,7 +1,7 @@
 # apps/backend/runtime/workflows Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-08
 Status: Active
 
 ## Purpose
@@ -31,3 +31,5 @@ Status: Active
 - 2026-01-02: Removed token merging application from `common.py`; `<merge:...>` / `<tm:...>` tags are stripped but have no effect.
 - 2026-01-02: Added standardized file header docstrings to workflow helper modules (doc-only change; part of rollout).
 - 2026-01-03: Split the former `common.py` golema into focused modules and removed the workflow re-export facade (`__init__.py` is now intentionally empty).
+- 2026-01-06: `sampling_plan.py` scheduler normalization is strict (no alias/case normalization) and invalid schedulers now raise instead of falling back.
+- 2026-01-08: `sampling_execute.py` passes `width/height` into `build_sampling_context(...)` so flow-match models with dynamic shifting (Flux) can resolve `flow_shift` from scheduler_config (fail-fast when missing).

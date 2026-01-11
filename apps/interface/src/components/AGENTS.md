@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -44,3 +44,5 @@ Status: Active
 - 2026-01-01: `BasicParametersCard.vue` can optionally render a `WanSubHeader` title (`sectionTitle`) so model tabs can label the card like WAN sections.
 - 2026-01-02: Added standardized file header docstrings to component modules (doc-only change; part of rollout).
 - 2026-01-03: Continued the header rollout across remaining core component modules (doc-only change; part of rollout).
+- 2026-01-06: `BasicParametersCard.vue` now defaults to explicit sampler/scheduler selection (no empty option) and selector components tolerate missing `label` by falling back to `name`.
+- 2026-01-06: Sampler/Scheduler selectors now default the empty-option label to “Select” (no `Automatic` placeholder); WAN stage panels still override with “Inherit”.

@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 
 import math
-from typing import Iterable, Sequence, Tuple
+from typing import Iterable, Tuple
 
 import torch
 from einops import repeat

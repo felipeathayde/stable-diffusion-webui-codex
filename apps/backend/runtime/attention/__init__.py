@@ -133,8 +133,6 @@ def attention_sub_quad(query, key, value, heads, mask=None, attn_precision=None,
         b, _, dim_head = query.shape
         dim_head //= heads
 
-    scale = dim_head ** -0.5
-
     if skip_reshape:
         query = query.reshape(b * heads, -1, dim_head)
         value = value.reshape(b * heads, -1, dim_head)
@@ -152,7 +150,6 @@ def attention_sub_quad(query, key, value, heads, mask=None, attn_precision=None,
         bytes_per_token = torch.finfo(query.dtype).bits // 8
     batch_x_heads, q_tokens, _ = query.shape
     _, _, k_tokens = key.shape
-    qk_matmul_size_bytes = batch_x_heads * bytes_per_token * q_tokens * k_tokens
 
     mem_free_total, mem_free_torch = memory_management.manager.get_free_memory(query.device, return_torch_stats=True)
 
@@ -205,8 +202,6 @@ def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
         dim_head //= heads
 
     scale = dim_head ** -0.5
-
-    h = heads
     if skip_reshape:
         q, k, v = map(
             lambda t: t.reshape(b * heads, -1, dim_head),
@@ -356,7 +351,6 @@ def slice_attention_single_head_spatial(q, k, v):
 
     mem_free_total = memory_management.manager.get_free_memory(q.device)
 
-    gb = 1024 ** 3
     tensor_size = q.shape[0] * q.shape[1] * k.shape[2] * q.element_size()
     modifier = 3 if q.element_size() == 2 else 2.5
     mem_required = tensor_size * modifier

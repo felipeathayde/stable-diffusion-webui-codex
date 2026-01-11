@@ -1,7 +1,7 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-08
 Status: Active
 
 ## Purpose
@@ -19,3 +19,6 @@ Status: Active
 - 2026-01-04: `CodexObjects` renamed `unet` → `denoiser`; engines store their sampling core patcher under `codex_objects.denoiser` (UNet for SD-family; transformer/DiT for Flux/Z-Image/WAN).
 - 2026-01-06: VAE override (`vae_path`) now unwraps wrapper VAEs via `first_stage_model` before calling `safe_load_state_dict` (fixes `'VAE' object has no attribute 'state_dict'`).
 - 2026-01-06: VAE/TE selection is explicit via `vae_source`/`tenc_source` + paths; core-only `.gguf` checkpoints never treat these paths as state-dict overrides, and ZImage always treats them as external selection (may be dir/gguf).
+- 2026-01-06: Refreshed `base.py` file header blocks to document `vae_source`/`tenc_source` validation and core-only `.gguf` semantics (doc-only change).
+- 2026-01-06: Generation metadata no longer falls back to `"Automatic"` for sampler/scheduler; missing values serialize as null to surface invalid inputs.
+- 2026-01-08: `base.py` now imports `TextEncoderOverrideConfig` from `runtime.models.text_encoder_overrides` after the loader seam carve (no behavior change).

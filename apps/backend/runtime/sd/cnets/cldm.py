@@ -1,15 +1,7 @@
-import torch
 import torch.nn as nn
 
-from apps.backend.runtime.common.nn.unet import (
-    timestep_embedding,
-    exists,
-    conv_nd,
-    SpatialTransformer,
-    TimestepEmbedSequential,
-    ResBlock,
-    Downsample,
-)
+from apps.backend.runtime.common.nn.unet.layers import Downsample, ResBlock, SpatialTransformer, TimestepEmbedSequential
+from apps.backend.runtime.common.nn.unet.utils import conv_nd, exists, timestep_embedding
 
 
 class ControlNet(nn.Module):
@@ -257,7 +249,6 @@ class ControlNet(nn.Module):
 
         outs = []
 
-        hs = []
         if self.num_classes is not None:
             assert y.shape[0] == x.shape[0]
             emb = emb + self.label_emb(y)

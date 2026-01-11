@@ -20,8 +20,9 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
+from collections import namedtuple
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 import torch
 
@@ -31,8 +32,6 @@ from apps.backend.runtime.memory.config import DeviceRole
 from . import emphasis, parsing
 
 logger = logging.getLogger("backend.runtime.text_processing.t5_engine")
-
-from collections import namedtuple
 
 PromptChunkFix = namedtuple("PromptChunkFix", ["offset", "embedding"])
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
+from apps.backend.runtime.model_registry.detectors.base import REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,

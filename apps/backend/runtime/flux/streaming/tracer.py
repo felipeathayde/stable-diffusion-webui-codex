@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple, TYPE_CHECKING
+from typing import List, Tuple, TYPE_CHECKING
 
 import torch
 from torch import nn

@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Z Image engine specification and runtime assembly (analogous to Flux `spec.py`).
-Builds a `ZImageEngineRuntime` from parsed components, optionally loading external VAE/text-encoder assets when the checkpoint is core-only.
+Builds a `ZImageEngineRuntime` from parsed components, loading external VAE/text-encoder assets when required (core-only checkpoints) and supporting
+optional external overrides for full checkpoints.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
@@ -15,8 +16,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/denoiser/text pipelines/clip wrapper/device/dtype).
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
 - `_k_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
-- `_load_external_vae` (function): Loads an external VAE asset for core-only checkpoints.
-- `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder asset for core-only checkpoints.
+- `_load_external_vae` (function): Loads an external Flow16 VAE from a path (required for core-only; optional override for full checkpoints).
+- `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder from a path (required for core-only; optional override for full checkpoints).
 - `assemble_zimage_runtime` (function): Assembles the runtime (including external assets when required) and returns a `ZImageEngineRuntime`.
 - `ZIMAGE_SPEC` (constant): Default Z Image engine spec instance.
 - `__all__` (constant): Public export list for this module.
@@ -33,6 +34,7 @@ from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
+from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
 from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
@@ -105,13 +107,19 @@ class ZImageEngineSpec:
     
     @property
     def flow_shift(self) -> float:
-        """Flow-match shift, delegating to FamilyRuntimeSpec if not overridden.
-        
-        Z Image Turbo uses shift=3.0 (matches HF `scheduler_config.json` for Z-Image-Turbo).
+        """Flow-match shift (mu) for Z Image Turbo.
+
+        Source of truth is the vendored diffusers scheduler config:
+        `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/scheduler/scheduler_config.json`.
         """
         if self._flow_shift_override is not None:
             return self._flow_shift_override
-        return self._get_family_spec().flow_shift or 3.0
+        from apps.backend.infra.config.repo_root import get_repo_root
+
+        repo_root = get_repo_root()
+        vendor_dir = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo"
+        spec = flow_shift_spec_from_repo_dir(vendor_dir)
+        return spec.resolve_effective_shift()
     
     @property
     def default_steps(self) -> int:

@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -26,3 +26,4 @@ Status: Active
 - 2026-01-01: History cards now render as a single-row horizontal strip, and `WANTab.vue` reuses the shared `cdx-history-*` card layout for parity with image tabs.
 - 2026-01-01: Results empty states now reflect running tasks (“Starting inference…” / “Generating…”) and image tabs can show live preview frames inside `ResultViewer.vue` while sampling.
 - 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).
+- 2026-01-06: `ImageModelTab.vue` now filters schedulers by the selected sampler’s `allowed_schedulers` and auto-resets invalid scheduler selections to the sampler’s `default_scheduler`.

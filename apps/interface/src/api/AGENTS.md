@@ -2,7 +2,7 @@
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-06
 Status: Active
 
 ## Purpose
@@ -14,6 +14,7 @@ Status: Active
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.highres.refiner`; `HighresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - `payloads_video.ts` provides typed (Zod) payload builders for WAN `/txt2vid` and `/img2vid`, including stage overrides (`wan_high/wan_low`), normalization of QuickSettings-style TE labels (`wan22/<abs_path>` → `<abs_path>`), and guards against sentinel asset values (`Automatic`/`Built-in`) so video endpoints receive real paths only.
+- 2026-01-06: `/api/samplers` DTO is now `{name,supported,default_scheduler,allowed_schedulers}` and WAN payload builders fail fast on non-canonical (uppercase) sampler/scheduler inputs.
 - 2025-12-16: Added `startVid2Vid(FormData)` for `/api/vid2vid` (multipart upload) and a typed builder `buildWanVid2VidPayload()`; video task events/results now include an optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
 - `Txt2ImgRequestSchema` exposes optional `smart_offload`/`smart_fallback` booleans so quicksettings can toggle smart offload and CPU fallback per-generation (mirroring `/api/options` keys `codex_smart_offload`/`codex_smart_fallback`).
 - Inventory helpers (`InventoryResponse`) are served by `/api/models/inventory`; the client exposes both a cached fetch (`fetchModelInventory`) and a rescan path (`refreshModelInventory`) that posts to `/api/models/inventory/refresh` (assets like VAEs/Text Encoders/metadata roots).

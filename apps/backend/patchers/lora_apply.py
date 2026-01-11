@@ -20,9 +20,8 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple, Any, Iterable, List
+from typing import Dict, Tuple, Any, Iterable
 
-import torch
 import safetensors.torch as sf
 
 from .lora import model_lora_keys_unet, model_lora_keys_clip, load_lora

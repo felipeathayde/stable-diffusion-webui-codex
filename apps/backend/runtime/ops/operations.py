@@ -539,7 +539,6 @@ try:
     from .operations_bnb import (
         BnbQuantConfig,
         CodexLoader4Bit,
-        CodexParams4bit,
         functional_dequantize_4bit,
         functional_linear_4bits,
     )

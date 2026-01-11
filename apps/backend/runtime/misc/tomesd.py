@@ -160,7 +160,9 @@ def get_functions(x, ratio, original_shape):
         m, u = bipartite_soft_matching_random2d(x, w, h, stride_x, stride_y, r, no_rand)
         return m, u
 
-    nothing = lambda y: y
+    def nothing(y):
+        return y
+
     return nothing, nothing
 
 

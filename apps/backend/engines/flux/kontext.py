@@ -45,7 +45,7 @@ class Kontext(Flux):
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
             extras={
-                "samplers": ("euler", "euler_a", "ddim", "dpmpp_2m"),
+                "samplers": ("euler", "euler a", "ddim", "dpm++ 2m"),
                 "schedulers": ("simple", "beta", "normal"),
             },
         )
@@ -170,8 +170,8 @@ class Kontext(Flux):
             "height": int(proc.height),
             "steps": int(proc.steps),
             "guidance_scale": float(proc.guidance_scale),
-            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
-            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
+            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
         }
         if getattr(proc, "prompt", None):
             info["prompt"] = str(getattr(proc, "prompt", ""))

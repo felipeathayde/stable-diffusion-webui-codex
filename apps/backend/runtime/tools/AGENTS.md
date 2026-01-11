@@ -9,6 +9,13 @@ Status: Active
 
 ## Key Files
 - `apps/backend/runtime/tools/gguf_converter.py` — Converts SafeTensors (including sharded `*.safetensors.index.json`) to GGUF with quantization + verification.
+- `apps/backend/runtime/tools/gguf_converter_key_mapping.py` — Hugging Face → GGUF tensor-name remapping helpers (layer-indexed mappings).
+- `apps/backend/runtime/tools/gguf_converter_safetensors_source.py` — SafeTensors source helpers (single-file + sharded index/dir).
+- `apps/backend/runtime/tools/gguf_converter_quantization.py` — Quantization selection + override rules for the converter.
+- `apps/backend/runtime/tools/gguf_converter_tensor_planner.py` — Tensor conversion planning helpers (types + stored byte shapes).
+- `apps/backend/runtime/tools/gguf_converter_types.py` — Public converter types (config, quantization enum, progress, verification error).
+- `apps/backend/runtime/tools/gguf_converter_metadata.py` — GGUF metadata injection helpers (provenance + arch keys).
+- `apps/backend/runtime/tools/gguf_converter_verify.py` — GGUF output verification helpers (tensor tables + spot-checks).
 
 ## Notes
 - Tools should be deterministic, auditable, and fail loud (no silent fallbacks).

@@ -1,0 +1,218 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Options API routes for reading, updating, and validating settings.
+Exposes the JSON-backed options store and registry-driven validation helpers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `build_router` (function): Build the APIRouter for options endpoints.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Dict
+
+from fastapi import APIRouter, Body, HTTPException
+
+
+def build_router(
+    *,
+    opts_load_native: Callable[[], Dict[str, Any]],
+    opts_snapshot,
+    opts_set_many: Callable[[Dict[str, Any]], Dict[str, Any]],
+    settings_registry_ok: bool,
+    field_index: Callable[[], Dict[str, Any]],
+    setting_type,
+) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/api/options")
+    def get_options() -> Dict[str, Any]:
+        return {"values": opts_load_native()}
+
+    @router.get("/api/options/keys")
+    def get_options_keys() -> Dict[str, Any]:
+        """List supported option keys and basic metadata from the settings registry."""
+        if not settings_registry_ok:
+            return {"keys": [], "types": {}, "choices": {}}
+        try:
+            idx = field_index()
+            keys = list(idx.keys())
+            types = {}
+            choices = {}
+            for k, f in idx.items():
+                t = getattr(getattr(f, "type", None), "name", None) or str(getattr(f, "type", None))
+                types[k] = t
+                ch = getattr(f, "choices", None)
+                if isinstance(ch, list):
+                    choices[k] = ch
+            return {"keys": keys, "types": types, "choices": choices}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read registry: {exc}")
+
+    @router.get("/api/options/snapshot")
+    def get_options_snapshot() -> Dict[str, Any]:
+        """Return a typed snapshot of current options (for UI defaults)."""
+        try:
+            return {"snapshot": opts_snapshot().as_dict()}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"failed to read snapshot: {exc}")
+
+    @router.get("/api/options/defaults")
+    def get_options_defaults() -> Dict[str, Any]:
+        """Return default values from the settings registry and the current snapshot."""
+        defaults: Dict[str, Any] = {}
+        if settings_registry_ok:
+            try:
+                idx = field_index()
+                for k, f in idx.items():
+                    defaults[k] = getattr(f, "default", None)
+            except Exception:
+                defaults = {}
+        try:
+            snap = opts_snapshot().as_dict()
+        except Exception:
+            snap = {}
+        return {"defaults": defaults, "snapshot": snap}
+
+    def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        if not settings_registry_ok:
+            return dict(payload)
+        try:
+            idx = field_index()
+        except Exception:
+            return dict(payload)
+
+        # Native UI keys that are persisted but not yet modeled in the generated settings registry.
+        extra_keys = {
+            "text_encoder_overrides",
+            "text_encoder_overrides_sha",
+            "codex_unet_storage_dtype",
+            "codex_inference_memory_mb",
+        }
+        out: Dict[str, Any] = {}
+        for k, v in payload.items():
+            f = idx.get(k)
+            if not f:
+                if k not in extra_keys:
+                    continue
+                try:
+                    if k in {"text_encoder_overrides", "text_encoder_overrides_sha"}:
+                        if isinstance(v, (list, tuple)):
+                            out[k] = [str(item).strip() for item in v if str(item).strip()]
+                    elif k == "codex_unet_storage_dtype":
+                        if isinstance(v, str):
+                            out[k] = v
+                    elif k == "codex_inference_memory_mb":
+                        out[k] = max(0.0, float(v))
+                except Exception:
+                    continue
+                continue
+            try:
+                if getattr(f, "choices", None) and isinstance(f.choices, list):
+                    if v not in f.choices:
+                        continue
+                if getattr(f, "type", None) in (setting_type.SLIDER, setting_type.NUMBER):
+                    num = float(v)
+                    lo = getattr(f, "min", None)
+                    hi = getattr(f, "max", None)
+                    if isinstance(lo, (int, float)) and num < lo:
+                        num = lo
+                    if isinstance(hi, (int, float)) and num > hi:
+                        num = hi
+                    out[k] = num
+                elif getattr(f, "type", None) == setting_type.CHECKBOX:
+                    if isinstance(v, str):
+                        out[k] = v.strip().lower() in ("1", "true", "yes", "on")
+                    else:
+                        out[k] = bool(v)
+                else:
+                    out[k] = v
+            except Exception:
+                continue
+        return out
+
+    @router.post("/api/options")
+    def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid payload")
+        updates = _validate_options(payload)
+        updated = opts_set_many(updates)
+
+        # Apply memory manager overrides when present
+        from apps.backend.runtime import memory_management as mem_management
+
+        role_map = {
+            "codex_core_device": ("core", "backend"),
+            "codex_te_device": ("text_encoder", "backend"),
+            "codex_vae_device": ("vae", "backend"),
+            "codex_core_dtype": ("core", "dtype"),
+            "codex_te_dtype": ("text_encoder", "dtype"),
+            "codex_vae_dtype": ("vae", "dtype"),
+        }
+        for key, value in payload.items():
+            if key not in role_map:
+                continue
+            role, kind = role_map[key]
+            try:
+                if kind == "backend":
+                    mem_management.set_component_backend(role, str(value))
+                else:
+                    mem_management.set_component_dtype(role, str(value))
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
+
+        return {"updated": updated}
+
+    @router.post("/api/options/validate")
+    def validate_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Dry-run options validation; returns accepted and rejected keys with reasons."""
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="invalid payload")
+        if not settings_registry_ok:
+            return {"accepted": dict(payload), "rejected": {}}
+        try:
+            idx = field_index()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"registry unavailable: {exc}")
+        accepted: Dict[str, Any] = {}
+        rejected: Dict[str, str] = {}
+        for k, v in payload.items():
+            f = idx.get(k)
+            if not f:
+                rejected[k] = "unknown key"
+                continue
+            try:
+                if getattr(f, "choices", None) and isinstance(f.choices, list) and v not in f.choices:
+                    rejected[k] = "not in choices"
+                    continue
+                if getattr(f, "type", None) in (setting_type.SLIDER, setting_type.NUMBER):
+                    num = float(v)
+                    lo = getattr(f, "min", None)
+                    hi = getattr(f, "max", None)
+                    if isinstance(lo, (int, float)) and num < lo:
+                        rejected[k] = f"below min {lo}"
+                        continue
+                    if isinstance(hi, (int, float)) and num > hi:
+                        rejected[k] = f"above max {hi}"
+                        continue
+                    accepted[k] = num
+                elif getattr(f, "type", None) == setting_type.CHECKBOX:
+                    if isinstance(v, str):
+                        accepted[k] = v.strip().lower() in ("1", "true", "yes", "on")
+                    else:
+                        accepted[k] = bool(v)
+                else:
+                    accepted[k] = v
+            except Exception:
+                rejected[k] = "invalid value"
+        return {"accepted": accepted, "rejected": rejected}
+
+    return router

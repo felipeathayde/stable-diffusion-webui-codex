@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 from apps.backend.runtime import trace as _trace
-from apps.backend.runtime.utils import FilterPrefixView
+from apps.backend.runtime.state_dict_views import FilterPrefixView
 
 _log = logging.getLogger("backend.state_dict")
 _KEYMAP_DIR = Path("logs")
@@ -167,7 +167,6 @@ def safe_load_state_dict(model, sd, *, log_name=None):
     Avoids materializing all tensors and reduces device/dtype edge cases.
     Emits periodic trace events. Returns (missing, unexpected) like nn.Module.load_state_dict.
     """
-    import torch
     from collections.abc import Mapping
     log_name = log_name or type(model).__name__
 

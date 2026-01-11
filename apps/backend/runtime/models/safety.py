@@ -164,7 +164,7 @@ def safe_torch_load(
     if strict:
         try:
             validate_checkpoint(path, extra_handler=extra_handler)
-        except UnsafeCheckpointError as exc:
+        except UnsafeCheckpointError:
             runtime_errors.report_error(f"Unsafe checkpoint rejected: {path}", exc_info=False, context="checkpoint_safety")
             raise
 

@@ -257,7 +257,7 @@ class EmbeddingDatabase:
 
 
 def create_embedding_from_data(data, name, filename='unknown embedding file', filepath=None):
-    if 'string_to_param' in data:  # textual inversion embeddings
+    if isinstance(data, dict) and 'string_to_param' in data:  # textual inversion embeddings
         param_dict = data['string_to_param']
         param_dict = getattr(param_dict, '_parameters', param_dict)  # fix for torch 1.12.1 loading saved file from torch 1.11
         assert len(param_dict) == 1, 'embedding file has multiple terms in it'
@@ -265,11 +265,11 @@ def create_embedding_from_data(data, name, filename='unknown embedding file', fi
         vec = emb.detach().to(dtype=torch.float32)
         shape = vec.shape[-1]
         vectors = vec.shape[0]
-    elif type(data) == dict and 'clip_g' in data and 'clip_l' in data:  # SDXL embedding
+    elif isinstance(data, dict) and 'clip_g' in data and 'clip_l' in data:  # SDXL embedding
         vec = {k: v.detach().to(dtype=torch.float32) for k, v in data.items()}
         shape = data['clip_g'].shape[-1] + data['clip_l'].shape[-1]
         vectors = data['clip_g'].shape[0]
-    elif type(data) == dict and type(next(iter(data.values()))) == torch.Tensor:  # diffuser concepts
+    elif isinstance(data, dict) and data and isinstance(next(iter(data.values())), torch.Tensor):  # diffuser concepts
         assert len(data.keys()) == 1, 'embedding file has multiple terms in it'
 
         emb = next(iter(data.values()))

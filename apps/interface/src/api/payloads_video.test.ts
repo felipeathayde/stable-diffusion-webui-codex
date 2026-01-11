@@ -14,8 +14,8 @@ describe('WAN video payload builders', () => {
       frames: 16,
       high: {
         modelDir: '/models/wan22',
-        sampler: 'Euler a',
-        scheduler: 'Automatic',
+        sampler: 'euler a',
+        scheduler: 'simple',
         steps: 4,
         cfgScale: 7,
         seed: 42,
@@ -23,8 +23,8 @@ describe('WAN video payload builders', () => {
       },
       low: {
         modelDir: '/models/wan22',
-        sampler: 'Euler',
-        scheduler: 'Automatic',
+        sampler: 'euler',
+        scheduler: 'simple',
         steps: 2,
         cfgScale: 5,
         seed: -1,

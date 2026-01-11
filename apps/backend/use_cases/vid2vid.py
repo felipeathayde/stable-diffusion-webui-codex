@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 import shutil
 from uuid import uuid4
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 from apps.backend.core.engine_interface import TaskType
 from apps.backend.core.params.video import VideoInterpolationOptions
@@ -313,7 +313,6 @@ def _run_flow_chunks(
     request: Vid2VidRequest,
     frames_in: Sequence[Any],
 ) -> list[Any]:
-    logger = getattr(engine, "_logger", None)
     extras = dict(getattr(request, "extras", {}) or {})
 
     cfg = _extract_vid2vid_options(extras)

@@ -31,9 +31,6 @@ import os
 import sys
 from typing import Mapping, MutableMapping, Sequence
 
-_LOG = logging.getLogger("backend.infra.config.args")
-TRACE_DEBUG_DEFAULT = 10
-
 from apps.backend.runtime.memory.config import (
     AttentionBackend,
     AttentionConfig,
@@ -46,6 +43,9 @@ from apps.backend.runtime.memory.config import (
     SwapMethod,
     SwapPolicy,
 )
+
+_LOG = logging.getLogger("backend.infra.config.args")
+TRACE_DEBUG_DEFAULT = 10
 
 
 def _build_parser() -> argparse.ArgumentParser:

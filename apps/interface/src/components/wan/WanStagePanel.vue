@@ -29,6 +29,7 @@ Symbols (top-level; keep in sync; no ghosts):
         :modelValue="stage.sampler"
         :label="samplerLabel"
         :allow-empty="true"
+        emptyLabel="Inherit"
         :disabled="disabled"
         @update:modelValue="(v) => updateStage({ sampler: v })"
       />
@@ -38,6 +39,7 @@ Symbols (top-level; keep in sync; no ghosts):
         :modelValue="stage.scheduler"
         :label="schedulerLabel"
         :allow-empty="true"
+        emptyLabel="Inherit"
         :disabled="disabled"
         @update:modelValue="(v) => updateStage({ scheduler: v })"
       />

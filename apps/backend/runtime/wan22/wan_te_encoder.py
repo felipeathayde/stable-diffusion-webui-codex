@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional
 import os
 import logging
 import torch
@@ -69,8 +69,6 @@ def _embedding_fp8(indices: torch.Tensor, embed_u8: torch.Tensor, embed_scale: t
 
 def _proj_fp8(x: torch.Tensor, pack, device: torch.device) -> torch.Tensor:
     # x: [B,L,Cin]; pack.w (u8+scale), pack.b optional
-    w_u8 = pack.w.w_u8.to('cpu') if pack.w.w_u8.is_cuda else pack.w.w_u8
-    w_scale = pack.w.scale.to('cpu') if pack.w.scale.is_cuda else pack.w.scale
     b = pack.b.to(device, x.dtype) if (pack.b is not None) else None
     # linear_fp8 expects tensors; it will tile-dequant onto device
     return linear_fp8(x, pack.w, b)

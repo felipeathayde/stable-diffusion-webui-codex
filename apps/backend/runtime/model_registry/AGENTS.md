@@ -1,7 +1,7 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
 Owner: Backend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-08
 Status: Draft
 
 ## Purpose
@@ -17,6 +17,9 @@ Status: Draft
 - 2025-12-12: Z Image runtime metadata was corrected (`context_dim=2560`, `flow_shift=3.0`) to match the canonical HF assets for Z-Image Turbo.
 - 2025-12-13: Z Image Turbo default steps adjusted to 9 to match diffusers `ZImagePipeline` recommendation (≈8 effective updates; last `dt=0`).
 - 2025-12-14: `ModelFamily.ZIMAGE.flow_shift` re-aligned to `3.0` in `family_runtime.py` (HF scheduler_config parity).
+- 2026-01-06: Engine capability surfaces now default to model_index-derived sampler/scheduler pairs (SD15 `pndm`/`ddim`, SDXL `euler`/`euler_discrete`, WAN22 `uni-pc`/`simple`, Hunyuan `ddpm`/`beta`).
+- 2026-01-08: Added `flow_shift.py` as the canonical flow-shift resolver from diffusers `scheduler_config.json` (fixed + dynamic) and removed hard-coded `flow_shift` values from family runtime specs where the value is not a true family invariant (Flux/WAN22).
+- 2026-01-08: Refreshed file header blocks for `capabilities.py` and `flow_shift.py` to keep the Symbols lists in sync (doc-only change).
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).
@@ -24,3 +27,4 @@ Status: Draft
 - Expose CLI/inspect tooling for diagnostics.
 - Wire registry outputs into loader/runtime paths and add regression fixtures.
 - 2026-01-02: Added standardized file header docstrings to model registry modules and detectors (doc-only change; part of rollout).
+- 2026-01-06: Updated Flux sampler allow-lists in `capabilities.py` to use canonical `SamplerKind` strings (spaces/`++` preserved).

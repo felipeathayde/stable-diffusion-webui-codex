@@ -65,7 +65,7 @@ def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, log
             try:
                 mod = importlib.import_module(name)
                 break
-            except Exception as ex:
+            except Exception:
                 mod = None
         if mod is None or not hasattr(mod, "apply"):
             raise ModuleNotFoundError("SAGE attention plugin not found (backend_ext.sage_attention or sage_attention)")

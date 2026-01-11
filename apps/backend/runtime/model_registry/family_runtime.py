@@ -138,7 +138,7 @@ class FamilyRuntimeSpec:
     # Sampling parameters (new)
     default_steps: int = 20  # Default sampling steps
     flow_shift: Optional[float] = None  # Flow-match shift (None for non-flow models)
-    scheduler_default: str = "automatic"  # Default scheduler name
+    scheduler_default: str = "karras"  # Default scheduler name (canonical)
     
     # Text encoding parameters (new)
     t5_min_length: Optional[int] = None  # T5 padding length (256 for Flux/SD3, None if no T5)
@@ -303,7 +303,9 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=20,
-        flow_shift=1.15,
+        # NOTE: Flux uses dynamic resolution-dependent shifting (use_dynamic_shifting=true).
+        # Source of truth is the diffusers scheduler_config.json (base/max shift + seq_len); do not hard-code a single value.
+        flow_shift=None,
         scheduler_default="simple",
         t5_min_length=256,
         uses_t5=True,
@@ -324,7 +326,8 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=20,
-        flow_shift=1.15,
+        # NOTE: Flux uses dynamic resolution-dependent shifting (use_dynamic_shifting=true).
+        flow_shift=None,
         scheduler_default="simple",
         t5_min_length=256,
         uses_t5=True,
@@ -345,7 +348,8 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=20,
-        flow_shift=1.15,
+        # NOTE: Chroma follows Flux flow-shift semantics (dynamic shifting in diffusers configs).
+        flow_shift=None,
         scheduler_default="simple",
         t5_min_length=256,
         uses_t5=True,
@@ -382,7 +386,9 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=20,
-        flow_shift=8.0,  # WAN22 14B default
+        # NOTE: WAN22 flow_shift is model-variant specific (T2V/I2V vs TI2V/Animate).
+        # Source of truth is the diffusers scheduler_config.json; do not hard-code here.
+        flow_shift=None,
         scheduler_default="simple",
         t5_min_length=512,  # UMT5-XXL
         uses_t5=True,

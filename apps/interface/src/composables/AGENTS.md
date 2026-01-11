@@ -23,4 +23,5 @@ Status: Active
 - 2026-01-02: `useGeneration(tabId)` now resolves the selected checkpoint to its short hash (when available) before sending requests, and uses `quicksettings.isModelGguf(...)` to decide when `tenc_sha` is required.
 - 2026-01-06: `useGeneration(tabId)` now requires `vae_sha` when the selected checkpoint is `.gguf` (even if the engine’s static capabilities don’t require VAE), keeping ZImage full checkpoints usable without forcing external assets.
 - 2026-01-06: `useGeneration(tabId)` now sends `tenc_sha` for ZImage when a text encoder is explicitly selected, enabling optional TE overrides for full (non-GGUF) checkpoints.
+- 2026-01-06: Refreshed `useGeneration.ts` file header blocks to reflect the current GGUF + optional override gating (doc-only change).
 - 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).

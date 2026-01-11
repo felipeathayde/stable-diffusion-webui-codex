@@ -18,8 +18,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
 
 import torch
@@ -28,7 +26,7 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest, Img2VidRequest
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
+from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 from .factory import CodexWan22Factory
 from .spec import WAN_14B_SPEC, WanEngineRuntime
@@ -302,7 +300,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:
         """Generate video from image."""
         self.ensure_loaded()
-        runtime = self._require_runtime()
+        self._require_runtime()
 
         if getattr(request, "init_image", None) is None:
             raise RuntimeError("img2vid requires 'init_image'")

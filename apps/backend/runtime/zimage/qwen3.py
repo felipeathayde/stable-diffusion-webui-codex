@@ -36,9 +36,8 @@ from __future__ import annotations
 # - SwiGLU activation
 
 import logging
-import math
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Any
+from typing import Optional, Tuple, List
 
 import torch
 import torch.nn as nn

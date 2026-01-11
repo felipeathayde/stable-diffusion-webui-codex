@@ -6,19 +6,15 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Sampler/scheduler option catalog (labels + aliases + defaults) for the WebUI/API surface.
-Defines the canonical sampler/scheduler names exposed to users, plus alias normalization tables and default scheduler selection rules used by
-the sampling driver and UI selectors.
+Purpose: Sampler/scheduler option catalog (canonical names + defaults) for the WebUI/API surface.
+Defines the canonical sampler/scheduler names exposed to users, plus default scheduler selection rules used by the sampling driver and UI selectors.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `SAMPLER_OPTIONS` (constant): UI-facing sampler option table (name/label/aliases + optional scheduler allowlists).
-- `SAMPLER_ALIAS_TO_CANONICAL` (constant): Normalization map from alias tokens to canonical sampler names.
+- `SAMPLER_OPTIONS` (constant): UI-facing sampler option table (canonical name + optional scheduler allowlists).
 - `SUPPORTED_SAMPLERS` (constant): Set of supported sampler canonical names.
-- `SCHEDULER_OPTIONS` (constant): UI-facing scheduler option table (name/label/aliases).
-- `SCHEDULER_ALIAS_TO_CANONICAL` (constant): Normalization map from alias tokens to canonical scheduler names.
+- `SCHEDULER_OPTIONS` (constant): UI-facing scheduler option table (canonical name only).
 - `SUPPORTED_SCHEDULERS` (constant): Set of supported scheduler canonical names.
-- `SAMPLER_DEFAULT_SCHEDULER` (constant): Default scheduler per sampler when the user selects an automatic scheduler.
-- `AUTO_TOKENS` (constant): Normalized tokens treated as “automatic/same/default” selectors.
+- `SAMPLER_DEFAULT_SCHEDULER` (constant): Default scheduler per sampler (used by UI and sampling plan defaults).
 """
 
 from __future__ import annotations
@@ -27,159 +23,111 @@ from typing import Dict, List, Set
 
 
 SAMPLER_OPTIONS: List[Dict[str, object]] = [
-    {"name": "automatic", "label": "Automatic", "aliases": ["auto", ""], "supported": True},
-    {"name": "euler", "label": "Euler", "aliases": ["k_euler"], "supported": True},
-    {"name": "euler a", "label": "Euler a", "aliases": ["k_euler_a", "euler_ancestral"], "supported": True},
-    {"name": "euler cfg++", "label": "Euler CFG++", "aliases": ["euler_cfg_pp"], "supported": True},
-    {"name": "euler a cfg++", "label": "Euler a CFG++", "aliases": ["euler_ancestral_cfg_pp", "euler a cfg_pp"], "supported": True},
-    {"name": "heun", "label": "Heun", "aliases": [], "supported": True},
-    {"name": "heunpp2", "label": "Heun++ 2", "aliases": [], "supported": True},
-    {"name": "lms", "label": "LMS", "aliases": [], "supported": True},
-    {"name": "ddim", "label": "DDIM", "aliases": [], "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "ddim cfg++", "label": "DDIM CFG++", "aliases": ["ddim_cfgpp"], "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "plms", "label": "PLMS", "aliases": [], "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "pndm", "label": "PNDM", "aliases": [], "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "dpm++ 2m", "label": "DPM++ 2M", "aliases": ["dpmpp_2m"], "supported": True},
-    {"name": "dpm++ 2m cfg++", "label": "DPM++ 2M CFG++", "aliases": ["dpmpp_2m_cfg_pp"], "supported": True},
-    {"name": "dpm++ 2m sde", "label": "DPM++ 2M SDE", "aliases": ["dpmpp_2m_sde"], "supported": True},
-    {"name": "dpm++ 2m sde heun", "label": "DPM++ 2M SDE Heun", "aliases": ["dpmpp_2m_sde_heun"], "supported": True},
-    {"name": "dpm++ 2m sde gpu", "label": "DPM++ 2M SDE GPU", "aliases": ["dpmpp_2m_sde_gpu"], "supported": True},
-    {"name": "dpm++ 2m sde heun gpu", "label": "DPM++ 2M SDE Heun GPU", "aliases": ["dpmpp_2m_sde_heun_gpu"], "supported": True},
-    {"name": "dpm++ sde", "label": "DPM++ SDE", "aliases": ["dpmpp_sde", "dpmpp_sde_gpu"], "supported": True},
-    {"name": "dpm++ 2s ancestral", "label": "DPM++ 2S Ancestral", "aliases": ["dpmpp_2s_ancestral"], "supported": True},
-    {"name": "dpm++ 2s ancestral cfg++", "label": "DPM++ 2S Ancestral CFG++", "aliases": ["dpmpp_2s_ancestral_cfg_pp"], "supported": True},
-    {"name": "dpm++ 3m sde", "label": "DPM++ 3M SDE", "aliases": ["dpmpp_3m_sde", "dpmpp_3m_sde_gpu"], "supported": True},
-    {"name": "dpm 2", "label": "DPM 2", "aliases": ["dpm_2"], "supported": True},
-    {"name": "dpm 2 ancestral", "label": "DPM 2 Ancestral", "aliases": ["dpm_2_ancestral"], "supported": True},
-    {"name": "dpm fast", "label": "DPM Fast", "aliases": ["dpm_fast"], "supported": True},
-    {"name": "dpm adaptive", "label": "DPM Adaptive", "aliases": ["dpm_adaptive"], "supported": True},
-    {"name": "uni-pc", "label": "UniPC", "aliases": ["uni_pc", "unipc"], "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "uni-pc bh2", "label": "UniPC (BH2)", "aliases": ["uni_pc_bh2"], "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
-    {"name": "ddpm", "label": "DDPM", "aliases": [], "supported": True},
-    {"name": "lcm", "label": "LCM", "aliases": [], "supported": True},
-    {"name": "ipndm", "label": "iPNDM", "aliases": [], "supported": True},
-    {"name": "ipndm v", "label": "iPNDM v", "aliases": ["ipndm_v"], "supported": True},
-    {"name": "deis", "label": "DEIS", "aliases": [], "supported": True},
-    {"name": "res multistep", "label": "Res MultiStep", "aliases": ["res_multistep"], "supported": True},
-    {"name": "res multistep cfg++", "label": "Res MultiStep CFG++", "aliases": ["res_multistep_cfg_pp"], "supported": True},
-    {"name": "res multistep ancestral", "label": "Res MultiStep Ancestral", "aliases": ["res_multistep_ancestral"], "supported": True},
-    {"name": "res multistep ancestral cfg++", "label": "Res MultiStep Ancestral CFG++", "aliases": ["res_multistep_ancestral_cfg_pp"], "supported": True},
-    {"name": "gradient estimation", "label": "Gradient Estimation", "aliases": ["gradient_estimation"], "supported": True},
-    {"name": "gradient estimation cfg++", "label": "Gradient Estimation CFG++", "aliases": ["gradient_estimation_cfg_pp"], "supported": True},
-    {"name": "er sde", "label": "ER SDE", "aliases": ["er_sde"], "supported": True},
-    {"name": "seeds 2", "label": "Seeds 2", "aliases": ["seeds_2"], "supported": True},
-    {"name": "seeds 3", "label": "Seeds 3", "aliases": ["seeds_3"], "supported": True},
-    {"name": "sa-solver", "label": "SA-Solver", "aliases": ["sa_solver"], "supported": True},
-    {"name": "sa-solver pece", "label": "SA-Solver PECE", "aliases": ["sa_solver_pece"], "supported": True},
-    {"name": "restart", "label": "Restart", "aliases": ["restart"], "supported": True},
+    {"name": "euler", "supported": True},
+    {"name": "euler a", "supported": True},
+    {"name": "euler cfg++", "supported": True},
+    {"name": "euler a cfg++", "supported": True},
+    {"name": "heun", "supported": True},
+    {"name": "heunpp2", "supported": True},
+    {"name": "lms", "supported": True},
+    {"name": "ddim", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "ddim cfg++", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "plms", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "pndm", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "dpm++ 2m", "supported": True},
+    {"name": "dpm++ 2m cfg++", "supported": True},
+    {"name": "dpm++ 2m sde", "supported": True},
+    {"name": "dpm++ 2m sde heun", "supported": True},
+    {"name": "dpm++ 2m sde gpu", "supported": True},
+    {"name": "dpm++ 2m sde heun gpu", "supported": True},
+    {"name": "dpm++ sde", "supported": True},
+    {"name": "dpm++ 2s ancestral", "supported": True},
+    {"name": "dpm++ 2s ancestral cfg++", "supported": True},
+    {"name": "dpm++ 3m sde", "supported": True},
+    {"name": "dpm 2", "supported": True},
+    {"name": "dpm 2 ancestral", "supported": True},
+    {"name": "dpm fast", "supported": True},
+    {"name": "dpm adaptive", "supported": True},
+    {"name": "uni-pc", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "uni-pc bh2", "supported": True, "schedulers": ["ddim", "ddim_uniform", "karras", "exponential", "simple", "euler_discrete"]},
+    {"name": "ddpm", "supported": True},
+    {"name": "lcm", "supported": True},
+    {"name": "ipndm", "supported": True},
+    {"name": "ipndm v", "supported": True},
+    {"name": "deis", "supported": True},
+    {"name": "res multistep", "supported": True},
+    {"name": "res multistep cfg++", "supported": True},
+    {"name": "res multistep ancestral", "supported": True},
+    {"name": "res multistep ancestral cfg++", "supported": True},
+    {"name": "gradient estimation", "supported": True},
+    {"name": "gradient estimation cfg++", "supported": True},
+    {"name": "er sde", "supported": True},
+    {"name": "seeds 2", "supported": True},
+    {"name": "seeds 3", "supported": True},
+    {"name": "sa-solver", "supported": True},
+    {"name": "sa-solver pece", "supported": True},
+    {"name": "restart", "supported": True},
 ]
-
-SAMPLER_ALIAS_TO_CANONICAL: Dict[str, str] = {}
-for entry in SAMPLER_OPTIONS:
-    canonical = entry["name"]
-    aliases = entry.get("aliases", []) if isinstance(entry.get("aliases"), list) else []
-    for alias in [canonical, *aliases]:
-        SAMPLER_ALIAS_TO_CANONICAL[alias.strip().lower()] = canonical  # type: ignore[arg-type]
 
 SUPPORTED_SAMPLERS: Set[str] = {entry["name"] for entry in SAMPLER_OPTIONS if entry.get("supported", True)}
 
 SCHEDULER_OPTIONS: List[Dict[str, object]] = [
-    {
-        "name": "automatic",
-        "label": "Automatic",
-        "aliases": ["auto", "", "use same scheduler", "use same", "same", "default"],
-        "supported": True,
-    },
-    {"name": "uniform", "label": "Uniform", "aliases": ["uniform"], "supported": True},
+    {"name": "uniform", "supported": True},
     {
         "name": "karras",
-        "label": "Karras",
-        "aliases": ["karras"],
         "supported": True,
     },
     {
         "name": "exponential",
-        "label": "Exponential",
-        "aliases": ["exp", "exponential"],
         "supported": True,
     },
     {
         "name": "polyexponential",
-        "label": "Polyexponential",
-        "aliases": ["polyexp", "polyexponential"],
         "supported": True,
     },
     {
         "name": "simple",
-        "label": "Simple",
-        "aliases": ["simple", "linear"],
         "supported": True,
     },
     {
         "name": "euler_discrete",
-        "label": "Euler (discrete)",
-        "aliases": [
-            "euler",
-            "euler a",
-            "eulerdiscretescheduler",
-            "eulerancestraldiscretescheduler",
-        ],
         "supported": True,
     },
-    {"name": "ddim", "label": "DDIM", "aliases": ["ddim"], "supported": True},
+    {"name": "ddim", "supported": True},
     {
         "name": "sgm_uniform",
-        "label": "SGM Uniform",
-        "aliases": ["sgm_uniform"],
         "supported": True,
     },
     {
         "name": "ddim_uniform",
-        "label": "DDIM Uniform",
-        "aliases": ["ddim_uniform"],
         "supported": True,
     },
     {
         "name": "beta",
-        "label": "Beta",
-        "aliases": ["beta"],
         "supported": True,
     },
     {
         "name": "normal",
-        "label": "Normal",
-        "aliases": ["normal"],
         "supported": True,
     },
     {
         "name": "linear_quadratic",
-        "label": "Linear-Quadratic",
-        "aliases": ["linear_quadratic"],
         "supported": True,
     },
     {
         "name": "kl_optimal",
-        "label": "KL Optimal",
-        "aliases": ["kl_optimal"],
         "supported": True,
     },
-    {"name": "turbo", "label": "Turbo", "aliases": ["turbo"], "supported": True},
-    {"name": "align_your_steps", "label": "Align Your Steps", "aliases": ["ays"], "supported": True},
-    {"name": "align_your_steps_gits", "label": "Align Your Steps GITS", "aliases": ["ays_gits"], "supported": True},
-    {"name": "align_your_steps_11", "label": "Align Your Steps 11", "aliases": ["ays11", "align_your_steps_11"], "supported": True},
-    {"name": "align_your_steps_32", "label": "Align Your Steps 32", "aliases": ["ays32", "align_your_steps_32"], "supported": True},
+    {"name": "turbo", "supported": True},
+    {"name": "align_your_steps", "supported": True},
+    {"name": "align_your_steps_gits", "supported": True},
+    {"name": "align_your_steps_11", "supported": True},
+    {"name": "align_your_steps_32", "supported": True},
 ]
-
-SCHEDULER_ALIAS_TO_CANONICAL: Dict[str, str] = {}
-for entry in SCHEDULER_OPTIONS:
-    canonical = entry["name"]
-    aliases = entry.get("aliases", []) if isinstance(entry.get("aliases"), list) else []
-    for alias in [canonical, *aliases]:
-        SCHEDULER_ALIAS_TO_CANONICAL[alias.strip().lower()] = canonical  # type: ignore[arg-type]
 
 SUPPORTED_SCHEDULERS: Set[str] = {entry["name"] for entry in SCHEDULER_OPTIONS if entry.get("supported", True)}
 
-# Default scheduler per sampler when user selects "Automatic" or "Use same".
+# Default scheduler per sampler.
 SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
     # Euler-family samplers default to the predictor ladder ("simple" schedule).
     "euler": "simple",
@@ -192,7 +140,7 @@ SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
     "ddim": "ddim",
     "ddim cfg++": "ddim",
     "plms": "karras",
-    "pndm": "karras",
+    "pndm": "ddim",
     "dpm++ 2m": "karras",
     "dpm++ 2m cfg++": "karras",
     "dpm++ sde": "karras",
@@ -208,9 +156,9 @@ SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
     "dpm 2 ancestral": "karras",
     "dpm fast": "karras",
     "dpm adaptive": "karras",
-    "uni-pc": "karras",
-    "uni-pc bh2": "karras",
-    "ddpm": "karras",
+    "uni-pc": "simple",
+    "uni-pc bh2": "simple",
+    "ddpm": "beta",
     "lcm": "karras",
     "ipndm": "karras",
     "ipndm v": "karras",
@@ -229,15 +177,10 @@ SAMPLER_DEFAULT_SCHEDULER: Dict[str, str] = {
     "restart": "karras",
 }
 
-AUTO_TOKENS: Set[str] = {"automatic", "auto", "use same", "use same scheduler", "same", "default", ""}
-
 __all__ = [
     "SAMPLER_OPTIONS",
-    "SAMPLER_ALIAS_TO_CANONICAL",
     "SUPPORTED_SAMPLERS",
     "SCHEDULER_OPTIONS",
-    "SCHEDULER_ALIAS_TO_CANONICAL",
     "SUPPORTED_SCHEDULERS",
     "SAMPLER_DEFAULT_SCHEDULER",
-    "AUTO_TOKENS",
 ]

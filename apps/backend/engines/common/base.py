@@ -7,13 +7,15 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
-Defines the shared “engine core” container for denoiser/VAE/text encoders and an abstract base engine with model-load/validate semantics.
+Defines `CodexObjects` and the shared engine load/unload path, including fail-fast `.gguf` core-only validation and explicit `vae_source`/`tenc_source`
+selection.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
 - `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration and runtime helpers
-  (subclasses implement task-specific inference behavior and required component sets).
+  including explicit asset-source selection (`vae_source`/`tenc_source`) and fail-fast validation for core-only `.gguf` checkpoints (subclasses implement
+  task-specific inference behavior and required component sets).
 """
 
 from __future__ import annotations
@@ -36,13 +38,10 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_miss,
 )
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.models.loader import (
-    DiffusionModelBundle,
-    TextEncoderOverrideConfig,
-    resolve_diffusion_bundle,
-)
-from apps.backend.runtime.utils import get_state_dict_after_quant
-from apps.backend.runtime.utils import load_torch_file
+from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
+from apps.backend.runtime.models.text_encoder_overrides import TextEncoderOverrideConfig
+from apps.backend.runtime.state_dict_tools import get_state_dict_after_quant
+from apps.backend.runtime.checkpoint_io import load_torch_file
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 
 
@@ -441,11 +440,6 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 "Provide them via engine option 'tenc_path' or 'text_encoder_override' "
                 "(or via the API 'extras.tenc_sha' selector)."
             )
-
-        try:
-            comp_keys = sorted(getattr(bundle, "components", {}).keys())  # type: ignore[arg-type]
-        except Exception:
-            comp_keys = []
 
         self._logger.info("[engine] Loading %s (ref=%s, source=%s)", self.engine_id, model_ref, bundle.source)
         self._reset_state()
@@ -891,8 +885,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             "height": int(proc.height),
             "steps": int(proc.steps),
             "guidance_scale": float(proc.guidance_scale),
-            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
-            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
+            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
         }
         if primary_prompt:
             info["prompt"] = str(primary_prompt)
@@ -1030,8 +1024,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
             "steps": int(proc.steps),
             "guidance_scale": float(proc.guidance_scale),
             "denoise_strength": float(getattr(proc, "denoising_strength", 0.0) or 0.0),
-            "sampler": str(getattr(proc, "sampler_name", "Automatic") or "Automatic"),
-            "scheduler": str(getattr(proc, "scheduler", "Automatic") or "Automatic"),
+            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
+            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
         }
         if getattr(proc, "prompt", None):
             info["prompt"] = str(getattr(proc, "prompt", ""))

@@ -22,12 +22,11 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 
 class FFmpegUnavailableError(RuntimeError):

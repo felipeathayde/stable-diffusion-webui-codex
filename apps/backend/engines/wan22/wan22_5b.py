@@ -21,7 +21,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
@@ -124,6 +123,27 @@ def _build_wan22_gguf_run_config(
     hi_opts = WanStageOptions.from_mapping(wh_raw, default_steps=default_steps, default_cfg=default_cfg)
     lo_opts = WanStageOptions.from_mapping(wl_raw, default_steps=default_steps, default_cfg=default_cfg)
 
+    # Flow-shift defaults are sourced from the canonical vendored diffusers scheduler_config.json.
+    # This is intentionally strict (no silent fallback): if stages omit flow_shift, we must be able
+    # to resolve a default from comp.hf_repo_dir (prepared during engine.load()).
+    hi_flow_shift = _coerce_float(wh_raw.get("flow_shift")) if isinstance(wh_raw, dict) else None
+    lo_flow_shift = _coerce_float(wl_raw.get("flow_shift")) if isinstance(wl_raw, dict) else None
+    if hi_flow_shift is None or lo_flow_shift is None:
+        vendor_dir = getattr(comp, "hf_repo_dir", None)
+        if not isinstance(vendor_dir, str) or not vendor_dir.strip():
+            raise RuntimeError(
+                "WAN22 GGUF requires flow_shift defaults from the vendored scheduler_config.json, "
+                "but comp.hf_repo_dir is missing. Ensure engine.load() prepared HF metadata."
+            )
+        from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+
+        spec = flow_shift_spec_from_repo_dir(vendor_dir)
+        default_flow_shift = spec.resolve()
+        if hi_flow_shift is None:
+            hi_flow_shift = default_flow_shift
+        if lo_flow_shift is None:
+            lo_flow_shift = default_flow_shift
+
     if not hi_opts.model_dir or not str(hi_opts.model_dir).strip():
         raise RuntimeError("WAN22 GGUF requires wan_high.model_dir (resolved from model_sha).")
     if not lo_opts.model_dir or not str(lo_opts.model_dir).strip():
@@ -144,11 +164,8 @@ def _build_wan22_gguf_run_config(
         if seed_override is not None:
             seed = seed_override
 
-    hi_flow_shift = _coerce_float(wh_raw.get("flow_shift")) if isinstance(wh_raw, dict) else None
-    lo_flow_shift = _coerce_float(wl_raw.get("flow_shift")) if isinstance(wl_raw, dict) else None
-
-    sampler_fallback = str(getattr(request, "sampler", "Automatic") or "Automatic")
-    scheduler_fallback = str(getattr(request, "scheduler", "Automatic") or "Automatic")
+    sampler_fallback = str(getattr(request, "sampler", "") or "").strip() or "uni-pc"
+    scheduler_fallback = str(getattr(request, "scheduler", "") or "").strip() or "simple"
 
     tokenizer_dir = str(ex.get("wan_tokenizer_dir")).strip() if ex.get("wan_tokenizer_dir") else None
 
@@ -222,7 +239,7 @@ def _build_wan22_gguf_run_config(
             scheduler=str(hi_opts.scheduler or scheduler_fallback),
             steps=max(1, int(hi_opts.steps)),
             cfg_scale=hi_opts.cfg_scale,
-            flow_shift=hi_flow_shift,
+            flow_shift=float(hi_flow_shift),
         ),
         low=gguf.StageConfig(
             model_dir=lo_dir,
@@ -230,7 +247,7 @@ def _build_wan22_gguf_run_config(
             scheduler=str(lo_opts.scheduler or scheduler_fallback),
             steps=max(1, int(lo_opts.steps)),
             cfg_scale=lo_opts.cfg_scale,
-            flow_shift=lo_flow_shift,
+            flow_shift=float(lo_flow_shift),
         ),
     )
 
@@ -254,7 +271,7 @@ class Wan225BEngine(BaseVideoEngine):
 
     # ------------------------------ lifecycle
     def load(self, model_ref: str, **options: Any) -> None:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função load')
+        self._logger.debug("[wan22_5b] before load()")
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
         self._opts = EngineOpts(device=dev, dtype=dty)
@@ -367,18 +384,18 @@ class Wan225BEngine(BaseVideoEngine):
             self._logger.info("WAN22 5B GGUF runtime selected for %s (device=%s dtype=%s)", p, comp.device, dty)
 
         self._comp = comp
-        self._logger.info('[wan22_5b] DEBUG: depois de função load')
+        self._logger.debug("[wan22_5b] after load()")
         self.mark_loaded()
 
     def unload(self) -> None:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função unload')
+        self._logger.debug("[wan22_5b] before unload()")
         self._comp = None
-        self._logger.info('[wan22_5b] DEBUG: depois de função unload')
+        self._logger.debug("[wan22_5b] after unload()")
         self.mark_unloaded()
 
     # ------------------------------ tasks
     def txt2vid(self, request: Txt2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função txt2vid')
+        self._logger.debug("[wan22_5b] before txt2vid()")
         self.ensure_loaded()
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
@@ -396,7 +413,9 @@ class Wan225BEngine(BaseVideoEngine):
             for ev in stream_run(gguf.run_txt2vid, cfg=cfg, logger=self._logger):
                 if isinstance(ev, dict) and ev.get('type') == 'progress':
                     st = str(ev.get('stage', ''))
-                    step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
+                    step = int(ev.get("step", 0))
+                    total = int(ev.get("total", 0))
+                    pct = float(ev.get("percent", 0.0))
                     pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
                     try:
                         self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct_out)
@@ -413,11 +432,11 @@ class Wan225BEngine(BaseVideoEngine):
                     except Exception:
                         pass
                     raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
-            self._logger.info('[wan22_5b] DEBUG: depois de função txt2vid')
+            self._logger.debug("[wan22_5b] after txt2vid()")
             return
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função img2vid')
+        self._logger.debug("[wan22_5b] before img2vid()")
         self.ensure_loaded()
         assert self._comp is not None
         if getattr(self._comp, 'pipeline', None) is not None:
@@ -437,7 +456,9 @@ class Wan225BEngine(BaseVideoEngine):
             for ev in stream_run(gguf.run_img2vid, cfg=cfg, logger=self._logger):
                 if isinstance(ev, dict) and ev.get('type') == 'progress':
                     st = str(ev.get('stage', ''))
-                    step = int(ev.get('step', 0)); total = int(ev.get('total', 0)); pct = float(ev.get('percent', 0.0))
+                    step = int(ev.get("step", 0))
+                    total = int(ev.get("total", 0))
+                    pct = float(ev.get("percent", 0.0))
                     pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
                     try:
                         self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct_out)
@@ -454,15 +475,15 @@ class Wan225BEngine(BaseVideoEngine):
                     except Exception:
                         pass
                     raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
-            self._logger.info('[wan22_5b] DEBUG: depois de função img2vid')
+            self._logger.debug("[wan22_5b] after img2vid()")
             return
 
     def vid2vid(self, request: Vid2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
-        self._logger.info('[wan22_5b] DEBUG: antes de função vid2vid')
+        self._logger.debug("[wan22_5b] before vid2vid()")
         self.ensure_loaded()
         assert self._comp is not None
         yield from _run_v2v(engine=self, comp=self._comp, request=request)
-        self._logger.info('[wan22_5b] DEBUG: depois de função vid2vid')
+        self._logger.debug("[wan22_5b] after vid2vid()")
         return
 
     # ------------------------------ helpers

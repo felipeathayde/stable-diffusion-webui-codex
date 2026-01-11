@@ -2,7 +2,7 @@
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
 Owner: Runtime Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-08
 Status: Active
 
 ## Scope
@@ -46,7 +46,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2025-12-11: `_maybe_convert_sdxl_vae_state_dict` expanded to cover `ModelFamily.ZIMAGE`, since Z Image uses the same Flow16 VAE layouts as Flux; external VAEs loaded via `runtime.common.vae.load_flow16_vae` reuse this converter.
 - 2025-11-25: Loader now preserves scheduler-provided `prediction_type` when it disagrees with the model signature, logging the mismatch instead of forcing the signature value; the signature hint remains accessible via `scheduler.config.codex_signature_prediction_type`.
 - 2025-12-04: `ModelRegistry` checkpoint discovery agora usa `apps/paths.json["checkpoints"]` como override primário, com fallbacks curados em `models/` (`sd15`, `sdxl`, `flux`) em vez de varrer múltiplas pastas legacy (`stable-diffusion`, `sd`, `checkpoints`).
-- 2025-12-05: Text encoder overrides are resolved centrally in `runtime.models.loader` via `TextEncoderOverrideConfig` + `resolve_text_encoder_override_paths`, mapping `(family, /api/text-encoders label, ModelSignature.text_encoders)` to per-component weights. Overrides fail fast when families mismatch, labels are unknown, or expected `<alias>.(safetensors|gguf|bin|pt)` files are missing under the configured root.
+- 2025-12-05: Text encoder overrides are resolved centrally by the loader using `TextEncoderOverrideConfig` + `resolve_text_encoder_override_paths` (now in `runtime.models.text_encoder_overrides`), mapping `(family, /api/text-encoders label, ModelSignature.text_encoders)` to per-component weights. Overrides fail fast when families mismatch, labels are unknown, or expected `<alias>.(safetensors|gguf|bin|pt)` files are missing under the configured root.
 - 2025-12-05: Flux GGUF core-only checkpoints (signalled via `ModelSignature.extras["gguf_core_only"]`) now compose with an external VAE resolved from `apps/paths.json["flux1_vae"]`; `_load_flux_vae_state_dict()` scans configured roots for a suitable VAE weights file and fails fast with an explicit error when nothing usable is found, instead of silently running Flux without a VAE.
 - 2025-12-06: `TextEncoderOverrideConfig` gained an `explicit_paths` map (`alias -> abs path`) for file-level overrides (e.g., Flux); `resolve_text_encoder_override_paths` now supports two modes: explicit path mapping (skipping `/api/text-encoders` root resolution) and the existing root-based lookup. In both cases, aliases are validated against `CodexEstimatedConfig.text_encoder_map`, and missing files or unsupported extensions raise `TextEncoderOverrideError` with clear messages.
 - 2025-12-30: `apps/backend/runtime/models/__init__.py` switched back to lazy exports (no eager `import safety` / wildcard imports) so `create_api_app` and tests can import the API with a lightweight torch stub.
@@ -56,4 +56,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-04: `ModelRegistry` now exposes public `hash_for(...)` + `flush_hash_cache()` so inventory and other subsystems can request hashes without importing private cache internals.
 - 2026-01-06: VAE selection is expressed via engine options (`vae_source` + `vae_path`); the loader does not persist a separate `external_vae_path` metadata key.
 - 2026-01-06: Loader now supports `tenc_path` (string or ordered list) as a shorthand for text encoder overrides: paths are mapped onto `ModelSignature.text_encoders` in order and loaded via the existing `TextEncoderOverrideConfig` pipeline (fail-fast on count/alias mismatch).
+- 2026-01-06: Refreshed `loader.py` header block to document `tenc_path` shorthand semantics (doc-only change).
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `api.py`, and `types.py` (doc-only change; part of rollout).
+- 2026-01-08: Split state-dict key normalization helpers into `key_normalization.py` and reused them from `loader.py` (UNet remap + transformer prefix stripping).
+- 2026-01-08: Moved text-encoder override definitions into `text_encoder_overrides.py`; loader now imports the shared config + resolver from that module.

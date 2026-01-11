@@ -82,8 +82,8 @@ def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> An
 def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger | None = None) -> Any:
     """Apply sampler/scheduler selection on a Diffusers pipeline component."""
 
-    sampler_name = plan.sampler_name or "Automatic"
-    scheduler_name = plan.scheduler_name or "Automatic"
+    sampler_name = plan.sampler_name or "euler"
+    scheduler_name = plan.scheduler_name or "simple"
     outcome = apply_sampler_scheduler(
         component,
         SamplerKind.from_string(sampler_name),

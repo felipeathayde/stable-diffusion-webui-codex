@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from apps.backend.infra.config.repo_root import get_repo_root
 
@@ -109,7 +109,7 @@ def attach_asyncio(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
     except Exception:
         return
 
-    def _handler(l, context):  # type: ignore[no-untyped-def]
+    def _handler(loop_, context):  # type: ignore[no-untyped-def]
         exc = context.get("exception")
         if exc is not None:
             dump_exception(type(exc), exc, exc.__traceback__, where="asyncio", context={k: str(v) for k, v in context.items() if k != "exception"})

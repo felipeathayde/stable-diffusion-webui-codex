@@ -28,22 +28,19 @@ from typing import Mapping, MutableMapping
 
 import torch
 
-from apps.backend.runtime.utils import load_torch_file
-from apps.backend.runtime.vision.clip import (
-    ClipVisionEncoder,
-    ClipVisionError,
-    ClipVisionLoadError,
-    ClipVisionOutput,
-    ClipVisionPreprocessSpec,
-    ClipVisionVariant,
+from apps.backend.runtime.checkpoint_io import load_torch_file
+from apps.backend.runtime.vision.clip.encoder import ClipVisionEncoder
+from apps.backend.runtime.vision.clip.errors import ClipVisionError, ClipVisionLoadError
+from apps.backend.runtime.vision.clip.preprocess import preprocess_image
+from apps.backend.runtime.vision.clip.registry import detect_variant_from_state_dict
+from apps.backend.runtime.vision.clip.specs import ClipVisionPreprocessSpec, ClipVisionVariant, get_variant_spec
+from apps.backend.runtime.vision.clip.state_dict import (
     cleaned_state_dict,
     convert_openclip_checkpoint,
-    detect_variant_from_state_dict,
-    get_variant_spec,
-    preprocess_image,
     rekey_vision_state_dict,
     summarize_state_dict,
 )
+from apps.backend.runtime.vision.clip.types import ClipVisionOutput
 
 logger = logging.getLogger("backend.patchers.clipvision")
 

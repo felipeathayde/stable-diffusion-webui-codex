@@ -196,6 +196,12 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
+  const samplingDefaults = (() => {
+    if (type === 'sd15') return { sampler: 'pndm', scheduler: 'ddim' }
+    if (type === 'sdxl') return { sampler: 'euler', scheduler: 'euler_discrete' }
+    if (type === 'flux1' || type === 'zimage' || type === 'chroma') return { sampler: 'euler', scheduler: 'simple' }
+    return { sampler: 'dpm++ 2m', scheduler: 'karras' }
+  })()
   const refinerDefaults: RefinerFormState = {
     enabled: false,
     steps: 0,
@@ -227,8 +233,8 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
     width: defaults.width,
     height: defaults.height,
-    sampler: '',
-    scheduler: '',
+    sampler: samplingDefaults.sampler,
+    scheduler: samplingDefaults.scheduler,
     steps: defaults.steps,
     cfgScale: guidance,
     seed: -1,
@@ -282,6 +288,14 @@ function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string,
   }
   if (d.refiner && typeof d.refiner === 'object') {
     merged.refiner = { ...(d.refiner || {}), ...(p.refiner || {}) }
+  }
+  const mergedSampler = (merged as any).sampler
+  if (typeof mergedSampler !== 'string' || !mergedSampler.trim()) {
+    ;(merged as any).sampler = (d as any).sampler
+  }
+  const mergedScheduler = (merged as any).scheduler
+  if (typeof mergedScheduler !== 'string' || !mergedScheduler.trim()) {
+    ;(merged as any).scheduler = (d as any).scheduler
   }
   return merged
 }

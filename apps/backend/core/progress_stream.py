@@ -60,7 +60,8 @@ def stream_run(
                 if logger is not None and hasattr(logger, "exception"):
                     logger.exception("stream_run worker crashed: %s", ex)
                 else:
-                    import traceback, sys
+                    import traceback
+                    import sys
                     traceback.print_exc(file=sys.stderr)
             finally:
                 # Surface error to the stream so engines can escalate

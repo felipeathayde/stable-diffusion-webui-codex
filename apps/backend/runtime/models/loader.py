@@ -7,18 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
-This module resolves TE/VAE overrides, normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
+This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
 ready for orchestrator/engine execution (with memory-management hooks).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_strip_unet_prefixes_mapping` (function): Builds a remap of UNet keys by stripping known prefixes in a checkpoint mapping.
-- `_normalize_depth_list` (function): Normalizes “depth list” inputs (pad/trim) to a fixed length used by model configs.
-- `_build_diffusers_to_ldm_map` (function): Builds a diffusers→LDM key mapping for UNet state dict conversion based on config.
-- `_normalize_unet_state_dict` (function): Normalizes/rewrites UNet state dict keys to the expected internal layout.
-- `TextEncoderOverrideError` (class): Raised when TE override configs are invalid or cannot be resolved to usable paths.
-- `TextEncoderOverrideConfig` (dataclass): Normalized TE override description (family/label/components; supports explicit path components).
-- `_canonical_override_family` (function): Canonicalizes override “family” for loader semantics (so UI/API can use stable labels).
-- `resolve_text_encoder_override_paths` (function): Resolves a TE override config into explicit weight paths (including `alias=/abs/path` entries).
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
 - `DiffusionModelBundle` (dataclass): Loaded model components and configs (UNet/VAE/text encoders + signature + quant/layout info).
 - `_supported_inference_dtypes` (function): Returns supported inference dtypes for a given model family.
@@ -32,8 +24,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
 - `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory.
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
-- `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution, VAE layout handling,
-  dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
+- `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),
+  VAE layout handling, dtype selection, and memory-management integration to produce a `DiffusionModelBundle`.
 - `_SimpleEstimated` (class): Minimal estimate container used for config detection/compat when only partial metadata is available.
 - `_detect_engine_from_config` (function): Detects engine identifier from a diffusers config dict.
 - `load_engine_from_diffusers` (function): Loads a `DiffusionModelBundle` directly from a diffusers repo directory.
@@ -54,18 +46,16 @@ from transformers import modeling_utils
 
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.args import args
-from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
 from apps.backend.runtime import trace as _trace
 from apps.backend.runtime.common.nn.clip import IntegratedCLIP
 from apps.backend.runtime.common.nn.t5 import IntegratedT5
-from apps.backend.runtime.common.nn.unet import UNet2DConditionModel  # legacy UNet (SD15/20)
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.memory.config import DeviceRole, SwapPolicy
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.model_parser import parse_state_dict
 from apps.backend.runtime.model_parser.quantization import detect_state_dict_dtype
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
-from apps.backend.runtime.model_registry import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.errors import ModelRegistryError
+from apps.backend.runtime.model_registry.loader import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,
     ModelFamily,
@@ -73,268 +63,22 @@ from apps.backend.runtime.model_registry.specs import (
     PredictionKind,
     QuantizationKind,
 )
+from apps.backend.runtime.models import api as model_api
+from apps.backend.runtime.models.key_normalization import _normalize_unet_state_dict, _strip_transformer_prefixes
+from apps.backend.runtime.models.text_encoder_overrides import (
+    _canonical_override_family,
+    TextEncoderOverrideConfig,
+    TextEncoderOverrideError,
+    resolve_text_encoder_override_paths,
+)
 from apps.backend.runtime.models.state_dict import load_state_dict, transformers_convert
 from apps.backend.runtime.ops import using_codex_operations
-from apps.backend.runtime.utils import (
-    RemapKeysView,
-    beautiful_print_gguf_state_dict_statics,
-    load_torch_file,
-    read_arbitrary_config,
-)
+from apps.backend.runtime.checkpoint_io import load_torch_file, read_arbitrary_config
+from apps.backend.runtime.state_dict_tools import beautiful_print_gguf_state_dict_statics
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")
-UNET_LOG = logging.getLogger(__name__ + ".unet")
-
-_UNET_PREFIXES: tuple[str, ...] = (
-    "model.diffusion_model.",
-    "model.model.",
-    "diffusion_model.",
-    "model.",
-)
-
-_UNET_MAP_ATTENTIONS: tuple[str, ...] = (
-    "proj_in.weight",
-    "proj_in.bias",
-    "proj_out.weight",
-    "proj_out.bias",
-    "norm.weight",
-    "norm.bias",
-)
-
-_TRANSFORMER_BLOCK_FIELDS: tuple[str, ...] = (
-    "norm1.weight",
-    "norm1.bias",
-    "norm2.weight",
-    "norm2.bias",
-    "norm3.weight",
-    "norm3.bias",
-    "attn1.to_q.weight",
-    "attn1.to_k.weight",
-    "attn1.to_v.weight",
-    "attn1.to_out.0.weight",
-    "attn1.to_out.0.bias",
-    "attn2.to_q.weight",
-    "attn2.to_k.weight",
-    "attn2.to_v.weight",
-    "attn2.to_out.0.weight",
-    "attn2.to_out.0.bias",
-    "ff.net.0.proj.weight",
-    "ff.net.0.proj.bias",
-    "ff.net.2.weight",
-    "ff.net.2.bias",
-)
-
-_UNET_MAP_RESNET: dict[str, str] = {
-    "in_layers.2.weight": "conv1.weight",
-    "in_layers.2.bias": "conv1.bias",
-    "emb_layers.1.weight": "time_emb_proj.weight",
-    "emb_layers.1.bias": "time_emb_proj.bias",
-    "out_layers.3.weight": "conv2.weight",
-    "out_layers.3.bias": "conv2.bias",
-    "skip_connection.weight": "conv_shortcut.weight",
-    "skip_connection.bias": "conv_shortcut.bias",
-    "in_layers.0.weight": "norm1.weight",
-    "in_layers.0.bias": "norm1.bias",
-    "out_layers.0.weight": "norm2.weight",
-    "out_layers.0.bias": "norm2.bias",
-}
-
-_UNET_MAP_BASIC: tuple[tuple[str, str], ...] = (
-    ("label_emb.0.0.weight", "class_embedding.linear_1.weight"),
-    ("label_emb.0.0.bias", "class_embedding.linear_1.bias"),
-    ("label_emb.0.2.weight", "class_embedding.linear_2.weight"),
-    ("label_emb.0.2.bias", "class_embedding.linear_2.bias"),
-    ("label_emb.0.0.weight", "add_embedding.linear_1.weight"),
-    ("label_emb.0.0.bias", "add_embedding.linear_1.bias"),
-    ("label_emb.0.2.weight", "add_embedding.linear_2.weight"),
-    ("label_emb.0.2.bias", "add_embedding.linear_2.bias"),
-    ("input_blocks.0.0.weight", "conv_in.weight"),
-    ("input_blocks.0.0.bias", "conv_in.bias"),
-    ("out.0.weight", "conv_norm_out.weight"),
-    ("out.0.bias", "conv_norm_out.bias"),
-    ("out.2.weight", "conv_out.weight"),
-    ("out.2.bias", "conv_out.bias"),
-    ("time_embed.0.weight", "time_embedding.linear_1.weight"),
-    ("time_embed.0.bias", "time_embedding.linear_1.bias"),
-    ("time_embed.2.weight", "time_embedding.linear_2.weight"),
-    ("time_embed.2.bias", "time_embedding.linear_2.bias"),
-)
-
-_ESSENTIAL_UNET_KEYS: tuple[str, ...] = (
-    "input_blocks.0.0.weight",
-    "time_embed.0.weight",
-    "out.2.weight",
-)
-
-
-def _strip_unet_prefixes_mapping(sd: Mapping[str, Any]) -> Dict[str, str]:
-    mapping: Dict[str, str] = {}
-    for key in list(sd.keys()):
-        name = str(key)
-        changed = True
-        while changed:
-            changed = False
-            for prefix in _UNET_PREFIXES:
-                if name.startswith(prefix):
-                    name = name[len(prefix):]
-                    changed = True
-                    break
-        mapping[name] = key
-    return mapping
-
-
-def _normalize_depth_list(values: Any, total: int, default: int = 0) -> list[int]:
-    if values is None:
-        return [default] * total
-    if isinstance(values, int):
-        base = [values] * total
-    else:
-        base = list(values)
-    if len(base) < total:
-        pad = base[-1] if base else default
-        base.extend([pad] * (total - len(base)))
-    return base[:total]
-
-
-def _build_diffusers_to_ldm_map(unet_config: Mapping[str, Any]) -> Dict[str, str]:
-    channel_mult = list(unet_config.get("channel_mult", []))
-    if not channel_mult:
-        return {}
-
-    num_blocks = len(channel_mult)
-    num_res_blocks_cfg = unet_config.get("num_res_blocks", [])
-    if isinstance(num_res_blocks_cfg, int):
-        num_res_blocks = [num_res_blocks_cfg] * num_blocks
-    else:
-        num_res_blocks = list(num_res_blocks_cfg)
-        if len(num_res_blocks) < num_blocks:
-            pad = num_res_blocks[-1] if num_res_blocks else 0
-            num_res_blocks.extend([pad] * (num_blocks - len(num_res_blocks)))
-        num_res_blocks = num_res_blocks[:num_blocks]
-
-    total_down_transformers = sum(num_res_blocks)
-    transformer_depth = _normalize_depth_list(unet_config.get("transformer_depth"), total_down_transformers, default=0)
-    transformer_depth_output = _normalize_depth_list(
-        unet_config.get("transformer_depth_output"),
-        sum(res + 1 for res in num_res_blocks),
-        default=0,
-    )
-    raw_mid = unet_config.get("transformer_depth_middle")
-    if isinstance(raw_mid, int):
-        transformers_mid = raw_mid
-    elif isinstance(raw_mid, (list, tuple)) and raw_mid:
-        transformers_mid = int(raw_mid[-1])
-    elif transformer_depth:
-        transformers_mid = transformer_depth[-1]
-    else:
-        transformers_mid = 0
-
-    mapping: Dict[str, str] = {}
-    for dest, src in _UNET_MAP_BASIC:
-        mapping[src] = dest
-
-    depth_iter = iter(transformer_depth)
-    for block_idx in range(num_blocks):
-        base_index = 1 + (num_res_blocks[block_idx] + 1) * block_idx
-        for res_idx in range(num_res_blocks[block_idx]):
-            for dest, src in _UNET_MAP_RESNET.items():
-                mapping[f"down_blocks.{block_idx}.resnets.{res_idx}.{src}"] = f"input_blocks.{base_index}.0.{dest}"
-            num_transformers = next(depth_iter, 0)
-            if num_transformers > 0:
-                for field in _UNET_MAP_ATTENTIONS:
-                    mapping[f"down_blocks.{block_idx}.attentions.{res_idx}.{field}"] = f"input_blocks.{base_index}.1.{field}"
-                for t in range(num_transformers):
-                    for field in _TRANSFORMER_BLOCK_FIELDS:
-                        mapping[
-                            f"down_blocks.{block_idx}.attentions.{res_idx}.transformer_blocks.{t}.{field}"
-                        ] = f"input_blocks.{base_index}.1.transformer_blocks.{t}.{field}"
-            base_index += 1
-        for suffix in ("weight", "bias"):
-            mapping[f"down_blocks.{block_idx}.downsamplers.0.conv.{suffix}"] = f"input_blocks.{base_index}.0.op.{suffix}"
-
-    # Mid block
-    for idx, target in enumerate((0, 2)):
-        for dest, src in _UNET_MAP_RESNET.items():
-            mapping[f"mid_block.resnets.{idx}.{src}"] = f"middle_block.{target}.{dest}"
-    for field in _UNET_MAP_ATTENTIONS:
-        mapping[f"mid_block.attentions.0.{field}"] = f"middle_block.1.{field}"
-    for t in range(max(int(transformers_mid), 0)):
-        for field in _TRANSFORMER_BLOCK_FIELDS:
-            mapping[f"mid_block.attentions.0.transformer_blocks.{t}.{field}"] = f"middle_block.1.transformer_blocks.{t}.{field}"
-
-    # Up blocks (reverse order)
-    up_res_counts = list(reversed(num_res_blocks))
-    depth_output = list(transformer_depth_output)
-    for block_idx in range(num_blocks):
-        base_index = (up_res_counts[block_idx] + 1) * block_idx
-        block_len = up_res_counts[block_idx] + 1
-        for res_idx in range(block_len):
-            stage_conv_index = 0
-            for dest, src in _UNET_MAP_RESNET.items():
-                mapping[f"up_blocks.{block_idx}.resnets.{res_idx}.{src}"] = f"output_blocks.{base_index}.0.{dest}"
-            stage_conv_index += 1
-            num_transformers = depth_output.pop() if depth_output else 0
-            if num_transformers > 0:
-                stage_conv_index += 1
-                for field in _UNET_MAP_ATTENTIONS:
-                    mapping[f"up_blocks.{block_idx}.attentions.{res_idx}.{field}"] = f"output_blocks.{base_index}.1.{field}"
-                for t in range(num_transformers):
-                    for field in _TRANSFORMER_BLOCK_FIELDS:
-                        mapping[
-                            f"up_blocks.{block_idx}.attentions.{res_idx}.transformer_blocks.{t}.{field}"
-                        ] = f"output_blocks.{base_index}.1.transformer_blocks.{t}.{field}"
-            if res_idx == block_len - 1:
-                for suffix in ("weight", "bias"):
-                    mapping[f"up_blocks.{block_idx}.upsamplers.0.conv.{suffix}"] = f"output_blocks.{base_index}.{stage_conv_index}.conv.{suffix}"
-            base_index += 1
-
-    return mapping
-
-
-def _normalize_unet_state_dict(state_dict: Mapping[str, Any], config: Mapping[str, Any]) -> Mapping[str, Any]:
-    from apps.backend.runtime.utils import RemapKeysView
-    stripped_map = _strip_unet_prefixes_mapping(state_dict)
-    # Already LDM layout
-    if any(k.startswith("input_blocks.") for k in stripped_map.keys()):
-        return RemapKeysView(state_dict, stripped_map)
-
-    diff_to_ldm = _build_diffusers_to_ldm_map(config)
-    remap: Dict[str, str] = {}
-    leftovers: list[str] = []
-    for key in stripped_map.keys():
-        if key.startswith((
-            "input_blocks.",
-            "output_blocks.",
-            "middle_block.",
-            "out.",
-            "time_embed.",
-            "label_emb.",
-            "add_embedding.",
-        )):
-            remap[key] = stripped_map[key]
-            continue
-        target = diff_to_ldm.get(key)
-        if target is not None:
-            remap[target] = stripped_map[key]
-        else:
-            leftovers.append(key)
-
-    missing = [k for k in _ESSENTIAL_UNET_KEYS if k not in remap]
-    if missing:
-        sample = list(sorted(leftovers))[:10]
-        raise RuntimeError(
-            "UNet state dict normalisation failed; missing essentials %s. Sample diffusers keys: %s"
-            % (missing, sample)
-        )
-
-    if leftovers:
-        UNET_LOG.debug("UNet leftover keys (diffusers layout) count=%d sample=%s", len(leftovers), leftovers[:5])
-
-    return RemapKeysView(state_dict, remap)
-from apps.backend.runtime.models import api as model_api
-
 _LOG = logging.getLogger(__name__)
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -358,189 +102,6 @@ PREDICTION_TYPE_MAP = {
     PredictionKind.EDM: "edm",
     PredictionKind.FLOW: "flow",
 }
-
-
-class TextEncoderOverrideError(RuntimeError):
-    """Raised when a text encoder override configuration cannot be applied."""
-
-
-@dataclass(frozen=True)
-class TextEncoderOverrideConfig:
-    """Explicit selection of a text encoder root for a given model family.
-
-    family:
-        Concrete model family (`ModelFamily.SD15`, `ModelFamily.SDXL`, `ModelFamily.FLUX`, `ModelFamily.WAN22`, ...)
-        that this override is valid for.
-    root_label:
-        One of the labels exposed by `/api/text-encoders` (e.g. `sdxl//abs/.../models/sdxl-tenc`).
-    components:
-        Optional subset of logical text encoder aliases (`clip_l`, `clip_g`, `t5xxl`, `umt5xxl`, ...).
-        When omitted, all encoders in `ModelSignature.text_encoders` are expected to have weights
-        under the selected root or explicit path map.
-    explicit_paths:
-        Optional mapping from logical alias -> absolute weight path, e.g.
-        ``{\"clip_l\": \"/abs/.../clip_l_fp8.safetensors\"}``. When provided, the loader
-        will bypass root resolution for those aliases and use the explicit paths instead.
-    """
-
-    family: ModelFamily
-    root_label: str
-    components: tuple[str, ...] | None = None
-    explicit_paths: Dict[str, str] | None = None
-
-
-def _canonical_override_family(family: ModelFamily) -> ModelFamily:
-    """Map specialised families to their override bucket.
-
-    For example, SDXL refiner shares text encoder family with SDXL.
-    """
-
-    if family is ModelFamily.SDXL_REFINER:
-        return ModelFamily.SDXL
-    return family
-
-
-def resolve_text_encoder_override_paths(
-    *,
-    signature: ModelSignature,
-    estimated_config: CodexEstimatedConfig,
-    override: TextEncoderOverrideConfig | None,
-) -> Dict[str, str]:
-    """Resolve a text encoder override into concrete component weight paths.
-
-    Returns a mapping from Diffusers component name to absolute weight path,
-    e.g. ``{\"text_encoder\": \"/abs/.../clip_l.safetensors\"}``.
-
-    This helper is intentionally pure: it validates invariants and inspects
-    the filesystem, but leaves loading of the actual state dicts to callers.
-    """
-
-    if override is None:
-        return {}
-
-    model_family = _canonical_override_family(signature.family)
-    if override.family is not model_family:
-        raise TextEncoderOverrideError(
-            "Text encoder override family=%s is not compatible with model family=%s"
-            % (override.family.value, model_family.value)
-        )
-
-    allowed_exts = (".safetensors", ".gguf", ".bin", ".pt")
-
-    text_map = dict(getattr(estimated_config, "text_encoder_map", {}) or {})
-
-    # Fast path: explicit alias -> path mapping (e.g. Flux file-level overrides).
-    explicit = dict(override.explicit_paths or {})
-    if explicit:
-        if override.components:
-            aliases = tuple(override.components)
-        else:
-            aliases = tuple(explicit.keys())
-        if not aliases:
-            raise TextEncoderOverrideError(
-                "Text encoder override for family=%s provided explicit paths but no aliases."
-                % model_family.value
-            )
-        missing_aliases = [alias for alias in aliases if alias not in text_map]
-        if missing_aliases:
-            raise TextEncoderOverrideError(
-                "Text encoder override refers to unknown encoder aliases for family=%s: %s"
-                % (model_family.value, ", ".join(sorted(missing_aliases)))
-            )
-        component_paths: Dict[str, str] = {}
-        for alias in aliases:
-            path = explicit.get(alias)
-            if not path:
-                raise TextEncoderOverrideError(
-                    "Text encoder override missing explicit path for alias %r (family=%s)"
-                    % (alias, model_family.value)
-                )
-            norm = str(path)
-            if not os.path.isfile(norm):
-                raise TextEncoderOverrideError(
-                    "Text encoder override path for alias %r is not a file: %r"
-                    % (alias, norm)
-                )
-            if not norm.lower().endswith(allowed_exts):
-                raise TextEncoderOverrideError(
-                    "Text encoder override path for alias %r must end with one of: %s"
-                    % (alias, ", ".join(allowed_exts))
-                )
-            component_name = text_map[alias]
-            component_paths[component_name] = norm
-        return component_paths
-
-    # Root-based path resolution using /api/text-encoders labels.
-    roots_by_family = list_text_encoder_roots_by_family()
-    family_roots = list(roots_by_family.get(model_family.value) or [])
-    root_path: str | None = None
-    for entry in family_roots:
-        if getattr(entry, "name", None) == override.root_label:
-            root_path = getattr(entry, "path", None)
-            break
-
-    if root_path is None:
-        raise TextEncoderOverrideError(
-            "Text encoder override label %r not found for family=%s. "
-            "Refresh /api/text-encoders and choose a valid label."
-            % (override.root_label, model_family.value)
-        )
-
-    root_path = str(root_path)
-    if not os.path.isdir(root_path):
-        raise TextEncoderOverrideError(
-            "Text encoder override root %r path is not a directory: %r"
-            % (override.root_label, root_path)
-        )
-
-    # Decide which logical encoders we expect under this root.
-    if override.components:
-        aliases = tuple(override.components)
-    else:
-        aliases = tuple(te.name for te in signature.text_encoders)
-
-    if not aliases:
-        raise TextEncoderOverrideError(
-            "Model family %s declares no text encoders; override cannot be applied."
-            % model_family.value
-        )
-
-    missing_aliases = [alias for alias in aliases if alias not in text_map]
-    if missing_aliases:
-        raise TextEncoderOverrideError(
-            "Text encoder override refers to unknown encoder aliases for family=%s: %s"
-            % (model_family.value, ", ".join(sorted(missing_aliases)))
-        )
-
-    # Strict file naming: each alias must have a single weights file named
-    # <alias>.<ext> under the selected root. No guessing across families.
-    try:
-        entries = set(os.listdir(root_path))
-    except Exception as exc:  # pragma: no cover - defensive
-        raise TextEncoderOverrideError(
-            "Failed to list text encoder override root %r: %s" % (root_path, exc)
-        ) from exc
-
-    component_paths: Dict[str, str] = {}
-
-    for alias in aliases:
-        found = None
-        for ext in allowed_exts:
-            candidate = alias + ext
-            if candidate in entries:
-                found = os.path.join(root_path, candidate)
-                break
-        if not found:
-            expected = ", ".join(alias + ext for ext in allowed_exts)
-            raise TextEncoderOverrideError(
-                "Text encoder override root %r is missing weights for encoder %r. "
-                "Expected one of: %s"
-                % (override.root_label, alias, expected)
-            )
-        component_name = text_map[alias]
-        component_paths[component_name] = found
-
-    return component_paths
 
 
 @dataclass
@@ -614,10 +175,6 @@ def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> 
     base_state = _load_state_dict(primary_path)
     signature = registry_detect(base_state)
     config = parse_state_dict(base_state, signature)
-    try:
-        comp_names = list(getattr(config, 'components', {}).keys())
-    except Exception:
-        comp_names = []
 
     if additional_paths:
         replacements: Dict[str, Mapping[str, Any]] = {}
@@ -956,7 +513,7 @@ def _load_huggingface_component(
             Uses RemapKeysView so tensors load on demand; avoids materialising
             the entire VAE just to rename keys (important for large XL VAEs).
             """
-            from apps.backend.runtime.utils import RemapKeysView
+            from apps.backend.runtime.state_dict_views import RemapKeysView
 
             prefixes = (
                 "first_stage_model.",
@@ -1452,21 +1009,36 @@ def _load_huggingface_component(
 
         if cls_name == "UNet2DConditionModel":
             # For SD15/SD20/SDXL families use Codex legacy UNet with LDM-style config
-            from apps.backend.runtime.common.nn.unet import UNet2DConditionModel as _CodexUNet
-            model_ctor = lambda cfg: _CodexUNet.from_config(cfg)
+            from apps.backend.runtime.common.nn.unet.model import UNet2DConditionModel as _CodexUNet
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return _CodexUNet.from_config(cfg)
+
         elif cls_name == "FluxTransformer2DModel":
             from apps.backend.runtime.flux.flux import FluxTransformer2DModel
-            model_ctor = lambda cfg: FluxTransformer2DModel(**cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return FluxTransformer2DModel(**dict(cfg))
+
         elif cls_name == "ChromaTransformer2DModel":
             from apps.backend.runtime.chroma.chroma import ChromaTransformer2DModel
-            model_ctor = lambda cfg: ChromaTransformer2DModel(**cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return ChromaTransformer2DModel(**dict(cfg))
+
         elif cls_name == "ZImageTransformer2DModel":
             from apps.backend.runtime.zimage.model import ZImageTransformer2DModel
             # Filter out HuggingFace metadata keys (starting with _)
-            model_ctor = lambda cfg: ZImageTransformer2DModel(**{k: v for k, v in cfg.items() if not k.startswith("_")})
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                filtered = {k: v for k, v in cfg.items() if not k.startswith("_")}
+                return ZImageTransformer2DModel(**filtered)
+
         else:
             from apps.backend.runtime.sd.mmditx import SD3Transformer2DModel
-            model_ctor = lambda cfg: SD3Transformer2DModel(**cfg)
+
+            def model_ctor(cfg: Mapping[str, Any]) -> Any:
+                return SD3Transformer2DModel(**dict(cfg))
 
         supported_dtypes = _supported_inference_dtypes(family)
         quant_kind = config.quantization.kind
@@ -1565,32 +1137,8 @@ def _load_huggingface_component(
             state_dict = _normalize_unet_state_dict(state_dict, config_json)
         elif cls_name in {"FluxTransformer2DModel", "ChromaTransformer2DModel", "SD3Transformer2DModel", "ZImageTransformer2DModel"}:
             # Strip common prefixes from transformer state dict keys (similar to UNet normalization)
-            from apps.backend.runtime.utils import RemapKeysView
-            _TRANSFORMER_PREFIXES = (
-                "model.diffusion_model.",
-                "model.model.",
-                "diffusion_model.",
-                "model.",
-            )
-            
-            def _strip_transformer_prefixes(sd: Mapping[str, Any]) -> Mapping[str, Any]:
-                mapping: Dict[str, str] = {}
-                for raw_key in sd.keys():
-                    key = str(raw_key)
-                    new_key = key
-                    changed = True
-                    while changed:
-                        changed = False
-                        for prefix in _TRANSFORMER_PREFIXES:
-                            if new_key.startswith(prefix):
-                                new_key = new_key[len(prefix):]
-                                changed = True
-                                break
-                    mapping[new_key] = key
-                return RemapKeysView(sd, mapping)
-            
             state_dict = _strip_transformer_prefixes(state_dict)
-            
+
             # NOTE: GGUF key names now match Codex model names directly
             # No remapping needed - components.py uses .lin and .adaLN_modulation
 

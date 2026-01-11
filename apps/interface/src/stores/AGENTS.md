@@ -31,3 +31,5 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to stores (doc-only change; part of rollout).
 - 2026-01-04: Flux family backend engine keys moved to `flux1*`; stores route Flux.1 runs to the canonical keys and ignore legacy `codex_engine` values (`kontext`/`chroma`) instead of normalizing them.
 - 2026-01-06: `engine_config.ts` treats ZImage external assets as optional by default (`requiresTenc/requiresVae=false`); `.gguf` requirements are enforced by `quicksettings.isModelGguf(...)` in payload builders.
+- 2026-01-06: Refreshed `engine_config.ts` header/comments to clarify that `requiresTenc/requiresVae` are UI gating flags and GGUF requirements are enforced dynamically (doc-only change).
+- 2026-01-06: Image tab defaults now use model_index-aligned canonical sampler/scheduler values (SD15: `pndm` + `ddim`; SDXL: `euler` + `euler_discrete`; flow: `euler` + `simple`) and normalization only fills blank/missing values (no alias/automatic shims).

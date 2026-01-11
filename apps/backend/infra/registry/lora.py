@@ -25,7 +25,6 @@ from typing import List, Dict
 from apps.backend.inventory.scanners.loras import iter_lora_files
 
 try:
-    import safetensors
     import safetensors.torch as sf
 except Exception:  # pragma: no cover - optional at import time
     sf = None  # type: ignore

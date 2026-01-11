@@ -165,8 +165,8 @@ def execute_sampling(
             processing.height,
         )
 
-    sampler_name = plan.sampler_name or getattr(processing, "sampler_name", None) or processing.sampler.algorithm
-    scheduler_name = plan.scheduler_name or getattr(processing, "scheduler", None)
+    sampler_name = plan.sampler_name
+    scheduler_name = plan.scheduler_name
     context = build_sampling_context(
         processing.sd_model,
         sampler_name=sampler_name,
@@ -174,6 +174,8 @@ def execute_sampling(
         steps=int(plan.steps),
         noise_source=plan.noise_settings.source.value,
         eta_noise_seed_delta=plan.noise_settings.eta_noise_seed_delta,
+        height=int(getattr(processing, "height", 0) or 0) or None,
+        width=int(getattr(processing, "width", 0) or 0) or None,
         device=noise.device,
         dtype=noise.dtype,
     )
@@ -194,4 +196,3 @@ def execute_sampling(
     _maybe_dump_latents(samples, processing, plan, prompt_context)
     devices.torch_gc()
     return samples
-

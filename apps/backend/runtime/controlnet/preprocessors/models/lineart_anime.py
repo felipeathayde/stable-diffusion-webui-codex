@@ -6,7 +6,6 @@ from functools import lru_cache
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .utils import load_state_dict, resolve_weights_file
 

@@ -45,7 +45,7 @@ const emit = defineEmits({
 
 const labelText = computed(() => props.label ?? 'Sampler')
 const allowEmpty = computed(() => props.allowEmpty === true)
-const emptyLabelText = computed(() => props.emptyLabel ?? 'Automatic')
+const emptyLabelText = computed(() => props.emptyLabel ?? 'Select')
 const disabled = computed(() => props.disabled === true)
 
 function onChange(event: Event): void {

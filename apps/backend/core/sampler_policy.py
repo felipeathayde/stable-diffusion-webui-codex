@@ -32,7 +32,6 @@ from apps.backend.engines.util.schedulers import SamplerKind
 
 # Friendly display names for SamplerKind values
 SAMPLER_NAME: Dict[SamplerKind, str] = {
-    SamplerKind.AUTOMATIC: "Automatic",
     SamplerKind.EULER: "Euler",
     SamplerKind.EULER_A: "Euler a",
     SamplerKind.DDIM: "DDIM",
@@ -45,7 +44,6 @@ SAMPLER_NAME: Dict[SamplerKind, str] = {
 
 # Baseline sets used unless an engine overrides them.
 DEFAULT_IMAGE_SAMPLERS: List[str] = [
-    SAMPLER_NAME[SamplerKind.AUTOMATIC],
     SAMPLER_NAME[SamplerKind.EULER_A],
     SAMPLER_NAME[SamplerKind.EULER],
     SAMPLER_NAME[SamplerKind.DPM2M],
@@ -55,10 +53,9 @@ DEFAULT_IMAGE_SAMPLERS: List[str] = [
     SAMPLER_NAME[SamplerKind.PNDM],
     SAMPLER_NAME[SamplerKind.UNI_PC],
 ]
-DEFAULT_IMAGE_SCHEDULERS: List[str] = ["Automatic", "Karras", "Simple"]
+DEFAULT_IMAGE_SCHEDULERS: List[str] = ["Karras", "Simple"]
 
 DEFAULT_VIDEO_SAMPLERS: List[str] = [
-    SAMPLER_NAME[SamplerKind.AUTOMATIC],
     SAMPLER_NAME[SamplerKind.EULER_A],
     SAMPLER_NAME[SamplerKind.EULER],
     SAMPLER_NAME[SamplerKind.DPM2M],
@@ -67,7 +64,7 @@ DEFAULT_VIDEO_SAMPLERS: List[str] = [
     SAMPLER_NAME[SamplerKind.PNDM],
     SAMPLER_NAME[SamplerKind.UNI_PC],
 ]
-DEFAULT_VIDEO_SCHEDULERS: List[str] = ["Automatic", "Karras"]
+DEFAULT_VIDEO_SCHEDULERS: List[str] = ["Karras"]
 
 # Per-engine overrides (lowercase engine keys)
 ENGINE_OVERRIDES: Dict[str, Dict[TaskType, Dict[str, List[str]]]] = {
@@ -110,7 +107,7 @@ def allowed_samplers(engine_key: str, task: TaskType) -> List[str]:
     entry = overrides.get(task)
     samplers = (entry or _base_for_task(task))["samplers"]
     # Return a copy to keep internal constants immutable
-    return list(dict.fromkeys(samplers)) or [SAMPLER_NAME[SamplerKind.AUTOMATIC]]
+    return list(dict.fromkeys(samplers)) or [SAMPLER_NAME[SamplerKind.EULER_A]]
 
 
 def allowed_schedulers(engine_key: str, task: TaskType) -> List[str]:
@@ -120,7 +117,7 @@ def allowed_schedulers(engine_key: str, task: TaskType) -> List[str]:
     overrides = ENGINE_OVERRIDES.get(key, {})
     entry = overrides.get(task)
     schedulers = (entry or _base_for_task(task))["schedulers"]
-    return list(dict.fromkeys(schedulers)) or ["Automatic"]
+    return list(dict.fromkeys(schedulers)) or ["Karras"]
 
 
 __all__ = ["allowed_samplers", "allowed_schedulers"]

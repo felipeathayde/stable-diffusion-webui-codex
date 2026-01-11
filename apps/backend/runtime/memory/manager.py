@@ -25,25 +25,18 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import time
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, MutableSequence, Optional, Sequence, Set, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, MutableSequence, Optional, Sequence, Set, Tuple
 
 import torch
 
 from .config import (
     AttentionBackend,
-    AttentionConfig,
-    ComponentPolicy,
     DeviceBackend,
     DeviceRole,
     HardwareProbe,
-    MemoryBudgets,
-    PrecisionFlags,
     RuntimeMemoryConfig,
-    SwapConfig,
-    SwapMethod,
     SwapPolicy,
 )
 from .exceptions import HardwareProbeError, MemoryConfigurationError, MemoryLoadError

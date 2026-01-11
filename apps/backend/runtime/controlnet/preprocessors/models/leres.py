@@ -7,7 +7,6 @@ from typing import Dict, Iterable, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchvision.models import resnext101_32x8d
 
 from apps.backend.runtime.models.safety import safe_torch_load

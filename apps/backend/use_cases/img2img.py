@@ -26,7 +26,6 @@ from typing import Any, Sequence
 
 import torch
 
-from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,

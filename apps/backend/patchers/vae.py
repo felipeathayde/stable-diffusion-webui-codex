@@ -224,8 +224,8 @@ def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_am
 
             for d in range(dims):
                 pos = max(0, min(s.shape[d + 2] - overlap, it[d]))
-                l = min(tile[d], s.shape[d + 2] - pos)
-                s_in = s_in.narrow(d + 2, pos, l)
+                length = min(tile[d], s.shape[d + 2] - pos)
+                s_in = s_in.narrow(d + 2, pos, length)
                 upscaled.append(round(pos * upscale_amount))
             ps = function(s_in).to(output_device)
             mask = torch.ones_like(ps)
@@ -328,7 +328,10 @@ class VAE:
         steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x // 2, tile_y * 2, overlap)
         steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x * 2, tile_y // 2, overlap)
 
-        decode_fn = lambda a: (_unwrap_decode_output(self.first_stage_model.decode(a.to(self.vae_dtype).to(self.device))) + 1.0).float()
+        def decode_fn(a: torch.Tensor) -> torch.Tensor:
+            decoded = self.first_stage_model.decode(a.to(self.vae_dtype).to(self.device))
+            return (_unwrap_decode_output(decoded) + 1.0).float()
+
         output = torch.clamp(((tiled_scale(samples, decode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
                                tiled_scale(samples, decode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
                                tiled_scale(samples, decode_fn, tile_x, tile_y, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device))
@@ -340,7 +343,10 @@ class VAE:
         steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x // 2, tile_y * 2, overlap)
         steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x * 2, tile_y // 2, overlap)
 
-        encode_fn = lambda a: _unwrap_encode_output(self.first_stage_model.encode((2. * a - 1.).to(self.vae_dtype).to(self.device))).float()
+        def encode_fn(a: torch.Tensor) -> torch.Tensor:
+            encoded = self.first_stage_model.encode((2.0 * a - 1.0).to(self.vae_dtype).to(self.device))
+            return _unwrap_encode_output(encoded).float()
+
         samples = tiled_scale(pixel_samples, encode_fn, tile_x, tile_y, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
         samples += tiled_scale(pixel_samples, encode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
         samples += tiled_scale(pixel_samples, encode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)

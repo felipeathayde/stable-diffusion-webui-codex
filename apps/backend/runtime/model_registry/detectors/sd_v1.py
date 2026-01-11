@@ -17,12 +17,10 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import math
 from typing import List
 
-import torch
 
-from apps.backend.runtime.model_registry.detectors.base import ModelDetector, REGISTRY
+from apps.backend.runtime.model_registry.detectors.base import REGISTRY
 from apps.backend.runtime.model_registry.signals import SignalBundle, count_blocks, has_all_keys
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,

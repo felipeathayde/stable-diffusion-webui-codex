@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage discovery policy used by inventories and registries.
-Defines strict roots for WAN22 GGUF stage weights (paths.json `wan22_ckpt` or `models/wan22`) and provides a shared stage classifier.
+Defines strict roots for WAN22 GGUF stage weights (paths.json `wan22_ckpt`) and provides a shared stage classifier.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `infer_wan22_stage` (function): Heuristically classify a GGUF filename as `high`/`low`/`unknown`.
@@ -21,7 +21,7 @@ from typing import Iterable, Sequence
 
 from apps.backend.infra.config.paths import get_paths_for
 
-from .base import default_models_root, dedupe_keep_order
+from .base import dedupe_keep_order
 
 
 def infer_wan22_stage(filename: str) -> str:
@@ -48,8 +48,7 @@ def _ggufs_in_dir(dir_path: str) -> list[str]:
 
 
 def iter_wan22_gguf_files(models_root: str | None = None, *, roots: Sequence[str] | None = None) -> Iterable[str]:
-    mr = models_root or default_models_root()
-    use_roots = list(roots) if roots is not None else (get_paths_for("wan22_ckpt") or [os.path.join(mr, "wan22")])
+    use_roots = list(roots) if roots is not None else list(get_paths_for("wan22_ckpt"))
     out: list[str] = []
     for root in use_roots:
         if os.path.isfile(root) and root.lower().endswith(".gguf"):
@@ -60,4 +59,3 @@ def iter_wan22_gguf_files(models_root: str | None = None, *, roots: Sequence[str
 
 
 __all__ = ["infer_wan22_stage", "iter_wan22_gguf_files"]
-

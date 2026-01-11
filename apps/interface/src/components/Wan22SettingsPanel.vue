@@ -43,22 +43,22 @@ Symbols (top-level; keep in sync; no ghosts):
               <input type="checkbox" v-model="store.hiUseLora" />
               <span>Use Auxiliary LoRA (High)</span>
             </label>
-            <div v-if="store.hiUseLora">
-              <label class="label-muted" for="wanHiLora">LoRA (input list)</label>
-              <input id="wanHiLora" class="ui-input" list="dl-lora" v-model="store.hiLoraPath" placeholder="/models/Lora/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
-            </div>
-          </div>
-          <div>
+	            <div v-if="store.hiUseLora">
+	              <label class="label-muted" for="wanHiLora">LoRA (input list)</label>
+	              <input id="wanHiLora" class="ui-input" list="dl-lora" v-model="store.hiLoraPath" placeholder="/models/wan22-loras/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+	            </div>
+	          </div>
+	          <div>
             <label class="switch-label">
               <input type="checkbox" v-model="store.loUseLora" />
               <span>Use Auxiliary LoRA (Low)</span>
             </label>
-            <div v-if="store.loUseLora">
-              <label class="label-muted" for="wanLoLora">LoRA (input list)</label>
-              <input id="wanLoLora" class="ui-input" list="dl-lora" v-model="store.loLoraPath" placeholder="/models/Lora/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
-            </div>
-          </div>
-        </div>
+	            <div v-if="store.loUseLora">
+	              <label class="label-muted" for="wanLoLora">LoRA (input list)</label>
+	              <input id="wanLoLora" class="ui-input" list="dl-lora" v-model="store.loLoraPath" placeholder="/models/wan22-loras/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+	            </div>
+	          </div>
+	        </div>
         <datalist id="dl-lora">
           <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
         </datalist>

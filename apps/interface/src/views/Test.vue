@@ -132,13 +132,13 @@ Symbols (top-level; keep in sync; no ghosts):
                   <input type="checkbox" v-model="state.high.useLora" />
                   <span>Use Auxiliary LoRA (High)</span>
                 </label>
-                <div v-if="state.high.useLora">
-                  <label class="label" for="highLora">LoRA (input list)</label>
-                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/Lora/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
-                  <datalist id="dl-lora">
-                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
-                  </datalist>
-                </div>
+	                <div v-if="state.high.useLora">
+	                  <label class="label" for="highLora">LoRA (input list)</label>
+	                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/wan22-loras/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+	                  <datalist id="dl-lora">
+	                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+	                  </datalist>
+	                </div>
               </div>
               <div>
                 <label class="label" for="highLoraWeight">LoRA Weight</label>
@@ -172,11 +172,11 @@ Symbols (top-level; keep in sync; no ghosts):
                   <input type="checkbox" v-model="state.low.useLora" />
                   <span>Use Auxiliary LoRA (Low)</span>
                 </label>
-                <div v-if="state.low.useLora">
-                  <label class="label" for="lowLora">LoRA (input list)</label>
-                  <input id="lowLora" class="ui-input" list="dl-lora" v-model="state.low.loraPath" placeholder="/models/Lora/*.safetensors" />
-                </div>
-              </div>
+	                <div v-if="state.low.useLora">
+	                  <label class="label" for="lowLora">LoRA (input list)</label>
+	                  <input id="lowLora" class="ui-input" list="dl-lora" v-model="state.low.loraPath" placeholder="/models/wan22-loras/*.safetensors" />
+	                </div>
+	              </div>
               <div>
                 <label class="label" for="lowLoraWeight">LoRA Weight</label>
                 <input id="lowLoraWeight" class="ui-input" type="number" step="0.05" v-model.number="state.low.loraWeight" />

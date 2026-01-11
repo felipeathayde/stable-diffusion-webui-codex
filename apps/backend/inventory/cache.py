@@ -109,7 +109,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
         vaes.append(entry)
     vaes.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
 
-    # Text encoders: models/text-encoder plus per-engine roots from apps/paths.json.
+    # Text encoders: per-engine roots from apps/paths.json.
     text_encoders: List[Dict[str, str]] = []
     for full in iter_text_encoder_files(models_root=mr):
         name = os.path.basename(full)

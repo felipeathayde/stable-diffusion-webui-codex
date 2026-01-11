@@ -11,7 +11,7 @@ Defines the default roots and per-family overrides (paths.json keys) and yields 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LORA_EXTS` (constant): Recognized LoRA weight file extensions.
-- `list_lora_roots` (function): Resolves LoRA search roots (models defaults + `get_paths_for("*_loras")` overrides).
+- `list_lora_roots` (function): Resolves LoRA search roots from `apps/paths.json` per-family keys (`*_loras`).
 - `iter_lora_files` (function): Yields LoRA file paths under the resolved roots (recursive, stable order).
 """
 
@@ -22,25 +22,18 @@ from typing import Iterable, Sequence
 
 from apps.backend.infra.config.paths import get_paths_for
 
-from .base import default_models_root, dedupe_keep_order, iter_files
+from .base import dedupe_keep_order, iter_files
 
 LORA_EXTS: tuple[str, ...] = (".safetensors", ".ckpt", ".pt", ".bin")
 
 
 def list_lora_roots(models_root: str | None = None) -> list[str]:
-    mr = models_root or default_models_root()
     roots: list[str] = []
 
-    # Built-in conventions (common in SD deployments).
-    for sub in ("Lora", "sd15-loras", "sdxl-loras", "flux-loras", "wan22-loras", "zimage-loras"):
-        p = os.path.join(mr, sub)
-        if os.path.isdir(p):
-            roots.append(p)
-
-    # Explicit overrides from apps/paths.json
+    # Per-family roots from apps/paths.json.
     for key in ("sd15_loras", "sdxl_loras", "flux1_loras", "wan22_loras", "zimage_loras"):
         for p in get_paths_for(key):
-            if os.path.isdir(p):
+            if os.path.isdir(p) or (os.path.isfile(p) and p.lower().endswith(LORA_EXTS)):
                 roots.append(p)
 
     return dedupe_keep_order(roots)
@@ -48,7 +41,13 @@ def list_lora_roots(models_root: str | None = None) -> list[str]:
 
 def iter_lora_files(models_root: str | None = None, *, roots: Sequence[str] | None = None) -> Iterable[str]:
     use_roots = list(roots) if roots is not None else list_lora_roots(models_root=models_root)
-    return dedupe_keep_order(list(iter_files(use_roots, exts=LORA_EXTS)))
+    out: list[str] = []
+    for root in use_roots:
+        if os.path.isfile(root) and root.lower().endswith(LORA_EXTS):
+            out.append(root)
+        elif os.path.isdir(root):
+            out.extend(list(iter_files([root], exts=LORA_EXTS)))
+    return dedupe_keep_order(out)
 
 
 __all__ = ["LORA_EXTS", "iter_lora_files", "list_lora_roots"]

@@ -289,7 +289,7 @@ class ModelRegistry:
 
         Resolution order:
         1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, wan22_ckpt).
-        2) Built-in defaults under models/: root, sd15, sdxl, flux.
+        2) Built-in defaults under models/: per-engine folders only (sd15, sdxl, flux, wan22, zimage).
 
         This replaces the legacy scatter of ad-hoc checkpoint folders ('stable-diffusion', 'sd', 'checkpoints').
         """
@@ -307,12 +307,13 @@ class ModelRegistry:
             candidates = []
 
         # 2) Curated built-in defaults quando não há overrides configurados.
+        # Keep these per-engine only (never scan models/ root directly).
         if not candidates:
             defaults = [
-                self._models_root,
                 self._models_root / "sd15",
                 self._models_root / "sdxl",
                 self._models_root / "flux",
+                self._models_root / "wan22",
                 self._models_root / "zimage",
             ]
             for p in defaults:

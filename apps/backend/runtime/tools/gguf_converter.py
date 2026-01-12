@@ -74,29 +74,21 @@ def convert_safetensors_to_gguf(
     with open(config_path, "r", encoding="utf-8") as f:
         model_config = json.load(f)
 
-    # Z-Image transformer: Diffusers exports require key remaps and QKV packing.
-    from apps.backend.runtime.tools import gguf_converter_zimage as _zimage  # local import avoids loading zimage helpers eagerly
-
-    if _zimage.is_zimage_transformer_config(model_config):
-        logger.info("Detected ZImageTransformer2DModel config; using Z-Image converter path.")
-        return _zimage.convert_zimage_transformer_to_gguf(
-            config,
-            model_config=model_config,
-            config_path=config_path,
-            progress=progress,
-            update_progress=update_progress,
-        )
+    logger.info("Loaded config: %s", model_config.get("_class_name") or model_config.get("model_type") or "unknown")
     
-    logger.info("Loaded config: %s", model_config.get("model_type", "unknown"))
-    
-    # Get architecture info
-    arch = str(model_config.get("model_type") or "llama")
-    num_layers = int(model_config.get("num_hidden_layers", 32))
     requested_type = _quantization.requested_ggml_type(config.quantization)
     overrides = _quantization.compile_tensor_overrides(config.quantization, config.tensor_type_overrides)
-    
-    # Build key mapping
-    key_mapping = _key_mapping.build_key_mapping(num_layers)
+
+    is_zimage_transformer = _tensor_planner.is_zimage_transformer_config(model_config)
+    if is_zimage_transformer:
+        arch = "zimage"
+        metadata_config = _tensor_planner.normalize_zimage_transformer_metadata_config(model_config)
+        key_mapping: dict[str, str] = {}
+    else:
+        arch = str(model_config.get("model_type") or "llama")
+        metadata_config = model_config
+        num_layers = int(model_config.get("num_hidden_layers", 32))
+        key_mapping = _key_mapping.build_key_mapping(num_layers)
     
     # Load safetensors
     progress.status = "loading_weights"
@@ -109,15 +101,19 @@ def convert_safetensors_to_gguf(
 
     with _safetensors_source.open_safetensors_source(config.safetensors_path) as sf:
         tensor_names = list(sf.keys())
-        progress.total_steps = len(tensor_names)
 
-        plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
+        if is_zimage_transformer:
+            plans, key_mapping = _tensor_planner.plan_zimage_transformer_tensors(tensor_names, sf, requested_type, overrides)
+        else:
+            plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
+
+        progress.total_steps = len(plans)
 
         writer = GGUFWriter(path=str(output_path), arch=arch)
         _metadata.add_basic_metadata(
             writer,
             arch,
-            model_config,
+            metadata_config,
             config.quantization,
             config_path=config_path,
             safetensors_path=config.safetensors_path,
@@ -149,60 +145,74 @@ def convert_safetensors_to_gguf(
             chunk_rows = 1024
             for i, plan in enumerate(plans):
                 progress.current_step = i + 1
-                progress.current_tensor = plan.src_name
+                progress.current_tensor = plan.gguf_name
                 update_progress()
-
-                sl = sf.get_slice(plan.src_name)
-                shape = tuple(int(x) for x in sl.get_shape())
-                if shape != plan.raw_shape:
-                    raise RuntimeError(f"Tensor shape changed during conversion for {plan.src_name}: {shape} vs {plan.raw_shape}")
 
                 bytes_written = 0
 
-                if plan.ggml_type == GGMLQuantizationType.F16:
-                    target_dtype = torch.float16
-                    if len(shape) == 1:
-                        t = sl[:].to(target_dtype).contiguous()
-                        out.write(t.numpy().tobytes(order="C"))
-                        bytes_written += t.numel() * 2
-                    elif len(shape) == 2:
-                        rows = shape[0]
-                        for start in range(0, rows, chunk_rows):
-                            chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
-                            out.write(chunk.numpy().tobytes(order="C"))
-                            bytes_written += chunk.numel() * 2
+                if plan.op == "copy":
+                    sl = sf.get_slice(plan.src_name)
+                    shape = tuple(int(x) for x in sl.get_shape())
+                    if shape != plan.raw_shape:
+                        raise RuntimeError(
+                            f"Tensor shape changed during conversion for {plan.src_name}: {shape} vs {plan.raw_shape}"
+                        )
+
+                    if plan.ggml_type == GGMLQuantizationType.F16:
+                        target_dtype = torch.float16
+                        if len(shape) == 1:
+                            t = sl[:].to(target_dtype).contiguous()
+                            out.write(t.numpy().tobytes(order="C"))
+                            bytes_written += t.numel() * 2
+                        elif len(shape) == 2:
+                            rows = shape[0]
+                            for start in range(0, rows, chunk_rows):
+                                chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
+                                out.write(chunk.numpy().tobytes(order="C"))
+                                bytes_written += chunk.numel() * 2
+                        else:
+                            t = sf.get_tensor(plan.src_name).to(target_dtype).contiguous()
+                            out.write(t.numpy().tobytes(order="C"))
+                            bytes_written += t.numel() * 2
+
+                    elif plan.ggml_type == GGMLQuantizationType.F32:
+                        target_dtype = torch.float32
+                        if len(shape) == 1:
+                            t = sl[:].to(target_dtype).contiguous()
+                            out.write(t.numpy().tobytes(order="C"))
+                            bytes_written += t.numel() * 4
+                        elif len(shape) == 2:
+                            rows = shape[0]
+                            for start in range(0, rows, chunk_rows):
+                                chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
+                                out.write(chunk.numpy().tobytes(order="C"))
+                                bytes_written += chunk.numel() * 4
+                        else:
+                            t = sf.get_tensor(plan.src_name).to(target_dtype).contiguous()
+                            out.write(t.numpy().tobytes(order="C"))
+                            bytes_written += t.numel() * 4
+
                     else:
-                        t = sf.get_tensor(plan.src_name).to(target_dtype).contiguous()
-                        out.write(t.numpy().tobytes(order="C"))
-                        bytes_written += t.numel() * 2
+                        if len(shape) == 1:
+                            # By policy we keep 1D tensors in F16, so this would indicate a planning bug.
+                            raise RuntimeError(f"Unexpected quantized 1D tensor plan for {plan.src_name}: {shape}")
 
-                elif plan.ggml_type == GGMLQuantizationType.F32:
-                    target_dtype = torch.float32
-                    if len(shape) == 1:
-                        t = sl[:].to(target_dtype).contiguous()
-                        out.write(t.numpy().tobytes(order="C"))
-                        bytes_written += t.numel() * 4
-                    elif len(shape) == 2:
-                        rows = shape[0]
-                        for start in range(0, rows, chunk_rows):
-                            chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
-                            out.write(chunk.numpy().tobytes(order="C"))
-                            bytes_written += chunk.numel() * 4
-                    else:
-                        t = sf.get_tensor(plan.src_name).to(target_dtype).contiguous()
-                        out.write(t.numpy().tobytes(order="C"))
-                        bytes_written += t.numel() * 4
-
-                else:
-                    if len(shape) == 1:
-                        # By policy we keep 1D tensors in F16, so this would indicate a planning bug.
-                        raise RuntimeError(f"Unexpected quantized 1D tensor plan for {plan.src_name}: {shape}")
-
-                    if len(shape) == 2:
-                        rows = shape[0]
-                        for start in range(0, rows, chunk_rows):
-                            chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()
-                            arr = chunk.numpy()
+                        if len(shape) == 2:
+                            rows = shape[0]
+                            for start in range(0, rows, chunk_rows):
+                                chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()
+                                arr = chunk.numpy()
+                                try:
+                                    q = quantize_numpy(arr, plan.ggml_type)
+                                except Exception as exc:
+                                    raise RuntimeError(
+                                        f"Failed to quantize tensor {plan.src_name} to {plan.ggml_type.name}: {exc}"
+                                    ) from exc
+                                out.write(q.tobytes(order="C"))
+                                bytes_written += q.nbytes
+                        else:
+                            t = sf.get_tensor(plan.src_name).to(torch.float32).contiguous()
+                            arr = t.numpy()
                             try:
                                 q = quantize_numpy(arr, plan.ggml_type)
                             except Exception as exc:
@@ -211,21 +221,88 @@ def convert_safetensors_to_gguf(
                                 ) from exc
                             out.write(q.tobytes(order="C"))
                             bytes_written += q.nbytes
+
+                elif plan.op == "concat_dim0":
+                    if not plan.src_names:
+                        raise RuntimeError(f"concat_dim0 plan has no sources for {plan.gguf_name}")
+
+                    slices = [sf.get_slice(name) for name in plan.src_names]
+                    shapes = [tuple(int(x) for x in sl.get_shape()) for sl in slices]
+                    base_shape = shapes[0]
+                    if any(s != base_shape for s in shapes[1:]):
+                        raise RuntimeError(
+                            f"concat_dim0 source shape mismatch for {plan.gguf_name}: {shapes}"
+                        )
+
+                    if len(base_shape) == 1:
+                        expected_shape = (int(base_shape[0]) * len(plan.src_names),)
+                    elif len(base_shape) == 2:
+                        expected_shape = (int(base_shape[0]) * len(plan.src_names), int(base_shape[1]))
                     else:
-                        t = sf.get_tensor(plan.src_name).to(torch.float32).contiguous()
-                        arr = t.numpy()
-                        try:
-                            q = quantize_numpy(arr, plan.ggml_type)
-                        except Exception as exc:
+                        raise RuntimeError(
+                            f"concat_dim0 expects 1D/2D tensors for {plan.gguf_name}, got {base_shape}"
+                        )
+
+                    if expected_shape != plan.raw_shape:
+                        raise RuntimeError(
+                            f"concat_dim0 planned shape mismatch for {plan.gguf_name}: expected {expected_shape}, planned {plan.raw_shape}"
+                        )
+
+                    if plan.ggml_type == GGMLQuantizationType.F16:
+                        target_dtype = torch.float16
+                        if len(base_shape) == 1:
+                            for sl in slices:
+                                t = sl[:].to(target_dtype).contiguous()
+                                out.write(t.numpy().tobytes(order="C"))
+                                bytes_written += t.numel() * 2
+                        else:
+                            rows = base_shape[0]
+                            for sl in slices:
+                                for start in range(0, rows, chunk_rows):
+                                    chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
+                                    out.write(chunk.numpy().tobytes(order="C"))
+                                    bytes_written += chunk.numel() * 2
+
+                    elif plan.ggml_type == GGMLQuantizationType.F32:
+                        target_dtype = torch.float32
+                        if len(base_shape) == 1:
+                            for sl in slices:
+                                t = sl[:].to(target_dtype).contiguous()
+                                out.write(t.numpy().tobytes(order="C"))
+                                bytes_written += t.numel() * 4
+                        else:
+                            rows = base_shape[0]
+                            for sl in slices:
+                                for start in range(0, rows, chunk_rows):
+                                    chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
+                                    out.write(chunk.numpy().tobytes(order="C"))
+                                    bytes_written += chunk.numel() * 4
+
+                    else:
+                        if len(base_shape) != 2:
                             raise RuntimeError(
-                                f"Failed to quantize tensor {plan.src_name} to {plan.ggml_type.name}: {exc}"
-                            ) from exc
-                        out.write(q.tobytes(order="C"))
-                        bytes_written += q.nbytes
+                                f"Unexpected quantized concat_dim0 tensor plan for {plan.gguf_name}: {base_shape}"
+                            )
+                        rows = base_shape[0]
+                        for sl in slices:
+                            for start in range(0, rows, chunk_rows):
+                                chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()
+                                arr = chunk.numpy()
+                                try:
+                                    q = quantize_numpy(arr, plan.ggml_type)
+                                except Exception as exc:
+                                    raise RuntimeError(
+                                        f"Failed to quantize tensor {plan.gguf_name} to {plan.ggml_type.name}: {exc}"
+                                    ) from exc
+                                out.write(q.tobytes(order="C"))
+                                bytes_written += q.nbytes
+
+                else:
+                    raise RuntimeError(f"Unknown tensor op for {plan.gguf_name}: {plan.op!r}")
 
                 if bytes_written != plan.stored_nbytes:
                     raise RuntimeError(
-                        f"Byte count mismatch for {plan.src_name}: wrote {bytes_written}, expected {plan.stored_nbytes}"
+                        f"Byte count mismatch for {plan.gguf_name}: wrote {bytes_written}, expected {plan.stored_nbytes}"
                     )
                 writer.write_padding(out, plan.stored_nbytes)
         finally:

@@ -576,7 +576,7 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
           model_name: model.model_name,
           filename: model.filename,
           hash: model.hash,
-          metadata: model.metadata,
+          codex_metadata: model.metadata,
         }
       : { selection: value }
   } else if (kind === 'vae' || kind === 'wan_vae') {
@@ -648,7 +648,12 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
       const res = await fetchFileMetadata(filePathForMetadata)
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
-      metadataModalPayload.value = { ...(current as any), file_metadata: res }
+      const codex = (res as any)?.nested?.codex
+      metadataModalPayload.value = {
+        ...(current as any),
+        file_metadata: res,
+        codex_metadata: typeof codex === 'object' && codex !== null ? codex : (current as any).codex_metadata,
+      }
     } catch (e: any) {
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return

@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict
 
+from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.infra.registry.text_encoder_roots import list_text_encoder_roots_by_family
 from apps.backend.runtime.model_parser.specs import CodexEstimatedConfig
 from apps.backend.runtime.model_registry.specs import ModelFamily, ModelSignature
@@ -39,7 +41,8 @@ class TextEncoderOverrideConfig:
         Concrete model family (`ModelFamily.SD15`, `ModelFamily.SDXL`, `ModelFamily.FLUX`, `ModelFamily.WAN22`, ...)
         that this override is valid for.
     root_label:
-        One of the labels exposed by `/api/text-encoders` (e.g. `sdxl//abs/.../models/sdxl-tenc`).
+        A stable label in the form `<family>/<path>` where `<path>` is either repo-relative or absolute and
+        originates from the configured `*_tenc` entries in `apps/paths.json` (exposed to the UI via `/api/paths`).
     components:
         Optional subset of logical text encoder aliases (`clip_l`, `clip_g`, `t5xxl`, `umt5xxl`, ...).
         When omitted, all encoders in `ModelSignature.text_encoders` are expected to have weights
@@ -137,20 +140,51 @@ def resolve_text_encoder_override_paths(
             component_paths[component_name] = norm
         return component_paths
 
-    # Root-based path resolution using /api/text-encoders labels.
+    # Root-based path resolution using configured roots (paths.json-backed).
     roots_by_family = list_text_encoder_roots_by_family()
     family_roots = list(roots_by_family.get(model_family.value) or [])
     root_path: str | None = None
+
+    label = str(override.root_label or "").strip()
+    label_path_hint = label
+    if "/" in label:
+        prefix, rest = label.split("/", 1)
+        if prefix.strip() == model_family.value:
+            label_path_hint = rest
+    label_path_hint = label_path_hint.strip()
+
+    resolved_hint: str | None = None
+    if label_path_hint:
+        try:
+            p = Path(os.path.expanduser(label_path_hint))
+        except Exception:
+            resolved_hint = None
+        else:
+            if not p.is_absolute():
+                p = get_repo_root() / p
+            try:
+                resolved_hint = str(p.resolve(strict=False))
+            except Exception:
+                resolved_hint = str(p)
+
     for entry in family_roots:
-        if getattr(entry, "name", None) == override.root_label:
+        if getattr(entry, "name", None) == label:
             root_path = getattr(entry, "path", None)
             break
+        if resolved_hint and getattr(entry, "path", None):
+            try:
+                entry_path = str(Path(str(getattr(entry, "path"))).resolve(strict=False))
+            except Exception:
+                entry_path = str(getattr(entry, "path"))
+            if entry_path == resolved_hint:
+                root_path = getattr(entry, "path", None)
+                break
 
     if root_path is None:
         raise TextEncoderOverrideError(
             "Text encoder override label %r not found for family=%s. "
-            "Refresh /api/text-encoders and choose a valid label."
-            % (override.root_label, model_family.value)
+            "Update apps/paths.json (`%s_tenc`) and choose a valid label."
+            % (override.root_label, model_family.value, model_family.value)
         )
 
     root_path = str(root_path)

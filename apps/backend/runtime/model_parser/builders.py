@@ -123,6 +123,18 @@ _FALLBACK_REPOS: Dict[ModelFamily, str] = {
     ModelFamily.FLUX: "black-forest-labs/FLUX.1-dev",
 }
 
+_WAN22_REPO_BY_MODEL_TYPE: Dict[str, str] = {
+    "t2v": "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+    "i2v": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+    "ti2v": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+    "animate": "Wan-AI/Wan2.2-Animate-14B-Diffusers",
+}
+
+
+def _resolve_wan22_repo_id(signature: ModelSignature) -> str:
+    raw = str((signature.extras or {}).get("model_type", "")).strip().lower()
+    return _WAN22_REPO_BY_MODEL_TYPE.get(raw, "")
+
 
 def register_text_encoder(context: ParserContext, alias: str, component: str) -> None:
     mapping = context.metadata.setdefault("text_encoder_map", {})
@@ -137,6 +149,11 @@ def build_estimated_config(
     extra_metadata: Dict[str, object] | None = None,
 ) -> CodexEstimatedConfig:
     repo_id = repo_override or signature.repo_hint or ""
+    if signature.family == ModelFamily.WAN22 and not repo_override:
+        # Legacy signatures used a placeholder repo id; normalize to a concrete
+        # diffusers repo so downstream asset resolution can locate vendored HF files.
+        if not repo_id or repo_id.strip() in {"Wan-AI/Wan2.2"}:
+            repo_id = _resolve_wan22_repo_id(signature)
     if not repo_id:
         repo_id = _FALLBACK_REPOS.get(signature.family, "")
     if not repo_id:

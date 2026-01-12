@@ -26,13 +26,7 @@ from typing import Optional, Tuple
 
 import torch
 
-log = logging.getLogger("wan22.te.cuda")
-if not log.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter('[wan22.te.cuda] %(levelname)s: %(message)s'))
-    log.addHandler(h)
-log.setLevel(logging.INFO)
-log.propagate = False
+log = logging.getLogger("backend.runtime.wan22.te.cuda")
 
 _ext = None
 _last_error: Optional[str] = None
@@ -43,24 +37,6 @@ def _try_load_ext(build: bool = False) -> None:
     global _last_error
     if _ext is not None:
         return
-    # Optional explicit path (env) where the compiled extension lives
-    try:
-        env_path = os.getenv('WAN_TE_EXT_DIR') or os.getenv('WAN_TE_EXT_PATH')
-    except Exception:
-        env_path = None
-    if env_path:
-        try:
-            p = env_path
-            if os.path.isfile(p):
-                p = os.path.dirname(p)
-            if os.path.isdir(p) and p not in sys.path:
-                sys.path.insert(0, p)
-            import wan_te_cuda as _loaded
-            _ext = _loaded
-            log.info("loaded wan_te_cuda extension from env path (%s)", p)
-            return
-        except Exception as ex:
-            log.info("wan_te_cuda not found in env path '%s': %s", env_path, ex)
     try:
         import wan_te_cuda as _loaded
         _ext = _loaded

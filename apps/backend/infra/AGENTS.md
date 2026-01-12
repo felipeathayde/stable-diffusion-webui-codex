@@ -16,7 +16,7 @@ Status: Active
 - Keep infrastructure logic here to avoid scattering environment/CLI handling across business logic modules.
 - When adding new accelerator backends or configuration sources, update these helpers instead of embedding logic in engines.
 - 2025-11-03: CLI parser exposes `--debug-conditioning`, mapping to `CODEX_DEBUG_COND` for SDXL conditioning diagnostics.
-- 2025-11-03: `--pin-shared-memory` (`CODEX_PIN_SHARED_MEMORY`) controls host pinning for offloaded models; disabled by default on Windows-heavy deployments.
+- 2025-11-03: `--pin-shared-memory` controls host pinning for offloaded models; disabled by default on Windows-heavy deployments (env alias removed; avoid settings via env).
 - 2026-01-01: Added `--debug-preview-factors` to log best-fit latent→RGB preview factors for tuning `Approx cheap` live previews.
 - 2025-12-06: `config/paths.py` agora garante, em best-effort, que roots relativos de modelos definidos em `apps/paths.json` (`sd15_*`, `sdxl_*`, `flux_*`, `wan22_*`) existam sob o repo root, criando diretórios ausentes apenas para entradas relativas; paths absolutos continuam dependendo de provisionamento manual.
 - 2025-12-29: Repo root resolution now prefers `CODEX_ROOT` (launchers) over process CWD so configs like `apps/paths.json` and `apps/settings_values.json` stay stable across launch methods.

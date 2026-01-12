@@ -10,7 +10,6 @@ Purpose: Sampling execution helper for workflow orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_truthy` (function): Parse a string env/value into a boolean toggle.
 - `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics).
 - `execute_sampling` (function): Execute sampling given processing + plan + conditioning payload and return the sampled latents.
 """
@@ -39,17 +38,12 @@ from apps.backend.runtime.live_preview import (
 from apps.backend.runtime.processing.conditioners import txt2img_conditioning
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext, SamplingPlan
 from apps.backend.runtime.sampling.context import build_sampling_context
+from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config.repo_root import get_repo_root
 
 from .scripts import collect_lora_selections, run_before_sampling_hooks, run_post_sample_hooks
 
 logger = logging.getLogger(__name__)
-
-
-def _truthy(value: str | None) -> bool:
-    if not value:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _maybe_dump_latents(
@@ -58,7 +52,7 @@ def _maybe_dump_latents(
     plan: SamplingPlan,
     prompt_context: PromptContext,
 ) -> None:
-    if not _truthy(os.getenv("CODEX_DUMP_LATENTS")):
+    if not env_flag("CODEX_DUMP_LATENTS", default=False):
         return
 
     path_hint = os.getenv("CODEX_DUMP_LATENTS_PATH")

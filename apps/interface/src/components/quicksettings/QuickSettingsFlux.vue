@@ -22,8 +22,19 @@ Symbols (top-level; keep in sync; no ghosts):
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+          <option v-if="checkpoints.length === 0" value="">No models found</option>
           <option v-for="model in checkpoints" :key="model" :value="model">{{ truncatePath(model) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!checkpoint"
+          title="Show checkpoint metadata"
+          aria-label="Show checkpoint metadata"
+          @click="$emit('showMetadata', { kind: 'checkpoint', value: checkpoint })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
       </div>
     </div>
@@ -37,6 +48,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">Select VAE</option>
           <option v-for="v in vaeChoices" :key="v" :value="v">{{ truncatePath(v) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!vae"
+          title="Show VAE metadata"
+          aria-label="Show VAE metadata"
+          @click="$emit('showMetadata', { kind: 'vae', value: vae })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
       </div>
     </div>
@@ -50,6 +71,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">Select CLIP</option>
           <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!textEncoderPrimary"
+          title="Show text encoder metadata"
+          aria-label="Show text encoder metadata"
+          @click="$emit('showMetadata', { kind: 'text_encoder_primary', value: textEncoderPrimary })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
       </div>
       <div class="qs-pair">
@@ -57,6 +88,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">Select T5</option>
           <option v-for="te in textEncoderChoices" :key="`sec-${te}`" :value="te">{{ textEncoderLabel(te) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!textEncoderSecondary"
+          title="Show text encoder metadata"
+          aria-label="Show text encoder metadata"
+          @click="$emit('showMetadata', { kind: 'text_encoder_secondary', value: textEncoderSecondary })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addTencPath')">+</button>
       </div>
     </div>
@@ -82,6 +123,7 @@ defineEmits<{
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
   (e: 'addTencPath'): void
+  (e: 'showMetadata', payload: { kind: 'checkpoint' | 'vae' | 'text_encoder_primary' | 'text_encoder_secondary'; value: string }): void
 }>()
 
 function truncatePath(path: string, maxLen = 40): string {

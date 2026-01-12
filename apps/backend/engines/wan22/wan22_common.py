@@ -106,19 +106,13 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
     """Return an ordered list of WAN 2.2 Diffusers repo IDs to try.
 
     Strict mode: no implicit or generic fallbacks. Resolution order is:
-    1) Explicit env override `CODEX_WAN_DIFFUSERS_REPO` (single repo id)
-    2) Exact key match in `WAN_DIFFUSERS_REPO_CANDIDATES`
+    1) Exact key match in `WAN_DIFFUSERS_REPO_CANDIDATES`
 
     If neither yields any candidate, raise with an actionable message.
     """
     key = (model_key or "").lower().strip()
 
-    # 1) explicit env override (highest precedence)
-    env_repo = (os.environ.get("CODEX_WAN_DIFFUSERS_REPO") or "").strip()
-    if env_repo:
-        return [env_repo]
-
-    # 2) exact/contained key match from known map
+    # 1) exact/contained key match from known map
     candidates: List[str] = []
     for mk, repos in WAN_DIFFUSERS_REPO_CANDIDATES.items():
         if mk in key:
@@ -130,8 +124,7 @@ def resolve_wan_repo_candidates(model_key: Optional[str] = None) -> List[str]:
         raise ValueError(
             (
                 "resolve_wan_repo_candidates: unable to resolve repo for key '{key}'. "
-                "Provide a valid engine/model key (one of: {valid}) or set "
-                "CODEX_WAN_DIFFUSERS_REPO to an explicit repo id."
+                "Provide a valid engine/model key (one of: {valid})."
             ).format(key=model_key, valid=valid)
         )
 

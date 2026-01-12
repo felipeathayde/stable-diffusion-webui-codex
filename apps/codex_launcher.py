@@ -211,7 +211,6 @@ class CodexGUILauncher(tk.Tk):
         """Start a service."""
         svc = self.services[name]
         env = self.store.build_env()
-        env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
         try:
             svc.start(env, external_terminal=self.meta.external_terminal)
             self._set_status(f"{name} starting...")
@@ -222,7 +221,6 @@ class CodexGUILauncher(tk.Tk):
         """Restart a service."""
         svc = self.services[name]
         env = self.store.build_env()
-        env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
         try:
             svc.restart(env, external_terminal=self.meta.external_terminal)
             self._set_status(f"{name} restarting...")
@@ -267,96 +265,14 @@ class CodexGUILauncher(tk.Tk):
                             row=row, column=0, columnspan=2, sticky="w", padx=16, pady=8)
         row += 1
 
-        # SDPA Policy
-        row = self._add_combo_row(scrollable, row, "SDPA Policy",
-                                  ["flash", "mem_efficient", "math"],
-                                  self.meta.sdpa_policy, "_var_sdpa")
-
-        # Attention Backend
-        row = self._add_combo_row(scrollable, row, "Attention Backend",
-                                  ["torch-sdpa", "xformers", "sage"],
-                                  self.env.get("CODEX_ATTENTION_BACKEND", "torch-sdpa"),
-                                  "_var_attn_backend")
-
-        # Diffusion Device
-        row = self._add_combo_row(scrollable, row, "Diffusion Device",
-                                  ["Auto", "GPU", "CPU"],
-                                  self._device_to_label(self.env.get("CODEX_DIFFUSION_DEVICE", "")),
-                                  "_var_diff_dev")
-
-        # Diffusion DType
-        row = self._add_combo_row(scrollable, row, "Diffusion DType",
-                                  ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
-                                  self.env.get("CODEX_DIFFUSION_DTYPE", "auto"),
-                                  "_var_diff_dtype")
-
-        # TE Device
-        row = self._add_combo_row(scrollable, row, "Text Encoder Device",
-                                  ["Auto", "GPU", "CPU"],
-                                  self._device_to_label(self.env.get("CODEX_TE_DEVICE", "")),
-                                  "_var_te_dev")
-
-        # TE DType
-        row = self._add_combo_row(scrollable, row, "Text Encoder DType",
-                                  ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
-                                  self.env.get("CODEX_TE_DTYPE", "auto"),
-                                  "_var_te_dtype")
-
-        # VAE Device
-        row = self._add_combo_row(scrollable, row, "VAE Device",
-                                  ["Auto", "GPU", "CPU"],
-                                  self._device_to_label(self.env.get("CODEX_VAE_DEVICE", "")),
-                                  "_var_vae_dev")
-
-        # VAE DType
-        row = self._add_combo_row(scrollable, row, "VAE DType",
-                                  ["auto", "fp16", "bf16", "fp32"],
-                                  self.env.get("CODEX_VAE_DTYPE", "auto"),
-                                  "_var_vae_dtype")
-
-        # Swap Policy
-        row = self._add_combo_row(scrollable, row, "Swap Policy",
-                                  ["never", "cpu", "shared"],
-                                  self.env.get("CODEX_SWAP_POLICY", "cpu"),
-                                  "_var_swap_pol")
-
-        # Swap Method
-        row = self._add_combo_row(scrollable, row, "Swap Method",
-                                  ["blocked", "async"],
-                                  self.env.get("CODEX_SWAP_METHOD", "blocked"),
-                                  "_var_swap_mth")
-
-        # Smart Offload
-        self._var_smart_offload = tk.BooleanVar(
-            value=self.env.get("CODEX_SMART_OFFLOAD", "0").lower() in {"1", "true", "yes", "on"})
-        ttk.Checkbutton(scrollable, text="Smart Offload (stage-wise VRAM management)",
-                        variable=self._var_smart_offload, command=self._mark_changed).grid(
-                            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=4)
-        row += 1
-
-        # Pin Shared Memory
-        self._var_pin_shared = tk.BooleanVar(
-            value=self.env.get("CODEX_PIN_SHARED_MEMORY", "0").lower() in {"1", "true", "yes", "on"})
-        ttk.Checkbutton(scrollable, text="Pin Shared Memory (faster GPU reloads)",
-                        variable=self._var_pin_shared, command=self._mark_changed).grid(
-                            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=4)
-        row += 1
-
-        # Attn Chunk Size
-        row = self._add_entry_row(scrollable, row, "Attention Chunk Size (0=disabled)",
-                                  self.env.get("CODEX_ATTN_CHUNK_SIZE", "0"),
-                                  "_var_attn_chunk")
-
-        # GGUF Cache Policy
-        row = self._add_combo_row(scrollable, row, "GGUF Cache Policy",
-                                  ["none", "cpu_lru"],
-                                  self.env.get("CODEX_GGUF_CACHE_POLICY", "none"),
-                                  "_var_gguf_pol")
-
-        # GGUF Cache Limit
-        row = self._add_entry_row(scrollable, row, "GGUF Cache Limit (MB)",
-                                  self.env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0"),
-                                  "_var_gguf_lim")
+        ttk.Label(
+            scrollable,
+            text=(
+                "Runtime settings (device/dtype/attention/cache/offload) are configured via the Web UI.\n"
+                "This launcher no longer applies CODEX_* runtime settings via environment variables."
+            ),
+            justify="left",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 0))
 
         return frame
 
@@ -365,45 +281,11 @@ class CodexGUILauncher(tk.Tk):
     def _build_tab_wan(self) -> ttk.Frame:
         """Build WAN22 configuration tab."""
         frame = ttk.Frame(self)
-        row = 0
-
-        # I2V Order
-        row = self._add_combo_row(frame, row, "I2V Concat Order",
-                                  ["lat_first", "lat_last"],
-                                  self.env.get("WAN_I2V_ORDER", "lat_first"),
-                                  "_var_i2v_order")
-
-        # GGUF Offload Level
-        row = self._add_combo_row(frame, row, "GGUF Offload Level",
-                                  ["0", "1", "2", "3"],
-                                  self.env.get("WAN_GGUF_OFFLOAD_LEVEL", "3"),
-                                  "_var_offload_lvl")
-
-        # TE FP8
-        te_impl = self.env.get("WAN_TE_IMPL", "hf")
-        self._var_te_fp8 = tk.BooleanVar(value=te_impl == "cuda_fp8")
-        ttk.Checkbutton(frame, text="Use CUDA FP8 for Text Encoder",
-                        variable=self._var_te_fp8, command=self._mark_changed).grid(
-                            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=4)
-        row += 1
-
-        # Debug toggles
-        debug_flags = [
-            ("WAN_SDPA_DEBUG", "SDPA Debug Logging"),
-            ("WAN_I2V_DEBUG_HI_DECODE", "I2V Debug High Decode"),
-            ("WAN_I2V_LAT_STATS", "Latent Stats"),
-            ("WAN_I2V_CONV32", "Conv32 (float32 patch embed)"),
-            ("WAN_I2V_DEBUG_SANITIZE_TOKENS", "Sanitize Tokens (preview)"),
-        ]
-        self._wan_flags: Dict[str, tk.BooleanVar] = {}
-        for key, label in debug_flags:
-            val = self.env.get(key, "0").lower() in {"1", "true", "yes", "on"}
-            var = tk.BooleanVar(value=val)
-            self._wan_flags[key] = var
-            ttk.Checkbutton(frame, text=label, variable=var,
-                            command=self._mark_changed).grid(
-                                row=row, column=0, columnspan=2, sticky="w", padx=16, pady=4)
-            row += 1
+        ttk.Label(
+            frame,
+            text="WAN runtime settings are now payload/options-driven.\n"
+                 "Use the Web UI (WAN tab) to configure per-run WAN options.",
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=16)
 
         return frame
 
@@ -419,7 +301,6 @@ class CodexGUILauncher(tk.Tk):
             ("CODEX_LOG_SAMPLER", "Sampler Verbose Logs"),
             ("CODEX_LOG_CFG_DELTA", "CFG Delta Logs (requires Sampler Verbose Logs)"),
             ("CODEX_LOG_SIGMAS", "Sigma Ladder Logs"),
-            ("CODEX_SAMPLER_FORCE_NATIVE", "Force Native Sampler"),
             ("CODEX_TRACE_DEBUG", "Trace Debug (very verbose)"),
             ("CODEX_PIPELINE_DEBUG", "Pipeline Debug"),
             ("CODEX_DUMP_LATENTS", "Dump Latents"),
@@ -533,29 +414,6 @@ class CodexGUILauncher(tk.Tk):
                         variable=self._var_log_file, command=self._mark_changed).grid(
                             row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 4))
         row += 1
-
-        # Section: WAN Log Levels
-        ttk.Label(frame, text="WAN Log Levels", style="TLabelframe.Label").grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(12, 4))
-        row += 1
-
-        # WAN log flags
-        wan_log_flags = [
-            ("WAN_LOG_DEBUG", "DEBUG (verbose)", "0"),
-            ("WAN_LOG_INFO", "INFO", "1"),
-            ("WAN_LOG_WARN", "WARNING", "1"),
-            ("WAN_LOG_ERROR", "ERROR", "1"),
-        ]
-
-        self._log_flags: Dict[str, tk.BooleanVar] = {}
-        for key, label, default in wan_log_flags:
-            val = self.env.get(key, default).lower() in {"1", "true", "yes", "on"}
-            var = tk.BooleanVar(value=val)
-            self._log_flags[key] = var
-            ttk.Checkbutton(frame, text=label, variable=var,
-                            command=self._mark_changed).grid(
-                                row=row, column=0, columnspan=2, sticky="w", padx=32, pady=2)
-            row += 1
 
         return frame
 
@@ -696,31 +554,6 @@ class CodexGUILauncher(tk.Tk):
 
         # Meta
         self.meta.external_terminal = self._var_ext_term.get()
-        self.meta.sdpa_policy = self._var_sdpa.get()
-        env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
-
-        # Runtime
-        env["CODEX_ATTENTION_BACKEND"] = self._var_attn_backend.get()
-        env["CODEX_DIFFUSION_DEVICE"] = self._label_to_device(self._var_diff_dev.get())
-        env["CODEX_DIFFUSION_DTYPE"] = self._var_diff_dtype.get()
-        env["CODEX_TE_DEVICE"] = self._label_to_device(self._var_te_dev.get())
-        env["CODEX_TE_DTYPE"] = self._var_te_dtype.get()
-        env["CODEX_VAE_DEVICE"] = self._label_to_device(self._var_vae_dev.get())
-        env["CODEX_VAE_DTYPE"] = self._var_vae_dtype.get()
-        env["CODEX_SWAP_POLICY"] = self._var_swap_pol.get()
-        env["CODEX_SWAP_METHOD"] = self._var_swap_mth.get()
-        env["CODEX_SMART_OFFLOAD"] = "1" if self._var_smart_offload.get() else "0"
-        env["CODEX_PIN_SHARED_MEMORY"] = "1" if self._var_pin_shared.get() else "0"
-        env["CODEX_ATTN_CHUNK_SIZE"] = self._var_attn_chunk.get()
-        env["CODEX_GGUF_CACHE_POLICY"] = self._var_gguf_pol.get()
-        env["CODEX_GGUF_CACHE_LIMIT_MB"] = self._var_gguf_lim.get()
-
-        # WAN
-        env["WAN_I2V_ORDER"] = self._var_i2v_order.get()
-        env["WAN_GGUF_OFFLOAD_LEVEL"] = self._var_offload_lvl.get()
-        env["WAN_TE_IMPL"] = "cuda_fp8" if self._var_te_fp8.get() else "hf"
-        for key, var in self._wan_flags.items():
-            env[key] = "1" if var.get() else "0"
 
         # Debug
         for key, var in self._debug_flags.items():
@@ -747,9 +580,6 @@ class CodexGUILauncher(tk.Tk):
                 env["CODEX_LOG_FILE"] = str(logs_dir / f"codex-{stamp}.log")
         else:
             env.pop("CODEX_LOG_FILE", None)
-
-        for key, var in self._log_flags.items():
-            env[key] = "1" if var.get() else "0"
 
     def _save_and_notify(self) -> None:
         """Save settings and notify user."""

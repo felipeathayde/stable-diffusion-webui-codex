@@ -49,16 +49,9 @@ from .vae_io import decode_latents_to_frames, vae_encode_init
 
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
     if policy is None:
-        policy = os.getenv("CODEX_GGUF_CACHE_POLICY", "none")
-
+        return
     lim = int(limit_mb or 0)
-    if lim <= 0:
-        try:
-            lim = int(os.getenv("CODEX_GGUF_CACHE_LIMIT_MB", "0") or 0)
-        except Exception:
-            lim = 0
-
-    pol = (policy or "none").strip().lower()
+    pol = str(policy).strip().lower()
     if pol in {"none", "", "off"} or lim <= 0:
         return
 
@@ -140,7 +133,9 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     model_key = f"wan_t2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or ("cuda" if lvl <= 1 else "cpu")
-    te_impl_val = (getattr(cfg, "te_impl", None) or os.getenv("WAN_TE_IMPL", "hf")).strip().lower()
+    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
+    if bool(getattr(cfg, "te_kernel_required", False)):
+        te_impl_val = "cuda_fp8"
     te_required = te_impl_val == "cuda_fp8"
     if te_required:
         te_dev_eff = "cuda"
@@ -225,18 +220,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="high",
     )
-
-    if str(os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0")).strip().lower() in ("1", "true", "yes", "on"):
-        try:
-            _ = decode_latents_to_frames(
-                latents=latents_hi,
-                model_dir=os.path.dirname(hi_path),
-                cfg=cfg,
-                logger=log,
-                debug_preview=True,
-            )
-        except Exception:
-            log.warning("[wan22.gguf] debug high decode failed", exc_info=True)
 
     if lvl >= 2:
         try:
@@ -370,18 +353,6 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         emit_logs=False,
     )
 
-    if str(os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0")).strip().lower() in ("1", "true", "yes", "on"):
-        try:
-            _ = decode_latents_to_frames(
-                latents=latents_hi,
-                model_dir=os.path.dirname(hi_path),
-                cfg=cfg,
-                logger=log,
-                debug_preview=True,
-            )
-        except Exception:
-            log.warning("[wan22.gguf] debug high decode failed", exc_info=True)
-
     if lvl >= 2:
         try:
             del hi_model
@@ -462,7 +433,9 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     model_key = f"wan_i2v_{variant}"
 
     te_dev_eff = getattr(cfg, "te_device", None) or ("cuda" if lvl <= 1 else "cpu")
-    te_impl_val = (getattr(cfg, "te_impl", None) or os.getenv("WAN_TE_IMPL", "hf")).strip().lower()
+    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
+    if bool(getattr(cfg, "te_kernel_required", False)):
+        te_impl_val = "cuda_fp8"
     te_required = te_impl_val == "cuda_fp8"
     if te_required:
         te_dev_eff = "cuda"
@@ -533,18 +506,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="high",
     )
-
-    if str(os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0")).strip().lower() in ("1", "true", "yes", "on"):
-        try:
-            _ = decode_latents_to_frames(
-                latents=latents_hi,
-                model_dir=os.path.dirname(hi_path),
-                cfg=cfg,
-                logger=log,
-                debug_preview=True,
-            )
-        except Exception:
-            log.warning("[wan22.gguf] debug high decode failed", exc_info=True)
 
     if lvl >= 2:
         try:

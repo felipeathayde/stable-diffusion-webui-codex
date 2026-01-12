@@ -11,29 +11,26 @@ Defines TypeScript interfaces/types for backend responses (models/options/sample
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`.
-- `SamplerInfo` (interface): Sampler metadata entry returned by `/api/samplers`.
-- `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
-- `ModelsResponse` (interface): `/api/models` response shape.
-- `SamplersResponse` (interface): `/api/samplers` response shape.
-- `SchedulersResponse` (interface): `/api/schedulers` response shape.
-- `VaesResponse` (interface): `/api/vaes` response shape.
-- `TextEncodersResponse` (interface): `/api/text-encoders` response shape.
-- `OptionsResponse` (interface): `/api/options` response shape.
-- `OptionsUpdateResponse` (interface): `/api/options` update response shape.
-- `Txt2ImgStartResponse` (interface): Start-task response shape (`task_id`).
-- `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
-- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
-- `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
-- `MemoryResponse` (interface): `/api/memory` response shape.
-- `VersionResponse` (interface): `/api/version` response shape.
-- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
-- `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
-- `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
-- `LoraListResponse` (interface): `/api/loras` response shape.
-- `PathsResponse` (interface): `/api/paths` response shape.
-- `PathsUpdateResponse` (interface): `/api/paths` update response shape.
-- `SettingsCategory` (interface): Settings category entry in settings schema responses.
-- `SettingsSection` (interface): Settings section entry in settings schema responses.
+ - `SamplerInfo` (interface): Sampler metadata entry returned by `/api/samplers`.
+ - `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
+ - `ModelsResponse` (interface): `/api/models` response shape.
+ - `SamplersResponse` (interface): `/api/samplers` response shape.
+ - `SchedulersResponse` (interface): `/api/schedulers` response shape.
+ - `OptionsResponse` (interface): `/api/options` response shape.
+ - `OptionsUpdateResponse` (interface): `/api/options` update response shape.
+ - `Txt2ImgStartResponse` (interface): Start-task response shape (`task_id`).
+ - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
+ - `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
+ - `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
+ - `MemoryResponse` (interface): `/api/memory` response shape.
+ - `VersionResponse` (interface): `/api/version` response shape.
+ - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+ - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
+ - `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
+ - `PathsResponse` (interface): `/api/paths` response shape.
+ - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
+ - `SettingsCategory` (interface): Settings category entry in settings schema responses.
+ - `SettingsSection` (interface): Settings section entry in settings schema responses.
 - `SettingsFieldType` (type): Allowed field types in settings schema definitions.
 - `SettingsField` (interface): Settings field entry in settings schema responses.
 - `SettingsSchemaResponse` (interface): `/api/settings/schema` response shape.
@@ -88,16 +85,6 @@ export interface SamplersResponse {
 
 export interface SchedulersResponse {
   schedulers: SchedulerInfo[]
-}
-
-export interface VaesResponse {
-  vaes: string[]
-  current: string | null
-}
-
-export interface TextEncodersResponse {
-  text_encoders: string[]
-  current: string[]
 }
 
 export interface OptionsResponse {
@@ -182,10 +169,6 @@ export interface EmbeddingsResponse {
   skipped: Record<string, { step?: number | null; vectors?: number; shape?: number[] | null; sd_checkpoint?: string | null; sd_checkpoint_name?: string | null }>
 }
 
-export interface LoraListResponse {
-  loras: { name: string; path: string }[]
-}
-
 export interface PathsResponse { paths: Record<string, string[]> }
 export interface PathsUpdateResponse { ok: boolean }
 
@@ -249,7 +232,7 @@ export interface WorkflowsResponse { version: number; workflows: Array<{ id: str
 export interface InventoryResponse {
   vaes: Array<{ name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>
   text_encoders: Array<{ name: string; path: string; sha256?: string }>
-  loras: Array<{ name: string; path: string }>
-  wan22: { gguf: Array<{ name: string; path: string; stage: 'high' | 'low' | 'unknown' }> }
+  loras: Array<{ name: string; path: string; sha256?: string }>
+  wan22: { gguf: Array<{ name: string; path: string; sha256?: string; stage: 'high' | 'low' | 'unknown' }> }
   metadata: Array<{ name: string; path: string }>
 }

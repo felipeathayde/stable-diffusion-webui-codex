@@ -22,8 +22,8 @@
       "when": { "engines": ["wan22"], "tabs": ["txt2vid", "img2vid"] },
       "layout": { "columns": 2 },
       "fields": [
-        { "key": "wan.high.model_dir", "label": "High Model (dir)", "type": "text", "help": "Absolute or repo-relative path", "bind": { "txt2vid": "hiModelDir", "img2vid": "hiModelDir" } },
-        { "key": "wan.low.model_dir", "label": "Low Model (dir)", "type": "text", "help": "Absolute or repo-relative path", "bind": { "txt2vid": "loModelDir", "img2vid": "loModelDir" } },
+        { "key": "wan.high.model_dir", "label": "High Model (.gguf)", "type": "text", "help": "Absolute or repo-relative path to a .gguf file", "bind": { "txt2vid": "hiModelDir", "img2vid": "hiModelDir" } },
+        { "key": "wan.low.model_dir", "label": "Low Model (.gguf)", "type": "text", "help": "Absolute or repo-relative path to a .gguf file", "bind": { "txt2vid": "loModelDir", "img2vid": "loModelDir" } },
         { "key": "wan.high.lora_path", "label": "High LoRA (file)", "type": "text", "bind": { "txt2vid": "hiLoraPath", "img2vid": "hiLoraPath" } },
         { "key": "wan.high.lora_weight", "label": "High LoRA Weight", "type": "number", "min": 0, "max": 2, "step": 0.05, "default": 1.0, "bind": { "txt2vid": "hiLoraWeight", "img2vid": "hiLoraWeight" } },
         { "key": "wan.low.lora_path", "label": "Low LoRA (file)", "type": "text", "bind": { "txt2vid": "loLoraPath", "img2vid": "loLoraPath" } },

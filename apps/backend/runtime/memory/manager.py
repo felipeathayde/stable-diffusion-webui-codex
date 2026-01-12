@@ -435,7 +435,7 @@ class CodexMemoryManager:
             # No CUDA/XPU/MPS/DirectML: fall back to CPU instead of aborting.
             logger.warning(
                 "Device AUTO fallback to CPU (no GPU/accelerator detected). "
-                "Set CODEX_DIFFUSION_DEVICE=cpu to silence this warning."
+                "Configure diffusion device to CPU in the Web UI to silence this warning."
             )
             self._config.device_backend = DeviceBackend.CPU
             return torch.device("cpu")

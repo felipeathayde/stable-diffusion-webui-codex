@@ -26,6 +26,7 @@ from apps.backend.core.registry import create_engine
 from apps.backend.engines import register_default_engines
 from apps.backend.engines.util.accelerator import apply_to_diffusers_pipeline as _apply_accel
 from apps.backend.engines.util.attention_backend import apply_to_diffusers_pipeline as _apply_attn
+from apps.backend.services import options_store
 from apps.backend.runtime.models.loader import (
     DiffusionModelBundle,
     FAMILY_TO_ENGINE_KEY,
@@ -74,20 +75,23 @@ def _options_to_kwargs(opts: EngineLoadOptions | None) -> Dict[str, Any]:
 
 
 def _apply_runtime_options(engine: Any, opts: EngineLoadOptions | None) -> Any:
-    if not opts:
-        return engine
-
     pipe = getattr(getattr(engine, "_comp", None), "pipeline", None)
     if pipe is None:
         return engine
 
-    if opts.attention_backend is not None:
-        try:
-            _apply_attn(pipe, backend=opts.attention_backend)
-        except Exception as exc:  # noqa: BLE001
-            _LOG.warning("Failed to apply attention backend %s: %s", opts.attention_backend, exc)
+    attention_backend = None
+    if opts and opts.attention_backend is not None:
+        attention_backend = opts.attention_backend
+    else:
+        attention_backend = str(options_store.get_value("codex_attention_backend", "torch-sdpa") or "torch-sdpa")
 
-    if opts.accelerator is not None:
+    if attention_backend is not None:
+        try:
+            _apply_attn(pipe, backend=attention_backend)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("Failed to apply attention backend %s: %s", attention_backend, exc)
+
+    if opts and opts.accelerator is not None:
         try:
             _apply_accel(pipe, accelerator=opts.accelerator)
         except Exception as exc:  # noqa: BLE001
@@ -116,4 +120,3 @@ def load_engine(name_or_path: str, options: EngineLoadOptions | None = None):
 
 
 __all__ = ["EngineLoadOptions", "load_engine"]
-

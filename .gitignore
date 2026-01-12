@@ -47,6 +47,7 @@ apps/interface/.pnpm-debug.log
 apps/interface/tabs.json
 apps/interface/workflows.json
 apps/settings_values.json
+/.sangoi/launcher/
 
 # No binary office docs
 *.docx

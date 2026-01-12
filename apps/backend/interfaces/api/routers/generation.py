@@ -35,13 +35,14 @@ from apps.backend.interfaces.api.task_registry import TaskEntry, register_task, 
 def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapshot, generation_provenance, save_generated_images, param_utils) -> APIRouter:
     router = APIRouter()
     CODEX_ROOT = codex_root
-    _GENERATION_PROVENANCE = generation_provenance
+    _GENERATION_PROVENANCE = generation_provenance(codex_root)
     _save_generated_images = save_generated_images
     _opts_get = opts_get
     _opts_snapshot = opts_snapshot
     _p = param_utils
 
     from apps.backend.core.engine_interface import TaskType
+    from apps.backend.engines import register_default_engines
     from apps.backend.core.orchestrator import InferenceOrchestrator
     from apps.backend.core.requests import (
         ProgressEvent,
@@ -53,6 +54,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Vid2VidRequest,
     )
     from apps.backend.runtime.memory import memory_management as mem_management
+    # Ensure canonical engine registry is populated before validating engine keys.
+    register_default_engines(replace=False)
 
     from apps.backend.types.payloads import TXT2IMG_KEYS, EXTRAS_KEYS
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
@@ -108,6 +111,42 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if maximum is not None and result > maximum:
             raise HTTPException(status_code=400, detail=f"'{key}' must be <= {maximum}")
         return result
+
+
+    def _resolve_wan_metadata_dir(payload: Dict[str, Any]) -> str:
+        """Resolve the WAN metadata directory for GGUF runs.
+
+        Preferred contract: pass `wan_metadata_repo="Org/Repo"` and resolve it under
+        `apps/backend/huggingface/` (vendored HF mirror).
+
+        Back-compat: accept `wan_metadata_dir` (or `wan_tokenizer_dir`) as an explicit path.
+        """
+        raw_repo = payload.get("wan_metadata_repo")
+        if isinstance(raw_repo, str) and raw_repo.strip():
+            repo_id = raw_repo.strip()
+            if repo_id.count("/") != 1:
+                raise HTTPException(status_code=400, detail="'wan_metadata_repo' must be a repo id like 'Org/Repo'")
+            org, repo = repo_id.split("/", 1)
+            if not org or not repo or org in {".", ".."} or repo in {".", ".."}:
+                raise HTTPException(status_code=400, detail="'wan_metadata_repo' must be a repo id like 'Org/Repo'")
+            if Path(repo_id).is_absolute():
+                raise HTTPException(status_code=400, detail="'wan_metadata_repo' must be a repo id (not a filesystem path)")
+
+            hf_root = (CODEX_ROOT / "apps" / "backend" / "huggingface").resolve()
+            local_dir = (hf_root / org / repo).resolve()
+            try:
+                local_dir.relative_to(hf_root)
+            except Exception:
+                raise HTTPException(status_code=400, detail="'wan_metadata_repo' resolves outside the vendored HF root")
+            if not local_dir.is_dir():
+                raise HTTPException(status_code=409, detail=f"WAN metadata repo not found locally: {repo_id}")
+            return str(local_dir)
+
+        meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
+        if isinstance(meta_dir, str) and meta_dir.strip():
+            return _path_from_api(meta_dir)
+
+        raise HTTPException(status_code=400, detail="'wan_metadata_repo' (or 'wan_metadata_dir') is required for WAN GGUF")
 
 
     def _parse_styles(payload: Dict[str, Any]) -> List[str]:
@@ -277,7 +316,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 )
             family = family_raw.strip()
             label = label_raw.strip()
-            # Cheap sanity: labels from /api/text-encoders use the pattern '<family>/<abs_path>'.
+            # Cheap sanity: UI labels use the pattern '<family>/<path>' (paths.json via /api/paths).
             if "/" in label and not label.startswith(f"{family}/"):
                 raise HTTPException(
                     status_code=400,
@@ -1284,11 +1323,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
         extras["wan_text_encoder_path"] = wan_tenc_path
 
-        # Metadata/tokenizer dirs are still paths (directories) but must be explicit.
-        meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
-        if not isinstance(meta_dir, str) or not meta_dir.strip():
-            raise HTTPException(status_code=400, detail="'wan_metadata_dir' (or 'wan_tokenizer_dir') is required for WAN GGUF")
-        extras["wan_metadata_dir"] = _path_from_api(meta_dir)
+        extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
 
         # Pass-through of runtime controls (non-model-part config)
         for key in (
@@ -1443,11 +1478,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
         extras["wan_text_encoder_path"] = wan_tenc_path
 
-        # Metadata/tokenizer dirs are still paths (directories) but must be explicit.
-        meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
-        if not isinstance(meta_dir, str) or not meta_dir.strip():
-            raise HTTPException(status_code=400, detail="'wan_metadata_dir' (or 'wan_tokenizer_dir') is required for WAN GGUF")
-        extras["wan_metadata_dir"] = _path_from_api(meta_dir)
+        extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
 
         # Pass-through of runtime controls (non-model-part config)
         for key in (
@@ -1684,10 +1715,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
             extras["wan_text_encoder_path"] = wan_tenc_path
 
-            meta_dir = payload.get("wan_metadata_dir") or payload.get("wan_tokenizer_dir")
-            if not isinstance(meta_dir, str) or not meta_dir.strip():
-                raise HTTPException(status_code=400, detail="'wan_metadata_dir' (or 'wan_tokenizer_dir') is required for WAN GGUF")
-            extras["wan_metadata_dir"] = _path_from_api(meta_dir)
+            extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
 
             for key in (
                 "gguf_offload",

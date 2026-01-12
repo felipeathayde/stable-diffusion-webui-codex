@@ -17,7 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import os
 from contextlib import nullcontext
 from typing import Optional
 
@@ -35,8 +34,7 @@ _SDPA_SETTINGS = {
 
 
 def set_sdpa_settings(policy: Optional[str], chunk: Optional[int]) -> None:
-    env_pol = os.getenv("WAN_SDPA_POLICY", "").strip().lower() if os.getenv("WAN_SDPA_POLICY") else None
-    pol = (policy or env_pol or _SDPA_SETTINGS["policy"]).strip().lower()
+    pol = (policy or _SDPA_SETTINGS["policy"]).strip().lower()
     if pol not in ("mem_efficient", "flash", "math"):
         pol = _SDPA_SETTINGS["policy"]
     ch = int(chunk) if (chunk is not None and int(chunk) > 0) else 0
@@ -90,22 +88,9 @@ def sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, causal: bool = Fa
             ctx = nullcontext()
 
     global _LOG_ONCE, _SDPA_LOG_COUNT
-    try:
-        verbose = str(os.getenv("WAN_SDPA_DEBUG", "0")).strip().lower() in ("1", "true", "yes")
-    except Exception:
-        verbose = False
-    try:
-        every = max(1, int(os.getenv("WAN_SDPA_DEBUG_EVERY", "5")))
-    except Exception:
-        every = 5
     _SDPA_LOG_COUNT += 1
-    should_log = False
-    if verbose:
-        should_log = (_SDPA_LOG_COUNT % every) == 0
-    else:
-        if not _LOG_ONCE.get("sdpa", False):
-            should_log = True
-            _LOG_ONCE["sdpa"] = True
+    should_log = not _LOG_ONCE.get("sdpa", False)
+    _LOG_ONCE["sdpa"] = True
     if should_log:
         try:
             import logging

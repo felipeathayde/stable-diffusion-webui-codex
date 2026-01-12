@@ -167,10 +167,8 @@ class ClassicTextProcessingEngine:
 
         target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
 
-        force_fp32 = str(os.getenv("CODEX_TE_FORCE_FP32", "")).lower() in ("1", "true", "yes", "on")
-
         while True:
-            desired_dtype = torch.float32 if force_fp32 else memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+            desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
             self._apply_precision(target_device, desired_dtype)
 
             # Ensure embedding weights use a stable compute dtype to avoid overflow

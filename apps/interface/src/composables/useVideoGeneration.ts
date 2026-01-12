@@ -201,6 +201,22 @@ export function useVideoGeneration(tabId: string) {
     return 'txt2vid'
   })
 
+  function normalizeWanMetadataRepo(raw: string): string | null {
+    const v = String(raw || '').trim()
+    if (!v) return null
+    // Back-compat: ignore legacy path values persisted in older tabs.
+    if (v.startsWith('/') || v.includes('\\') || v.includes(':')) return null
+    if (!v.includes('/')) return null
+    return v
+  }
+
+  function inferWanMetadataRepo(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): string {
+    const hint = `${hi.modelDir || ''} ${lo.modelDir || ''}`.toLowerCase()
+    if (hint.includes('ti2v') || hint.includes('5b')) return 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
+    if (v.useInitImage || v.useInitVideo) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+    return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+  }
+
   function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, initVideo: File | null): string {
     const prompt = String(v.prompt || '').trim()
     if (!prompt) return 'Prompt must not be empty.'
@@ -211,8 +227,30 @@ export function useVideoGeneration(tabId: string) {
       const path = String(v.initVideoPath || '').trim()
       if (!initVideo && !path) return 'Video mode requires an input video; upload a file or provide a path.'
     }
-    if (!hi.modelDir && !lo.modelDir) {
-      return 'WAN model directory is empty. Set WAN High/Low model dirs in QuickSettings.'
+    if (!hi.modelDir || !lo.modelDir) {
+      return 'WAN requires both High and Low stage models. Set them in QuickSettings.'
+    }
+    if (!quicksettings.resolveWanGgufSha(hi.modelDir)) {
+      return 'WAN High model must resolve to a sha256. Click Refresh and re-select the High model.'
+    }
+    if (!quicksettings.resolveWanGgufSha(lo.modelDir)) {
+      return 'WAN Low model must resolve to a sha256. Click Refresh and re-select the Low model.'
+    }
+
+    const teLabel = String(assets.value.textEncoder || '').trim()
+    if (!teLabel) {
+      return 'WAN requires a text encoder (.safetensors). Set WAN Text Encoder in QuickSettings.'
+    }
+    if (!quicksettings.resolveTextEncoderSha(teLabel)) {
+      return 'WAN Text Encoder must resolve to a sha256. Click Refresh and re-select the text encoder.'
+    }
+
+    const vaeLabel = String(assets.value.vae || '').trim()
+    if (!vaeLabel) {
+      return 'WAN requires a VAE selection. Set WAN VAE in QuickSettings.'
+    }
+    if (!quicksettings.resolveVaeSha(vaeLabel)) {
+      return 'WAN VAE must resolve to a sha256. Click Refresh and re-select the VAE.'
     }
     return ''
   }
@@ -334,9 +372,14 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams) {
-    const metaDir = String(assets.value.metadata || '').trim()
-    const tePath = String(assets.value.textEncoder || '').trim()
-    const vaePath = String(assets.value.vae || '').trim()
+    const metaRepo = normalizeWanMetadataRepo(assets.value.metadata) || inferWanMetadataRepo(v, hi, lo)
+    const teLabel = String(assets.value.textEncoder || '').trim()
+    const vaeLabel = String(assets.value.vae || '').trim()
+
+    const hiSha = quicksettings.resolveWanGgufSha(hi.modelDir) || ''
+    const loSha = quicksettings.resolveWanGgufSha(lo.modelDir) || ''
+    const tencSha = quicksettings.resolveTextEncoderSha(teLabel) || ''
+    const vaeSha = quicksettings.resolveVaeSha(vaeLabel) || ''
 
     return {
       device: quicksettings.currentDevice || 'cpu',
@@ -347,7 +390,7 @@ export function useVideoGeneration(tabId: string) {
       fps: v.fps,
       frames: v.frames,
       high: {
-        modelDir: hi.modelDir,
+        modelSha: hiSha,
         sampler: hi.sampler,
         scheduler: hi.scheduler,
         steps: hi.steps,
@@ -357,7 +400,7 @@ export function useVideoGeneration(tabId: string) {
         loraWeight: hi.loraWeight,
       },
       low: {
-        modelDir: lo.modelDir,
+        modelSha: loSha,
         sampler: lo.sampler,
         scheduler: lo.scheduler,
         steps: lo.steps,
@@ -368,9 +411,9 @@ export function useVideoGeneration(tabId: string) {
       },
       format: 'auto' as const,
       assets: {
-        metadataDir: metaDir,
-        textEncoder: tePath,
-        vaePath: vaePath,
+        metadataRepo: metaRepo,
+        textEncoderSha: tencSha,
+        vaeSha: vaeSha,
       },
       output: {
         filenamePrefix: v.filenamePrefix,

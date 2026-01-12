@@ -43,6 +43,16 @@ const PromptSchema = z
 
 const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
 
+const Sha256Schema = z
+  .string()
+  .transform((value) => value.trim().toLowerCase())
+  .refine((value) => /^[0-9a-f]{64}$/.test(value), { message: 'Expected sha256 (64 lowercase hex chars)' })
+
+const RepoIdSchema = z
+  .string()
+  .transform((value) => value.trim())
+  .refine((value) => value.includes('/') && !value.startsWith('/') && !value.endsWith('/'), { message: "Expected repo id like 'Org/Repo'" })
+
 const VideoInterpolationSchema = z
   .object({
     enabled: z.boolean(),
@@ -53,7 +63,7 @@ const VideoInterpolationSchema = z
 
 const WanStageSchema = z
   .object({
-    model_dir: z.string().min(1).optional(),
+    model_sha: Sha256Schema,
     sampler: z.string().min(1).optional(),
     scheduler: z.string().min(1).optional(),
     steps: z.number().int().min(1),
@@ -85,10 +95,9 @@ const CommonWanVideoPayloadSchema = z
     wan_high: WanStageSchema.optional(),
     wan_low: WanStageSchema.optional(),
     wan_format: WanFormatEnum.optional(),
-    wan_metadata_dir: z.string().min(1).optional(),
-    wan_vae_path: z.string().min(1).optional(),
-    wan_text_encoder_path: z.string().min(1).optional(),
-    wan_text_encoder_dir: z.string().min(1).optional(),
+    wan_metadata_repo: RepoIdSchema,
+    wan_vae_sha: Sha256Schema,
+    wan_tenc_sha: Sha256Schema,
     wan_tokenizer_dir: z.string().min(1).optional(),
   })
   .strict()
@@ -159,7 +168,7 @@ export const WanVid2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
 export type WanVid2VidPayload = z.infer<typeof WanVid2VidPayloadSchema>
 
 export interface WanStageInput {
-  modelDir: string
+  modelSha: string
   sampler: string
   scheduler: string
   steps: number
@@ -189,9 +198,9 @@ export interface WanInterpolationInput {
 }
 
 export interface WanAssetsInput {
-  metadataDir: string
-  textEncoder: string
-  vaePath: string
+  metadataRepo: string
+  textEncoderSha: string
+  vaeSha: string
   tokenizerDir?: string
 }
 
@@ -238,13 +247,19 @@ function normalizeDevice(device: string): WanTxt2VidPayload['codex_device'] {
 }
 
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
+  const modelSha = String(stage.modelSha || '').trim().toLowerCase()
+  if (!modelSha) {
+    throw new Error('WAN stage requires model_sha (sha256)')
+  }
+  if (!/^[0-9a-f]{64}$/.test(modelSha)) {
+    throw new Error(`WAN stage model_sha must be sha256 (64 lowercase hex), got '${stage.modelSha}'`)
+  }
   const payload: Record<string, unknown> = {
+    model_sha: modelSha,
     steps: stage.steps,
     cfg_scale: stage.cfgScale,
     seed: stage.seed,
   }
-  const modelDir = String(stage.modelDir || '').trim()
-  if (modelDir) payload.model_dir = modelDir
   const sampler = String(stage.sampler || '').trim()
   if (sampler) {
     if (sampler !== sampler.toLowerCase()) {
@@ -276,27 +291,17 @@ function isUnsetSentinel(raw: string): boolean {
 }
 
 function addWanAssets(payload: Record<string, unknown>, assets: WanAssetsInput): void {
-  const metaDir = String(assets.metadataDir || '').trim()
-  if (metaDir && !isUnsetSentinel(metaDir)) payload.wan_metadata_dir = metaDir
+  const repo = String(assets.metadataRepo || '').trim()
+  if (repo && !isUnsetSentinel(repo)) payload.wan_metadata_repo = repo
 
   const tokenizerDir = String(assets.tokenizerDir || '').trim()
   if (tokenizerDir && !isUnsetSentinel(tokenizerDir)) payload.wan_tokenizer_dir = tokenizerDir
 
-  const vaeRaw = String(assets.vaePath || '').trim()
-  if (vaeRaw && !isUnsetSentinel(vaeRaw)) {
-    let vae = vaeRaw.replace(/\\+/g, '/')
-    if (vae.startsWith('wan22/')) vae = vae.slice('wan22/'.length)
-    if (vae.startsWith('vae/')) vae = vae.slice('vae/'.length)
-    payload.wan_vae_path = vae
-  }
+  const vaeSha = String(assets.vaeSha || '').trim().toLowerCase()
+  if (vaeSha) payload.wan_vae_sha = vaeSha
 
-  const teRaw = String(assets.textEncoder || '').trim()
-  if (!teRaw || isUnsetSentinel(teRaw)) return
-  let normalized = teRaw.replace(/\\+/g, '/')
-  // Accept QuickSettings-style labels like "wan22/<abs/path/to/file.safetensors>".
-  if (normalized.startsWith('wan22/')) normalized = normalized.slice('wan22/'.length)
-  if (normalized.toLowerCase().endsWith('.safetensors')) payload.wan_text_encoder_path = normalized
-  else payload.wan_text_encoder_dir = normalized
+  const tencSha = String(assets.textEncoderSha || '').trim().toLowerCase()
+  if (tencSha) payload.wan_tenc_sha = tencSha
 }
 
 function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput): void {

@@ -11,7 +11,6 @@ Scans configured model roots (via `apps/paths.json` accessors) for checkpoint an
 persistent cache in `models/.hashes.json` to support fast UI inventory and backend SHA-based resolution.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_repo_root` (function): Resolves repo root from `CODEX_ROOT` (fails fast if unset).
 - `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
 - `_default_hf_root` (function): Returns the default Hugging Face vendor cache root under `CODEX_ROOT` (when used).
 - `_sha256` (function): Computes sha256 digest for a file path.
@@ -38,6 +37,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime import trace as _trace
 
 from .types import (
@@ -52,27 +52,12 @@ _ALLOWED_CHECKPOINT_EXTS = {".ckpt", ".safetensor", ".safetensors", ".pt", ".bin
 _CHECKPOINT_BLACKLIST_SUFFIXES = {".vae.ckpt", ".vae.safetensor", ".vae.safetensors", ".vae.pt"}
 _VAE_EXTS = {".safetensor", ".safetensors", ".ckpt", ".pt"}
 
-
-def _repo_root() -> Path:
-    """Get repo root from CODEX_ROOT environment variable.
-    
-    Raises EnvironmentError if CODEX_ROOT is not set.
-    """
-    env_root = os.environ.get("CODEX_ROOT")
-    if not env_root:
-        raise EnvironmentError(
-            "CODEX_ROOT environment variable is not set. "
-            "Please use run-webui.bat or run-tui.bat to launch the application."
-        )
-    return Path(env_root).resolve()
-
-
 def _default_models_root() -> Path:
-    return _repo_root() / "models"
+    return get_repo_root() / "models"
 
 
 def _default_hf_root() -> Path:
-    return _repo_root() / "apps" / "backend" / "huggingface"
+    return get_repo_root() / "apps" / "backend" / "huggingface"
 
 
 def _sha256(path: Path) -> str:
@@ -304,7 +289,7 @@ class ModelRegistry:
 
         Resolution order:
         1) Explicit roots from apps/paths.json per engine (sd15_ckpt, sdxl_ckpt, flux1_ckpt, wan22_ckpt).
-        2) Built-in defaults under models/: root, sd15, sdxl, flux.
+        2) Built-in defaults under models/: per-engine folders only (sd15, sdxl, flux, wan22, zimage).
 
         This replaces the legacy scatter of ad-hoc checkpoint folders ('stable-diffusion', 'sd', 'checkpoints').
         """
@@ -322,12 +307,13 @@ class ModelRegistry:
             candidates = []
 
         # 2) Curated built-in defaults quando não há overrides configurados.
+        # Keep these per-engine only (never scan models/ root directly).
         if not candidates:
             defaults = [
-                self._models_root,
                 self._models_root / "sd15",
                 self._models_root / "sdxl",
                 self._models_root / "flux",
+                self._models_root / "wan22",
                 self._models_root / "zimage",
             ]
             for p in defaults:

@@ -11,7 +11,7 @@ Implements the profile store used by the TUI/GUI launchers to load/save settings
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_default_area_env` (function): Builds default per-area env maps (core/wan), hydrating from current env and best-effort settings snapshot.
+- `_default_area_env` (function): Builds default per-area env maps (debug/log only).
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
 - `LauncherProfileStore` (dataclass): Main profile store; loads/saves meta/env maps, resolves key routing, and provides lookup helpers
@@ -39,73 +39,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
-from apps.backend.services import options_store
 from apps.backend.infra.config.repo_root import get_repo_root
 
 LOGGER = logging.getLogger("codex.launcher.profiles")
 
 ENV_PREFIX_AREAS: Dict[str, str] = {
     "CODEX_": "core",
-    "WAN_": "wan",
 }
 
 
 def _default_area_env() -> Dict[str, Dict[str, str]]:
     """Compute default environment values partitioned by area."""
-    core = {
-        "CODEX_ATTENTION_BACKEND": os.getenv("CODEX_ATTENTION_BACKEND", "torch-sdpa"),
-        "CODEX_ATTN_CHUNK_SIZE": os.getenv("CODEX_ATTN_CHUNK_SIZE", "0"),
-        "CODEX_GGUF_CACHE_POLICY": os.getenv("CODEX_GGUF_CACHE_POLICY", "none"),
-        "CODEX_GGUF_CACHE_LIMIT_MB": os.getenv("CODEX_GGUF_CACHE_LIMIT_MB", "0"),
-        "CODEX_DIFFUSION_DTYPE": os.getenv("CODEX_DIFFUSION_DTYPE", "fp16"),
-        "CODEX_DIFFUSION_DEVICE": os.getenv("CODEX_DIFFUSION_DEVICE", ""),
-        "CODEX_TE_DTYPE": os.getenv("CODEX_TE_DTYPE", "fp16"),
-        "CODEX_TE_DEVICE": os.getenv("CODEX_TE_DEVICE", ""),
-        "CODEX_VAE_DTYPE": os.getenv("CODEX_VAE_DTYPE", "fp16"),
-        "CODEX_VAE_DEVICE": os.getenv("CODEX_VAE_DEVICE", ""),
-        "CODEX_SWAP_POLICY": os.getenv("CODEX_SWAP_POLICY", "cpu"),
-        "CODEX_SWAP_METHOD": os.getenv("CODEX_SWAP_METHOD", "blocked"),
-        "CODEX_GPU_PREFER_CONSTRUCT": os.getenv("CODEX_GPU_PREFER_CONSTRUCT", "0"),
-        "CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0"),
-    }
-    wan = {
-        "WAN_SDPA_DEBUG": os.getenv("WAN_SDPA_DEBUG", "0"),
-        "WAN_SDPA_DEBUG_EVERY": os.getenv("WAN_SDPA_DEBUG_EVERY", "5"),
-        "WAN_SDPA_POLICY": os.getenv("WAN_SDPA_POLICY", "mem_efficient"),
-        "WAN_I2V_DEBUG_HI_DECODE": os.getenv("WAN_I2V_DEBUG_HI_DECODE", "0"),
-        "WAN_I2V_LAT_STATS": os.getenv("WAN_I2V_LAT_STATS", "0"),
-        "WAN_I2V_STRICT_VAE": os.getenv("WAN_I2V_STRICT_VAE", "0"),
-        "WAN_I2V_CONV32": os.getenv("WAN_I2V_CONV32", "0"),
-        "WAN_I2V_ORDER": os.getenv("WAN_I2V_ORDER", "lat_first"),
-        "WAN_I2V_DEBUG_CLAMP": os.getenv("WAN_I2V_DEBUG_CLAMP", ""),
-        "WAN_I2V_DEBUG_SANITIZE_TOKENS": os.getenv("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0"),
-        "WAN_TE_IMPL": os.getenv("WAN_TE_IMPL", "hf"),
-        "WAN_TE_KERNEL_REQUIRED": os.getenv("WAN_TE_KERNEL_REQUIRED", "0"),
-        "WAN_GGUF_OFFLOAD_LEVEL": os.getenv("WAN_GGUF_OFFLOAD_LEVEL", "3"),
-        "WAN_LOG_INFO": os.getenv("WAN_LOG_INFO", "1"),
-        "WAN_LOG_WARN": os.getenv("WAN_LOG_WARN", "1"),
-        "WAN_LOG_ERROR": os.getenv("WAN_LOG_ERROR", "1"),
-        "WAN_LOG_DEBUG": os.getenv("WAN_LOG_DEBUG", "0"),
-    }
-    try:
-        snap = options_store.get_snapshot()
-
-        def _set_core(key: str, value: str | None) -> None:
-            if value is None:
-                return
-            text = str(value).strip().lower()
-            if text:
-                core[key] = text
-
-        _set_core("CODEX_DIFFUSION_DEVICE", snap.codex_diffusion_device)
-        _set_core("CODEX_DIFFUSION_DTYPE", snap.codex_diffusion_dtype)
-        _set_core("CODEX_TE_DEVICE", snap.codex_te_device)
-        _set_core("CODEX_TE_DTYPE", snap.codex_te_dtype)
-        _set_core("CODEX_VAE_DEVICE", snap.codex_vae_device)
-        _set_core("CODEX_VAE_DTYPE", snap.codex_vae_dtype)
-    except Exception:  # pragma: no cover - snapshot load should be resilient
-        LOGGER.debug("Failed to hydrate device defaults from settings_values.json.", exc_info=True)
-    return {"core": core, "wan": wan}
+    core = {"CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0")}
+    return {"core": core}
 
 
 DEFAULT_MODEL_NAME = "default"
@@ -135,8 +81,6 @@ class _EnvironmentView(MutableMapping[str, str]):
         value = str(value)
         target_map, target_kind = self._store.resolve_container_for_key(key)
         target_map[key] = value
-        if key == "WAN_SDPA_POLICY":
-            self._store.meta.sdpa_policy = value
         LOGGER.debug("Set env %s=%s (container=%s)", key, value, target_kind)
 
     def __delitem__(self, key: str) -> None:
@@ -234,7 +178,6 @@ class LauncherProfileStore:
         _write_meta(self.root, self.meta)
         _write_env_maps(self.root / "areas", self.areas)
         _write_env_maps(self.root / "models", self.models)
-        self._persist_device_settings()
 
     # ------------------------------------------------------------------ internal
 
@@ -247,134 +190,31 @@ class LauncherProfileStore:
         if self.meta.active_model not in self.models:
             self.models[self.meta.active_model] = {}
 
-        wan_env = self.areas.get("wan", {})
-        if wan_env:
-            policy = wan_env.get("WAN_SDPA_POLICY")
-            if policy:
-                self.meta.sdpa_policy = policy
-        self.areas.setdefault("wan", {}).setdefault("WAN_SDPA_POLICY", self.meta.sdpa_policy)
-        self._migrate_device_dtype_flags()
-
-    def _persist_device_settings(self) -> None:
-        core = self.areas.get("core", {})
-        if not core:
-            return
-        mapping = (
-            ("CODEX_DIFFUSION_DEVICE", "codex_diffusion_device"),
-            ("CODEX_DIFFUSION_DTYPE", "codex_diffusion_dtype"),
-            ("CODEX_TE_DEVICE", "codex_te_device"),
-            ("CODEX_TE_DTYPE", "codex_te_dtype"),
-            ("CODEX_VAE_DEVICE", "codex_vae_device"),
-            ("CODEX_VAE_DTYPE", "codex_vae_dtype"),
-        )
-        updates: Dict[str, str] = {}
-        for env_key, settings_key in mapping:
-            value = core.get(env_key)
-            if value is None:
-                continue
-            text = str(value).strip().lower()
-            if not text:
-                continue
-            updates[settings_key] = text
-        if updates:
-            options_store.set_values(updates)
-
-    def _migrate_device_dtype_flags(self) -> None:
-        def _canonical_device(value: str | None) -> str:
-            if value is None:
-                return ""
-            v = value.strip().lower()
-            if not v or v == "auto":
-                return ""
-            if v in {"gpu", "cuda"}:
-                return "cuda"
-            if v == "cpu":
-                return "cpu"
-            if v == "mps":
-                return "mps"
-            if v == "xpu":
-                return "xpu"
-            if v in {"directml", "dml"}:
-                return "directml"
-            LOGGER.warning("Dropping unsupported device option '%s' from launcher profile.", value)
-            return ""
-
-        def _canonical_dtype(value: str | None) -> str:
-            if value is None:
-                return ""
-            v = value.strip().lower()
-            mapping = {
-                "float32": "fp32",
-                "single": "fp32",
-                "float": "fp32",
-                "fp32": "fp32",
-                "float16": "fp16",
-                "half": "fp16",
-                "fp16": "fp16",
-                "bf16": "bf16",
-                "bfloat16": "bf16",
-                "fp8-e4m3fn": "fp8_e4m3fn",
-                "fp8_e4": "fp8_e4m3fn",
-                "fp8-e5m2": "fp8_e5m2",
-                "fp8_e5": "fp8_e5m2",
-            }
-            return mapping.get(v, v)
-
-        def _guard_cpu_dtype(mapping: Dict[str, str], device_key: str, dtype_key: str) -> None:
-            if device_key not in mapping and dtype_key not in mapping:
-                return
-            device_val = _canonical_device(mapping.get(device_key))
-            if device_key in mapping or device_val:
-                mapping[device_key] = device_val
-            dtype_val = _canonical_dtype(mapping.get(dtype_key))
-            if device_val == "cpu":
-                mapping[dtype_key] = "fp32"
-            elif dtype_key in mapping and dtype_val:
-                mapping[dtype_key] = dtype_val
-            elif dtype_key in mapping and not dtype_val:
-                mapping.pop(dtype_key, None)
-
-        core_env = self.areas.setdefault("core", {})
-        legacy_core_dev = core_env.pop("CODEX_CORE_DEVICE", None)
-        if legacy_core_dev:
-            canon = _canonical_device(legacy_core_dev)
-            if canon:
-                core_env["CODEX_DIFFUSION_DEVICE"] = canon
-
-        legacy_core_dtype = core_env.pop("CODEX_CORE_DTYPE", None)
-        if legacy_core_dtype:
-            canon_dt = _canonical_dtype(legacy_core_dtype)
-            if canon_dt:
-                core_env["CODEX_DIFFUSION_DTYPE"] = canon_dt
-
-        wan_env = self.areas.get("wan", {})
-        if wan_env and "WAN_TE_DEVICE" in wan_env:
-            legacy_te = _canonical_device(wan_env.pop("WAN_TE_DEVICE"))
-            if legacy_te and not core_env.get("CODEX_TE_DEVICE"):
-                core_env["CODEX_TE_DEVICE"] = legacy_te
-
-        containers: list[Dict[str, str]] = list(self.areas.values()) + list(self.models.values())
-        for mapping in containers:
-            legacy_core_dev = mapping.pop("CODEX_CORE_DEVICE", None)
-            if legacy_core_dev and not mapping.get("CODEX_DIFFUSION_DEVICE"):
-                canon = _canonical_device(legacy_core_dev)
-                if canon:
-                    mapping["CODEX_DIFFUSION_DEVICE"] = canon
-
-            legacy_core_dtype = mapping.pop("CODEX_CORE_DTYPE", None)
-            if legacy_core_dtype and not mapping.get("CODEX_DIFFUSION_DTYPE"):
-                canon_dt = _canonical_dtype(legacy_core_dtype)
-                if canon_dt:
-                    mapping["CODEX_DIFFUSION_DTYPE"] = canon_dt
-
-            legacy_cpu = mapping.pop("CODEX_VAE_IN_CPU", None)
-            if legacy_cpu and str(legacy_cpu).strip().lower() in {"1", "true", "yes", "on"}:
-                mapping["CODEX_VAE_DEVICE"] = "cpu"
-                mapping["CODEX_VAE_DTYPE"] = "fp32"
-            _guard_cpu_dtype(mapping, "CODEX_DIFFUSION_DEVICE", "CODEX_DIFFUSION_DTYPE")
-            _guard_cpu_dtype(mapping, "CODEX_VAE_DEVICE", "CODEX_VAE_DTYPE")
-            _guard_cpu_dtype(mapping, "CODEX_TE_DEVICE", "CODEX_TE_DTYPE")
-
+        # Drop legacy env knobs (WAN_* and CODEX_* runtime settings).
+        for container in list(self.areas.values()) + list(self.models.values()):
+            for key in list(container.keys()):
+                if key.startswith("WAN_"):
+                    container.pop(key, None)
+                if key in {
+                    "CODEX_ATTENTION_BACKEND",
+                    "CODEX_ATTN_CHUNK_SIZE",
+                    "CODEX_GGUF_CACHE_POLICY",
+                    "CODEX_GGUF_CACHE_LIMIT_MB",
+                    "CODEX_DIFFUSION_DEVICE",
+                    "CODEX_DIFFUSION_DTYPE",
+                    "CODEX_TE_DEVICE",
+                    "CODEX_TE_DTYPE",
+                    "CODEX_VAE_DEVICE",
+                    "CODEX_VAE_DTYPE",
+                    "CODEX_SWAP_POLICY",
+                    "CODEX_SWAP_METHOD",
+                    "CODEX_GPU_PREFER_CONSTRUCT",
+                    "CODEX_SMART_OFFLOAD",
+                    "CODEX_PIN_SHARED_MEMORY",
+                }:
+                    container.pop(key, None)
+        self.areas.pop("wan", None)
+        # Device/dtype/attention/cache settings are configured via WebUI options.
 
 def _default_root() -> Path:
     return get_repo_root() / ".sangoi" / "launcher"

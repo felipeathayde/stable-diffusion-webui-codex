@@ -123,19 +123,24 @@ def _build_wan22_gguf_run_config(
     hi_opts = WanStageOptions.from_mapping(wh_raw, default_steps=default_steps, default_cfg=default_cfg)
     lo_opts = WanStageOptions.from_mapping(wl_raw, default_steps=default_steps, default_cfg=default_cfg)
 
-    # Flow-shift defaults are sourced from the canonical vendored diffusers scheduler_config.json.
-    # This is intentionally strict (no silent fallback): if stages omit flow_shift, we must be able
-    # to resolve a default from comp.hf_repo_dir (prepared during engine.load()).
+    # Flow-shift defaults are sourced from scheduler_config.json under the metadata repo selected
+    # by the request (wan_metadata_dir). This keeps the repo selection explicit (payload-driven)
+    # and avoids coupling flow_shift to engine.load() heuristics.
     hi_flow_shift = _coerce_float(wh_raw.get("flow_shift")) if isinstance(wh_raw, dict) else None
     lo_flow_shift = _coerce_float(wl_raw.get("flow_shift")) if isinstance(wl_raw, dict) else None
     if hi_flow_shift is None or lo_flow_shift is None:
-        vendor_dir = getattr(comp, "hf_repo_dir", None)
-        if not isinstance(vendor_dir, str) or not vendor_dir.strip():
-            raise RuntimeError(
-                "WAN22 GGUF requires flow_shift defaults from the vendored scheduler_config.json, "
-                "but comp.hf_repo_dir is missing. Ensure engine.load() prepared HF metadata."
-            )
         from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+
+        vendor_dir = str(meta_dir or "").strip()
+        if not vendor_dir:
+            raise RuntimeError(
+                "WAN22 GGUF requires flow_shift defaults from scheduler_config.json, but wan_metadata_dir is missing."
+            )
+        # Support callers that provide a tokenizer subfolder instead of the repo root.
+        if not os.path.isdir(os.path.join(vendor_dir, "scheduler")):
+            parent = os.path.dirname(vendor_dir)
+            if parent and os.path.isdir(os.path.join(parent, "scheduler")):
+                vendor_dir = parent
 
         spec = flow_shift_spec_from_repo_dir(vendor_dir)
         default_flow_shift = spec.resolve()

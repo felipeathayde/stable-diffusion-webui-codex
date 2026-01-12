@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Text encoder weight-file discovery policy used by backend inventories.
-Defines the default text encoder locations under `models/` and engine-specific overrides from paths.json, yielding file paths in stable order.
+Defines text encoder locations from per-family `apps/paths.json` keys (`*_tenc`) and yields weight file paths in stable order.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TEXT_ENCODER_EXTS` (constant): Recognized text encoder weight file extensions.
-- `list_text_encoder_roots` (function): Resolves text encoder search roots (models defaults + `get_paths_for("*_tenc")` overrides).
+- `list_text_encoder_roots` (function): Resolves text encoder search roots from `apps/paths.json` per-family keys (`*_tenc`).
 - `iter_text_encoder_files` (function): Yields weight-file paths under the resolved roots (non-recursive, stable order).
 """
 
@@ -22,7 +22,7 @@ from typing import Iterable, Sequence
 
 from apps.backend.infra.config.paths import get_paths_for
 
-from .base import default_models_root, dedupe_keep_order
+from .base import dedupe_keep_order
 
 TEXT_ENCODER_EXTS: tuple[str, ...] = (".safetensors", ".pt", ".bin", ".gguf")
 
@@ -42,15 +42,9 @@ def _files_in_dir(dir_path: str, *, exts: Sequence[str]) -> list[str]:
 
 
 def list_text_encoder_roots(models_root: str | None = None) -> list[str]:
-    mr = models_root or default_models_root()
     roots: list[str] = []
 
-    # Default convention.
-    default_dir = os.path.join(mr, "text-encoder")
-    if os.path.isdir(default_dir):
-        roots.append(default_dir)
-
-    # Engine-specific overrides from apps/paths.json
+    # Per-family roots from apps/paths.json.
     for key in ("sd15_tenc", "sdxl_tenc", "flux1_tenc", "wan22_tenc", "zimage_tenc"):
         for p in get_paths_for(key):
             if os.path.isdir(p):

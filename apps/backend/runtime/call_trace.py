@@ -11,7 +11,6 @@ Implements a sys/thread profile hook that logs function calls under `apps.*` wit
 enable/disable helpers to avoid flooding logs by default.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_truthy` (function): Parses common truthy tokens for env-driven toggles.
 - `_profiler` (function): Profile hook used by `sys.setprofile` / `threading.setprofile` (logs `call`/`return` events).
 - `_set_max_per_func` (function): Configures the per-function call cap (0 disables the cap).
 - `_reset_counters` (function): Clears per-function call counters and “muted” notifications.
@@ -30,6 +29,8 @@ import threading
 from types import FrameType
 from typing import Any, Callable, Optional, Tuple
 
+from apps.backend.infra.config.env_flags import env_flag
+
 _logger = logging.getLogger("backend.calltrace")
 
 _enabled: bool = False
@@ -40,13 +41,6 @@ _DEFAULT_MAX_PER_FUNC = 10
 _max_per_func: int = _DEFAULT_MAX_PER_FUNC
 _call_counts: dict[Tuple[str, str], int] = {}
 _muted_notified: set[Tuple[str, str]] = set()
-
-
-def _truthy(value: str | None) -> bool:
-    if not value:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
 
 def _profiler(frame: FrameType, event: str, arg: Any):  # pragma: no cover - runtime hook
     # Guard: prevent recursion while we log
@@ -190,7 +184,7 @@ def _env_trace_limit() -> Optional[int]:
 
 def enable_from_env() -> None:
     """Enable when CODEX_TRACE_DEBUG=1 (or truthy)."""
-    if _truthy(os.getenv("CODEX_TRACE_DEBUG")):
+    if env_flag("CODEX_TRACE_DEBUG", default=False):
         enable(max_calls_per_func=_env_trace_limit())
 
 

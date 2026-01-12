@@ -28,10 +28,21 @@ Symbols (top-level; keep in sync; no ghosts):
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+          <option v-if="checkpoints.length === 0" value="">No models found</option>
           <option v-for="model in checkpoints" :key="model" :value="model">
             {{ model }}
           </option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!checkpoint"
+          title="Show checkpoint metadata"
+          aria-label="Show checkpoint metadata"
+          @click="$emit('showMetadata', { kind: 'checkpoint', value: checkpoint })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
       </div>
     </div>
@@ -46,6 +57,16 @@ Symbols (top-level; keep in sync; no ghosts):
               {{ v === 'Automatic' ? 'Built-in' : v }}
             </option>
           </select>
+          <button
+            class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+            type="button"
+            :disabled="!vae || ['Automatic', 'Built in', 'None'].includes(vae)"
+            title="Show VAE metadata"
+            aria-label="Show VAE metadata"
+            @click="$emit('showMetadata', { kind: 'vae', value: vae })"
+          >
+            i
+          </button>
           <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addVaePath')">+</button>
         </div>
       </div>
@@ -83,6 +104,7 @@ defineEmits<{
   (e: 'update:textEncoder', value: string): void
   (e: 'addCheckpointPath'): void
   (e: 'addVaePath'): void
+  (e: 'showMetadata', payload: { kind: 'checkpoint' | 'vae' | 'text_encoder'; value: string }): void
 }>()
 
 const textEncoderAutomaticLabel = props.textEncoderAutomaticLabel ?? 'Built-in'

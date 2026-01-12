@@ -41,7 +41,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Modal from '../ui/Modal.vue'
 import { fetchEmbeddings } from '../../api/client'
 
@@ -52,20 +52,33 @@ const open = computed({ get: () => props.modelValue, set: (v: boolean) => emit('
 const names = ref<string[]>([])
 const q = ref('')
 const weight = ref(1.0)
+const loading = ref(false)
+const loaded = ref(false)
 
 const filtered = computed(() => {
   const query = q.value.toLowerCase().trim()
   return names.value.filter(n => n.toLowerCase().includes(query))
 })
 
-onMounted(async () => {
-  try {
-    const res = await fetchEmbeddings()
-    names.value = Object.keys(res.loaded || {}).sort((a,b)=>a.localeCompare(b))
-  } catch (e) {
-    names.value = []
-  }
-})
+watch(
+  open,
+  async (isOpen) => {
+    if (!isOpen) return
+    if (loaded.value || loading.value) return
+    loading.value = true
+    try {
+      const res = await fetchEmbeddings()
+      names.value = Object.keys(res.loaded || {}).sort((a, b) => a.localeCompare(b))
+      loaded.value = true
+    } catch {
+      names.value = []
+      loaded.value = true
+    } finally {
+      loading.value = false
+    }
+  },
+  { immediate: true },
+)
 
 function insert(name: string): void {
   const t = weight.value && weight.value !== 1.0 ? `(${name}:${weight.value.toFixed(2)})` : name

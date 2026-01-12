@@ -47,9 +47,9 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Modal from '../ui/Modal.vue'
-import { fetchLoras } from '../../api/client'
+import { fetchModelInventory } from '../../api/client'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e:'insert', payload: { token: string; target: 'positive' | 'negative' }): void }>()
@@ -59,20 +59,33 @@ interface LoraItem { name: string; path: string }
 const items = ref<LoraItem[]>([])
 const q = ref('')
 const weight = ref(0.8)
+const loading = ref(false)
+const loaded = ref(false)
 
 const filtered = computed(() => {
   const query = q.value.toLowerCase().trim()
   return items.value.filter(n => n.name.toLowerCase().includes(query))
 })
 
-onMounted(async () => {
-  try {
-    const res = await fetchLoras()
-    items.value = res.loras || []
-  } catch (e) {
-    items.value = []
-  }
-})
+watch(
+  open,
+  async (isOpen) => {
+    if (!isOpen) return
+    if (loaded.value || loading.value) return
+    loading.value = true
+    try {
+      const inv = await fetchModelInventory()
+      items.value = (inv.loras || []) as LoraItem[]
+      loaded.value = true
+    } catch {
+      items.value = []
+      loaded.value = true
+    } finally {
+      loading.value = false
+    }
+  },
+  { immediate: true },
+)
 
 function insert(name: string, target: 'positive' | 'negative'): void {
   const t = `<lora:${name}:${(weight.value ?? 1.0).toFixed(2)}>`

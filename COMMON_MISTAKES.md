@@ -51,8 +51,8 @@
 **Correct command:** `~/.venv/bin/python -m pytest -q tests/backend/test_codex_quantization_parametergguf_to.py`
 
 **Wrong command:** `CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
-**Cause + fix:** `apps.backend.interfaces.api.run_api expects CODEX_ROOT to be set by the launcher (run-webui/run-tui). When invoking the module directly, export CODEX_ROOT (and in CPU-only sandboxes also force CODEX_DIFFUSION_DEVICE=cpu) before running.`
-**Correct command:** `CODEX_ROOT=/home/lucas/work/stable-diffusion-webui-codex CODEX_DIFFUSION_DEVICE=cpu CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
+**Cause + fix:** `apps.backend.interfaces.api.run_api expects CODEX_ROOT to be set by the launcher (run-webui/run-tui). When invoking the module directly, export CODEX_ROOT. In CPU-only sandboxes, pass devices via CLI (--core-device/--te-device/--vae-device) instead of using CODEX_* device env vars.`
+**Correct command:** `CODEX_ROOT=/home/lucas/work/stable-diffusion-webui-codex CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850 --core-device cpu --te-device cpu --vae-device cpu`
 
 **Wrong command:** `sed -n '1,260p' apps/backend/use_cases/txt2img_pipeline.py`
 **Cause + fix:** `Txt2img pipeline is a package directory under apps/backend/use_cases/txt2img_pipeline/; the runner lives at runner.py. List the directory before assuming a flat file path.`
@@ -120,8 +120,8 @@
 **Correct command:** `uv sync --locked --extra cpu`
 
 **Wrong command:** `~/.venv/bin/python -c "from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`
-**Cause + fix:** `Backend config auto-initializes with AUTO devices and aborts when CUDA is unavailable; set explicit CPU devices before importing.`
-**Correct command:** `CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python -c "from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`
+**Cause + fix:** `If you need to force CPU devices (e.g. in a CPU-only sandbox), pass device overrides via CLI args (core/TE/VAE) instead of using CODEX_* device env vars.`
+**Correct command:** `~/.venv/bin/python -c "import sys; sys.argv += ['--core-device','cpu','--te-device','cpu','--vae-device','cpu']; from apps.backend.infra.config import args as cfg; import apps.backend.engines.sd.sdxl as mod; print(bool(getattr(cfg.args, 'debug_conditioning', False)))"`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `Command tries to add ignored __pycache__ paths; filter them out or use a narrower add list.`
@@ -493,12 +493,12 @@ PY`
 **Cause + fix:** `Importing launcher.services pulls backend runtime and requires torch; the sandbox lacks torch so the import fails. Inspect the command by reading the file instead of importing.`
 **Correct command:** `sed -n '80,150p' apps/launcher/services.py`
 
-**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python - <<'PY'
+**Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite ~/.venv/bin/python - <<'PY'
 import os,json
 from fastapi.testclient import TestClient
 from apps.backend.interfaces.api.run_api import create_api_app
 
-app = create_api_app(argv=[], env=os.environ)
+app = create_api_app(argv=['--core-device','cpu','--te-device','cpu','--vae-device','cpu'], env=os.environ)
 client = TestClient(app)
 
 paths = [(r.path, sorted(list(getattr(r, 'methods', [])))) for r in app.router.routes if getattr(r, 'path', None) in {'/api/txt2img','/api/img2img','/api/tasks/{task_id}'}]
@@ -509,12 +509,12 @@ print('status', resp.status_code)
 print('body', resp.json())
 PY`
 **Cause and fix:** `FastAPI startup + TestClient took longer than the harness default (~10s), so the command timed out at exit code 124. Run the same script with a longer timeout (≈60–120s) when bootstrapping the API in the CPU-only sandbox.`
-**Correct command:** `timeout 120s cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite CODEX_DIFFUSION_DEVICE=cpu CODEX_TE_DEVICE=cpu CODEX_VAE_DEVICE=cpu ~/.venv/bin/python - <<'PY'
+**Correct command:** `timeout 120s cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite ~/.venv/bin/python - <<'PY'
 import os,json
 from fastapi.testclient import TestClient
 from apps.backend.interfaces.api.run_api import create_api_app
 
-app = create_api_app(argv=[], env=os.environ)
+app = create_api_app(argv=['--core-device','cpu','--te-device','cpu','--vae-device','cpu'], env=os.environ)
 client = TestClient(app)
 
 paths = [(r.path, sorted(list(getattr(r, 'methods', [])))) for r in app.router.routes if getattr(r, 'path', None) in {'/api/txt2img','/api/img2img','/api/tasks/{task_id}'}]

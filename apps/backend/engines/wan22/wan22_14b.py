@@ -145,7 +145,8 @@ class Wan2214BEngine(CodexDiffusionEngine):
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         runtime = self._require_runtime()
         token_count = len(runtime.text.t5_text.tokenize([prompt])[0])
-        return token_count, max(256, token_count)
+        min_len = int(getattr(runtime.text.t5_text, "min_length", 256) or 256)
+        return token_count, max(min_len, token_count)
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
@@ -189,7 +190,8 @@ class Wan2214BEngine(CodexDiffusionEngine):
         height = int(getattr(request, "height", 432) or 432)
         num_frames = int(getattr(request, "num_frames", 16) or 16)
         steps = int(getattr(request, "steps", WAN_14B_SPEC.default_steps) or WAN_14B_SPEC.default_steps)
-        cfg_scale = float(getattr(request, "cfg_scale", WAN_14B_SPEC.default_cfg_scale) or WAN_14B_SPEC.default_cfg_scale)
+        req_cfg = getattr(request, "guidance_scale", None)
+        cfg_scale = float(req_cfg if req_cfg is not None else WAN_14B_SPEC.default_cfg_scale)
         seed = getattr(request, "seed", None)
 
         logger.info(

@@ -20,7 +20,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -86,12 +85,24 @@ def as_torch_dtype(dtype: str) -> torch.dtype:
 
 
 def resolve_device_name(name: str) -> str:
-    s = (name or "auto").lower().strip()
+    raw = str(name or "auto").strip()
+    s = raw.lower()
+
+    if s in {"cpu"}:
+        return "cpu"
+
     if s in {"auto", ""}:
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if s in {"cuda", "gpu"}:
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    return "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        raise RuntimeError("WAN22: CUDA is not available; set device='cpu' explicitly to force CPU.")
+
+    # Accept explicit CUDA device strings (cuda, cuda:0, etc).
+    if s == "gpu" or s.startswith("cuda"):
+        if torch.cuda.is_available():
+            return "cuda" if s == "gpu" else s
+        raise RuntimeError(f"WAN22: device={raw!r} requested but CUDA is not available; set device='cpu' explicitly.")
+
+    raise ValueError(f"Unsupported device: {raw!r} (expected 'auto', 'cpu', or 'cuda').")
 
 
 def resolve_i2v_order() -> str:
@@ -99,8 +110,6 @@ def resolve_i2v_order() -> str:
 
     - 'lat_first': latents(16) then cond extras (mask4+img16).
     - 'lat_last' : cond extras first then latents(16).
-    Defaults to 'lat_first'. Controlled by env `WAN_I2V_ORDER`.
+    Defaults to 'lat_first'. (Env overrides removed; payload-driven only.)
     """
-
-    v = str(os.getenv("WAN_I2V_ORDER", "lat_first")).strip().lower()
-    return "lat_last" if v in {"lat_last", "last", "cond_first"} else "lat_first"
+    return "lat_first"

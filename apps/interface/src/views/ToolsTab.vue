@@ -21,7 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `pollStatus` (function): Polls job status and stops polling when complete/error.
 - `browseForConfig` (function): Opens the file browser in config selection mode.
 - `browseForSafetensors` (function): Opens the file browser in safetensors selection mode.
-- `browseForOutput` (function): Opens the file browser in output selection mode.
+- `browseForOutputDir` (function): Opens the file browser in output-folder selection mode.
 - `openFileBrowser` (function): Opens the modal and loads the current path listing.
 - `closeFileBrowser` (function): Closes the modal.
 - `loadBrowserPath` (function): Fetches the directory listing for the current browser path.
@@ -30,6 +30,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `openItem` (function): Opens a directory (or confirms selection for files).
 - `confirmSelection` (function): Applies the selected path to the active form field and closes the modal.
 - `formatSize` (function): Formats byte sizes for display.
+- `outputFileName` (computed): Generated output filename `{base}-{quant}-Codex.gguf` derived from the safetensors path.
+- `outputFullPath` (computed): Output full path (folder + generated filename).
 -->
 
 <template>
@@ -84,17 +86,37 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
           <div class="field">
-            <label class="label-muted">Tensor Overrides (advanced)</label>
-            <textarea v-model="ggufForm.tensorTypeOverrides" class="ui-textarea cdx-tools-overrides" placeholder="One per line: <regex>=<quant>\nExample:\nattn_q\\.weight$=Q8_0" :disabled="isConverting" rows="5"></textarea>
-            <p class="caption">Applied to both source and GGUF tensor names. Last match wins.</p>
+            <details class="accordion">
+              <summary>Advanced</summary>
+              <div class="accordion-body">
+                <div class="field">
+                  <label class="label-muted">Tensor Overrides</label>
+                  <textarea
+                    v-model="ggufForm.tensorTypeOverrides"
+                    class="ui-textarea cdx-tools-overrides"
+                    placeholder="One per line: <regex>=<quant>\nExample:\nattn_q\\.weight$=Q8_0"
+                    :disabled="isConverting"
+                    rows="5"
+                  ></textarea>
+                  <p class="caption">Applied to both source and GGUF tensor names. Last match wins.</p>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div class="field">
-            <label class="label-muted">Output File</label>
+            <label class="label-muted">Output Folder</label>
             <div class="row-inline">
-              <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.outputPath" placeholder="Output .gguf file path" :disabled="isConverting" />
-              <button class="btn-icon" type="button" @click="browseForOutput" :disabled="isConverting" aria-label="Browse for output path">…</button>
+              <input
+                class="ui-input cdx-tools-grow"
+                type="text"
+                v-model="ggufForm.outputDir"
+                placeholder="Output folder path"
+                :disabled="isConverting"
+              />
+              <button class="btn-icon" type="button" @click="browseForOutputDir" :disabled="isConverting" aria-label="Browse for output folder">…</button>
             </div>
+            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
           </div>
 
           <div class="row-inline">
@@ -117,7 +139,7 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </div>
 
-    <Modal v-model="showFileBrowser" title="Browse Files">
+    <Modal v-model="showFileBrowser" :title="browserTitle">
       <div class="cdx-tools-pathbar">
         <button class="btn btn-sm btn-secondary" type="button" @click="goToParent" :disabled="!browserData.parent">Up</button>
         <input class="ui-input cdx-tools-grow" type="text" v-model="browserPath" @keyup.enter="loadBrowserPath" />
@@ -125,7 +147,7 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
       <div class="cdx-tools-file-list">
         <div
-          v-for="item in browserData.items"
+          v-for="item in browserItems"
           :key="item.name"
           class="cdx-tools-file-item"
           :class="{ 'is-selected': selectedItem && selectedItem.name === item.name && selectedItem.type === item.type }"
@@ -141,7 +163,9 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <template #footer>
         <button class="btn btn-md btn-secondary" type="button" @click="closeFileBrowser">Cancel</button>
-        <button class="btn btn-md btn-primary" type="button" @click="confirmSelection" :disabled="!selectedItem">Select</button>
+        <button class="btn btn-md btn-primary" type="button" @click="confirmSelection" :disabled="browserMode !== 'output_dir' && !selectedItem">
+          Select
+        </button>
       </template>
     </Modal>
   </section>
@@ -155,7 +179,7 @@ interface GGUFForm {
   configPath: string
   safetensorsPath: string
   quantization: string
-  outputPath: string
+  outputDir: string
   tensorTypeOverrides: string
 }
 
@@ -183,7 +207,7 @@ const ggufForm = ref<GGUFForm>({
   configPath: '',
   safetensorsPath: '',
   quantization: 'Q5_K_M',
-  outputPath: '',
+  outputDir: '',
   tensorTypeOverrides: '',
 })
 
@@ -195,7 +219,7 @@ const pollInterval = ref<number | null>(null)
 const showFileBrowser = ref(false)
 const browserPath = ref('')
 const browserData = ref<BrowserData>({ path: '', exists: false, parent: '', items: [] })
-const browserMode = ref<'config' | 'safetensors' | 'output'>('config')
+const browserMode = ref<'config' | 'safetensors' | 'output_dir'>('config')
 const selectedItem = ref<BrowserItem | null>(null)
 
 const isConverting = computed(() => {
@@ -208,8 +232,68 @@ const isConverting = computed(() => {
 const canConvert = computed(() => {
   return ggufForm.value.configPath && 
          ggufForm.value.safetensorsPath && 
-         ggufForm.value.outputPath
+         ggufForm.value.outputDir
 })
+
+const browserTitle = computed(() => {
+  if (browserMode.value === 'config') return 'Choose Config Folder'
+  if (browserMode.value === 'safetensors') return 'Choose Weights'
+  if (browserMode.value === 'output_dir') return 'Choose Output Folder'
+  return 'Browse Files'
+})
+
+const browserItems = computed(() => {
+  if (browserMode.value === 'output_dir') {
+    return browserData.value.items.filter((it) => it.type === 'directory')
+  }
+  return browserData.value.items
+})
+
+function _sanitizeOutputStem(raw: string): string {
+  const s = String(raw || '').trim()
+  if (!s) return 'model'
+  // Keep stable/portable: collapse whitespace and remove weird separators.
+  const cleaned = s.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '')
+  return cleaned || 'model'
+}
+
+function _basename(path: string): string {
+  const p = String(path || '').replace(/[\\/]+$/, '').replace(/\\/g, '/')
+  const parts = p.split('/')
+  return parts[parts.length - 1] || ''
+}
+
+function _joinPath(dir: string, file: string): string {
+  const d = String(dir || '').trim()
+  if (!d) return file
+  const sep = d.includes('\\') && !d.includes('/') ? '\\' : '/'
+  return d.replace(/[\\/]+$/, '') + sep + file
+}
+
+function _deriveOutputStem(): string {
+  const raw = String(ggufForm.value.safetensorsPath || '').trim()
+  if (!raw) return 'model'
+  const name = _basename(raw)
+  if (name.toLowerCase().endsWith('.safetensors.index.json')) {
+    return name.slice(0, -'.safetensors.index.json'.length)
+  }
+  if (name.toLowerCase().endsWith('.safetensors')) {
+    return name.slice(0, -'.safetensors'.length)
+  }
+  if (name.toLowerCase().endsWith('.index.json')) {
+    return name.slice(0, -'.index.json'.length)
+  }
+  // If user picked a folder, use its leaf.
+  return name
+}
+
+const outputFileName = computed(() => {
+  const stem = _sanitizeOutputStem(_deriveOutputStem())
+  const quant = String(ggufForm.value.quantization || 'F16').trim() || 'F16'
+  return `${stem}-${quant}-Codex.gguf`
+})
+
+const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, outputFileName.value))
 
 async function startConversion() {
   try {
@@ -220,7 +304,7 @@ async function startConversion() {
       body: JSON.stringify({
         config_path: ggufForm.value.configPath,
         safetensors_path: ggufForm.value.safetensorsPath,
-        output_path: ggufForm.value.outputPath,
+        output_path: outputFullPath.value,
         quantization: ggufForm.value.quantization,
         tensor_type_overrides: tensorTypeOverrides,
       }),
@@ -293,9 +377,9 @@ function browseForSafetensors() {
   openFileBrowser()
 }
 
-function browseForOutput() {
-  browserMode.value = 'output'
-  browserPath.value = ggufForm.value.outputPath || ''
+function browseForOutputDir() {
+  browserMode.value = 'output_dir'
+  browserPath.value = ggufForm.value.outputDir || ''
   openFileBrowser()
 }
 
@@ -311,8 +395,7 @@ function closeFileBrowser() {
 
 async function loadBrowserPath() {
   try {
-    const ext = browserMode.value === 'safetensors' ? '.safetensors' : 
-                browserMode.value === 'output' ? '.gguf' : ''
+    const ext = browserMode.value === 'safetensors' ? '.safetensors' : ''
     
     const response = await fetch(`/api/tools/browse-files?path=${encodeURIComponent(browserPath.value)}&extensions=${ext}`)
     browserData.value = await response.json()
@@ -344,16 +427,23 @@ function openItem(item: BrowserItem) {
 }
 
 function confirmSelection() {
-  if (!selectedItem.value) return
-  
-  const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+  if (!selectedItem.value && browserMode.value !== 'output_dir') return
   
   if (browserMode.value === 'config') {
+    if (!selectedItem.value) return
+    const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
     ggufForm.value.configPath = selectedItem.value.type === 'directory' ? fullPath : browserPath.value
   } else if (browserMode.value === 'safetensors') {
+    if (!selectedItem.value) return
+    const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
     ggufForm.value.safetensorsPath = fullPath
-  } else if (browserMode.value === 'output') {
-    ggufForm.value.outputPath = fullPath
+  } else if (browserMode.value === 'output_dir') {
+    if (!selectedItem.value) {
+      ggufForm.value.outputDir = browserPath.value
+    } else if (selectedItem.value.type === 'directory') {
+      const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+      ggufForm.value.outputDir = fullPath
+    }
   }
   
   closeFileBrowser()

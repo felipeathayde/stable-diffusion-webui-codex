@@ -77,6 +77,18 @@ import type { Txt2ImgRequest } from './payloads'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
+const _jsonCache = new Map<string, unknown>()
+const _jsonInflight = new Map<string, Promise<unknown>>()
+
+function invalidateJsonCache(prefixPath: string): void {
+  for (const key of Array.from(_jsonCache.keys())) {
+    if (key === prefixPath || key.startsWith(`${prefixPath}?`)) _jsonCache.delete(key)
+  }
+  for (const key of Array.from(_jsonInflight.keys())) {
+    if (key === prefixPath || key.startsWith(`${prefixPath}?`)) _jsonInflight.delete(key)
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -90,6 +102,25 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || `${res.status} ${res.statusText}`)
   }
   return (await res.json()) as T
+}
+
+function requestJsonCached<T>(path: string): Promise<T> {
+  const cached = _jsonCache.get(path)
+  if (cached !== undefined) return Promise.resolve(cached as T)
+
+  const inflight = _jsonInflight.get(path)
+  if (inflight) return inflight as Promise<T>
+
+  const p = requestJson<T>(path)
+    .then((value) => {
+      _jsonCache.set(path, value)
+      return value
+    })
+    .finally(() => {
+      _jsonInflight.delete(path)
+    })
+  _jsonInflight.set(path, p as Promise<unknown>)
+  return p
 }
 
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
@@ -113,21 +144,24 @@ export function refreshModels(): Promise<ModelsResponse> {
 }
 
 export function fetchModelInventory(): Promise<InventoryResponse> {
-  return requestJson<InventoryResponse>('/models/inventory')
+  return requestJsonCached<InventoryResponse>('/models/inventory')
 }
 
-export function refreshModelInventory(): Promise<InventoryResponse> {
-  return requestJson<InventoryResponse>('/models/inventory/refresh', { method: 'POST' })
+export async function refreshModelInventory(): Promise<InventoryResponse> {
+  invalidateJsonCache('/models/inventory')
+  const inv = await requestJson<InventoryResponse>('/models/inventory/refresh', { method: 'POST' })
+  _jsonCache.set('/models/inventory', inv)
+  return inv
 }
 
 export async function fetchSamplers(): Promise<SamplersResponse> {
-  const res = await requestJson<SamplersResponse>('/samplers')
+  const res = await requestJsonCached<SamplersResponse>('/samplers')
   const supported = res.samplers.filter((sampler) => sampler.supported !== false)
   return { samplers: supported }
 }
 
 export async function fetchSchedulers(): Promise<SchedulersResponse> {
-  const res = await requestJson<SchedulersResponse>('/schedulers')
+  const res = await requestJsonCached<SchedulersResponse>('/schedulers')
   const supported = res.schedulers.filter((scheduler) => scheduler.supported !== false)
   return { schedulers: supported }
 }
@@ -231,10 +265,13 @@ export function fetchEngineCapabilities(): Promise<EngineCapabilitiesResponse> {
 }
 
 export function fetchPaths(): Promise<PathsResponse> {
-  return requestJson<PathsResponse>('/paths')
+  return requestJsonCached<PathsResponse>('/paths')
 }
 
 export function updatePaths(paths: Record<string, string[]>): Promise<PathsUpdateResponse> {
+  invalidateJsonCache('/paths')
+  // Inventory resolution depends on roots; clear the cached snapshot so callers can re-fetch.
+  invalidateJsonCache('/models/inventory')
   return requestJson<PathsUpdateResponse>('/paths', { method: 'POST', body: JSON.stringify({ paths }) })
 }
 
@@ -249,12 +286,12 @@ export function fetchSettingsSchema(): Promise<SettingsSchemaResponse> {
 
 export function fetchUiBlocks(tab?: string): Promise<UiBlocksResponse> {
   const q = tab ? `?tab=${encodeURIComponent(tab)}` : ''
-  return requestJson<UiBlocksResponse>(`/ui/blocks${q}`)
+  return requestJsonCached<UiBlocksResponse>(`/ui/blocks${q}`)
 }
 
 export function fetchUiPresets(tab?: string): Promise<UiPresetsResponse> {
   const q = tab ? `?tab=${encodeURIComponent(tab)}` : ''
-  return requestJson<UiPresetsResponse>(`/ui/presets${q}`)
+  return requestJsonCached<UiPresetsResponse>(`/ui/presets${q}`)
 }
 
 export function applyUiPreset(id: string, tab: string): Promise<UiPresetApplyResponse> {
@@ -268,22 +305,26 @@ export function applyUiPreset(id: string, tab: string): Promise<UiPresetApplyRes
 import type { TabsResponse, ApiTab, WorkflowsResponse } from './types'
 
 export function fetchTabs(): Promise<TabsResponse> {
-  return requestJson<TabsResponse>('/ui/tabs')
+  return requestJsonCached<TabsResponse>('/ui/tabs')
 }
 
 export function createTabApi(payload: Partial<ApiTab> & { type: ApiTab['type']; title?: string; params?: Record<string, unknown> }): Promise<{ id: string }> {
+  invalidateJsonCache('/ui/tabs')
   return requestJson<{ id: string }>('/ui/tabs', { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export function updateTabApi(tabId: string, payload: Partial<Pick<ApiTab, 'title' | 'enabled' | 'params'>>): Promise<{ updated: string }> {
+  invalidateJsonCache('/ui/tabs')
   return requestJson<{ updated: string }>(`/ui/tabs/${encodeURIComponent(tabId)}`, { method: 'PATCH', body: JSON.stringify(payload) })
 }
 
 export function reorderTabsApi(ids: string[]): Promise<{ ok: boolean }> {
+  invalidateJsonCache('/ui/tabs')
   return requestJson<{ ok: boolean }>('/ui/tabs/reorder', { method: 'POST', body: JSON.stringify({ ids }) })
 }
 
 export function deleteTabApi(tabId: string): Promise<{ deleted: string }> {
+  invalidateJsonCache('/ui/tabs')
   return requestJson<{ deleted: string }>(`/ui/tabs/${encodeURIComponent(tabId)}`, { method: 'DELETE' })
 }
 

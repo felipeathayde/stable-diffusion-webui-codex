@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
     <div class="qs-row">
       <div class="qs-pair">
         <select class="select-md" :value="checkpoint" @change="$emit('update:checkpoint', ($event.target as HTMLSelectElement).value)">
+          <option v-if="checkpoints.length === 0" value="">No models found</option>
           <option v-for="model in checkpoints" :key="model" :value="model">{{ truncatePath(model) }}</option>
         </select>
         <button

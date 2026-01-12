@@ -132,6 +132,9 @@ Symbols (top-level; keep in sync; no ghosts):
           <div class="qs-row">
             <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
           </div>
+          <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
+            <small class="label-muted">{{ currentPathsHint }}</small>
+          </div>
         </div>
       </template>
 
@@ -156,6 +159,9 @@ Symbols (top-level; keep in sync; no ghosts):
           <label class="label-muted">Models</label>
           <div class="qs-row">
             <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          </div>
+          <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
+            <small class="label-muted">{{ currentPathsHint }}</small>
           </div>
         </div>
       </template>

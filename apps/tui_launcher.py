@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: BIOS-style curses TUI (stdlib-only) for managing Codex services and launcher options.
-Settings persist under `.sangoi/launcher/` and the UI controls API/UI service processes plus runtime flags (including WAN controls).
+Settings persist under `.sangoi/launcher/` and the UI controls API/UI service processes plus runtime flags.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BIOSApp` (class): Curses app implementing the tabbed launcher UI (render loop + key handling); includes nested helpers for panes,
-  item lists per tab (`_items_main/_items_runtime/_items_wan/_items_debug/_items_logging`), popup selection, and applying changes to the profile/env.
+  item lists per tab (`_items_main/_items_runtime/_items_debug/_items_logging`), popup selection, and applying changes to the profile/env.
 - `main` (function): Curses entrypoint (used with `curses.wrapper`); creates `BIOSApp` and runs the UI loop.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ from apps.launcher import (
     run_launch_checks,
 )
 class BIOSApp:
-    TABS = ["Main", "Runtime", "WAN", "DEBUG", "Logging", "Logs", "Exit"]
+    TABS = ["Main", "Runtime", "DEBUG", "Logging", "Logs", "Exit"]
 
     def __init__(self, stdscr) -> None:
         self.stdscr = stdscr
@@ -188,111 +188,10 @@ class BIOSApp:
         return out
 
     def _items_runtime(self) -> List[Tuple[str, str, str]]:
-        env = self.env
         ext = "Enabled" if self.meta.external_terminal else "Disabled"
-        pol = self.meta.sdpa_policy
-        attn_backend = env.get("CODEX_ATTENTION_BACKEND", "torch-sdpa")
-        attn_chunk = env.get("CODEX_ATTN_CHUNK_SIZE", "0")
-        gguf_pol = env.get("CODEX_GGUF_CACHE_POLICY", "none")
-        gguf_lim = env.get("CODEX_GGUF_CACHE_LIMIT_MB", "0")
-        _unet_dtype_options = {"auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"}
-        _te_dtype_options = {"auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"}
-        _vae_dtype_options = {"auto", "fp16", "bf16", "fp32"}
-
-        unet_dtype = (env.get("CODEX_DIFFUSION_DTYPE", "auto") or "auto").strip().lower()
-        if unet_dtype not in _unet_dtype_options:
-            unet_dtype = "auto"
-        env["CODEX_DIFFUSION_DTYPE"] = unet_dtype
-        diff_device_raw = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
-        if diff_device_raw == "gpu":
-            diff_device_raw = "cuda"
-            env["CODEX_DIFFUSION_DEVICE"] = "cuda"
-        if diff_device_raw == "cpu" and unet_dtype != "fp32":
-            unet_dtype = "fp32"
-            env["CODEX_DIFFUSION_DTYPE"] = "fp32"
-        te_dtype = (env.get("CODEX_TE_DTYPE", "auto") or "auto").strip().lower()
-        if te_dtype not in _te_dtype_options:
-            te_dtype = "auto"
-        env["CODEX_TE_DTYPE"] = te_dtype
-        te_device_raw = env.get("CODEX_TE_DEVICE", "").strip().lower()
-        if te_device_raw == "gpu":
-            te_device_raw = "cuda"
-            env["CODEX_TE_DEVICE"] = "cuda"
-        if te_device_raw == "cpu" and te_dtype != "fp32":
-            te_dtype = "fp32"
-            env["CODEX_TE_DTYPE"] = "fp32"
-        vae_dtype = (env.get("CODEX_VAE_DTYPE", "auto") or "auto").strip().lower()
-        if vae_dtype not in _vae_dtype_options:
-            vae_dtype = "auto"
-        env["CODEX_VAE_DTYPE"] = vae_dtype
-        vae_device_raw = env.get("CODEX_VAE_DEVICE", "").strip().lower()
-        if vae_device_raw == "gpu":
-            vae_device_raw = "cuda"
-            env["CODEX_VAE_DEVICE"] = "cuda"
-        if vae_device_raw == "cpu" and vae_dtype != "fp32":
-            vae_dtype = "fp32"
-            env["CODEX_VAE_DTYPE"] = "fp32"
-
-        def _device_label(raw: str) -> str:
-            mapping = {
-                "cpu": "CPU",
-                "cuda": "GPU",
-                "mps": "MPS",
-                "xpu": "XPU",
-                "directml": "DirectML",
-                "dml": "DirectML",
-            }
-            return mapping.get(raw, "Auto")
-
-        diff_dev_label = _device_label(diff_device_raw)
-        te_dev_label = _device_label(te_device_raw)
-        vae_dev_label = _device_label(vae_device_raw)
-        swap_pol = env.get("CODEX_SWAP_POLICY", "cpu")
-        swap_mth = env.get("CODEX_SWAP_METHOD", "blocked")
-        smart_offload = env.get("CODEX_SMART_OFFLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
-        pin_shared = env.get("CODEX_PIN_SHARED_MEMORY", "0").strip().lower() in {"1", "true", "yes", "on"}
         return [
             ("Services in new terminal", f"[{ext}]", "toggle_extterm"),
-            ("SDPA Policy", f"[{pol}]", "cycle_sdpa"),
-            ("Attention Backend", f"[{attn_backend}]", "cycle_attn_backend"),
-            ("Attn Chunk Size", f"[{attn_chunk}]", "edit_attn_chunk"),
-            ("GGUF Cache Policy", f"[{gguf_pol}]", "cycle_gguf_pol"),
-            ("GGUF Cache Limit (MB)", f"[{gguf_lim}]", "edit_gguf_lim"),
-            ("Diffusion Device", f"[{diff_dev_label}]", "select_diff_device"),
-            ("DiT/UNet DType", f"[{unet_dtype}]", "cycle_unet_dtype"),
-            ("Text Encoder Device", f"[{te_dev_label}]", "select_te_device"),
-            ("Text Encoder DType", f"[{te_dtype}]", "cycle_te_dtype"),
-            ("VAE DType", f"[{vae_dtype}]", "cycle_vae_dtype"),
-            ("VAE Device", f"[{vae_dev_label}]", "select_vae_dev"),
-            ("Swap Policy", f"[{swap_pol}]", "cycle_swap_pol"),
-            ("Swap Method", f"[{swap_mth}]", "cycle_swap_mth"),
-            ("Smart Offload", f"[{'Enabled' if smart_offload else 'Disabled'}]", "toggle_smart_offload"),
-            ("Pin Shared Memory", f"[{'Enabled' if pin_shared else 'Disabled'}]", "toggle_pin_shared"),
-        ]
-
-    def _items_wan(self) -> List[Tuple[str, str, str]]:
-        env = self.env
-        order = env.get("WAN_I2V_ORDER", "lat_first")
-        offload_lvl = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
-        te_impl = env.get("WAN_TE_IMPL", "hf")
-        te_fp8_label = "Enabled" if te_impl == "cuda_fp8" else "Disabled"
-        sdpa_dbg = env.get("WAN_SDPA_DEBUG", "0").lower() in ("1", "true", "yes", "on")
-        dbg_hi = env.get("WAN_I2V_DEBUG_HI_DECODE", "0").lower() in ("1", "true", "yes", "on")
-        lat_stats = env.get("WAN_I2V_LAT_STATS", "0").lower() in ("1", "true", "yes", "on")
-        conv32 = env.get("WAN_I2V_CONV32", "0").lower() in ("1", "true", "yes", "on")
-        sanitize = env.get("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0").lower() in ("1", "true", "yes", "on")
-        clamp = env.get("WAN_I2V_DEBUG_CLAMP", "")
-        clamp_label = clamp if clamp else "Disabled"
-        return [
-            ("I2V Concat Order", f"[{order}]", "cycle_i2v_order"),
-            ("GGUF Offload Level", f"[{offload_lvl}]", "cycle_offload_lvl"),
-            ("Use cuda fp8 (TE)", f"[{te_fp8_label}]", "toggle_te_fp8"),
-            ("WAN_SDPA_DEBUG", f"[{'Enabled' if sdpa_dbg else 'Disabled'}]", "toggle_sdpa_debug"),
-            ("WAN_I2V_DEBUG_HI_DECODE", f"[{'Enabled' if dbg_hi else 'Disabled'}]", "toggle_hi_decode_debug"),
-            ("WAN_I2V_LAT_STATS", f"[{'Enabled' if lat_stats else 'Disabled'}]", "toggle_lat_stats"),
-            ("WAN_I2V_CONV32", f"[{'Enabled' if conv32 else 'Disabled'}]", "toggle_conv32"),
-            ("WAN_I2V_DEBUG_SANITIZE_TOKENS", f"[{'Enabled' if sanitize else 'Disabled'}]", "toggle_sanitize_tokens"),
-            ("WAN_I2V_DEBUG_CLAMP", f"[{clamp_label}]", "edit_debug_clamp"),
+            ("Runtime settings", "[Configured in Web UI]", "status"),
         ]
 
     def _items_debug(self) -> List[Tuple[str, str, str]]:
@@ -305,7 +204,6 @@ class BIOSApp:
         sampler = _enabled("CODEX_LOG_SAMPLER")
         cfg_delta = _enabled("CODEX_LOG_CFG_DELTA")
         sigmas = _enabled("CODEX_LOG_SIGMAS")
-        force_native = _enabled("CODEX_SAMPLER_FORCE_NATIVE")
         trace = _enabled("CODEX_TRACE_DEBUG")
         pipeline = _enabled("CODEX_PIPELINE_DEBUG")
         dump_latents = _enabled("CODEX_DUMP_LATENTS")
@@ -320,7 +218,6 @@ class BIOSApp:
             ("CFG Delta Logs", f"[{'Enabled' if cfg_delta else 'Disabled'}]", "toggle_cfg_delta_logs"),
             ("CFG Delta Steps (N)", f"[{cfg_delta_n}]", "edit_cfg_delta_n"),
             ("Sigma Ladder Logs", f"[{'Enabled' if sigmas else 'Disabled'}]", "toggle_sigma_logs"),
-            ("Force Native Sampler", f"[{'Enabled' if force_native else 'Disabled'}]", "toggle_force_native_sampler"),
             ("Trace Debug", f"[{'ON' if trace else 'OFF'}]", "toggle_trace_debug"),
             ("Trace Max Per Func", f"[{trace_max}]", "edit_trace_max"),
             ("Pipeline Debug", f"[{'ON' if pipeline else 'OFF'}]", "toggle_pipeline_debug"),
@@ -348,11 +245,6 @@ class BIOSApp:
             ("Codex WARNING", f"[{_flag_label('CODEX_LOG_WARNING', '1')}]", "toggle_codex_warning"),
             ("Codex ERROR", f"[{_flag_label('CODEX_LOG_ERROR', '1')}]", "toggle_codex_error"),
             ("Write Codex Log File", f"[{file_label}]", "toggle_log_file"),
-            # WAN Log Levels
-            ("WAN DEBUG", f"[{_flag_label('WAN_LOG_DEBUG', '0')}]", "toggle_log_debug"),
-            ("WAN INFO", f"[{_flag_label('WAN_LOG_INFO', '1')}]", "toggle_log_info"),
-            ("WAN WARNING", f"[{_flag_label('WAN_LOG_WARN', '1')}]", "toggle_log_warn"),
-            ("WAN ERROR", f"[{_flag_label('WAN_LOG_ERROR', '1')}]", "toggle_log_error"),
         ]
 
     def _help_for(self, tab: str, key: str) -> List[str]:
@@ -361,122 +253,9 @@ class BIOSApp:
                 "Launch API/UI in a separate Windows console window.",
                 "On Linux/macOS this is ignored (attached mode only).",
             ],
-            "SDPA Policy": [
-                "Select SDPA kernel preference: flash | mem_efficient | math.",
-                "Applied via WAN_SDPA_POLICY env when starting services.",
-            ],
-            "Attention Backend": [
-                "Global attention backend: torch-sdpa | xformers | sage.",
-                "Applied via CODEX_ATTENTION_BACKEND.",
-            ],
-            "Use cuda fp8 (TE)": [
-                "Toggle Text Encoder FP8 (CUDA) path.",
-                "On = use custom CUDA kernels (FP8) for TE; Off = use HF implementation.",
-                "Requires PyTorch >= 2.1 and compatible GPU; may reduce VRAM with slight precision loss.",
-                "Applied via WAN_TE_IMPL=(cuda_fp8|hf).",
-            ],
-            "Attn Chunk Size": [
-                "Split attention into chunks to cap peak VRAM during SDPA.",
-                "0 disables chunking. Use when hitting OOM: try 2048, then 1024.",
-                "Trade-off: smaller chunk → lower peak memory, but slower total time.",
-                "Applies to self/cross attention in DiT/UNet blocks.",
-                "Applied via CODEX_ATTN_CHUNK_SIZE.",
-            ],
-            "GGUF Cache Policy": [
-                "Control CPU-side cache of dequantized GGUF tensors (weights).",
-                "none: no cache (lowest RAM, more CPU dequant work).",
-                "cpu_lru: LRU cache in host RAM up to limit; reduces CPU work between steps.",
-                "Useful when models don't fit fully in VRAM and you reuse the same model.",
-                "Applied via CODEX_GGUF_CACHE_POLICY.",
-            ],
-            "GGUF Cache Limit (MB)": [
-                "Max RAM (in MB) used by cpu_lru GGUF cache.",
-                "Set to ~50% of free system RAM for safety. 0 disables cache.",
-                "Only applies when GGUF Cache Policy = cpu_lru.",
-                "Applied via CODEX_GGUF_CACHE_LIMIT_MB.",
-            ],
-            "Diffusion Device": [
-                "Where to run the Diffusion core (UNet/DiT): Auto | GPU | CPU.",
-                "CPU forces fp32 precision automatically.",
-                "Applied via CODEX_DIFFUSION_DEVICE=(cuda|cpu|auto).",
-            ],
-            "DiT/UNet DType": [
-                "Numerical dtype for the main denoiser (DiT/UNet).",
-                "fp16/bf16 recommended. fp32 enforced when device=CPU.",
-                "Applied via CODEX_DIFFUSION_DTYPE.",
-            ],
-            "Text Encoder Device": [
-                "Run Text Encoder on GPU | CPU | Auto.",
-                "CPU forces fp32 precision; GPU unlocks fp16/bf16/fp8.",
-                "Applied via CODEX_TE_DEVICE.",
-            ],
-            "Text Encoder DType": [
-                "Precision for Text Encoder (fp16/bf16/fp8/fp32).",
-                "Forced to fp32 when device=CPU.",
-                "Applied via CODEX_TE_DTYPE.",
-            ],
-            "VAE DType": [
-                "VAE precision (fp16/bf16/fp32).",
-                "Applied via CODEX_VAE_DTYPE.",
-            ],
-            "VAE Device": [
-                "Where to run the VAE: Auto | GPU | CPU.",
-                "CPU forces fp32 precision automatically.",
-                "Applied via CODEX_VAE_DEVICE.",
-            ],
-            "Swap Policy": [
-                "Swap/offload policy: never | cpu | shared (pinned).",
-                "Applied via CODEX_SWAP_POLICY.",
-            ],
-            "Swap Method": [
-                "Transfer method: blocked | async (CUDA streams).",
-                "Applied via CODEX_SWAP_METHOD.",
-            ],
-            "Smart Offload": [
-                "Stage-wise VRAM management: load only the components needed for the current stage.",
-                "Enabled: TE → UNet → VAE are moved between CPU/GPU automatically.",
-                "Helps GPUs with limited VRAM avoid OOM at the cost of extra transfers.",
-                "Applied via CODEX_SMART_OFFLOAD or --smart-offload.",
-            ],
-            "Pin Shared Memory": [
-                "Keep CPU tensors in pinned host memory after offloading (faster GPU reloads).",
-                "Enable only when Smart Offload is on and you need faster transfers; uses extra RAM.",
-                "Applied via CODEX_PIN_SHARED_MEMORY or --pin-shared-memory.",
-            ],
-            
-            "I2V Concat Order": [
-                "Order for I2V channels when assembling 36ch volume:",
-                "lat_first (latents first, then mask+img) or lat_last.",
-                "Applied via WAN_I2V_ORDER.",
-            ],
-            "WAN_SDPA_DEBUG": [
-                "Verbose log of SDPA backend selection (flash/mem/math).",
-                "Effective when running WAN22 pipelines.",
-            ],
-            "WAN_I2V_DEBUG_HI_DECODE": [
-                "Debug: decodificar tokens do High antes do handoff.",
-                "Isola NaNs entre High/Low (usa 16 canais base).",
-            ],
-            "WAN_I2V_LAT_STATS": [
-                "Print min/max/mean/std of latents before VAE decode.",
-                "Useful when preview shows non-finite outputs.",
-            ],
-            "WAN_I2V_STRICT_VAE": [
-                "If latents or decoded images contain NaN/Inf, raise",
-                "a RuntimeError instead of sanitizing output.",
-            ],
-            "WAN_I2V_DEBUG_CLAMP": [
-                "Clamp latents to ±value in preview decode only.",
-                "Empty disables. Does not affect final decode.",
-            ],
-            "WAN_I2V_CONV32": [
-                "Compute patch embed/unembed in float32 to reduce overflow.",
-                "May reduce performance; recommended only for debugging.",
-            ],
-            "WAN_I2V_DEBUG_SANITIZE_TOKENS": [
-                "Preview-only: replace NaN with 0, +Inf with +1, -Inf with -1",
-                "before unembedding to latents. Helps visualize bad tokens",
-                "without touching the actual pipeline output.",
+            "Runtime settings": [
+                "Runtime settings (device/dtype/attention/cache/offload) are configured via the Web UI.",
+                "This launcher no longer applies CODEX_* runtime settings via environment variables.",
             ],
             "Codex DEBUG": [
                 "Enable/disable DEBUG level logs from Codex backend.",
@@ -537,11 +316,6 @@ class BIOSApp:
                 "Dump full sigma ladder (first/last and compact summary).",
                 "Applies via CODEX_LOG_SIGMAS.",
             ],
-            "Force Native Sampler": [
-                "Force Codex to use the native sampler loop instead of k-diffusion where available.",
-                "Useful for isolating sampler bugs or comparing Codex vs legacy behavior.",
-                "Applies via CODEX_SAMPLER_FORCE_NATIVE=1.",
-            ],
             "Dump Latents": [
                 "Save final latent tensor after each sampling run.",
                 "Applies via CODEX_DUMP_LATENTS; files stored under logs/diagnostics by default.",
@@ -550,22 +324,6 @@ class BIOSApp:
                 "Optional file or directory to receive latent dumps.",
                 "Directory → auto filenames; file path → overwrite each run.",
                 "Applies via CODEX_DUMP_LATENTS_PATH.",
-            ],
-            "WAN DEBUG": [
-                "Enable/disable DEBUG level logs from WAN runtime (very verbose).",
-                "Applied via WAN_LOG_DEBUG.",
-            ],
-            "WAN INFO": [
-                "Enable/disable INFO level logs from WAN runtime.",
-                "Applied via WAN_LOG_INFO.",
-            ],
-            "WAN WARNING": [
-                "Enable/disable WARNING level logs from WAN runtime.",
-                "Applied via WAN_LOG_WARN.",
-            ],
-            "WAN ERROR": [
-                "Enable/disable ERROR level logs from WAN runtime.",
-                "Applied via WAN_LOG_ERROR.",
             ],
             "Start API": ["Start backend API server."],
             "Restart API": ["Restart backend API server (stop + start)."],
@@ -592,7 +350,6 @@ class BIOSApp:
             return
         svc = self.services[name]
         env = self.store.build_env()
-        env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
         if action == "start":
             svc.start(env, external_terminal=self.meta.external_terminal)
         elif action == "restart":
@@ -607,204 +364,11 @@ class BIOSApp:
         if not (0 <= idx < len(items)):
             return
         _key, _val, action = items[idx]
-        env = self.env
         if action == "toggle_extterm":
             self.meta.external_terminal = not self.meta.external_terminal
-        elif action == "cycle_sdpa":
-            order = ["flash", "mem_efficient", "math"]
-            cur = self.meta.sdpa_policy
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            self.meta.sdpa_policy = order[i]
-            env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
-        elif action == "cycle_attn_backend":
-            order = ["torch-sdpa", "xformers", "sage"]
-            cur = env.get("CODEX_ATTENTION_BACKEND", "torch-sdpa")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_ATTENTION_BACKEND"] = order[i]
-        elif action == "edit_attn_chunk":
-            val = self._prompt("Attn chunk size (0 disables): ")
-            if val is not None and val.isdigit():
-                env["CODEX_ATTN_CHUNK_SIZE"] = val
-        elif action == "cycle_gguf_pol":
-            order = ["none", "cpu_lru"]
-            cur = env.get("CODEX_GGUF_CACHE_POLICY", "none")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_GGUF_CACHE_POLICY"] = order[i]
-        elif action == "edit_gguf_lim":
-            val = self._prompt("GGUF cache limit MB (0 disables): ")
-            if val is not None and val.isdigit():
-                env["CODEX_GGUF_CACHE_LIMIT_MB"] = val
-        elif action == "cycle_unet_dtype":
-            order = ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
-            cur = (env.get("CODEX_DIFFUSION_DTYPE", "auto") or "auto").strip().lower()
-            if cur not in order:
-                cur = "auto"
-            if env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower() == "cpu":
-                env["CODEX_DIFFUSION_DTYPE"] = "fp32"
-                self.message = "Diffusion dtype locked to fp32 on CPU."
-                return
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_DIFFUSION_DTYPE"] = order[i]
-        elif action == "cycle_te_dtype":
-            order = ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"]
-            cur = (env.get("CODEX_TE_DTYPE", "auto") or "auto").strip().lower()
-            if cur not in order:
-                cur = "auto"
-            if env.get("CODEX_TE_DEVICE", "").strip().lower() == "cpu":
-                env["CODEX_TE_DTYPE"] = "fp32"
-                self.message = "Text Encoder dtype locked to fp32 on CPU."
-                return
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_TE_DTYPE"] = order[i]
-        elif action == "cycle_vae_dtype":
-            order = ["auto", "fp16", "bf16", "fp32"]
-            cur = (env.get("CODEX_VAE_DTYPE", "auto") or "auto").strip().lower()
-            if cur not in order:
-                cur = "auto"
-            if env.get("CODEX_VAE_DEVICE", "").strip().lower() == "cpu":
-                env["CODEX_VAE_DTYPE"] = "fp32"
-                self.message = "VAE dtype locked to fp32 on CPU."
-                return
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_VAE_DTYPE"] = order[i]
-        elif action == "select_vae_dev":
-            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
-            cur = env.get("CODEX_VAE_DEVICE", "").strip().lower()
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            nxt = order[i]
-            env["CODEX_VAE_DEVICE"] = nxt
-            if nxt == "cpu":
-                env["CODEX_VAE_DTYPE"] = "fp32"
-        elif action == "select_diff_device":
-            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
-            cur = env.get("CODEX_DIFFUSION_DEVICE", "").strip().lower()
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            nxt = order[i]
-            env["CODEX_DIFFUSION_DEVICE"] = nxt
-            if nxt == "cpu":
-                env["CODEX_DIFFUSION_DTYPE"] = "fp32"
-        elif action == "select_te_device":
-            order = ["", "cuda", "cpu"]  # Auto, GPU, CPU
-            cur = env.get("CODEX_TE_DEVICE", "").strip().lower()
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            nxt = order[i]
-            env["CODEX_TE_DEVICE"] = nxt
-            if nxt == "cpu":
-                env["CODEX_TE_DTYPE"] = "fp32"
-        elif action == "cycle_swap_pol":
-            order = ["never", "cpu", "shared"]
-            cur = env.get("CODEX_SWAP_POLICY", "cpu")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_SWAP_POLICY"] = order[i]
-        elif action == "cycle_swap_mth":
-            order = ["blocked", "async"]
-            cur = env.get("CODEX_SWAP_METHOD", "blocked")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["CODEX_SWAP_METHOD"] = order[i]
-        elif action == "toggle_smart_offload":
-            enabled = env.get("CODEX_SMART_OFFLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
-            if enabled:
-                env.pop("CODEX_SMART_OFFLOAD", None)
-                self.message = "Smart Offload disabled."
-            else:
-                env["CODEX_SMART_OFFLOAD"] = "1"
-                self.message = "Smart Offload enabled (stage-wise VRAM loads)."
-        elif action == "toggle_pin_shared":
-            enabled = env.get("CODEX_PIN_SHARED_MEMORY", "0").strip().lower() in {"1", "true", "yes", "on"}
-            if enabled:
-                env.pop("CODEX_PIN_SHARED_MEMORY", None)
-                self.message = "Pinned shared memory disabled."
-            else:
-                env["CODEX_PIN_SHARED_MEMORY"] = "1"
-                self.message = "Pinned shared memory enabled for offloaded models."
-
-    def _act_wan(self, idx: int) -> None:
-        items = self._items_wan()
-        if not (0 <= idx < len(items)):
+        else:
             return
-        _key, _val, action = items[idx]
-        env = self.env
-        if action == "cycle_i2v_order":
-            order = ["lat_first", "lat_last"]
-            cur = env.get("WAN_I2V_ORDER", "lat_first")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["WAN_I2V_ORDER"] = order[i]
-        elif action == "cycle_offload_lvl":
-            order = ["0", "1", "2", "3"]
-            cur = env.get("WAN_GGUF_OFFLOAD_LEVEL", "3")
-            try:
-                i = (order.index(cur) + 1) % len(order)
-            except ValueError:
-                i = 0
-            env["WAN_GGUF_OFFLOAD_LEVEL"] = order[i]
-        elif action == "toggle_te_fp8":
-            cur = env.get("WAN_TE_IMPL", "hf").strip().lower()
-            env["WAN_TE_IMPL"] = "cuda_fp8" if cur != "cuda_fp8" else "hf"
-        elif action == "toggle_sdpa_debug":
-            cur = env.get("WAN_SDPA_DEBUG", "0").strip().lower()
-            env["WAN_SDPA_DEBUG"] = "1" if cur in ("0", "", "false", "no") else "0"
-        elif action == "toggle_hi_decode_debug":
-            cur = env.get("WAN_I2V_DEBUG_HI_DECODE", "0").strip().lower()
-            env["WAN_I2V_DEBUG_HI_DECODE"] = "1" if cur in ("0", "", "false", "no") else "0"
-        elif action == "toggle_lat_stats":
-            cur = env.get("WAN_I2V_LAT_STATS", "0").strip().lower()
-            env["WAN_I2V_LAT_STATS"] = "1" if cur in ("0", "", "false", "no") else "0"
-        elif action == "toggle_conv32":
-            cur = env.get("WAN_I2V_CONV32", "0").strip().lower()
-            env["WAN_I2V_CONV32"] = "1" if cur in ("0", "", "false", "no") else "0"
-        elif action == "toggle_sanitize_tokens":
-            cur = env.get("WAN_I2V_DEBUG_SANITIZE_TOKENS", "0").strip().lower()
-            env["WAN_I2V_DEBUG_SANITIZE_TOKENS"] = "1" if cur in ("0", "", "false", "no") else "0"
-        elif action == "edit_debug_clamp":
-            val = self._prompt("Debug clamp (abs, empty to disable): ")
-            if val is None:
-                return
-            val = val.strip()
-            if not val:
-                env["WAN_I2V_DEBUG_CLAMP"] = ""
-                return
-            try:
-                float(val)
-            except Exception:
-                self.message = "Invalid clamp value; expect float or empty"
-            else:
-                env["WAN_I2V_DEBUG_CLAMP"] = val
+
     def _act_logging(self, idx: int) -> None:
         items = self._items_logging()
         if not (0 <= idx < len(items)):
@@ -835,15 +399,6 @@ class BIOSApp:
                 log_path = self._ensure_log_file()
                 env["CODEX_LOG_FILE"] = log_path
                 self.message = f"Logging to {Path(log_path).name}"
-        # WAN log level toggles
-        elif action == "toggle_log_debug":
-            _toggle_flag("WAN_LOG_DEBUG", "0")
-        elif action == "toggle_log_info":
-            _toggle_flag("WAN_LOG_INFO", "1")
-        elif action == "toggle_log_warn":
-            _toggle_flag("WAN_LOG_WARN", "1")
-        elif action == "toggle_log_error":
-            _toggle_flag("WAN_LOG_ERROR", "1")
 
     def _act_debug(self, idx: int) -> None:
         items = self._items_debug()
@@ -905,12 +460,6 @@ class BIOSApp:
                 "CODEX_LOG_SIGMAS",
                 message_on="Sigma ladder logs enabled (restart API to apply).",
                 message_off="Sigma ladder logs disabled.",
-            )
-        elif action == "toggle_force_native_sampler":
-            _toggle_flag(
-                "CODEX_SAMPLER_FORCE_NATIVE",
-                message_on="Native sampler forced (k-diffusion disabled). Restart API to apply.",
-                message_off="Native sampler automatic (k-diffusion allowed). Restart API to apply.",
             )
         elif action == "toggle_trace_debug":
             _toggle_flag(
@@ -989,8 +538,6 @@ class BIOSApp:
                 items = self._items_main()
             elif tab_name == "Runtime":
                 items = self._items_runtime()
-            elif tab_name == "WAN":
-                items = self._items_wan()
             elif tab_name == "DEBUG":
                 items = self._items_debug()
             elif tab_name == "Logging":
@@ -1118,8 +665,6 @@ class BIOSApp:
             elif tab == "Runtime":
                 # Open BIOS-style popup for multi-choice fields
                 self._act_runtime_popup_or_apply(self.sel_index)
-            elif tab == "WAN":
-                self._act_wan_popup_or_apply(self.sel_index)
             elif tab == "DEBUG":
                 self._act_debug(self.sel_index)
             elif tab == "Logging":
@@ -1132,8 +677,6 @@ class BIOSApp:
         if ch in (ord('+'), ord('-')):
             if tab == "Runtime":
                 self._act_runtime(self.sel_index)
-            elif tab == "WAN":
-                self._act_wan(self.sel_index)
             elif tab == "DEBUG":
                 self._act_debug(self.sel_index)
             elif tab == "Logging":
@@ -1154,7 +697,6 @@ class BIOSApp:
         # Function keys shortcuts
         if ch == curses.KEY_F2:
             env = self.store.build_env()
-            env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
             self.services["API"].start(env, external_terminal=self.meta.external_terminal)
             return
         if ch == curses.KEY_F3:
@@ -1163,7 +705,6 @@ class BIOSApp:
             return
         if ch == curses.KEY_F4:
             env = self.store.build_env()
-            env["WAN_SDPA_POLICY"] = self.meta.sdpa_policy
             self.services["UI"].start(env, external_terminal=self.meta.external_terminal)
             return
         if ch == curses.KEY_F5:
@@ -1226,83 +767,7 @@ class BIOSApp:
             return
 
     def _act_runtime_popup_or_apply(self, idx: int) -> None:
-        items = self._items_runtime()
-        if not (0 <= idx < len(items)):
-            return
-        key, _val, action = items[idx]
-        env = self.env
-        choices_map = {
-            'cycle_sdpa': ["flash", "mem_efficient", "math"],
-            'cycle_attn_backend': ["torch-sdpa", "xformers", "sage"],
-            'cycle_gguf_pol': ["none", "cpu_lru"],
-            'cycle_unet_dtype': ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
-            'cycle_te_dtype': ["auto", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2", "fp32"],
-            'cycle_vae_dtype': ["auto", "fp16", "bf16", "fp32"],
-            'cycle_swap_pol': ["never", "cpu", "shared"],
-            'cycle_swap_mth': ["blocked", "async"],
-            'select_diff_device': ["Auto", "GPU", "CPU"],
-            'select_te_device': ["Auto", "GPU", "CPU"],
-            'select_vae_dev': ["Auto", "GPU", "CPU"],
-        }
-        if action not in choices_map:
-            return self._act_runtime(idx)
-        options = choices_map[action]
-
-        def _device_option_label(key_name: str) -> str:
-            raw = env.get(key_name, "").strip().lower()
-            if raw == "gpu":
-                env[key_name] = "cuda"
-                raw = "cuda"
-            if raw == "cuda":
-                return "GPU"
-            if raw == "cpu":
-                return "CPU"
-            return "Auto"
-
-        cur_val = {
-            'cycle_sdpa': self.meta.sdpa_policy,
-            'cycle_attn_backend': env.get('CODEX_ATTENTION_BACKEND', 'torch-sdpa'),
-            'cycle_gguf_pol': env.get('CODEX_GGUF_CACHE_POLICY', 'none'),
-            'cycle_unet_dtype': (env.get('CODEX_DIFFUSION_DTYPE', 'auto') or 'auto').strip().lower(),
-            'cycle_te_dtype': (env.get('CODEX_TE_DTYPE', 'auto') or 'auto').strip().lower(),
-            'cycle_vae_dtype': (env.get('CODEX_VAE_DTYPE', 'auto') or 'auto').strip().lower(),
-            'cycle_swap_pol': env.get('CODEX_SWAP_POLICY', 'cpu'),
-            'cycle_swap_mth': env.get('CODEX_SWAP_METHOD', 'blocked'),
-            'select_diff_device': _device_option_label('CODEX_DIFFUSION_DEVICE'),
-            'select_te_device': _device_option_label('CODEX_TE_DEVICE'),
-            'select_vae_dev': _device_option_label('CODEX_VAE_DEVICE'),
-        }[action]
-        try:
-            sel = options.index(cur_val)
-        except ValueError:
-            sel = 0
-        self.popup_selection = (key, options, sel, action)
-        self._draw_select_popup(key, options, sel)
-    def _act_wan_popup_or_apply(self, idx: int) -> None:
-        items = self._items_wan()
-        if not (0 <= idx < len(items)):
-            return
-        key, _val, action = items[idx]
-        env = self.env
-        choices_map = {
-            'cycle_i2v_order': ["lat_first", "lat_last"],
-            'cycle_offload_lvl': ["0", "1", "2", "3"],
-        }
-        if action not in choices_map:
-            return self._act_wan(idx)
-        options = choices_map[action]
-        cur_val = {
-            'cycle_i2v_order': env.get('WAN_I2V_ORDER', 'lat_first'),
-            'cycle_offload_lvl': env.get('WAN_GGUF_OFFLOAD_LEVEL', '3'),
-        }[action]
-        try:
-            sel = options.index(cur_val)
-        except ValueError:
-            sel = 0
-        self.popup_selection = (key, options, sel, action)
-        self._draw_select_popup(key, options, sel)
-
-
+        return self._act_runtime(idx)
     def _draw_select_popup(self, title: str, options: List[str], index: int) -> None:
         self.popup_active = True
         self.stdscr.nodelay(True)
@@ -1335,67 +800,8 @@ class BIOSApp:
                 self.popup_selection = (title, options, index, action0)
 
     def _apply_popup_selection(self, action: str, value: str) -> None:
-        env = self.env
-        if action == 'cycle_sdpa':
-            self.meta.sdpa_policy = value
-            env['WAN_SDPA_POLICY'] = value
-        elif action == 'cycle_offload_lvl':
-            env['WAN_GGUF_OFFLOAD_LEVEL'] = value
-        elif action == 'cycle_attn_backend':
-            env['CODEX_ATTENTION_BACKEND'] = value
-        elif action == 'cycle_gguf_pol':
-            env['CODEX_GGUF_CACHE_POLICY'] = value
-        elif action == 'cycle_unet_dtype':
-            if env.get('CODEX_DIFFUSION_DEVICE', '').strip().lower() == 'cpu' and value != 'fp32':
-                env['CODEX_DIFFUSION_DTYPE'] = 'fp32'
-                self.message = "Diffusion dtype locked to fp32 on CPU."
-            else:
-                env['CODEX_DIFFUSION_DTYPE'] = value
-        elif action == 'cycle_te_dtype':
-            if env.get('CODEX_TE_DEVICE', '').strip().lower() == 'cpu' and value != 'fp32':
-                env['CODEX_TE_DTYPE'] = 'fp32'
-                self.message = "Text Encoder dtype locked to fp32 on CPU."
-            else:
-                env['CODEX_TE_DTYPE'] = value
-        elif action == 'cycle_vae_dtype':
-            if env.get('CODEX_VAE_DEVICE', '').strip().lower() == 'cpu' and value != 'fp32':
-                env['CODEX_VAE_DTYPE'] = 'fp32'
-                self.message = "VAE dtype locked to fp32 on CPU."
-            else:
-                env['CODEX_VAE_DTYPE'] = value
-        elif action == 'cycle_swap_pol':
-            env['CODEX_SWAP_POLICY'] = value
-        elif action == 'cycle_swap_mth':
-            env['CODEX_SWAP_METHOD'] = value
-        elif action == 'cycle_i2v_order':
-            env['WAN_I2V_ORDER'] = value
-        elif action == 'select_diff_device':
-            v = value.strip().lower()
-            if v == 'gpu':
-                env['CODEX_DIFFUSION_DEVICE'] = 'cuda'
-            elif v == 'cpu':
-                env['CODEX_DIFFUSION_DEVICE'] = 'cpu'
-                env['CODEX_DIFFUSION_DTYPE'] = 'fp32'
-            else:
-                env['CODEX_DIFFUSION_DEVICE'] = ''
-        elif action == 'select_te_device':
-            v = value.strip().lower()
-            if v == 'gpu':
-                env['CODEX_TE_DEVICE'] = 'cuda'
-            elif v == 'cpu':
-                env['CODEX_TE_DEVICE'] = 'cpu'
-                env['CODEX_TE_DTYPE'] = 'fp32'
-            else:
-                env['CODEX_TE_DEVICE'] = ''
-        elif action == 'select_vae_dev':
-            v = value.strip().lower()
-            if v == 'gpu':
-                env['CODEX_VAE_DEVICE'] = 'cuda'
-            elif v == 'cpu':
-                env['CODEX_VAE_DEVICE'] = 'cpu'
-                env['CODEX_VAE_DTYPE'] = 'fp32'
-            else:
-                env['CODEX_VAE_DEVICE'] = ''
+        _ = (action, value)
+        self.message = "Popup setting selection removed; configure runtime settings in the Web UI."
 
 
 

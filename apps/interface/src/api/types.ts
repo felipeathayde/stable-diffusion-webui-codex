@@ -79,6 +79,14 @@ export interface ModelsResponse {
   current: string | null
 }
 
+export interface FileMetadataResponse {
+  path: string
+  kind: 'gguf' | 'safetensors'
+  flat: Record<string, unknown>
+  nested: Record<string, unknown>
+  summary: Record<string, unknown>
+}
+
 export interface SamplersResponse {
   samplers: SamplerInfo[]
 }

@@ -72,6 +72,7 @@ import type {
   UiPresetApplyResponse,
   InventoryResponse,
   EngineCapabilitiesResponse,
+  FileMetadataResponse,
 } from './types'
 import type { Txt2ImgRequest } from './payloads'
 
@@ -145,6 +146,10 @@ export function refreshModels(): Promise<ModelsResponse> {
 
 export function fetchModelInventory(): Promise<InventoryResponse> {
   return requestJsonCached<InventoryResponse>('/models/inventory')
+}
+
+export function fetchFileMetadata(path: string): Promise<FileMetadataResponse> {
+  return requestJson<FileMetadataResponse>(`/models/file-metadata?path=${encodeURIComponent(path)}`)
 }
 
 export async function refreshModelInventory(): Promise<InventoryResponse> {

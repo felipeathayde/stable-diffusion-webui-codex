@@ -24,6 +24,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api
 from apps.backend.interfaces.api.serializers import _serialize_checkpoint
+from apps.backend.interfaces.api.file_metadata import read_file_metadata
 
 
 def build_router(
@@ -72,6 +73,18 @@ def build_router(
             "wan22": {"gguf": _normalize_inventory_for_api(inv.get("wan22", []))},
             "metadata": _normalize_inventory_for_api(inv.get("metadata", [])),
         }
+
+    @router.get("/api/models/file-metadata")
+    def get_file_metadata(path: str = Query(..., description="Repo-relative or absolute path to a weights file.")) -> Dict[str, Any]:
+        try:
+            result = read_file_metadata(path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="file not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        return result.as_dict()
 
     @router.post("/api/models/inventory/refresh")
     def refresh_models_inventory() -> Dict[str, Any]:

@@ -20,7 +20,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, replace
 import time
 from typing import Sequence
@@ -534,8 +533,8 @@ class Txt2ImgPipelineRunner:
         load_opts = EngineLoadOptions(
             device=None,
             dtype=None,
-            attention_backend=os.getenv("CODEX_ATTENTION_BACKEND"),
-            accelerator=os.getenv("CODEX_ACCELERATOR"),
+            attention_backend=None,
+            accelerator=None,
             vae_path=None,
         )
         try:

@@ -166,19 +166,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--core-device",
         choices=device_choices,
         default=None,
-        help="Explicit device for diffusion core (overrides env/settings).",
+        help="Explicit device for diffusion core (overrides saved WebUI settings).",
     )
     parser.add_argument(
         "--te-device",
         choices=device_choices,
         default=None,
-        help="Explicit device for text encoder (overrides env/settings).",
+        help="Explicit device for text encoder (overrides saved WebUI settings).",
     )
     parser.add_argument(
         "--vae-device",
         choices=device_choices,
         default=None,
-        help="Explicit device for VAE (overrides env/settings).",
+        help="Explicit device for VAE (overrides saved WebUI settings).",
     )
 
     dtype_choices = ["auto", "fp16", "bf16", "fp32", "fp8_e4m3fn", "fp8_e5m2"]
@@ -186,34 +186,34 @@ def _build_parser() -> argparse.ArgumentParser:
         "--core-dtype",
         choices=dtype_choices,
         default=None,
-        help="Preferred dtype for diffusion core (overrides env/settings).",
+        help="Preferred dtype for diffusion core (overrides saved WebUI settings).",
     )
     parser.add_argument(
         "--te-dtype",
         choices=dtype_choices,
         default=None,
-        help="Preferred dtype for text encoder (overrides env/settings).",
+        help="Preferred dtype for text encoder (overrides saved WebUI settings).",
     )
     parser.add_argument(
         "--vae-dtype",
         choices=["auto", "fp16", "bf16", "fp32"],
         default=None,
-        help="Preferred dtype for VAE (overrides env/settings).",
+        help="Preferred dtype for VAE (overrides saved WebUI settings).",
     )
 
     return parser
 
 
 _DEVICE_DIRECTIVES = (
-    ("core_device", "CODEX_DIFFUSION_DEVICE", "codex_diffusion_device"),
-    ("te_device", "CODEX_TE_DEVICE", "codex_te_device"),
-    ("vae_device", "CODEX_VAE_DEVICE", "codex_vae_device"),
+    ("core_device", "codex_diffusion_device"),
+    ("te_device", "codex_te_device"),
+    ("vae_device", "codex_vae_device"),
 )
 
 _DTYPE_DIRECTIVES = (
-    ("core_dtype", "CODEX_DIFFUSION_DTYPE", "codex_diffusion_dtype"),
-    ("te_dtype", "CODEX_TE_DTYPE", "codex_te_dtype"),
-    ("vae_dtype", "CODEX_VAE_DTYPE", "codex_vae_dtype"),
+    ("core_dtype", "codex_diffusion_dtype"),
+    ("te_dtype", "codex_te_dtype"),
+    ("vae_dtype", "codex_vae_dtype"),
 )
 
 
@@ -247,25 +247,16 @@ def _apply_source_overrides(
         text = str(value).strip()
         return text or None
 
-    for flag_attr, env_key, settings_key in _DEVICE_DIRECTIVES + _DTYPE_DIRECTIVES:
+    for flag_attr, settings_key in _DEVICE_DIRECTIVES + _DTYPE_DIRECTIVES:
         raw = getattr(ns, flag_attr, None)
         if raw is not None:
             text = str(raw).strip().lower()
-            if not text or text == "auto":
-                env_map.pop(env_key, None)
-                setattr(ns, flag_attr, None)
-            else:
-                env_map[env_key] = text
-                setattr(ns, flag_attr, text)
+            setattr(ns, settings_key, None if not text or text == "auto" else text)
             continue
 
-        if not _has_value(env_map.get(env_key)):
-            setting_val = _setting_value(settings_key)
-            if setting_val:
-                env_map[env_key] = setting_val
-
-    if getattr(ns, "smart_offload", False):
-        env_map["CODEX_SMART_OFFLOAD"] = "1"
+        setting_val = _setting_value(settings_key)
+        if setting_val:
+            setattr(ns, settings_key, setting_val)
 
     if getattr(ns, "debug_conditioning", False):
         env_map["CODEX_DEBUG_COND"] = "1"
@@ -273,16 +264,15 @@ def _apply_source_overrides(
     if getattr(ns, "debug_preview_factors", False):
         env_map["CODEX_DEBUG_PREVIEW_FACTORS"] = "1"
 
-    if getattr(ns, "pin_shared_memory", False):
-        env_map["CODEX_PIN_SHARED_MEMORY"] = "1"
+    _ = env_map  # env_map only carries debug/log vars now (settings are payload/options-driven)
 
 
 def _validate_required_devices(ns: argparse.Namespace) -> None:
     missing: list[str] = []
     for attr, label in (
-        ("codex_diffusion_device", "CODEX_DIFFUSION_DEVICE"),
-        ("codex_te_device", "CODEX_TE_DEVICE"),
-        ("codex_vae_device", "CODEX_VAE_DEVICE"),
+        ("codex_diffusion_device", "codex_diffusion_device"),
+        ("codex_te_device", "codex_te_device"),
+        ("codex_vae_device", "codex_vae_device"),
     ):
         value = getattr(ns, attr, None)
         if value is None:
@@ -445,30 +435,30 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         elif v in {"fp8_e5m2", "fp8-e5m2", "fp8_e5"}:
             ns.clip_in_fp8_e5m2 = True
 
-    diffusion_device_choice = _normalize_device_choice(env.get("CODEX_DIFFUSION_DEVICE"))
-    diffusion_dtype_raw = env.get("CODEX_DIFFUSION_DTYPE") or env.get("WEBUI_CORE_DTYPE")
+    diffusion_device_choice = _normalize_device_choice(getattr(ns, "codex_diffusion_device", None))
+    diffusion_dtype_raw = getattr(ns, "codex_diffusion_dtype", None)
     diffusion_dtype_choice = _normalize_dtype_choice(diffusion_dtype_raw, allow_fp8=True)
-    if diffusion_device_choice == "cpu" and diffusion_dtype_choice != "fp32":
+    if diffusion_device_choice == "cpu" and diffusion_dtype_choice not in (None, "fp32"):
         diffusion_dtype_choice = "fp32"
     _set_core_dtype(diffusion_dtype_choice or diffusion_dtype_raw)
     ns.codex_diffusion_device = diffusion_device_choice
     ns.codex_diffusion_dtype = diffusion_dtype_choice
 
-    vae_device_choice = _normalize_device_choice(env.get("CODEX_VAE_DEVICE"))
-    vae_dtype_raw = env.get("CODEX_VAE_DTYPE") or env.get("WEBUI_VAE_DTYPE")
+    vae_device_choice = _normalize_device_choice(getattr(ns, "codex_vae_device", None))
+    vae_dtype_raw = getattr(ns, "codex_vae_dtype", None)
     vae_dtype_choice = _normalize_dtype_choice(vae_dtype_raw, allow_fp8=False)
     if vae_device_choice == "cpu":
         ns.vae_in_cpu = True
-        if vae_dtype_choice != "fp32":
+        if vae_dtype_choice not in (None, "fp32"):
             vae_dtype_choice = "fp32"
     _set_vae_dtype(vae_dtype_choice or vae_dtype_raw)
     ns.codex_vae_device = vae_device_choice
     ns.codex_vae_dtype = vae_dtype_choice
 
-    te_device_choice = _normalize_device_choice(env.get("CODEX_TE_DEVICE"))
-    te_dtype_raw = env.get("CODEX_TE_DTYPE")
+    te_device_choice = _normalize_device_choice(getattr(ns, "codex_te_device", None))
+    te_dtype_raw = getattr(ns, "codex_te_dtype", None)
     te_dtype_choice = _normalize_dtype_choice(te_dtype_raw, allow_fp8=True)
-    if te_device_choice == "cpu" and te_dtype_choice != "fp32":
+    if te_device_choice == "cpu" and te_dtype_choice not in (None, "fp32"):
         te_dtype_choice = "fp32"
     _set_te_dtype(te_dtype_choice or te_dtype_raw)
     ns.codex_te_device = te_device_choice
@@ -480,28 +470,11 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     if te_device_choice == "cpu" and getattr(ns, "clip_in_fp16", False):
         ns.clip_in_fp16 = False
 
-    swap_policy = (env.get("CODEX_SWAP_POLICY") or env.get("WEBUI_SWAP_POLICY") or "").lower()
-    if swap_policy in {"never", "cpu", "shared"}:
-        ns.swap_policy = swap_policy
-
-    swap_method = (env.get("CODEX_SWAP_METHOD") or env.get("WEBUI_SWAP_METHOD") or "").lower()
-    if swap_method in {"blocked", "async"}:
-        ns.swap_method = swap_method
-
-    if _truthy(env.get("CODEX_GPU_PREFER_CONSTRUCT")):
-        ns.gpu_prefer_construct = True
-
-    if _truthy(env.get("CODEX_SMART_OFFLOAD")):
-        ns.smart_offload = True
-
     if _truthy(env.get("CODEX_DEBUG_COND")):
         ns.debug_conditioning = True
 
     if _truthy(env.get("CODEX_DEBUG_PREVIEW_FACTORS")):
         ns.debug_preview_factors = True
-
-    if _truthy(env.get("CODEX_PIN_SHARED_MEMORY")):
-        ns.pin_shared_memory = True
 
     # Global call tracing (function-level). This toggles a runtime hook in
     # the API entrypoint; we keep the flag for visibility in the parsed args.
@@ -600,7 +573,6 @@ _args: argparse.Namespace | None = None
 _memory_config: RuntimeMemoryConfig | None = None
 _UNKNOWN: list[str] = []
 
-
 def initialize(
     argv: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
@@ -643,9 +615,9 @@ def initialize(
         namespace.trace_debug_max_per_func = 0
     _apply_env_overrides(namespace, env_map)
 
-    config = build_runtime_memory_config(namespace)
     if strict:
         _validate_required_devices(namespace)
+    config = build_runtime_memory_config(namespace)
 
     _args = namespace
     _memory_config = config

@@ -24,6 +24,8 @@ from PIL import Image, PngImagePlugin
 import piexif
 import piexif.helper
 
+from apps.backend.services import options_store
+
 
 class MediaService:
     """Image encode/decode helpers for API/service layers."""
@@ -76,9 +78,14 @@ class MediaService:
         with BytesIO() as output_bytes:
             if isinstance(image, str):
                 return image
-            fmt = os.getenv("CODEX_SAMPLES_FORMAT", "png").lower()
-            jpeg_quality = int(os.getenv("CODEX_JPEG_QUALITY", "95"))
-            webp_lossless = os.getenv("CODEX_WEBP_LOSSLESS", "0") in ("1", "true", "yes", "on")
+            fmt = str(options_store.get_value("samples_format", "png") or "png").strip().lower()
+            jpeg_quality = int(options_store.get_value("jpeg_quality", 80) or 80)
+            webp_lossless = str(options_store.get_value("webp_lossless", False)).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
             if fmt == 'png':
                 use_metadata = False
                 metadata = PngImagePlugin.PngInfo()

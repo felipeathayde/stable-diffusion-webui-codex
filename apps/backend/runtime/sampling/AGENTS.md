@@ -21,8 +21,8 @@ Status: Active
   - `get_sampler_spec(name)`: resolves sampler name and validates scheduler compatibility before sampling context creation.
 - `driver.py`
   - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default runs the **native** sampler loop (no k-diffusion dependency).
-  - K-diffusion-backed samplers are optional and only used when `CODEX_SAMPLER_ENABLE_KDIFFUSION=1` (and the `k-diffusion` Python package is installed); otherwise all sampling goes through the native path.
-  - Restart sampler is provided via `k_diffusion_extra.restart_sampler`; UniPC/UniPC-BH2 are wired through `k_diffusion_extra` (BH2 currently reuses the UniPC update until a dedicated integrator is ported). These helpers require `k-diffusion` and are only reachable when k-diffusion is explicitly enabled.
+  - K-diffusion integration is not exposed via env vars (settings are Web UI / payload-driven). If k-diffusion routing is needed, port it behind an explicit Web UI setting instead of env toggles.
+  - Restart sampler / UniPC helpers under `k_diffusion_extra` remain optional/experimental and must not be enabled via env flags.
 - `__init__.py`
 - Sampling inner loop no longer emits legacy low-VRAM print warnings; memory pressure handling remains via `memory_management.manager.get_free_memory` without stdout noise.
 
@@ -64,7 +64,7 @@ Status: Active
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.
 - `CODEX_LOG_SAMPLER=1` logs sampler setup with scheduler name, prediction_type (from predictor/scheduler), sigma bounds, and the first few sigmas; per-step logs continue to show sigma transitions and latent norms.
-- K-diffusion routing is controlled exclusively via `CODEX_SAMPLER_ENABLE_KDIFFUSION=1`; enabling sampler logging alone (`CODEX_LOG_SAMPLER`) does not change whether k-diffusion is used.
+- Sampler diagnostics (`CODEX_LOG_SAMPLER`) do not change sampler routing (native vs other backends).
 
 ### Pré-checagens antes do denoiser
 - Após a montagem (`cond_cat(c)`), validação obrigatória:

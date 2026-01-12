@@ -7,22 +7,22 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Engine-side attention backend selection for diffusers pipelines.
-Applies an attention backend (torch SDPA / xFormers / SageAttention) based on explicit input or `CODEX_ATTENTION_BACKEND`.
+Applies an attention backend (torch SDPA / xFormers / SageAttention) based on explicit input or persisted WebUI options.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_get_selected_backend` (function): Reads attention backend selection from the environment (defaults to `"torch-sdpa"`).
+- `_get_selected_backend` (function): Reads attention backend selection from WebUI options (defaults to `"torch-sdpa"`).
 - `apply_to_diffusers_pipeline` (function): Applies the chosen attention backend to a diffusers pipeline or raises with cause.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
-import os
+from apps.backend.services import options_store
 
 
 def _get_selected_backend() -> str:
-    # Read from env; default to PyTorch SDPA when not specified by user
-    return os.getenv("CODEX_ATTENTION_BACKEND", "torch-sdpa")
+    # Settings are configured via WebUI options (apps/settings_values.json).
+    return str(options_store.get_value("codex_attention_backend", "torch-sdpa") or "torch-sdpa")
 
 
 def apply_to_diffusers_pipeline(pipe: Any, *, backend: Optional[str] = None, logger=None) -> str:

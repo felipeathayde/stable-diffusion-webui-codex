@@ -20,7 +20,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Mapping, Sequence
 
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
@@ -61,9 +60,6 @@ def resolve_noise_settings(processing: Any) -> NoiseSettings:
         source = metadata.get("randn_source", source)
     if getattr(processing, "noise_source", None):
         source = processing.noise_source
-    env_source = os.getenv("CODEX_NOISE_SOURCE")
-    if source is None and env_source:
-        source = env_source
 
     try:
         source_kind = NoiseSourceKind.from_string(source) if source else NoiseSourceKind.GPU

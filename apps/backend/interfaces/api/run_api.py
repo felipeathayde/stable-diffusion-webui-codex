@@ -389,6 +389,32 @@ def build_app() -> FastAPI:
         if changed:
             _save_json(_settings_values_path, saved)
 
+        # Apply persisted memory overrides at process startup so launchers/env do not
+        # need to control devices/dtypes (WebUI options are the source of truth).
+        try:
+            from apps.backend.runtime import memory_management as mem_management  # type: ignore
+
+            role_map = {
+                "codex_core_device": ("core", "backend"),
+                "codex_te_device": ("text_encoder", "backend"),
+                "codex_vae_device": ("vae", "backend"),
+                "codex_core_dtype": ("core", "dtype"),
+                "codex_te_dtype": ("text_encoder", "dtype"),
+                "codex_vae_dtype": ("vae", "dtype"),
+            }
+            for key, (role, kind) in role_map.items():
+                if key not in saved:
+                    continue
+                value = saved.get(key)
+                if value is None:
+                    continue
+                if kind == "backend":
+                    mem_management.set_component_backend(role, str(value))
+                else:
+                    mem_management.set_component_dtype(role, str(value))
+        except Exception:
+            pass
+
     # Apply saved settings early (after modules init) before serving
     try:
         _apply_saved_settings()
@@ -515,8 +541,8 @@ def _enable_trace_debug(ns: Any) -> None:
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:
     argv_seq = list(argv or [])
-    snapshot = options_store.get_snapshot()
-    ns = _bootstrap_runtime(argv_seq, env or os.environ, snapshot.as_dict())
+    settings = options_store.load_values()
+    ns = _bootstrap_runtime(argv_seq, env or os.environ, settings)
     _enable_trace_debug(ns)
     ensure_initialized()
     # Build a fresh app each time to avoid stale/None globals under factory mode

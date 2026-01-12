@@ -33,15 +33,29 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
 
     registration = import_module("apps.backend.engines.registration")
 
-    registration.register_sd15(registry=registry, replace=replace)
-    registration.register_sdxl(registry=registry, replace=replace)
-    registration.register_flux(registry=registry, replace=replace)
-    registration.register_kontext(registry=registry, replace=replace)
-    registration.register_sd20(registry=registry, replace=replace)
-    registration.register_sd35(registry=registry, replace=replace)
-    registration.register_zimage(registry=registry, replace=replace)
+    from apps.backend.core.registry import registry as _global_registry
+
+    target = registry or _global_registry
+
+    def _maybe_register(key: str, fn) -> None:  # type: ignore[no-untyped-def]
+        if replace:
+            fn(registry=target, replace=True)
+            return
+        try:
+            target.get_descriptor(key)
+            return
+        except Exception:
+            fn(registry=target, replace=False)
+
+    _maybe_register("sd15", registration.register_sd15)
+    _maybe_register("sdxl", registration.register_sdxl)
+    _maybe_register("flux1", registration.register_flux)
+    _maybe_register("flux1_kontext", registration.register_kontext)
+    _maybe_register("sd20", registration.register_sd20)
+    _maybe_register("sd35", registration.register_sd35)
+    _maybe_register("zimage", registration.register_zimage)
     # Optional engines are not auto-registered in strict mode (no silent fallbacks)
-    registration.register_wan22_videos(registry=registry, replace=replace)
+    _maybe_register("wan22_14b", registration.register_wan22_videos)
 
 
 __all__ = [

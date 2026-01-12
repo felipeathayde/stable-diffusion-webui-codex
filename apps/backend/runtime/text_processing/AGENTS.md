@@ -19,7 +19,7 @@ Applies to `apps/backend/runtime/text_processing/*` including `classic_engine.py
 - Emit actionable logs on precision fallback; never silence errors.
 
 ## 2025-12-03 — TE dtype alignment
-- Classic CLIP engine now keeps embeddings in the selected TE dtype (no unconditional fp32 upcast); TE dtype still respects `CODEX_TE_FORCE_FP32` when set.
+- Classic CLIP engine now keeps embeddings in the selected TE dtype (no unconditional fp32 upcast); TE dtype is configured via Web UI / memory manager (no env override).
 - T5 engine moves shared embeddings to the chosen TE dtype from memory manager instead of forcing fp32.
 
 ### Wrapper-first calling convention

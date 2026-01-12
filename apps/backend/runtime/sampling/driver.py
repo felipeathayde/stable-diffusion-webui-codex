@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from typing import Any, Optional, Callable, List
 import math
-import os
 import logging
 
 import torch
@@ -348,7 +347,7 @@ class CodexSampler:
                         sampler_name=self.algorithm,
                         scheduler_name=scheduler_name,
                         steps=steps,
-                        noise_source=os.getenv("CODEX_NOISE_SOURCE"),
+                        noise_source=getattr(processing, "noise_source", None),
                         eta_noise_seed_delta=int(getattr(processing, "eta_noise_seed_delta", 0) or 0),
                         height=(int(getattr(processing, "height", 0) or 0) or None),
                         width=(int(getattr(processing, "width", 0) or 0) or None),
@@ -433,7 +432,7 @@ class CodexSampler:
                 backend_state.start(job_count=1, sampling_steps=steps - start_idx)
                 state_started = True
 
-                strict = env_flag("CODEX_SAMPLER_STRICT", default=True)
+                strict = True
                 import time as _time
 
                 preview_interval = active_context.preview_interval
@@ -447,7 +446,7 @@ class CodexSampler:
                 sampler_kind = active_context.sampler_kind
 
                 # Default to native sampler; enable k-diffusion only when explicitly requested.
-                use_kd = env_flag("CODEX_SAMPLER_ENABLE_KDIFFUSION", default=False)
+                use_kd = False
                 if use_kd and sampler_kind in _KD_MAPPING and _KD_SAMPLING is not None:
                     kd_name = _KD_MAPPING[sampler_kind]
 

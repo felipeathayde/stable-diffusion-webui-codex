@@ -7,22 +7,21 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Engine-side accelerator selection for diffusers pipelines.
-Applies an accelerator backend (or no-op) based on explicit input or `CODEX_ACCELERATOR`.
+Applies an accelerator backend (or no-op) based on explicit input (payload-driven).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_get_selected_accelerator` (function): Reads accelerator selection from the environment (defaults to `"none"`).
+- `_get_selected_accelerator` (function): Reads accelerator selection from explicit input (defaults to `"none"`).
 - `apply_to_diffusers_pipeline` (function): Applies the selected accelerator to a diffusers pipeline or raises with cause.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
-import os
 
 
 def _get_selected_accelerator() -> str:
-    # Read from env to avoid legacy opts; default to none
-    return os.getenv("CODEX_ACCELERATOR", "none")
+    # Accelerator selection is payload-driven; default to none.
+    return "none"
 
 
 def apply_to_diffusers_pipeline(pipe: Any, *, accelerator: Optional[str] = None, logger=None) -> str:

@@ -30,13 +30,7 @@ from safetensors import safe_open
 
 from .wan_te_cuda import Fp8Weight
 
-log = logging.getLogger("wan22.te.loader")
-if not log.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter('[wan22.te.loader] %(levelname)s: %(message)s'))
-    log.addHandler(h)
-log.setLevel(logging.INFO)
-log.propagate = False
+log = logging.getLogger("backend.runtime.wan22.te.loader")
 
 
 @dataclass
@@ -70,16 +64,15 @@ def _fp8_pack_from(path: str, w_key: str, scale_key: Optional[str], b_key: Optio
     if w_u8.dtype != torch.uint8:
         raise RuntimeError(f"Expected uint8 for '{w_key}', got {w_u8.dtype}")
     if scale_key is None:
-        # Single scale fallback (1.0) — caller should replace later if true FP8 scales are provided elsewhere
-        w_scale = torch.ones((w_u8.shape[0],), dtype=torch.float32)
-    else:
-        w_scale = _tensor_from_safe(path, scale_key)
-        if w_scale.dim() == 0:
-            w_scale = w_scale.view(1).expand(w_u8.shape[0]).contiguous()
-        if w_scale.numel() not in (1, w_u8.shape[0]):
-            raise RuntimeError(f"Scale shape mismatch for '{scale_key}' vs '{w_key}'")
-        if w_scale.numel() == 1:
-            w_scale = w_scale.view(1).expand(w_u8.shape[0]).contiguous()
+        raise RuntimeError(f"TE FP8 weights missing scale tensor for '{w_key}'")
+
+    w_scale = _tensor_from_safe(path, scale_key)
+    if w_scale.dim() == 0:
+        w_scale = w_scale.view(1).expand(w_u8.shape[0]).contiguous()
+    if w_scale.numel() not in (1, w_u8.shape[0]):
+        raise RuntimeError(f"Scale shape mismatch for '{scale_key}' vs '{w_key}'")
+    if w_scale.numel() == 1:
+        w_scale = w_scale.view(1).expand(w_u8.shape[0]).contiguous()
     b = _tensor_from_safe(path, b_key) if b_key is not None else None
     return LinearPack(Fp8Weight(w_u8=w_u8, scale=w_scale, fp8_format='e4m3fn'), b, (w_u8.shape[0], w_u8.shape[1]))
 
@@ -109,7 +102,17 @@ def load_umt5_xxl_fp8(path: str) -> WanTEFp8Weights:
         embed_u8_key = 'shared.weight_u8' if 'shared.weight_u8' in keys else embed_u8_key
         embed_scale_key = 'shared.scale' if 'shared.scale' in keys else embed_scale_key
     embed_u8 = _tensor_from_safe(path, embed_u8_key)
-    embed_scale = _tensor_from_safe(path, embed_scale_key) if embed_scale_key in keys else torch.tensor([1.0], dtype=torch.float32)
+    if embed_u8.dtype != torch.uint8:
+        raise RuntimeError(f"Expected uint8 for '{embed_u8_key}', got {embed_u8.dtype}")
+    if embed_scale_key not in keys:
+        raise RuntimeError(f"TE FP8 weights missing tensor '{embed_scale_key}' in {os.path.basename(path)}")
+    embed_scale = _tensor_from_safe(path, embed_scale_key)
+    if embed_scale.dim() == 0:
+        embed_scale = embed_scale.view(1)
+    if embed_scale.numel() not in (1, embed_u8.shape[0]):
+        raise RuntimeError(f"Scale shape mismatch for '{embed_scale_key}' vs '{embed_u8_key}'")
+    if embed_scale.numel() == 1:
+        embed_scale = embed_scale.view(1).expand(embed_u8.shape[0]).contiguous()
     embed = Fp8Weight(w_u8=embed_u8, scale=embed_scale if embed_scale.dim() else embed_scale.view(1), fp8_format='e4m3fn')
 
     # Discover number of layers by scanning keys

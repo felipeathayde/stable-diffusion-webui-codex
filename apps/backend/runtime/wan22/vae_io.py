@@ -23,8 +23,6 @@ from typing import Any, Optional
 
 import torch
 
-from apps.backend.infra.config.env_flags import env_flag
-
 from .config import RunConfig, as_torch_dtype, resolve_device_name, resolve_i2v_order
 from .diagnostics import cuda_empty_cache, get_logger
 from .wan_latent_norms import resolve_norm
@@ -62,7 +60,7 @@ def vae_encode_init(
     torch_dtype = as_torch_dtype(dtype)
     vae = load_vae(vae_dir, torch_dtype=torch_dtype)
 
-    norm = resolve_norm(os.getenv("WAN_VAE_NORM", "wan21"), channels=16)
+    norm = resolve_norm(None, channels=16)
     log.info("[wan22.gguf] VAE latent norm=%s channels=%d", norm.name, norm.channels)
 
     dev_name = resolve_device_name(device)
@@ -141,7 +139,7 @@ def vae_decode_video(
     target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
     vae = vae.to(device=target, dtype=torch_dtype)
 
-    norm = resolve_norm(os.getenv("WAN_VAE_NORM", "wan21"), channels=16)
+    norm = resolve_norm(None, channels=16)
 
     if hasattr(video_latents, "ndim"):
         if video_latents.ndim == 4:
@@ -152,43 +150,6 @@ def vae_decode_video(
             )
 
     b, c, t, h, w = video_latents.shape
-
-    if env_flag("WAN_I2V_LAT_STATS", default=False):
-        vt = video_latents
-        if torch.is_tensor(vt):
-            vt_cpu = vt.detach().to(device="cpu", dtype=torch.float32)
-            finite = torch.isfinite(vt_cpu)
-            n_total = int(vt_cpu.numel())
-            n_bad = int((~finite).sum().item())
-            if n_bad < n_total:
-                vals = vt_cpu[finite]
-                mn = float(vals.min().item())
-                mx = float(vals.max().item())
-                mean = float(vals.mean().item())
-                std = float(vals.std(unbiased=False).item())
-                log.info(
-                    "[wan22.gguf] latents stats: B=%d C=%d T=%d H=%d W=%d min=%.4f max=%.4f mean=%.4f std=%.4f bad=%d",
-                    b,
-                    c,
-                    t,
-                    h,
-                    w,
-                    mn,
-                    mx,
-                    mean,
-                    std,
-                    n_bad,
-                )
-            else:
-                log.info(
-                    "[wan22.gguf] latents stats: B=%d C=%d T=%d H=%d W=%d (all non-finite: %d)",
-                    b,
-                    c,
-                    t,
-                    h,
-                    w,
-                    n_bad,
-                )
 
     if int(c) != 16:
         raise RuntimeError(
@@ -245,13 +206,7 @@ def decode_latents_to_frames(
     log = get_logger(logger)
     x = latents
     log.info("[wan22.gguf] decode latents: shape=%s", tuple(x.shape))
-
-    if debug_preview:
-        v = os.getenv("WAN_I2V_DEBUG_CLAMP", "").strip()
-        if v:
-            lim = float(v)
-            if lim > 0:
-                x = torch.clamp(x, min=-lim, max=lim)
+    _ = debug_preview  # debug-only clamp removed (no env-driven behavior)
 
     c = int(x.shape[1])
     if c != 16:

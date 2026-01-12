@@ -720,12 +720,9 @@ const wanMetadataChoices = computed(() => {
   const seen = new Set<string>()
   const out: string[] = []
   for (const item of inventoryMetadata.value) {
-    const name = String(item.name || '')
-    // Keep the dropdown focused on WAN2.2 metadata repos; users can still Browse… for arbitrary paths.
-    if (name && !name.startsWith('Wan-AI/')) continue
-    const path = String(item.path || '').trim()
-    if (!path) continue
-    if (!seen.has(path)) { seen.add(path); out.push(path) }
+    const repoId = String(item.name || '').trim()
+    if (!repoId || !repoId.startsWith('Wan-AI/')) continue
+    if (!seen.has(repoId)) { seen.add(repoId); out.push(repoId) }
   }
   return out
 })
@@ -1004,23 +1001,23 @@ function promptForPath(label: string, current: string): string | null {
 }
 
 async function onWanBrowseHigh(): Promise<void> {
-  const path = promptForPath('WAN High model directory (server path)', wanHighModel.value)
+  const path = promptForPath('WAN High model (.gguf) path or sha256', wanHighModel.value)
   if (path) await onWanHighModelChange(path)
 }
 
 async function onWanBrowseLow(): Promise<void> {
-  const path = promptForPath('WAN Low model directory (server path)', wanLowModel.value)
+  const path = promptForPath('WAN Low model (.gguf) path or sha256', wanLowModel.value)
   if (path) await onWanLowModelChange(path)
 }
 
 async function onWanBrowseMetadata(): Promise<void> {
-  const path = promptForPath('WAN Metadata directory (server path)', wanMetadataDir.value)
-  if (path) await onWanMetadataDirChange(path)
+  const next = promptForPath('WAN metadata repo id (e.g. Wan-AI/Wan2.2-T2V-A14B-Diffusers)', wanMetadataDir.value)
+  if (next) await onWanMetadataDirChange(next)
 }
 
 async function onWanBrowseTe(): Promise<void> {
   const current = wanTextEncoder.value
-  const next = promptForPath('WAN Text Encoder identifier or path', current)
+  const next = promptForPath('WAN Text Encoder (.safetensors) path or sha256', current)
   if (next === null) return
   const normalized = next.replace(/\\+/g, '/')
   // Keep the stored value consistent with the dropdown labels (wan22/<abs_path>).
@@ -1030,7 +1027,7 @@ async function onWanBrowseTe(): Promise<void> {
 
 async function onWanBrowseVae(): Promise<void> {
   const current = wanVae.value
-  const next = promptForPath('WAN VAE identifier or path', current)
+  const next = promptForPath('WAN VAE path or sha256', current)
   if (next !== null) await onWanVaeChange(next)
 }
 

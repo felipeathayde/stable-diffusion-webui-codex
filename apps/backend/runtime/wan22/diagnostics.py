@@ -29,7 +29,7 @@ from apps.backend.infra.config.env_flags import env_flag
 
 
 def log_sigmas_enabled() -> bool:
-    return env_flag("WAN_LOG_SIGMAS", default=False) or env_flag("CODEX_LOG_SIGMAS", default=False)
+    return env_flag("CODEX_LOG_SIGMAS", default=False)
 
 
 def summarize_tensor(t: object, *, window: int = 6) -> str:

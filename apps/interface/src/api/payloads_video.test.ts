@@ -4,6 +4,12 @@ import { buildWanImg2VidPayload, buildWanTxt2VidPayload, buildWanVid2VidPayload 
 
 describe('WAN video payload builders', () => {
   it('builds a txt2vid payload with stage overrides and video options', () => {
+    const hiSha = 'a'.repeat(64)
+    const loSha = 'b'.repeat(64)
+    const vaeSha = 'c'.repeat(64)
+    const tencSha = 'd'.repeat(64)
+    const metaRepo = 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+
     const payload = buildWanTxt2VidPayload({
       device: 'CUDA',
       prompt: '  test prompt  ',
@@ -13,7 +19,7 @@ describe('WAN video payload builders', () => {
       fps: 24,
       frames: 16,
       high: {
-        modelDir: '/models/wan22',
+        modelSha: hiSha,
         sampler: 'euler a',
         scheduler: 'simple',
         steps: 4,
@@ -22,7 +28,7 @@ describe('WAN video payload builders', () => {
         flowShift: 8.2,
       },
       low: {
-        modelDir: '/models/wan22',
+        modelSha: loSha,
         sampler: 'euler',
         scheduler: 'simple',
         steps: 2,
@@ -31,9 +37,9 @@ describe('WAN video payload builders', () => {
       },
       format: 'gguf',
       assets: {
-        metadataDir: '/meta',
-        textEncoder: 'wan22//abs/path/to/tenc.safetensors',
-        vaePath: '/vae.safetensors',
+        metadataRepo: metaRepo,
+        textEncoderSha: tencSha,
+        vaeSha: vaeSha,
       },
       output: {
         filenamePrefix: 'wan22',
@@ -58,15 +64,17 @@ describe('WAN video payload builders', () => {
     expect(payload.txt2vid_steps).toBe(4)
     expect(payload.txt2vid_cfg_scale).toBe(7)
     expect(payload.wan_format).toBe('gguf')
-    expect(payload.wan_high).toMatchObject({ model_dir: '/models/wan22', steps: 4, cfg_scale: 7, flow_shift: 8.2 })
-    expect(payload.wan_low).toMatchObject({ model_dir: '/models/wan22', steps: 2, cfg_scale: 5 })
+    expect(payload.wan_high).toMatchObject({ model_sha: hiSha, steps: 4, cfg_scale: 7, flow_shift: 8.2 })
+    expect(payload.wan_low).toMatchObject({ model_sha: loSha, steps: 2, cfg_scale: 5 })
     expect(payload.video_interpolation).toMatchObject({ enabled: true, model: 'rife47.pth', times: 2 })
-    expect(payload.wan_text_encoder_path).toBe('/abs/path/to/tenc.safetensors')
-    expect(payload.wan_vae_path).toBe('/vae.safetensors')
-    expect(payload.wan_metadata_dir).toBe('/meta')
+    expect(payload.wan_tenc_sha).toBe(tencSha)
+    expect(payload.wan_vae_sha).toBe(vaeSha)
+    expect(payload.wan_metadata_repo).toBe(metaRepo)
   })
 
-  it('builds an img2vid payload and emits wan_text_encoder_dir for directory inputs', () => {
+  it('builds an img2vid payload with sha-selected assets', () => {
+    const sha = 'e'.repeat(64)
+    const metaRepo = 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
     const payload = buildWanImg2VidPayload({
       device: 'cpu',
       prompt: 'p',
@@ -77,7 +85,7 @@ describe('WAN video payload builders', () => {
       frames: 16,
       initImageData: 'data:image/png;base64,AAAA',
       high: {
-        modelDir: '/models/wan22',
+        modelSha: sha,
         sampler: '',
         scheduler: '',
         steps: 12,
@@ -85,7 +93,7 @@ describe('WAN video payload builders', () => {
         seed: -1,
       },
       low: {
-        modelDir: '/models/wan22',
+        modelSha: sha,
         sampler: '',
         scheduler: '',
         steps: 12,
@@ -94,9 +102,9 @@ describe('WAN video payload builders', () => {
       },
       format: 'auto',
       assets: {
-        metadataDir: '',
-        textEncoder: '/models/wan22-tenc',
-        vaePath: '',
+        metadataRepo: metaRepo,
+        textEncoderSha: sha,
+        vaeSha: sha,
       },
       output: {
         filenamePrefix: '',
@@ -118,11 +126,14 @@ describe('WAN video payload builders', () => {
 
     expect(payload.codex_device).toBe('cpu')
     expect(payload.img2vid_init_image).toBe('data:image/png;base64,AAAA')
-    expect(payload.wan_text_encoder_dir).toBe('/models/wan22-tenc')
-    expect(payload.wan_text_encoder_path).toBeUndefined()
+    expect(payload.wan_tenc_sha).toBe(sha)
+    expect(payload.wan_vae_sha).toBe(sha)
+    expect(payload.wan_metadata_repo).toBe(metaRepo)
   })
 
   it('builds a vid2vid payload (multipart upload path optional) with flow settings', () => {
+    const sha = 'f'.repeat(64)
+    const metaRepo = 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
     const payload = buildWanVid2VidPayload({
       device: 'cuda',
       prompt: '  v2v  ',
@@ -138,10 +149,10 @@ describe('WAN video payload builders', () => {
       flowEnabled: true,
       flowUseLarge: false,
       flowDownscale: 2,
-      high: { modelDir: '/models/wan22', sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
-      low: { modelDir: '/models/wan22', sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
+      high: { modelSha: sha, sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
+      low: { modelSha: sha, sampler: '', scheduler: '', steps: 12, cfgScale: 7, seed: 1 },
       format: 'gguf',
-      assets: { metadataDir: '', textEncoder: '', vaePath: '' },
+      assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
       output: {
         filenamePrefix: 'wan22',
         format: 'video/h264-mp4',
@@ -161,5 +172,8 @@ describe('WAN video payload builders', () => {
     expect(payload.vid2vid_strength).toBe(0.75)
     expect(payload.vid2vid_method).toBe('flow_chunks')
     expect(payload.vid2vid_flow_enabled).toBe(true)
+    expect(payload.wan_tenc_sha).toBe(sha)
+    expect(payload.wan_vae_sha).toBe(sha)
+    expect(payload.wan_metadata_repo).toBe(metaRepo)
   })
 })

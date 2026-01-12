@@ -43,12 +43,8 @@ Tensor te_linear_fp8_forward(const Tensor& x, const Tensor& w_u8, const Tensor& 
   auto dtype = x.dtype();
   Tensor y = torch::zeros({B, L, Cout}, x.options());
 
-  // Choose tile size (env WAN_TE_TILE or default 256)
+  // Tile size (fixed; env overrides removed)
   int64_t tile = 256;
-  const char* env = std::getenv("WAN_TE_TILE");
-  if (env) {
-    try { tile = std::max<int64_t>(64, std::stoll(env)); } catch (...) {}
-  }
 
   // Process Cout in tiles
   auto dev = x.device();

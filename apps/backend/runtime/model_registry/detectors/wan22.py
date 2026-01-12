@@ -35,13 +35,21 @@ from apps.backend.runtime.model_registry.specs import (
     ModelSignature,
     PredictionKind,
     QuantizationHint,
+    QuantizationKind,
     TextEncoderSignature,
     VAESignature,
 )
 from apps.backend.runtime.wan22.inference import infer_wan22_latent_channels, infer_wan22_patch_embedding
+from apps.backend.quantization.tensor import CodexParameter
 
 
 WAN_HEAD_KEY = "head.modulation"
+_WAN22_REPO_HINT_BY_MODEL_TYPE = {
+    "t2v": "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+    "i2v": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+    "ti2v": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+    "animate": "Wan-AI/Wan2.2-Animate-14B-Diffusers",
+}
 
 
 class Wan22Detector(ModelDetector):
@@ -56,6 +64,8 @@ class Wan22Detector(ModelDetector):
         return bool(patch and len(patch) == 5)
 
     def build_signature(self, bundle: SignalBundle) -> ModelSignature:  # type: ignore[override]
+        is_gguf = any(isinstance(v, CodexParameter) and v.qtype is not None for v in bundle.state_dict.values())
+
         key = _find_key(bundle, WAN_HEAD_KEY)
         assert key is not None
         prefix = key[: -len(WAN_HEAD_KEY)]
@@ -92,12 +102,17 @@ class Wan22Detector(ModelDetector):
 
         text_encoders = _collect_text_encoders(bundle, prefix)
 
+        quantization = (
+            QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf") if is_gguf else QuantizationHint()
+        )
+        repo_hint = _WAN22_REPO_HINT_BY_MODEL_TYPE.get(model_type, "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+
         return ModelSignature(
             family=ModelFamily.WAN22,
-            repo_hint="Wan-AI/Wan2.2",
+            repo_hint=repo_hint,
             prediction=PredictionKind.FLOW,
             latent_format=LatentFormat.WAN22,
-            quantization=QuantizationHint(),
+            quantization=quantization,
             core=CodexCoreSignature(
                 architecture=CodexCoreArchitecture.DIT,
                 channels_in=in_channels,

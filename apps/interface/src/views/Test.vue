@@ -364,7 +364,7 @@ async function generate(): Promise<void> {
       wan_text_encoder_path: tePath || undefined,
       wan_metadata_dir: metaDir || undefined,
     }
-    // Offload/kernel controls removed (env-only: WAN_GGUF_OFFLOAD_LEVEL, WAN_TE_IMPL, WAN_TE_KERNEL_REQUIRED)
+    // Offload/kernel controls removed (payload/options-driven; no env overrides).
     if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = resolve(state.high.loraPath, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
     if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = resolve(state.low.loraPath, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
     if (state.useInitImage && state.initImageData) {

@@ -95,7 +95,7 @@ std::vector<torch::Tensor> attn_stream_rows_launcher(
     const double scale = 1.0 / std::sqrt(static_cast<double>(D));
     // Tile sizes
     int64_t qchunk = chunk > 0 ? chunk : 192;
-    int64_t kchunk = [](){ const char* v = std::getenv("WAN_TE_ATTN_KCHUNK"); if (!v) return (int64_t)256; try { return std::max<int64_t>(64, std::stoll(v)); } catch (...) { return (int64_t)256; } }();
+    int64_t kchunk = 256;
 
     auto options = q.options();
     auto device = q.device();

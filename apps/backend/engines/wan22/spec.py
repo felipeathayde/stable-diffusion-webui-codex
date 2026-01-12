@@ -89,17 +89,22 @@ class WanEngineSpec:
 
         repo_root = get_repo_root()
         hf_root = repo_root / "apps" / "backend" / "huggingface"
+        last_exc: Exception | None = None
+        last_repo: str | None = None
         for rid in resolve_wan_repo_candidates(self.name):
             local_dir = hf_root / rid.replace("/", "/")
             try:
                 spec = flow_shift_spec_from_repo_dir(local_dir)
                 return spec.resolve()
-            except Exception:
+            except Exception as exc:
+                last_exc = exc
+                last_repo = rid
                 continue
+        hint = f" (last repo tried: {last_repo!r} error: {last_exc})" if (last_repo and last_exc) else ""
         raise RuntimeError(
-            f"WAN22: unable to resolve flow_shift from scheduler_config.json for spec={self.name!r}. "
+            f"WAN22: unable to resolve flow_shift from scheduler_config.json for spec={self.name!r}{hint}. "
             "Ensure vendored HF assets exist under apps/backend/huggingface/Wan-AI/**."
-        )
+        ) from last_exc
     
     @property
     def default_steps(self) -> int:

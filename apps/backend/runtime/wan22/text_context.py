@@ -48,7 +48,7 @@ def get_text_context(
     - Tokenizer/config are read from local folders only (metadata repo or explicit dirs).
     """
 
-    _ = (model_dir, vae_dir, model_key, te_kernel_required)  # kept for signature compatibility
+    _ = (model_dir, vae_dir, model_key)  # kept for signature compatibility
     log = get_logger(logger)
 
     # Normalize device strings early (call sites sometimes pass 'auto').
@@ -98,10 +98,13 @@ def get_text_context(
     )
 
     # Effective TE preferences (extras > env > defaults)
-    te_impl_eff = (te_impl or os.getenv("WAN_TE_IMPL", "") or "hf").strip().lower()
+    te_kernel_required_eff = bool(te_kernel_required) if te_kernel_required is not None else False
+    te_impl_eff = (te_impl or "hf").strip().lower()
+    if te_kernel_required_eff:
+        te_impl_eff = "cuda_fp8"
     te_req_eff = te_impl_eff == "cuda_fp8"
 
-    te_dev_eff = (te_device or os.getenv("CODEX_TE_DEVICE") or device or "cpu").strip().lower()
+    te_dev_eff = (te_device or device or "cpu").strip().lower()
     if te_dev_eff == "gpu":
         te_dev_eff = "cuda"
 
@@ -119,7 +122,7 @@ def get_text_context(
     # CUDA TE kernel (FP8). Required if selected; do not fallback.
     if te_impl_eff == "cuda_fp8":
         try:
-            from apps.backend.runtime.nn import wan_te_cuda as _tecuda
+            from . import wan_te_cuda as _tecuda
         except Exception as exc:
             raise RuntimeError(f"WAN22 TE CUDA kernel required but module not importable: {exc}") from exc
 
@@ -146,6 +149,9 @@ def get_text_context(
 
         if not metadata_dir:
             raise RuntimeError("WAN22 GGUF: 'wan_metadata_dir' is required for TE CUDA path (need text_encoder config).")
+
+        if not te_file:
+            raise RuntimeError("WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required for TE CUDA path.")
 
         enc_dir = os.path.join(metadata_dir, "text_encoder")
         cfg_hf = AutoConfig.from_pretrained(enc_dir, local_files_only=True)
@@ -251,4 +257,3 @@ def get_text_context(
             torch.cuda.empty_cache()
 
     return p, n
-

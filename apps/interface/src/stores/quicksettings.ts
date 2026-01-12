@@ -374,6 +374,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   function resolveTextEncoderSha(label: string | null | undefined): string | undefined {
     if (!label) return undefined
     const normalized = label.replace(/\\+/g, '/')
+
+    const lower = normalized.trim().toLowerCase()
+    if (lower.length === 64 && /^[0-9a-f]+$/.test(lower)) {
+      return lower
+    }
+
     const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
     const tail = normalized.split('/').pop() || ''
     return (

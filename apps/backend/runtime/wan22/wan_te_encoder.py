@@ -21,20 +21,13 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from typing import Optional
-import os
 import logging
 import torch
 
-from apps.backend.runtime.nn.wan_te_loader import load_umt5_xxl_fp8, WanTEFp8Weights
+from .wan_te_loader import load_umt5_xxl_fp8, WanTEFp8Weights
 from .wan_te_cuda import linear_fp8, attn_fp8, available as te_ext_available
 
-log = logging.getLogger("wan22.te.encoder")
-if not log.handlers:
-    h = logging.StreamHandler()
-    h.setFormatter(logging.Formatter('[wan22.te.encoder] %(levelname)s: %(message)s'))
-    log.addHandler(h)
-log.setLevel(logging.INFO)
-log.propagate = False
+log = logging.getLogger("backend.runtime.wan22.te.encoder")
 
 
 def _rms_norm(x: torch.Tensor, w: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -49,14 +42,12 @@ def _embedding_fp8(indices: torch.Tensor, embed_u8: torch.Tensor, embed_scale: t
     rows = indices.reshape(-1).to(torch.long).cpu()
     u8_rows = embed_u8.index_select(0, rows)  # [B*L, C] (CPU u8)
     sc_rows = embed_scale.index_select(0, rows).to(torch.float32).view(-1, 1)
-    # Optional pinned host path (enabled by default). Set WAN_TE_PINNED=0 to disable.
-    use_pinned = os.environ.get('WAN_TE_PINNED', '1').lower().strip() in ('1','true','yes','on')
-    if use_pinned and u8_rows.device.type == 'cpu' and torch.cuda.is_available():
+    if u8_rows.device.type == 'cpu' and torch.cuda.is_available():
         try:
             u8_rows = u8_rows.pin_memory()
         except Exception:
             pass
-    if use_pinned and sc_rows.device.type == 'cpu' and torch.cuda.is_available():
+    if sc_rows.device.type == 'cpu' and torch.cuda.is_available():
         try:
             sc_rows = sc_rows.pin_memory()
         except Exception:
@@ -76,24 +67,46 @@ def _proj_fp8(x: torch.Tensor, pack, device: torch.device) -> torch.Tensor:
 
 _ATTN_LOG_ONCE = False
 
-def _attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+def _attn(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    causal: bool = False,
+    attention_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     # q/k/v: [B,H,L,D]
     B, H, L, D = q.shape
-    impl_env = os.environ.get('WAN_TE_ATTN', '').lower().strip()
-    # Auto-select: use CUDA path if extension available and not explicitly forced to 'sdpa'
-    impl = 'cuda' if (impl_env in ('', 'auto') and te_ext_available()) else (impl_env or 'sdpa')
+    use_cuda_attn = te_ext_available()
+    if attention_mask is not None:
+        keep = attention_mask.to(torch.bool)
+        if keep.shape != (B, L):
+            raise RuntimeError(f"TE FP8: attention_mask must be [B,L] (got {tuple(keep.shape)})")
+        if not bool(keep.all().item()):
+            # CUDA path does not support attention masks; fall back to SDPA for correctness.
+            use_cuda_attn = False
+    impl = "cuda" if use_cuda_attn else "sdpa"
     global _ATTN_LOG_ONCE
     if not _ATTN_LOG_ONCE:
         _ATTN_LOG_ONCE = True
-        log.info("attention_impl=%s (env=%s, ext=%s)", impl, (impl_env or 'auto'), te_ext_available())
-    if impl == 'cuda' and te_ext_available():
+        log.info("attention_impl=%s (ext=%s)", impl, te_ext_available())
+    if use_cuda_attn:
         out, _ = attn_fp8(q, k, v, None, bool(causal))
         return out
     else:
         q2 = q.reshape(B*H, L, D)
         k2 = k.reshape(B*H, L, D)
         v2 = v.reshape(B*H, L, D)
-        out = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2, is_causal=causal)
+        attn_mask = None
+        if attention_mask is not None:
+            keep = attention_mask.to(torch.bool)
+            if keep.shape != (B, L):
+                raise RuntimeError(f"TE FP8: attention_mask must be [B,L] (got {tuple(keep.shape)})")
+            mask = ~keep  # True = masked
+            attn_mask = (
+                mask[:, None, :].expand(B, L, L)[:, None, :, :].expand(B, H, L, L).reshape(B * H, L, L)
+            ).to(device=q2.device)
+        out = torch.nn.functional.scaled_dot_product_attention(q2, k2, v2, attn_mask=attn_mask, is_causal=causal)
         return out.reshape(B, H, L, D)
 
 
@@ -124,13 +137,14 @@ def encode_fp8(
     h = _embedding_fp8(input_ids, weights.embed.w_u8, weights.embed.scale, dt, dev)  # [B,L,C]
 
     # Attention mask format: convert [B,L] -> [B,1,1,L] bool
-    am = None
+    am_keep = None
     if attention_mask is not None:
         am = attention_mask
-        if am.dim() == 2:
-            am = am.to(torch.bool).view(B, 1, 1, L)
-        else:
-            am = am.to(torch.bool)
+        if am.dim() == 4:
+            am = am[:, 0, 0, :]
+        elif am.dim() != 2:
+            raise RuntimeError(f"TE FP8: attention_mask must be [B,L] or [B,1,1,L] (got {tuple(am.shape)})")
+        am_keep = am.to(torch.bool)
 
     H = num_heads
     D = d_kv
@@ -165,7 +179,7 @@ def encode_fp8(
         k = k.view(B, L, H, D).permute(0, 2, 1, 3).contiguous()
         v = v.view(B, L, H, D).permute(0, 2, 1, 3).contiguous()
         # Attention (SDPA)
-        a = _attn(q, k, v, causal=False, attn_mask=None)
+        a = _attn(q, k, v, causal=False, attention_mask=am_keep)
         a = a.permute(0, 2, 1, 3).contiguous().view(B, L, C)
         o = _proj_fp8(a, blk['o'], dev)
         h = x + o

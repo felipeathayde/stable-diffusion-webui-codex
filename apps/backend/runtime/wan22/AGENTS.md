@@ -12,7 +12,7 @@ Status: Active
 
 ## Key files
 - `wan22.py`: facade/entrypoint importado pelos engines WAN22; re-exporta `RunConfig`/`StageConfig` e `run_*`/`stream_*` do runtime GGUF (mantém path estável para callers).
-- `config.py`: dataclasses/config do runtime GGUF (`RunConfig`, `StageConfig`) + parsing helpers (dtype/device + `WAN_I2V_ORDER`).
+- `config.py`: dataclasses/config do runtime GGUF (`RunConfig`, `StageConfig`) + parsing helpers (dtype/device).
 - `run.py`: entrypoints `run_txt2vid`/`run_img2vid` + versões streaming; orquestra TE, sampling por stage e VAE IO.
 - `sampling.py`: geometria + scheduler + loop de sampling por stage (`sample_stage_latents*`) e adaptação de shape/I2V channels.
 - `text_context.py`: tokenizer + text encoder (strict local-files-only) para embeddings de prompt/negative.
@@ -32,7 +32,7 @@ Status: Active
 - 2025-12-06: `streaming/` adiciona infraestrutura de streaming de core para WAN 2.2 14B, operando em nível de `nn.Module` (wrapper `StreamedWanTransformer`) com offload por segmentos.
 - 2025-12-06: `model.py`/`sampler.py` introduzem o caminho nn.Module (`WanTransformer2DModel` + `WanVideoSampler`/`sample_txt2vid`) espelhando a arquitetura da branch `feature/flux-core-streaming`; o engine 14B (`Wan2214BEngine`) já consome esse caminho para `txt2vid` quando o runtime/spec Codex está ativo (flag + `_bundle`), mantendo GGUF/Diffusers como defaults.
 - 2025-12-13: GGUF WAN22 deixou de usar o runner WAN-específico (`WanDiTGGUF`) e passou a carregar o stage GGUF direto em `WanTransformer2DModel`, com SDPA policy/chunk centralizados em `sdpa.py` e dependência de `CodexOperationsGGUF` para suportar módulos GGUF em `nn.Module`.
-- 2025-12-14: `sampler.py` (caminho experimental runtime/spec) agora escala o timestep passado ao core por `flow_multiplier` (default `1000.0`) e tem teste de regressão; `wan22.py` emite logs opt-in de paridade (sigma ladder + mapeamento de timestep) quando `CODEX_LOG_SIGMAS=1`/`WAN_LOG_SIGMAS=1`.
+- 2025-12-14: `sampler.py` (caminho experimental runtime/spec) agora escala o timestep passado ao core por `flow_multiplier` (default `1000.0`) e tem teste de regressão; `wan22.py` emite logs opt-in de paridade (sigma ladder + mapeamento de timestep) quando `CODEX_LOG_SIGMAS=1`.
 - 2026-01-03: Removed upstream pipeline brand wording from WAN22 runtime comments; keep behaviour described directly and treat Diffusers as the baseline only for the HF asset path.
 - 2026-01-04: Centralized WAN22 patch/head shape inference in `inference.py` so detector and runtime loaders agree on GGUF vs torch layout.
 - 2026-01-06: `sampling.make_scheduler` now recognizes canonical `uni-pc` and instantiates `UniPCMultistepScheduler` for WAN GGUF stage runs.

@@ -44,6 +44,7 @@ Status: Active
 - `apps/interface/tabs.json` — backend-managed persisted tab state (created if missing).
 - `apps/interface/workflows.json` — backend-managed persisted workflows state (created if missing).
 - `apps/settings_values.json` — backend-managed persisted options snapshot (created/overwritten locally).
+- `.sangoi/launcher/` — launcher profile persistence (meta + env areas + per-model env overlays); created/overwritten locally by the TUI/GUI launcher and will drift across machines.
 
 ## Extending the ignore set
 - Prefer directory-level ignores (e.g., `apps/interface/dist/`) over broad `*` patterns.

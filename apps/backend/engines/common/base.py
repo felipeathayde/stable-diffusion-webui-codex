@@ -417,11 +417,13 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 vae_path_for_bundle = None
             else:
                 vae_path_for_bundle = vae_path_for_bundle.strip()
+            expected_family = ModelFamily.ZIMAGE if self.engine_id == "zimage" else None
             bundle = resolve_diffusion_bundle(
                 model_ref,
                 text_encoder_override=te_override_cfg,
                 vae_path=vae_path_for_bundle,
                 tenc_path=tenc_path,
+                expected_family=expected_family,
             )
         elif isinstance(bundle_obj, DiffusionModelBundle):
             bundle = bundle_obj

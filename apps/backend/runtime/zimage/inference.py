@@ -127,7 +127,7 @@ def infer_zimage_dims_from_state_dict(
     state_dict: Mapping[str, Any],
     *,
     patch_size: int = 2,
-    prefixes: Sequence[str] = ("", "model.diffusion_model.", "diffusion_model."),
+    prefixes: Sequence[str] = ("model.diffusion_model.", "diffusion_model.", "model.", ""),
 ) -> ZImageDims:
     keys = tuple(state_dict.keys())
     prefix = ""
@@ -151,4 +151,3 @@ def infer_zimage_dims_from_state_dict(
 
 
 __all__ = ["ZImageDims", "infer_zimage_dims", "infer_zimage_dims_from_state_dict"]
-

@@ -34,7 +34,12 @@ from ..specs import (
 from ..quantization import validate_component_dtypes
 
 
-_ZIMAGE_CORE_PREFIXES = ("", "model.", "model.diffusion_model.")
+_ZIMAGE_CORE_PREFIXES = (
+    "model.diffusion_model.",
+    "diffusion_model.",
+    "model.",
+    "",
+)
 
 
 def _register_zimage_text_encoders(context) -> None:
@@ -90,6 +95,7 @@ def _validate_transformer_core(context):
     possible_keys = [
         base_key,  # GGUF format
         f"model.{base_key}",  # Some safetensors
+        f"diffusion_model.{base_key}",  # Some exports strip the leading 'model.' wrapper
         f"model.diffusion_model.{base_key}",  # FP8/BF16 safetensors
     ]
     if not any(k in unet for k in possible_keys):

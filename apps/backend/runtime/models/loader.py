@@ -58,10 +58,15 @@ from apps.backend.runtime.model_registry.errors import ModelRegistryError
 from apps.backend.runtime.model_registry.loader import detect_from_state_dict as registry_detect
 from apps.backend.runtime.model_registry.specs import (
     CodexCoreArchitecture,
+    CodexCoreSignature,
     ModelFamily,
     ModelSignature,
     PredictionKind,
+    QuantizationHint,
+    LatentFormat,
     QuantizationKind,
+    TextEncoderSignature,
+    VAESignature,
 )
 from apps.backend.runtime.models import api as model_api
 from apps.backend.runtime.models.key_normalization import _normalize_unet_state_dict, _strip_transformer_prefixes
@@ -172,16 +177,130 @@ def _load_state_dict(path: str) -> Mapping[str, Any]:
     _trace.event("load_torch_file_done", path=str(path), type=type(sd).__name__, tensors=tensor_count)
     return sd
 
-def _parse_checkpoint(primary_path: str, additional_paths: list[str] | None) -> ParsedCheckpoint:
+def _read_json(path: Path) -> Dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Required metadata file missing: {path}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse JSON metadata file: {path}") from exc
+    if not isinstance(data, dict):
+        raise TypeError(f"Expected JSON object at {path}, got {type(data).__name__}")
+    return data
+
+
+def _zimage_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
+    """Build a Z-Image `ModelSignature` from vendored HF metadata (no state-dict detection)."""
+
+    vendor_root = _BACKEND_ROOT / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo"
+    transformer_cfg = _read_json(vendor_root / "transformer" / "config.json")
+    text_encoder_cfg = _read_json(vendor_root / "text_encoder" / "config.json")
+
+    patch_size = transformer_cfg.get("all_patch_size")
+    if isinstance(patch_size, list) and patch_size:
+        patch_size = patch_size[0]
+    patch_size = int(patch_size) if isinstance(patch_size, (int, float, str)) and str(patch_size).strip() else 2
+    patch_area = int(max(1, patch_size) * max(1, patch_size))
+
+    latent_channels_raw = transformer_cfg.get("in_channels", 16)
+    latent_channels = int(latent_channels_raw) if isinstance(latent_channels_raw, (int, float, str)) else 16
+
+    hidden_dim_raw = transformer_cfg.get("dim", 3840)
+    hidden_dim = int(hidden_dim_raw) if isinstance(hidden_dim_raw, (int, float, str)) else 3840
+
+    context_dim_raw = transformer_cfg.get("cap_feat_dim")
+    if context_dim_raw is None:
+        context_dim_raw = text_encoder_cfg.get("hidden_size", 2560)
+    context_dim = int(context_dim_raw) if isinstance(context_dim_raw, (int, float, str)) else 2560
+
+    num_layers_raw = transformer_cfg.get("n_layers", 30)
+    num_layers = int(num_layers_raw) if isinstance(num_layers_raw, (int, float, str)) else 30
+
+    num_refiner_layers_raw = transformer_cfg.get("n_refiner_layers", 2)
+    num_refiner_layers = int(num_refiner_layers_raw) if isinstance(num_refiner_layers_raw, (int, float, str)) else 2
+
+    num_heads_raw = transformer_cfg.get("n_heads", 30)
+    num_heads = int(num_heads_raw) if isinstance(num_heads_raw, (int, float, str)) else 30
+
+    suffix = Path(model_path).suffix.lower()
+    quantization = QuantizationHint()
+    gguf_core_only = False
+    if suffix == ".gguf":
+        quantization = QuantizationHint(kind=QuantizationKind.GGUF, detail="file_extension")
+        gguf_core_only = True
+
+    channels_out = latent_channels
+    channels_in = latent_channels * patch_area
+
+    extras = {
+        "hidden_dim": hidden_dim,
+        "context_dim": context_dim,
+        "num_layers": num_layers,
+        "num_refiner_layers": num_refiner_layers,
+        "num_heads": num_heads,
+        "latent_channels": latent_channels,
+        "guidance_embeds": False,
+        "gguf_core_only": gguf_core_only,
+        "signature_source": "vendored_hf",
+    }
+
+    text_encoders = [
+        TextEncoderSignature(
+            name="qwen3_4b",
+            key_prefix="text_encoder.",
+            expected_dim=context_dim,
+            tokenizer_hint="Qwen/Qwen3-4B",
+        )
+    ]
+
+    # Z-Image supports embedded VAE/text-encoder in non-GGUF exports, but the engine
+    # decides core-only vs full based on parsed components. Keep VAE signature
+    # optional here so metadata drives the pipeline without constraining assets.
+    vae: VAESignature | None = None if gguf_core_only else VAESignature(key_prefix="vae.", latent_channels=latent_channels)
+
+    return ModelSignature(
+        family=ModelFamily.ZIMAGE,
+        repo_hint="Alibaba-TongYi/Z-Image-Turbo",
+        prediction=PredictionKind.FLOW,
+        latent_format=LatentFormat.ZIMAGE,
+        quantization=quantization,
+        core=CodexCoreSignature(
+            architecture=CodexCoreArchitecture.DIT,
+            channels_in=channels_in,
+            channels_out=channels_out,
+            context_dim=context_dim,
+            temporal=False,
+            depth=num_layers,
+            key_prefixes=["layers."],
+        ),
+        text_encoders=text_encoders,
+        vae=vae,
+        extras=extras,
+    )
+
+
+def _parse_checkpoint(
+    primary_path: str,
+    additional_paths: list[str] | None,
+    *,
+    expected_family: ModelFamily | None = None,
+) -> ParsedCheckpoint:
     base_state = _load_state_dict(primary_path)
-    signature = registry_detect(base_state)
+    if expected_family is ModelFamily.ZIMAGE:
+        signature = _zimage_signature_from_vendored_hf(model_path=primary_path)
+    else:
+        signature = registry_detect(base_state)
     config = parse_state_dict(base_state, signature)
 
     if additional_paths:
         replacements: Dict[str, Mapping[str, Any]] = {}
         for extra in additional_paths:
             extra_state = _load_state_dict(extra)
-            extra_signature = registry_detect(extra_state)
+            if expected_family is ModelFamily.ZIMAGE:
+                extra_signature = _zimage_signature_from_vendored_hf(model_path=extra)
+            else:
+                extra_signature = registry_detect(extra_state)
             extra_config = parse_state_dict(extra_state, extra_signature)
             for name, component in extra_config.components.items():
                 replacements[name] = component.state_dict
@@ -1256,9 +1375,14 @@ def codex_loader(
     text_encoder_override: TextEncoderOverrideConfig | None = None,
     vae_path: str | None = None,
     tenc_path: str | list[str] | None = None,
+    expected_family: ModelFamily | None = None,
 ) -> DiffusionModelBundle:
     try:
-        parsed = _parse_checkpoint(sd_path, additional_state_dicts or [])
+        parsed = _parse_checkpoint(
+            sd_path,
+            additional_state_dicts or [],
+            expected_family=expected_family,
+        )
     except ModelRegistryError as exc:
         raise ValueError("Failed to recognize model type!") from exc
 
@@ -1511,6 +1635,7 @@ def resolve_diffusion_bundle(
     text_encoder_override: TextEncoderOverrideConfig | None = None,
     vae_path: str | None = None,
     tenc_path: str | list[str] | None = None,
+    expected_family: ModelFamily | None = None,
 ) -> DiffusionModelBundle:
     """Resolve a diffusion model reference into a fully loaded bundle."""
     if os.path.isdir(model_ref):
@@ -1526,6 +1651,7 @@ def resolve_diffusion_bundle(
             text_encoder_override=text_encoder_override,
             vae_path=vae_path,
             tenc_path=tenc_path,
+            expected_family=expected_family,
         )
 
     record = model_api.find_checkpoint(model_ref)
@@ -1546,4 +1672,5 @@ def resolve_diffusion_bundle(
         text_encoder_override=text_encoder_override,
         vae_path=vae_path,
         tenc_path=tenc_path,
+        expected_family=expected_family,
     )

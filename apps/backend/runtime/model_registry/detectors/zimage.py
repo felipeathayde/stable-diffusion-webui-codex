@@ -12,7 +12,7 @@ Identifies Z Image core transformer checkpoints (GGUF or prefixed SafeTensors ex
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZIMAGE_CORE_KEYS` (constant): Minimal key set used to identify Z Image core weights (with optional prefix).
-- `_DIFFUSION_MODEL_PREFIX` (constant): Prefix used by some SafeTensors exports (`model.diffusion_model.*`).
+- `ZIMAGE_CORE_PREFIXES` (constant): Accepted prefixes for Z Image core keys (GGUF + common wrapper prefixes).
 - `_has_zimage_keys` (function): Checks presence of Z Image core keys in a signal bundle (prefixed or unprefixed).
 - `ZImageDetector` (class): Detector that matches Z Image bundles and builds a `ModelSignature` (dims + quantization hint).
 - `_shape` (function): Shape helper reading from bundle metadata or tensor objects.
@@ -43,7 +43,7 @@ from apps.backend.runtime.zimage.inference import infer_zimage_dims
 
 
 # Core keys for Z Image Turbo (NextDiT/Lumina2 format)
-# Some checkpoints use these directly, others have model.diffusion_model. prefix
+# Some checkpoints use these directly, others include wrapper prefixes.
 ZIMAGE_CORE_KEYS = (
     "x_embedder.weight",
     "cap_embedder.0.weight",
@@ -52,23 +52,23 @@ ZIMAGE_CORE_KEYS = (
     "final_layer.linear.weight",
 )
 
-# Prefix used by some safetensors exports (FP8, BF16)
-_DIFFUSION_MODEL_PREFIX = "model.diffusion_model."
+ZIMAGE_CORE_PREFIXES = (
+    "model.diffusion_model.",
+    "diffusion_model.",
+    "model.",
+    "",
+)
 
 
 def _has_zimage_keys(bundle: SignalBundle) -> bool:
     """Check if bundle has Z Image core keys, with or without prefix."""
     keys_set = set(bundle.keys)
-    
-    # Check unprefixed (GGUF format)
-    if all(k in keys_set for k in ZIMAGE_CORE_KEYS):
-        return True
-    
-    # Check with model.diffusion_model. prefix (safetensors format)
-    prefixed_keys = tuple(_DIFFUSION_MODEL_PREFIX + k for k in ZIMAGE_CORE_KEYS)
-    if all(k in keys_set for k in prefixed_keys):
-        return True
-    
+
+    for prefix in ZIMAGE_CORE_PREFIXES:
+        prefixed_keys = tuple(prefix + k for k in ZIMAGE_CORE_KEYS)
+        if all(k in keys_set for k in prefixed_keys):
+            return True
+
     return False
 
 
@@ -87,11 +87,13 @@ class ZImageDetector(ModelDetector):
         # Detect if this is a GGUF quantized checkpoint
         is_gguf = any(isinstance(v, CodexParameter) and v.qtype is not None for v in bundle.state_dict.values())
         
-        # Detect which key prefix is used (prefixed for safetensors, unprefixed for GGUF)
+        # Detect which key prefix is used (prefixed for some exports, unprefixed for GGUF).
         keys_set = set(bundle.keys)
         prefix = ""
-        if (_DIFFUSION_MODEL_PREFIX + "x_embedder.weight") in keys_set:
-            prefix = _DIFFUSION_MODEL_PREFIX
+        for candidate in ZIMAGE_CORE_PREFIXES:
+            if candidate and (candidate + "x_embedder.weight") in keys_set:
+                prefix = candidate
+                break
         
         stripped_keys = [k[len(prefix):] for k in bundle.keys if prefix and k.startswith(prefix)] if prefix else list(bundle.keys)
 

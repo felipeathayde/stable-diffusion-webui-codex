@@ -76,6 +76,7 @@ from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.checkpoint_io import load_torch_file, read_arbitrary_config
 from apps.backend.runtime.state_dict_tools import beautiful_print_gguf_state_dict_statics
 from apps.backend.runtime.wan22.vae import AutoencoderKLWan
+from apps.backend.runtime.models.registry import _detect_safetensors_primary_dtype
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")
@@ -427,6 +428,41 @@ def _detect_vae_layout(sd: Mapping[str, Any]) -> str:
     return "diffusers"
 
 
+_SAFETENSORS_DTYPE_LABEL_TO_TORCH: dict[str, torch.dtype] = {
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+    "fp32": torch.float32,
+    "fp64": torch.float64,
+}
+
+
+def _maybe_default_dtype_from_weights(
+    *,
+    role: DeviceRole,
+    current: torch.dtype,
+    weights_path: str | None,
+    supported: tuple[torch.dtype, ...] = (torch.float16, torch.bfloat16, torch.float32),
+) -> torch.dtype:
+    if not weights_path:
+        return current
+    try:
+        forced = memory_management.manager.config.component_policy(role).forced_dtype
+    except Exception:
+        forced = None
+    if forced:
+        return current
+
+    label = _detect_safetensors_primary_dtype(Path(weights_path))
+    if not label:
+        return current
+    detected = _SAFETENSORS_DTYPE_LABEL_TO_TORCH.get(label)
+    if detected is None:
+        return current
+    if detected not in supported:
+        return current
+    return detected
+
+
 def _load_huggingface_component(
     parsed: ParsedCheckpoint,
     component_name: str,
@@ -434,6 +470,8 @@ def _load_huggingface_component(
     cls_name: str,
     repo_path: str,
     state_dict: Mapping[str, Any] | None,
+    *,
+    weights_path: str | None = None,
 ):
     family = parsed.signature.family
     config = parsed.config
@@ -550,6 +588,7 @@ def _load_huggingface_component(
             config_json = _load_component_config(component_path)
         vae_device = memory_management.manager.get_device(DeviceRole.VAE)
         vae_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
+        vae_dtype = _maybe_default_dtype_from_weights(role=DeviceRole.VAE, current=vae_dtype, weights_path=weights_path)
         _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype), cls=vae_cls.__name__)
 
         with using_codex_operations(device=vae_device, dtype=vae_dtype, manual_cast_enabled=True):
@@ -609,11 +648,12 @@ def _load_huggingface_component(
             )
             # Use T5EncoderModel handler but keep this component_name (not redirecting)
             return _load_huggingface_component(
-                parsed, component_name, lib_name, "T5EncoderModel", repo_path, state_dict
+                parsed, component_name, lib_name, "T5EncoderModel", repo_path, state_dict, weights_path=weights_path
             )
         # Build native Codex CLIP instead of HF; normalise state dict beforehand
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
         te_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        te_dtype = _maybe_default_dtype_from_weights(role=DeviceRole.TEXT_ENCODER, current=te_dtype, weights_path=weights_path)
         to_args = dict(device=te_device, dtype=te_dtype)
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
@@ -871,7 +911,7 @@ def _load_huggingface_component(
             )
             # Use CLIPTextModel handler but keep this component_name (not redirecting)
             return _load_huggingface_component(
-                parsed, component_name, lib_name, "CLIPTextModel", repo_path, state_dict
+                parsed, component_name, lib_name, "CLIPTextModel", repo_path, state_dict, weights_path=weights_path
             )
         # T5-XXL config (google/t5-v1_1-xxl) - used by Flux
         _T5_XXL_DEFAULT_CONFIG = {
@@ -917,6 +957,11 @@ def _load_huggingface_component(
                 t5_config = _T5_XXL_DEFAULT_CONFIG
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
         storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        storage_dtype = _maybe_default_dtype_from_weights(
+            role=DeviceRole.TEXT_ENCODER,
+            current=storage_dtype,
+            weights_path=weights_path,
+        )
         state_dict_dtype = detect_state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
             LOGGER.info("Using Detected T5 Data Type: %s", state_dict_dtype)
@@ -1043,6 +1088,12 @@ def _load_huggingface_component(
         supported_dtypes = _supported_inference_dtypes(family)
         quant_kind = config.quantization.kind
         storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
+        storage_dtype = _maybe_default_dtype_from_weights(
+            role=DeviceRole.CORE,
+            current=storage_dtype,
+            weights_path=weights_path,
+            supported=tuple(supported_dtypes),
+        )
         if quant_kind == QuantizationKind.NF4:
             storage_dtype = "nf4"
         elif quant_kind == QuantizationKind.FP4:
@@ -1083,6 +1134,8 @@ def _load_huggingface_component(
         else:
             # Non-quantized models: compute computation_dtype for non-quantized path
             computation_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
+            if isinstance(storage_dtype, torch.dtype):
+                computation_dtype = storage_dtype
             
             prefer_gpu = bool(getattr(mem_config, "gpu_prefer_construct", False))
             construct_device = load_device if prefer_gpu else memory_management.manager.get_offload_device(DeviceRole.CORE)
@@ -1315,6 +1368,7 @@ def codex_loader(
             cls_name,
             local_repo_path,
             component_sd,
+            weights_path=sd_path if override_path is None and not (is_flux_core_gguf and cls_name == "AutoencoderKL") else (override_path or vae_path),
         )
         if component_sd is not None:
             component_states.pop(component_name, None)

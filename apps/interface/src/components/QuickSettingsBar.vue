@@ -250,7 +250,7 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore } from '../stores/model_tabs'
-import { fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
+import { fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
@@ -563,11 +563,13 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   let title = 'Metadata'
   let subtitle = ''
   let out: unknown = null
+  let filePathForMetadata: string | null = null
 
   if (kind === 'checkpoint') {
     const model = findModelByTitle(value)
     title = 'Checkpoint metadata'
     subtitle = model?.model_name ? String(model.model_name) : String(value)
+    filePathForMetadata = model?.filename ? String(model.filename) : null
     out = model
       ? {
           title: model.title,
@@ -582,6 +584,7 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
     const sha = store.resolveVaeSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
     title = kind === 'wan_vae' ? 'WAN VAE metadata' : 'VAE metadata'
     subtitle = rec?.name ? String(rec.name) : value
+    filePathForMetadata = rec?.path ? String(rec.path) : null
     out = {
       selection: value,
       sha256: sha,
@@ -604,6 +607,7 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
     else if (kind === 'wan_text_encoder') title = 'WAN text encoder metadata'
     else title = 'Text encoder metadata'
     subtitle = rec?.name ? String(rec.name) : value
+    filePathForMetadata = rec?.path ? String(rec.path) : null
     out = {
       selection: value,
       sha256: sha || (isSha256(value) ? value.toLowerCase() : undefined),
@@ -615,6 +619,7 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
     const sha = store.resolveWanGgufSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
     title = stage === 'high' ? 'WAN high model metadata' : 'WAN low model metadata'
     subtitle = rec?.name ? String(rec.name) : value
+    filePathForMetadata = rec?.path ? String(rec.path) : null
     out = {
       selection: value,
       stage,
@@ -627,10 +632,32 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
     out = { selection: value, kind }
   }
 
+  if (filePathForMetadata && typeof out === 'object' && out !== null) {
+    ;(out as any).file_metadata = { status: 'loading', path: filePathForMetadata }
+  }
+
   metadataModalTitle.value = title
   metadataModalSubtitle.value = subtitle
   metadataModalPayload.value = out
   showMetadataModal.value = true
+
+  if (!filePathForMetadata) return
+
+  void (async () => {
+    try {
+      const res = await fetchFileMetadata(filePathForMetadata)
+      const current = metadataModalPayload.value
+      if (typeof current !== 'object' || current === null) return
+      metadataModalPayload.value = { ...(current as any), file_metadata: res }
+    } catch (e: any) {
+      const current = metadataModalPayload.value
+      if (typeof current !== 'object' || current === null) return
+      metadataModalPayload.value = {
+        ...(current as any),
+        file_metadata: { status: 'error', path: filePathForMetadata, error: String(e?.message || e) },
+      }
+    }
+  })()
 }
 
 function fileInPaths(file: string, key: string): boolean {

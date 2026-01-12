@@ -255,6 +255,12 @@ def _apply_source_overrides(
             continue
 
         setting_val = _setting_value(settings_key)
+        # Back-compat: WebUI persists per-component core settings under `codex_core_*`,
+        # while the runtime namespace uses `codex_diffusion_*` for the diffusion core.
+        if settings_key == "codex_diffusion_device":
+            setting_val = _setting_value("codex_core_device") or setting_val
+        elif settings_key == "codex_diffusion_dtype":
+            setting_val = _setting_value("codex_core_dtype") or setting_val
         if setting_val:
             setattr(ns, settings_key, setting_val)
 

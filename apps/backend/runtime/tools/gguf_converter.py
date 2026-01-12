@@ -73,6 +73,19 @@ def convert_safetensors_to_gguf(
     config_path = _safetensors_source.resolve_config_json_path(config.config_path)
     with open(config_path, "r", encoding="utf-8") as f:
         model_config = json.load(f)
+
+    # Z-Image transformer: Diffusers exports require key remaps and QKV packing.
+    from apps.backend.runtime.tools import gguf_converter_zimage as _zimage  # local import avoids loading zimage helpers eagerly
+
+    if _zimage.is_zimage_transformer_config(model_config):
+        logger.info("Detected ZImageTransformer2DModel config; using Z-Image converter path.")
+        return _zimage.convert_zimage_transformer_to_gguf(
+            config,
+            model_config=model_config,
+            config_path=config_path,
+            progress=progress,
+            update_progress=update_progress,
+        )
     
     logger.info("Loaded config: %s", model_config.get("model_type", "unknown"))
     

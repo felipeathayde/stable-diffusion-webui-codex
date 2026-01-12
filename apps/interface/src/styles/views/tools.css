@@ -4,6 +4,14 @@
     margin-inline: auto;
   }
 
+  .cdx-tools .row-inline {
+    flex-wrap: nowrap;
+  }
+
+  .cdx-tools .row-inline .btn-icon {
+    flex-shrink: 0;
+  }
+
   .cdx-tools .btn-icon:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -140,4 +148,3 @@
     opacity: 0.7;
   }
 }
-

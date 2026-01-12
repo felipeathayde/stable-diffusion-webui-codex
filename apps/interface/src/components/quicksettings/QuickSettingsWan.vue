@@ -49,6 +49,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">{{ builtInLabel }}</option>
           <option v-for="m in highChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!highModel"
+          title="Show model metadata"
+          aria-label="Show model metadata"
+          @click="$emit('showMetadata', { kind: 'wan_high_model', value: highModel })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseHigh')">+</button>
       </div>
     </div>
@@ -62,6 +72,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">{{ builtInLabel }}</option>
           <option v-for="m in lowChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!lowModel"
+          title="Show model metadata"
+          aria-label="Show model metadata"
+          @click="$emit('showMetadata', { kind: 'wan_low_model', value: lowModel })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseLow')">+</button>
       </div>
     </div>
@@ -88,6 +108,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">{{ builtInLabel }}</option>
           <option v-for="te in textEncoderChoices" :key="te" :value="te">{{ encoderLabel(te) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!textEncoder"
+          title="Show text encoder metadata"
+          aria-label="Show text encoder metadata"
+          @click="$emit('showMetadata', { kind: 'wan_text_encoder', value: textEncoder })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseTe')">+</button>
       </div>
     </div>
@@ -101,6 +131,16 @@ Symbols (top-level; keep in sync; no ghosts):
           <option value="">{{ builtInLabel }}</option>
           <option v-for="v in vaeChoices" :key="v" :value="v">{{ dirLabel(v) }}</option>
         </select>
+        <button
+          class="btn qs-btn-outline qs-inline-btn qs-info-btn"
+          type="button"
+          :disabled="!vae"
+          title="Show VAE metadata"
+          aria-label="Show VAE metadata"
+          @click="$emit('showMetadata', { kind: 'wan_vae', value: vae })"
+        >
+          i
+        </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseVae')">+</button>
       </div>
     </div>
@@ -136,6 +176,7 @@ defineEmits<{
   (e: 'browseMetadata'): void
   (e: 'browseTe'): void
   (e: 'browseVae'): void
+  (e: 'showMetadata', payload: { kind: 'wan_high_model' | 'wan_low_model' | 'wan_text_encoder' | 'wan_vae'; value: string }): void
 }>()
 
 const builtInLabel = 'Select…'

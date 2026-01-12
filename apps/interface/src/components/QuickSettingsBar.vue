@@ -21,6 +21,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeTabFamily` (function): Normalizes unknown inputs to a `TabFamily` (or `null`).
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
 - `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
+- `MetadataKind` (type): Discriminant for inline metadata popups (checkpoint/TE/VAE/WAN stage).
+- `onShowMetadata` (function): Resolves selection metadata and opens a modal.
 - `fileInPaths` (function): Checks whether a file path belongs to the configured roots for a key from `/api/paths` (drives selector filtering).
 - `modelMatchesFamily` (function): Determines whether a checkpoint/inventory entry matches a given family (combines heuristics + `fileInPaths`).
 - `isVaeForFamily` (function): Filters VAE entries to those relevant for the current family.
@@ -102,6 +104,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @browseMetadata="onWanBrowseMetadata"
           @browseTe="onWanBrowseTe"
           @browseVae="onWanBrowseVae"
+          @showMetadata="onShowMetadata"
         />
       </template>
 
@@ -122,6 +125,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @addCheckpointPath="onAddCheckpointPath"
           @addVaePath="onAddVaePath"
           @addTencPath="onAddTencPath"
+          @showMetadata="onShowMetadata"
         />
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
@@ -146,6 +150,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @addCheckpointPath="onAddCheckpointPath"
           @addVaePath="onAddVaePath"
           @addTencPath="onAddTencPath"
+          @showMetadata="onShowMetadata"
         />
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
@@ -174,6 +179,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:textEncoder="onPrimaryTextEncoderChange"
           @addCheckpointPath="onAddCheckpointPath"
           @addVaePath="onAddVaePath"
+          @showMetadata="onShowMetadata"
         />
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
@@ -235,6 +241,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <QuickSettingsOverridesModal v-model="showOverridesModal" />
+    <AssetMetadataModal v-model="showMetadataModal" :title="metadataModalTitle" :subtitle="metadataModalSubtitle" :payload="metadataModalPayload" />
   </section>
 </template>
 
@@ -254,6 +261,7 @@ import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
 import QuickSettingsFlux from './quicksettings/QuickSettingsFlux.vue'
 import QuickSettingsZImage from './quicksettings/QuickSettingsZImage.vue'
 import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
+import AssetMetadataModal from './modals/AssetMetadataModal.vue'
 
 const store = useQuicksettingsStore()
 const presets = useUiPresetsStore()
@@ -261,12 +269,20 @@ const route = useRoute()
 const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
 const pathsConfig = ref<Record<string, string[]>>({})
-const inventoryVaes = ref<Array<{ name: string; path: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }>>([])
-const inventoryWan = ref<Array<{ name: string; path: string; stage: string }>>([])
-const inventoryTextEncoders = ref<Array<{ name: string; path: string }>>([])
-const inventoryMetadata = ref<Array<{ name: string; path: string }>>([])
+type InventoryVae = { name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }
+type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: string }
+type InventoryTextEncoder = { name: string; path: string; sha256?: string }
+type InventoryMetadata = { name: string; path: string }
+const inventoryVaes = ref<InventoryVae[]>([])
+const inventoryWan = ref<InventoryWanGguf[]>([])
+const inventoryTextEncoders = ref<InventoryTextEncoder[]>([])
+const inventoryMetadata = ref<InventoryMetadata[]>([])
 const engineCaps = useEngineCapabilitiesStore()
 const showOverridesModal = ref(false)
+const showMetadataModal = ref(false)
+const metadataModalTitle = ref('Metadata')
+const metadataModalSubtitle = ref('')
+const metadataModalPayload = ref<unknown>(null)
 const isLoadingQuicksettings = ref(false)
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
@@ -432,6 +448,7 @@ async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void
     inventoryWan.value = (inv.wan22?.gguf ?? []).map((g: any) => ({
       name: String(g.name),
       path: String(g.path),
+      sha256: typeof g?.sha256 === 'string' ? String(g.sha256) : undefined,
       stage: String(g.stage || 'unknown'),
     }))
     // Text encoder files are available via inventory for future use (e.g., Flux overrides).
@@ -456,6 +473,167 @@ async function loadPaths(): Promise<void> {
 
 function normalizePath(path: string): string {
   return path.replace(/\\+/g, '/').replace(/\/+$/, '')
+}
+
+type MetadataKind =
+  | 'checkpoint'
+  | 'vae'
+  | 'text_encoder'
+  | 'text_encoder_primary'
+  | 'text_encoder_secondary'
+  | 'wan_high_model'
+  | 'wan_low_model'
+  | 'wan_text_encoder'
+  | 'wan_vae'
+
+function isSha256(value: string): boolean {
+  const lower = value.toLowerCase().trim()
+  return lower.length === 64 && /^[0-9a-f]+$/.test(lower)
+}
+
+function stripFamilyPrefix(label: string): string {
+  const norm = label.replace(/\\+/g, '/').trim()
+  const idx = norm.indexOf('/')
+  if (idx <= 0) return norm
+  const prefix = norm.slice(0, idx)
+  const rest = norm.slice(idx + 1)
+  if (!rest) return norm
+  if (['sd15', 'sdxl', 'flux1', 'wan22', 'zimage'].includes(prefix)) return rest
+  return norm
+}
+
+function findModelByTitle(title: string): any | undefined {
+  const raw = String(title || '').trim()
+  if (!raw) return undefined
+  for (const m of store.models) {
+    if (!m) continue
+    if (m.title === raw) return m
+  }
+  return undefined
+}
+
+function findVaeRecord(label: string): InventoryVae | undefined {
+  const raw = String(label || '').trim()
+  if (!raw) return undefined
+  const norm = normalizePath(raw)
+  const tail = norm.split('/').pop() || raw
+  return inventoryVaes.value.find((v) => {
+    if (!v) return false
+    if (v.name === raw) return true
+    const vPath = normalizePath(String(v.path || ''))
+    return vPath === norm || (tail ? vPath.endsWith('/' + tail) : false)
+  })
+}
+
+function findTextEncoderRecord(label: string): InventoryTextEncoder | undefined {
+  const raw = String(label || '').trim()
+  if (!raw) return undefined
+  const unprefixed = stripFamilyPrefix(raw)
+  const candidates = [raw, unprefixed]
+  for (const cand of candidates) {
+    const norm = normalizePath(cand)
+    const tail = norm.split('/').pop() || cand
+    const found = inventoryTextEncoders.value.find((te) => {
+      if (!te) return false
+      if (te.name === cand) return true
+      const tePath = normalizePath(String(te.path || ''))
+      return tePath === norm || (tail ? tePath.endsWith('/' + tail) : false)
+    })
+    if (found) return found
+  }
+  return undefined
+}
+
+function findWanGgufRecord(label: string, stage: 'high' | 'low'): InventoryWanGguf | undefined {
+  const raw = String(label || '').trim()
+  if (!raw) return undefined
+  const norm = normalizePath(raw)
+  const tail = norm.split('/').pop() || raw
+  return inventoryWan.value.find((w) => {
+    if (!w) return false
+    if (String(w.stage || '') !== stage) return false
+    if (w.name === raw) return true
+    const wPath = normalizePath(String(w.path || ''))
+    return wPath === norm || (tail ? wPath.endsWith('/' + tail) : false)
+  })
+}
+
+function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
+  const kind = String((payload as any)?.kind || '').trim() as MetadataKind
+  const value = String((payload as any)?.value || '').trim()
+  if (!kind || !value) return
+
+  let title = 'Metadata'
+  let subtitle = ''
+  let out: unknown = null
+
+  if (kind === 'checkpoint') {
+    const model = findModelByTitle(value)
+    title = 'Checkpoint metadata'
+    subtitle = model?.model_name ? String(model.model_name) : String(value)
+    out = model
+      ? {
+          title: model.title,
+          model_name: model.model_name,
+          filename: model.filename,
+          hash: model.hash,
+          metadata: model.metadata,
+        }
+      : { selection: value }
+  } else if (kind === 'vae' || kind === 'wan_vae') {
+    const rec = findVaeRecord(value)
+    const sha = store.resolveVaeSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
+    title = kind === 'wan_vae' ? 'WAN VAE metadata' : 'VAE metadata'
+    subtitle = rec?.name ? String(rec.name) : value
+    out = {
+      selection: value,
+      sha256: sha,
+      inventory: rec
+        ? {
+            name: rec.name,
+            path: rec.path,
+            sha256: rec.sha256,
+            format: rec.format,
+            latent_channels: rec.latent_channels ?? null,
+            scaling_factor: rec.scaling_factor ?? null,
+          }
+        : null,
+    }
+  } else if (kind === 'text_encoder' || kind === 'text_encoder_primary' || kind === 'text_encoder_secondary' || kind === 'wan_text_encoder') {
+    const rec = findTextEncoderRecord(value)
+    const sha = store.resolveTextEncoderSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
+    if (kind === 'text_encoder_primary') title = 'Text encoder metadata (CLIP)'
+    else if (kind === 'text_encoder_secondary') title = 'Text encoder metadata (T5)'
+    else if (kind === 'wan_text_encoder') title = 'WAN text encoder metadata'
+    else title = 'Text encoder metadata'
+    subtitle = rec?.name ? String(rec.name) : value
+    out = {
+      selection: value,
+      sha256: sha || (isSha256(value) ? value.toLowerCase() : undefined),
+      inventory: rec ? { name: rec.name, path: rec.path, sha256: rec.sha256 } : null,
+    }
+  } else if (kind === 'wan_high_model' || kind === 'wan_low_model') {
+    const stage = kind === 'wan_high_model' ? 'high' : 'low'
+    const rec = findWanGgufRecord(value, stage)
+    const sha = store.resolveWanGgufSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
+    title = stage === 'high' ? 'WAN high model metadata' : 'WAN low model metadata'
+    subtitle = rec?.name ? String(rec.name) : value
+    out = {
+      selection: value,
+      stage,
+      sha256: sha || (isSha256(value) ? value.toLowerCase() : undefined),
+      inventory: rec ? { name: rec.name, path: rec.path, sha256: rec.sha256, stage: rec.stage } : null,
+    }
+  } else {
+    title = 'Metadata'
+    subtitle = value
+    out = { selection: value, kind }
+  }
+
+  metadataModalTitle.value = title
+  metadataModalSubtitle.value = subtitle
+  metadataModalPayload.value = out
+  showMetadataModal.value = true
 }
 
 function fileInPaths(file: string, key: string): boolean {

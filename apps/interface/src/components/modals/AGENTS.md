@@ -11,6 +11,7 @@ Status: Active
 ## Key files
 - `apps/interface/src/components/ui/Modal.vue` — shared modal shell (header/body/footer, click-outside backdrop).
 - `apps/interface/src/components/modals/CheckpointModal.vue` — checkpoint picker (prompt workflows / views decide insertion targets).
+- `apps/interface/src/components/modals/AssetMetadataModal.vue` — read-only JSON metadata viewer for selected checkpoints/assets (QuickSettings info button).
 - `apps/interface/src/components/modals/LoraModal.vue` — LoRA picker/insert helpers.
 - `apps/interface/src/components/modals/TextualInversionModal.vue` — TI picker/insert helpers.
 - `apps/interface/src/components/modals/QuickSettingsOverridesModal.vue` — global device + per-component overrides UI.

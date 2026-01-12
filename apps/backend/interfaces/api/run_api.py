@@ -389,32 +389,6 @@ def build_app() -> FastAPI:
         if changed:
             _save_json(_settings_values_path, saved)
 
-        # Apply persisted memory overrides at process startup so launchers/env do not
-        # need to control devices/dtypes (WebUI options are the source of truth).
-        try:
-            from apps.backend.runtime import memory_management as mem_management  # type: ignore
-
-            role_map = {
-                "codex_core_device": ("core", "backend"),
-                "codex_te_device": ("text_encoder", "backend"),
-                "codex_vae_device": ("vae", "backend"),
-                "codex_core_dtype": ("core", "dtype"),
-                "codex_te_dtype": ("text_encoder", "dtype"),
-                "codex_vae_dtype": ("vae", "dtype"),
-            }
-            for key, (role, kind) in role_map.items():
-                if key not in saved:
-                    continue
-                value = saved.get(key)
-                if value is None:
-                    continue
-                if kind == "backend":
-                    mem_management.set_component_backend(role, str(value))
-                else:
-                    mem_management.set_component_dtype(role, str(value))
-        except Exception:
-            pass
-
     # Apply saved settings early (after modules init) before serving
     try:
         _apply_saved_settings()

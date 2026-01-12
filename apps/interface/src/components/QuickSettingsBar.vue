@@ -132,9 +132,6 @@ Symbols (top-level; keep in sync; no ghosts):
           <div class="qs-row">
             <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
           </div>
-          <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
-            <small class="label-muted">{{ currentPathsHint }}</small>
-          </div>
         </div>
       </template>
 
@@ -159,9 +156,6 @@ Symbols (top-level; keep in sync; no ghosts):
           <label class="label-muted">Models</label>
           <div class="qs-row">
             <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
-          </div>
-          <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
-            <small class="label-muted">{{ currentPathsHint }}</small>
           </div>
         </div>
       </template>
@@ -191,9 +185,6 @@ Symbols (top-level; keep in sync; no ghosts):
           <label class="label-muted">Models</label>
           <div class="qs-row">
             <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
-          </div>
-          <div v-if="currentPathsHint" class="qs-row qs-paths-hint">
-            <small class="label-muted">{{ currentPathsHint }}</small>
           </div>
         </div>
       </template>
@@ -797,21 +788,6 @@ watch(
   },
   { immediate: true },
 )
-
-const currentPathsHint = computed(() => {
-  const fam = activeFamily.value
-  if (fam === 'sd15' || fam === 'sdxl') return ''
-  const prefix = enginePrefixForFamily(fam)
-  const keys = [`${prefix}_ckpt`, `${prefix}_tenc`, `${prefix}_vae`]
-  const parts: string[] = []
-  for (const key of keys) {
-    const vals = pathsConfig.value[key] || []
-    if (vals.length) {
-      parts.push(`${key}: ${vals.join(', ')}`)
-    }
-  }
-  return parts.join(' | ')
-})
 
 async function initQuicksettings(options?: { forceInventoryRefresh?: boolean; forceModelsRefresh?: boolean }): Promise<void> {
   isLoadingQuicksettings.value = true

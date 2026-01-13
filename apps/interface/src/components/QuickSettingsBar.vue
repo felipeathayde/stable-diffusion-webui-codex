@@ -565,21 +565,21 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   let out: unknown = null
   let filePathForMetadata: string | null = null
 
-  if (kind === 'checkpoint') {
-    const model = findModelByTitle(value)
-    title = 'Checkpoint metadata'
-    subtitle = model?.model_name ? String(model.model_name) : String(value)
-    filePathForMetadata = model?.filename ? String(model.filename) : null
-    out = model
-      ? {
-          hash: model.hash,
-          file: {
-            name: model.model_name,
-            path: model.filename,
-            size: { bytes: null, megabytes: null, gigabytes: null },
-          },
-        }
-      : { selection: value }
+	  if (kind === 'checkpoint') {
+	    const model = findModelByTitle(value)
+	    title = 'Checkpoint metadata'
+	    subtitle = model?.model_name ? String(model.model_name) : String(value)
+	    filePathForMetadata = model?.filename ? String(model.filename) : null
+	    out = model
+	      ? {
+	          hash: model.hash,
+	          'file.name': model.model_name,
+	          'file.path': model.filename,
+	          'file.size.bytes': null,
+	          'file.size.megabytes': null,
+	          'file.size.gigabytes': null,
+	        }
+	      : { selection: value }
   } else if (kind === 'vae' || kind === 'wan_vae') {
     const rec = findVaeRecord(value)
     const sha = store.resolveVaeSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
@@ -645,38 +645,33 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   if (!filePathForMetadata) return
 
 	  void (async () => {
-    try {
-      const res = await fetchFileMetadata(filePathForMetadata)
-      const current = metadataModalPayload.value
-      if (typeof current !== 'object' || current === null) return
-      const flat = (res as any)?.flat
-      const nested = (res as any)?.nested
-      const sizeBytes = (res as any)?.summary?.file?.size_bytes
+	    try {
+	      const res = await fetchFileMetadata(filePathForMetadata)
+	      const current = metadataModalPayload.value
+	      if (typeof current !== 'object' || current === null) return
+	      const flat = (res as any)?.flat
+	      const nested = (res as any)?.nested
+	      const sizeBytes = (res as any)?.summary?.file?.size_bytes
 
-      let fileOut = (current as any).file
-      if (fileOut && typeof fileOut === 'object' && typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0) {
-        const mb = sizeBytes / 1_000_000
-        const gb = sizeBytes / 1_000_000_000
-        fileOut = {
-          ...(fileOut as any),
-          size: {
-            bytes: sizeBytes,
-            megabytes: Number(mb.toFixed(3)),
-            gigabytes: Number(gb.toFixed(3)),
-          },
-        }
-      }
+	      const filePatch: Record<string, unknown> = {}
+	      if (typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0) {
+	        const mb = sizeBytes / 1_000_000
+	        const gb = sizeBytes / 1_000_000_000
+	        filePatch['file.size.bytes'] = sizeBytes
+	        filePatch['file.size.megabytes'] = Number(mb.toFixed(3))
+	        filePatch['file.size.gigabytes'] = Number(gb.toFixed(3))
+	      }
 
-      const metaOut: Record<string, unknown> = {
-        raw: flat && typeof flat === 'object' ? flat : (res as any),
-        nested: nested && typeof nested === 'object' ? nested : undefined,
-      }
-      metadataModalPayload.value = {
-        ...(current as any),
-        file: fileOut,
-        metadata: metaOut,
-      }
-    } catch (e: any) {
+	      const metaOut: Record<string, unknown> = {
+	        raw: flat && typeof flat === 'object' ? flat : (res as any),
+	        nested: nested && typeof nested === 'object' ? nested : undefined,
+	      }
+	      metadataModalPayload.value = {
+	        ...(current as any),
+	        ...filePatch,
+	        metadata: metaOut,
+	      }
+	    } catch (e: any) {
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
       metadataModalPayload.value = {

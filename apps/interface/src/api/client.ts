@@ -17,6 +17,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
  - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
+ - `fetchFileMetadata` (function): Reads GGUF/SafeTensors file metadata (`/models/file-metadata`).
+ - `fetchCheckpointMetadata` (function): Fetches the metadata modal payload for a checkpoint selection (`/models/checkpoint-metadata`).
  - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
  - `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
  - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
@@ -73,6 +75,7 @@ import type {
   InventoryResponse,
   EngineCapabilitiesResponse,
   FileMetadataResponse,
+  CheckpointMetadataResponse,
 } from './types'
 import type { Txt2ImgRequest } from './payloads'
 
@@ -150,6 +153,10 @@ export function fetchModelInventory(): Promise<InventoryResponse> {
 
 export function fetchFileMetadata(path: string): Promise<FileMetadataResponse> {
   return requestJson<FileMetadataResponse>(`/models/file-metadata?path=${encodeURIComponent(path)}`)
+}
+
+export function fetchCheckpointMetadata(value: string): Promise<CheckpointMetadataResponse> {
+  return requestJson<CheckpointMetadataResponse>(`/models/checkpoint-metadata?value=${encodeURIComponent(value)}`)
 }
 
 export async function refreshModelInventory(): Promise<InventoryResponse> {

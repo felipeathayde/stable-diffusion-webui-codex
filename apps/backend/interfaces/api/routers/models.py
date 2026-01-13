@@ -86,6 +86,49 @@ def build_router(
             raise HTTPException(status_code=500, detail=str(exc))
         return result.as_dict()
 
+    @router.get("/api/models/checkpoint-metadata")
+    def get_checkpoint_metadata(value: str = Query(..., description="Checkpoint title/name/path to resolve.")) -> Dict[str, Any]:
+        record = None
+        try:
+            record = model_api.find_checkpoint(value)
+        except Exception:
+            record = None
+
+        if record is None:
+            raise HTTPException(status_code=404, detail="checkpoint not found")
+
+        raw_path = str(getattr(record, "filename", "") or getattr(record, "path", "") or "").strip()
+        if not raw_path:
+            raise HTTPException(status_code=500, detail="checkpoint record missing filename")
+
+        weights_path = Path(raw_path).expanduser()
+        resolved = weights_path.resolve(strict=False)
+        if not resolved.exists():
+            raise HTTPException(status_code=404, detail="checkpoint file not found")
+        if not resolved.is_file():
+            raise HTTPException(status_code=400, detail="checkpoint is not a file")
+
+        try:
+            meta = read_file_metadata(str(resolved))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="file not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+        size_bytes = int(resolved.stat().st_size)
+        short_hash = getattr(record, "short_hash", None) or getattr(record, "shorthash", None)
+        return {
+            "hash": short_hash,
+            "file.name": resolved.stem,
+            "file.path": str(resolved),
+            "file.size.bytes": size_bytes,
+            "file.size.megabytes": round(size_bytes / 1_000_000, 3),
+            "file.size.gigabytes": round(size_bytes / 1_000_000_000, 3),
+            "metadata": {"raw": dict(meta.flat), "nested": dict(meta.nested)},
+        }
+
     @router.post("/api/models/inventory/refresh")
     def refresh_models_inventory() -> Dict[str, Any]:
         from apps.backend.inventory import cache as _inv_cache

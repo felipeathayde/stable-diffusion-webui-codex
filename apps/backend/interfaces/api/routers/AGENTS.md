@@ -18,7 +18,9 @@ Status: Active
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
 - `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + file browser endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
+- `apps/backend/interfaces/api/routers/models.py` also exposes `/api/models/checkpoint-metadata` (UI metadata modal payload for a checkpoint selection).
 
 ## Notes
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
+- 2026-01-13: `models.py` adds `/api/models/checkpoint-metadata` so the UI can fetch the full metadata modal payload without constructing it client-side.

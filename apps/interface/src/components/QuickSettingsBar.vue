@@ -250,7 +250,7 @@ import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore } from '../stores/model_tabs'
-import { fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
+import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
@@ -566,25 +566,14 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   let filePathForMetadata: string | null = null
 
 	  if (kind === 'checkpoint') {
-	    const model = findModelByTitle(value)
 	    title = 'Checkpoint metadata'
-	    subtitle = model?.model_name ? String(model.model_name) : String(value)
-	    filePathForMetadata = model?.filename ? String(model.filename) : null
-	    out = model
-	      ? {
-	          hash: model.hash,
-	          'file.name': model.model_name,
-	          'file.path': model.filename,
-	          'file.size.bytes': null,
-	          'file.size.megabytes': null,
-	          'file.size.gigabytes': null,
-	        }
-	      : { selection: value }
-  } else if (kind === 'vae' || kind === 'wan_vae') {
-    const rec = findVaeRecord(value)
-    const sha = store.resolveVaeSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
-    title = kind === 'wan_vae' ? 'WAN VAE metadata' : 'VAE metadata'
-    subtitle = rec?.name ? String(rec.name) : value
+	    subtitle = value
+	    out = { selection: value, metadata: { status: 'loading' } }
+	  } else if (kind === 'vae' || kind === 'wan_vae') {
+	    const rec = findVaeRecord(value)
+	    const sha = store.resolveVaeSha(value) || (rec?.sha256 ? String(rec.sha256) : undefined)
+	    title = kind === 'wan_vae' ? 'WAN VAE metadata' : 'VAE metadata'
+	    subtitle = rec?.name ? String(rec.name) : value
     filePathForMetadata = rec?.path ? String(rec.path) : null
     out = {
       selection: value,
@@ -637,12 +626,27 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
     ;(out as any).metadata = { status: 'loading' }
   }
 
-  metadataModalTitle.value = title
-  metadataModalSubtitle.value = subtitle
-  metadataModalPayload.value = out
-  showMetadataModal.value = true
+	  metadataModalTitle.value = title
+	  metadataModalSubtitle.value = subtitle
+	  metadataModalPayload.value = out
+	  showMetadataModal.value = true
 
-  if (!filePathForMetadata) return
+	  if (kind === 'checkpoint') {
+	    void (async () => {
+	      try {
+	        const payload = await fetchCheckpointMetadata(value)
+	        metadataModalPayload.value = payload
+	      } catch (e: any) {
+	        metadataModalPayload.value = {
+	          selection: value,
+	          metadata: { status: 'error', error: String(e?.message || e) },
+	        }
+	      }
+	    })()
+	    return
+	  }
+
+	  if (!filePathForMetadata) return
 
 	  void (async () => {
 	    try {

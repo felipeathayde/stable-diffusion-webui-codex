@@ -281,6 +281,7 @@
   @import "./styles/components/video-settings-card.css";
   @import "./styles/components/quicksettings.css";
   @import "./styles/components/quicksettings-overrides-modal.css";
+  @import "./styles/components/asset-metadata-modal.css";
   @import "./styles/components/views-shared.css";
   @import "./styles/components/cdx-stepper-input.css";
   @import "./styles/components/cdx-slider-field.css";

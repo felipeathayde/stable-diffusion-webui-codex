@@ -1,0 +1,123 @@
+/*
+Purpose: Asset metadata modal JSON viewer styles.
+Keeps scrollbars/theme aligned and styles the collapsible JsonTreeView.
+*/
+
+.cdx-metadata-modal__json {
+  padding: var(--space-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+}
+
+.cdx-json-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsla(0,0%,100%,0.22) hsla(0,0%,100%,0.05);
+}
+
+.cdx-json-scroll::-webkit-scrollbar {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.cdx-json-scroll::-webkit-scrollbar-track {
+  background: hsla(0,0%,100%,0.05);
+  border-radius: 999px;
+}
+
+.cdx-json-scroll::-webkit-scrollbar-thumb {
+  background: hsla(0,0%,100%,0.16);
+  border-radius: 999px;
+  border: 0.1875rem solid hsla(0,0%,0%,0.18);
+}
+
+.cdx-json-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsla(0,0%,100%,0.24);
+}
+
+.cdx-json-node {
+  margin: 0;
+}
+
+.cdx-json-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.5rem;
+}
+
+.cdx-json-summary:hover {
+  background: hsla(0,0%,100%,0.06);
+}
+
+.cdx-json-summary::-webkit-details-marker {
+  display: none;
+}
+
+.cdx-json-summary::before {
+  content: "▸";
+  width: 1rem;
+  display: inline-block;
+  color: var(--color-muted-foreground);
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.cdx-json-node[open] > .cdx-json-summary::before {
+  transform: rotate(90deg);
+}
+
+.cdx-json-node[open] .cdx-json-preview {
+  display: none;
+}
+
+.cdx-json-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-left: 1.25rem;
+  border-left: 0.0625rem solid hsla(0,0%,100%,0.08);
+  margin-left: 0.5rem;
+}
+
+.cdx-json-tail,
+.cdx-json-line {
+  padding: 0.1rem 0.25rem;
+}
+
+.cdx-json-more {
+  padding: 0.1rem 0.25rem;
+  color: var(--color-muted-foreground);
+  opacity: 0.9;
+}
+
+.cdx-json-key {
+  color: var(--color-primary);
+  opacity: 0.95;
+}
+
+.cdx-json-punct {
+  color: var(--color-muted-foreground);
+}
+
+.cdx-json-string {
+  color: var(--color-foreground);
+  opacity: 0.92;
+}
+
+.cdx-json-number {
+  color: var(--color-foreground);
+  opacity: 0.92;
+}
+
+.cdx-json-boolean,
+.cdx-json-null {
+  color: var(--color-muted-foreground);
+  opacity: 0.9;
+}
+

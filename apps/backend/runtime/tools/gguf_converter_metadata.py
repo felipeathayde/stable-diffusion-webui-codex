@@ -58,9 +58,6 @@ def add_basic_metadata(
     if commit:
         writer.add_string("codex.commit", commit)
 
-    writer.add_string("gguf.quantized_at_utc", _dt.datetime.now(tz=_dt.timezone.utc).isoformat())
-    writer.add_string("gguf.quantization", str(quant.value))
-
     model_name = str(config.get("_name_or_path") or config.get("name") or "model")
     writer.add_string("model.name", model_name)
     writer.add_string("model.architecture", str(arch))
@@ -77,6 +74,9 @@ def add_basic_metadata(
     writer.add_uint32("model.attention.head_count_kv", int(config.get("num_key_value_heads", 8)))
     writer.add_float32("model.rope.freq_base", float(config.get("rope_theta", 10000.0)))
     writer.add_float32("model.attention.layer_norm_rms_epsilon", float(config.get("rms_norm_eps", 1e-6)))
+
+    writer.add_string("gguf.quantized_at_utc", _dt.datetime.now(tz=_dt.timezone.utc).isoformat())
+    writer.add_string("gguf.quantization", str(quant.value))
 
 
 __all__ = [

@@ -15,6 +15,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `is_zimage_transformer_config` (function): Returns True when a config.json represents a Z-Image transformer export.
 - `normalize_zimage_transformer_metadata_config` (function): Adapts Z-Image transformer config fields to metadata helper inputs.
 - `plan_zimage_transformer_tensors` (function): Plan tensor conversion for Diffusers-style Z-Image transformer weights (includes QKV packing).
+- `is_flux_transformer_config` (function): Returns True when a config.json represents a Flux transformer export.
+- `normalize_flux_transformer_metadata_config` (function): Adapts Flux transformer config fields to metadata helper inputs.
+- `plan_flux_transformer_tensors` (function): Plan tensor conversion for Diffusers-style Flux transformer weights (maps to Comfy-style keys).
 """
 
 from __future__ import annotations
@@ -95,6 +98,41 @@ def plan_tensors(
 
 def is_zimage_transformer_config(config: Mapping[str, Any]) -> bool:
     return str(config.get("_class_name") or "") == "ZImageTransformer2DModel"
+
+
+def is_flux_transformer_config(config: Mapping[str, Any]) -> bool:
+    return str(config.get("_class_name") or "") == "FluxTransformer2DModel"
+
+
+def normalize_flux_transformer_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt Flux transformer config keys into the metadata helper's expected fields."""
+
+    def _as_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(default)
+
+    num_heads = _as_int(config.get("num_attention_heads"), 24)
+    head_dim = _as_int(config.get("attention_head_dim"), 128)
+    hidden = max(1, num_heads) * max(1, head_dim)
+
+    double_layers = _as_int(config.get("num_layers"), 19)
+    single_layers = _as_int(config.get("num_single_layers"), 38)
+
+    return {
+        "model_type": "flux",
+        "num_hidden_layers": max(1, double_layers + single_layers),
+        "hidden_size": hidden,
+        "num_attention_heads": num_heads,
+        "num_key_value_heads": num_heads,
+        "max_position_embeddings": 4096,
+        "rope_theta": 10000.0,
+        "rms_norm_eps": 1e-6,
+        "_name_or_path": str(
+            config.get("_name_or_path") or config.get("name") or "black-forest-labs/FLUX.1-Kontext-dev"
+        ),
+    }
 
 
 def normalize_zimage_transformer_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -398,10 +436,251 @@ def plan_zimage_transformer_tensors(
     return plans, key_mapping
 
 
+def _extract_block_indices(keys: Sequence[str], prefix: str) -> list[int]:
+    indices: set[int] = set()
+    for k in keys:
+        if not k.startswith(prefix):
+            continue
+        rest = k[len(prefix) :]
+        part = rest.split(".", 1)[0]
+        if part.isdigit():
+            indices.add(int(part))
+    return sorted(indices)
+
+
+def plan_flux_transformer_tensors(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested: GGMLQuantizationType,
+    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
+) -> tuple[list[TensorPlan], dict[str, str]]:
+    """Plan Flux transformer tensors from Diffusers key layout into Comfy-style keys.
+
+    This maps `transformer_blocks.*` (double blocks) and `single_transformer_blocks.*` (single blocks) into the
+    key layout expected by `apps/backend/runtime/flux/model.py`:
+    - `img_in`, `txt_in`, `time_in`, `vector_in`, `guidance_in`, `final_layer`
+    - `double_blocks.*` (img/txt attn+mlp+modulation)
+    - `single_blocks.*` (fused qkv+mlp in `linear1`, `linear2`, modulation)
+
+    It also fuses QKV projections (and single-block `proj_mlp`) to match the fused Comfy layout.
+    """
+
+    shapes: dict[str, tuple[int, ...]] = {}
+    keys_set = set(tensor_names)
+    consumed: set[str] = set()
+    out_ops: dict[str, tuple[str, tuple[str, ...]]] = {}
+
+    def _require(name: str) -> str:
+        if name not in keys_set:
+            raise RuntimeError(f"Flux planner: missing required tensor: {name}")
+        return name
+
+    def _add_copy(dst: str, src: str) -> None:
+        if dst in out_ops:
+            raise RuntimeError(f"Flux planner: duplicate mapping for {dst} (src={src})")
+        out_ops[dst] = ("copy", (_require(src),))
+        consumed.add(src)
+
+    def _add_concat(dst: str, srcs: Sequence[str]) -> None:
+        if dst in out_ops:
+            raise RuntimeError(f"Flux planner: duplicate mapping for {dst}")
+        resolved = tuple(_require(s) for s in srcs)
+        out_ops[dst] = ("concat_dim0", resolved)
+        consumed.update(resolved)
+
+    # Top-level modules (input/output and embedder MLPs).
+    _add_copy("img_in.weight", "x_embedder.weight")
+    _add_copy("img_in.bias", "x_embedder.bias")
+    _add_copy("txt_in.weight", "context_embedder.weight")
+    _add_copy("txt_in.bias", "context_embedder.bias")
+
+    _add_copy("final_layer.linear.weight", "proj_out.weight")
+    _add_copy("final_layer.linear.bias", "proj_out.bias")
+    _add_copy("final_layer.adaLN_modulation.1.weight", "norm_out.linear.weight")
+    _add_copy("final_layer.adaLN_modulation.1.bias", "norm_out.linear.bias")
+
+    _add_copy("time_in.in_layer.weight", "time_text_embed.timestep_embedder.linear_1.weight")
+    _add_copy("time_in.in_layer.bias", "time_text_embed.timestep_embedder.linear_1.bias")
+    _add_copy("time_in.out_layer.weight", "time_text_embed.timestep_embedder.linear_2.weight")
+    _add_copy("time_in.out_layer.bias", "time_text_embed.timestep_embedder.linear_2.bias")
+
+    _add_copy("vector_in.in_layer.weight", "time_text_embed.text_embedder.linear_1.weight")
+    _add_copy("vector_in.in_layer.bias", "time_text_embed.text_embedder.linear_1.bias")
+    _add_copy("vector_in.out_layer.weight", "time_text_embed.text_embedder.linear_2.weight")
+    _add_copy("vector_in.out_layer.bias", "time_text_embed.text_embedder.linear_2.bias")
+
+    # Guidance embedder is optional for schnell-style configs.
+    if "time_text_embed.guidance_embedder.linear_1.weight" in keys_set:
+        _add_copy("guidance_in.in_layer.weight", "time_text_embed.guidance_embedder.linear_1.weight")
+        _add_copy("guidance_in.in_layer.bias", "time_text_embed.guidance_embedder.linear_1.bias")
+        _add_copy("guidance_in.out_layer.weight", "time_text_embed.guidance_embedder.linear_2.weight")
+        _add_copy("guidance_in.out_layer.bias", "time_text_embed.guidance_embedder.linear_2.bias")
+
+    # Double blocks: Diffusers `transformer_blocks.N.*` → Comfy `double_blocks.N.*`.
+    double_indices = _extract_block_indices(tensor_names, "transformer_blocks.")
+    if not double_indices:
+        raise RuntimeError("Flux planner: no transformer_blocks.* tensors found")
+    if double_indices != list(range(0, max(double_indices) + 1)):
+        raise RuntimeError(f"Flux planner: unexpected transformer_blocks indices: {double_indices}")
+
+    for i in double_indices:
+        base = f"transformer_blocks.{i}."
+
+        def src(suffix: str) -> str:
+            return base + suffix
+
+        # Norm scales (weight → scale).
+        _add_copy(f"double_blocks.{i}.img_attn.norm.query_norm.scale", src("attn.norm_q.weight"))
+        _add_copy(f"double_blocks.{i}.img_attn.norm.key_norm.scale", src("attn.norm_k.weight"))
+        _add_copy(f"double_blocks.{i}.txt_attn.norm.query_norm.scale", src("attn.norm_added_q.weight"))
+        _add_copy(f"double_blocks.{i}.txt_attn.norm.key_norm.scale", src("attn.norm_added_k.weight"))
+
+        # QKV projections.
+        _add_concat(
+            f"double_blocks.{i}.img_attn.qkv.weight",
+            (src("attn.to_q.weight"), src("attn.to_k.weight"), src("attn.to_v.weight")),
+        )
+        _add_concat(
+            f"double_blocks.{i}.img_attn.qkv.bias",
+            (src("attn.to_q.bias"), src("attn.to_k.bias"), src("attn.to_v.bias")),
+        )
+        _add_concat(
+            f"double_blocks.{i}.txt_attn.qkv.weight",
+            (src("attn.add_q_proj.weight"), src("attn.add_k_proj.weight"), src("attn.add_v_proj.weight")),
+        )
+        _add_concat(
+            f"double_blocks.{i}.txt_attn.qkv.bias",
+            (src("attn.add_q_proj.bias"), src("attn.add_k_proj.bias"), src("attn.add_v_proj.bias")),
+        )
+
+        # Output projections.
+        _add_copy(f"double_blocks.{i}.img_attn.proj.weight", src("attn.to_out.0.weight"))
+        _add_copy(f"double_blocks.{i}.img_attn.proj.bias", src("attn.to_out.0.bias"))
+        _add_copy(f"double_blocks.{i}.txt_attn.proj.weight", src("attn.to_add_out.weight"))
+        _add_copy(f"double_blocks.{i}.txt_attn.proj.bias", src("attn.to_add_out.bias"))
+
+        # Feed-forward MLPs.
+        _add_copy(f"double_blocks.{i}.img_mlp.0.weight", src("ff.net.0.proj.weight"))
+        _add_copy(f"double_blocks.{i}.img_mlp.0.bias", src("ff.net.0.proj.bias"))
+        _add_copy(f"double_blocks.{i}.img_mlp.2.weight", src("ff.net.2.weight"))
+        _add_copy(f"double_blocks.{i}.img_mlp.2.bias", src("ff.net.2.bias"))
+
+        _add_copy(f"double_blocks.{i}.txt_mlp.0.weight", src("ff_context.net.0.proj.weight"))
+        _add_copy(f"double_blocks.{i}.txt_mlp.0.bias", src("ff_context.net.0.proj.bias"))
+        _add_copy(f"double_blocks.{i}.txt_mlp.2.weight", src("ff_context.net.2.weight"))
+        _add_copy(f"double_blocks.{i}.txt_mlp.2.bias", src("ff_context.net.2.bias"))
+
+        # Modulation.
+        _add_copy(f"double_blocks.{i}.img_mod.lin.weight", src("norm1.linear.weight"))
+        _add_copy(f"double_blocks.{i}.img_mod.lin.bias", src("norm1.linear.bias"))
+        _add_copy(f"double_blocks.{i}.txt_mod.lin.weight", src("norm1_context.linear.weight"))
+        _add_copy(f"double_blocks.{i}.txt_mod.lin.bias", src("norm1_context.linear.bias"))
+
+    # Single blocks: Diffusers `single_transformer_blocks.N.*` → Comfy `single_blocks.N.*`.
+    single_indices = _extract_block_indices(tensor_names, "single_transformer_blocks.")
+    if not single_indices:
+        raise RuntimeError("Flux planner: no single_transformer_blocks.* tensors found")
+    if single_indices != list(range(0, max(single_indices) + 1)):
+        raise RuntimeError(f"Flux planner: unexpected single_transformer_blocks indices: {single_indices}")
+
+    for i in single_indices:
+        base = f"single_transformer_blocks.{i}."
+
+        def src(suffix: str) -> str:
+            return base + suffix
+
+        _add_copy(f"single_blocks.{i}.norm.query_norm.scale", src("attn.norm_q.weight"))
+        _add_copy(f"single_blocks.{i}.norm.key_norm.scale", src("attn.norm_k.weight"))
+
+        # Fused linear1: qkv + mlp projection.
+        _add_concat(
+            f"single_blocks.{i}.linear1.weight",
+            (
+                src("attn.to_q.weight"),
+                src("attn.to_k.weight"),
+                src("attn.to_v.weight"),
+                src("proj_mlp.weight"),
+            ),
+        )
+        _add_concat(
+            f"single_blocks.{i}.linear1.bias",
+            (
+                src("attn.to_q.bias"),
+                src("attn.to_k.bias"),
+                src("attn.to_v.bias"),
+                src("proj_mlp.bias"),
+            ),
+        )
+
+        _add_copy(f"single_blocks.{i}.linear2.weight", src("proj_out.weight"))
+        _add_copy(f"single_blocks.{i}.linear2.bias", src("proj_out.bias"))
+
+        _add_copy(f"single_blocks.{i}.modulation.lin.weight", src("norm.linear.weight"))
+        _add_copy(f"single_blocks.{i}.modulation.lin.bias", src("norm.linear.bias"))
+
+    leftovers = sorted(keys_set.difference(consumed))
+    if leftovers:
+        sample = ", ".join(leftovers[:12])
+        more = "" if len(leftovers) <= 12 else f" (+{len(leftovers) - 12} more)"
+        raise RuntimeError(f"Flux planner: unmapped tensors: {sample}{more}")
+
+    plans: list[TensorPlan] = []
+    key_mapping: dict[str, str] = {}
+
+    for gguf_name in sorted(out_ops):
+        op, srcs = out_ops[gguf_name]
+        if not srcs:
+            raise RuntimeError(f"Flux planner: empty source list for {gguf_name}")
+
+        if op == "copy":
+            raw_shape = _shape_of(safetensors_handle, shapes, srcs[0])
+            src_name = srcs[0]
+        elif op == "concat_dim0":
+            base_shape = _shape_of(safetensors_handle, shapes, srcs[0])
+            dims = len(base_shape)
+            if dims not in (1, 2):
+                raise RuntimeError(f"Flux planner: unexpected concat_dim0 source shape for {gguf_name}: {base_shape}")
+            total0 = 0
+            trailing = base_shape[1:] if dims == 2 else ()
+            for src in srcs:
+                shape = _shape_of(safetensors_handle, shapes, src)
+                if len(shape) != dims:
+                    raise RuntimeError(f"Flux planner: concat_dim0 rank mismatch for {gguf_name}: {src}={shape}")
+                if dims == 2 and shape[1:] != trailing:
+                    raise RuntimeError(
+                        f"Flux planner: concat_dim0 trailing dims mismatch for {gguf_name}: {src}={shape} expected *x{trailing[0]}"
+                    )
+                total0 += int(shape[0])
+            raw_shape = (total0, *trailing) if dims == 2 else (total0,)
+            src_name = srcs[0]
+        else:
+            raise RuntimeError(f"Flux planner: unknown op={op!r} for {gguf_name}")
+
+        plans.append(
+            _build_plan(
+                gguf_name=gguf_name,
+                raw_shape=raw_shape,
+                op=op,
+                src_name=src_name,
+                src_names=tuple(srcs),
+                requested=requested,
+                overrides=overrides,
+            )
+        )
+
+        if src_name not in key_mapping:
+            key_mapping[src_name] = gguf_name
+
+    return plans, key_mapping
+
+
 __all__ = [
     "TensorPlan",
+    "is_flux_transformer_config",
     "is_zimage_transformer_config",
+    "normalize_flux_transformer_metadata_config",
     "normalize_zimage_transformer_metadata_config",
     "plan_tensors",
+    "plan_flux_transformer_tensors",
     "plan_zimage_transformer_tensors",
 ]

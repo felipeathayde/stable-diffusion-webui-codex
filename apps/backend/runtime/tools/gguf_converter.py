@@ -95,11 +95,16 @@ def convert_safetensors_to_gguf(
     requested_type = _quantization.requested_ggml_type(config.quantization)
     overrides = _quantization.compile_tensor_overrides(config.quantization, config.tensor_type_overrides)
 
+    is_flux_transformer = _tensor_planner.is_flux_transformer_config(model_config)
     is_zimage_transformer = _tensor_planner.is_zimage_transformer_config(model_config)
-    if is_zimage_transformer:
+    if is_flux_transformer:
+        arch = "flux"
+        metadata_config = _tensor_planner.normalize_flux_transformer_metadata_config(model_config)
+        key_mapping = {}
+    elif is_zimage_transformer:
         arch = "zimage"
         metadata_config = _tensor_planner.normalize_zimage_transformer_metadata_config(model_config)
-        key_mapping: dict[str, str] = {}
+        key_mapping = {}
     else:
         arch = str(model_config.get("model_type") or "llama")
         metadata_config = model_config
@@ -120,7 +125,9 @@ def convert_safetensors_to_gguf(
         tensor_names = list(sf.keys())
         check_cancel()
 
-        if is_zimage_transformer:
+        if is_flux_transformer:
+            plans, key_mapping = _tensor_planner.plan_flux_transformer_tensors(tensor_names, sf, requested_type, overrides)
+        elif is_zimage_transformer:
             plans, key_mapping = _tensor_planner.plan_zimage_transformer_tensors(tensor_names, sf, requested_type, overrides)
         else:
             plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)

@@ -26,13 +26,12 @@ Keeps scrollbars/theme aligned and styles the collapsible JsonTreeView.
 .cdx-metadata-modal__viewer {
   position: relative;
   padding: 0;
-  overflow: hidden;
 }
 
 .cdx-metadata-modal__overlay {
   position: absolute;
   top: var(--space-sm);
-  right: var(--space-sm);
+  right: var(--space-xl);
   z-index: 3;
   display: flex;
   align-items: center;
@@ -72,6 +71,7 @@ Keeps scrollbars/theme aligned and styles the collapsible JsonTreeView.
   line-height: 1.45;
   white-space: pre;
   overflow: auto;
+	max-height: 60dvh;
 }
 
 .cdx-json-scroll {

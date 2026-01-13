@@ -71,7 +71,7 @@ Keeps scrollbars/theme aligned and styles the collapsible JsonTreeView.
   line-height: 1.45;
   white-space: pre;
   overflow: auto;
-	max-height: 60dvh;
+	height: 60dvh;
 }
 
 .cdx-json-scroll {

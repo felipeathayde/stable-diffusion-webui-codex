@@ -21,4 +21,5 @@ Status: Active
 - Tools should be deterministic, auditable, and fail loud (no silent fallbacks).
 - When adding metadata to GGUF outputs, prefer stable keys and avoid leaking absolute local filesystem paths.
 - 2026-01-13: GGUF converter metadata uses a Codex UI schema (`model.*`, `codex.*`, `gguf.*`) and avoids verbose conversion input keys (`codex.source_*`).
+- 2026-01-13: GGUF converter supports cooperative cancellation (Tools API cancel flag) and the tools API defaults to no-overwrite when the output file already exists.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

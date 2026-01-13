@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-13
 Status: Active
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: Active
 - 2026-01-01: Results empty states now reflect running tasks (“Starting inference…” / “Generating…”) and image tabs can show live preview frames inside `ResultViewer.vue` while sampling.
 - 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).
 - 2026-01-06: `ImageModelTab.vue` now filters schedulers by the selected sampler’s `allowed_schedulers` and auto-resets invalid scheduler selections to the sampler’s `default_scheduler`.
+- 2026-01-13: `ToolsTab.vue` GGUF converter supports cancellation and an Overwrite toggle (default off; fails if the output file exists).

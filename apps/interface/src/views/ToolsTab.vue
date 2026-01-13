@@ -12,13 +12,14 @@ without manual typing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ToolsTab` (component): Tools page SFC; owns GGUF converter form state and the file browser modal.
-- `GGUFForm` (interface): GGUF converter form state (paths + quantization + overrides).
+- `GGUFForm` (interface): GGUF converter form state (paths + quantization + overrides + overwrite).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
 - `startConversion` (function): Starts a conversion job and begins polling.
+- `cancelConversion` (function): Requests cancellation of the current conversion job (cooperative).
 - `parseTensorTypeOverrides` (function): Parses textarea overrides into a normalized line list.
-- `pollStatus` (function): Polls job status and stops polling when complete/error.
+- `pollStatus` (function): Polls job status and stops polling when complete/error/cancelled.
 - `browseForConfig` (function): Opens the file browser in config selection mode.
 - `browseForSafetensors` (function): Opens the file browser in safetensors selection mode.
 - `browseForOutputDir` (function): Opens the file browser in output-folder selection mode.
@@ -117,12 +118,34 @@ Symbols (top-level; keep in sync; no ghosts):
               <button class="btn-icon" type="button" @click="browseForOutputDir" :disabled="isConverting" aria-label="Browse for output folder">…</button>
             </div>
             <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
+            <div class="row-inline">
+              <button
+                :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="ggufForm.overwrite"
+                :disabled="isConverting"
+                title="Allow overwriting the output file if it already exists"
+                @click="ggufForm.overwrite = !ggufForm.overwrite"
+              >
+                Overwrite
+              </button>
+              <span class="caption">When off, conversion fails if the output file already exists.</span>
+            </div>
           </div>
 
           <div class="row-inline">
             <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">
               <span v-if="!isConverting">Convert to GGUF</span>
               <span v-else>Converting…</span>
+            </button>
+            <button
+              v-if="isConverting && currentJobId"
+              class="btn btn-md btn-secondary"
+              type="button"
+              :disabled="conversionStatus?.status === 'cancelling'"
+              @click="cancelConversion"
+            >
+              Cancel
             </button>
           </div>
 
@@ -181,6 +204,7 @@ interface GGUFForm {
   quantization: string
   outputDir: string
   tensorTypeOverrides: string
+  overwrite: boolean
 }
 
 interface ConversionStatus {
@@ -209,6 +233,7 @@ const ggufForm = ref<GGUFForm>({
   quantization: 'Q5_K_M',
   outputDir: '',
   tensorTypeOverrides: '',
+  overwrite: false,
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -223,10 +248,10 @@ const browserMode = ref<'config' | 'safetensors' | 'output_dir'>('config')
 const selectedItem = ref<BrowserItem | null>(null)
 
 const isConverting = computed(() => {
-  return conversionStatus.value?.status === 'loading_config' ||
-         conversionStatus.value?.status === 'loading_weights' ||
-         conversionStatus.value?.status === 'converting' ||
-         conversionStatus.value?.status === 'verifying'
+  if (!currentJobId.value) return false
+  const status = conversionStatus.value?.status
+  if (!status) return true
+  return !['complete', 'error', 'cancelled'].includes(status)
 })
 
 const canConvert = computed(() => {
@@ -295,20 +320,21 @@ const outputFileName = computed(() => {
 
 const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, outputFileName.value))
 
-async function startConversion() {
-  try {
-    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
-    const response = await fetch('/api/tools/convert-gguf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        config_path: ggufForm.value.configPath,
-        safetensors_path: ggufForm.value.safetensorsPath,
-        output_path: outputFullPath.value,
-        quantization: ggufForm.value.quantization,
-        tensor_type_overrides: tensorTypeOverrides,
-      }),
-    })
+	async function startConversion() {
+	  try {
+	    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
+	    const response = await fetch('/api/tools/convert-gguf', {
+	      method: 'POST',
+	      headers: { 'Content-Type': 'application/json' },
+	      body: JSON.stringify({
+	        config_path: ggufForm.value.configPath,
+	        safetensors_path: ggufForm.value.safetensorsPath,
+	        output_path: outputFullPath.value,
+	        overwrite: ggufForm.value.overwrite,
+	        quantization: ggufForm.value.quantization,
+	        tensor_type_overrides: tensorTypeOverrides,
+	      }),
+	    })
     
     const data = await response.json()
     
@@ -325,16 +351,36 @@ async function startConversion() {
     currentJobId.value = data.job_id
     conversionStatus.value = { status: 'pending', progress: 0, current_tensor: '', error: null }
     
-    // Start polling
-    pollInterval.value = window.setInterval(pollStatus, 500)
-  } catch (e: any) {
+	    // Start polling
+	    pollInterval.value = window.setInterval(pollStatus, 500)
+	  } catch (e: any) {
     conversionStatus.value = {
       status: 'error',
       progress: 0,
       current_tensor: '',
       error: e.message,
-    }
-  }
+	  }
+	}
+
+	async function cancelConversion() {
+	  if (!currentJobId.value) return
+	  try {
+	    const res = await fetch(`/api/tools/convert-gguf/${currentJobId.value}/cancel`, { method: 'POST' })
+	    if (!res.ok) {
+	      const data = await res.json().catch(() => ({}))
+	      throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
+	    }
+	    if (conversionStatus.value) {
+	      conversionStatus.value = { ...conversionStatus.value, status: 'cancelling' }
+	    }
+	  } catch (e: any) {
+	    if (conversionStatus.value) {
+	      conversionStatus.value = { ...conversionStatus.value, error: String(e?.message || e) }
+	    } else {
+	      conversionStatus.value = { status: 'error', progress: 0, current_tensor: '', error: String(e?.message || e) }
+	    }
+	  }
+	}
 }
 
 function parseTensorTypeOverrides(raw: string): string[] {
@@ -344,25 +390,25 @@ function parseTensorTypeOverrides(raw: string): string[] {
     .filter((line) => line.length > 0)
 }
 
-async function pollStatus() {
-  if (!currentJobId.value) return
-  
-  try {
-    const response = await fetch(`/api/tools/convert-gguf/${currentJobId.value}`)
-    const data = await response.json()
-    
-    conversionStatus.value = data
-    
-    if (data.status === 'complete' || data.status === 'error') {
-      if (pollInterval.value) {
-        clearInterval(pollInterval.value)
-        pollInterval.value = null
-      }
-    }
-  } catch (e) {
-    // Ignore polling errors
-  }
-}
+	async function pollStatus() {
+	  if (!currentJobId.value) return
+	  
+	  try {
+	    const response = await fetch(`/api/tools/convert-gguf/${currentJobId.value}`)
+	    const data = await response.json()
+	    
+	    conversionStatus.value = data
+	    
+	    if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
+	      if (pollInterval.value) {
+	        clearInterval(pollInterval.value)
+	        pollInterval.value = null
+	      }
+	    }
+	  } catch (e) {
+	    // Ignore polling errors
+	  }
+	}
 
 // File browser functions
 function browseForConfig() {

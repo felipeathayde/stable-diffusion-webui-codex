@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -27,12 +28,14 @@ from fastapi import APIRouter, Body, HTTPException
 def build_router(*, codex_root: Path) -> APIRouter:
     router = APIRouter()
     _gguf_conversion_jobs: Dict[str, Dict[str, Any]] = {}
+    _gguf_conversion_controls: Dict[str, Dict[str, Any]] = {}
 
     @router.post("/api/tools/convert-gguf")
     async def convert_to_gguf(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         """Start a GGUF conversion job."""
         from apps.backend.runtime.tools.gguf_converter import (
             ConversionConfig,
+            GGUFConversionCancelled,
             QuantizationType,
             convert_safetensors_to_gguf,
         )
@@ -43,6 +46,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         config_path = payload.get("config_path", "")
         safetensors_path = payload.get("safetensors_path", "")
         output_path = payload.get("output_path", "")
+        overwrite = bool(payload.get("overwrite", False))
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
 
@@ -55,6 +59,12 @@ def build_router(*, codex_root: Path) -> APIRouter:
         if not os.path.exists(safetensors_path):
             raise HTTPException(status_code=400, detail=f"Safetensors not found: {safetensors_path}")
 
+        final_path = Path(os.path.expanduser(str(output_path))).resolve()
+        if final_path.exists() and not overwrite:
+            raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
+        if final_path.exists() and final_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"Output path is a directory: {final_path}")
+
         try:
             quant = QuantizationType(quant_str)
         except ValueError:
@@ -66,6 +76,16 @@ def build_router(*, codex_root: Path) -> APIRouter:
         elif isinstance(overrides_raw, list):
             tensor_type_overrides = [str(x).strip() for x in overrides_raw if str(x).strip()]
 
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_handle = tempfile.NamedTemporaryFile(
+            prefix=f"{final_path.stem}.",
+            suffix=f".part-{job_id}{final_path.suffix or '.gguf'}",
+            dir=str(final_path.parent),
+            delete=False,
+        )
+        tmp_path = Path(tmp_handle.name)
+        tmp_handle.close()
+
         # Create job entry
         _gguf_conversion_jobs[job_id] = {
             "status": "pending",
@@ -74,32 +94,76 @@ def build_router(*, codex_root: Path) -> APIRouter:
             "error": None,
         }
 
+        cancel_event = threading.Event()
+        _gguf_conversion_controls[job_id] = {
+            "cancel_event": cancel_event,
+            "tmp_path": tmp_path,
+            "final_path": final_path,
+        }
+
         def run_conversion() -> None:
             try:
+                job = _gguf_conversion_jobs[job_id]
+                ctrl = _gguf_conversion_controls[job_id]
+
                 config = ConversionConfig(
                     config_path=config_path,
                     safetensors_path=safetensors_path,
-                    output_path=output_path,
+                    output_path=str(ctrl["tmp_path"]),
                     quantization=quant,
                     tensor_type_overrides=tensor_type_overrides,
                 )
 
                 def progress_cb(prog):
-                    _gguf_conversion_jobs[job_id].update(
+                    status = prog.status
+                    percent = prog.progress_percent
+                    if status == "complete":
+                        # The converter reports completion before we atomically move the temp
+                        # file into place; keep polling until final rename finishes.
+                        status = "finalizing"
+                        percent = min(99.9, percent)
+                    job.update(
                         {
-                            "status": prog.status,
-                            "progress": prog.progress_percent,
+                            "status": status,
+                            "progress": percent,
                             "current_tensor": prog.current_tensor,
                         }
                     )
 
-                convert_safetensors_to_gguf(config, progress_callback=progress_cb)
-                _gguf_conversion_jobs[job_id]["status"] = "complete"
-                _gguf_conversion_jobs[job_id]["progress"] = 100
+                convert_safetensors_to_gguf(
+                    config,
+                    progress_callback=progress_cb,
+                    should_cancel=lambda: bool(ctrl["cancel_event"].is_set()),
+                )
 
+                job["status"] = "finalizing"
+                job["progress"] = 99.9
+                os.replace(str(ctrl["tmp_path"]), str(ctrl["final_path"]))
+                job["status"] = "complete"
+                job["progress"] = 100
+
+            except GGUFConversionCancelled:
+                job = _gguf_conversion_jobs[job_id]
+                job["status"] = "cancelled"
+                job["error"] = None
+                try:
+                    ctrl = _gguf_conversion_controls[job_id]
+                    tmp = Path(ctrl["tmp_path"])
+                    if tmp.exists():
+                        tmp.unlink()
+                except Exception:
+                    pass
             except Exception as exc:
-                _gguf_conversion_jobs[job_id]["status"] = "error"
-                _gguf_conversion_jobs[job_id]["error"] = str(exc)
+                job = _gguf_conversion_jobs[job_id]
+                job["status"] = "error"
+                job["error"] = str(exc)
+                try:
+                    ctrl = _gguf_conversion_controls[job_id]
+                    tmp = Path(ctrl["tmp_path"])
+                    if tmp.exists():
+                        tmp.unlink()
+                except Exception:
+                    pass
 
         thread = threading.Thread(target=run_conversion, daemon=True)
         thread.start()
@@ -111,6 +175,20 @@ def build_router(*, codex_root: Path) -> APIRouter:
         if job_id not in _gguf_conversion_jobs:
             raise HTTPException(status_code=404, detail="Job not found")
         return _gguf_conversion_jobs[job_id]
+
+    @router.post("/api/tools/convert-gguf/{job_id}/cancel")
+    async def cancel_gguf_conversion(job_id: str) -> Dict[str, Any]:
+        job = _gguf_conversion_jobs.get(job_id)
+        ctrl = _gguf_conversion_controls.get(job_id)
+        if job is None or ctrl is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        if job.get("status") in {"complete", "error", "cancelled"}:
+            raise HTTPException(status_code=409, detail=f"Job is not cancellable (status={job.get('status')})")
+
+        ctrl["cancel_event"].set()
+        job["status"] = "cancelling"
+        return {"ok": True}
 
     @router.get("/api/tools/browse-files")
     async def browse_files(path: str = "", extensions: str = "") -> Dict[str, Any]:

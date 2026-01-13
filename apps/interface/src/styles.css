@@ -210,9 +210,9 @@
 
   /* Modal */
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 50; }
-  .modal-panel { background: var(--color-panel); color: var(--color-panel-foreground); border: 0.0625rem solid var(--color-border); border-radius: 0.75rem; box-shadow: 0 0.5rem 2rem rgba(0,0,0,0.45); width: 48rem; max-width: 95vw; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
+  .modal-panel { background: var(--color-panel); color: var(--color-panel-foreground); border: 0.0625rem solid var(--color-border); border-radius: 0.75rem; box-shadow: 0 0.5rem 2rem rgba(0,0,0,0.45); width: 100dvh; display: flex; flex-direction: column; }
   .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 0.0625rem solid var(--color-border); }
-  .modal-body { padding: 1rem; overflow: auto; }
+  .modal-body { padding: 1rem; }
   .modal-footer { padding: 0.75rem 1rem; border-top: 0.0625rem solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; }
 
   /* Subtabs inside panels */

@@ -23,17 +23,16 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <div v-else-if="isTreePayload">
-      <div v-if="supportsNestedToggle" class="cdx-metadata-modal__toolbar">
+      <div v-if="supportsBeautifyToggle" class="cdx-metadata-modal__toolbar">
         <button
-          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', preferNested ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', beautify ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
           type="button"
-          :aria-pressed="preferNested"
-          :title="preferNested ? 'Showing nested (organized) metadata' : 'Showing raw (flat) metadata'"
-          @click="preferNested = !preferNested"
+          :aria-pressed="beautify"
+          :title="beautify ? 'Beautify: ON (nested/organized)' : 'Beautify: OFF (raw/flat)'"
+          @click="beautify = !beautify"
         >
-          Nested
+          Beautify
         </button>
-        <span class="caption">{{ preferNested ? 'nested' : 'raw' }}</span>
       </div>
 
       <div class="card text-sm cdx-metadata-modal__json cdx-json-scroll">
@@ -67,13 +66,13 @@ const open = computed({
   set: (v: boolean) => emit('update:modelValue', v),
 })
 
-const preferNested = ref(true)
+const beautify = ref(true)
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-const supportsNestedToggle = computed(() => {
+const supportsBeautifyToggle = computed(() => {
   const payload = props.payload
   if (!isPlainObject(payload)) return false
   const meta = (payload as any).metadata
@@ -85,7 +84,7 @@ const supportsNestedToggle = computed(() => {
 
 const displayPayload = computed(() => {
   const payload = props.payload
-  if (!supportsNestedToggle.value) return payload
+  if (!supportsBeautifyToggle.value) return payload
   if (!isPlainObject(payload)) return payload
 
   const meta = (payload as any).metadata
@@ -100,7 +99,7 @@ const displayPayload = computed(() => {
   if (typeof (meta as any).kind === 'string') common.kind = (meta as any).kind
   if ((meta as any).summary && typeof (meta as any).summary === 'object') common.summary = (meta as any).summary
 
-  const view = preferNested.value ? nested : raw
+  const view = beautify.value ? nested : raw
   return { ...(payload as any), metadata: { ...common, ...(view as any) } }
 })
 

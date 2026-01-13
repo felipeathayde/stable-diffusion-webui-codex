@@ -642,27 +642,26 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
 
   if (!filePathForMetadata) return
 
-  void (async () => {
-    try {
-      const res = await fetchFileMetadata(filePathForMetadata)
-      const current = metadataModalPayload.value
-      if (typeof current !== 'object' || current === null) return
-      const nested = (res as any)?.nested
-      const summary = (res as any)?.summary
-      const metaOut: Record<string, unknown> = { path: (res as any)?.path, kind: (res as any)?.kind }
-      if (summary && typeof summary === 'object') {
-        metaOut.summary = summary
-      }
-      if (nested && typeof nested === 'object') {
-        Object.assign(metaOut, nested)
-      } else {
-        metaOut.raw = res as any
-      }
-      metadataModalPayload.value = {
-        ...(current as any),
-        metadata: metaOut,
-      }
-    } catch (e: any) {
+	  void (async () => {
+	    try {
+	      const res = await fetchFileMetadata(filePathForMetadata)
+	      const current = metadataModalPayload.value
+	      if (typeof current !== 'object' || current === null) return
+	      const flat = (res as any)?.flat
+	      const nested = (res as any)?.nested
+	      const summary = (res as any)?.summary
+	      const metaOut: Record<string, unknown> = {
+	        path: (res as any)?.path,
+	        kind: (res as any)?.kind,
+	        raw: flat && typeof flat === 'object' ? flat : (res as any),
+	        nested: nested && typeof nested === 'object' ? nested : undefined,
+	      }
+	      if (summary && typeof summary === 'object') metaOut.summary = summary
+	      metadataModalPayload.value = {
+	        ...(current as any),
+	        metadata: metaOut,
+	      }
+	    } catch (e: any) {
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
       metadataModalPayload.value = {

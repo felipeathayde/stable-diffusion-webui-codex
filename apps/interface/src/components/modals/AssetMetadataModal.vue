@@ -16,15 +16,18 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <Modal v-model="open" :title="title">
-    <p v-if="subtitle" class="subtitle">{{ subtitle }}</p>
+    <div v-if="subtitle" class="cdx-metadata-modal__subtitle">
+      <code class="cdx-metadata-modal__subtitle-code">{{ subtitle }}</code>
+    </div>
 
     <div v-if="!hasPayload" class="card text-sm">
       No metadata available for this selection.
     </div>
 
-    <div v-else-if="isTreePayload">
-      <div v-if="supportsBeautifyToggle" class="cdx-metadata-modal__toolbar">
+    <div v-else-if="isTreePayload" class="card text-sm cdx-metadata-modal__viewer">
+      <div class="cdx-metadata-modal__overlay">
         <button
+          v-if="supportsBeautifyToggle"
           :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', beautify ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
           type="button"
           :aria-pressed="beautify"
@@ -33,10 +36,26 @@ Symbols (top-level; keep in sync; no ghosts):
         >
           Beautify
         </button>
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', 'qs-toggle-btn--off']"
+          type="button"
+          title="Collapse all"
+          @click="collapseAll"
+        >
+          Collapse
+        </button>
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', 'qs-toggle-btn--off']"
+          type="button"
+          title="Expand all"
+          @click="expandAll"
+        >
+          Expand
+        </button>
       </div>
 
-      <div class="card text-sm cdx-metadata-modal__json cdx-json-scroll">
-        <JsonTreeView :value="displayPayload" />
+      <div class="cdx-metadata-modal__json cdx-json-scroll">
+        <JsonTreeView :value="displayPayload" :expand-all-signal="expandAllSignal" :collapse-all-signal="collapseAllSignal" />
       </div>
     </div>
 
@@ -67,6 +86,16 @@ const open = computed({
 })
 
 const beautify = ref(true)
+const expandAllSignal = ref(0)
+const collapseAllSignal = ref(0)
+
+function expandAll(): void {
+  expandAllSignal.value += 1
+}
+
+function collapseAll(): void {
+  collapseAllSignal.value += 1
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

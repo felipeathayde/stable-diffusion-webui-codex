@@ -22,4 +22,4 @@ Status: Active
 - `LoraModal.vue` inserts `<lora:name:weight>` tokens via buttons targeting the positive/negative prompt; `PromptCard.vue` handles the `target` payload for the main prompt UX (views may still handle it when using the modal directly).
 - Keep modals presentational; stores and routing decisions live in views/stores.
 - 2026-01-03: Added standardized file header blocks to modal components (doc-only change; part of rollout).
-- 2026-01-13: `AssetMetadataModal.vue` adds a “Beautify” toggle to switch between raw (flat) and nested (organized) file metadata views.
+- 2026-01-13: `AssetMetadataModal.vue` adds in-view controls (Beautify + expand/collapse all) to switch between raw/nested file metadata and manage large trees.

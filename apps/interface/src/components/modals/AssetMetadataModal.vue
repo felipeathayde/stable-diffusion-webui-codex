@@ -21,7 +21,11 @@ Symbols (top-level; keep in sync; no ghosts):
       No metadata available for this selection.
     </div>
 
-    <pre v-else class="card text-sm"><code>{{ pretty }}</code></pre>
+    <div v-else-if="isTreePayload" class="card text-sm cdx-metadata-modal__json cdx-json-scroll">
+      <JsonTreeView :value="props.payload" />
+    </div>
+
+    <pre v-else class="card text-sm cdx-metadata-modal__json cdx-json-scroll"><code>{{ pretty }}</code></pre>
 
     <template #footer>
       <button class="btn btn-md btn-outline" type="button" @click="open = false">Close</button>
@@ -32,6 +36,7 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed } from 'vue'
 import Modal from '../ui/Modal.vue'
+import JsonTreeView from '../ui/JsonTreeView.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -65,5 +70,9 @@ const pretty = computed(() => {
     return String(payload)
   }
 })
-</script>
 
+const isTreePayload = computed(() => {
+  const payload = props.payload
+  return payload !== null && payload !== undefined && typeof payload === 'object'
+})
+</script>

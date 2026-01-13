@@ -87,6 +87,16 @@ export interface FileMetadataResponse {
   summary: Record<string, unknown>
 }
 
+export interface CheckpointMetadataResponse {
+  hash: string | null
+  'file.name': string
+  'file.path': string
+  'file.size.bytes': number
+  'file.size.megabytes': number
+  'file.size.gigabytes': number
+  metadata: { raw: Record<string, unknown>; nested: Record<string, unknown> }
+}
+
 export interface SamplersResponse {
   samplers: SamplerInfo[]
 }

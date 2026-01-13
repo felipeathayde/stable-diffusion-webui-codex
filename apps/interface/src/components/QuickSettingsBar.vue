@@ -572,10 +572,12 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
     filePathForMetadata = model?.filename ? String(model.filename) : null
     out = model
       ? {
-          title: model.title,
-          model_name: model.model_name,
-          filename: model.filename,
           hash: model.hash,
+          file: {
+            name: model.model_name,
+            path: model.filename,
+            size: { bytes: null, megabytes: null, gigabytes: null },
+          },
         }
       : { selection: value }
   } else if (kind === 'vae' || kind === 'wan_vae') {
@@ -632,7 +634,7 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   }
 
   if (filePathForMetadata && typeof out === 'object' && out !== null) {
-    ;(out as any).metadata = { status: 'loading', path: filePathForMetadata }
+    ;(out as any).metadata = { status: 'loading' }
   }
 
   metadataModalTitle.value = title
@@ -643,30 +645,43 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   if (!filePathForMetadata) return
 
 	  void (async () => {
-	    try {
-	      const res = await fetchFileMetadata(filePathForMetadata)
-	      const current = metadataModalPayload.value
-	      if (typeof current !== 'object' || current === null) return
-	      const flat = (res as any)?.flat
-	      const nested = (res as any)?.nested
-	      const summary = (res as any)?.summary
-	      const metaOut: Record<string, unknown> = {
-	        path: (res as any)?.path,
-	        kind: (res as any)?.kind,
-	        raw: flat && typeof flat === 'object' ? flat : (res as any),
-	        nested: nested && typeof nested === 'object' ? nested : undefined,
-	      }
-	      if (summary && typeof summary === 'object') metaOut.summary = summary
-	      metadataModalPayload.value = {
-	        ...(current as any),
-	        metadata: metaOut,
-	      }
-	    } catch (e: any) {
+    try {
+      const res = await fetchFileMetadata(filePathForMetadata)
+      const current = metadataModalPayload.value
+      if (typeof current !== 'object' || current === null) return
+      const flat = (res as any)?.flat
+      const nested = (res as any)?.nested
+      const sizeBytes = (res as any)?.summary?.file?.size_bytes
+
+      let fileOut = (current as any).file
+      if (fileOut && typeof fileOut === 'object' && typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0) {
+        const mb = sizeBytes / 1_000_000
+        const gb = sizeBytes / 1_000_000_000
+        fileOut = {
+          ...(fileOut as any),
+          size: {
+            bytes: sizeBytes,
+            megabytes: Number(mb.toFixed(3)),
+            gigabytes: Number(gb.toFixed(3)),
+          },
+        }
+      }
+
+      const metaOut: Record<string, unknown> = {
+        raw: flat && typeof flat === 'object' ? flat : (res as any),
+        nested: nested && typeof nested === 'object' ? nested : undefined,
+      }
+      metadataModalPayload.value = {
+        ...(current as any),
+        file: fileOut,
+        metadata: metaOut,
+      }
+    } catch (e: any) {
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
       metadataModalPayload.value = {
         ...(current as any),
-        metadata: { status: 'error', path: filePathForMetadata, error: String(e?.message || e) },
+        metadata: { status: 'error', error: String(e?.message || e) },
       }
     }
   })()

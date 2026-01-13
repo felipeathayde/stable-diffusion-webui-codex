@@ -17,6 +17,7 @@ Status: Active
 - `QuickSettingsBar.vue` surfaces engine/tab selectors in the main header row; it renders a nested, collapsible Advanced area (Smart toggles + GPU VRAM / Attention Backend / Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `quicksettings.currentEngine`.
 - 2026-01-13: Metadata modal payload now uses a single `metadata` object (no `codex_metadata` wrapper; `file_metadata` → `metadata`).
 - 2026-01-13: Metadata modal adds a toggle to switch between raw (flat) and nested (organized) views for file metadata.
+- 2026-01-13: Checkpoint metadata payload uses `file.{name,path,size}` (no `title`/`model_name`/`filename`) and the file-metadata keys are normalized (e.g. `model.*`, `codex.*`, `gguf.*`).
 - 2025-12-29: `QuickSettingsBar.vue` no longer writes `--sticky-offset` directly; the header offset is tracked by `App.vue` via a `ResizeObserver`.
 - 2025-12-29: `QuickSettingsBar.vue` keeps the active model tab in sync with the current route (`/models/:tabId`) to avoid falling back to the global engine during Vite HMR reloads.
 - 2025-12-27: `QuickSettingsBar.vue` binds checkpoint selection to the active model tab (`tab.params.checkpoint`, auto-seeded from the engine’s `*_ckpt` roots in `apps/paths.json`), and FLUX.1/ZImage model tabs also keep per-tab text encoders (`tab.params.textEncoders`) used by `useGeneration` for `tenc_sha`/`text_encoder_override`.

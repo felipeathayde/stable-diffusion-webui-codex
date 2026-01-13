@@ -20,5 +20,5 @@ Status: Active
 ## Notes
 - Tools should be deterministic, auditable, and fail loud (no silent fallbacks).
 - When adding metadata to GGUF outputs, prefer stable keys and avoid leaking absolute local filesystem paths.
-- 2026-01-13: GGUF converter metadata no longer writes `general.author` or `general.source.repo_url` (keep provenance in `general.repo_url`/`general.version` and `general.source.url`).
+- 2026-01-13: GGUF converter metadata uses a Codex UI schema (`model.*`, `codex.*`, `gguf.*`) and avoids verbose conversion input keys (`codex.source_*`).
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

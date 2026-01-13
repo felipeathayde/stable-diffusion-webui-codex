@@ -65,8 +65,10 @@ def add_basic_metadata(
     commit = best_effort_git_commit(repo_root)
     if commit:
         writer.add_version(commit)
-        writer.add_string("codex.repo_commit", commit)
-    writer.add_string("codex.repo_url", CODEX_REPO_URL)
+
+    # NOTE: Keep Codex provenance lightweight in the `codex_metadata` UI surface.
+    # - Repo URL/commit are available via `general.repo_url` and `general.version`.
+    # - Additional conversion details live under other `codex.*` keys below.
     writer.add_string("codex.converted_at_utc", _dt.datetime.now(tz=_dt.timezone.utc).isoformat())
     writer.add_string("codex.quantization", str(quant.value))
 
@@ -146,4 +148,3 @@ def add_basic_metadata(
 __all__ = [
     "add_basic_metadata",
 ]
-

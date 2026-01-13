@@ -648,11 +648,22 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
       const res = await fetchFileMetadata(filePathForMetadata)
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
-      const codex = (res as any)?.nested?.codex
+      const nested = (res as any)?.nested
+      const codex = nested?.codex
+      const general = nested?.general
+      const repo_commit =
+        (typeof general?.version === 'string' && general.version.trim()) ||
+        (typeof codex?.repo_commit === 'string' && codex.repo_commit.trim()) ||
+        undefined
+      const repo_url =
+        (typeof general?.repo_url === 'string' && general.repo_url.trim()) ||
+        (typeof codex?.repo_url === 'string' && codex.repo_url.trim()) ||
+        undefined
+      const codex_metadata = repo_commit || repo_url ? { repo_commit, repo_url } : (current as any).codex_metadata
       metadataModalPayload.value = {
         ...(current as any),
         file_metadata: res,
-        codex_metadata: typeof codex === 'object' && codex !== null ? codex : (current as any).codex_metadata,
+        codex_metadata,
       }
     } catch (e: any) {
       const current = metadataModalPayload.value

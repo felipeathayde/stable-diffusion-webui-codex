@@ -13,6 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `QuantizationType` (enum): Supported “human” quantization selectors for conversion (maps to `GGMLQuantizationType`).
 - `ConversionConfig` (dataclass): Conversion configuration (input/output paths, quantization choices, tensor overrides, and metadata inputs).
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
+- `GGUFConversionCancelled` (exception): Raised when a conversion is cancelled via a cooperative cancel signal.
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
 - `convert_safetensors_to_gguf` (function): Main conversion entrypoint; reads SafeTensors (incl. sharded), quantizes tensors, writes GGUF,
   and optionally verifies the output (uses many helpers above).
@@ -48,9 +49,15 @@ from apps.backend.runtime.tools.gguf_converter_types import (
 logger = logging.getLogger("backend.runtime.tools.gguf_converter")
 
 
+class GGUFConversionCancelled(Exception):
+    """Raised when a conversion is cancelled via a cooperative cancel signal."""
+
+
 def convert_safetensors_to_gguf(
     config: ConversionConfig,
     progress_callback: Optional[Callable[[ConversionProgress], None]] = None,
+    *,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> str:
     """Convert a Safetensors file to GGUF format.
     
@@ -66,8 +73,16 @@ def convert_safetensors_to_gguf(
     def update_progress():
         if progress_callback:
             progress_callback(progress)
+
+    def check_cancel() -> None:
+        if should_cancel is not None and should_cancel():
+            progress.status = "cancelled"
+            progress.error = "cancelled"
+            update_progress()
+            raise GGUFConversionCancelled("cancelled")
     
     update_progress()
+    check_cancel()
     
     # Load model config
     config_path = _safetensors_source.resolve_config_json_path(config.config_path)
@@ -75,6 +90,7 @@ def convert_safetensors_to_gguf(
         model_config = json.load(f)
 
     logger.info("Loaded config: %s", model_config.get("_class_name") or model_config.get("model_type") or "unknown")
+    check_cancel()
     
     requested_type = _quantization.requested_ggml_type(config.quantization)
     overrides = _quantization.compile_tensor_overrides(config.quantization, config.tensor_type_overrides)
@@ -93,6 +109,7 @@ def convert_safetensors_to_gguf(
     # Load safetensors
     progress.status = "loading_weights"
     update_progress()
+    check_cancel()
     
     logger.info("Loading safetensors: %s", config.safetensors_path)
     
@@ -101,6 +118,7 @@ def convert_safetensors_to_gguf(
 
     with _safetensors_source.open_safetensors_source(config.safetensors_path) as sf:
         tensor_names = list(sf.keys())
+        check_cancel()
 
         if is_zimage_transformer:
             plans, key_mapping = _tensor_planner.plan_zimage_transformer_tensors(tensor_names, sf, requested_type, overrides)
@@ -108,6 +126,7 @@ def convert_safetensors_to_gguf(
             plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
 
         progress.total_steps = len(plans)
+        check_cancel()
 
         writer = GGUFWriter(path=str(output_path), arch=arch)
         _metadata.add_basic_metadata(
@@ -131,6 +150,7 @@ def convert_safetensors_to_gguf(
 
         progress.status = "converting"
         update_progress()
+        check_cancel()
 
         try:
             writer.write_header_to_file()
@@ -144,6 +164,7 @@ def convert_safetensors_to_gguf(
             # Stream-write tensors in the same order used for tensor-info offsets.
             chunk_rows = 1024
             for i, plan in enumerate(plans):
+                check_cancel()
                 progress.current_step = i + 1
                 progress.current_tensor = plan.gguf_name
                 update_progress()
@@ -167,6 +188,7 @@ def convert_safetensors_to_gguf(
                         elif len(shape) == 2:
                             rows = shape[0]
                             for start in range(0, rows, chunk_rows):
+                                check_cancel()
                                 chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
                                 out.write(chunk.numpy().tobytes(order="C"))
                                 bytes_written += chunk.numel() * 2
@@ -184,6 +206,7 @@ def convert_safetensors_to_gguf(
                         elif len(shape) == 2:
                             rows = shape[0]
                             for start in range(0, rows, chunk_rows):
+                                check_cancel()
                                 chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
                                 out.write(chunk.numpy().tobytes(order="C"))
                                 bytes_written += chunk.numel() * 4
@@ -200,6 +223,7 @@ def convert_safetensors_to_gguf(
                         if len(shape) == 2:
                             rows = shape[0]
                             for start in range(0, rows, chunk_rows):
+                                check_cancel()
                                 chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()
                                 arr = chunk.numpy()
                                 try:
@@ -223,6 +247,7 @@ def convert_safetensors_to_gguf(
                             bytes_written += q.nbytes
 
                 elif plan.op == "concat_dim0":
+                    check_cancel()
                     if not plan.src_names:
                         raise RuntimeError(f"concat_dim0 plan has no sources for {plan.gguf_name}")
 
@@ -252,6 +277,7 @@ def convert_safetensors_to_gguf(
                         target_dtype = torch.float16
                         if len(base_shape) == 1:
                             for sl in slices:
+                                check_cancel()
                                 t = sl[:].to(target_dtype).contiguous()
                                 out.write(t.numpy().tobytes(order="C"))
                                 bytes_written += t.numel() * 2
@@ -259,6 +285,7 @@ def convert_safetensors_to_gguf(
                             rows = base_shape[0]
                             for sl in slices:
                                 for start in range(0, rows, chunk_rows):
+                                    check_cancel()
                                     chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
                                     out.write(chunk.numpy().tobytes(order="C"))
                                     bytes_written += chunk.numel() * 2
@@ -267,6 +294,7 @@ def convert_safetensors_to_gguf(
                         target_dtype = torch.float32
                         if len(base_shape) == 1:
                             for sl in slices:
+                                check_cancel()
                                 t = sl[:].to(target_dtype).contiguous()
                                 out.write(t.numpy().tobytes(order="C"))
                                 bytes_written += t.numel() * 4
@@ -274,6 +302,7 @@ def convert_safetensors_to_gguf(
                             rows = base_shape[0]
                             for sl in slices:
                                 for start in range(0, rows, chunk_rows):
+                                    check_cancel()
                                     chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
                                     out.write(chunk.numpy().tobytes(order="C"))
                                     bytes_written += chunk.numel() * 4
@@ -286,6 +315,7 @@ def convert_safetensors_to_gguf(
                         rows = base_shape[0]
                         for sl in slices:
                             for start in range(0, rows, chunk_rows):
+                                check_cancel()
                                 chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()
                                 arr = chunk.numpy()
                                 try:
@@ -309,10 +339,12 @@ def convert_safetensors_to_gguf(
             writer.close()
 
     logger.info("GGUF file written: %s", output_path)
+    check_cancel()
     
     # Verification step: validate the generated file
     progress.status = "verifying"
     update_progress()
+    check_cancel()
     
     _verify.verify_gguf_file(
         gguf_path=str(output_path),
@@ -332,6 +364,7 @@ def convert_safetensors_to_gguf(
 __all__ = [
     "ConversionConfig",
     "ConversionProgress", 
+    "GGUFConversionCancelled",
     "QuantizationType",
     "GGUFVerificationError",
     "convert_safetensors_to_gguf",

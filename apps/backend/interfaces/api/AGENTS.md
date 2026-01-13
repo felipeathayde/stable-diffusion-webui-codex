@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-08
+Last Review: 2026-01-13
 Status: Active
 
 ## Purpose
@@ -19,6 +19,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
 - `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + file browser endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
+- `apps/backend/interfaces/api/file_metadata.py` — GGUF/SafeTensors header readers for `/api/models/file-metadata` (UI/debug).
 - `apps/backend/interfaces/api/path_utils.py` — repo-relative path normalization helpers.
 - `apps/backend/interfaces/api/json_store.py` — JSON load/save helpers for persistence files.
 - `apps/backend/interfaces/api/task_registry.py` — in-process task registry (SSE queue + cancel flags).
@@ -27,3 +28,4 @@ Status: Active
 ## Notes
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.
 - Task state is centralized in `task_registry.py` so generation + tasks routers share cancellation/status logic.
+- `/api/models/file-metadata` is intended for UI/debug; it returns a nested view of dotted GGUF keys and omits redundant/noisy fields like `general.author` and `general.source.repo_url`.

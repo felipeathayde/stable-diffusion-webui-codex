@@ -57,7 +57,6 @@ def add_basic_metadata(
 ) -> None:
     name = str(config.get("_name_or_path") or config.get("name") or "model")
     writer.add_name(name)
-    writer.add_author(CODEX_GENERATED_BY)
     writer.add_quantized_by(CODEX_GENERATED_BY)
     writer.add_repo_url(CODEX_REPO_URL)
 
@@ -66,9 +65,9 @@ def add_basic_metadata(
     if commit:
         writer.add_version(commit)
 
-    # NOTE: Keep Codex provenance lightweight in the `codex_metadata` UI surface.
+    # NOTE: Keep Codex provenance lightweight and prefer stable GGUF keys.
     # - Repo URL/commit are available via `general.repo_url` and `general.version`.
-    # - Additional conversion details live under other `codex.*` keys below.
+    # - Additional conversion details live under `codex.*` keys below.
     writer.add_string("codex.converted_at_utc", _dt.datetime.now(tz=_dt.timezone.utc).isoformat())
     writer.add_string("codex.quantization", str(quant.value))
 
@@ -104,7 +103,6 @@ def add_basic_metadata(
     # Best-effort: mark the upstream repo when the config includes a Hugging Face id.
     upstream = str(config.get("_name_or_path") or "").strip()
     if _is_hf_repo_id(upstream):
-        writer.add_source_repo_url(f"https://huggingface.co/{upstream}")
         writer.add_source_url(f"https://huggingface.co/{upstream}")
 
     requested = _quantization.requested_ggml_type(quant)

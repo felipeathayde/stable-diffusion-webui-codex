@@ -576,7 +576,6 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
           model_name: model.model_name,
           filename: model.filename,
           hash: model.hash,
-          codex_metadata: model.metadata,
         }
       : { selection: value }
   } else if (kind === 'vae' || kind === 'wan_vae') {
@@ -633,7 +632,7 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   }
 
   if (filePathForMetadata && typeof out === 'object' && out !== null) {
-    ;(out as any).file_metadata = { status: 'loading', path: filePathForMetadata }
+    ;(out as any).metadata = { status: 'loading', path: filePathForMetadata }
   }
 
   metadataModalTitle.value = title
@@ -649,28 +648,26 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
       const nested = (res as any)?.nested
-      const codex = nested?.codex
-      const general = nested?.general
-      const repo_commit =
-        (typeof general?.version === 'string' && general.version.trim()) ||
-        (typeof codex?.repo_commit === 'string' && codex.repo_commit.trim()) ||
-        undefined
-      const repo_url =
-        (typeof general?.repo_url === 'string' && general.repo_url.trim()) ||
-        (typeof codex?.repo_url === 'string' && codex.repo_url.trim()) ||
-        undefined
-      const codex_metadata = repo_commit || repo_url ? { repo_commit, repo_url } : (current as any).codex_metadata
+      const summary = (res as any)?.summary
+      const metaOut: Record<string, unknown> = { path: (res as any)?.path, kind: (res as any)?.kind }
+      if (summary && typeof summary === 'object') {
+        metaOut.summary = summary
+      }
+      if (nested && typeof nested === 'object') {
+        Object.assign(metaOut, nested)
+      } else {
+        metaOut.raw = res as any
+      }
       metadataModalPayload.value = {
         ...(current as any),
-        file_metadata: res,
-        codex_metadata,
+        metadata: metaOut,
       }
     } catch (e: any) {
       const current = metadataModalPayload.value
       if (typeof current !== 'object' || current === null) return
       metadataModalPayload.value = {
         ...(current as any),
-        file_metadata: { status: 'error', path: filePathForMetadata, error: String(e?.message || e) },
+        metadata: { status: 'error', path: filePathForMetadata, error: String(e?.message || e) },
       }
     }
   })()

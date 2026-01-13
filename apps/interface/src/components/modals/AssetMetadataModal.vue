@@ -27,6 +27,28 @@ Symbols (top-level; keep in sync; no ghosts):
     <div v-else-if="isTreePayload" class="card text-sm cdx-metadata-modal__viewer">
       <div class="cdx-metadata-modal__overlay">
         <button
+          class="btn-icon cdx-metadata-modal__icon-btn"
+          type="button"
+          aria-label="Collapse all"
+          title="Collapse all"
+          @click="collapseAll"
+        >
+          <svg class="cdx-metadata-modal__icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 15L12 9L18 15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button
+          class="btn-icon cdx-metadata-modal__icon-btn"
+          type="button"
+          aria-label="Expand all"
+          title="Expand all"
+          @click="expandAll"
+        >
+          <svg class="cdx-metadata-modal__icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 9L12 15L18 9" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button
           v-if="supportsBeautifyToggle"
           :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', beautify ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
           type="button"
@@ -35,22 +57,6 @@ Symbols (top-level; keep in sync; no ghosts):
           @click="beautify = !beautify"
         >
           Beautify
-        </button>
-        <button
-          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', 'qs-toggle-btn--off']"
-          type="button"
-          title="Collapse all"
-          @click="collapseAll"
-        >
-          Collapse
-        </button>
-        <button
-          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', 'qs-toggle-btn--off']"
-          type="button"
-          title="Expand all"
-          @click="expandAll"
-        >
-          Expand
         </button>
       </div>
 

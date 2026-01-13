@@ -28,7 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
     <span v-if="!isLast" class="cdx-json-punct">,</span>
   </div>
 
-  <details v-else-if="kind === 'object'" class="cdx-json-node" :open="depth < defaultOpenDepth">
+  <details v-else-if="kind === 'object'" class="cdx-json-node" :open="isOpen" @toggle="onToggle">
     <summary class="cdx-json-summary">
       <span v-if="hasName" class="cdx-json-key">"{{ nameText }}"</span>
       <span v-if="hasName" class="cdx-json-punct">: </span>
@@ -50,6 +50,8 @@ Symbols (top-level; keep in sync; no ghosts):
         :default-open-depth="defaultOpenDepth"
         :max-depth="maxDepth"
         :max-items="maxItems"
+        :expand-all-signal="expandAllSignal"
+        :collapse-all-signal="collapseAllSignal"
       />
       <div v-if="objectHasMore" class="cdx-json-more">…</div>
     </div>
@@ -59,7 +61,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
   </details>
 
-  <details v-else-if="kind === 'array'" class="cdx-json-node" :open="depth < defaultOpenDepth">
+  <details v-else-if="kind === 'array'" class="cdx-json-node" :open="isOpen" @toggle="onToggle">
     <summary class="cdx-json-summary">
       <span v-if="hasName" class="cdx-json-key">"{{ nameText }}"</span>
       <span v-if="hasName" class="cdx-json-punct">: </span>
@@ -79,6 +81,8 @@ Symbols (top-level; keep in sync; no ghosts):
         :default-open-depth="defaultOpenDepth"
         :max-depth="maxDepth"
         :max-items="maxItems"
+        :expand-all-signal="expandAllSignal"
+        :collapse-all-signal="collapseAllSignal"
       />
       <div v-if="arrayHasMore" class="cdx-json-more">…</div>
     </div>
@@ -97,7 +101,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 defineOptions({ name: 'JsonTreeView' })
 
@@ -110,6 +114,8 @@ const props = withDefaults(
     defaultOpenDepth?: number
     maxDepth?: number
     maxItems?: number
+    expandAllSignal?: number
+    collapseAllSignal?: number
   }>(),
   {
     depth: 0,
@@ -117,6 +123,8 @@ const props = withDefaults(
     defaultOpenDepth: 1,
     maxDepth: 24,
     maxItems: 200,
+    expandAllSignal: 0,
+    collapseAllSignal: 0,
   },
 )
 
@@ -124,6 +132,8 @@ const depth = computed(() => Math.max(0, Number(props.depth) || 0))
 const defaultOpenDepth = computed(() => Math.max(0, Number(props.defaultOpenDepth) || 0))
 const maxDepth = computed(() => Math.max(0, Number(props.maxDepth) || 0))
 const maxItems = computed(() => Math.max(0, Number(props.maxItems) || 0))
+const expandAllSignal = computed(() => Math.max(0, Number(props.expandAllSignal) || 0))
+const collapseAllSignal = computed(() => Math.max(0, Number(props.collapseAllSignal) || 0))
 
 const hasName = computed(() => props.name !== undefined && props.name !== null && String(props.name).length > 0)
 const nameText = computed(() => String(props.name ?? ''))
@@ -139,7 +149,27 @@ const kind = computed(() => {
   return 'other'
 })
 
+const isContainer = computed(() => kind.value === 'object' || kind.value === 'array')
 const isMaxDepth = computed(() => maxDepth.value > 0 && depth.value >= maxDepth.value)
+const isOpen = ref(depth.value < defaultOpenDepth.value)
+
+function onToggle(event: Event): void {
+  const target = event.target
+  if (!target || !(target instanceof HTMLDetailsElement)) return
+  isOpen.value = Boolean(target.open)
+}
+
+watch(expandAllSignal, (value, prev) => {
+  if (value === prev) return
+  if (!isContainer.value || isMaxDepth.value) return
+  isOpen.value = true
+})
+
+watch(collapseAllSignal, (value, prev) => {
+  if (value === prev) return
+  if (!isContainer.value || isMaxDepth.value) return
+  isOpen.value = false
+})
 
 type Entry = { key: string; value: unknown }
 

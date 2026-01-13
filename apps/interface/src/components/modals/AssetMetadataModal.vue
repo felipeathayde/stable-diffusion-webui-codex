@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Metadata viewer modal for model/asset selections.
-Displays a read-only JSON view of the resolved metadata payload for the current selection (checkpoint / text encoder / VAE / WAN stage).
+Displays a read-only JSON view of the resolved metadata payload for the current selection (checkpoint / text encoder / VAE / WAN stage),
+with an optional toggle to switch between raw and nested views for file metadata payloads.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AssetMetadataModal` (component): Modal for displaying a JSON metadata payload.
@@ -21,8 +22,23 @@ Symbols (top-level; keep in sync; no ghosts):
       No metadata available for this selection.
     </div>
 
-    <div v-else-if="isTreePayload" class="card text-sm cdx-metadata-modal__json cdx-json-scroll">
-      <JsonTreeView :value="props.payload" />
+    <div v-else-if="isTreePayload">
+      <div v-if="supportsNestedToggle" class="cdx-metadata-modal__toolbar">
+        <button
+          :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', preferNested ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :aria-pressed="preferNested"
+          :title="preferNested ? 'Showing nested (organized) metadata' : 'Showing raw (flat) metadata'"
+          @click="preferNested = !preferNested"
+        >
+          Nested
+        </button>
+        <span class="caption">{{ preferNested ? 'nested' : 'raw' }}</span>
+      </div>
+
+      <div class="card text-sm cdx-metadata-modal__json cdx-json-scroll">
+        <JsonTreeView :value="displayPayload" />
+      </div>
     </div>
 
     <pre v-else class="card text-sm cdx-metadata-modal__json cdx-json-scroll"><code>{{ pretty }}</code></pre>
@@ -34,7 +50,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Modal from '../ui/Modal.vue'
 import JsonTreeView from '../ui/JsonTreeView.vue'
 
@@ -51,8 +67,45 @@ const open = computed({
   set: (v: boolean) => emit('update:modelValue', v),
 })
 
-const hasPayload = computed(() => {
+const preferNested = ref(true)
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+const supportsNestedToggle = computed(() => {
   const payload = props.payload
+  if (!isPlainObject(payload)) return false
+  const meta = (payload as any).metadata
+  if (!isPlainObject(meta)) return false
+  const raw = (meta as any).raw
+  const nested = (meta as any).nested
+  return isPlainObject(raw) && isPlainObject(nested)
+})
+
+const displayPayload = computed(() => {
+  const payload = props.payload
+  if (!supportsNestedToggle.value) return payload
+  if (!isPlainObject(payload)) return payload
+
+  const meta = (payload as any).metadata
+  if (!isPlainObject(meta)) return payload
+
+  const raw = (meta as any).raw
+  const nested = (meta as any).nested
+  if (!isPlainObject(raw) || !isPlainObject(nested)) return payload
+
+  const common: Record<string, unknown> = {}
+  if (typeof (meta as any).path === 'string') common.path = (meta as any).path
+  if (typeof (meta as any).kind === 'string') common.kind = (meta as any).kind
+  if ((meta as any).summary && typeof (meta as any).summary === 'object') common.summary = (meta as any).summary
+
+  const view = preferNested.value ? nested : raw
+  return { ...(payload as any), metadata: { ...common, ...(view as any) } }
+})
+
+const hasPayload = computed(() => {
+  const payload = displayPayload.value
   if (payload === null || payload === undefined) return false
   if (typeof payload === 'string') return payload.trim().length > 0
   if (Array.isArray(payload)) return payload.length > 0
@@ -61,7 +114,7 @@ const hasPayload = computed(() => {
 })
 
 const pretty = computed(() => {
-  const payload = props.payload
+  const payload = displayPayload.value
   if (payload === null || payload === undefined) return ''
   if (typeof payload === 'string') return payload
   try {
@@ -72,7 +125,7 @@ const pretty = computed(() => {
 })
 
 const isTreePayload = computed(() => {
-  const payload = props.payload
+  const payload = displayPayload.value
   return payload !== null && payload !== undefined && typeof payload === 'object'
 })
 </script>

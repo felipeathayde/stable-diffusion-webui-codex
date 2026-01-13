@@ -12,6 +12,15 @@ Keeps scrollbars/theme aligned and styles the collapsible JsonTreeView.
   overflow: auto;
 }
 
+.cdx-metadata-modal__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding: 0 var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
 .cdx-json-scroll {
   scrollbar-width: thin;
   scrollbar-color: hsla(0,0%,100%,0.22) hsla(0,0%,100%,0.05);
@@ -120,4 +129,3 @@ Keeps scrollbars/theme aligned and styles the collapsible JsonTreeView.
   color: var(--color-muted-foreground);
   opacity: 0.9;
 }
-

@@ -226,10 +226,6 @@ def read_file_metadata(raw_path: str) -> FileMetadataResult:
     suffix = resolved.suffix.lower()
     if suffix == ".gguf":
         flat = _read_gguf_kv(resolved)
-        # UI hygiene: avoid redundant/duplicated GGUF keys that are either noisy
-        # or duplicated by other `general.*` fields.
-        for key in ("general.author", "general.source.repo_url"):
-            flat.pop(key, None)
         summary = {
             "file": {"size_bytes": int(resolved.stat().st_size), "name": resolved.name},
             "contains_codex_keys": any(str(k).startswith("codex.") for k in flat.keys()),

@@ -28,4 +28,4 @@ Status: Active
 ## Notes
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.
 - Task state is centralized in `task_registry.py` so generation + tasks routers share cancellation/status logic.
-- `/api/models/file-metadata` is intended for UI/debug; it returns a nested view of dotted GGUF keys and omits redundant/noisy fields like `general.author` and `general.source.repo_url`.
+- `/api/models/file-metadata` is intended for UI/debug; it returns `flat` plus a nested view of dotted keys. Codex-generated GGUF files use `model.*`, `codex.*`, and `gguf.*` keys (no legacy `general.*` provenance fields).

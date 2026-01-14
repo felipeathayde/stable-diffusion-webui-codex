@@ -48,6 +48,9 @@ class SamplingContext:
     sigma_min: float | None = None
     sigma_max: float | None = None
     sigma_data: float | None = None
+    flow_shift: float | None = None
+    flow_shift_config_path: str | None = None
+    flow_shift_repo_dir: str | None = None
 
     @property
     def device(self) -> torch.device:
@@ -104,8 +107,13 @@ def build_sampling_context(
     dt = dtype or getattr(predictor_container.diffusion_model, "dtype", torch.float32)
 
     flow_shift_value: float | None = None
+    flow_shift_config_path: str | None = None
+    flow_shift_repo_dir: str | None = None
     if prediction_type == "const":
-        flow_shift_value = resolve_flow_shift_for_sampling(sd_model, pred, height=height, width=width)
+        resolution = resolve_flow_shift_for_sampling(sd_model, pred, height=height, width=width)
+        flow_shift_value = float(resolution.effective_shift)
+        flow_shift_config_path = resolution.spec.config_path
+        flow_shift_repo_dir = resolution.repo_dir
 
     sigmas = build_sigma_schedule(
         scheduler_name,
@@ -138,6 +146,9 @@ def build_sampling_context(
         sigma_min=sigma_min,
         sigma_max=sigma_max,
         sigma_data=sigma_data,
+        flow_shift=flow_shift_value,
+        flow_shift_config_path=flow_shift_config_path,
+        flow_shift_repo_dir=flow_shift_repo_dir,
     )
 
     _LOGGER.debug(

@@ -364,11 +364,13 @@ class CodexSampler:
                     schedule_first = float(sigmas[0]) if len(sigmas) > 0 else float("nan")
                     schedule_last = float(sigmas[-1]) if len(sigmas) > 0 else float("nan")
                     schedule_summary = self._summarize_sigmas(sigmas)
+                    sigma_min_val = float("nan") if active_context.sigma_min is None else float(active_context.sigma_min)
+                    sigma_max_val = float("nan") if active_context.sigma_max is None else float(active_context.sigma_max)
                     self._logger.info(
                         "sigma schedule len=%d predict_min=%.6g predict_max=%.6g first=%.6g last=%.6g ladder=%s",
                         len(sigmas) - 1,
-                        float(active_context.sigma_min or float("nan")),
-                        float(active_context.sigma_max or float("nan")),
+                        sigma_min_val,
+                        sigma_max_val,
                         schedule_first,
                         schedule_last,
                         schedule_summary,
@@ -460,11 +462,13 @@ class CodexSampler:
                         schedule_first = float(sigmas_run[0]) if len(sigmas_run) > 0 else float("nan")
                         schedule_last = float(sigmas_run[-1]) if len(sigmas_run) > 0 else float("nan")
                         schedule_summary = self._summarize_sigmas(sigmas_run)
+                        sigma_min_val = float("nan") if active_context.sigma_min is None else float(active_context.sigma_min)
+                        sigma_max_val = float("nan") if active_context.sigma_max is None else float(active_context.sigma_max)
                         self._logger.info(
                             "sigma schedule len=%d predict_min=%.6g predict_max=%.6g first=%.6g last=%.6g ladder=%s",
                             len(sigmas_run) - 1,
-                            float(active_context.sigma_min or float("nan")),
-                            float(active_context.sigma_max or float("nan")),
+                            sigma_min_val,
+                            sigma_max_val,
                             schedule_first,
                             schedule_last,
                             schedule_summary,

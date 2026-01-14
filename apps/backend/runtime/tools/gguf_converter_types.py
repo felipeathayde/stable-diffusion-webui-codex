@@ -52,6 +52,7 @@ class ConversionConfig:
     output_path: str  # Output .gguf path
     quantization: QuantizationType = QuantizationType.F16
     comfy_layout: bool = True
+    workers: int = 0  # 0 = auto, otherwise number of CPU workers for quantization
     tensor_type_overrides: Sequence[str] = ()
 
 

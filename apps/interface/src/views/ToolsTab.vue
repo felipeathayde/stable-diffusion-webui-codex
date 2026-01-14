@@ -90,6 +90,18 @@ Symbols (top-level; keep in sync; no ghosts):
 	            <details class="accordion">
 	              <summary>Advanced</summary>
 		              <div class="accordion-body">
+                    <div class="field">
+                      <label class="label-muted">Workers (CPU)</label>
+                      <input
+                        class="ui-input"
+                        type="number"
+                        min="0"
+                        step="1"
+                        v-model.number="ggufForm.workers"
+                        :disabled="isConverting"
+                      />
+                      <p class="caption">0 = auto. Higher values use more CPU to speed up quantization.</p>
+                    </div>
 		                <div class="field">
 		                  <label class="label-muted">Tensor Overrides</label>
 		                  <textarea
@@ -217,6 +229,7 @@ interface GGUFForm {
   tensorTypeOverrides: string
   overwrite: boolean
   comfyLayout: boolean
+  workers: number
 }
 
 interface ConversionStatus {
@@ -247,6 +260,7 @@ const ggufForm = ref<GGUFForm>({
   tensorTypeOverrides: '',
   overwrite: false,
   comfyLayout: true,
+  workers: 0,
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -333,68 +347,80 @@ const outputFileName = computed(() => {
 
 const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, outputFileName.value))
 
-	async function startConversion() {
-	  try {
-	    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
-	    const response = await fetch('/api/tools/convert-gguf', {
-	      method: 'POST',
-	      headers: { 'Content-Type': 'application/json' },
-		      body: JSON.stringify({
-		        config_path: ggufForm.value.configPath,
-		        safetensors_path: ggufForm.value.safetensorsPath,
-		        output_path: outputFullPath.value,
-		        overwrite: ggufForm.value.overwrite,
-		        comfy_layout: ggufForm.value.comfyLayout,
-		        quantization: ggufForm.value.quantization,
-		        tensor_type_overrides: tensorTypeOverrides,
-		      }),
-		    })
-    
-    const data = await response.json()
-    
+async function startConversion() {
+  try {
+    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
+    if (pollInterval.value) {
+      clearInterval(pollInterval.value)
+      pollInterval.value = null
+    }
+
+    const response = await fetch('/api/tools/convert-gguf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config_path: ggufForm.value.configPath,
+        safetensors_path: ggufForm.value.safetensorsPath,
+        output_path: outputFullPath.value,
+        overwrite: ggufForm.value.overwrite,
+        comfy_layout: ggufForm.value.comfyLayout,
+        workers: ggufForm.value.workers,
+        quantization: ggufForm.value.quantization,
+        tensor_type_overrides: tensorTypeOverrides,
+      }),
+    })
+
+    let data: any = null
+    let fallbackText = ''
+    try {
+      data = await response.json()
+    } catch {
+      fallbackText = await response.text().catch(() => '')
+    }
+
     if (!response.ok) {
+      const detail = data?.detail || fallbackText || `${response.status} ${response.statusText}`
       conversionStatus.value = {
         status: 'error',
         progress: 0,
         current_tensor: '',
-        error: data.detail || 'Unknown error',
+        error: String(detail),
       }
       return
     }
-    
-    currentJobId.value = data.job_id
+
+    currentJobId.value = String(data?.job_id || '')
     conversionStatus.value = { status: 'pending', progress: 0, current_tensor: '', error: null }
-    
-	    // Start polling
-	    pollInterval.value = window.setInterval(pollStatus, 500)
-	  } catch (e: any) {
+
+    pollInterval.value = window.setInterval(pollStatus, 500)
+  } catch (e: any) {
     conversionStatus.value = {
       status: 'error',
       progress: 0,
       current_tensor: '',
-      error: e.message,
-	  }
-	}
+      error: String(e?.message || e),
+    }
+  }
+}
 
-	async function cancelConversion() {
-	  if (!currentJobId.value) return
-	  try {
-	    const res = await fetch(`/api/tools/convert-gguf/${currentJobId.value}/cancel`, { method: 'POST' })
-	    if (!res.ok) {
-	      const data = await res.json().catch(() => ({}))
-	      throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
-	    }
-	    if (conversionStatus.value) {
-	      conversionStatus.value = { ...conversionStatus.value, status: 'cancelling' }
-	    }
-	  } catch (e: any) {
-	    if (conversionStatus.value) {
-	      conversionStatus.value = { ...conversionStatus.value, error: String(e?.message || e) }
-	    } else {
-	      conversionStatus.value = { status: 'error', progress: 0, current_tensor: '', error: String(e?.message || e) }
-	    }
-	  }
-	}
+async function cancelConversion() {
+  if (!currentJobId.value) return
+  try {
+    const res = await fetch(`/api/tools/convert-gguf/${currentJobId.value}/cancel`, { method: 'POST' })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
+    }
+    if (conversionStatus.value) {
+      conversionStatus.value = { ...conversionStatus.value, status: 'cancelling' }
+    }
+  } catch (e: any) {
+    if (conversionStatus.value) {
+      conversionStatus.value = { ...conversionStatus.value, error: String(e?.message || e) }
+    } else {
+      conversionStatus.value = { status: 'error', progress: 0, current_tensor: '', error: String(e?.message || e) }
+    }
+  }
 }
 
 function parseTensorTypeOverrides(raw: string): string[] {
@@ -404,25 +430,25 @@ function parseTensorTypeOverrides(raw: string): string[] {
     .filter((line) => line.length > 0)
 }
 
-	async function pollStatus() {
-	  if (!currentJobId.value) return
-	  
-	  try {
-	    const response = await fetch(`/api/tools/convert-gguf/${currentJobId.value}`)
-	    const data = await response.json()
-	    
-	    conversionStatus.value = data
-	    
-	    if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
-	      if (pollInterval.value) {
-	        clearInterval(pollInterval.value)
-	        pollInterval.value = null
-	      }
-	    }
-	  } catch (e) {
-	    // Ignore polling errors
-	  }
-	}
+async function pollStatus() {
+  if (!currentJobId.value) return
+
+  try {
+    const response = await fetch(`/api/tools/convert-gguf/${currentJobId.value}`)
+    const data = await response.json()
+
+    conversionStatus.value = data
+
+    if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
+      if (pollInterval.value) {
+        clearInterval(pollInterval.value)
+        pollInterval.value = null
+      }
+    }
+  } catch {
+    // Ignore polling errors
+  }
+}
 
 // File browser functions
 function browseForConfig() {
@@ -455,7 +481,7 @@ function closeFileBrowser() {
 
 async function loadBrowserPath() {
   try {
-    const ext = browserMode.value === 'safetensors' ? '.safetensors' : ''
+    const ext = browserMode.value === 'safetensors' ? '.safetensors,.safetensors.index.json,.index.json' : ''
     
     const response = await fetch(`/api/tools/browse-files?path=${encodeURIComponent(browserPath.value)}&extensions=${ext}`)
     browserData.value = await response.json()
@@ -478,7 +504,7 @@ function selectItem(item: BrowserItem) {
 
 function openItem(item: BrowserItem) {
   if (item.type === 'directory') {
-    browserPath.value = browserPath.value.replace(/[/\\]$/, '') + '/' + item.name
+    browserPath.value = _joinPath(browserPath.value, item.name)
     loadBrowserPath()
     selectedItem.value = null
   } else {
@@ -491,17 +517,17 @@ function confirmSelection() {
   
   if (browserMode.value === 'config') {
     if (!selectedItem.value) return
-    const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+    const fullPath = _joinPath(browserPath.value, selectedItem.value.name)
     ggufForm.value.configPath = selectedItem.value.type === 'directory' ? fullPath : browserPath.value
   } else if (browserMode.value === 'safetensors') {
     if (!selectedItem.value) return
-    const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+    const fullPath = _joinPath(browserPath.value, selectedItem.value.name)
     ggufForm.value.safetensorsPath = fullPath
   } else if (browserMode.value === 'output_dir') {
     if (!selectedItem.value) {
       ggufForm.value.outputDir = browserPath.value
     } else if (selectedItem.value.type === 'directory') {
-      const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+      const fullPath = _joinPath(browserPath.value, selectedItem.value.name)
       ggufForm.value.outputDir = fullPath
     }
   }

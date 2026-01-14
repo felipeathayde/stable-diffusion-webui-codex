@@ -48,29 +48,19 @@ def build_router(*, codex_root: Path) -> APIRouter:
         output_path = payload.get("output_path", "")
         overwrite = bool(payload.get("overwrite", False))
         comfy_layout_raw = payload.get("comfy_layout", True)
-        workers_raw = payload.get("workers", 0)
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
 
         if not config_path or not safetensors_path or not output_path:
             raise HTTPException(status_code=400, detail="Missing required paths")
 
-        expanded_config = os.path.expanduser(str(config_path))
-        if os.path.isdir(expanded_config):
-            cfg_file = os.path.join(expanded_config, "config.json")
-            if not os.path.isfile(cfg_file):
-                raise HTTPException(status_code=400, detail=f"config.json not found under: {expanded_config}")
-        elif not os.path.isfile(expanded_config):
-            raise HTTPException(status_code=400, detail=f"Config not found: {expanded_config}")
+        if not os.path.exists(config_path) and not os.path.exists(os.path.join(config_path, "config.json")):
+            raise HTTPException(status_code=400, detail=f"Config not found: {config_path}")
 
-        expanded_weights = os.path.expanduser(str(safetensors_path))
-        if not os.path.exists(expanded_weights):
-            raise HTTPException(status_code=400, detail=f"Safetensors not found: {expanded_weights}")
+        if not os.path.exists(safetensors_path):
+            raise HTTPException(status_code=400, detail=f"Safetensors not found: {safetensors_path}")
 
-        try:
-            final_path = Path(os.path.expanduser(str(output_path))).resolve()
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid output_path {output_path!r}: {exc}") from exc
+        final_path = Path(os.path.expanduser(str(output_path))).resolve()
         if final_path.exists() and not overwrite:
             raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
         if final_path.exists() and final_path.is_dir():
@@ -79,17 +69,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
         if not isinstance(comfy_layout_raw, bool):
             raise HTTPException(status_code=400, detail="comfy_layout must be a boolean when provided")
         comfy_layout = bool(comfy_layout_raw)
-
-        workers = 0
-        if workers_raw is not None and str(workers_raw).strip() != "":
-            try:
-                workers = int(workers_raw)
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"workers must be an integer (got {workers_raw!r})") from exc
-            if workers < 0:
-                raise HTTPException(status_code=400, detail="workers must be >= 0 (0 = auto)")
-            if workers > 64:
-                raise HTTPException(status_code=400, detail="workers must be <= 64")
 
         try:
             quant = QuantizationType(quant_str)
@@ -133,12 +112,11 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 ctrl = _gguf_conversion_controls[job_id]
 
                 config = ConversionConfig(
-                    config_path=expanded_config,
-                    safetensors_path=expanded_weights,
+                    config_path=config_path,
+                    safetensors_path=safetensors_path,
                     output_path=str(ctrl["tmp_path"]),
                     quantization=quant,
                     comfy_layout=comfy_layout,
-                    workers=workers,
                     tensor_type_overrides=tensor_type_overrides,
                 )
 

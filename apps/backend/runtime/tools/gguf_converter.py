@@ -39,7 +39,7 @@ from apps.backend.runtime.tools import gguf_converter_quantization as _quantizat
 from apps.backend.runtime.tools import gguf_converter_safetensors_source as _safetensors_source
 from apps.backend.runtime.tools import gguf_converter_tensor_planner as _tensor_planner
 from apps.backend.runtime.tools import gguf_converter_verify as _verify
-from apps.backend.runtime.tools.gguf_converter_specs import GGUFArch
+from apps.backend.runtime.tools.gguf_converter_specs import GGUFArch, GGUFKeyLayout
 from apps.backend.runtime.tools.gguf_converter_types import (
     ConversionConfig,
     ConversionProgress,

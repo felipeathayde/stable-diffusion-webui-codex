@@ -29,4 +29,5 @@ Status: Active
 - 2026-01-14: Fixed `concat_dim0` streaming writes to allow variable dim0 sizes (required by Flux single-block `linear1` fusion: q/k/v + `proj_mlp`).
 - 2026-01-14: Flux GGUF quantization now keeps sensitive IO projection weights in float (F32/F16) and keeps Flux 1D tensors in F32 (biases + norm scales), matching known-good community files and preventing residual noise regressions.
 - 2026-01-14: GGUF converter dispatch is now profile-driven (typed registry): model-specific dtype “overrides” are formalized as per-model quantization policies (user `tensor_type_overrides` remain supported, but policy rules can be marked required).
+- 2026-01-14: Follow-up: fixed a missing `GGUFKeyLayout` import in `gguf_converter.py` introduced during the profile-registry refactor (NameError at runtime).
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

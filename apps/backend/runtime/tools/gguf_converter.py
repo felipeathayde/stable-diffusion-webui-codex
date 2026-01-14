@@ -264,15 +264,20 @@ def convert_safetensors_to_gguf(
                     slices = [sf.get_slice(name) for name in plan.src_names]
                     shapes = [tuple(int(x) for x in sl.get_shape()) for sl in slices]
                     base_shape = shapes[0]
-                    if any(s != base_shape for s in shapes[1:]):
-                        raise RuntimeError(
-                            f"concat_dim0 source shape mismatch for {plan.gguf_name}: {shapes}"
-                        )
+                    rank = len(base_shape)
+                    if any(len(s) != rank for s in shapes[1:]):
+                        raise RuntimeError(f"concat_dim0 source rank mismatch for {plan.gguf_name}: {shapes}")
+                    if rank == 2:
+                        trailing = base_shape[1:]
+                        if any(s[1:] != trailing for s in shapes[1:]):
+                            raise RuntimeError(
+                                f"concat_dim0 source trailing dims mismatch for {plan.gguf_name}: {shapes}"
+                            )
 
-                    if len(base_shape) == 1:
-                        expected_shape = (int(base_shape[0]) * len(plan.src_names),)
-                    elif len(base_shape) == 2:
-                        expected_shape = (int(base_shape[0]) * len(plan.src_names), int(base_shape[1]))
+                    if rank == 1:
+                        expected_shape = (sum(int(s[0]) for s in shapes),)
+                    elif rank == 2:
+                        expected_shape = (sum(int(s[0]) for s in shapes), int(base_shape[1]))
                     else:
                         raise RuntimeError(
                             f"concat_dim0 expects 1D/2D tensors for {plan.gguf_name}, got {base_shape}"
@@ -285,15 +290,15 @@ def convert_safetensors_to_gguf(
 
                     if plan.ggml_type == GGMLQuantizationType.F16:
                         target_dtype = torch.float16
-                        if len(base_shape) == 1:
+                        if rank == 1:
                             for sl in slices:
                                 check_cancel()
                                 t = sl[:].to(target_dtype).contiguous()
                                 out.write(t.numpy().tobytes(order="C"))
                                 bytes_written += t.numel() * 2
                         else:
-                            rows = base_shape[0]
-                            for sl in slices:
+                            for sl, shape in zip(slices, shapes, strict=True):
+                                rows = int(shape[0])
                                 for start in range(0, rows, chunk_rows):
                                     check_cancel()
                                     chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
@@ -302,15 +307,15 @@ def convert_safetensors_to_gguf(
 
                     elif plan.ggml_type == GGMLQuantizationType.F32:
                         target_dtype = torch.float32
-                        if len(base_shape) == 1:
+                        if rank == 1:
                             for sl in slices:
                                 check_cancel()
                                 t = sl[:].to(target_dtype).contiguous()
                                 out.write(t.numpy().tobytes(order="C"))
                                 bytes_written += t.numel() * 4
                         else:
-                            rows = base_shape[0]
-                            for sl in slices:
+                            for sl, shape in zip(slices, shapes, strict=True):
+                                rows = int(shape[0])
                                 for start in range(0, rows, chunk_rows):
                                     check_cancel()
                                     chunk = sl[start : min(rows, start + chunk_rows)].to(target_dtype).contiguous()
@@ -318,12 +323,12 @@ def convert_safetensors_to_gguf(
                                     bytes_written += chunk.numel() * 4
 
                     else:
-                        if len(base_shape) != 2:
+                        if rank != 2:
                             raise RuntimeError(
                                 f"Unexpected quantized concat_dim0 tensor plan for {plan.gguf_name}: {base_shape}"
                             )
-                        rows = base_shape[0]
-                        for sl in slices:
+                        for sl, shape in zip(slices, shapes, strict=True):
+                            rows = int(shape[0])
                             for start in range(0, rows, chunk_rows):
                                 check_cancel()
                                 chunk = sl[start : min(rows, start + chunk_rows)].to(torch.float32).contiguous()

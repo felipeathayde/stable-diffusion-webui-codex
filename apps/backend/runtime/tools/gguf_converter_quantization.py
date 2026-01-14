@@ -64,8 +64,31 @@ def _default_tensor_type_overrides(quant: QuantizationType) -> list[tuple[str, G
     Patterns are applied against both the source tensor name and the GGUF tensor name.
     """
 
+    rules: list[tuple[str, GGMLQuantizationType]] = []
+
+    # Diffusion-model GGUF convention (Flux/ZImage): keep a handful of IO / embedder
+    # matrices in float to avoid quality regressions (visible as residual noise).
+    if quant not in {QuantizationType.F16, QuantizationType.F32}:
+        rules.extend(
+            [
+                # Flux: input/output + time/guidance/vector projections are sensitive; keep them float.
+                (r"^img_in\.weight$", GGMLQuantizationType.F32),
+                (r"^(?:guidance_in|time_in|vector_in)\.in_layer\.weight$", GGMLQuantizationType.F32),
+                (r"^final_layer\.linear\.weight$", GGMLQuantizationType.F32),
+                (r"^(?:guidance_in|time_in|vector_in)\.out_layer\.weight$", GGMLQuantizationType.F16),
+                (r"^txt_in\.weight$", GGMLQuantizationType.F16),
+                (r"^final_layer\.adaLN_modulation\.1\.weight$", GGMLQuantizationType.F16),
+                # Flux: keep 1D tensors in F32 (biases + norm scales); community GGUFs do this and it improves stability.
+                (r"^(?:double_blocks|single_blocks)\..*\.(?:bias|scale)$", GGMLQuantizationType.F32),
+                (r"^(?:img_in|txt_in)\.bias$", GGMLQuantizationType.F32),
+                (r"^(?:guidance_in|time_in|vector_in)\.(?:in_layer|out_layer)\.bias$", GGMLQuantizationType.F32),
+                (r"^final_layer\.(?:linear|adaLN_modulation\.1)\.bias$", GGMLQuantizationType.F32),
+            ]
+        )
+
     if quant == QuantizationType.Q5_K_M:
-        return [
+        rules.extend(
+            [
             # Embeddings / output: keep higher precision to preserve prompt semantics.
             (r"(?:^|\.)token_embd\.weight$", GGMLQuantizationType.Q8_0),
             (r"(?:^|\.)output\.weight$", GGMLQuantizationType.Q8_0),
@@ -74,10 +97,12 @@ def _default_tensor_type_overrides(quant: QuantizationType) -> list[tuple[str, G
             # Attention projections: bump to 6-bit.
             (r"(?:^|\.)attn_(?:q|k|v|output)\.weight$", GGMLQuantizationType.Q6_K),
             (r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)\.weight$", GGMLQuantizationType.Q6_K),
-        ]
+            ]
+        )
 
     if quant == QuantizationType.Q4_K_M:
-        return [
+        rules.extend(
+            [
             # Embeddings / output: bump to 6-bit (still much smaller than fp16).
             (r"(?:^|\.)token_embd\.weight$", GGMLQuantizationType.Q6_K),
             (r"(?:^|\.)output\.weight$", GGMLQuantizationType.Q6_K),
@@ -86,9 +111,10 @@ def _default_tensor_type_overrides(quant: QuantizationType) -> list[tuple[str, G
             # Attention projections: bump to 5-bit K.
             (r"(?:^|\.)attn_(?:q|k|v|output)\.weight$", GGMLQuantizationType.Q5_K),
             (r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)\.weight$", GGMLQuantizationType.Q5_K),
-        ]
+            ]
+        )
 
-    return []
+    return rules
 
 
 def compile_tensor_overrides(
@@ -156,4 +182,3 @@ __all__ = [
     "requested_ggml_type",
     "select_tensor_ggml_type",
 ]
-

@@ -25,4 +25,5 @@ Status: Active
 - 2026-01-13: GGUF converter supports Flux transformer planning: maps Diffusers `FluxTransformer2DModel` keys (`transformer_blocks.*`, `single_transformer_blocks.*`) into the Comfy/Codex Flux runtime layout (`double_blocks.*`, `single_blocks.*`, `img_in`, `txt_in`, `time_in`, `vector_in`, `guidance_in`, `final_layer`).
 - 2026-01-14: GGUF converter now supports a `comfy_layout` toggle: for Flux/ZImage transformer exports, when enabled it maps Diffusers keys into the Comfy/Codex runtime layout (`double_blocks.*`, `single_blocks.*`); when disabled it preserves source key names. Output records `codex.converter.comfy_layout` in metadata.
 - 2026-01-14: Fixed `concat_dim0` streaming writes to allow variable dim0 sizes (required by Flux single-block `linear1` fusion: q/k/v + `proj_mlp`).
+- 2026-01-14: Flux GGUF quantization now keeps sensitive IO projection weights in float (F32/F16) and keeps Flux 1D tensors in F32 (biases + norm scales), matching known-good community files and preventing residual noise regressions.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

@@ -280,6 +280,95 @@ def _zimage_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     )
 
 
+def _flux_signature_from_vendored_hf(
+    *,
+    model_path: str,
+    expected_family: ModelFamily,
+    has_guidance: bool | None = None,
+) -> ModelSignature:
+    """Build a Flux `ModelSignature` from vendored HF metadata (no state-dict detection)."""
+
+    vendor_root = _BACKEND_ROOT / "huggingface" / "black-forest-labs"
+    if expected_family is ModelFamily.FLUX_KONTEXT:
+        repo_hint = "black-forest-labs/FLUX.1-Kontext-dev"
+        transformer_cfg = _read_json(vendor_root / "FLUX.1-Kontext-dev" / "transformer" / "config.json")
+    else:
+        # Default Flux core signature (dev/schnell share the same architecture, but guidance differs).
+        if has_guidance is False:
+            repo_hint = "black-forest-labs/FLUX.1-schnell"
+            transformer_cfg = _read_json(vendor_root / "FLUX.1-schnell" / "transformer" / "config.json")
+        else:
+            repo_hint = "black-forest-labs/FLUX.1-dev"
+            transformer_cfg = _read_json(vendor_root / "FLUX.1-dev" / "transformer" / "config.json")
+
+    latent_channels_raw = transformer_cfg.get("in_channels", 64)
+    latent_channels = int(latent_channels_raw) if isinstance(latent_channels_raw, (int, float, str)) else 64
+
+    context_dim_raw = transformer_cfg.get("joint_attention_dim", 4096)
+    context_dim = int(context_dim_raw) if isinstance(context_dim_raw, (int, float, str)) else 4096
+
+    double_layers_raw = transformer_cfg.get("num_layers", 19)
+    double_layers = int(double_layers_raw) if isinstance(double_layers_raw, (int, float, str)) else 19
+
+    single_layers_raw = transformer_cfg.get("num_single_layers", 38)
+    single_layers = int(single_layers_raw) if isinstance(single_layers_raw, (int, float, str)) else 38
+
+    guidance_embed = bool(transformer_cfg.get("guidance_embeds", False))
+
+    suffix = Path(model_path).suffix.lower()
+    quantization = QuantizationHint()
+    gguf_core_only = False
+    if suffix == ".gguf":
+        quantization = QuantizationHint(kind=QuantizationKind.GGUF, detail="file_extension")
+        gguf_core_only = True
+
+    extras = {
+        "flow_double_layers": double_layers,
+        "flow_single_layers": single_layers,
+        "guidance_embed": guidance_embed,
+        "gguf_core_only": gguf_core_only,
+        "signature_source": "vendored_hf",
+    }
+
+    text_encoders = [
+        TextEncoderSignature(
+            name="clip_l",
+            key_prefix="text_encoders.clip_l.",
+            expected_dim=768,
+            tokenizer_hint=f"{repo_hint}/tokenizer",
+        ),
+        TextEncoderSignature(
+            name="t5xxl",
+            key_prefix="text_encoders.t5xxl.",
+            expected_dim=4096,
+            tokenizer_hint=f"{repo_hint}/tokenizer_2",
+        ),
+    ]
+
+    # Flux core-only checkpoints require external VAE in the engine loader path.
+    vae: VAESignature | None = None if gguf_core_only else VAESignature(key_prefix="vae.", latent_channels=16)
+
+    return ModelSignature(
+        family=expected_family,
+        repo_hint=repo_hint,
+        prediction=PredictionKind.FLOW,
+        latent_format=LatentFormat.FLOW16,
+        quantization=quantization,
+        core=CodexCoreSignature(
+            architecture=CodexCoreArchitecture.FLOW_TRANSFORMER,
+            channels_in=latent_channels,
+            channels_out=latent_channels,
+            context_dim=context_dim,
+            temporal=False,
+            depth=double_layers + single_layers,
+            key_prefixes=["transformer.", "model.diffusion_model."],
+        ),
+        text_encoders=text_encoders,
+        vae=vae,
+        extras=extras,
+    )
+
+
 def _parse_checkpoint(
     primary_path: str,
     additional_paths: list[str] | None,
@@ -289,6 +378,16 @@ def _parse_checkpoint(
     base_state = _load_state_dict(primary_path)
     if expected_family is ModelFamily.ZIMAGE:
         signature = _zimage_signature_from_vendored_hf(model_path=primary_path)
+    elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
+        guidance_key = "guidance_in.in_layer.weight"
+        has_guidance = any(
+            k in base_state for k in (guidance_key, f"transformer.{guidance_key}", f"model.diffusion_model.{guidance_key}")
+        )
+        signature = _flux_signature_from_vendored_hf(
+            model_path=primary_path,
+            expected_family=expected_family,
+            has_guidance=has_guidance,
+        )
     else:
         signature = registry_detect(base_state)
     config = parse_state_dict(base_state, signature)
@@ -299,6 +398,16 @@ def _parse_checkpoint(
             extra_state = _load_state_dict(extra)
             if expected_family is ModelFamily.ZIMAGE:
                 extra_signature = _zimage_signature_from_vendored_hf(model_path=extra)
+            elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
+                guidance_key = "guidance_in.in_layer.weight"
+                has_guidance = any(
+                    k in extra_state for k in (guidance_key, f"transformer.{guidance_key}", f"model.diffusion_model.{guidance_key}")
+                )
+                extra_signature = _flux_signature_from_vendored_hf(
+                    model_path=extra,
+                    expected_family=expected_family,
+                    has_guidance=has_guidance,
+                )
             else:
                 extra_signature = registry_detect(extra_state)
             extra_config = parse_state_dict(extra_state, extra_signature)

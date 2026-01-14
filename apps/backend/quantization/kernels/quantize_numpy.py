@@ -277,6 +277,7 @@ def _make_qkx2_quants_32(
 
     sum_w = wf.sum(axis=-1, dtype=np.float32)
     sum_x = (wf * xf).sum(axis=-1, dtype=np.float32)
+    sum_x2 = (wf * xf * xf).sum(axis=-1, dtype=np.float32)
 
     denom = (max_const - min_cur).astype(np.float32, copy=False)
     valid = denom > np.float32(0.0)
@@ -290,12 +291,24 @@ def _make_qkx2_quants_32(
     l0 = np.clip(l0, 0, nmax).astype(np.int32, copy=False)
     l0f = l0.astype(np.float32, copy=False)
 
-    diff = scale[..., None] * l0f + min_cur[..., None] - xf
     if use_mad:
-        err = (wf * np.abs(diff)).sum(axis=-1, dtype=np.float32)
+        diff = scale[..., None] * l0f + min_cur[..., None] - xf
+        best_err = (wf * np.abs(diff)).sum(axis=-1, dtype=np.float32).astype(np.float32, copy=False)
     else:
-        err = (wf * (diff * diff)).sum(axis=-1, dtype=np.float32)
-    best_err = err.astype(np.float32, copy=False)
+        sum_l0 = (wf * l0f).sum(axis=-1, dtype=np.float32)
+        sum_l20 = (wf * l0f * l0f).sum(axis=-1, dtype=np.float32)
+        sum_xl0 = (wf * l0f * xf).sum(axis=-1, dtype=np.float32)
+
+        # Weighted SSE: scale^2*Σ(w l^2) + 2*scale*min*Σ(w l) - 2*scale*Σ(w x l)
+        #            + min^2*Σw - 2*min*Σ(w x) + Σ(w x^2)
+        best_err = (
+            scale * scale * sum_l20
+            + np.float32(2.0) * scale * min_cur * sum_l0
+            - np.float32(2.0) * scale * sum_xl0
+            + min_cur * min_cur * sum_w
+            - np.float32(2.0) * min_cur * sum_x
+            + sum_x2
+        ).astype(np.float32, copy=False)
 
     if nstep < 1:
         return scale, (-min_cur).astype(np.float32, copy=False)
@@ -332,11 +345,18 @@ def _make_qkx2_quants_32(
         this_scale = np.where(pos_min, safe_sum_l2, this_scale).astype(np.float32, copy=False)
         this_min = np.where(pos_min, np.float32(0.0), this_min).astype(np.float32, copy=False)
 
-        diff = this_scale[..., None] * laux_f + this_min[..., None] - xf
         if use_mad:
+            diff = this_scale[..., None] * laux_f + this_min[..., None] - xf
             cur_err = (wf * np.abs(diff)).sum(axis=-1, dtype=np.float32)
         else:
-            cur_err = (wf * (diff * diff)).sum(axis=-1, dtype=np.float32)
+            cur_err = (
+                this_scale * this_scale * sum_l2
+                + np.float32(2.0) * this_scale * this_min * sum_l
+                - np.float32(2.0) * this_scale * sum_xl
+                + this_min * this_min * sum_w
+                - np.float32(2.0) * this_min * sum_x
+                + sum_x2
+            ).astype(np.float32, copy=False)
         cur_err = np.where(valid_D, cur_err, np.float32(np.inf)).astype(np.float32, copy=False)
 
         improved = cur_err < best_err

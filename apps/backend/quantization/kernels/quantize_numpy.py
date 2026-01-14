@@ -12,6 +12,7 @@ matching ggml rounding/packing conventions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_np_roundf` (function): GGML-style round-half-up rounding used for quant packing.
+- `_nearest_int_f32` (function): GGML nearest-int helper matching llama.cpp `nearest_int` (float32 bit trick).
 - `_pack_nibbles_32x4` (function): Packs 32 4-bit values into 16 bytes using ggml nibble order.
 - `_pack_bits_32` (function): Packs 32 1-bit flags into 4 bytes (little-endian bit order).
 - `quantize_blocks_q8_0` (function): Quantizes blocks to GGML Q8_0 packed layout.
@@ -21,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `quantize_blocks_q5_1` (function): Quantizes blocks to GGML Q5_1 packed layout.
 - `quantize_blocks_iq4_nl` (function): Quantizes blocks to GGML IQ4_NL packed layout.
 - `_pack_k_scale_min` (function): Packs K-quant scale/min arrays into the ggml K-block header layout.
+- `_make_qkx2_quants_32` (function): Vectorized port of llama.cpp `make_qkx2_quants` for `(…, 32)` groups.
 - `quantize_blocks_q4_k` (function): Quantizes blocks to GGML Q4_K packed layout.
 - `quantize_blocks_q5_k` (function): Quantizes blocks to GGML Q5_K packed layout.
 - `quantize_blocks_q3_k` (function): Quantizes blocks to GGML Q3_K packed layout.
@@ -41,6 +43,14 @@ def _np_roundf(values: np.ndarray) -> np.ndarray:
     floored = np.floor(abs_values)
     delta = floored + np.floor(2 * (abs_values - floored))
     return np.sign(values) * delta
+
+
+def _nearest_int_f32(values: np.ndarray) -> np.ndarray:
+    """Round float32 values to nearest int using llama.cpp's `nearest_int` trick."""
+    x = values.astype(np.float32, copy=False)
+    magic = np.float32(12582912.0)  # 0x4B400000
+    bits = (x + magic).view(np.int32)
+    return (bits & np.int32(0x007FFFFF)) - np.int32(0x00400000)
 
 
 def _pack_nibbles_32x4(values: np.ndarray) -> np.ndarray:
@@ -234,6 +244,109 @@ def _pack_k_scale_min(scales: np.ndarray, mins: np.ndarray) -> np.ndarray:
     return packed.reshape((scales.shape[0], 12))
 
 
+def _make_qkx2_quants_32(
+    x: np.ndarray,
+    weights: np.ndarray,
+    *,
+    nmax: int,
+    rmin: float,
+    rdelta: float,
+    nstep: int,
+    use_mad: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute (scale, min) for K-quant groups of 32 values.
+
+    This matches llama.cpp's `make_qkx2_quants` behavior, but runs vectorized
+    across batch dimensions. Returns:
+    - scale: float32, same shape as x[..., 0]
+    - the_min: float32, stored as `-min` (>= 0)
+    """
+    if x.ndim < 1 or x.shape[-1] != 32:
+        raise ValueError(f"expected (..., 32) groups, got {x.shape}")
+    if weights.shape != x.shape:
+        raise ValueError(f"weights shape mismatch: {weights.shape} vs {x.shape}")
+
+    xf = x.astype(np.float32, copy=False)
+    wf = weights.astype(np.float32, copy=False)
+
+    min0 = xf.min(axis=-1)
+    max0 = xf.max(axis=-1)
+
+    min_cur = np.minimum(min0, np.float32(0.0)).astype(np.float32, copy=False)
+    max_const = max0.astype(np.float32, copy=False)
+
+    sum_w = wf.sum(axis=-1, dtype=np.float32)
+    sum_x = (wf * xf).sum(axis=-1, dtype=np.float32)
+
+    denom = (max_const - min_cur).astype(np.float32, copy=False)
+    valid = denom > np.float32(0.0)
+
+    iscale = np.zeros_like(denom, dtype=np.float32)
+    np.divide(np.float32(nmax), denom, out=iscale, where=valid)
+    scale = np.zeros_like(denom, dtype=np.float32)
+    np.divide(np.float32(1.0), iscale, out=scale, where=iscale != 0)
+
+    l0 = _nearest_int_f32(iscale[..., None] * (xf - min_cur[..., None]))
+    l0 = np.clip(l0, 0, nmax).astype(np.int32, copy=False)
+    l0f = l0.astype(np.float32, copy=False)
+
+    diff = scale[..., None] * l0f + min_cur[..., None] - xf
+    if use_mad:
+        err = (wf * np.abs(diff)).sum(axis=-1, dtype=np.float32)
+    else:
+        err = (wf * (diff * diff)).sum(axis=-1, dtype=np.float32)
+    best_err = err.astype(np.float32, copy=False)
+
+    if nstep < 1:
+        return scale, (-min_cur).astype(np.float32, copy=False)
+
+    for step in range(int(nstep) + 1):
+        denom = (max_const - min_cur).astype(np.float32, copy=False)
+        valid = denom > np.float32(0.0)
+        step_factor = np.float32(rmin + rdelta * step + nmax)
+        iscale = np.zeros_like(denom, dtype=np.float32)
+        np.divide(step_factor, denom, out=iscale, where=valid)
+
+        laux = _nearest_int_f32(iscale[..., None] * (xf - min_cur[..., None]))
+        laux = np.clip(laux, 0, nmax).astype(np.int32, copy=False)
+        laux_f = laux.astype(np.float32, copy=False)
+
+        sum_l = (wf * laux_f).sum(axis=-1, dtype=np.float32)
+        sum_l2 = (wf * laux_f * laux_f).sum(axis=-1, dtype=np.float32)
+        sum_xl = (wf * laux_f * xf).sum(axis=-1, dtype=np.float32)
+
+        D = (sum_w * sum_l2 - sum_l * sum_l).astype(np.float32, copy=False)
+        valid_D = valid & (D > np.float32(0.0))
+
+        this_scale = np.zeros_like(scale, dtype=np.float32)
+        this_min = np.zeros_like(min_cur, dtype=np.float32)
+
+        num_scale = (sum_w * sum_xl - sum_x * sum_l).astype(np.float32, copy=False)
+        num_min = (sum_l2 * sum_x - sum_l * sum_xl).astype(np.float32, copy=False)
+        np.divide(num_scale, D, out=this_scale, where=valid_D)
+        np.divide(num_min, D, out=this_min, where=valid_D)
+
+        pos_min = valid_D & (this_min > np.float32(0.0))
+        safe_sum_l2 = np.zeros_like(sum_l2, dtype=np.float32)
+        np.divide(sum_xl, sum_l2, out=safe_sum_l2, where=sum_l2 > np.float32(0.0))
+        this_scale = np.where(pos_min, safe_sum_l2, this_scale).astype(np.float32, copy=False)
+        this_min = np.where(pos_min, np.float32(0.0), this_min).astype(np.float32, copy=False)
+
+        diff = this_scale[..., None] * laux_f + this_min[..., None] - xf
+        if use_mad:
+            cur_err = (wf * np.abs(diff)).sum(axis=-1, dtype=np.float32)
+        else:
+            cur_err = (wf * (diff * diff)).sum(axis=-1, dtype=np.float32)
+        cur_err = np.where(valid_D, cur_err, np.float32(np.inf)).astype(np.float32, copy=False)
+
+        improved = cur_err < best_err
+        best_err = np.where(improved, cur_err, best_err).astype(np.float32, copy=False)
+        scale = np.where(improved, this_scale, scale).astype(np.float32, copy=False)
+        min_cur = np.where(improved, this_min, min_cur).astype(np.float32, copy=False)
+
+    return scale, (-min_cur).astype(np.float32, copy=False)
+
+
 def quantize_blocks_q4_k(blocks: np.ndarray) -> np.ndarray:
     """Quantize float32 blocks (n, 256) to GGML Q4_K packed blocks (n, 144)."""
     if blocks.ndim != 2 or blocks.shape[1] != 256:
@@ -290,50 +403,63 @@ def quantize_blocks_q5_k(blocks: np.ndarray) -> np.ndarray:
 
     x = blocks.astype(np.float32, copy=False)
     n_blocks = x.shape[0]
+
     groups = x.reshape((n_blocks, 8, 32))
+    sum_x2 = np.sum(groups * groups, axis=-1, dtype=np.float32)
+    av_x = np.sqrt(sum_x2 / np.float32(32.0)).astype(np.float32, copy=False)
+    weights = av_x[..., None] + np.abs(groups)
 
-    g_min = groups.min(axis=-1)
-    g_max = groups.max(axis=-1)
-    g_min = np.minimum(g_min, 0.0)
-    dm = -g_min
+    scales_f, mins_f = _make_qkx2_quants_32(
+        groups,
+        weights,
+        nmax=31,
+        rmin=-0.5,
+        rdelta=0.1,
+        nstep=15,
+        use_mad=False,
+    )
 
-    scale = (g_max - g_min) / np.float32(31.0)
+    max_scale = scales_f.max(axis=-1, keepdims=True)
+    max_min = mins_f.max(axis=-1, keepdims=True)
 
-    max_scale = scale.max(axis=-1, keepdims=True)
-    d = (max_scale / np.float32(63.0)).astype(np.float32)
-    sc = np.where(d == 0, 0, np.rint(scale / d)).astype(np.int32)
+    inv_scale = np.where(max_scale > 0, np.float32(63.0) / max_scale, np.float32(0.0)).astype(np.float32, copy=False)
+    inv_min = np.where(max_min > 0, np.float32(63.0) / max_min, np.float32(0.0)).astype(np.float32, copy=False)
+
+    sc = _nearest_int_f32(inv_scale * scales_f)
+    mn = _nearest_int_f32(inv_min * mins_f)
     sc = np.clip(sc, 0, 63).astype(np.uint8)
-
-    max_dm = dm.max(axis=-1, keepdims=True)
-    dmin = (max_dm / np.float32(63.0)).astype(np.float32)
-    mn = np.where(dmin == 0, 0, np.rint(dm / dmin)).astype(np.int32)
     mn = np.clip(mn, 0, 63).astype(np.uint8)
 
-    scale_q = d * sc.astype(np.float32)
-    dm_q = dmin * mn.astype(np.float32)
+    d = (max_scale / np.float32(63.0)).astype(np.float16)
+    dmin = (max_min / np.float32(63.0)).astype(np.float16)
+
+    header_d = d.view(np.uint8)
+    header_dmin = dmin.view(np.uint8)
+    scales_packed = _pack_k_scale_min(sc, mn)
+
+    d_f = d.astype(np.float32)
+    dmin_f = dmin.astype(np.float32)
+    d_g = d_f * sc.astype(np.float32)
+    dm_g = dmin_f * mn.astype(np.float32)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         q = np.where(
-            scale_q[:, :, None] == 0,
+            d_g[:, :, None] == 0,
             0,
-            np.rint((groups + dm_q[:, :, None]) / scale_q[:, :, None]),
+            _nearest_int_f32((groups + dm_g[:, :, None]) / d_g[:, :, None]),
         )
-    q = np.clip(q, 0, 31).astype(np.uint8)
+    q = np.clip(q, 0, 31).astype(np.int32)
 
-    ql = q & np.uint8(0x0F)
-    qh_bits = (q >> np.uint8(4)) & np.uint8(1)
+    ql = (q & 0x0F).astype(np.uint8)
+    qh_bits = ((q >> 4) & 1).astype(np.uint8)
 
     even = ql[:, 0:8:2, :]
     odd = ql[:, 1:8:2, :]
     qs = (even & np.uint8(0x0F)) | (odd << np.uint8(4))
     qs = qs.reshape((n_blocks, 128))
 
-    weights = (np.uint8(1) << np.arange(8, dtype=np.uint8)).reshape((1, 8, 1))
-    qh = (qh_bits.astype(np.uint8) * weights).sum(axis=1).astype(np.uint8)  # (n_blocks, 32)
-
-    header_d = d.astype(np.float16).view(np.uint8)
-    header_dmin = dmin.astype(np.float16).view(np.uint8)
-    scales_packed = _pack_k_scale_min(sc, mn)
+    qh_weights = (np.uint8(1) << np.arange(8, dtype=np.uint8)).reshape((1, 8, 1))
+    qh = (qh_bits * qh_weights).sum(axis=1).astype(np.uint8)
 
     return np.concatenate([header_d, header_dmin, scales_packed, qh, qs], axis=-1)
 

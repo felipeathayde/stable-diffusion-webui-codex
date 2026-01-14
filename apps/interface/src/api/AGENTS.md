@@ -20,7 +20,7 @@ Status: Active
 - Inventory helpers (`InventoryResponse`) are served by `/api/models/inventory`; the client exposes both a cached fetch (`fetchModelInventory`) and a rescan path (`refreshModelInventory`) that posts to `/api/models/inventory/refresh` (assets like VAEs/Text Encoders/metadata roots).
 - `ModelsResponse` is served by `/api/models`; the client exposes a rescan path (`refreshModels`) that calls `/api/models?refresh=1` so the UI can pick up newly copied checkpoints without restarting the backend.
 - 2026-01-13: Added `fetchCheckpointMetadata()` for `/api/models/checkpoint-metadata` so the metadata modal payload can be fetched without constructing `file.*` keys client-side.
-- `payloads.ts` also exposes `deriveFluxTextEncoderOverrideFromLabels(labels)`, which builds a `text_encoder_override` payload (family `flux1`, label `flux1/explicit`, components `clip_l=/abs/...`, `t5xxl=/abs/...`) from Flux.1-style `flux1/<abs_path>` labels; model-tab generation (`useGeneration(tabId)`) reuses this helper when sending Flux.1 txt2img requests.
+- Flux.1 generation requests should not send `extras.text_encoder_override`; the backend derives any needed TE override from `extras.tenc_sha` (sha-only selection).
 - 2026-01-02: Added standardized file header blocks to `client.ts` and `payloads.ts` (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header block to `types.ts` (doc-only change; part of rollout).
 - 2026-01-04: `payloads.ts` treats Flux.1 family keys as flow engines (`flux1*`) for distilled-CFG handling (legacy engine key aliases are not accepted).

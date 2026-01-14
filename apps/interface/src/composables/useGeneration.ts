@@ -23,7 +23,7 @@ import { computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { getEngineConfig, type EngineType } from '../stores/engine_config'
-import { buildTxt2ImgPayload, deriveFluxTextEncoderOverrideFromLabels, type Txt2ImgRequest } from '../api/payloads'
+import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 
@@ -218,10 +218,6 @@ export function useGeneration(tabId: string) {
       ? (p as any).textEncoders.map((it: unknown) => String(it || '').trim()).filter((it: string) => it.length > 0)
       : []
 
-    const teOverride = engineType.value === 'flux1'
-      ? deriveFluxTextEncoderOverrideFromLabels(textEncoders)
-      : undefined
-    
     // Build extras based on engine capabilities (e.g. tenc_sha)
     const extras: Record<string, unknown> = {}
 
@@ -286,7 +282,6 @@ export function useGeneration(tabId: string) {
       if (p.useInitImage) {
         const isFlowModel = Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg
         const img2imgExtras: Record<string, unknown> = { ...extras }
-        if (teOverride) img2imgExtras.text_encoder_override = teOverride
 
         const payload: any = {
           img2img_init_image: p.initImageData,
@@ -341,7 +336,6 @@ export function useGeneration(tabId: string) {
             smartCache: quicksettings.smartCache,
             highres: p.highres,
             refiner: p.refiner,
-            textEncoderOverride: teOverride,
             extras,
           })
         } catch (error) {

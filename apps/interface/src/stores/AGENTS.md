@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-13
 Status: Active
 
 ## Purpose
@@ -17,7 +17,7 @@ Status: Active
 - 2025-12-03: XYZ store now enqueues payload snapshots, supports stop-after-current vs stop-now (calling `/api/tasks/{id}/cancel`), and preserves hires/refiner in each job payload.
 - 2025-12-04: `engine_capabilities.ts` hydrates `/engines/capabilities` (under `/api` via `API_BASE`) once and exposes a cached map keyed by semantic engine tag (sd15, sdxl, flux1, wan22, hunyuan_video, svd) so views/components can hide Highres/Refiner/video-specific UI when the backend declares a surface as unsupported.
 - 2025-12-05: `quicksettings.ts` exposes flags `smartOffload`/`smartFallback`/`smartCache` from `/api/options`; model-tab payload builders propagate these flags for generation-time behavior.
-- 2025-12-06: Model tabs derive FLUX.1 `textEncoderOverride` from `tab.params.textEncoders` using `deriveFluxTextEncoderOverrideFromLabels` (same contract as the FLUX.1 engine payload builder).
+- 2025-12-06: Model tabs keep per-tab Flux text encoder selections (`tab.params.textEncoders`) and `useGeneration(tabId)` sends them via `tenc_sha` (Flux.1 does not use `text_encoder_override` from the client).
 - 2025-12-09: `quicksettings.ts` resolves SHA256 for path-prefixed text encoder labels (flux1/zimage), keeps `text_encoder_overrides` labels intact instead of truncating to basenames, and exposes `resolveTextEncoderSha` so composables can attach `tenc_sha` to GGUF payloads; model-tab `useGeneration` blocks runs when required TE SHAs are missing.
 - 2025-12-14: `model_tabs.ts` treats tab `type` as a UI tab kind (`sd15|sdxl|flux1|zimage|wan`) and normalizes legacy WAN types (`wan22_*` → `wan`); removed the legacy video Pinia store (`stores/video.ts`) now that WAN video runs exclusively via model tabs + typed payload builders.
 - 2025-12-27: Image tabs now persist their checkpoint + text encoders in tab params (`checkpoint`, `textEncoders`) and `model_tabs.normalizeTab()` fills missing params with defaults at load time (so backend-saved tabs with partial `params` don’t render blank/undefined fields).

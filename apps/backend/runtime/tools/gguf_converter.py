@@ -253,6 +253,46 @@ def convert_safetensors_to_gguf(
                             out.write(q.tobytes(order="C"))
                             bytes_written += q.nbytes
 
+                elif plan.op == "swap_halves":
+                    # Swap first and second halves along dim0 (for Diffusers→BFL shift/scale reorder).
+                    check_cancel()
+                    t = sf.get_tensor(plan.src_name)
+                    shape = tuple(t.shape)
+                    if shape != plan.raw_shape:
+                        raise RuntimeError(
+                            f"swap_halves shape mismatch for {plan.gguf_name}: expected {plan.raw_shape}, got {shape}"
+                        )
+                    half = shape[0] // 2
+                    if shape[0] % 2 != 0:
+                        raise RuntimeError(
+                            f"swap_halves requires even dim0 for {plan.gguf_name}: got {shape[0]}"
+                        )
+                    # Swap: [second_half, first_half]
+                    first_half = t[:half]
+                    second_half = t[half:]
+                    swapped = torch.cat([second_half, first_half], dim=0)
+
+                    if plan.ggml_type == GGMLQuantizationType.F16:
+                        swapped = swapped.to(torch.float16).contiguous()
+                        out.write(swapped.numpy().tobytes(order="C"))
+                        bytes_written += swapped.numel() * 2
+                    elif plan.ggml_type == GGMLQuantizationType.F32:
+                        swapped = swapped.to(torch.float32).contiguous()
+                        out.write(swapped.numpy().tobytes(order="C"))
+                        bytes_written += swapped.numel() * 4
+                    else:
+                        # Quantized: write in chunks
+                        swapped = swapped.to(torch.float32).contiguous()
+                        arr = swapped.numpy()
+                        try:
+                            q = quantize_numpy(arr, plan.ggml_type)
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Failed to quantize tensor {plan.gguf_name} to {plan.ggml_type.name}: {exc}"
+                            ) from exc
+                        out.write(q.tobytes(order="C"))
+                        bytes_written += q.nbytes
+
                 elif plan.op == "concat_dim0":
                     check_cancel()
                     if not plan.src_names:

@@ -492,6 +492,17 @@ def plan_flux_transformer_tensors(
         out_ops[dst] = ("concat_dim0", resolved)
         consumed.update(resolved)
 
+    def _add_swap_halves(dst: str, src: str) -> None:
+        """Swap first and second halves of tensor along dim0.
+
+        Diffusers stores shift/scale chunks in opposite order to BFL/ComfyUI for
+        final_layer.adaLN_modulation. This op corrects the layout during conversion.
+        """
+        if dst in out_ops:
+            raise RuntimeError(f"Flux planner: duplicate mapping for {dst} (src={src})")
+        out_ops[dst] = ("swap_halves", (_require(src),))
+        consumed.add(src)
+
     # Top-level modules (input/output and embedder MLPs).
     _add_copy("img_in.weight", "x_embedder.weight")
     _add_copy("img_in.bias", "x_embedder.bias")
@@ -500,8 +511,9 @@ def plan_flux_transformer_tensors(
 
     _add_copy("final_layer.linear.weight", "proj_out.weight")
     _add_copy("final_layer.linear.bias", "proj_out.bias")
-    _add_copy("final_layer.adaLN_modulation.1.weight", "norm_out.linear.weight")
-    _add_copy("final_layer.adaLN_modulation.1.bias", "norm_out.linear.bias")
+    # Diffusers stores shift/scale in [scale, shift] order but BFL/ComfyUI expects [shift, scale].
+    _add_swap_halves("final_layer.adaLN_modulation.1.weight", "norm_out.linear.weight")
+    _add_swap_halves("final_layer.adaLN_modulation.1.bias", "norm_out.linear.bias")
 
     _add_copy("time_in.in_layer.weight", "time_text_embed.timestep_embedder.linear_1.weight")
     _add_copy("time_in.in_layer.bias", "time_text_embed.timestep_embedder.linear_1.bias")
@@ -637,6 +649,10 @@ def plan_flux_transformer_tensors(
             raise RuntimeError(f"Flux planner: empty source list for {gguf_name}")
 
         if op == "copy":
+            raw_shape = _shape_of(safetensors_handle, shapes, srcs[0])
+            src_name = srcs[0]
+        elif op == "swap_halves":
+            # Shape stays the same; just reorder rows.
             raw_shape = _shape_of(safetensors_handle, shapes, srcs[0])
             src_name = srcs[0]
         elif op == "concat_dim0":

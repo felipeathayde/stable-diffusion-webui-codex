@@ -31,6 +31,7 @@ import numpy as np
 from apps.backend.quantization.gguf import GGMLQuantizationType
 from apps.backend.quantization.gguf.quant_shapes import quant_shape_to_byte_shape
 from apps.backend.runtime.tools.gguf_converter_quantization import select_tensor_ggml_type
+from apps.backend.runtime.tools.gguf_converter_specs import CompiledTensorTypeRule
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +52,7 @@ def plan_tensors(
     safetensors_handle: Any,
     key_mapping: dict[str, str],
     requested: GGMLQuantizationType,
-    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
+    overrides: list[CompiledTensorTypeRule],
 ) -> list[TensorPlan]:
     plans: list[TensorPlan] = []
 
@@ -61,9 +62,11 @@ def plan_tensors(
         gguf_name = key_mapping.get(src_name, src_name)
 
         desired = requested
-        for rx, qtype in overrides:
-            if rx.search(src_name) or rx.search(gguf_name):
-                desired = qtype
+        for rule in overrides:
+            if rule.apply_to.matches_src() and rule.pattern.search(src_name):
+                desired = rule.ggml_type
+            if rule.apply_to.matches_dst() and rule.pattern.search(gguf_name):
+                desired = rule.ggml_type
         ggml_type = select_tensor_ggml_type(raw_shape, desired)
 
         if ggml_type == GGMLQuantizationType.F16:
@@ -209,17 +212,18 @@ def _select_ggml_type(
     gguf_name: str,
     src_names: Sequence[str],
     requested: GGMLQuantizationType,
-    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
+    overrides: list[CompiledTensorTypeRule],
 ) -> GGMLQuantizationType:
     desired = requested
-    for rx, qtype in overrides:
-        if rx.search(gguf_name):
-            desired = qtype
+    for rule in overrides:
+        if rule.apply_to.matches_dst() and rule.pattern.search(gguf_name):
+            desired = rule.ggml_type
             continue
-        for src in src_names:
-            if rx.search(src):
-                desired = qtype
-                break
+        if rule.apply_to.matches_src():
+            for src in src_names:
+                if rule.pattern.search(src):
+                    desired = rule.ggml_type
+                    break
 
     ggml_type = select_tensor_ggml_type(raw_shape, desired)
 
@@ -239,7 +243,7 @@ def _build_plan(
     src_name: str,
     src_names: tuple[str, ...],
     requested: GGMLQuantizationType,
-    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
+    overrides: list[CompiledTensorTypeRule],
 ) -> TensorPlan:
     ggml_type = _select_ggml_type(
         raw_shape=raw_shape,
@@ -279,7 +283,7 @@ def plan_zimage_transformer_tensors(
     tensor_names: list[str],
     safetensors_handle: Any,
     requested: GGMLQuantizationType,
-    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
+    overrides: list[CompiledTensorTypeRule],
 ) -> tuple[list[TensorPlan], dict[str, str]]:
     """Plan Z-Image transformer tensors from Diffusers key layout into Codex runtime layout.
 
@@ -452,7 +456,7 @@ def plan_flux_transformer_tensors(
     tensor_names: list[str],
     safetensors_handle: Any,
     requested: GGMLQuantizationType,
-    overrides: list[tuple[re.Pattern[str], GGMLQuantizationType]],
+    overrides: list[CompiledTensorTypeRule],
 ) -> tuple[list[TensorPlan], dict[str, str]]:
     """Plan Flux transformer tensors from Diffusers key layout into Comfy-style keys.
 

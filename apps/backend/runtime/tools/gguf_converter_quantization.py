@@ -7,17 +7,15 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Quantization selection helpers for the GGUF converter.
-Handles quantization presets, per-tensor override compilation, and shape/block-size compatibility rules.
+Maps the human-facing quantization selector to GGML types and enforces generic per-tensor shape/block-size compatibility rules.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `requested_ggml_type` (function): Maps `QuantizationType` to the requested `GGMLQuantizationType`.
-- `compile_tensor_overrides` (function): Compiles built-in + user-provided per-tensor quantization overrides.
 - `select_tensor_ggml_type` (function): Selects the effective GGML type for a tensor given shape and requested type.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Sequence
 
 from apps.backend.quantization.gguf import GGML_QUANT_SIZES, GGMLQuantizationType
@@ -58,102 +56,6 @@ def requested_ggml_type(quant: QuantizationType) -> GGMLQuantizationType:
     raise ValueError(f"Unsupported quantization: {quant}")
 
 
-def _default_tensor_type_overrides(quant: QuantizationType) -> list[tuple[str, GGMLQuantizationType]]:
-    """Return built-in per-tensor overrides for mixed-precision presets.
-
-    Patterns are applied against both the source tensor name and the GGUF tensor name.
-    """
-
-    rules: list[tuple[str, GGMLQuantizationType]] = []
-
-    # Diffusion-model GGUF convention (Flux/ZImage): keep a handful of IO / embedder
-    # matrices in float to avoid quality regressions (visible as residual noise).
-    if quant not in {QuantizationType.F16, QuantizationType.F32}:
-        rules.extend(
-            [
-                # Flux: input/output + time/guidance/vector projections are sensitive; keep them float.
-                (r"^img_in\.weight$", GGMLQuantizationType.F32),
-                (r"^(?:guidance_in|time_in|vector_in)\.in_layer\.weight$", GGMLQuantizationType.F32),
-                (r"^final_layer\.linear\.weight$", GGMLQuantizationType.F32),
-                (r"^(?:guidance_in|time_in|vector_in)\.out_layer\.weight$", GGMLQuantizationType.F16),
-                (r"^txt_in\.weight$", GGMLQuantizationType.F16),
-                (r"^final_layer\.adaLN_modulation\.1\.weight$", GGMLQuantizationType.F16),
-                # Flux: keep 1D tensors in F32 (biases + norm scales); community GGUFs do this and it improves stability.
-                (r"^(?:double_blocks|single_blocks)\..*\.(?:bias|scale)$", GGMLQuantizationType.F32),
-                (r"^(?:img_in|txt_in)\.bias$", GGMLQuantizationType.F32),
-                (r"^(?:guidance_in|time_in|vector_in)\.(?:in_layer|out_layer)\.bias$", GGMLQuantizationType.F32),
-                (r"^final_layer\.(?:linear|adaLN_modulation\.1)\.bias$", GGMLQuantizationType.F32),
-            ]
-        )
-
-    if quant == QuantizationType.Q5_K_M:
-        rules.extend(
-            [
-            # Embeddings / output: keep higher precision to preserve prompt semantics.
-            (r"(?:^|\.)token_embd\.weight$", GGMLQuantizationType.Q8_0),
-            (r"(?:^|\.)output\.weight$", GGMLQuantizationType.Q8_0),
-            (r"model\.embed_tokens\.weight$", GGMLQuantizationType.Q8_0),
-            (r"lm_head\.weight$", GGMLQuantizationType.Q8_0),
-            # Attention projections: bump to 6-bit.
-            (r"(?:^|\.)attn_(?:q|k|v|output)\.weight$", GGMLQuantizationType.Q6_K),
-            (r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)\.weight$", GGMLQuantizationType.Q6_K),
-            ]
-        )
-
-    if quant == QuantizationType.Q4_K_M:
-        rules.extend(
-            [
-            # Embeddings / output: bump to 6-bit (still much smaller than fp16).
-            (r"(?:^|\.)token_embd\.weight$", GGMLQuantizationType.Q6_K),
-            (r"(?:^|\.)output\.weight$", GGMLQuantizationType.Q6_K),
-            (r"model\.embed_tokens\.weight$", GGMLQuantizationType.Q6_K),
-            (r"lm_head\.weight$", GGMLQuantizationType.Q6_K),
-            # Attention projections: bump to 5-bit K.
-            (r"(?:^|\.)attn_(?:q|k|v|output)\.weight$", GGMLQuantizationType.Q5_K),
-            (r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)\.weight$", GGMLQuantizationType.Q5_K),
-            ]
-        )
-
-    return rules
-
-
-def compile_tensor_overrides(
-    quant: QuantizationType,
-    extra_overrides: Sequence[str],
-) -> list[tuple[re.Pattern[str], GGMLQuantizationType]]:
-    """Compile built-in + user-provided tensor quantization overrides.
-
-    `extra_overrides` entries use a llama.cpp-like format: `<regex>=<quant>`
-    where `<quant>` is any `QuantizationType` value (case-insensitive).
-    """
-
-    rules: list[tuple[re.Pattern[str], GGMLQuantizationType]] = []
-
-    for pattern, qtype in _default_tensor_type_overrides(quant):
-        rules.append((re.compile(pattern), qtype))
-
-    for entry in extra_overrides:
-        raw = str(entry or "").strip()
-        if not raw:
-            continue
-        if "=" not in raw:
-            raise ValueError(f"Invalid tensor override (expected '<regex>=<quant>'): {raw!r}")
-        pattern, qname = raw.split("=", 1)
-        pattern = pattern.strip()
-        qname = qname.strip()
-        if not pattern or not qname:
-            raise ValueError(f"Invalid tensor override (expected '<regex>=<quant>'): {raw!r}")
-
-        try:
-            q_enum = QuantizationType(qname.upper())
-        except ValueError as exc:
-            raise ValueError(f"Invalid quant type in override {raw!r}: {qname!r}") from exc
-
-        rules.append((re.compile(pattern), requested_ggml_type(q_enum)))
-
-    return rules
-
-
 def select_tensor_ggml_type(shape: Sequence[int], requested: GGMLQuantizationType) -> GGMLQuantizationType:
     """Select the per-tensor GGML type.
 
@@ -178,7 +80,6 @@ def select_tensor_ggml_type(shape: Sequence[int], requested: GGMLQuantizationTyp
 
 
 __all__ = [
-    "compile_tensor_overrides",
     "requested_ggml_type",
     "select_tensor_ggml_type",
 ]

@@ -33,12 +33,13 @@ from apps.backend.quantization.gguf import (
     GGMLQuantizationType,
     GGUFWriter,
 )
-from apps.backend.runtime.tools import gguf_converter_key_mapping as _key_mapping
 from apps.backend.runtime.tools import gguf_converter_metadata as _metadata
+from apps.backend.runtime.tools import gguf_converter_profiles as _profiles
 from apps.backend.runtime.tools import gguf_converter_quantization as _quantization
 from apps.backend.runtime.tools import gguf_converter_safetensors_source as _safetensors_source
 from apps.backend.runtime.tools import gguf_converter_tensor_planner as _tensor_planner
 from apps.backend.runtime.tools import gguf_converter_verify as _verify
+from apps.backend.runtime.tools.gguf_converter_specs import GGUFArch
 from apps.backend.runtime.tools.gguf_converter_types import (
     ConversionConfig,
     ConversionProgress,
@@ -92,26 +93,24 @@ def convert_safetensors_to_gguf(
     logger.info("Loaded config: %s", model_config.get("_class_name") or model_config.get("model_type") or "unknown")
     check_cancel()
     
-    requested_type = _quantization.requested_ggml_type(config.quantization)
-    overrides = _quantization.compile_tensor_overrides(config.quantization, config.tensor_type_overrides)
-
-    is_flux_transformer = _tensor_planner.is_flux_transformer_config(model_config)
-    is_zimage_transformer = _tensor_planner.is_zimage_transformer_config(model_config)
     comfy_layout = bool(getattr(config, "comfy_layout", True))
 
-    if is_flux_transformer:
-        arch = "flux"
-        metadata_config = _tensor_planner.normalize_flux_transformer_metadata_config(model_config)
-        key_mapping: dict[str, str] = {}
-    elif is_zimage_transformer:
-        arch = "zimage"
-        metadata_config = _tensor_planner.normalize_zimage_transformer_metadata_config(model_config)
-        key_mapping = {}
-    else:
+    profile = _profiles.resolve_profile(model_config, comfy_layout=comfy_layout)
+    requested_type = _quantization.requested_ggml_type(config.quantization)
+    dtype_rules = profile.quant_policy.compile(quant=config.quantization, user_rules=config.tensor_type_overrides)
+
+    if profile.arch is GGUFArch.LLAMA:
         arch = str(model_config.get("model_type") or "llama")
-        metadata_config = model_config
-        num_layers = int(model_config.get("num_hidden_layers", 32))
-        key_mapping = _key_mapping.build_key_mapping(num_layers)
+    else:
+        arch = profile.arch.value
+
+    metadata_config = (
+        profile.planner.normalize_metadata(model_config) if profile.planner is not None else dict(model_config)
+    )
+
+    key_mapping: dict[str, str] = {}
+    if profile.key_mapping is not None:
+        key_mapping = profile.key_mapping.build(model_config)
     
     # Load safetensors
     progress.status = "loading_weights"
@@ -127,12 +126,10 @@ def convert_safetensors_to_gguf(
         tensor_names = list(sf.keys())
         check_cancel()
 
-        if comfy_layout and is_flux_transformer:
-            plans, key_mapping = _tensor_planner.plan_flux_transformer_tensors(tensor_names, sf, requested_type, overrides)
-        elif comfy_layout and is_zimage_transformer:
-            plans, key_mapping = _tensor_planner.plan_zimage_transformer_tensors(tensor_names, sf, requested_type, overrides)
+        if profile.layout is GGUFKeyLayout.COMFY_CODEX and profile.planner is not None:
+            plans, key_mapping = profile.planner.plan(tensor_names, sf, requested_type, dtype_rules)
         else:
-            plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
+            plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, dtype_rules)
 
         progress.total_steps = len(plans)
         check_cancel()

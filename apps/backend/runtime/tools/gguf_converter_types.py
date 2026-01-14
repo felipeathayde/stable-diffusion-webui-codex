@@ -51,6 +51,7 @@ class ConversionConfig:
     safetensors_path: str  # Path to .safetensors file
     output_path: str  # Output .gguf path
     quantization: QuantizationType = QuantizationType.F16
+    comfy_layout: bool = True
     tensor_type_overrides: Sequence[str] = ()
 
 
@@ -81,4 +82,3 @@ __all__ = [
     "GGUFVerificationError",
     "QuantizationType",
 ]
-

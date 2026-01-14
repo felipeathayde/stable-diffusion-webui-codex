@@ -12,7 +12,7 @@ without manual typing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ToolsTab` (component): Tools page SFC; owns GGUF converter form state and the file browser modal.
-- `GGUFForm` (interface): GGUF converter form state (paths + quantization + overrides + overwrite).
+- `GGUFForm` (interface): GGUF converter form state (paths + quantization + overrides + overwrite + Comfy layout toggle).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
@@ -54,7 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
               <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.configPath" placeholder="Path to folder with config.json" :disabled="isConverting" />
               <button class="btn-icon" type="button" @click="browseForConfig" :disabled="isConverting" aria-label="Browse for config folder">…</button>
             </div>
-            <p class="caption">Folder containing config.json (e.g., text_encoder/)</p>
+            <p class="caption">Folder containing config.json (e.g., transformer/, text_encoder/)</p>
           </div>
 
           <div class="field">
@@ -89,10 +89,26 @@ Symbols (top-level; keep in sync; no ghosts):
           <div class="field">
             <details class="accordion">
               <summary>Advanced</summary>
-              <div class="accordion-body">
-                <div class="field">
-                  <label class="label-muted">Tensor Overrides</label>
-                  <textarea
+	              <div class="accordion-body">
+	                <div class="field">
+	                  <label class="label-muted">Flux/ZImage Layout</label>
+	                  <div class="row-inline">
+	                    <button
+	                      :class="['btn', 'qs-toggle-btn', ggufForm.comfyLayout ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+	                      type="button"
+	                      :aria-pressed="ggufForm.comfyLayout"
+	                      :disabled="isConverting"
+	                      title="When on, Flux/ZImage transformer exports are mapped to the Comfy/Codex key layout (double_blocks.*, single_blocks.*)."
+	                      @click="ggufForm.comfyLayout = !ggufForm.comfyLayout"
+	                    >
+	                      Comfy Layout
+	                    </button>
+	                    <span class="caption">Enable for Flux/ZImage transformer GGUF (Codex runtime). Turn off to preserve source key names.</span>
+	                  </div>
+	                </div>
+	                <div class="field">
+	                  <label class="label-muted">Tensor Overrides</label>
+	                  <textarea
                     v-model="ggufForm.tensorTypeOverrides"
                     class="ui-textarea cdx-tools-overrides"
                     placeholder="One per line: <regex>=<quant>\nExample:\nattn_q\\.weight$=Q8_0"
@@ -205,6 +221,7 @@ interface GGUFForm {
   outputDir: string
   tensorTypeOverrides: string
   overwrite: boolean
+  comfyLayout: boolean
 }
 
 interface ConversionStatus {
@@ -234,6 +251,7 @@ const ggufForm = ref<GGUFForm>({
   outputDir: '',
   tensorTypeOverrides: '',
   overwrite: false,
+  comfyLayout: true,
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -326,15 +344,16 @@ const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, output
 	    const response = await fetch('/api/tools/convert-gguf', {
 	      method: 'POST',
 	      headers: { 'Content-Type': 'application/json' },
-	      body: JSON.stringify({
-	        config_path: ggufForm.value.configPath,
-	        safetensors_path: ggufForm.value.safetensorsPath,
-	        output_path: outputFullPath.value,
-	        overwrite: ggufForm.value.overwrite,
-	        quantization: ggufForm.value.quantization,
-	        tensor_type_overrides: tensorTypeOverrides,
-	      }),
-	    })
+		      body: JSON.stringify({
+		        config_path: ggufForm.value.configPath,
+		        safetensors_path: ggufForm.value.safetensorsPath,
+		        output_path: outputFullPath.value,
+		        overwrite: ggufForm.value.overwrite,
+		        comfy_layout: ggufForm.value.comfyLayout,
+		        quantization: ggufForm.value.quantization,
+		        tensor_type_overrides: tensorTypeOverrides,
+		      }),
+		    })
     
     const data = await response.json()
     

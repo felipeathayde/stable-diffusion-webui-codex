@@ -122,6 +122,12 @@ def _validate_transformer_core(context):
     unet = context.require("transformer").tensors
     key = "double_blocks.0.img_attn.norm.key_norm.scale"
     if key not in unet:
+        if any(k.startswith(("transformer_blocks.", "single_transformer_blocks.")) for k in unet):
+            raise ValidationError(
+                "Flux transformer looks like a Diffusers export (transformer_blocks.*); expected Comfy/Codex layout (double_blocks.*). "
+                "Re-convert the weights via Tools → GGUF Converter with Comfy Layout enabled.",
+                component="transformer",
+            )
         raise ValidationError("Flux transformer missing double block attn scale", component="transformer")
 
 

@@ -97,10 +97,12 @@ def convert_safetensors_to_gguf(
 
     is_flux_transformer = _tensor_planner.is_flux_transformer_config(model_config)
     is_zimage_transformer = _tensor_planner.is_zimage_transformer_config(model_config)
+    comfy_layout = bool(getattr(config, "comfy_layout", True))
+
     if is_flux_transformer:
         arch = "flux"
         metadata_config = _tensor_planner.normalize_flux_transformer_metadata_config(model_config)
-        key_mapping = {}
+        key_mapping: dict[str, str] = {}
     elif is_zimage_transformer:
         arch = "zimage"
         metadata_config = _tensor_planner.normalize_zimage_transformer_metadata_config(model_config)
@@ -125,9 +127,9 @@ def convert_safetensors_to_gguf(
         tensor_names = list(sf.keys())
         check_cancel()
 
-        if is_flux_transformer:
+        if comfy_layout and is_flux_transformer:
             plans, key_mapping = _tensor_planner.plan_flux_transformer_tensors(tensor_names, sf, requested_type, overrides)
-        elif is_zimage_transformer:
+        elif comfy_layout and is_zimage_transformer:
             plans, key_mapping = _tensor_planner.plan_zimage_transformer_tensors(tensor_names, sf, requested_type, overrides)
         else:
             plans = _tensor_planner.plan_tensors(tensor_names, sf, key_mapping, requested_type, overrides)
@@ -144,6 +146,7 @@ def convert_safetensors_to_gguf(
             config_path=config_path,
             safetensors_path=config.safetensors_path,
         )
+        writer.add_bool("codex.converter.comfy_layout", comfy_layout)
 
         for plan in plans:
             raw_dtype = None if plan.ggml_type in {GGMLQuantizationType.F16, GGMLQuantizationType.F32} else plan.ggml_type

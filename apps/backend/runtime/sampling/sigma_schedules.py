@@ -187,7 +187,23 @@ def _simple_schedule_from_predictor(
             if include_zero:
                 base = torch.linspace(1.0, 0.0, int(steps), device=device, dtype=dtype)
             else:
-                base = torch.linspace(1.0, 1.0 / max(float(steps), 1.0), int(steps), device=device, dtype=dtype)
+                denom: float | None = None
+                try:
+                    sigmas = getattr(predictor, "sigmas", None)
+                    if sigmas is not None:
+                        total = int(len(sigmas))
+                        if total > 0:
+                            denom = float(total)
+                except Exception:  # noqa: BLE001 - best-effort
+                    denom = None
+                if denom is None:
+                    try:
+                        denom = float(int(pseudo or 0)) if int(pseudo or 0) > 0 else None
+                    except Exception:  # noqa: BLE001 - best-effort
+                        denom = None
+                if denom is None:
+                    denom = float(max(int(steps), 1))
+                base = torch.linspace(1.0, 1.0 / denom, int(steps), device=device, dtype=dtype)
             if shift_value == 1.0:
                 shifted = base
             else:

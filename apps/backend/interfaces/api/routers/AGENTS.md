@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-13
+Last Review: 2026-01-14
 Status: Active
 
 ## Purpose
@@ -23,4 +23,5 @@ Status: Active
 ## Notes
 - Routers should not mutate global state in `run_api.py`; prefer explicit dependency injection via `build_router(...)`.
 - 2026-01-13: `tools.py` supports GGUF conversion cancellation (`POST /api/tools/convert-gguf/:job_id/cancel`) and an `overwrite` flag (default false; fails with 409 if the output path exists).
+- 2026-01-14: `tools.py` accepts a `comfy_layout` flag for GGUF conversion to control Flux/ZImage Comfy/Codex remapping (default true).
 - 2026-01-13: `models.py` adds `/api/models/checkpoint-metadata` so the UI can fetch the full metadata modal payload without constructing it client-side.

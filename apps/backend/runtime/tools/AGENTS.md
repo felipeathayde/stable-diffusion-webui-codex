@@ -1,7 +1,7 @@
 # apps/backend/runtime/tools Overview
 Date: 2025-12-31
 Owner: Runtime Maintainers
-Last Review: 2026-01-13
+Last Review: 2026-01-14
 Status: Active
 
 ## Purpose
@@ -23,4 +23,5 @@ Status: Active
 - 2026-01-13: GGUF converter metadata uses a Codex UI schema (`model.*`, `codex.*`, `gguf.*`) and avoids verbose conversion input keys (`codex.source_*`).
 - 2026-01-13: GGUF converter supports cooperative cancellation (Tools API cancel flag) and the tools API defaults to no-overwrite when the output file already exists.
 - 2026-01-13: GGUF converter supports Flux transformer planning: maps Diffusers `FluxTransformer2DModel` keys (`transformer_blocks.*`, `single_transformer_blocks.*`) into the Comfy/Codex Flux runtime layout (`double_blocks.*`, `single_blocks.*`, `img_in`, `txt_in`, `time_in`, `vector_in`, `guidance_in`, `final_layer`).
+- 2026-01-14: GGUF converter now supports a `comfy_layout` toggle: for Flux/ZImage transformer exports, when enabled it maps Diffusers keys into the Comfy/Codex runtime layout (`double_blocks.*`, `single_blocks.*`); when disabled it preserves source key names. Output records `codex.converter.comfy_layout` in metadata.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

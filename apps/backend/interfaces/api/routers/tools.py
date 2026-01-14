@@ -47,6 +47,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         safetensors_path = payload.get("safetensors_path", "")
         output_path = payload.get("output_path", "")
         overwrite = bool(payload.get("overwrite", False))
+        comfy_layout_raw = payload.get("comfy_layout", True)
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
 
@@ -64,6 +65,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
             raise HTTPException(status_code=409, detail=f"Output file already exists: {final_path}")
         if final_path.exists() and final_path.is_dir():
             raise HTTPException(status_code=400, detail=f"Output path is a directory: {final_path}")
+
+        if not isinstance(comfy_layout_raw, bool):
+            raise HTTPException(status_code=400, detail="comfy_layout must be a boolean when provided")
+        comfy_layout = bool(comfy_layout_raw)
 
         try:
             quant = QuantizationType(quant_str)
@@ -111,6 +116,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     safetensors_path=safetensors_path,
                     output_path=str(ctrl["tmp_path"]),
                     quantization=quant,
+                    comfy_layout=comfy_layout,
                     tensor_type_overrides=tensor_type_overrides,
                 )
 

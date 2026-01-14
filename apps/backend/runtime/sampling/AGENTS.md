@@ -1,7 +1,7 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
 Owner: Runtime Maintainers
-Last Review: 2026-01-08
+Last Review: 2026-01-14
 Status: Active
 
 ## Purpose
@@ -50,6 +50,7 @@ Status: Active
 - 2026-01-06: Updated default schedulers for `pndm`/`uni-pc`/`ddpm` to match model_index-derived defaults (DDIM/simple/beta).
 - 2026-01-08: Flow-match `flow_shift` is resolved from diffusers `scheduler_config.json` (fixed/dynamic) and injected into `SIMPLE` schedule construction; Flux dynamic shifting is resolution-aware and fails fast without `width/height`.
 - 2026-01-08: Refreshed `registry.py` file header block to include the `_build_specs` helper in the Symbols list (doc-only change).
+- 2026-01-14: Flow-match runs now log which `scheduler_config.json` path is used to resolve `flow_shift` (diffusers repo dir vs vendored HF mirror) before building sigmas; sigma schedule logs now print `predict_min/max` correctly when the bound is 0.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

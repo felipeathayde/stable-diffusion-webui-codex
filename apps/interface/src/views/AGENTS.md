@@ -30,3 +30,4 @@ Status: Active
 - 2026-01-13: `ToolsTab.vue` GGUF converter supports cancellation and an Overwrite toggle (default off; fails if the output file exists).
 - 2026-01-14: `ToolsTab.vue` GGUF converter adds a “Comfy Layout” toggle to control Flux/ZImage Diffusers→Comfy key mapping.
 - 2026-01-14: `ToolsTab.vue` moved the “Comfy Layout” toggle next to “Overwrite” (Output section) for visibility.
+- 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).

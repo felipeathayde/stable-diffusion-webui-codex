@@ -8,6 +8,10 @@
     flex-wrap: nowrap;
   }
 
+  .cdx-tools .row-inline.cdx-tools-actions {
+    justify-content: flex-end;
+  }
+
   .cdx-tools .row-inline .btn-icon {
     flex-shrink: 0;
   }

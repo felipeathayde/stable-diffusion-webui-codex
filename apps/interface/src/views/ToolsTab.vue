@@ -86,29 +86,13 @@ Symbols (top-level; keep in sync; no ghosts):
             </select>
           </div>
 
-          <div class="field">
-            <details class="accordion">
-              <summary>Advanced</summary>
-	              <div class="accordion-body">
-	                <div class="field">
-	                  <label class="label-muted">Flux/ZImage Layout</label>
-	                  <div class="row-inline">
-	                    <button
-	                      :class="['btn', 'qs-toggle-btn', ggufForm.comfyLayout ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-	                      type="button"
-	                      :aria-pressed="ggufForm.comfyLayout"
-	                      :disabled="isConverting"
-	                      title="When on, Flux/ZImage transformer exports are mapped to the Comfy/Codex key layout (double_blocks.*, single_blocks.*)."
-	                      @click="ggufForm.comfyLayout = !ggufForm.comfyLayout"
-	                    >
-	                      Comfy Layout
-	                    </button>
-	                    <span class="caption">Enable for Flux/ZImage transformer GGUF (Codex runtime). Turn off to preserve source key names.</span>
-	                  </div>
-	                </div>
-	                <div class="field">
-	                  <label class="label-muted">Tensor Overrides</label>
-	                  <textarea
+	          <div class="field">
+	            <details class="accordion">
+	              <summary>Advanced</summary>
+		              <div class="accordion-body">
+		                <div class="field">
+		                  <label class="label-muted">Tensor Overrides</label>
+		                  <textarea
                     v-model="ggufForm.tensorTypeOverrides"
                     class="ui-textarea cdx-tools-overrides"
                     placeholder="One per line: <regex>=<quant>\nExample:\nattn_q\\.weight$=Q8_0"
@@ -133,21 +117,32 @@ Symbols (top-level; keep in sync; no ghosts):
               />
               <button class="btn-icon" type="button" @click="browseForOutputDir" :disabled="isConverting" aria-label="Browse for output folder">…</button>
             </div>
-            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
-            <div class="row-inline">
-              <button
-                :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :aria-pressed="ggufForm.overwrite"
-                :disabled="isConverting"
-                title="Allow overwriting the output file if it already exists"
-                @click="ggufForm.overwrite = !ggufForm.overwrite"
-              >
-                Overwrite
-              </button>
-              <span class="caption">When off, conversion fails if the output file already exists.</span>
-            </div>
-          </div>
+	            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
+	            <div class="row-inline">
+	              <button
+	                :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+	                type="button"
+	                :aria-pressed="ggufForm.overwrite"
+	                :disabled="isConverting"
+	                title="Allow overwriting the output file if it already exists"
+	                @click="ggufForm.overwrite = !ggufForm.overwrite"
+	              >
+	                Overwrite
+	              </button>
+	              <button
+	                :class="['btn', 'qs-toggle-btn', ggufForm.comfyLayout ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+	                type="button"
+	                :aria-pressed="ggufForm.comfyLayout"
+	                :disabled="isConverting"
+	                title="When on, Flux/ZImage transformer exports are mapped to the Comfy/Codex key layout (double_blocks.*, single_blocks.*)."
+	                @click="ggufForm.comfyLayout = !ggufForm.comfyLayout"
+	              >
+	                Comfy Layout
+	              </button>
+	            </div>
+	            <p class="caption">Overwrite: when off, conversion fails if the output file already exists.</p>
+	            <p class="caption">Comfy Layout: enable for Flux/ZImage transformer GGUF (Codex runtime). Turn off to preserve source key names.</p>
+	          </div>
 
           <div class="row-inline">
             <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">

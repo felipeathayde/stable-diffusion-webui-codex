@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Zod request schemas + payload builders for image generation (txt2img/img2img).
 Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including highres/refiner) and to
-derive Flux.1 explicit text-encoder overrides from `flux1/<abs_path>` labels.
+apply engine-agnostic request normalization/validation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FLOW_ENGINES` (const): Engine ids treated as flow models (distilled CFG; negative prompt omitted).
@@ -24,7 +24,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
 - `normalizeDevice` (function): Normalizes and validates a device token.
 - `buildTxt2ImgPayload` (function): Builds and validates a `Txt2ImgRequest` from UI form state.
-- `deriveFluxTextEncoderOverrideFromLabels` (function): Builds a Flux.1 explicit `text_encoder_override` from `flux1/…` labels.
 - `formatZodError` (function): Converts Zod errors (or unknown errors) into a readable message.
 */
 
@@ -170,11 +169,6 @@ export interface Txt2ImgFormState {
   smartCache?: boolean
   highres?: HighresFormState
   refiner?: RefinerFormState
-  textEncoderOverride?: {
-    family: string
-    label: string
-    components?: string[]
-  }
   extras?: Record<string, unknown>
 }
 
@@ -279,15 +273,6 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
       vae: state.refiner.vae,
     }
   }
-  if (state.textEncoderOverride && state.textEncoderOverride.family && state.textEncoderOverride.label) {
-    extras.text_encoder_override = {
-      family: state.textEncoderOverride.family,
-      label: state.textEncoderOverride.label,
-      components: state.textEncoderOverride.components && state.textEncoderOverride.components.length > 0
-        ? state.textEncoderOverride.components
-        : undefined,
-    }
-  }
   // Merge engine-specific extras from state (e.g., tenc_sha for Z Image)
   if (state.extras) {
     for (const [key, value] of Object.entries(state.extras)) {
@@ -301,33 +286,6 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
   }
 
   return Txt2ImgRequestSchema.parse(payload)
-}
-
-export function deriveFluxTextEncoderOverrideFromLabels(labels: string[]): Txt2ImgFormState['textEncoderOverride'] | undefined {
-  const fluxPrefix = 'flux1/'
-  const fluxLabels = labels.filter((label) => typeof label === 'string' && label.startsWith(fluxPrefix)) as string[]
-  if (fluxLabels.length === 0) return undefined
-
-  const components: string[] = []
-  const primary = fluxLabels[0]?.slice(fluxPrefix.length)
-  const secondary = fluxLabels[1]?.slice(fluxPrefix.length)
-
-  if (primary) {
-    components.push(`clip_l=${primary}`)
-  }
-  if (secondary && secondary !== primary) {
-    components.push(`t5xxl=${secondary}`)
-  }
-
-  if (components.length === 0) return undefined
-
-  return {
-    family: 'flux1',
-    // Label is still required by the backend schema but is not used in explicit-path mode.
-    // Keep the `<family>/…` pattern so API-side validation passes.
-    label: 'flux1/explicit',
-    components,
-  }
 }
 
 export function formatZodError(err: unknown): string {

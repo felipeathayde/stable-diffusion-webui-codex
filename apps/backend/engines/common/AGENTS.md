@@ -1,7 +1,7 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-08
+Last Review: 2026-01-14
 Status: Active
 
 ## Purpose
@@ -22,3 +22,4 @@ Status: Active
 - 2026-01-06: Refreshed `base.py` file header blocks to document `vae_source`/`tenc_source` validation and core-only `.gguf` semantics (doc-only change).
 - 2026-01-06: Generation metadata no longer falls back to `"Automatic"` for sampler/scheduler; missing values serialize as null to surface invalid inputs.
 - 2026-01-08: `base.py` now imports `TextEncoderOverrideConfig` from `runtime.models.text_encoder_overrides` after the loader seam carve (no behavior change).
+- 2026-01-14: Flux engines now pass `expected_family` into `resolve_diffusion_bundle(...)` so prefixed Flux checkpoints can use metadata-driven signatures instead of state-dict detector guesses.

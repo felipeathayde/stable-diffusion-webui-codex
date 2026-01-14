@@ -2,7 +2,7 @@
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
 Owner: Runtime Maintainers
-Last Review: 2026-01-08
+Last Review: 2026-01-14
 Status: Active
 
 ## Scope
@@ -60,3 +60,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `api.py`, and `types.py` (doc-only change; part of rollout).
 - 2026-01-08: Split state-dict key normalization helpers into `key_normalization.py` and reused them from `loader.py` (UNet remap + transformer prefix stripping).
 - 2026-01-08: Moved text-encoder override definitions into `text_encoder_overrides.py`; loader now imports the shared config + resolver from that module.
+- 2026-01-14: Flux expected-family loads now use vendored HF metadata to build the signature (selecting `FLUX.1-dev` vs `FLUX.1-schnell` by guidance key presence), avoiding registry detection failures on prefixed Flux checkpoints.

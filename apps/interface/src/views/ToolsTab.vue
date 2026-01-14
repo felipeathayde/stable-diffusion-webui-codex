@@ -118,7 +118,7 @@ Symbols (top-level; keep in sync; no ghosts):
               <button class="btn-icon" type="button" @click="browseForOutputDir" :disabled="isConverting" aria-label="Browse for output folder">…</button>
             </div>
 	            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
-	            <div class="row-inline">
+	            <div class="row-inline cdx-tools-actions">
 	              <button
 	                :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
 	                type="button"
@@ -144,11 +144,11 @@ Symbols (top-level; keep in sync; no ghosts):
 	            <p class="caption">Comfy Layout: enable for Flux/ZImage transformer GGUF (Codex runtime). Turn off to preserve source key names.</p>
 	          </div>
 
-          <div class="row-inline">
-            <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">
-              <span v-if="!isConverting">Convert to GGUF</span>
-              <span v-else>Converting…</span>
-            </button>
+	          <div class="row-inline cdx-tools-actions">
+	            <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">
+	              <span v-if="!isConverting">Convert to GGUF</span>
+	              <span v-else>Converting…</span>
+	            </button>
             <button
               v-if="isConverting && currentJobId"
               class="btn btn-md btn-secondary"

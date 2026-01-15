@@ -14,7 +14,7 @@ Status: Active
 ## Principles
 - **No models in Git:** model weights, checkpoints, and large binary artefacts (e.g., `models/`, `*.ckpt`, `*.safetensors`) must remain untracked.
 - **No caches or build outputs:** bytecode caches (`__pycache__/`), node modules (`node_modules/`), frontend bundles (`apps/interface/dist/`), and temporary directories (repo-root `tmp/`, `.tmp/`, plus `.pytest_cache/`) stay ignored.
-- **Docs and configs are tracked:** Markdown docs under `.sangoi/**`, configuration files (`*.json`, `*.toml`, `*.yaml`), and source code are always included — except for runtime state JSON files that are created/overwritten locally (see below).
+- **Docs and configs are tracked:** Markdown docs under `.sangoi/**`, configuration files (`*.json`, `*.toml`, `*.yaml`), and source code are always included — except for runtime state JSON files and explicitly ignored repo-root scratch configs/scripts that are created/overwritten locally (see below).
 - **Tests are tracked:** repository test sources under `tests/` are kept in version control; only test caches/outputs are ignored.
 - **No binary office docs:** keep office exports like `*.docx` local; prefer Markdown under `.sangoi/**`.
 
@@ -34,6 +34,11 @@ Status: Active
 ## Root scratch (tracked? no)
 - Repo-root `/*.png` and `/*.txt` — ad-hoc outputs/notes. If you need to version images, place them under `.sangoi/assets/` (or another tracked docs folder) instead.
 - `/logo.png` is explicitly tracked as a repo asset.
+
+## Repo-root local configs/scripts (tracked? no)
+- `config.json` — local scratch config; do not commit.
+- `ui-config.json` — local scratch UI config; do not commit.
+- `script-gemini*.js` — local one-off scripts; do not commit.
 
 ## Tooling outputs (tracked? no)
 - `.sangoi/reports/tooling/pyright/` — type-check reports.

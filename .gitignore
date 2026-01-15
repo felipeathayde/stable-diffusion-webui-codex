@@ -36,6 +36,11 @@ __pycache__/
 !/logo.png
 /*.txt
 
+# Local one-off configs/scripts (do not commit)
+/config.json
+/ui-config.json
+/script-gemini*.js
+
 # Frontend artifacts (Vue/Vite)
 node_modules/
 apps/interface/dist/

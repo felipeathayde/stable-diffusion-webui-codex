@@ -1,7 +1,7 @@
 # apps/backend/runtime/tools Overview
 Date: 2025-12-31
 Owner: Runtime Maintainers
-Last Review: 2026-01-14
+Last Review: 2026-01-15
 Status: Active
 
 ## Purpose
@@ -30,4 +30,5 @@ Status: Active
 - 2026-01-14: Flux GGUF quantization now keeps sensitive IO projection weights in float (F32/F16) and keeps Flux 1D tensors in F32 (biases + norm scales), matching known-good community files and preventing residual noise regressions.
 - 2026-01-14: GGUF converter dispatch is now profile-driven (typed registry): model-specific dtype “overrides” are formalized as per-model quantization policies (user `tensor_type_overrides` remain supported, but policy rules can be marked required).
 - 2026-01-14: Follow-up: fixed a missing `GGUFKeyLayout` import in `gguf_converter.py` introduced during the profile-registry refactor (NameError at runtime).
+- 2026-01-15: Removed a stale Flux planner dtype override injection that imported a deleted type; Flux dtype rules live in the profile quantization policy.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

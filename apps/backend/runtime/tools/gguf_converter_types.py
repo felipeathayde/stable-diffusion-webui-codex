@@ -11,7 +11,7 @@ Defines the conversion config, quantization selector enum, progress tracking, an
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuantizationType` (enum): Supported “human” quantization selectors for conversion (maps to `GGMLQuantizationType`).
-- `ConversionConfig` (dataclass): Conversion configuration (input/output paths, quantization choices, tensor overrides).
+- `ConversionConfig` (dataclass): Conversion configuration (paths, profile selection, quantization, and dtype override knobs).
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
 """
@@ -50,9 +50,13 @@ class ConversionConfig:
     config_path: str  # Path to config.json or folder containing it
     safetensors_path: str  # Path to .safetensors file
     output_path: str  # Output .gguf path
+    profile_id: Optional[str] = None
     quantization: QuantizationType = QuantizationType.F16
     comfy_layout: bool = True
     tensor_type_overrides: Sequence[str] = ()
+    flux_txt_in_weight_dtype: str = "auto"
+    flux_out_proj_weight_dtype: str = "auto"
+    flux_final_modulation_weight_dtype: str = "auto"
 
 
 @dataclass(slots=True)

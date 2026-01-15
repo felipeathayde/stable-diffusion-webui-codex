@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
 - `GGUFConversionCancelled` (exception): Raised when a conversion is cancelled via a cooperative cancel signal.
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
+- `_apply_flux_float_dtype_overrides` (function): Applies Flux-specific FP16/FP32 knobs to compiled dtype rules (appends override rules).
 - `convert_safetensors_to_gguf` (function): Main conversion entrypoint; reads SafeTensors (incl. sharded), quantizes tensors, writes GGUF,
   and optionally verifies the output (uses many helpers above).
 """
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -39,7 +41,12 @@ from apps.backend.runtime.tools import gguf_converter_quantization as _quantizat
 from apps.backend.runtime.tools import gguf_converter_safetensors_source as _safetensors_source
 from apps.backend.runtime.tools import gguf_converter_tensor_planner as _tensor_planner
 from apps.backend.runtime.tools import gguf_converter_verify as _verify
-from apps.backend.runtime.tools.gguf_converter_specs import GGUFArch, GGUFKeyLayout
+from apps.backend.runtime.tools.gguf_converter_specs import (
+    CompiledTensorTypeRule,
+    GGUFArch,
+    GGUFKeyLayout,
+    TensorNameTarget,
+)
 from apps.backend.runtime.tools.gguf_converter_types import (
     ConversionConfig,
     ConversionProgress,
@@ -52,6 +59,64 @@ logger = logging.getLogger("backend.runtime.tools.gguf_converter")
 
 class GGUFConversionCancelled(Exception):
     """Raised when a conversion is cancelled via a cooperative cancel signal."""
+
+
+def _apply_flux_float_dtype_overrides(
+    rules: list[CompiledTensorTypeRule],
+    *,
+    config: ConversionConfig,
+    profile_arch: GGUFArch,
+    profile_layout: GGUFKeyLayout,
+) -> None:
+    if profile_arch is not GGUFArch.FLUX:
+        return
+    if config.quantization in {QuantizationType.F16, QuantizationType.F32}:
+        return
+    if profile_layout is not GGUFKeyLayout.COMFY_CODEX:
+        return
+
+    def _parse_choice(value: str) -> GGMLQuantizationType | None:
+        raw = str(value or "").strip().upper()
+        if raw in {"", "AUTO"}:
+            return None
+        if raw in {"F16", "FP16"}:
+            return GGMLQuantizationType.F16
+        if raw in {"F32", "FP32"}:
+            return GGMLQuantizationType.F32
+        raise ValueError(f"Invalid float dtype selection: {value!r} (expected auto|F16|F32)")
+
+    txt_in_dtype = _parse_choice(getattr(config, "flux_txt_in_weight_dtype", "auto"))
+    out_proj_dtype = _parse_choice(getattr(config, "flux_out_proj_weight_dtype", "auto"))
+    final_mod_dtype = _parse_choice(getattr(config, "flux_final_modulation_weight_dtype", "auto"))
+
+    def _append(pattern: str, ggml_type: GGMLQuantizationType, reason: str) -> None:
+        rules.append(
+            CompiledTensorTypeRule(
+                pattern=re.compile(pattern),
+                ggml_type=ggml_type,
+                apply_to=TensorNameTarget.DST,
+                reason=reason,
+            )
+        )
+
+    if txt_in_dtype is not None:
+        _append(
+            r"^txt_in\.weight$",
+            txt_in_dtype,
+            f"user override: flux_txt_in_weight_dtype={txt_in_dtype.name}",
+        )
+    if out_proj_dtype is not None:
+        _append(
+            r"^(?:guidance_in|time_in|vector_in)\.out_layer\.weight$",
+            out_proj_dtype,
+            f"user override: flux_out_proj_weight_dtype={out_proj_dtype.name}",
+        )
+    if final_mod_dtype is not None:
+        _append(
+            r"^final_layer\.adaLN_modulation\.1\.weight$",
+            final_mod_dtype,
+            f"user override: flux_final_modulation_weight_dtype={final_mod_dtype.name}",
+        )
 
 
 def convert_safetensors_to_gguf(
@@ -95,9 +160,21 @@ def convert_safetensors_to_gguf(
     
     comfy_layout = bool(getattr(config, "comfy_layout", True))
 
-    profile = _profiles.resolve_profile(model_config, comfy_layout=comfy_layout)
+    profile_id = getattr(config, "profile_id", None)
+    if profile_id:
+        profile = _profiles.profile_by_id(str(profile_id))
+        if profile.layout in {GGUFKeyLayout.COMFY_CODEX, GGUFKeyLayout.NATIVE_KEYS}:
+            comfy_layout = profile.layout is GGUFKeyLayout.COMFY_CODEX
+    else:
+        profile = _profiles.resolve_profile(model_config, comfy_layout=comfy_layout)
     requested_type = _quantization.requested_ggml_type(config.quantization)
     dtype_rules = profile.quant_policy.compile(quant=config.quantization, user_rules=config.tensor_type_overrides)
+    _apply_flux_float_dtype_overrides(
+        dtype_rules,
+        config=config,
+        profile_arch=profile.arch,
+        profile_layout=profile.layout,
+    )
 
     if profile.arch is GGUFArch.LLAMA:
         arch = str(model_config.get("model_type") or "llama")

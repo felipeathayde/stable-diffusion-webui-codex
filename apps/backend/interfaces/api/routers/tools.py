@@ -30,6 +30,26 @@ def build_router(*, codex_root: Path) -> APIRouter:
     _gguf_conversion_jobs: Dict[str, Dict[str, Any]] = {}
     _gguf_conversion_controls: Dict[str, Dict[str, Any]] = {}
 
+    @router.get("/api/tools/gguf-converter/presets")
+    async def list_gguf_converter_presets() -> Dict[str, Any]:
+        from apps.backend.runtime.tools.gguf_converter_presets import list_vendored_gguf_converter_presets
+
+        presets = list_vendored_gguf_converter_presets(codex_root=codex_root)
+        return {
+            "presets": [
+                {
+                    "id": p.id,
+                    "label": p.label,
+                    "config_dir": p.config_dir,
+                    "kind": p.kind,
+                    "profile_id": p.profile_id,
+                    "profile_id_comfy": p.profile_id_comfy,
+                    "profile_id_native": p.profile_id_native,
+                }
+                for p in presets
+            ]
+        }
+
     @router.post("/api/tools/convert-gguf")
     async def convert_to_gguf(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         """Start a GGUF conversion job."""
@@ -50,6 +70,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
         comfy_layout_raw = payload.get("comfy_layout", True)
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
+        profile_id_raw = payload.get("profile_id", None)
+        flux_txt_in_weight_dtype_raw = payload.get("flux_txt_in_weight_dtype", "auto")
+        flux_out_proj_weight_dtype_raw = payload.get("flux_out_proj_weight_dtype", "auto")
+        flux_final_modulation_weight_dtype_raw = payload.get("flux_final_modulation_weight_dtype", "auto")
 
         if not config_path or not safetensors_path or not output_path:
             raise HTTPException(status_code=400, detail="Missing required paths")
@@ -74,6 +98,34 @@ def build_router(*, codex_root: Path) -> APIRouter:
             quant = QuantizationType(quant_str)
         except ValueError:
             quant = QuantizationType.F16
+
+        profile_id: str | None = None
+        if profile_id_raw is not None:
+            profile_id = str(profile_id_raw).strip() or None
+            if profile_id is not None:
+                from apps.backend.runtime.tools.gguf_converter_profiles import profile_by_id
+
+                try:
+                    profile_by_id(profile_id)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def _normalize_float_dtype_choice(value: Any) -> str:
+            raw = str(value or "").strip().upper()
+            if raw in {"", "AUTO"}:
+                return "auto"
+            if raw in {"F16", "FP16"}:
+                return "F16"
+            if raw in {"F32", "FP32"}:
+                return "F32"
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid float dtype selection: {value!r} (expected auto|F16|F32)",
+            )
+
+        flux_txt_in_weight_dtype = _normalize_float_dtype_choice(flux_txt_in_weight_dtype_raw)
+        flux_out_proj_weight_dtype = _normalize_float_dtype_choice(flux_out_proj_weight_dtype_raw)
+        flux_final_modulation_weight_dtype = _normalize_float_dtype_choice(flux_final_modulation_weight_dtype_raw)
 
         tensor_type_overrides: list[str] = []
         if isinstance(overrides_raw, str):
@@ -115,9 +167,13 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     config_path=config_path,
                     safetensors_path=safetensors_path,
                     output_path=str(ctrl["tmp_path"]),
+                    profile_id=profile_id,
                     quantization=quant,
                     comfy_layout=comfy_layout,
                     tensor_type_overrides=tensor_type_overrides,
+                    flux_txt_in_weight_dtype=flux_txt_in_weight_dtype,
+                    flux_out_proj_weight_dtype=flux_out_proj_weight_dtype,
+                    flux_final_modulation_weight_dtype=flux_final_modulation_weight_dtype,
                 )
 
                 def progress_cb(prog):

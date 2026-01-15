@@ -9,8 +9,17 @@ Required Notice: see NOTICE
 Purpose: Converter profile registry for GGUF conversion (selects layout/planner/key mapping + per-model dtype policies).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `resolve_profile` (function): Resolve the effective `ConverterProfileSpec` from a config.json and `comfy_layout`.
+- `_is_flux` (function): Detect whether a config.json describes a Flux transformer.
+- `_is_zimage` (function): Detect whether a config.json describes a ZImage transformer.
+- `_build_llama_mapping` (function): Build a Llama HF→GGUF key mapping from the model config.
+- `_COND_QUANTIZED` (constant): Condition helper matching any quantized preset (non-F16/F32).
+- `_COND_FLUX_MIXED` (constant): Condition helper matching Flux mixed presets (`Q5_K_M`/`Q4_K_M`).
+- `FLUX_QUANT_POLICY` (constant): Flux per-tensor dtype policy (mixed presets keep more IO weights in float32).
+- `ZIMAGE_QUANT_POLICY` (constant): ZImage per-tensor dtype policy (pad tokens must remain float).
+- `LLAMA_QUANT_POLICY` (constant): Llama per-tensor dtype policy (mixed presets bump key weights to higher precision).
 - `PROFILE_REGISTRY` (constant): Registry of built-in converter profiles (table-driven dispatch).
+- `resolve_profile` (function): Resolve the effective `ConverterProfileSpec` from a config.json and `comfy_layout`.
+- `profile_by_id` (function): Resolve a profile by its stable id string (no heuristics).
 """
 
 from __future__ import annotations
@@ -50,6 +59,7 @@ def _build_llama_mapping(config: Mapping[str, Any]) -> dict[str, str]:
 
 
 _COND_QUANTIZED = QuantizationCondition(exclude=frozenset({QuantizationType.F16, QuantizationType.F32}))
+_COND_FLUX_MIXED = QuantizationCondition(include=frozenset({QuantizationType.Q5_K_M, QuantizationType.Q4_K_M}))
 
 
 FLUX_QUANT_POLICY = QuantizationPolicySpec(
@@ -125,6 +135,28 @@ FLUX_QUANT_POLICY = QuantizationPolicySpec(
             apply_to=TensorNameTarget.DST,
             when=_COND_QUANTIZED,
             reason="Flux biases stay F32 for stability",
+        ),
+        # Mixed presets are explicitly allowed to trade size for quality.
+        TensorTypeRule(
+            pattern=r"^(?:guidance_in|time_in|vector_in)\.out_layer\.weight$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_FLUX_MIXED,
+            reason="Flux mixed preset: keep out-projections float32 for higher quality",
+        ),
+        TensorTypeRule(
+            pattern=r"^txt_in\.weight$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_FLUX_MIXED,
+            reason="Flux mixed preset: keep txt_in float32 for higher quality",
+        ),
+        TensorTypeRule(
+            pattern=r"^final_layer\.adaLN_modulation\.1\.weight$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_FLUX_MIXED,
+            reason="Flux mixed preset: keep final modulation float32 for higher quality",
         ),
     ),
 )
@@ -324,4 +356,17 @@ def resolve_profile(config_json: Mapping[str, Any], *, comfy_layout: bool) -> Co
     return PROFILE_REGISTRY[4]
 
 
-__all__ = ["PROFILE_REGISTRY", "resolve_profile"]
+def profile_by_id(profile_id: str) -> ConverterProfileSpec:
+    try:
+        pid = ConverterProfileId(str(profile_id))
+    except ValueError as exc:
+        raise ValueError(f"Unknown GGUF converter profile_id: {profile_id!r}") from exc
+
+    for profile in PROFILE_REGISTRY:
+        if profile.id is pid:
+            return profile
+
+    raise ValueError(f"GGUF converter profile_id not registered: {profile_id!r}")
+
+
+__all__ = ["PROFILE_REGISTRY", "profile_by_id", "resolve_profile"]

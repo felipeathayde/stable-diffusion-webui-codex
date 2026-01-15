@@ -11,6 +11,7 @@ Status: Active
 - `apps/backend/runtime/tools/gguf_converter.py` — Converts SafeTensors (including sharded `*.safetensors.index.json`) to GGUF with quantization + verification.
 - `apps/backend/runtime/tools/gguf_converter_specs.py` — Typed converter specs (profiles/layouts + quantization policy rule types).
 - `apps/backend/runtime/tools/gguf_converter_profiles.py` — Profile registry: resolves layout/planner/key mapping + per-model dtype policies.
+- `apps/backend/runtime/tools/gguf_converter_presets.py` — Lists vendored Hugging Face config presets for the GGUF converter UI (Flux/ZImage/LLM).
 - `apps/backend/runtime/tools/gguf_converter_key_mapping.py` — Hugging Face → GGUF tensor-name remapping helpers (layer-indexed mappings).
 - `apps/backend/runtime/tools/gguf_converter_safetensors_source.py` — SafeTensors source helpers (single-file + sharded index/dir).
 - `apps/backend/runtime/tools/gguf_converter_quantization.py` — Quantization selector + generic per-tensor shape/block compatibility rules.
@@ -31,4 +32,7 @@ Status: Active
 - 2026-01-14: GGUF converter dispatch is now profile-driven (typed registry): model-specific dtype “overrides” are formalized as per-model quantization policies (user `tensor_type_overrides` remain supported, but policy rules can be marked required).
 - 2026-01-14: Follow-up: fixed a missing `GGUFKeyLayout` import in `gguf_converter.py` introduced during the profile-registry refactor (NameError at runtime).
 - 2026-01-15: Removed a stale Flux planner dtype override injection that imported a deleted type; Flux dtype rules live in the profile quantization policy.
+- 2026-01-15: Flux mixed presets (`Q5_K_M` / `Q4_K_M`) now keep additional IO weights in F32 (larger GGUF, higher quality).
+- 2026-01-15: GGUF converter now supports explicit `profile_id` selection (UI can avoid heuristics) and a vendored preset list for picking configs.
+- 2026-01-15: Flux GGUF converter exposes FP16/FP32 knobs (Advanced) for selected IO weights (applies to Comfy Layout Flux transformer exports).
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

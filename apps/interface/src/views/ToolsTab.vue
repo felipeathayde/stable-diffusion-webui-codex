@@ -12,10 +12,12 @@ without manual typing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ToolsTab` (component): Tools page SFC; owns GGUF converter form state and the file browser modal.
-- `GGUFForm` (interface): GGUF converter form state (paths + quantization + overrides + overwrite + Comfy layout toggle).
+- `GGUFConverterPreset` (interface): Vendored config preset entry returned by `/api/tools/gguf-converter/presets`.
+- `GGUFForm` (interface): GGUF converter form state (preset selection + paths + quantization + overrides + overwrite + Comfy layout toggle).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
+- `loadPresets` (function): Loads the vendored preset list for the model selector.
 - `startConversion` (function): Starts a conversion job and begins polling.
 - `cancelConversion` (function): Requests cancellation of the current conversion job (cooperative).
 - `parseTensorTypeOverrides` (function): Parses textarea overrides into a normalized line list.
@@ -45,16 +47,77 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="gen-card cdx-tools-card">
           <div>
             <div class="h3">GGUF Converter</div>
-            <p class="caption">Convert Safetensors text encoders to GGUF format</p>
+            <p class="caption">Convert Safetensors weights to GGUF format</p>
+          </div>
+
+          <div class="field">
+            <label class="label-muted">Model Preset (vendored Hugging Face)</label>
+            <select class="select-md" v-model="ggufForm.presetId" :disabled="isConverting || presetsLoading">
+              <option value="">Custom / other config…</option>
+              <optgroup v-if="presetFlux.length" label="Flux (transformer)">
+                <option v-for="p in presetFlux" :key="p.id" :value="p.id">{{ p.label }}</option>
+              </optgroup>
+              <optgroup v-if="presetZImage.length" label="Z-Image (transformer)">
+                <option v-for="p in presetZImage" :key="p.id" :value="p.id">{{ p.label }}</option>
+              </optgroup>
+              <optgroup v-if="presetLLM.length" label="LLM (CausalLM)">
+                <option v-for="p in presetLLM" :key="p.id" :value="p.id">{{ p.label }}</option>
+              </optgroup>
+            </select>
+            <p class="caption">
+              Select a vendored config to avoid hunting for <code>config.json</code>. Choose “Custom” to browse a local config.
+            </p>
+            <p v-if="presetsLoading" class="caption">Loading vendored presets…</p>
+            <p v-if="presetsError" class="cdx-tools-error">{{ presetsError }}</p>
           </div>
 
           <div class="field">
             <label class="label-muted">Config Folder</label>
             <div class="row-inline">
-              <input class="ui-input cdx-tools-grow" type="text" v-model="ggufForm.configPath" placeholder="Path to folder with config.json" :disabled="isConverting" />
-              <button class="btn-icon" type="button" @click="browseForConfig" :disabled="isConverting" aria-label="Browse for config folder">…</button>
+              <input
+                class="ui-input cdx-tools-grow"
+                type="text"
+                v-model="ggufForm.configPath"
+                placeholder="Path to folder with config.json"
+                :disabled="isConverting || (!!selectedPreset && !ggufForm.overrideConfig)"
+              />
+              <button
+                class="btn-icon"
+                type="button"
+                @click="browseForConfig"
+                :disabled="isConverting || (!!selectedPreset && !ggufForm.overrideConfig)"
+                aria-label="Browse for config folder"
+              >
+                …
+              </button>
             </div>
-            <p class="caption">Folder containing config.json (e.g., transformer/, text_encoder/)</p>
+            <div v-if="selectedPreset" class="row-inline cdx-tools-actions">
+              <button
+                :class="['btn', 'qs-toggle-btn', ggufForm.overrideConfig ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="ggufForm.overrideConfig"
+                :disabled="isConverting"
+                title="Override the preset config folder with a custom path"
+                @click="ggufForm.overrideConfig = !ggufForm.overrideConfig"
+              >
+                Override Config
+              </button>
+            </div>
+            <p v-if="selectedPreset && !ggufForm.overrideConfig" class="caption">
+              Using vendored config: <code>{{ selectedPreset.label }}</code>
+            </p>
+            <p v-else class="caption">Folder containing config.json (e.g., transformer/, text_encoder/)</p>
+          </div>
+
+          <div v-if="!selectedPreset" class="field">
+            <label class="label-muted">Model Type</label>
+            <select class="select-md" v-model="ggufForm.manualModelKind" :disabled="isConverting">
+              <option value="auto">Auto-detect from config.json</option>
+              <option value="flux_transformer">Flux transformer</option>
+              <option value="zimage_transformer">Z-Image transformer</option>
+              <option value="llm_causallm">LLM (CausalLM)</option>
+            </select>
+            <p class="caption">When set, bypasses detection heuristics by forcing a converter profile.</p>
           </div>
 
           <div class="field">
@@ -90,9 +153,9 @@ Symbols (top-level; keep in sync; no ghosts):
 	            <details class="accordion">
 	              <summary>Advanced</summary>
 		              <div class="accordion-body">
-		                <div class="field">
-		                  <label class="label-muted">Tensor Overrides</label>
-		                  <textarea
+                <div class="field">
+                  <label class="label-muted">Tensor Overrides</label>
+                  <textarea
                     v-model="ggufForm.tensorTypeOverrides"
                     class="ui-textarea cdx-tools-overrides"
                     placeholder="One per line: <regex>=<quant>\nExample:\nattn_q\\.weight$=Q8_0"
@@ -100,6 +163,38 @@ Symbols (top-level; keep in sync; no ghosts):
                     rows="5"
                   ></textarea>
                   <p class="caption">Applied to both source and GGUF tensor names. Last match wins.</p>
+                </div>
+
+                <div v-if="isFluxSelected" class="field">
+                  <label class="label-muted">Flux: txt_in.weight dtype</label>
+                  <select class="select-md" v-model="ggufForm.fluxTxtInWeightDtype" :disabled="isConverting || !ggufForm.comfyLayout">
+                    <option value="auto">Auto (policy default)</option>
+                    <option value="F16">F16 (smaller)</option>
+                    <option value="F32">F32 (larger, higher quality)</option>
+                  </select>
+                  <p class="caption">Only applies to Flux transformer when Comfy Layout is enabled and quantization is not F16/F32.</p>
+                </div>
+
+                <div v-if="isFluxSelected" class="field">
+                  <label class="label-muted">Flux: *out_layer.weight dtype (time/guidance/vector)</label>
+                  <select class="select-md" v-model="ggufForm.fluxOutProjWeightDtype" :disabled="isConverting || !ggufForm.comfyLayout">
+                    <option value="auto">Auto (policy default)</option>
+                    <option value="F16">F16 (smaller)</option>
+                    <option value="F32">F32 (larger, higher quality)</option>
+                  </select>
+                </div>
+
+                <div v-if="isFluxSelected" class="field">
+                  <label class="label-muted">Flux: final_layer.adaLN_modulation.1.weight dtype</label>
+                  <select
+                    class="select-md"
+                    v-model="ggufForm.fluxFinalModulationWeightDtype"
+                    :disabled="isConverting || !ggufForm.comfyLayout"
+                  >
+                    <option value="auto">Auto (policy default)</option>
+                    <option value="F16">F16 (smaller)</option>
+                    <option value="F32">F32 (larger, higher quality)</option>
+                  </select>
                 </div>
               </div>
             </details>
@@ -206,17 +301,33 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import Modal from '../components/ui/Modal.vue'
 
+interface GGUFConverterPreset {
+  id: string
+  label: string
+  config_dir: string
+  kind: string
+  profile_id: string | null
+  profile_id_comfy: string | null
+  profile_id_native: string | null
+}
+
 interface GGUFForm {
+  presetId: string
+  overrideConfig: boolean
   configPath: string
+  manualModelKind: 'auto' | 'flux_transformer' | 'zimage_transformer' | 'llm_causallm'
   safetensorsPath: string
   quantization: string
   outputDir: string
   tensorTypeOverrides: string
   overwrite: boolean
   comfyLayout: boolean
+  fluxTxtInWeightDtype: 'auto' | 'F16' | 'F32'
+  fluxOutProjWeightDtype: 'auto' | 'F16' | 'F32'
+  fluxFinalModulationWeightDtype: 'auto' | 'F16' | 'F32'
 }
 
 interface ConversionStatus {
@@ -239,14 +350,24 @@ interface BrowserData {
   items: BrowserItem[]
 }
 
+const presets = ref<GGUFConverterPreset[]>([])
+const presetsLoading = ref(false)
+const presetsError = ref<string | null>(null)
+
 const ggufForm = ref<GGUFForm>({
+  presetId: '',
+  overrideConfig: false,
   configPath: '',
+  manualModelKind: 'auto',
   safetensorsPath: '',
   quantization: 'Q5_K_M',
   outputDir: '',
   tensorTypeOverrides: '',
   overwrite: false,
   comfyLayout: true,
+  fluxTxtInWeightDtype: 'auto',
+  fluxOutProjWeightDtype: 'auto',
+  fluxFinalModulationWeightDtype: 'auto',
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -260,6 +381,32 @@ const browserData = ref<BrowserData>({ path: '', exists: false, parent: '', item
 const browserMode = ref<'config' | 'safetensors' | 'output_dir'>('config')
 const selectedItem = ref<BrowserItem | null>(null)
 
+const selectedPreset = computed(() => presets.value.find((p) => p.id === ggufForm.value.presetId) ?? null)
+const presetFlux = computed(() => presets.value.filter((p) => p.kind === 'flux_transformer'))
+const presetZImage = computed(() => presets.value.filter((p) => p.kind === 'zimage_transformer'))
+const presetLLM = computed(() => presets.value.filter((p) => p.kind === 'llm_causallm'))
+
+const effectiveProfileId = computed(() => {
+  const preset = selectedPreset.value
+  if (preset) {
+    if (preset.profile_id) return preset.profile_id
+    return ggufForm.value.comfyLayout ? preset.profile_id_comfy : preset.profile_id_native
+  }
+
+  if (ggufForm.value.manualModelKind === 'flux_transformer') {
+    return ggufForm.value.comfyLayout ? 'flux_transformer_comfy' : 'flux_transformer_native'
+  }
+  if (ggufForm.value.manualModelKind === 'zimage_transformer') {
+    return ggufForm.value.comfyLayout ? 'zimage_transformer_comfy' : 'zimage_transformer_native'
+  }
+  if (ggufForm.value.manualModelKind === 'llm_causallm') {
+    return 'llama_hf_to_gguf'
+  }
+  return null
+})
+
+const isFluxSelected = computed(() => (effectiveProfileId.value || '').startsWith('flux_transformer_'))
+
 const isConverting = computed(() => {
   if (!currentJobId.value) return false
   const status = conversionStatus.value?.status
@@ -268,9 +415,7 @@ const isConverting = computed(() => {
 })
 
 const canConvert = computed(() => {
-  return ggufForm.value.configPath && 
-         ggufForm.value.safetensorsPath && 
-         ggufForm.value.outputDir
+  return Boolean(ggufForm.value.configPath && ggufForm.value.safetensorsPath && ggufForm.value.outputDir)
 })
 
 const browserTitle = computed(() => {
@@ -333,70 +478,6 @@ const outputFileName = computed(() => {
 
 const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, outputFileName.value))
 
-	async function startConversion() {
-	  try {
-	    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
-	    const response = await fetch('/api/tools/convert-gguf', {
-	      method: 'POST',
-	      headers: { 'Content-Type': 'application/json' },
-		      body: JSON.stringify({
-		        config_path: ggufForm.value.configPath,
-		        safetensors_path: ggufForm.value.safetensorsPath,
-		        output_path: outputFullPath.value,
-		        overwrite: ggufForm.value.overwrite,
-		        comfy_layout: ggufForm.value.comfyLayout,
-		        quantization: ggufForm.value.quantization,
-		        tensor_type_overrides: tensorTypeOverrides,
-		      }),
-		    })
-    
-    const data = await response.json()
-    
-    if (!response.ok) {
-      conversionStatus.value = {
-        status: 'error',
-        progress: 0,
-        current_tensor: '',
-        error: data.detail || 'Unknown error',
-      }
-      return
-    }
-    
-    currentJobId.value = data.job_id
-    conversionStatus.value = { status: 'pending', progress: 0, current_tensor: '', error: null }
-    
-	    // Start polling
-	    pollInterval.value = window.setInterval(pollStatus, 500)
-	  } catch (e: any) {
-    conversionStatus.value = {
-      status: 'error',
-      progress: 0,
-      current_tensor: '',
-      error: e.message,
-	  }
-	}
-
-	async function cancelConversion() {
-	  if (!currentJobId.value) return
-	  try {
-	    const res = await fetch(`/api/tools/convert-gguf/${currentJobId.value}/cancel`, { method: 'POST' })
-	    if (!res.ok) {
-	      const data = await res.json().catch(() => ({}))
-	      throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
-	    }
-	    if (conversionStatus.value) {
-	      conversionStatus.value = { ...conversionStatus.value, status: 'cancelling' }
-	    }
-	  } catch (e: any) {
-	    if (conversionStatus.value) {
-	      conversionStatus.value = { ...conversionStatus.value, error: String(e?.message || e) }
-	    } else {
-	      conversionStatus.value = { status: 'error', progress: 0, current_tensor: '', error: String(e?.message || e) }
-	    }
-	  }
-	}
-}
-
 function parseTensorTypeOverrides(raw: string): string[] {
   return raw
     .split(/\r?\n/)
@@ -404,25 +485,145 @@ function parseTensorTypeOverrides(raw: string): string[] {
     .filter((line) => line.length > 0)
 }
 
-	async function pollStatus() {
-	  if (!currentJobId.value) return
-	  
-	  try {
-	    const response = await fetch(`/api/tools/convert-gguf/${currentJobId.value}`)
-	    const data = await response.json()
-	    
-	    conversionStatus.value = data
-	    
-	    if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
-	      if (pollInterval.value) {
-	        clearInterval(pollInterval.value)
-	        pollInterval.value = null
-	      }
-	    }
-	  } catch (e) {
-	    // Ignore polling errors
-	  }
-	}
+async function loadPresets() {
+  presetsLoading.value = true
+  try {
+    const res = await fetch('/api/tools/gguf-converter/presets')
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
+    }
+    const list = Array.isArray((data as any)?.presets) ? ((data as any).presets as GGUFConverterPreset[]) : []
+    presets.value = list
+    presetsError.value = null
+  } catch (e: any) {
+    presets.value = []
+    presetsError.value = String(e?.message || e)
+  } finally {
+    presetsLoading.value = false
+  }
+}
+
+watch(
+  () => ggufForm.value.presetId,
+  () => {
+    if (ggufForm.value.presetId) {
+      ggufForm.value.overrideConfig = false
+    }
+  },
+)
+
+watch(
+  () => selectedPreset.value,
+  (preset) => {
+    if (!preset) return
+    if (!ggufForm.value.overrideConfig) {
+      ggufForm.value.configPath = preset.config_dir
+    }
+  },
+)
+
+watch(
+  () => ggufForm.value.overrideConfig,
+  (override) => {
+    if (override) return
+    const preset = selectedPreset.value
+    if (preset) ggufForm.value.configPath = preset.config_dir
+  },
+)
+
+async function startConversion() {
+  try {
+    const tensorTypeOverrides = parseTensorTypeOverrides(ggufForm.value.tensorTypeOverrides)
+    const payload: Record<string, any> = {
+      config_path: ggufForm.value.configPath,
+      safetensors_path: ggufForm.value.safetensorsPath,
+      output_path: outputFullPath.value,
+      overwrite: ggufForm.value.overwrite,
+      comfy_layout: ggufForm.value.comfyLayout,
+      quantization: ggufForm.value.quantization,
+      tensor_type_overrides: tensorTypeOverrides,
+      flux_txt_in_weight_dtype: ggufForm.value.fluxTxtInWeightDtype,
+      flux_out_proj_weight_dtype: ggufForm.value.fluxOutProjWeightDtype,
+      flux_final_modulation_weight_dtype: ggufForm.value.fluxFinalModulationWeightDtype,
+    }
+
+    const profileId = effectiveProfileId.value
+    if (profileId) {
+      payload.profile_id = profileId
+    }
+
+    const response = await fetch('/api/tools/convert-gguf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      conversionStatus.value = {
+        status: 'error',
+        progress: 0,
+        current_tensor: '',
+        error: (data as any)?.detail || 'Unknown error',
+      }
+      return
+    }
+
+    currentJobId.value = (data as any).job_id
+    conversionStatus.value = { status: 'pending', progress: 0, current_tensor: '', error: null }
+
+    pollInterval.value = window.setInterval(pollStatus, 500)
+  } catch (e: any) {
+    conversionStatus.value = {
+      status: 'error',
+      progress: 0,
+      current_tensor: '',
+      error: String(e?.message || e),
+    }
+  }
+}
+
+async function cancelConversion() {
+  if (!currentJobId.value) return
+  try {
+    const res = await fetch(`/api/tools/convert-gguf/${currentJobId.value}/cancel`, { method: 'POST' })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
+    }
+    if (conversionStatus.value) {
+      conversionStatus.value = { ...conversionStatus.value, status: 'cancelling' }
+    }
+  } catch (e: any) {
+    if (conversionStatus.value) {
+      conversionStatus.value = { ...conversionStatus.value, error: String(e?.message || e) }
+    } else {
+      conversionStatus.value = { status: 'error', progress: 0, current_tensor: '', error: String(e?.message || e) }
+    }
+  }
+}
+
+async function pollStatus() {
+  if (!currentJobId.value) return
+
+  try {
+    const response = await fetch(`/api/tools/convert-gguf/${currentJobId.value}`)
+    const data = await response.json()
+
+    conversionStatus.value = data
+
+    if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
+      if (pollInterval.value) {
+        clearInterval(pollInterval.value)
+        pollInterval.value = null
+      }
+    }
+  } catch (e) {
+    // Ignore polling errors
+  }
+}
 
 // File browser functions
 function browseForConfig() {
@@ -455,9 +656,11 @@ function closeFileBrowser() {
 
 async function loadBrowserPath() {
   try {
-    const ext = browserMode.value === 'safetensors' ? '.safetensors' : ''
-    
-    const response = await fetch(`/api/tools/browse-files?path=${encodeURIComponent(browserPath.value)}&extensions=${ext}`)
+    const ext = browserMode.value === 'safetensors' ? '.safetensors,.safetensors.index.json,.index.json' : ''
+
+    const response = await fetch(
+      `/api/tools/browse-files?path=${encodeURIComponent(browserPath.value)}&extensions=${encodeURIComponent(ext)}`,
+    )
     browserData.value = await response.json()
     browserPath.value = browserData.value.path
   } catch (e) {
@@ -488,7 +691,7 @@ function openItem(item: BrowserItem) {
 
 function confirmSelection() {
   if (!selectedItem.value && browserMode.value !== 'output_dir') return
-  
+
   if (browserMode.value === 'config') {
     if (!selectedItem.value) return
     const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
@@ -505,7 +708,7 @@ function confirmSelection() {
       ggufForm.value.outputDir = fullPath
     }
   }
-  
+
   closeFileBrowser()
 }
 
@@ -515,6 +718,10 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB'
   return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB'
 }
+
+onMounted(() => {
+  loadPresets()
+})
 
 onUnmounted(() => {
   if (pollInterval.value) {

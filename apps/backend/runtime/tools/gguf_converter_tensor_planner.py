@@ -469,6 +469,47 @@ def plan_flux_transformer_tensors(
     It also fuses QKV projections (and single-block `proj_mlp`) to match the fused Comfy layout.
     """
 
+    # Force sensitive embeddings/outputs to FP32/FP16 if quantization is active.
+    # We prepend these to overrides so they take precedence.
+    if requested not in {GGMLQuantizationType.F16, GGMLQuantizationType.F32}:
+        sensitive_suffixes = [
+            "img_in.weight",
+            "img_in.bias",
+            "txt_in.weight",
+            "txt_in.bias",
+            "vector_in.in_layer.weight",
+            "vector_in.in_layer.bias",
+            "vector_in.out_layer.weight",
+            "vector_in.out_layer.bias",
+            "guidance_in.in_layer.weight",
+            "guidance_in.in_layer.bias",
+            "guidance_in.out_layer.weight",
+            "guidance_in.out_layer.bias",
+            "final_layer.linear.weight",
+            "final_layer.linear.bias",
+            "final_layer.adaLN_modulation.1.weight",
+            "final_layer.adaLN_modulation.1.bias",
+        ]
+
+        # We construct rules that match the *destination* (GGUF) name.
+        # Since _select_ggml_type checks both, forcing on dst is cleaner for our planned outputs.
+        # We reuse CompiledTensorTypeRule but mock the pattern to match exact string end.
+        import re
+        from .gguf_converter_types import CompiledTensorTypeRule, TensorTypeRuleTarget
+
+        # We'll just append them as explicit rules.
+        # Note: The converter expects regex patterns.
+        # We escape the dots and assert strict equality or suffix match.
+        for suffix in sensitive_suffixes:
+            # Match strictly the GGUF name (dst).
+            pattern = re.compile(f"^{re.escape(suffix)}$")
+            rule = CompiledTensorTypeRule(
+                pattern=pattern,
+                ggml_type=GGMLQuantizationType.F16,
+                apply_to=TensorTypeRuleTarget.DST,  # Match the output name
+            )
+            overrides.insert(0, rule)
+
     shapes: dict[str, tuple[int, ...]] = {}
     keys_set = set(tensor_names)
     consumed: set[str] = set()

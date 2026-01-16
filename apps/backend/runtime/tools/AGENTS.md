@@ -38,4 +38,5 @@ Status: Active
 - 2026-01-15: GGUF converter exposes FP16/FP32 via profile-scoped float groups (Advanced) for selected tensors (per-profile patterns).
 - 2026-01-16: Replaced Flux-only dtype knobs with generic profile-scoped FP16/FP32 float groups (applies to any supported converter profile).
 - 2026-01-16: Vendored selector now uses “model metadata” (org/repo + component) rather than listing raw config-dir presets.
+- 2026-01-16: Vendored model metadata scanner no longer classifies `*ForCausalLM` configs as converter components and labels diffusion components as `denoiser` for UI display.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

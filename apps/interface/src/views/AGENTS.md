@@ -28,7 +28,6 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to view modules (doc-only change; part of rollout).
 - 2026-01-06: `ImageModelTab.vue` now filters schedulers by the selected sampler’s `allowed_schedulers` and auto-resets invalid scheduler selections to the sampler’s `default_scheduler`.
 - 2026-01-13: `ToolsTab.vue` GGUF converter supports cancellation and an Overwrite toggle (default off; fails if the output file exists).
-- 2026-01-14: `ToolsTab.vue` GGUF converter adds a “Comfy Layout” toggle to control Flux/ZImage Diffusers→Comfy key mapping.
-- 2026-01-14: `ToolsTab.vue` moved the “Comfy Layout” toggle next to “Overwrite” (Output section) for visibility.
+- 2026-01-14: `ToolsTab.vue` GGUF converter uses Comfy/Codex key mapping for diffusion denoisers (Diffusers→Comfy keys via `comfy_layout`; UI currently forces it on).
 - 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).
-- 2026-01-16: `ToolsTab.vue` now uses vendored model metadata (model + component) and exposes a Mixed toggle plus FP16/FP32 float group overrides in Advanced.
+- 2026-01-16: `ToolsTab.vue` now uses vendored model metadata only and exposes a Mixed toggle with an FP16/FP32 choice (advanced overrides are hidden).

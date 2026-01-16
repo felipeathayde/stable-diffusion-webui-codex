@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Vendored model metadata for the GGUF converter UI.
 Scans the local Hugging Face mirror under `apps/backend/huggingface/**` and exposes “model metadata” entries (org/repo)
-with supported conversion components (Flux/ZImage transformers, and LLM CausalLM text encoders).
+with supported conversion components (currently Flux/ZImage denoisers).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `GGUFConverterModelComponent` (dataclass): Convertible component entry (config dir + profile hints).
@@ -91,10 +91,6 @@ def _classify_config(cfg: dict[str, Any]) -> tuple[str, dict[str, str]]:
             },
         )
 
-    architectures = cfg.get("architectures")
-    if isinstance(architectures, list) and any(str(a).endswith("ForCausalLM") for a in architectures):
-        return ("llm_causallm", {"profile_id": "llama_hf_to_gguf"})
-
     return ("unknown", {})
 
 
@@ -122,6 +118,8 @@ def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGU
 
             component_id = subdir or "root"
             component_label = subdir or "root"
+            if kind in {"flux_transformer", "zimage_transformer"}:
+                component_label = "denoiser"
             components.append(
                 GGUFConverterModelComponent(
                     id=component_id,
@@ -137,7 +135,7 @@ def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGU
         if not components:
             continue
 
-        kind_priority = {"flux_transformer": 0, "zimage_transformer": 0, "llm_causallm": 1}
+        kind_priority = {"flux_transformer": 0, "zimage_transformer": 0}
         components.sort(key=lambda c: (kind_priority.get(c.kind, 9), c.label.lower()))
         model_id = f"{org}/{repo}"
         models.append(

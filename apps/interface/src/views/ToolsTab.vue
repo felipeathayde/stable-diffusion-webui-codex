@@ -83,26 +83,34 @@ Symbols (top-level; keep in sync; no ghosts):
             <p class="caption">For sharded weights, select the folder that contains <code>*.safetensors.index.json</code>.</p>
           </div>
 
-          <div class="field">
-            <label class="label-muted">Quantization</label>
-            <select class="select-md" v-model="ggufForm.quantization" :disabled="isConverting">
-              <option value="F16">F16 - No quantization (full precision)</option>
-              <option value="F32">F32 - Full float32 (largest)</option>
-              <option value="Q8_0">Q8_0 - 8-bit (max quality, larger)</option>
-              <option value="Q6_K">Q6_K - 6-bit K-quant (high quality)</option>
-              <option value="Q5_K">Q5_K - 5-bit (~35% size)</option>
-              <option value="Q5_1">Q5_1 - 5-bit legacy</option>
-              <option value="Q5_0">Q5_0 - 5-bit legacy</option>
-              <option value="Q4_K">Q4_K - 4-bit (~25% size)</option>
-              <option value="Q4_1">Q4_1 - 4-bit legacy</option>
-              <option value="Q4_0">Q4_0 - 4-bit legacy</option>
-              <option value="Q3_K">Q3_K - 3-bit K-quant (last resort)</option>
-              <option value="Q2_K">Q2_K - 2-bit K-quant (extreme)</option>
-              <option value="IQ4_NL">IQ4_NL - 4-bit IQ (experimental)</option>
-            </select>
-            <div class="row-inline cdx-tools-actions">
-              <button
-                :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+	          <div class="field">
+	            <label class="label-muted">Quantization</label>
+	            <select class="select-md" v-model="ggufForm.quantization" :disabled="isConverting">
+	              <optgroup label="Float (no quant)">
+	                <option value="F16">F16 — float16</option>
+	                <option value="F32">F32 — float32</option>
+	              </optgroup>
+	              <optgroup label="K-quants">
+	                <option value="Q8_0">Q8_0 — 8-bit</option>
+	                <option value="Q6_K">Q6_K — 6-bit K</option>
+	                <option value="Q5_K">Q5_K — 5-bit K</option>
+	                <option value="Q4_K">Q4_K — 4-bit K</option>
+	                <option value="Q3_K">Q3_K — 3-bit K</option>
+	                <option value="Q2_K">Q2_K — 2-bit K</option>
+	              </optgroup>
+	              <optgroup label="Legacy">
+	                <option value="Q5_1">Q5_1 — 5-bit legacy</option>
+	                <option value="Q5_0">Q5_0 — 5-bit legacy</option>
+	                <option value="Q4_1">Q4_1 — 4-bit legacy</option>
+	                <option value="Q4_0">Q4_0 — 4-bit legacy</option>
+	              </optgroup>
+	              <optgroup label="Experimental">
+	                <option value="IQ4_NL">IQ4_NL — 4-bit IQ (NL)</option>
+	              </optgroup>
+	            </select>
+		            <div class="row-inline cdx-tools-actions">
+		              <button
+		                :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
                 type="button"
                 :aria-pressed="ggufForm.mixed"
                 :disabled="isConverting || !mixedSupported"

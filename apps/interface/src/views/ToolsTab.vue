@@ -85,47 +85,57 @@ Symbols (top-level; keep in sync; no ghosts):
 
 	          <div class="field">
 	            <label class="label-muted">Quantization</label>
-	            <select class="select-md" v-model="ggufForm.quantization" :disabled="isConverting">
-	              <optgroup label="Float (no quant)">
-	                <option value="F16">F16 — float16</option>
-	                <option value="F32">F32 — float32</option>
-	              </optgroup>
-	              <optgroup label="K-quants">
-	                <option value="Q8_0">Q8_0 — 8-bit</option>
-	                <option value="Q6_K">Q6_K — 6-bit K</option>
-	                <option value="Q5_K">Q5_K — 5-bit K</option>
-	                <option value="Q4_K">Q4_K — 4-bit K</option>
-	                <option value="Q3_K">Q3_K — 3-bit K</option>
-	                <option value="Q2_K">Q2_K — 2-bit K</option>
-	              </optgroup>
-	              <optgroup label="Legacy">
-	                <option value="Q5_1">Q5_1 — 5-bit legacy</option>
-	                <option value="Q5_0">Q5_0 — 5-bit legacy</option>
-	                <option value="Q4_1">Q4_1 — 4-bit legacy</option>
-	                <option value="Q4_0">Q4_0 — 4-bit legacy</option>
-	              </optgroup>
-	              <optgroup label="Experimental">
-	                <option value="IQ4_NL">IQ4_NL — 4-bit IQ (NL)</option>
-	              </optgroup>
-	            </select>
-		            <div class="row-inline cdx-tools-actions">
-		              <button
-		                :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-                type="button"
-                :aria-pressed="ggufForm.mixed"
-                :disabled="isConverting || !mixedSupported"
-                title="Enable mixed policy when available (e.g., Q5_K → Q5_K_M, Q4_K → Q4_K_M)"
-                @click="ggufForm.mixed = !ggufForm.mixed"
-              >
-                Mixed
-              </button>
-              <select v-if="ggufForm.mixed && mixedSupported" class="select-md" v-model="ggufForm.mixedFloatDtype" :disabled="isConverting">
-                <option value="F16">Mixed float dtype: FP16</option>
-                <option value="F32">Mixed float dtype: FP32</option>
-              </select>
-            </div>
+              <div class="row-inline">
+	              <select class="select-md cdx-tools-grow" v-model="ggufForm.quantization" :disabled="isConverting">
+	                <optgroup label="Float (no quant)">
+	                  <option value="F16">F16 — float16</option>
+	                  <option value="F32">F32 — float32</option>
+	                </optgroup>
+	                <optgroup label="K-quants">
+	                  <option value="Q8_0">Q8_0 — 8-bit</option>
+	                  <option value="Q6_K">Q6_K — 6-bit K</option>
+	                  <option value="Q5_K">Q5_K — 5-bit K</option>
+	                  <option value="Q4_K">Q4_K — 4-bit K</option>
+	                  <option value="Q3_K">Q3_K — 3-bit K</option>
+	                  <option value="Q2_K">Q2_K — 2-bit K</option>
+	                </optgroup>
+	                <optgroup label="Legacy">
+	                  <option value="Q5_1">Q5_1 — 5-bit legacy</option>
+	                  <option value="Q5_0">Q5_0 — 5-bit legacy</option>
+	                  <option value="Q4_1">Q4_1 — 4-bit legacy</option>
+	                  <option value="Q4_0">Q4_0 — 4-bit legacy</option>
+	                </optgroup>
+	                <optgroup label="Experimental">
+	                  <option value="IQ4_NL">IQ4_NL — 4-bit IQ (NL)</option>
+	                </optgroup>
+	              </select>
+		            <button
+		              :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+		              type="button"
+		              :aria-pressed="ggufForm.mixed"
+		              :disabled="isConverting || !mixedSupported"
+		              title="Enable mixed policy when available (e.g., Q5_K → Q5_K_M, Q4_K → Q4_K_M)"
+		              @click="ggufForm.mixed = !ggufForm.mixed"
+		            >
+		              Mixed
+		            </button>
+		            <button
+		              v-if="ggufForm.mixed && mixedSupported"
+		              :class="[
+		                'btn',
+		                'qs-toggle-btn',
+		                ggufForm.mixedFloatDtype === 'auto' ? 'qs-toggle-btn--off' : 'qs-toggle-btn--on',
+		              ]"
+		              type="button"
+		              :disabled="isConverting"
+		              title="Mixed float dtype (cycles AUTO → FP16 → FP32)"
+		              @click="cycleMixedFloatDtype"
+		            >
+		              {{ mixedFloatDtypeLabel }}
+		            </button>
+              </div>
 	            <p class="caption">
-	              Mixed enables mixed quant variants when available and sets float tensors to FP16/FP32 (larger file, better quality).
+	              Mixed enables mixed quant variants when available. Float dtype cycles AUTO/FP16/FP32.
 	            </p>
 	          </div>
 
@@ -263,7 +273,7 @@ interface GGUFForm {
   safetensorsPath: string
   quantization: string
   mixed: boolean
-  mixedFloatDtype: 'F16' | 'F32'
+  mixedFloatDtype: 'auto' | 'F16' | 'F32'
   outputDir: string
   overwrite: boolean
   comfyLayout: boolean
@@ -300,7 +310,7 @@ const ggufForm = ref<GGUFForm>({
   safetensorsPath: '',
   quantization: 'Q5_K',
   mixed: true,
-  mixedFloatDtype: 'F16',
+  mixedFloatDtype: 'auto',
   outputDir: '',
   overwrite: false,
   comfyLayout: true,
@@ -363,6 +373,21 @@ const mixedSupported = computed(() => {
   const q = String(ggufForm.value.quantization || '').trim()
   return q === 'Q5_K' || q === 'Q4_K'
 })
+
+const mixedFloatDtypeLabel = computed(() => {
+  const v = ggufForm.value.mixedFloatDtype
+  if (v === 'auto') return 'AUTO'
+  if (v === 'F16') return 'FP16'
+  if (v === 'F32') return 'FP32'
+  return String(v).toUpperCase()
+})
+
+function cycleMixedFloatDtype() {
+  const order: Array<'auto' | 'F16' | 'F32'> = ['auto', 'F16', 'F32']
+  const current = ggufForm.value.mixedFloatDtype
+  const idx = order.indexOf(current)
+  ggufForm.value.mixedFloatDtype = order[(idx + 1) % order.length]
+}
 
 const browserTitle = computed(() => {
   if (browserMode.value === 'safetensors') return 'Choose Weights'
@@ -505,7 +530,7 @@ async function startConversion() {
       payload.profile_id = profileId
     }
 
-    if (ggufForm.value.mixed && mixedSupported.value) {
+    if (ggufForm.value.mixed && mixedSupported.value && ggufForm.value.mixedFloatDtype !== 'auto') {
       const floatGroupOverrides: Record<string, string> = {}
       for (const group of floatGroups.value) {
         floatGroupOverrides[group.id] = ggufForm.value.mixedFloatDtype

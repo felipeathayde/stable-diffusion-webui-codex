@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FloatDtypeGroup` (interface): Float dtype override group returned by `/api/tools/gguf-converter/presets`.
 - `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + profile hints).
 - `GGUFConverterModelMetadata` (interface): Vendored model metadata entry returned by `/api/tools/gguf-converter/presets`.
-- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + overwrite).
+- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + overwrite + Comfy Layout).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
@@ -100,22 +100,22 @@ Symbols (top-level; keep in sync; no ghosts):
               <option value="Q2_K">Q2_K - 2-bit K-quant (extreme)</option>
               <option value="IQ4_NL">IQ4_NL - 4-bit IQ (experimental)</option>
             </select>
-	            <div class="row-inline cdx-tools-actions">
-	              <button
-	                :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-	                type="button"
-	                :aria-pressed="ggufForm.mixed"
-	                :disabled="isConverting || !mixedSupported"
-	                title="Enable mixed policy when available (e.g., Q5_K → Q5_K_M, Q4_K → Q4_K_M)"
-	                @click="ggufForm.mixed = !ggufForm.mixed"
-	              >
-	                Mixed
-	              </button>
-	              <select v-if="ggufForm.mixed && mixedSupported" class="select-md" v-model="ggufForm.mixedFloatDtype" :disabled="isConverting">
-	                <option value="F16">Mixed float dtype: FP16</option>
-	                <option value="F32">Mixed float dtype: FP32</option>
-	              </select>
-	            </div>
+            <div class="row-inline cdx-tools-actions">
+              <button
+                :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="ggufForm.mixed"
+                :disabled="isConverting || !mixedSupported"
+                title="Enable mixed policy when available (e.g., Q5_K → Q5_K_M, Q4_K → Q4_K_M)"
+                @click="ggufForm.mixed = !ggufForm.mixed"
+              >
+                Mixed
+              </button>
+              <select v-if="ggufForm.mixed && mixedSupported" class="select-md" v-model="ggufForm.mixedFloatDtype" :disabled="isConverting">
+                <option value="F16">Mixed float dtype: FP16</option>
+                <option value="F32">Mixed float dtype: FP32</option>
+              </select>
+            </div>
 	            <p class="caption">
 	              Mixed enables mixed quant variants when available and sets float tensors to FP16/FP32 (larger file, better quality).
 	            </p>
@@ -135,19 +135,30 @@ Symbols (top-level; keep in sync; no ghosts):
             </div>
 	            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
 	            <div class="row-inline cdx-tools-actions">
-	              <button
-	                :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-	                type="button"
-	                :aria-pressed="ggufForm.overwrite"
-	                :disabled="isConverting"
-	                title="Allow overwriting the output file if it already exists"
-	                @click="ggufForm.overwrite = !ggufForm.overwrite"
-	              >
-	                Overwrite
-	              </button>
-	            </div>
-	            <p class="caption">Overwrite: when off, conversion fails if the output file already exists.</p>
-	          </div>
+                    <button
+                      :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                      type="button"
+                      :aria-pressed="ggufForm.overwrite"
+                      :disabled="isConverting"
+                      title="Allow overwriting the output file if it already exists"
+                      @click="ggufForm.overwrite = !ggufForm.overwrite"
+                    >
+                      Overwrite
+                    </button>
+                    <button
+                      :class="['btn', 'qs-toggle-btn', ggufForm.comfyLayout ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                      type="button"
+                      :aria-pressed="ggufForm.comfyLayout"
+                      :disabled="isConverting"
+                      title="When on, denoiser exports are mapped to the Comfy/Codex key layout."
+                      @click="ggufForm.comfyLayout = !ggufForm.comfyLayout"
+                    >
+                      Comfy Layout
+                    </button>
+                  </div>
+                  <p class="caption">Overwrite: when off, conversion fails if the output file already exists.</p>
+                  <p class="caption">Comfy Layout: enable for Codex runtime; turn off to preserve source key names.</p>
+                </div>
 
 	          <div class="row-inline cdx-tools-actions">
 	            <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">
@@ -247,6 +258,7 @@ interface GGUFForm {
   mixedFloatDtype: 'F16' | 'F32'
   outputDir: string
   overwrite: boolean
+  comfyLayout: boolean
 }
 
 interface ConversionStatus {
@@ -283,6 +295,7 @@ const ggufForm = ref<GGUFForm>({
   mixedFloatDtype: 'F16',
   outputDir: '',
   overwrite: false,
+  comfyLayout: true,
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -307,7 +320,7 @@ const effectiveProfileId = computed(() => {
   const component = selectedComponent.value
   if (component) {
     if (component.profile_id) return component.profile_id
-    return component.profile_id_comfy
+    return ggufForm.value.comfyLayout ? component.profile_id_comfy : component.profile_id_native
   }
   return null
 })
@@ -475,7 +488,7 @@ async function startConversion() {
       safetensors_path: ggufForm.value.safetensorsPath,
       output_path: outputFullPath.value,
       overwrite: ggufForm.value.overwrite,
-      comfy_layout: true,
+      comfy_layout: ggufForm.value.comfyLayout,
       quantization: effectiveQuantization.value,
     }
 

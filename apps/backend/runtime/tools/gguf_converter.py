@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ConversionProgress` (dataclass): Progress/report structure for long conversions (stage counters, timings, and status fields).
 - `GGUFConversionCancelled` (exception): Raised when a conversion is cancelled via a cooperative cancel signal.
 - `GGUFVerificationError` (exception): Raised when a written GGUF file fails validation/verification.
-- `_apply_flux_float_dtype_overrides` (function): Applies Flux-specific FP16/FP32 knobs to compiled dtype rules (appends override rules).
+- `_apply_float_group_overrides` (function): Applies profile-scoped FP16/FP32 group overrides to compiled dtype rules.
 - `convert_safetensors_to_gguf` (function): Main conversion entrypoint; reads SafeTensors (incl. sharded), quantizes tensors, writes GGUF,
   and optionally verifies the output (uses many helpers above).
 """
@@ -41,6 +41,7 @@ from apps.backend.runtime.tools import gguf_converter_quantization as _quantizat
 from apps.backend.runtime.tools import gguf_converter_safetensors_source as _safetensors_source
 from apps.backend.runtime.tools import gguf_converter_tensor_planner as _tensor_planner
 from apps.backend.runtime.tools import gguf_converter_verify as _verify
+from apps.backend.runtime.tools.gguf_converter_float_groups import float_groups_for_profile_id
 from apps.backend.runtime.tools.gguf_converter_specs import (
     CompiledTensorTypeRule,
     GGUFArch,
@@ -61,21 +62,25 @@ class GGUFConversionCancelled(Exception):
     """Raised when a conversion is cancelled via a cooperative cancel signal."""
 
 
-def _apply_flux_float_dtype_overrides(
+def _apply_float_group_overrides(
     rules: list[CompiledTensorTypeRule],
     *,
     config: ConversionConfig,
-    profile_arch: GGUFArch,
-    profile_layout: GGUFKeyLayout,
+    profile_id: str,
 ) -> None:
-    if profile_arch is not GGUFArch.FLUX:
+    overrides = getattr(config, "float_group_overrides", None)
+    if overrides is None:
         return
-    if config.quantization in {QuantizationType.F16, QuantizationType.F32}:
-        return
-    if profile_layout is not GGUFKeyLayout.COMFY_CODEX:
+    if not isinstance(overrides, dict):
+        raise TypeError(f"float_group_overrides must be a dict[str, str], got {type(overrides).__name__}")
+    if not overrides:
         return
 
-    def _parse_choice(value: str) -> GGMLQuantizationType | None:
+    allowed_groups = {g.id: g for g in float_groups_for_profile_id(profile_id)}
+    if not allowed_groups:
+        raise ValueError(f"Profile {profile_id!r} does not define any float dtype groups")
+
+    def _parse_choice(value: object) -> GGMLQuantizationType | None:
         raw = str(value or "").strip().upper()
         if raw in {"", "AUTO"}:
             return None
@@ -85,38 +90,28 @@ def _apply_flux_float_dtype_overrides(
             return GGMLQuantizationType.F32
         raise ValueError(f"Invalid float dtype selection: {value!r} (expected auto|F16|F32)")
 
-    txt_in_dtype = _parse_choice(getattr(config, "flux_txt_in_weight_dtype", "auto"))
-    out_proj_dtype = _parse_choice(getattr(config, "flux_out_proj_weight_dtype", "auto"))
-    final_mod_dtype = _parse_choice(getattr(config, "flux_final_modulation_weight_dtype", "auto"))
+    for group_id, choice in overrides.items():
+        gid = str(group_id).strip()
+        if not gid:
+            raise ValueError("float_group_overrides contains an empty group id")
+        group = allowed_groups.get(gid)
+        if group is None:
+            allowed = ", ".join(sorted(allowed_groups.keys()))
+            raise ValueError(f"Unknown float dtype group for profile {profile_id!r}: {gid!r} (allowed: {allowed})")
 
-    def _append(pattern: str, ggml_type: GGMLQuantizationType, reason: str) -> None:
-        rules.append(
-            CompiledTensorTypeRule(
-                pattern=re.compile(pattern),
-                ggml_type=ggml_type,
-                apply_to=TensorNameTarget.DST,
-                reason=reason,
+        ggml_type = _parse_choice(choice)
+        if ggml_type is None:
+            continue
+
+        for pattern in group.patterns:
+            rules.append(
+                CompiledTensorTypeRule(
+                    pattern=re.compile(pattern),
+                    ggml_type=ggml_type,
+                    apply_to=TensorNameTarget.DST,
+                    reason=f"user float group override: {gid}={ggml_type.name}",
+                )
             )
-        )
-
-    if txt_in_dtype is not None:
-        _append(
-            r"^txt_in\.weight$",
-            txt_in_dtype,
-            f"user override: flux_txt_in_weight_dtype={txt_in_dtype.name}",
-        )
-    if out_proj_dtype is not None:
-        _append(
-            r"^(?:guidance_in|time_in|vector_in)\.out_layer\.weight$",
-            out_proj_dtype,
-            f"user override: flux_out_proj_weight_dtype={out_proj_dtype.name}",
-        )
-    if final_mod_dtype is not None:
-        _append(
-            r"^final_layer\.adaLN_modulation\.1\.weight$",
-            final_mod_dtype,
-            f"user override: flux_final_modulation_weight_dtype={final_mod_dtype.name}",
-        )
 
 
 def convert_safetensors_to_gguf(
@@ -169,12 +164,7 @@ def convert_safetensors_to_gguf(
         profile = _profiles.resolve_profile(model_config, comfy_layout=comfy_layout)
     requested_type = _quantization.requested_ggml_type(config.quantization)
     dtype_rules = profile.quant_policy.compile(quant=config.quantization, user_rules=config.tensor_type_overrides)
-    _apply_flux_float_dtype_overrides(
-        dtype_rules,
-        config=config,
-        profile_arch=profile.arch,
-        profile_layout=profile.layout,
-    )
+    _apply_float_group_overrides(dtype_rules, config=config, profile_id=profile.id.value)
 
     if profile.arch is GGUFArch.LLAMA:
         arch = str(model_config.get("model_type") or "llama")

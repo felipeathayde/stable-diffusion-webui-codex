@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Sequence
 
@@ -54,9 +54,7 @@ class ConversionConfig:
     quantization: QuantizationType = QuantizationType.F16
     comfy_layout: bool = True
     tensor_type_overrides: Sequence[str] = ()
-    flux_txt_in_weight_dtype: str = "auto"
-    flux_out_proj_weight_dtype: str = "auto"
-    flux_final_modulation_weight_dtype: str = "auto"
+    float_group_overrides: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

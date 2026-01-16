@@ -32,22 +32,47 @@ def build_router(*, codex_root: Path) -> APIRouter:
 
     @router.get("/api/tools/gguf-converter/presets")
     async def list_gguf_converter_presets() -> Dict[str, Any]:
-        from apps.backend.runtime.tools.gguf_converter_presets import list_vendored_gguf_converter_presets
+        from apps.backend.runtime.tools.gguf_converter_float_groups import float_groups_for_profile_id
+        from apps.backend.runtime.tools.gguf_converter_model_metadata import list_vendored_gguf_converter_model_metadata
 
-        presets = list_vendored_gguf_converter_presets(codex_root=codex_root)
-        return {
-            "presets": [
-                {
-                    "id": p.id,
-                    "label": p.label,
-                    "config_dir": p.config_dir,
-                    "kind": p.kind,
-                    "profile_id": p.profile_id,
-                    "profile_id_comfy": p.profile_id_comfy,
-                    "profile_id_native": p.profile_id_native,
-                }
-                for p in presets
+        models = list_vendored_gguf_converter_model_metadata(codex_root=codex_root)
+        profile_ids: set[str] = set()
+        for model in models:
+            for comp in model.components:
+                for pid in (comp.profile_id, comp.profile_id_comfy, comp.profile_id_native):
+                    if pid:
+                        profile_ids.add(pid)
+
+        float_groups: dict[str, Any] = {}
+        for pid in sorted(profile_ids):
+            float_groups[pid] = [
+                {"id": g.id, "label": g.label, "patterns": list(g.patterns)}
+                for g in float_groups_for_profile_id(pid)
             ]
+
+        return {
+            "models": [
+                {
+                    "id": m.id,
+                    "label": m.label,
+                    "org": m.org,
+                    "repo": m.repo,
+                    "components": [
+                        {
+                            "id": c.id,
+                            "label": c.label,
+                            "config_dir": c.config_dir,
+                            "kind": c.kind,
+                            "profile_id": c.profile_id,
+                            "profile_id_comfy": c.profile_id_comfy,
+                            "profile_id_native": c.profile_id_native,
+                        }
+                        for c in m.components
+                    ],
+                }
+                for m in models
+            ],
+            "float_groups": float_groups,
         }
 
     @router.post("/api/tools/convert-gguf")
@@ -71,9 +96,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
         profile_id_raw = payload.get("profile_id", None)
-        flux_txt_in_weight_dtype_raw = payload.get("flux_txt_in_weight_dtype", "auto")
-        flux_out_proj_weight_dtype_raw = payload.get("flux_out_proj_weight_dtype", "auto")
-        flux_final_modulation_weight_dtype_raw = payload.get("flux_final_modulation_weight_dtype", "auto")
+        float_group_overrides_raw = payload.get("float_group_overrides", {})
 
         if not config_path or not safetensors_path or not output_path:
             raise HTTPException(status_code=400, detail="Missing required paths")
@@ -123,9 +146,34 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 detail=f"Invalid float dtype selection: {value!r} (expected auto|F16|F32)",
             )
 
-        flux_txt_in_weight_dtype = _normalize_float_dtype_choice(flux_txt_in_weight_dtype_raw)
-        flux_out_proj_weight_dtype = _normalize_float_dtype_choice(flux_out_proj_weight_dtype_raw)
-        flux_final_modulation_weight_dtype = _normalize_float_dtype_choice(flux_final_modulation_weight_dtype_raw)
+        float_group_overrides: dict[str, str] = {}
+        if float_group_overrides_raw is None:
+            float_group_overrides = {}
+        elif isinstance(float_group_overrides_raw, dict):
+            for k, v in float_group_overrides_raw.items():
+                group_id = str(k or "").strip()
+                if not group_id:
+                    raise HTTPException(status_code=400, detail="float_group_overrides contains an empty group id")
+                float_group_overrides[group_id] = _normalize_float_dtype_choice(v)
+        else:
+            raise HTTPException(status_code=400, detail="float_group_overrides must be an object/dict when provided")
+
+        if any(v != "auto" for v in float_group_overrides.values()):
+            if profile_id is None:
+                raise HTTPException(status_code=400, detail="float_group_overrides requires profile_id")
+
+            from apps.backend.runtime.tools.gguf_converter_float_groups import float_groups_for_profile_id
+
+            allowed = {g.id for g in float_groups_for_profile_id(profile_id)}
+            for gid, choice in float_group_overrides.items():
+                if choice == "auto":
+                    continue
+                if gid not in allowed:
+                    allowed_msg = ", ".join(sorted(allowed)) if allowed else "(none)"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unknown float dtype group for profile {profile_id!r}: {gid!r} (allowed: {allowed_msg})",
+                    )
 
         tensor_type_overrides: list[str] = []
         if isinstance(overrides_raw, str):
@@ -171,9 +219,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     quantization=quant,
                     comfy_layout=comfy_layout,
                     tensor_type_overrides=tensor_type_overrides,
-                    flux_txt_in_weight_dtype=flux_txt_in_weight_dtype,
-                    flux_out_proj_weight_dtype=flux_out_proj_weight_dtype,
-                    flux_final_modulation_weight_dtype=flux_final_modulation_weight_dtype,
+                    float_group_overrides=float_group_overrides,
                 )
 
                 def progress_cb(prog):

@@ -12,12 +12,15 @@ without manual typing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ToolsTab` (component): Tools page SFC; owns GGUF converter form state and the file browser modal.
-- `GGUFConverterPreset` (interface): Vendored config preset entry returned by `/api/tools/gguf-converter/presets`.
-- `GGUFForm` (interface): GGUF converter form state (preset selection + paths + quantization + overrides + overwrite + Comfy layout toggle).
+- `FloatDtypeGroup` (interface): Float dtype override group returned by `/api/tools/gguf-converter/presets`.
+- `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + profile hints).
+- `GGUFConverterModelMetadata` (interface): Vendored model metadata entry returned by `/api/tools/gguf-converter/presets`.
+- `GGUFForm` (interface): GGUF converter form state (model metadata + component + quant/mixed + overrides + overwrite + Comfy layout toggle).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
-- `loadPresets` (function): Loads the vendored preset list for the model selector.
+- `formatComponentLabel` (function): Formats component options in the selector.
+- `loadModelMetadata` (function): Loads vendored model metadata + float groups for the selector.
 - `startConversion` (function): Starts a conversion job and begins polling.
 - `cancelConversion` (function): Requests cancellation of the current conversion job (cooperative).
 - `parseTensorTypeOverrides` (function): Parses textarea overrides into a normalized line list.
@@ -33,6 +36,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `openItem` (function): Opens a directory (or confirms selection for files).
 - `confirmSelection` (function): Applies the selected path to the active form field and closes the modal.
 - `formatSize` (function): Formats byte sizes for display.
+- `effectiveQuantization` (computed): Derived quantization name sent to the API (base type + Mixed toggle).
 - `outputFileName` (computed): Generated output filename `{base}-{quant}-Codex.gguf` derived from the safetensors path.
 - `outputFullPath` (computed): Output full path (folder + generated filename).
 -->
@@ -51,24 +55,24 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
 
           <div class="field">
-            <label class="label-muted">Model Preset (vendored Hugging Face)</label>
-            <select class="select-md" v-model="ggufForm.presetId" :disabled="isConverting || presetsLoading">
+            <label class="label-muted">Model Metadata (vendored Hugging Face)</label>
+            <select class="select-md" v-model="ggufForm.modelId" :disabled="isConverting || metadataLoading">
               <option value="">Custom / other config…</option>
-              <optgroup v-if="presetFlux.length" label="Flux (transformer)">
-                <option v-for="p in presetFlux" :key="p.id" :value="p.id">{{ p.label }}</option>
-              </optgroup>
-              <optgroup v-if="presetZImage.length" label="Z-Image (transformer)">
-                <option v-for="p in presetZImage" :key="p.id" :value="p.id">{{ p.label }}</option>
-              </optgroup>
-              <optgroup v-if="presetLLM.length" label="LLM (CausalLM)">
-                <option v-for="p in presetLLM" :key="p.id" :value="p.id">{{ p.label }}</option>
-              </optgroup>
+              <option v-for="m in modelMetadata" :key="m.id" :value="m.id">{{ m.label }}</option>
             </select>
             <p class="caption">
-              Select a vendored config to avoid hunting for <code>config.json</code>. Choose “Custom” to browse a local config.
+              Pick a vendored model to avoid hunting for <code>config.json</code>. Choose “Custom” to browse a local config.
             </p>
-            <p v-if="presetsLoading" class="caption">Loading vendored presets…</p>
-            <p v-if="presetsError" class="cdx-tools-error">{{ presetsError }}</p>
+            <p v-if="metadataLoading" class="caption">Loading vendored model metadata…</p>
+            <p v-if="metadataError" class="cdx-tools-error">{{ metadataError }}</p>
+          </div>
+
+          <div v-if="selectedModel" class="field">
+            <label class="label-muted">Component</label>
+            <select class="select-md" v-model="ggufForm.componentId" :disabled="isConverting">
+              <option v-for="c in selectedModel.components" :key="c.id" :value="c.id">{{ formatComponentLabel(c) }}</option>
+            </select>
+            <p class="caption">Select which component/config to use for conversion.</p>
           </div>
 
           <div class="field">
@@ -79,37 +83,37 @@ Symbols (top-level; keep in sync; no ghosts):
                 type="text"
                 v-model="ggufForm.configPath"
                 placeholder="Path to folder with config.json"
-                :disabled="isConverting || (!!selectedPreset && !ggufForm.overrideConfig)"
+                :disabled="isConverting || (!!selectedComponent && !ggufForm.overrideConfig)"
               />
               <button
                 class="btn-icon"
                 type="button"
                 @click="browseForConfig"
-                :disabled="isConverting || (!!selectedPreset && !ggufForm.overrideConfig)"
+                :disabled="isConverting || (!!selectedComponent && !ggufForm.overrideConfig)"
                 aria-label="Browse for config folder"
               >
                 …
               </button>
             </div>
-            <div v-if="selectedPreset" class="row-inline cdx-tools-actions">
+            <div v-if="selectedComponent" class="row-inline cdx-tools-actions">
               <button
                 :class="['btn', 'qs-toggle-btn', ggufForm.overrideConfig ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
                 type="button"
                 :aria-pressed="ggufForm.overrideConfig"
                 :disabled="isConverting"
-                title="Override the preset config folder with a custom path"
+                title="Override the selected config folder with a custom path"
                 @click="ggufForm.overrideConfig = !ggufForm.overrideConfig"
               >
                 Override Config
               </button>
             </div>
-            <p v-if="selectedPreset && !ggufForm.overrideConfig" class="caption">
-              Using vendored config: <code>{{ selectedPreset.label }}</code>
+            <p v-if="selectedComponent && !ggufForm.overrideConfig" class="caption">
+              Using vendored config: <code>{{ selectedModel?.label }}</code> / <code>{{ selectedComponent.label }}</code>
             </p>
             <p v-else class="caption">Folder containing config.json (e.g., transformer/, text_encoder/)</p>
           </div>
 
-          <div v-if="!selectedPreset" class="field">
+          <div v-if="!selectedModel" class="field">
             <label class="label-muted">Model Type</label>
             <select class="select-md" v-model="ggufForm.manualModelKind" :disabled="isConverting">
               <option value="auto">Auto-detect from config.json</option>
@@ -133,13 +137,12 @@ Symbols (top-level; keep in sync; no ghosts):
             <label class="label-muted">Quantization</label>
             <select class="select-md" v-model="ggufForm.quantization" :disabled="isConverting">
               <option value="F16">F16 - No quantization (full precision)</option>
+              <option value="F32">F32 - Full float32 (largest)</option>
               <option value="Q8_0">Q8_0 - 8-bit (max quality, larger)</option>
               <option value="Q6_K">Q6_K - 6-bit K-quant (high quality)</option>
-              <option value="Q5_K_M">Q5_K_M - 5-bit K-quant (mixed, recommended)</option>
               <option value="Q5_K">Q5_K - 5-bit (~35% size)</option>
               <option value="Q5_1">Q5_1 - 5-bit legacy</option>
               <option value="Q5_0">Q5_0 - 5-bit legacy</option>
-              <option value="Q4_K_M">Q4_K_M - 4-bit K-quant (mixed, safe default)</option>
               <option value="Q4_K">Q4_K - 4-bit (~25% size)</option>
               <option value="Q4_1">Q4_1 - 4-bit legacy</option>
               <option value="Q4_0">Q4_0 - 4-bit legacy</option>
@@ -147,6 +150,26 @@ Symbols (top-level; keep in sync; no ghosts):
               <option value="Q2_K">Q2_K - 2-bit K-quant (extreme)</option>
               <option value="IQ4_NL">IQ4_NL - 4-bit IQ (experimental)</option>
             </select>
+            <div class="row-inline cdx-tools-actions">
+              <button
+                :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="ggufForm.mixed"
+                :disabled="isConverting"
+                title="Enable mixed policy when available (e.g., Q5_K → Q5_K_M, Q4_K → Q4_K_M)"
+                @click="ggufForm.mixed = !ggufForm.mixed"
+              >
+                Mixed
+              </button>
+              <select v-if="ggufForm.mixed" class="select-md" v-model="ggufForm.mixedFloatDtype" :disabled="isConverting">
+                <option value="auto">Mixed float dtype: Auto</option>
+                <option value="F16">Mixed float dtype: F16</option>
+                <option value="F32">Mixed float dtype: F32</option>
+              </select>
+            </div>
+            <p class="caption">
+              Mixed enables mixed quant variants when available and can default FP16/FP32 float groups to the selected dtype (Advanced overrides still apply).
+            </p>
           </div>
 
 	          <div class="field">
@@ -165,37 +188,17 @@ Symbols (top-level; keep in sync; no ghosts):
                   <p class="caption">Applied to both source and GGUF tensor names. Last match wins.</p>
                 </div>
 
-                <div v-if="isFluxSelected" class="field">
-                  <label class="label-muted">Flux: txt_in.weight dtype</label>
-                  <select class="select-md" v-model="ggufForm.fluxTxtInWeightDtype" :disabled="isConverting || !ggufForm.comfyLayout">
-                    <option value="auto">Auto (policy default)</option>
-                    <option value="F16">F16 (smaller)</option>
-                    <option value="F32">F32 (larger, higher quality)</option>
-                  </select>
-                  <p class="caption">Only applies to Flux transformer when Comfy Layout is enabled and quantization is not F16/F32.</p>
-                </div>
-
-                <div v-if="isFluxSelected" class="field">
-                  <label class="label-muted">Flux: *out_layer.weight dtype (time/guidance/vector)</label>
-                  <select class="select-md" v-model="ggufForm.fluxOutProjWeightDtype" :disabled="isConverting || !ggufForm.comfyLayout">
+                <div v-for="g in floatGroups" :key="g.id" class="field">
+                  <label class="label-muted">{{ g.label }}</label>
+                  <select class="select-md" v-model="ggufForm.floatGroupOverrides[g.id]" :disabled="isConverting">
                     <option value="auto">Auto (policy default)</option>
                     <option value="F16">F16 (smaller)</option>
                     <option value="F32">F32 (larger, higher quality)</option>
                   </select>
                 </div>
-
-                <div v-if="isFluxSelected" class="field">
-                  <label class="label-muted">Flux: final_layer.adaLN_modulation.1.weight dtype</label>
-                  <select
-                    class="select-md"
-                    v-model="ggufForm.fluxFinalModulationWeightDtype"
-                    :disabled="isConverting || !ggufForm.comfyLayout"
-                  >
-                    <option value="auto">Auto (policy default)</option>
-                    <option value="F16">F16 (smaller)</option>
-                    <option value="F32">F32 (larger, higher quality)</option>
-                  </select>
-                </div>
+                <p v-if="floatGroups.length" class="caption">
+                  FP16/FP32 group overrides apply to destination tensor names for the selected converter profile.
+                </p>
               </div>
             </details>
           </div>
@@ -304,7 +307,13 @@ Symbols (top-level; keep in sync; no ghosts):
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import Modal from '../components/ui/Modal.vue'
 
-interface GGUFConverterPreset {
+interface FloatDtypeGroup {
+  id: string
+  label: string
+  patterns: string[]
+}
+
+interface GGUFConverterModelComponent {
   id: string
   label: string
   config_dir: string
@@ -314,20 +323,29 @@ interface GGUFConverterPreset {
   profile_id_native: string | null
 }
 
+interface GGUFConverterModelMetadata {
+  id: string
+  label: string
+  org: string
+  repo: string
+  components: GGUFConverterModelComponent[]
+}
+
 interface GGUFForm {
-  presetId: string
+  modelId: string
+  componentId: string
   overrideConfig: boolean
   configPath: string
   manualModelKind: 'auto' | 'flux_transformer' | 'zimage_transformer' | 'llm_causallm'
   safetensorsPath: string
   quantization: string
+  mixed: boolean
+  mixedFloatDtype: 'auto' | 'F16' | 'F32'
   outputDir: string
   tensorTypeOverrides: string
   overwrite: boolean
   comfyLayout: boolean
-  fluxTxtInWeightDtype: 'auto' | 'F16' | 'F32'
-  fluxOutProjWeightDtype: 'auto' | 'F16' | 'F32'
-  fluxFinalModulationWeightDtype: 'auto' | 'F16' | 'F32'
+  floatGroupOverrides: Record<string, 'auto' | 'F16' | 'F32'>
 }
 
 interface ConversionStatus {
@@ -350,24 +368,26 @@ interface BrowserData {
   items: BrowserItem[]
 }
 
-const presets = ref<GGUFConverterPreset[]>([])
-const presetsLoading = ref(false)
-const presetsError = ref<string | null>(null)
+const modelMetadata = ref<GGUFConverterModelMetadata[]>([])
+const floatGroupsByProfileId = ref<Record<string, FloatDtypeGroup[]>>({})
+const metadataLoading = ref(false)
+const metadataError = ref<string | null>(null)
 
 const ggufForm = ref<GGUFForm>({
-  presetId: '',
+  modelId: '',
+  componentId: '',
   overrideConfig: false,
   configPath: '',
   manualModelKind: 'auto',
   safetensorsPath: '',
-  quantization: 'Q5_K_M',
+  quantization: 'Q5_K',
+  mixed: true,
+  mixedFloatDtype: 'auto',
   outputDir: '',
   tensorTypeOverrides: '',
   overwrite: false,
   comfyLayout: true,
-  fluxTxtInWeightDtype: 'auto',
-  fluxOutProjWeightDtype: 'auto',
-  fluxFinalModulationWeightDtype: 'auto',
+  floatGroupOverrides: {},
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -381,16 +401,18 @@ const browserData = ref<BrowserData>({ path: '', exists: false, parent: '', item
 const browserMode = ref<'config' | 'safetensors' | 'output_dir'>('config')
 const selectedItem = ref<BrowserItem | null>(null)
 
-const selectedPreset = computed(() => presets.value.find((p) => p.id === ggufForm.value.presetId) ?? null)
-const presetFlux = computed(() => presets.value.filter((p) => p.kind === 'flux_transformer'))
-const presetZImage = computed(() => presets.value.filter((p) => p.kind === 'zimage_transformer'))
-const presetLLM = computed(() => presets.value.filter((p) => p.kind === 'llm_causallm'))
+const selectedModel = computed(() => modelMetadata.value.find((m) => m.id === ggufForm.value.modelId) ?? null)
+const selectedComponent = computed(() => {
+  const model = selectedModel.value
+  if (!model) return null
+  return model.components.find((c) => c.id === ggufForm.value.componentId) ?? null
+})
 
 const effectiveProfileId = computed(() => {
-  const preset = selectedPreset.value
-  if (preset) {
-    if (preset.profile_id) return preset.profile_id
-    return ggufForm.value.comfyLayout ? preset.profile_id_comfy : preset.profile_id_native
+  const component = selectedComponent.value
+  if (component) {
+    if (component.profile_id) return component.profile_id
+    return ggufForm.value.comfyLayout ? component.profile_id_comfy : component.profile_id_native
   }
 
   if (ggufForm.value.manualModelKind === 'flux_transformer') {
@@ -405,7 +427,25 @@ const effectiveProfileId = computed(() => {
   return null
 })
 
-const isFluxSelected = computed(() => (effectiveProfileId.value || '').startsWith('flux_transformer_'))
+const floatGroups = computed(() => {
+  const pid = effectiveProfileId.value
+  if (!pid) return [] as FloatDtypeGroup[]
+  return floatGroupsByProfileId.value[pid] || []
+})
+
+function formatComponentLabel(component: GGUFConverterModelComponent): string {
+  const kind = String(component.kind || '')
+  const base =
+    kind === 'flux_transformer'
+      ? 'Flux transformer'
+      : kind === 'zimage_transformer'
+        ? 'Z-Image transformer'
+        : kind === 'llm_causallm'
+          ? 'LLM (CausalLM)'
+          : kind || 'Component'
+  const suffix = component.label && component.label !== 'root' ? ` (${component.label})` : ''
+  return `${base}${suffix}`
+}
 
 const isConverting = computed(() => {
   if (!currentJobId.value) return false
@@ -470,9 +510,17 @@ function _deriveOutputStem(): string {
   return name
 }
 
+const effectiveQuantization = computed(() => {
+  const q = String(ggufForm.value.quantization || 'F16').trim() || 'F16'
+  if (!ggufForm.value.mixed) return q
+  if (q === 'Q5_K') return 'Q5_K_M'
+  if (q === 'Q4_K') return 'Q4_K_M'
+  return q
+})
+
 const outputFileName = computed(() => {
   const stem = _sanitizeOutputStem(_deriveOutputStem())
-  const quant = String(ggufForm.value.quantization || 'F16').trim() || 'F16'
+  const quant = String(effectiveQuantization.value || 'F16').trim() || 'F16'
   return `${stem}-${quant}-Codex.gguf`
 })
 
@@ -485,40 +533,53 @@ function parseTensorTypeOverrides(raw: string): string[] {
     .filter((line) => line.length > 0)
 }
 
-async function loadPresets() {
-  presetsLoading.value = true
+async function loadModelMetadata() {
+  metadataLoading.value = true
   try {
     const res = await fetch('/api/tools/gguf-converter/presets')
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       throw new Error((data as any)?.detail || `${res.status} ${res.statusText}`)
     }
-    const list = Array.isArray((data as any)?.presets) ? ((data as any).presets as GGUFConverterPreset[]) : []
-    presets.value = list
-    presetsError.value = null
+
+    const models = Array.isArray((data as any)?.models) ? ((data as any).models as GGUFConverterModelMetadata[]) : []
+    modelMetadata.value = models
+
+    const fg = (data as any)?.float_groups
+    floatGroupsByProfileId.value =
+      fg && typeof fg === 'object' && !Array.isArray(fg) ? (fg as Record<string, FloatDtypeGroup[]>) : {}
+
+    metadataError.value = null
   } catch (e: any) {
-    presets.value = []
-    presetsError.value = String(e?.message || e)
+    modelMetadata.value = []
+    floatGroupsByProfileId.value = {}
+    metadataError.value = String(e?.message || e)
   } finally {
-    presetsLoading.value = false
+    metadataLoading.value = false
   }
 }
 
 watch(
-  () => ggufForm.value.presetId,
+  () => ggufForm.value.modelId,
   () => {
-    if (ggufForm.value.presetId) {
-      ggufForm.value.overrideConfig = false
+    const model = selectedModel.value
+    if (!model) {
+      ggufForm.value.componentId = ''
+      return
+    }
+    ggufForm.value.overrideConfig = false
+    if (!model.components.find((c) => c.id === ggufForm.value.componentId)) {
+      ggufForm.value.componentId = model.components[0]?.id || ''
     }
   },
 )
 
 watch(
-  () => selectedPreset.value,
-  (preset) => {
-    if (!preset) return
+  () => selectedComponent.value,
+  (component) => {
+    if (!component) return
     if (!ggufForm.value.overrideConfig) {
-      ggufForm.value.configPath = preset.config_dir
+      ggufForm.value.configPath = component.config_dir
     }
   },
 )
@@ -527,8 +588,8 @@ watch(
   () => ggufForm.value.overrideConfig,
   (override) => {
     if (override) return
-    const preset = selectedPreset.value
-    if (preset) ggufForm.value.configPath = preset.config_dir
+    const component = selectedComponent.value
+    if (component) ggufForm.value.configPath = component.config_dir
   },
 )
 
@@ -541,16 +602,32 @@ async function startConversion() {
       output_path: outputFullPath.value,
       overwrite: ggufForm.value.overwrite,
       comfy_layout: ggufForm.value.comfyLayout,
-      quantization: ggufForm.value.quantization,
+      quantization: effectiveQuantization.value,
       tensor_type_overrides: tensorTypeOverrides,
-      flux_txt_in_weight_dtype: ggufForm.value.fluxTxtInWeightDtype,
-      flux_out_proj_weight_dtype: ggufForm.value.fluxOutProjWeightDtype,
-      flux_final_modulation_weight_dtype: ggufForm.value.fluxFinalModulationWeightDtype,
     }
 
     const profileId = effectiveProfileId.value
     if (profileId) {
       payload.profile_id = profileId
+    }
+
+    const floatGroupOverrides: Record<string, string> = {}
+    for (const group of floatGroups.value) {
+      let choice = ggufForm.value.floatGroupOverrides[group.id] || 'auto'
+      if (
+        choice === 'auto' &&
+        ggufForm.value.mixed &&
+        ggufForm.value.mixedFloatDtype &&
+        ggufForm.value.mixedFloatDtype !== 'auto'
+      ) {
+        choice = ggufForm.value.mixedFloatDtype
+      }
+      if (choice !== 'auto') {
+        floatGroupOverrides[group.id] = choice
+      }
+    }
+    if (Object.keys(floatGroupOverrides).length > 0) {
+      payload.float_group_overrides = floatGroupOverrides
     }
 
     const response = await fetch('/api/tools/convert-gguf', {
@@ -720,7 +797,7 @@ function formatSize(bytes: number): string {
 }
 
 onMounted(() => {
-  loadPresets()
+  loadModelMetadata()
 })
 
 onUnmounted(() => {

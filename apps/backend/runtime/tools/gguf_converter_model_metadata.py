@@ -6,13 +6,14 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Vendored “preset” descriptors for the GGUF converter UI.
-Scans the local Hugging Face mirror under `apps/backend/huggingface/**` and exposes a small, typed list of
-supported config directories (Flux/ZImage transformer configs + LLM CausalLM text encoders).
+Purpose: Vendored model metadata for the GGUF converter UI.
+Scans the local Hugging Face mirror under `apps/backend/huggingface/**` and exposes “model metadata” entries (org/repo)
+with supported conversion components (Flux/ZImage transformers, and LLM CausalLM text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `GGUFConverterPreset` (dataclass): UI preset entry (id/label/config dir + profile hints).
-- `list_vendored_gguf_converter_presets` (function): List supported presets from the vendored HF mirror.
+- `GGUFConverterModelComponent` (dataclass): Convertible component entry (config dir + profile hints).
+- `GGUFConverterModelMetadata` (dataclass): Model entry (org/repo + components).
+- `list_vendored_gguf_converter_model_metadata` (function): Lists supported model metadata from the vendored HF mirror.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from apps.backend.inventory.scanners.vendored_hf import iter_vendored_hf_repos
 
 
 @dataclass(frozen=True, slots=True)
-class GGUFConverterPreset:
+class GGUFConverterModelComponent:
     id: str
     label: str
     config_dir: str
@@ -35,6 +36,15 @@ class GGUFConverterPreset:
     profile_id: str | None = None
     profile_id_comfy: str | None = None
     profile_id_native: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GGUFConverterModelMetadata:
+    id: str
+    label: str
+    org: str
+    repo: str
+    components: tuple[GGUFConverterModelComponent, ...]
 
 
 def _iter_candidate_config_dirs(repo_dir: str) -> Iterable[tuple[str, str]]:
@@ -88,11 +98,12 @@ def _classify_config(cfg: dict[str, Any]) -> tuple[str, dict[str, str]]:
     return ("unknown", {})
 
 
-def list_vendored_gguf_converter_presets(*, codex_root: Path) -> list[GGUFConverterPreset]:
+def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGUFConverterModelMetadata]:
     vendored_root = codex_root / "apps" / "backend" / "huggingface"
-    presets: list[GGUFConverterPreset] = []
+    models: list[GGUFConverterModelMetadata] = []
 
     for org, repo, repo_dir in iter_vendored_hf_repos(str(vendored_root)):
+        components: list[GGUFConverterModelComponent] = []
         for subdir, config_dir in _iter_candidate_config_dirs(repo_dir):
             cfg_path = os.path.join(config_dir, "config.json")
             if not os.path.isfile(cfg_path):
@@ -109,12 +120,12 @@ def list_vendored_gguf_converter_presets(*, codex_root: Path) -> list[GGUFConver
             if kind == "unknown":
                 continue
 
-            preset_id = f"{org}/{repo}" + (f"/{subdir}" if subdir else "")
-            label = f"{org}/{repo}" + (f" ({subdir})" if subdir else "")
-            presets.append(
-                GGUFConverterPreset(
-                    id=preset_id,
-                    label=label,
+            component_id = subdir or "root"
+            component_label = subdir or "root"
+            components.append(
+                GGUFConverterModelComponent(
+                    id=component_id,
+                    label=component_label,
                     config_dir=str(Path(config_dir).resolve()),
                     kind=kind,
                     profile_id=profile_hints.get("profile_id"),
@@ -123,9 +134,28 @@ def list_vendored_gguf_converter_presets(*, codex_root: Path) -> list[GGUFConver
                 )
             )
 
-    presets.sort(key=lambda p: p.label.lower())
-    return presets
+        if not components:
+            continue
+
+        kind_priority = {"flux_transformer": 0, "zimage_transformer": 0, "llm_causallm": 1}
+        components.sort(key=lambda c: (kind_priority.get(c.kind, 9), c.label.lower()))
+        model_id = f"{org}/{repo}"
+        models.append(
+            GGUFConverterModelMetadata(
+                id=model_id,
+                label=model_id,
+                org=org,
+                repo=repo,
+                components=tuple(components),
+            )
+        )
+
+    models.sort(key=lambda m: m.label.lower())
+    return models
 
 
-__all__ = ["GGUFConverterPreset", "list_vendored_gguf_converter_presets"]
-
+__all__ = [
+    "GGUFConverterModelComponent",
+    "GGUFConverterModelMetadata",
+    "list_vendored_gguf_converter_model_metadata",
+]

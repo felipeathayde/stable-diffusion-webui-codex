@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-15
+Last Review: 2026-01-16
 Status: Active
 
 ## Purpose
@@ -31,4 +31,4 @@ Status: Active
 - 2026-01-14: `ToolsTab.vue` GGUF converter adds a “Comfy Layout” toggle to control Flux/ZImage Diffusers→Comfy key mapping.
 - 2026-01-14: `ToolsTab.vue` moved the “Comfy Layout” toggle next to “Overwrite” (Output section) for visibility.
 - 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).
-- 2026-01-15: `ToolsTab.vue` now supports a vendored model/config preset selector (lists vendored HF configs) and Flux FP16/FP32 knobs in Advanced.
+- 2026-01-16: `ToolsTab.vue` now uses vendored model metadata (model + component) and exposes a Mixed toggle plus FP16/FP32 float group overrides in Advanced.

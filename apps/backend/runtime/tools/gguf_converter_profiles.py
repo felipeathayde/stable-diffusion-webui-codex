@@ -13,6 +13,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_is_zimage` (function): Detect whether a config.json describes a ZImage transformer.
 - `_is_wan22` (function): Detect whether a config.json describes a WAN22 transformer.
 - `_build_llama_mapping` (function): Build a Llama HF→GGUF key mapping from the model config.
+- `_plan_flux` (function): Delegates Flux tensor planning to the tensor planner (supports key remaps and QKV packing).
+- `_plan_zimage` (function): Delegates ZImage tensor planning to the tensor planner (supports key remaps and QKV packing).
+- `_plan_wan22` (function): Delegates WAN22 tensor planning to the tensor planner (Diffusers → Comfy key mapping).
 - `_COND_QUANTIZED` (constant): Condition helper matching any quantized preset (non-F16/F32).
 - `_COND_FLUX_MIXED` (constant): Condition helper matching Flux mixed presets (`Q5_K_M`/`Q4_K_M`).
 - `_COND_WAN22_MIXED` (constant): Condition helper matching WAN22 mixed presets (`Q5_K_M`/`Q4_K_M`).

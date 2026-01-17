@@ -16,12 +16,17 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_supported_inference_dtypes` (function): Returns supported inference dtypes for a given model family.
 - `_prediction_type_value` (function): Converts a `PredictionKind` into the string value expected by configs/pipelines.
 - `_load_state_dict` (function): Loads a state dict from disk (handles supported formats) for downstream parsing.
+- `_read_json` (function): Reads a required JSON metadata file with explicit errors (used by vendored-HF signature builders).
+- `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (no state-dict detector).
+- `_flux_signature_from_vendored_hf` (function): Builds a Flux `ModelSignature` from vendored HF metadata (no state-dict detector).
 - `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
 - `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
 - `_load_component_config` (function): Loads a component config dict from a diffusers component directory.
 - `_resolve_vae_class` (function): Picks the VAE class/loader path based on model signature and layout (`diffusers` vs legacy layouts).
 - `_maybe_convert_sdxl_vae_state_dict` (function): Applies SDXL-specific VAE key conversions when the checkpoint layout requires it.
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
+- `_SAFETENSORS_DTYPE_LABEL_TO_TORCH` (constant): Maps safetensors dtype labels to torch dtypes for default precision selection.
+- `_maybe_default_dtype_from_weights` (function): Picks a default dtype from safetensors header dtype hints when no dtype was forced.
 - `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory.
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
 - `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),

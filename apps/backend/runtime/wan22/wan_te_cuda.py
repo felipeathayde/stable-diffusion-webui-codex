@@ -10,6 +10,7 @@ Purpose: WAN T5 CUDA FP8 extension bridge (optional runtime path).
 Loads the `wan_te_cuda` extension and exposes minimal FP8 ops used by WAN text-encoder code paths.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_try_load_ext` (function): Best-effort extension loader (prebuilt, in-place build, or optional JIT build).
 - `available` (function): Returns True when the extension is available (may attempt a JIT build).
 - `last_error` (function): Returns the last extension load/build error message, when present.
 - `Fp8Weight` (class): Container describing an FP8 packed weight tensor and scale.

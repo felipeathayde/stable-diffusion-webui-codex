@@ -13,6 +13,8 @@ normalizes quantization metadata by comparing detector hints with parser-detecte
 Symbols (top-level; keep in sync; no ghosts):
 - `_CORE_CONFIG_PRESETS` (constant): Default core config presets per `ModelFamily` for compatibility loaders (UNet-like models).
 - `_FALLBACK_REPOS` (constant): Fallback diffusers repo ids used when `ModelSignature.repo_hint` is missing.
+- `_WAN22_REPO_BY_MODEL_TYPE` (constant): WAN22 model-type string → diffusers repo id mapping for vendored HF assets.
+- `_resolve_wan22_repo_id` (function): Resolves a concrete WAN22 diffusers repo id from the signature extras (model_type).
 - `register_text_encoder` (function): Records a logical text encoder alias → component name mapping in `ParserContext.metadata`.
 - `build_estimated_config` (function): Builds the `CodexEstimatedConfig` returned by `parse_state_dict` (components + repo id + extras + quantization).
 """

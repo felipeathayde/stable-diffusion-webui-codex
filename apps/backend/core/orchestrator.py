@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Backend inference orchestrator (engine routing + caching + event streaming).
 Resolves engines from the registry, loads/unloads per request, fingerprints load-affecting options, purges VRAM on model swaps, and yields
 typed progress events back to API callers.
+On engine load/execution failures, performs a best-effort purge to release VRAM/RAM so the backend can recover without restart.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InferenceOrchestrator` (class): Routes typed requests to engines; caches loaded engines with option fingerprinting, reloads when overrides
@@ -112,15 +113,48 @@ class InferenceOrchestrator:
         }
         return InferenceOrchestrator._freeze_engine_options(relevant)
 
-    def _purge_vram(self, *, reason: str) -> None:
+    @staticmethod
+    def _scrub_exception_tracebacks(exc: BaseException) -> None:
+        """Best-effort traceback scrub to avoid holding large tensors in exception frames.
+
+        Python tracebacks keep references to stack frames (and thus locals). On load/inference
+        failures this can pin large CPU tensors/state dicts in memory longer than intended.
+        Scrubbing the tracebacks allows GC to reclaim memory after we unload models.
+        """
+
+        stack: list[BaseException] = [exc]
+        visited: set[int] = set()
+        while stack:
+            current = stack.pop()
+            ident = id(current)
+            if ident in visited:
+                continue
+            visited.add(ident)
+            with contextlib.suppress(Exception):
+                current.__traceback__ = None
+            nested = []
+            with contextlib.suppress(Exception):
+                if current.__cause__ is not None:
+                    nested.append(current.__cause__)
+            with contextlib.suppress(Exception):
+                if current.__context__ is not None:
+                    nested.append(current.__context__)
+            stack.extend(nested)
+
+    def _purge_vram(self, *, reason: str, clear_engine_cache: bool = False) -> None:
         for cached_engine in list(self._engine_cache.values()):
-            if not getattr(cached_engine, "_is_loaded", False):
+            if not clear_engine_cache and not getattr(cached_engine, "_is_loaded", False):
                 continue
             try:
                 cached_engine.unload()
                 cached_engine.mark_unloaded()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to unload cached engine during VRAM purge: %s", exc, exc_info=True)
+
+        if clear_engine_cache:
+            self._engine_cache.clear()
+            self._engine_options_fingerprint.clear()
+            self._last_generation_signature = None
 
         self._engine_options_fingerprint.clear()
 
@@ -134,6 +168,14 @@ class InferenceOrchestrator:
 
         try:
             gc.collect()
+        except Exception:  # pragma: no cover
+            pass
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
         except Exception:  # pragma: no cover
             pass
 
@@ -241,6 +283,12 @@ class InferenceOrchestrator:
                     except Exception:
                         self._engine_options_fingerprint.pop(normalized_key, None)
                 except Exception as exc:  # noqa: BLE001
+                    logger.exception("Engine '%s' failed during load (model=%s).", engine_key, model_ref)
+                    self._scrub_exception_tracebacks(exc)
+                    with contextlib.suppress(Exception):
+                        engine.unload()
+                        engine.mark_unloaded()
+                    self._purge_vram(reason="engine load failure", clear_engine_cache=True)
                     raise EngineLoadError(
                         f"Failed to load engine '{engine_key}' for model '{model_ref}': {exc}"
                     ) from exc
@@ -257,6 +305,11 @@ class InferenceOrchestrator:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("Engine '%s' failed during '%s'", engine_key, task.value)
+            self._scrub_exception_tracebacks(exc)
+            with contextlib.suppress(Exception):
+                engine.unload()
+                engine.mark_unloaded()
+            self._purge_vram(reason="engine execution failure", clear_engine_cache=True)
             raise EngineExecutionError(str(exc)) from exc
         finally:
             elapsed = time.perf_counter() - start

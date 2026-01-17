@@ -11,6 +11,7 @@ Defines strict roots for WAN22 GGUF stage weights (paths.json `wan22_ckpt`) and 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `infer_wan22_stage` (function): Heuristically classify a GGUF filename as `high`/`low`/`unknown`.
+- `_ggufs_in_dir` (function): Lists `.gguf` files in a directory (non-recursive, stable order).
 - `iter_wan22_gguf_files` (function): Yields `.gguf` stage file paths under resolved roots (non-recursive, stable order).
 """
 

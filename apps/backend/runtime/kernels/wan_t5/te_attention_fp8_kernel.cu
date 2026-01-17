@@ -1,3 +1,20 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Experimental WAN T5 CUDA kernels for streaming softmax attention without materializing full logits.
+Provides a launcher used by the WAN TE FP8 path to compute attention in chunks to reduce peak memory usage.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `my_max` (function): Simple device helper for maximum (used by kernel scaffolding).
+- `attn_stream_rows_kernel` (function): CUDA kernel scaffold for streaming attention per query row chunk.
+- `attn_stream_rows_launcher` (function): ATen-based launcher that performs numerically stable streaming attention over K tiles.
+*/
+
 // Experimental CUDA kernel: streaming softmax attention per query row chunk.
 // This avoids materializing full [Lq,Lk] logits. Two-pass algorithm per row:
 // 1) find max over K tiles; 2) sum exp((q·k)/sqrt(D) - max); 3) compute output as sum(exp(...) * v) / sumexp.

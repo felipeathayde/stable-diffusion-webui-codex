@@ -11,6 +11,8 @@ Centralizes hidden/context/latent/layer inference so model registry detectors an
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageDims` (dataclass): Inferred core dimensions for ZImage transformer checkpoints.
+- `_shape_of_value` (function): Best-effort helper that returns a tuple shape for a value exposing `.shape`.
+- `_max_index` (function): Extracts the max numeric index for a key prefix (used to infer layer counts).
 - `infer_zimage_dims` (function): Infers `ZImageDims` from key names + a shape getter (prefix-agnostic).
 - `infer_zimage_dims_from_state_dict` (function): Convenience helper that infers dims from a state dict with common prefixes.
 """

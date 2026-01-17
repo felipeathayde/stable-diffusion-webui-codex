@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
 - `_default_hf_root` (function): Returns the default Hugging Face vendor cache root under `CODEX_ROOT` (when used).
 - `_sha256` (function): Computes sha256 digest for a file path.
+- `_detect_safetensors_primary_dtype` (function): Best-effort safetensors dtype hint reader (header-only parse; used for defaults/telemetry).
 - `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
 - `_load_hash_cache` (function): Loads `.hashes.json` cache from disk.
 - `_save_hash_cache` (function): Writes `.hashes.json` cache to disk.

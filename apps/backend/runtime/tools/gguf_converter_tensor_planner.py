@@ -12,6 +12,12 @@ Plans tensor name remaps, quantization types, and storage byte shapes without lo
 Symbols (top-level; keep in sync; no ghosts):
 - `TensorPlan` (dataclass): Planned tensor conversion entry (name/shape/type + storage strategy).
 - `plan_tensors` (function): Plan per-tensor conversion settings for a safetensors source.
+- `_shape_of` (function): Shape getter wrapper with caching for safetensors slices.
+- `_select_ggml_type` (function): Selects an effective GGML type for a tensor (requested + per-name override rules).
+- `_build_plan` (function): Builds one `TensorPlan` entry including stored byte-shape/dtype for the selected GGML type.
+- `_strip_prefixes` (function): Removes known wrapper prefixes from a tensor key until stable.
+- `_map_wan22_key_to_comfy` (function): Maps WAN22 Diffusers key layout to Comfy/WAN export keys used by Codex runtimes.
+- `_extract_block_indices` (function): Extracts stable block indices from keys (used by planners for deterministic ordering).
 - `is_zimage_transformer_config` (function): Returns True when a config.json represents a Z-Image transformer export.
 - `normalize_zimage_transformer_metadata_config` (function): Adapts Z-Image transformer config fields to metadata helper inputs.
 - `plan_zimage_transformer_tensors` (function): Plan tensor conversion for Diffusers-style Z-Image transformer weights (includes QKV packing).

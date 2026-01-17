@@ -1,3 +1,18 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
+Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
+*/
+
 import { describe, expect, it } from 'vitest'
 
 import { buildWanImg2VidPayload, buildWanTxt2VidPayload, buildWanVid2VidPayload } from './payloads_video'

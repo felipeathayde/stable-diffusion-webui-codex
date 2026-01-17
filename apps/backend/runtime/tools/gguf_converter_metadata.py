@@ -10,6 +10,7 @@ Purpose: GGUF metadata injection helpers for the converter.
 Adds provenance/source metadata and minimal architecture keys required by loader tooling.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_is_hf_repo_id` (function): Returns True when a string looks like a Hugging Face repo id (`org/repo`).
 - `add_basic_metadata` (function): Adds standard provenance/license metadata keys into the output GGUF.
 """
 

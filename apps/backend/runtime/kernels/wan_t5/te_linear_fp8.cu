@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: WAN T5 CUDA extension op implementing a tiled linear forward for FP8 packed weights (uint8 + scale).
+Dequantizes Cout tiles on-demand to the activation dtype (fp16/bf16) and uses ATen matmul to avoid materializing the full weight matrix.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `dequant_tile` (function): Dequantizes a `[Cout_tile, Cin]` slice of packed weights into compute dtype on the target device.
+- `te_linear_fp8_forward` (function): Linear forward for `[B,L,Cin]` activations against packed FP8 weights (optional bias).
+*/
+
 // Linear FP8 (uint8 + per-output scale) → compute in FP16/BF16 without materializing full W.
 // Strategy: tile Cout dimension, dequantize one tile [Cout_t, Cin] to compute dtype, GEMM x@[W_t]^T, accumulate into y[:, :, Cout_tile].
 

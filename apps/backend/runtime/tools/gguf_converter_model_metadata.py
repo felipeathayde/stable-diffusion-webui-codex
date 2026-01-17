@@ -13,6 +13,9 @@ with supported conversion components (Flux/ZImage/WAN22 denoisers).
 Symbols (top-level; keep in sync; no ghosts):
 - `GGUFConverterModelComponent` (dataclass): Convertible component entry (config dir + profile hints).
 - `GGUFConverterModelMetadata` (dataclass): Model entry (org/repo + components).
+- `_iter_candidate_config_dirs` (function): Iterates candidate config directories within a repo (root + subdirs).
+- `_has_weights_index` (function): Returns True when a config dir contains weights files or a sharded weights index.
+- `_classify_config` (function): Classifies a diffusers config.json into a converter component kind + profile hints.
 - `list_vendored_gguf_converter_model_metadata` (function): Lists supported model metadata from the vendored HF mirror.
 """
 

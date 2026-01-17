@@ -11,6 +11,7 @@ Defines text encoder locations from per-family `apps/paths.json` keys (`*_tenc`)
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TEXT_ENCODER_EXTS` (constant): Recognized text encoder weight file extensions.
+- `_files_in_dir` (function): Lists weight files in a directory (non-recursive, stable order).
 - `list_text_encoder_roots` (function): Resolves text encoder search roots from `apps/paths.json` per-family keys (`*_tenc`).
 - `iter_text_encoder_files` (function): Yields weight-file paths under the resolved roots (non-recursive, stable order).
 """

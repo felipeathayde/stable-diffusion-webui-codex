@@ -11,6 +11,19 @@ Provides lightweight, JSON-serializable metadata extraction for GGUF and SafeTen
 so the Web UI can display provenance (e.g., repo commit/url) and basic file info.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_read_exact` (function): Reads exactly N bytes from a file handle (raises EOFError on short reads).
+- `_read_u32` (function): Reads a little-endian `uint32`.
+- `_read_i32` (function): Reads a little-endian `int32`.
+- `_read_u64` (function): Reads a little-endian `uint64`.
+- `_read_i64` (function): Reads a little-endian `int64`.
+- `_read_f32` (function): Reads a little-endian `float32`.
+- `_read_f64` (function): Reads a little-endian `float64`.
+- `_read_string` (function): Reads a GGUF-style length-prefixed UTF-8 string.
+- `_read_gguf_value` (function): Reads one GGUF KV value given its GGUF type id.
+- `_read_gguf_kv` (function): Reads a GGUF header KV table into a dict (header-only).
+- `_read_safetensors_header` (function): Reads and parses the SafeTensors JSON header (no tensor payload reads).
+- `_nest_dotted_keys` (function): Converts a flat mapping with dotted keys into a nested dictionary.
+- `FileMetadataResult` (dataclass): JSON-friendly file metadata result (path, kind, flat, nested, summary).
 - `read_file_metadata` (function): Read metadata from a supported weights file (GGUF/SafeTensors), returning both flat and nested views.
 """
 

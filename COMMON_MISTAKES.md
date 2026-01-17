@@ -1,3 +1,7 @@
+**Wrong command:** `pytest -q tests/backend/test_orchestrator_purges_vram_on_model_switch.py tests/backend/test_orchestrator_purges_memory_on_failure.py`
+**Cause + fix:** `PyTest collection fails because the repo is not installed as a package; tests import via the top-level 'apps' module, so PYTHONPATH must include the repo root. Re-run with PYTHONPATH=$PWD (and CODEX_ROOT=$PWD when tests need repo-root resolution).`
+**Correct command:** `PYTHONPATH=$PWD pytest -q tests/backend/test_orchestrator_purges_vram_on_model_switch.py tests/backend/test_orchestrator_purges_memory_on_failure.py`
+
 **Wrong command:** `~/.venv/bin/python -m pytest -q tests/backend/test_wan22_sampler_timestep_multiplier.py tests/backend/test_wan22_gguf_run_config_overrides.py`
 **Cause + fix:** `Some backend modules require CODEX_ROOT (and PYTHONPATH) to resolve repo paths; running pytest without these env vars causes collection to fail. Re-run with CODEX_ROOT=$PWD PYTHONPATH=$PWD.`
 **Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q tests/backend/test_wan22_sampler_timestep_multiplier.py tests/backend/test_wan22_gguf_run_config_overrides.py`

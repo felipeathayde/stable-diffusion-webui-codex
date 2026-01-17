@@ -12,6 +12,10 @@ Resolves a `DiffusionModelBundle`, instantiates the matching engine via the regi
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadOptions` (dataclass): Optional engine load overrides (device/dtype/attention backend/accelerator/VAE override).
+- `_ensure_registry_ready` (function): Ensures the engine registry has the default engines registered (idempotent).
+- `_instantiate_engine` (function): Creates an engine instance for a resolved diffusion bundle (family → engine key).
+- `_options_to_kwargs` (function): Converts `EngineLoadOptions` into `engine.load(...)` keyword arguments.
+- `_apply_runtime_options` (function): Applies best-effort runtime options (attention backend, accelerator) to diffusers-backed engines.
 - `load_engine` (function): Loads and initializes a diffusion engine for direct use (best-effort cleanup on failures).
 """
 

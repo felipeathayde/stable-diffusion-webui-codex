@@ -79,6 +79,10 @@ If a behavior change will surprise a user, you write the surprise out of the sys
 Before you build, you prove what already exists.
 You search the house first.
 
+Before you do anything else, you read `SUBSYSTEM-MAP.md`.
+You use it to find the real seam before you touch a file.
+If you don't know what to change, you don't guess — you search the map first.
+
 Run `rg -n <keyword>` at the root.
 Open `.sangoi/*`, and read like you mean it.
 

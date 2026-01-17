@@ -39,7 +39,7 @@ from apps.backend.runtime.model_registry.specs import (
     VAESignature,
 )
 from apps.backend.quantization.tensor import CodexParameter
-from apps.backend.runtime.zimage.inference import infer_zimage_dims
+from apps.backend.runtime.families.zimage.inference import infer_zimage_dims
 
 
 # Core keys for Z Image Turbo (NextDiT/Lumina2 format)

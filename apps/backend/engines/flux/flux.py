@@ -92,7 +92,7 @@ class Flux(CodexDiffusionEngine):
 
         # Note: Streaming is handled in assemble_flux_runtime() via _maybe_enable_streaming_core
         # Check if streaming was enabled and store controller reference
-        from apps.backend.runtime.flux.streaming import StreamedFluxCore
+        from apps.backend.runtime.families.flux.streaming import StreamedFluxCore
         core_model = getattr(runtime.denoiser.model, "diffusion_model", runtime.denoiser.model)
         if isinstance(core_model, StreamedFluxCore):
             self._streaming_controller = core_model.controller

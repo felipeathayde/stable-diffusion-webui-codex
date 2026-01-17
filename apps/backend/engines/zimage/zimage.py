@@ -34,7 +34,7 @@ from apps.backend.runtime.memory.smart_offload import (
 )
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.timeline import timeline_node
-from apps.backend.runtime.zimage.debug import env_flag, env_int, truncate_text
+from apps.backend.runtime.families.zimage.debug import env_flag, env_int, truncate_text
 
 from .factory import CodexZImageFactory
 from .spec import ZIMAGE_SPEC, ZImageEngineRuntime

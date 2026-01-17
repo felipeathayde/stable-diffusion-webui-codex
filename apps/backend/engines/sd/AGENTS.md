@@ -9,7 +9,7 @@ Status: Active
 - Stable Diffusion engine implementations (txt2img/img2img) leveraging the SD runtime components.
 
 ## Notes
-- Keep SD engine logic aligned with runtime helpers under `runtime/sd/`.
+- Keep SD engine logic aligned with runtime helpers under `runtime/families/sd/`.
 - Shared assembly helpers live in `spec.py`; SD-family engines assemble runtimes via `CodexSDFamilyFactory` (`apps/backend/engines/sd/factory.py`) which wraps `assemble_engine_runtime`.
 - SD15 and SD20 share implementation via `CodexSDClassicEngineBase` (`apps/backend/engines/sd/classic_base.py`) to avoid duplicated TE/VAE helpers.
 - `CodexObjects` stores the sampling core under `denoiser`; SD-family engines still assemble a true UNet denoiser as `SDEngineRuntime.unet`.

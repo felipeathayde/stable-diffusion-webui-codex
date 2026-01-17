@@ -8,7 +8,7 @@ Status: Active
 - Flux.1 family engines (Flux, Chroma, Kontext) leveraging the Flux runtime.
 
 ## Notes
-- Ensure scheduler and runtime dependencies stay in sync with `apps/backend/runtime/flux/`.
+- Ensure scheduler and runtime dependencies stay in sync with `apps/backend/runtime/families/flux/`.
 - Shared assembly helpers live in `spec.py`; Flux-family engines assemble runtimes via `CodexFluxFamilyFactory` (`apps/backend/engines/flux/factory.py`) which wraps `assemble_flux_runtime`.
 - `assemble_flux_runtime` now accepts `engine_options` and can wrap the Flux transformer core in a `StreamedFluxCore` when `StreamingConfig` (built from engine options) decides streaming should be enabled based on VRAM state.
 - Streaming is currently gated to the Flux.1 engine (`spec.name == "flux1"`) and uses devices from the memory manager (`get_torch_device` / `core_offload_device`); when disabled, the runtime is identical to the previous non-streaming path.

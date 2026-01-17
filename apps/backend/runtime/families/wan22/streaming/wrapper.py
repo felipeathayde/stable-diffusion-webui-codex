@@ -27,7 +27,7 @@ from .specs import WanExecutionPlan, build_execution_plan
 from .controller import WanCoreController
 
 if TYPE_CHECKING:
-    from apps.backend.runtime.wan22.model import WanTransformer2DModel
+    from apps.backend.runtime.families.wan22.model import WanTransformer2DModel
 
 logger = logging.getLogger("backend.runtime.wan22.streaming.wrapper")
 

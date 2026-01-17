@@ -85,7 +85,7 @@ from apps.backend.runtime.models.state_dict import load_state_dict, transformers
 from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.checkpoint_io import load_torch_file, read_arbitrary_config
 from apps.backend.runtime.state_dict_tools import beautiful_print_gguf_state_dict_statics
-from apps.backend.runtime.wan22.vae import AutoencoderKLWan
+from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
 from apps.backend.runtime.models.registry import _detect_safetensors_primary_dtype
 
 LOGGER = logging.getLogger(__name__)
@@ -1293,19 +1293,19 @@ def _load_huggingface_component(
                 return _CodexUNet.from_config(cfg)
 
         elif cls_name == "FluxTransformer2DModel":
-            from apps.backend.runtime.flux.flux import FluxTransformer2DModel
+            from apps.backend.runtime.families.flux.flux import FluxTransformer2DModel
 
             def model_ctor(cfg: Mapping[str, Any]) -> Any:
                 return FluxTransformer2DModel(**dict(cfg))
 
         elif cls_name == "ChromaTransformer2DModel":
-            from apps.backend.runtime.chroma.chroma import ChromaTransformer2DModel
+            from apps.backend.runtime.families.chroma.chroma import ChromaTransformer2DModel
 
             def model_ctor(cfg: Mapping[str, Any]) -> Any:
                 return ChromaTransformer2DModel(**dict(cfg))
 
         elif cls_name == "ZImageTransformer2DModel":
-            from apps.backend.runtime.zimage.model import ZImageTransformer2DModel
+            from apps.backend.runtime.families.zimage.model import ZImageTransformer2DModel
             # Filter out HuggingFace metadata keys (starting with _)
 
             def model_ctor(cfg: Mapping[str, Any]) -> Any:
@@ -1313,7 +1313,7 @@ def _load_huggingface_component(
                 return ZImageTransformer2DModel(**filtered)
 
         else:
-            from apps.backend.runtime.sd.mmditx import SD3Transformer2DModel
+            from apps.backend.runtime.families.sd.mmditx import SD3Transformer2DModel
 
             def model_ctor(cfg: Mapping[str, Any]) -> Any:
                 return SD3Transformer2DModel(**dict(cfg))

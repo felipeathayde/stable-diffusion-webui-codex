@@ -28,7 +28,7 @@ from torch import nn
 from .specs import BlockInfo, BlockType, ExecutionPlan, Segment, calculate_module_bytes
 
 if TYPE_CHECKING:
-    from apps.backend.runtime.flux.model import FluxTransformer2DModel
+    from apps.backend.runtime.families.flux.model import FluxTransformer2DModel
 
 logger = logging.getLogger("backend.runtime.flux.streaming.tracer")
 

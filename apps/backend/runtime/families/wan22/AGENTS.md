@@ -1,6 +1,6 @@
 <!-- tags: backend, runtime, wan22, gguf, streaming, transformer -->
 
-# apps/backend/runtime/wan22 Overview
+# apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
 Last Review: 2026-01-08
@@ -11,7 +11,7 @@ Status: Active
 - Native nn.Module implementation of the WAN 2.2 transformer (`WanTransformer2DModel`) and a flow-matching sampler for video latents, preparados para uso por um runtime/spec Codex.
 
 ## Key files
-- `wan22.py`: facade/entrypoint importado pelos engines WAN22; re-exporta `RunConfig`/`StageConfig` e `run_*`/`stream_*` do runtime GGUF (mantém path estável para callers).
+- `wan22.py`: facade/entrypoint importado pelos engines WAN22; re-exporta `RunConfig`/`StageConfig` e `run_*`/`stream_*` do runtime GGUF.
 - `config.py`: dataclasses/config do runtime GGUF (`RunConfig`, `StageConfig`) + parsing helpers (dtype/device).
 - `run.py`: entrypoints `run_txt2vid`/`run_img2vid` + versões streaming; orquestra TE, sampling por stage e VAE IO.
 - `sampling.py`: geometria + scheduler + loop de sampling por stage (`sample_stage_latents*`) e adaptação de shape/I2V channels.

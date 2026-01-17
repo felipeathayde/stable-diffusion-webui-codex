@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from apps.backend.runtime.flux.config import FluxPositionalConfig
+from apps.backend.runtime.families.flux.config import FluxPositionalConfig
 
 
 @dataclass(frozen=True, slots=True)

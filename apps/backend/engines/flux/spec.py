@@ -28,8 +28,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
-from apps.backend.runtime.flux.model import FluxTransformer2DModel
-from apps.backend.runtime.flux.streaming import (
+from apps.backend.runtime.families.flux.model import FluxTransformer2DModel
+from apps.backend.runtime.families.flux.streaming import (
     StreamingConfig,
     StreamedFluxCore,
     StreamingPolicy,

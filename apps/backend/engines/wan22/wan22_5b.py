@@ -11,10 +11,8 @@ Implements txt2vid/img2vid/vid2vid by loading WAN components (pipeline, VAE, tex
 use-cases, with strict asset resolution and stage overrides via request extras.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_coerce_int` (function): Best-effort coercion of optional values to `int` (returns `None` on failure).
-- `_coerce_float` (function): Best-effort coercion of optional values to `float` (returns `None` on failure).
-- `_build_wan22_gguf_run_config` (function): Maps a request + extras into a GGUF runtime `RunConfig` (resolves assets from sha selection,
-  applies high/low stage overrides, and validates required metadata/tokenizer dirs).
+- `_is_diffusers_dir` (function): Heuristic check for a Diffusers-style WAN weights directory (config/model_index presence).
+- `_looks_like_wan_diffusers_weights_dir` (function): Heuristic check for WAN Diffusers weights (safetensors/bin shards under transformer/vae).
 - `Wan225BEngine` (class): `BaseVideoEngine` implementation for WAN22 5B; loads vendor HF metadata, builds/loads components, and runs
   txt2vid/img2vid/vid2vid via progress-streamed use-cases (contains nested helper logic for diffusers/GGUF mode selection).
 """
@@ -22,10 +20,10 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
-from apps.backend.core.requests import InferenceEvent, Txt2VidRequest, Img2VidRequest, Vid2VidRequest, ProgressEvent, ResultEvent
+from apps.backend.core.requests import Img2VidRequest, InferenceEvent, Txt2VidRequest, Vid2VidRequest
 from apps.backend.engines.common.base_video import BaseVideoEngine
 from apps.backend.use_cases.txt2vid import run_txt2vid as _run_t2v
 from apps.backend.use_cases.img2vid import run_img2vid as _run_i2v
@@ -34,228 +32,47 @@ from apps.backend.core.exceptions import EngineLoadError
 
 import os
 
-from apps.backend.huggingface.assets import ensure_repo_minimal_files
-from apps.backend.core.progress_stream import stream_run
 from apps.backend.engines.wan22.wan22_common import (
-    EngineOpts,
     WanComponents,
-    WanStageOptions,
     resolve_wan_repo_candidates,
-    resolve_user_supplied_assets,
 )
 from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.huggingface.assets import ensure_repo_minimal_files
 
 REPO_ROOT = get_repo_root()
 HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
 
-def _coerce_int(value: Any) -> Optional[int]:
+
+def _is_diffusers_dir(path: str) -> bool:
     try:
-        if value is None:
-            return None
-        return int(value)
+        return (
+            os.path.isfile(os.path.join(path, "model_index.json"))
+            or os.path.isfile(os.path.join(path, "unet", "config.json"))
+            or os.path.isfile(os.path.join(path, "transformer", "config.json"))
+            or os.path.isfile(os.path.join(path, "vae", "config.json"))
+        )
     except Exception:
-        return None
+        return False
 
 
-def _coerce_float(value: Any) -> Optional[float]:
+def _looks_like_wan_diffusers_weights_dir(path: str) -> bool:
     try:
-        if value is None:
-            return None
-        return float(value)
+        tdir = os.path.join(path, "transformer")
+        if os.path.isdir(tdir):
+            for name in os.listdir(tdir):
+                n = name.lower()
+                if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
+                    return True
+        vdir = os.path.join(path, "vae")
+        if os.path.isdir(vdir):
+            for name in os.listdir(vdir):
+                n = name.lower()
+                if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
+                    return True
     except Exception:
-        return None
-
-
-def _build_wan22_gguf_run_config(
-    *,
-    request: Txt2VidRequest | Img2VidRequest,
-    comp: WanComponents,
-    dtype: str,
-    device: str,
-    logger: Any,
-) -> Any:
-    """Build a WAN22 GGUF RunConfig from the request + extras.
-
-    This is intentionally a pure "mapping" helper so we can test stage overrides
-    without running the GGUF runtime.
-    """
-    from apps.backend.runtime.wan22 import wan22 as gguf
-
-    ex_raw = getattr(request, "extras", {}) or {}
-    ex: Dict[str, Any] = dict(ex_raw) if isinstance(ex_raw, dict) else {}
-
-    # Resolve assets (sha-only; no implicit fallbacks).
-    vae_path, te_path, meta_dir = resolve_user_supplied_assets(ex)
-    if not te_path:
-        raise RuntimeError(
-            "WAN22 GGUF requires a text encoder weights file; provide 'wan_text_encoder_path' "
-            "(resolved from sha selection)."
-        )
-    if not vae_path:
-        raise RuntimeError(
-            "WAN22 GGUF requires a VAE weights file; provide 'wan_vae_path' (resolved from sha selection)."
-        )
-    if not meta_dir:
-        raise RuntimeError(
-            "WAN22 GGUF requires tokenizer metadata; provide 'wan_metadata_dir' or 'wan_tokenizer_dir'."
-        )
-
-    te_path = os.path.expanduser(str(te_path))
-    te_lower = str(te_path).lower()
-    if not (te_lower.endswith(".safetensors") or te_lower.endswith(".gguf")):
-        raise RuntimeError(
-            "WAN22 GGUF: 'wan_text_encoder_path' must be a '.safetensors' or '.gguf' file, got: %s" % te_path
-        )
-    if not os.path.isfile(te_path):
-        raise RuntimeError(f"WAN22 GGUF: text encoder weights not found: {te_path}")
-
-    vae_path = os.path.expanduser(str(vae_path))
-    if not os.path.isfile(vae_path) and not os.path.isdir(vae_path):
-        raise RuntimeError(f"WAN22 GGUF: VAE weights not found: {vae_path}")
-
-    # WAN stage overrides
-    wh_raw = ex.get("wan_high") if isinstance(ex.get("wan_high"), dict) else None
-    wl_raw = ex.get("wan_low") if isinstance(ex.get("wan_low"), dict) else None
-
-    default_steps = int(getattr(request, "steps", 12) or 12)
-    default_cfg = getattr(request, "guidance_scale", None)
-
-    hi_opts = WanStageOptions.from_mapping(wh_raw, default_steps=default_steps, default_cfg=default_cfg)
-    lo_opts = WanStageOptions.from_mapping(wl_raw, default_steps=default_steps, default_cfg=default_cfg)
-
-    # Flow-shift defaults are sourced from scheduler_config.json under the metadata repo selected
-    # by the request (wan_metadata_dir). This keeps the repo selection explicit (payload-driven)
-    # and avoids coupling flow_shift to engine.load() heuristics.
-    hi_flow_shift = _coerce_float(wh_raw.get("flow_shift")) if isinstance(wh_raw, dict) else None
-    lo_flow_shift = _coerce_float(wl_raw.get("flow_shift")) if isinstance(wl_raw, dict) else None
-    if hi_flow_shift is None or lo_flow_shift is None:
-        from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
-
-        vendor_dir = str(meta_dir or "").strip()
-        if not vendor_dir:
-            raise RuntimeError(
-                "WAN22 GGUF requires flow_shift defaults from scheduler_config.json, but wan_metadata_dir is missing."
-            )
-        # Support callers that provide a tokenizer subfolder instead of the repo root.
-        if not os.path.isdir(os.path.join(vendor_dir, "scheduler")):
-            parent = os.path.dirname(vendor_dir)
-            if parent and os.path.isdir(os.path.join(parent, "scheduler")):
-                vendor_dir = parent
-
-        spec = flow_shift_spec_from_repo_dir(vendor_dir)
-        default_flow_shift = spec.resolve()
-        if hi_flow_shift is None:
-            hi_flow_shift = default_flow_shift
-        if lo_flow_shift is None:
-            lo_flow_shift = default_flow_shift
-
-    if not hi_opts.model_dir or not str(hi_opts.model_dir).strip():
-        raise RuntimeError("WAN22 GGUF requires wan_high.model_dir (resolved from model_sha).")
-    if not lo_opts.model_dir or not str(lo_opts.model_dir).strip():
-        raise RuntimeError("WAN22 GGUF requires wan_low.model_dir (resolved from model_sha).")
-
-    hi_dir = os.path.expanduser(str(hi_opts.model_dir))
-    lo_dir = os.path.expanduser(str(lo_opts.model_dir))
-    for label, gguf_path in (("high", hi_dir), ("low", lo_dir)):
-        if not str(gguf_path).lower().endswith(".gguf"):
-            raise RuntimeError(f"WAN22 GGUF: {label} stage model must be a .gguf file, got: {gguf_path}")
-        if not os.path.isfile(gguf_path):
-            raise RuntimeError(f"WAN22 GGUF: {label} stage model not found: {gguf_path}")
-
-    # Seed is applied to the High stage only in the current GGUF runtime.
-    seed = getattr(request, "seed", None)
-    if isinstance(wh_raw, dict) and wh_raw.get("seed") is not None:
-        seed_override = _coerce_int(wh_raw.get("seed"))
-        if seed_override is not None:
-            seed = seed_override
-
-    sampler_fallback = str(getattr(request, "sampler", "") or "").strip() or "uni-pc"
-    scheduler_fallback = str(getattr(request, "scheduler", "") or "").strip() or "simple"
-
-    tokenizer_dir = str(ex.get("wan_tokenizer_dir")).strip() if ex.get("wan_tokenizer_dir") else None
-
-    offload_level = _coerce_int(ex.get("gguf_offload_level"))
-    if offload_level is not None and offload_level < 0:
-        offload_level = None
-
-    if logger is not None:
-        try:
-            logger.info(
-                "[wan22.gguf] assets: metadata=%s te=%s vae=%s",
-                os.path.basename(str(meta_dir)) if meta_dir else None,
-                os.path.basename(str(te_path)) if te_path else None,
-                os.path.basename(str(vae_path)) if vae_path else None,
-            )
-        except Exception:
-            pass
-        try:
-            logger.info(
-                "[wan22.gguf] stage overrides: high=(dir=%s steps=%s cfg=%s sampler=%s scheduler=%s seed=%s) low=(dir=%s steps=%s cfg=%s sampler=%s scheduler=%s)",
-                os.path.basename(hi_dir) if hi_dir else None,
-                int(hi_opts.steps),
-                hi_opts.cfg_scale,
-                hi_opts.sampler or sampler_fallback,
-                hi_opts.scheduler or scheduler_fallback,
-                seed,
-                os.path.basename(lo_dir) if lo_dir else None,
-                int(lo_opts.steps),
-                lo_opts.cfg_scale,
-                lo_opts.sampler or sampler_fallback,
-                lo_opts.scheduler or scheduler_fallback,
-            )
-        except Exception:
-            pass
-
-    return gguf.RunConfig(
-        width=int(getattr(request, "width", 768) or 768),
-        height=int(getattr(request, "height", 432) or 432),
-        fps=int(getattr(request, "fps", 24) or 24),
-        num_frames=int(getattr(request, "num_frames", 16) or 16),
-        guidance_scale=getattr(request, "guidance_scale", None),
-        dtype=dtype,
-        device=device,
-        seed=seed,
-        prompt=request.prompt,
-        negative_prompt=getattr(request, "negative_prompt", None),
-        init_image=getattr(request, "init_image", None),
-        vae_dir=vae_path,
-        text_encoder_dir=te_path,
-        tokenizer_dir=tokenizer_dir,
-        metadata_dir=meta_dir,
-        sdpa_policy=(ex.get("gguf_sdpa_policy") if ex.get("gguf_sdpa_policy") is not None else None),
-        attn_chunk_size=(
-            int(ex.get("gguf_attn_chunk", 0)) if ex.get("gguf_attn_chunk") not in (None, "", 0) else None
-        ),
-        gguf_cache_policy=(ex.get("gguf_cache_policy") if ex.get("gguf_cache_policy") is not None else None),
-        gguf_cache_limit_mb=(
-            int(ex.get("gguf_cache_limit_mb", 0)) if ex.get("gguf_cache_limit_mb") not in (None, "", 0) else None
-        ),
-        log_mem_interval=(
-            int(ex.get("gguf_log_mem_interval", 0)) if ex.get("gguf_log_mem_interval") not in (None, "", 0) else None
-        ),
-        aggressive_offload=bool(ex.get("gguf_offload", True)),
-        offload_level=offload_level,
-        te_device=(str(ex.get("gguf_te_device")).lower() if ex.get("gguf_te_device") is not None else None),
-        te_impl=(str(ex.get("gguf_te_impl")).lower() if ex.get("gguf_te_impl") is not None else None),
-        te_kernel_required=bool(ex.get("gguf_te_kernel_required", False)),
-        high=gguf.StageConfig(
-            model_dir=hi_dir,
-            sampler=str(hi_opts.sampler or sampler_fallback),
-            scheduler=str(hi_opts.scheduler or scheduler_fallback),
-            steps=max(1, int(hi_opts.steps)),
-            cfg_scale=hi_opts.cfg_scale,
-            flow_shift=float(hi_flow_shift),
-        ),
-        low=gguf.StageConfig(
-            model_dir=lo_dir,
-            sampler=str(lo_opts.sampler or sampler_fallback),
-            scheduler=str(lo_opts.scheduler or scheduler_fallback),
-            steps=max(1, int(lo_opts.steps)),
-            cfg_scale=lo_opts.cfg_scale,
-            flow_shift=float(lo_flow_shift),
-        ),
-    )
+        return False
+    return False
 
 
 class Wan225BEngine(BaseVideoEngine):
@@ -264,7 +81,6 @@ class Wan225BEngine(BaseVideoEngine):
     def __init__(self) -> None:
         super().__init__()
         self._comp: Optional[WanComponents] = None
-        self._opts = EngineOpts()
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
@@ -280,8 +96,8 @@ class Wan225BEngine(BaseVideoEngine):
         self._logger.debug("[wan22_5b] before load()")
         dev = str(options.get("device", "auto"))
         dty = str(options.get("dtype", "fp16"))
-        self._opts = EngineOpts(device=dev, dtype=dty)
         comp = WanComponents()
+
         p = model_ref
         try:
             if os.path.isfile(p):
@@ -297,77 +113,44 @@ class Wan225BEngine(BaseVideoEngine):
             else:
                 raise EngineLoadError(f"WAN22 5B model path not found: {model_ref}")
 
-        vendor_dir: Optional[Path] = None
-        last_exc: Optional[Exception] = None
-        for rid in resolve_wan_repo_candidates(self.engine_id):
-            local_dir = HF_ROOT / Path(rid.replace('/', os.sep))
-            try:
-                ensure_repo_minimal_files(rid, str(local_dir), offline=False)
-                vendor_dir = local_dir
-                comp.hf_repo_dir = str(local_dir)
-                te_dir = local_dir / "text_encoder"
-                tk_dir = local_dir / "tokenizer"
-                vae_dir = local_dir / "vae"
-                comp.hf_text_encoder_dir = str(te_dir) if te_dir.exists() else None
-                comp.hf_tokenizer_dir = str(tk_dir) if tk_dir.exists() else None
-                comp.hf_vae_dir = str(vae_dir) if vae_dir.exists() else None
-                break
-            except Exception as exc:
-                last_exc = exc
-                self._logger.error(
-                    "WAN22 5B: failed to fetch minimal HF assets from %s: %s", rid, exc
-                )
-        if vendor_dir is None and last_exc is not None:
-            raise EngineLoadError(
-                f"WAN22 5B: unable to prepare required HF assets; last error: {last_exc}"
-            )
-
-        def _is_diffusers_dir(path: str) -> bool:
-            try:
-                return (
-                    os.path.isfile(os.path.join(path, 'model_index.json'))
-                    or os.path.isfile(os.path.join(path, 'unet', 'config.json'))
-                    or os.path.isfile(os.path.join(path, 'transformer', 'config.json'))
-                    or os.path.isfile(os.path.join(path, 'vae', 'config.json'))
-                )
-            except Exception:
-                return False
-
-        def _looks_like_wan_diffusers_weights_dir(path: str) -> bool:
-            try:
-                tdir = os.path.join(path, "transformer")
-                if os.path.isdir(tdir):
-                    for name in os.listdir(tdir):
-                        n = name.lower()
-                        if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
-                            return True
-                vdir = os.path.join(path, "vae")
-                if os.path.isdir(vdir):
-                    for name in os.listdir(vdir):
-                        n = name.lower()
-                        if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
-                            return True
-            except Exception:
-                return False
-            return False
-
         comp.model_dir = p
-        # Strict device policy: CPU only if explicitly chosen. Otherwise require CUDA.
-        try:
-            import torch
-            cuda_ok = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
-        except Exception:
-            cuda_ok = False
-        dev_lc = (dev or 'auto').lower().strip()
-        if dev_lc == 'cpu':
-            comp.device = 'cpu'
-        else:
-            if not cuda_ok:
-                raise EngineLoadError("CUDA is not available; set device='cpu' explicitly to force CPU.")
-            comp.device = 'cuda'
         comp.dtype = dty
+        try:
+            from apps.backend.runtime.families.wan22.config import resolve_device_name
+
+            resolved = resolve_device_name(dev)
+            comp.device = "cpu" if resolved == "cpu" else "cuda"
+        except Exception as exc:
+            raise EngineLoadError(str(exc)) from exc
 
         if _is_diffusers_dir(p) or _looks_like_wan_diffusers_weights_dir(p):
+            # Diffusers path requires vendored HF metadata (model_index/tokenizers/etc).
+            from apps.backend.infra.config.args import args as backend_args
+
+            offline = bool(getattr(backend_args, "disable_online_tokenizer", False))
+            vendor_dir: Optional[Path] = None
+            last_exc: Optional[Exception] = None
+            for rid in resolve_wan_repo_candidates(self.engine_id):
+                local_dir = HF_ROOT / Path(rid.replace("/", os.sep))
+                try:
+                    ensure_repo_minimal_files(rid, str(local_dir), offline=offline)
+                    vendor_dir = local_dir
+                    comp.hf_repo_dir = str(local_dir)
+                    te_dir = local_dir / "text_encoder"
+                    tk_dir = local_dir / "tokenizer"
+                    vae_dir = local_dir / "vae"
+                    comp.hf_text_encoder_dir = str(te_dir) if te_dir.exists() else None
+                    comp.hf_tokenizer_dir = str(tk_dir) if tk_dir.exists() else None
+                    comp.hf_vae_dir = str(vae_dir) if vae_dir.exists() else None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    self._logger.error("WAN22 5B: failed to prepare minimal HF assets from %s: %s", rid, exc)
+            if vendor_dir is None:
+                raise EngineLoadError(
+                    f"WAN22 5B: unable to prepare required HF assets for Diffusers path; last error: {last_exc}"
+                )
+
             try:
                 vendor = Path(str(comp.hf_repo_dir or "")).resolve() if comp.hf_repo_dir else None
                 if vendor is None or not vendor.is_dir():
@@ -385,9 +168,18 @@ class Wan225BEngine(BaseVideoEngine):
             except Exception as exc:
                 raise EngineLoadError(f"WAN22 5B diffusers pipeline load failed: {exc}") from exc
         else:
-            # GGUF path: tokenizer/config under backend/huggingface; all weights supplied by user.
+            # GGUF path: assets are payload-driven (sha-only); avoid any local/online HF metadata probing here.
             comp.pipeline = None
-            self._logger.info("WAN22 5B GGUF runtime selected for %s (device=%s dtype=%s)", p, comp.device, dty)
+            ref_base = os.path.basename(str(model_ref or "")).lower()
+            weights_hint = "14b" if "14b" in ref_base else ("5b" if "5b" in ref_base else "unknown")
+            self._logger.info(
+                "WAN22 GGUF runtime selected (engine=%s weights_hint=%s) for %s (device=%s dtype=%s)",
+                self.engine_id,
+                weights_hint,
+                p,
+                comp.device,
+                dty,
+            )
 
         self._comp = comp
         self._logger.debug("[wan22_5b] after load()")
@@ -404,85 +196,15 @@ class Wan225BEngine(BaseVideoEngine):
         self._logger.debug("[wan22_5b] before txt2vid()")
         self.ensure_loaded()
         assert self._comp is not None
-        if getattr(self._comp, 'pipeline', None) is not None:
-            yield from _run_t2v(engine=self, comp=self._comp, request=request)
-        else:
-            from apps.backend.runtime.wan22 import wan22 as gguf
-            yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing txt2vid (GGUF)")
-            cfg = _build_wan22_gguf_run_config(
-                request=request,
-                comp=self._comp,
-                dtype=self._opts.dtype,
-                device=self._comp.device,
-                logger=self._logger,
-            )
-            for ev in stream_run(gguf.run_txt2vid, cfg=cfg, logger=self._logger):
-                if isinstance(ev, dict) and ev.get('type') == 'progress':
-                    st = str(ev.get('stage', ''))
-                    step = int(ev.get("step", 0))
-                    total = int(ev.get("total", 0))
-                    pct = float(ev.get("percent", 0.0))
-                    pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
-                    try:
-                        self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct_out)
-                    except Exception:
-                        pass
-                    yield ProgressEvent(stage=st, percent=pct_out, step=step, total_steps=total)
-                elif isinstance(ev, dict) and ev.get('type') == 'result':
-                    frames = ev.get('frames', [])
-                    yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "txt2vid", "frames": len(frames)})})
-                elif isinstance(ev, dict) and ev.get('type') == 'error':
-                    err = ev.get('error')
-                    try:
-                        self._logger.error("[wan22.gguf] runtime error during txt2vid: %s", err)
-                    except Exception:
-                        pass
-                    raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
-            self._logger.debug("[wan22_5b] after txt2vid()")
-            return
+        yield from _run_t2v(engine=self, comp=self._comp, request=request)
+        self._logger.debug("[wan22_5b] after txt2vid()")
 
     def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         self._logger.debug("[wan22_5b] before img2vid()")
         self.ensure_loaded()
         assert self._comp is not None
-        if getattr(self._comp, 'pipeline', None) is not None:
-            yield from _run_i2v(engine=self, comp=self._comp, request=request)
-        else:
-            from apps.backend.runtime.wan22 import wan22 as gguf
-            if getattr(request, 'init_image', None) is None:
-                raise RuntimeError("img2vid requires 'init_image'")
-            yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid (GGUF)")
-            cfg = _build_wan22_gguf_run_config(
-                request=request,
-                comp=self._comp,
-                dtype=self._opts.dtype,
-                device=self._comp.device,
-                logger=self._logger,
-            )
-            for ev in stream_run(gguf.run_img2vid, cfg=cfg, logger=self._logger):
-                if isinstance(ev, dict) and ev.get('type') == 'progress':
-                    st = str(ev.get('stage', ''))
-                    step = int(ev.get("step", 0))
-                    total = int(ev.get("total", 0))
-                    pct = float(ev.get("percent", 0.0))
-                    pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
-                    try:
-                        self._logger.info("[wan22.gguf] %s %d/%d (%.1f%%)", st, step, total, pct_out)
-                    except Exception:
-                        pass
-                    yield ProgressEvent(stage=st, percent=pct_out, step=step, total_steps=total)
-                elif isinstance(ev, dict) and ev.get('type') == 'result':
-                    frames = ev.get('frames', [])
-                    yield ResultEvent(payload={"images": frames, "info": self._to_json({"engine": self.engine_id, "task": "img2vid", "frames": len(frames)})})
-                elif isinstance(ev, dict) and ev.get('type') == 'error':
-                    err = ev.get('error')
-                    try:
-                        self._logger.error("[wan22.gguf] runtime error during img2vid: %s", err)
-                    except Exception:
-                        pass
-                    raise RuntimeError(f"WAN22 GGUF runtime error: {err}")
-            self._logger.debug("[wan22_5b] after img2vid()")
-            return
+        yield from _run_i2v(engine=self, comp=self._comp, request=request)
+        self._logger.debug("[wan22_5b] after img2vid()")
 
     def vid2vid(self, request: Vid2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         self._logger.debug("[wan22_5b] before vid2vid()")
@@ -491,7 +213,3 @@ class Wan225BEngine(BaseVideoEngine):
         yield from _run_v2v(engine=self, comp=self._comp, request=request)
         self._logger.debug("[wan22_5b] after vid2vid()")
         return
-
-    # ------------------------------ helpers
-    # GGUF config assembly lives in `_build_wan22_gguf_run_config` so UI stage overrides
-    # can be unit-tested without running the full runtime.

@@ -180,12 +180,12 @@ def _load_external_text_encoder(tenc_path: str | None, dtype: str = "bf16") -> o
     # Detect if GGUF or safetensors
     if tenc_path.lower().endswith(".gguf"):
         # Load GGUF text encoder
-        from apps.backend.runtime.zimage.text_encoder import ZImageTextEncoder
+        from apps.backend.runtime.families.zimage.text_encoder import ZImageTextEncoder
         encoder = ZImageTextEncoder.from_gguf(tenc_path, torch_dtype=torch_dtype)
     else:
         # Load safetensors text encoder
         from safetensors.torch import load_file
-        from apps.backend.runtime.zimage.text_encoder import ZImageTextEncoder
+        from apps.backend.runtime.families.zimage.text_encoder import ZImageTextEncoder
         state_dict = load_file(tenc_path)
         encoder = ZImageTextEncoder.from_state_dict(state_dict, torch_dtype=torch_dtype)
     
@@ -284,7 +284,7 @@ def assemble_zimage_runtime(
     _log_vram("AFTER ZImageCLIP wrapper")
     
     # Create text processing engine
-    from apps.backend.runtime.zimage.text_encoder import ZImageTextProcessingEngine
+    from apps.backend.runtime.families.zimage.text_encoder import ZImageTextProcessingEngine
     text_engine = ZImageTextProcessingEngine(text_encoder)
     
     _log_vram("FINAL")

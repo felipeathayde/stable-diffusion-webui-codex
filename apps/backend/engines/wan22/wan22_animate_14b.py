@@ -70,12 +70,15 @@ class Wan22Animate14BEngine(BaseVideoEngine):
         comp = WanComponents()
 
         # Resolve vendored HF metadata (model_index/tokenizers/etc).
+        from apps.backend.infra.config.args import args as backend_args
+
+        offline = bool(getattr(backend_args, "disable_online_tokenizer", False))
         vendor_dir: Optional[Path] = None
         last_exc: Optional[Exception] = None
         for rid in resolve_wan_repo_candidates(self.engine_id):
             local_dir = HF_ROOT / Path(rid.replace("/", os.sep))
             try:
-                ensure_repo_minimal_files(rid, str(local_dir), offline=False)
+                ensure_repo_minimal_files(rid, str(local_dir), offline=offline)
                 vendor_dir = local_dir
                 comp.hf_repo_dir = str(local_dir)
                 te_dir = local_dir / "text_encoder"
@@ -93,21 +96,14 @@ class Wan22Animate14BEngine(BaseVideoEngine):
                 f"WAN22 Animate: unable to prepare required HF assets; last error: {last_exc}"
             )
 
-        # Strict device policy: CPU only if explicitly chosen. Otherwise require CUDA.
-        try:
-            import torch  # type: ignore
-
-            cuda_ok = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
-        except Exception:
-            cuda_ok = False
-        dev_lc = (dev or "auto").lower().strip()
-        if dev_lc == "cpu":
-            comp.device = "cpu"
-        else:
-            if not cuda_ok:
-                raise EngineLoadError("CUDA is not available; set device='cpu' explicitly to force CPU.")
-            comp.device = "cuda"
         comp.dtype = dty
+        try:
+            from apps.backend.runtime.families.wan22.config import resolve_device_name
+
+            resolved = resolve_device_name(dev)
+            comp.device = "cpu" if resolved == "cpu" else "cuda"
+        except Exception as exc:
+            raise EngineLoadError(str(exc)) from exc
         comp.model_dir = p
 
         try:

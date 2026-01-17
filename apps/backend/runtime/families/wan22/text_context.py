@@ -160,7 +160,7 @@ def get_text_context(
         num_heads = int(getattr(cfg_hf, "num_heads", getattr(cfg_hf, "num_attention_heads", 32)))
         d_kv = int(getattr(cfg_hf, "d_kv", getattr(cfg_hf, "hidden_size", 4096) // num_heads))
 
-        from apps.backend.runtime.wan22.wan_te_encoder import encode_fp8 as _encode_fp8
+        from apps.backend.runtime.families.wan22.wan_te_encoder import encode_fp8 as _encode_fp8
 
         dev = torch.device("cuda" if te_dev_eff == "cuda" and torch.cuda.is_available() else "cpu")
         if dev.type != "cuda":

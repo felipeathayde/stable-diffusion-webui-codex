@@ -10,7 +10,7 @@ Status: Active
 
 ## Subdirectories
 - `common/` — Shared base classes/helpers used by multiple engines.
-- `sd/`, `flux/`, `wan22/` — Model-specific engine implementations and components (Flux family includes Chroma + Flux Kontext variants).
+- `sd/`, `flux/`, `wan22/`, `zimage/` — Model-specific engine implementations and components (Flux family includes Chroma + Kontext variants).
 - `util/` — Utility helpers for schedulers, attention mapping, etc.
 
 ## Key Files
@@ -20,6 +20,7 @@ Status: Active
 ## Notes
 - New engines should live under their own subdirectory (mirroring existing patterns) and register via `registration.py`.
 - Task orchestration lives under `apps/backend/use_cases/`; keep engines model-specific and keep shared logic under `apps/backend/runtime/`.
+- Factory standard: for each model family, prefer a `spec.py` + `factory.py` seam under `apps/backend/engines/<family>/` so assembly stays consistent and engines keep only model-specific logic (plan: `.sangoi/plans/2026-01-03-engine-factory-standard-v1.md`).
 - Diffusion engines now share a `BaseInferenceEngine` lifecycle; instantiate via the registry and let `load()` pull `DiffusionModelBundle` instances instead of invoking loaders manually.
 - 2025-11-03: SDXL engine reads `debug_conditioning` from backend config (no direct env lookup) to log conditioning norms when requested.
 - 2025-11-30: `apps.backend.engines.__init__` now lazily resolves WAN22 engine classes; importing the package no longer pulls Hugging Face assets or torch unless the engines are requested.

@@ -6,7 +6,7 @@ from typing import Optional
 import torch
 
 from apps.backend.runtime.models.state_dict import state_dict_prefix_replace
-from apps.backend.runtime.sd.cnets import t2i_adapter
+from apps.backend.runtime.families.sd.cnets import t2i_adapter
 from apps.backend.runtime.misc import adaptive_resize
 
 from ...base import ControlModuleBase

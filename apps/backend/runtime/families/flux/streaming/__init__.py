@@ -20,7 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 # Usage (sketch):
-#   from apps.backend.runtime.flux.streaming import trace_execution_plan, CoreController, StreamedFluxCore, StreamingPolicy
+#   from apps.backend.runtime.families.flux.streaming import trace_execution_plan, CoreController, StreamedFluxCore, StreamingPolicy
 #   plan = trace_execution_plan(flux_core)
 #   controller = CoreController(storage="cpu", compute="cuda", policy=StreamingPolicy.NAIVE)
 #   streamed = StreamedFluxCore(flux_core, plan, controller)

@@ -39,7 +39,7 @@ from apps.backend.runtime.model_registry.specs import (
     TextEncoderSignature,
     VAESignature,
 )
-from apps.backend.runtime.wan22.inference import infer_wan22_latent_channels, infer_wan22_patch_embedding
+from apps.backend.runtime.families.wan22.inference import infer_wan22_latent_channels, infer_wan22_patch_embedding
 from apps.backend.quantization.tensor import CodexParameter
 
 

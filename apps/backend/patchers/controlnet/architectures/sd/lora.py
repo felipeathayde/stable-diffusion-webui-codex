@@ -7,7 +7,7 @@ import torch
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
-from apps.backend.runtime.sd.cnets import cldm
+from apps.backend.runtime.families.sd.cnets import cldm
 from apps.backend.runtime.ops.operations import using_codex_operations
 
 from ...base import ControlModuleBase

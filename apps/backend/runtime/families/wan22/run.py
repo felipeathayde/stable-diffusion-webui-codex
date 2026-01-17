@@ -22,10 +22,13 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import gc
 import os
 from typing import Any, Optional
 
 import torch
+
+from apps.backend.runtime.memory import memory_management
 
 from .config import (
     RunConfig,
@@ -45,6 +48,31 @@ from .sdpa import set_sdpa_settings
 from .stage_loader import load_stage_model_from_gguf, pick_stage_gguf
 from .text_context import get_text_context
 from .vae_io import decode_latents_to_frames, vae_encode_init
+
+
+class _MemoryManagedModule:
+    """Tiny wrapper to integrate plain nn.Modules with the Codex memory manager.
+
+    We intentionally keep this minimal (no LoRA/object patch plumbing) and rely on the
+    runtime to construct models in the desired dtype; memory manager controls device moves.
+    """
+
+    def __init__(self, model: torch.nn.Module, *, load_device: torch.device) -> None:
+        self.model = model
+        self.load_device = load_device
+
+    def model_dtype(self):  # noqa: ANN001 - matches memory manager dynamic protocol
+        # Keep the model's existing dtype (GGUF loader already created weights correctly).
+        return None
+
+    def codex_patch_model(self, target_device: torch.device | None = None):  # noqa: ANN001 - protocol
+        if target_device is None:
+            return self.model
+        try:
+            self.model.to(target_device, non_blocking=True)
+        except TypeError:
+            self.model.to(target_device)
+        return self.model
 
 
 def _try_set_cache_policy(policy: Optional[str], limit_mb: Optional[int]) -> None:
@@ -122,7 +150,9 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
 
     lvl = _resolve_offload_level(cfg)
 
-    hi_model = load_stage_model_from_gguf(hi_path, device=dev, dtype=dt, logger=log)
+    # Load GGUF weights on CPU first; the memory manager will move to GPU right before sampling.
+    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     if on_progress:
         try:
             on_progress(stage="prepare", step=0, total=1, percent=0.05)
@@ -200,6 +230,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         cfg.seed,
     )
 
+    memory_management.manager.load_model(hi_mm)
     latents_hi = sample_stage_latents(
         model=hi_model,
         geom=geom_hi,
@@ -221,14 +252,16 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         stage_name="high",
     )
 
+    memory_management.manager.unload_model(hi_mm)
+    del hi_mm
+    del hi_model
+    gc.collect()
     if lvl >= 2:
-        try:
-            del hi_model
-        except Exception:
-            pass
+        _try_clear_cache()
         cuda_empty_cache(log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=dev, dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     log.info(
         "[wan22.gguf] LOW geom: grid=%s kernel=%s cin=%d",
@@ -252,6 +285,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         (getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
     )
 
+    memory_management.manager.load_model(lo_mm)
     latents_lo = sample_stage_latents(
         model=lo_model,
         geom=geom_lo,
@@ -272,6 +306,15 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="low",
     )
+
+    # Free the LOW stage weights before VAE decode (decode can be very VRAM-hungry).
+    memory_management.manager.unload_model(lo_mm)
+    del lo_mm
+    del lo_model
+    gc.collect()
+    if lvl >= 2:
+        _try_clear_cache()
+        cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     if lvl >= 3:
@@ -298,7 +341,8 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     dt = as_torch_dtype(cfg.dtype)
     lvl = _resolve_offload_level(cfg)
 
-    hi_model = load_stage_model_from_gguf(hi_path, device=dev, dtype=dt, logger=log)
+    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_t2v_{variant}"
 
@@ -332,6 +376,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
+    memory_management.manager.load_model(hi_mm)
     latents_hi = yield from sample_stage_latents_generator(
         model=hi_model,
         geom=geom_hi,
@@ -353,14 +398,16 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         emit_logs=False,
     )
 
+    memory_management.manager.unload_model(hi_mm)
+    del hi_mm
+    del hi_model
+    gc.collect()
     if lvl >= 2:
-        try:
-            del hi_model
-        except Exception:
-            pass
+        _try_clear_cache()
         cuda_empty_cache(log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=dev, dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
 
@@ -370,6 +417,7 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
     flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
+    memory_management.manager.load_model(lo_mm)
     latents_lo = yield from sample_stage_latents_generator(
         model=lo_model,
         geom=geom_lo,
@@ -390,6 +438,15 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         stage_name="low",
         emit_logs=False,
     )
+
+    # Free the LOW stage weights before VAE decode.
+    memory_management.manager.unload_model(lo_mm)
+    del lo_mm
+    del lo_model
+    gc.collect()
+    if lvl >= 2:
+        _try_clear_cache()
+        cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     _try_clear_cache()
@@ -421,13 +478,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     lvl = _resolve_offload_level(cfg)
-
-    hi_model = load_stage_model_from_gguf(hi_path, device=dev, dtype=dt, logger=log)
-    if on_progress:
-        try:
-            on_progress(stage="prepare", step=0, total=1, percent=0.05)
-        except Exception:
-            pass
 
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_i2v_{variant}"
@@ -477,6 +527,14 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lat0 = lat0.repeat(1, 1, t, 1, 1)
     lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
 
+    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
+    if on_progress:
+        try:
+            on_progress(stage="prepare", step=0, total=1, percent=0.05)
+        except Exception:
+            pass
+
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
 
@@ -486,6 +544,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
+    memory_management.manager.load_model(hi_mm)
     latents_hi = sample_stage_latents(
         model=hi_model,
         geom=geom_hi,
@@ -507,14 +566,16 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         stage_name="high",
     )
 
+    memory_management.manager.unload_model(hi_mm)
+    del hi_mm
+    del hi_model
+    gc.collect()
     if lvl >= 2:
-        try:
-            del hi_model
-        except Exception:
-            pass
+        _try_clear_cache()
         cuda_empty_cache(logger=log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=dev, dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
 
@@ -524,6 +585,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
     flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
+    memory_management.manager.load_model(lo_mm)
     latents_lo = sample_stage_latents(
         model=lo_model,
         geom=geom_lo,
@@ -544,6 +606,15 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_multiplier=WAN_FLOW_MULTIPLIER,
         stage_name="low",
     )
+
+    # Free the LOW stage weights before VAE decode.
+    memory_management.manager.unload_model(lo_mm)
+    del lo_mm
+    del lo_model
+    gc.collect()
+    if lvl >= 2:
+        _try_clear_cache()
+        cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     _try_clear_cache()
@@ -569,8 +640,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     dev = torch.device(dev_name)
     dt = as_torch_dtype(cfg.dtype)
     lvl = _resolve_offload_level(cfg)
-
-    hi_model = load_stage_model_from_gguf(hi_path, device=dev, dtype=dt, logger=log)
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_i2v_{variant}"
 
@@ -604,11 +673,14 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     lat0 = lat0.repeat(1, 1, t, 1, 1)
     lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
 
+    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
+    memory_management.manager.load_model(hi_mm)
     latents_hi = yield from sample_stage_latents_generator(
         model=hi_model,
         geom=geom_hi,
@@ -630,19 +702,22 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         emit_logs=False,
     )
 
+    memory_management.manager.unload_model(hi_mm)
+    del hi_mm
+    del hi_model
+    gc.collect()
     if lvl >= 2:
-        try:
-            del hi_model
-        except Exception:
-            pass
+        _try_clear_cache()
         cuda_empty_cache(logger=log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=dev, dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
     flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
     flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
 
+    memory_management.manager.load_model(lo_mm)
     latents_lo = yield from sample_stage_latents_generator(
         model=lo_model,
         geom=geom_lo,
@@ -663,6 +738,15 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         stage_name="low",
         emit_logs=False,
     )
+
+    # Free the LOW stage weights before VAE decode.
+    memory_management.manager.unload_model(lo_mm)
+    del lo_mm
+    del lo_model
+    gc.collect()
+    if lvl >= 2:
+        _try_clear_cache()
+        cuda_empty_cache(log, label="after-low")
 
     frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
     _try_clear_cache()

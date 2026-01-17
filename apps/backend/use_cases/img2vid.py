@@ -6,18 +6,20 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Img2vid orchestration using Diffusers pipelines (WAN22).
+Purpose: Img2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Runs high/low stages, configures sampler settings, applies LoRAs, optionally performs video frame interpolation, exports video, and yields progress/result events.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_run_stage` (function): Runs a single Diffusers stage and returns its generated frames.
+- `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
 - `run_img2vid` (function): Orchestrates img2vid generation and yields an `InferenceEvent` stream.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any, Iterator
+from dataclasses import dataclass
+from typing import Any, Iterator, Optional
 
 from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent
@@ -58,6 +60,19 @@ def _run_stage(
     raise RuntimeError("img2vid pipeline returned no frames")
 
 
+def _yield_wan22_gguf_progress(ev: dict) -> Optional[ProgressEvent]:
+    if ev.get("type") != "progress":
+        return None
+    stage = str(ev.get("stage", "") or "")
+    step = int(ev.get("step", 0))
+    total = int(ev.get("total", 0))
+    pct = float(ev.get("percent", 0.0))
+    pct_out = (pct * 100.0) if (0.0 <= pct <= 1.0) else pct
+    eta_raw = ev.get("eta_seconds", None)
+    eta = float(eta_raw) if eta_raw is not None else None
+    return ProgressEvent(stage=stage, percent=pct_out, step=step, total_steps=total, eta_seconds=eta)
+
+
 def run_img2vid(
     *,
     engine,
@@ -76,6 +91,99 @@ def run_img2vid(
     pipe = getattr(comp, "pipeline", None)
     high_model = getattr(comp, "pipeline_high", None)
     low_model = getattr(comp, "pipeline_low", None)
+
+    if pipe is None and high_model is None and low_model is None:
+        from apps.backend.runtime.families.wan22.config import build_wan22_gguf_run_config
+        from apps.backend.runtime.families.wan22 import wan22 as gguf
+
+        cfg = build_wan22_gguf_run_config(
+            request=request,
+            device=getattr(comp, "device", "auto"),
+            dtype=getattr(comp, "dtype", "fp16"),
+            logger=logger,
+        )
+
+        frames: list[Any] | None = None
+        for ev in gguf.stream_img2vid(cfg, logger=logger):
+            if not isinstance(ev, dict):
+                raise RuntimeError(f"WAN22 GGUF: invalid stream event type: {type(ev)}")
+            if ev.get("type") == "progress":
+                pe = _yield_wan22_gguf_progress(ev)
+                if pe is not None:
+                    yield pe
+                continue
+            if ev.get("type") == "result":
+                frames = list(ev.get("frames", []) or [])
+                break
+            raise RuntimeError(f"WAN22 GGUF: unknown stream event type: {ev.get('type')!r}")
+
+        if not frames:
+            raise RuntimeError("WAN22 GGUF: produced no frames")
+
+        vfi_opts = None
+        vfi_cfg = plan.extras.get("video_interpolation") if isinstance(plan.extras, dict) else None
+        if isinstance(vfi_cfg, dict):
+            vio = VideoInterpolationOptions(
+                enabled=bool(vfi_cfg.get("enabled", False)),
+                model=str(vfi_cfg.get("model")) if vfi_cfg.get("model") is not None else None,
+                times=int(vfi_cfg.get("times")) if vfi_cfg.get("times") is not None else None,
+            )
+            vfi_opts = vio.as_dict()
+            if vio.enabled and (vio.times or 0) > 1:
+                yield ProgressEvent(stage="interpolate", percent=2.0, message="Interpolating frames (VFI)")
+                frames, vfi_meta = maybe_interpolate(
+                    frames,
+                    enabled=vio.enabled,
+                    model=vio.model,
+                    times=vio.times or 2,
+                    logger=logger,
+                )
+                vfi_opts = {**vfi_opts, "result": vfi_meta}
+
+        video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None))
+
+        @dataclass(frozen=True)
+        class _SamplerOutcome:
+            sampler_in: str | None
+            scheduler_in: str | None
+            sampler_effective: str | None
+            scheduler_effective: str | None
+            warnings: tuple[str, ...] = ()
+
+        extra_meta: dict[str, Any] = dict(plan.extras) if isinstance(plan.extras, dict) else {}
+        if vfi_opts is not None:
+            extra_meta["video_interpolation"] = vfi_opts
+        if cfg.low is not None:
+            extra_meta["sampler_low"] = {
+                "sampler_in": cfg.low.sampler,
+                "scheduler_in": cfg.low.scheduler,
+                "sampler": cfg.low.sampler,
+                "scheduler": cfg.low.scheduler,
+            }
+
+        elapsed = time.perf_counter() - start
+        result = build_video_result(
+            engine,
+            frames,
+            plan,
+            _SamplerOutcome(
+                sampler_in=getattr(request, "sampler", None),
+                scheduler_in=getattr(request, "scheduler", None),
+                sampler_effective=(cfg.high.sampler if cfg.high is not None else getattr(request, "sampler", None)),
+                scheduler_effective=(cfg.high.scheduler if cfg.high is not None else getattr(request, "scheduler", None)),
+            ),
+            elapsed=elapsed,
+            task="img2vid",
+            extra=extra_meta,
+            video_meta=video_meta,
+        )
+
+        payload = {
+            "images": result.frames,
+            "info": engine._to_json(result.metadata),  # type: ignore[attr-defined]
+        }
+        yield ResultEvent(payload=payload)
+        return
 
     apply_engine_loras(engine, logger)
 

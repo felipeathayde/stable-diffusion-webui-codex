@@ -28,7 +28,7 @@ from .specs import BlockType, ExecutionPlan
 from .controller import CoreController
 
 if TYPE_CHECKING:
-    from apps.backend.runtime.flux.model import FluxTransformer2DModel
+    from apps.backend.runtime.families.flux.model import FluxTransformer2DModel
 
 logger = logging.getLogger("backend.runtime.flux.streaming.wrapper")
 
@@ -136,7 +136,7 @@ class StreamedFluxCore(nn.Module):
 
         # Input projections
         img = self._base.img_in(img)
-        from apps.backend.runtime.flux.geometry import timestep_embedding
+        from apps.backend.runtime.families.flux.geometry import timestep_embedding
 
         vec = self._base.time_in(timestep_embedding(timestep, 256).to(img.dtype))
         vec = vec + self._base.vector_in(y)

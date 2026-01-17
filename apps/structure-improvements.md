@@ -24,7 +24,7 @@ Status: Draft
 - Link each message to the appropriate NH task from the parity plan and update references to `apps.launcher` when the task executes.
 
 ## 5. Runtime/Engine Modularization
-- Evaluate WAN22 runtime (`apps/backend/runtime/wan22/`) for further stage-level submodules (conditioning, scheduler, export).
+- Evaluate WAN22 runtime (`apps/backend/runtime/families/wan22/`) for further stage-level submodules (conditioning, scheduler, export).
 - Assess existing `AGENTS.md` mapping to spot opportunities for new `use_cases/*` when combining features (e.g., ControlNet + LoRA flows).
 
 ## 6. Tooling Notes

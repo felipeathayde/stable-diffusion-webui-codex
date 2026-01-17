@@ -313,6 +313,13 @@ The engine key and asset requirements are defined by backend capabilities + requ
     - Complements: `wan_vae_sha` + `wan_tenc_sha` → must resolve to VAE + `.safetensors`
     - Metadata/tokenizer dirs remain explicit paths (resolved relative to `CODEX_ROOT` when repo-relative).
 
+### Engine assembly seams (spec + factory)
+- Engine families standardize assembly via `spec.py` + `factory.py` modules under `apps/backend/engines/<family>/`:
+  - `spec.py` defines typed runtime containers and `assemble_*` helpers.
+  - `factory.py` is the family assembly boundary (builds runtime + `CodexObjects` from a `DiffusionModelBundle`).
+- Factory plan: `.sangoi/plans/2026-01-03-engine-factory-standard-v1.md`.
+- Runtime layout: model-family runtimes live under `apps/backend/runtime/families/<family>/` (plan/rationale: `.sangoi/plans/2026-01-17-backend-runtime-families-layout.md`).
+
 ## Security / path hygiene (what is allowed)
 - API responses prefer repo-relative `path` values under `CODEX_ROOT` (avoid leaking host absolute paths).
 - Output serving (`/api/output/{rel_path}`) is root-scoped and rejects traversal.

@@ -16,5 +16,5 @@ Status: Active
 - `apps/backend/huggingface/Wan-AI/Wan2.2-Animate-14B-Diffusers/` — Wan-Animate 14B metadata (Diffusers `WanAnimatePipeline`).
 
 ## Notes
-- Keep this tree aligned with `apps/backend/huggingface/assets.py` allowlists and any WAN loaders under `apps/backend/engines/wan22/**` and `apps/backend/runtime/wan22/**`.
+- Keep this tree aligned with `apps/backend/huggingface/assets.py` allowlists and any WAN loaders under `apps/backend/engines/wan22/**` and `apps/backend/runtime/families/wan22/**`.
 - If a new WAN variant introduces extra component folders (e.g. `image_encoder/`, `image_processor/`), update `ensure_repo_minimal_files()` accordingly and log the change under `.sangoi/task-logs/`.

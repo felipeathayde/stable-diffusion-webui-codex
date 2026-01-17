@@ -62,7 +62,7 @@ class Kontext(Flux):
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
         logger.debug("Kontext runtime prepared (distilled cfg=%s)", runtime.use_distilled_cfg)
 
-        from apps.backend.runtime.flux.streaming import StreamedFluxCore
+        from apps.backend.runtime.families.flux.streaming import StreamedFluxCore
 
         core_model = getattr(runtime.denoiser.model, "diffusion_model", runtime.denoiser.model)
         if isinstance(core_model, StreamedFluxCore):

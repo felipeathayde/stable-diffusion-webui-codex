@@ -32,10 +32,10 @@ from einops import rearrange, repeat
 
 from apps.backend.runtime import utils
 from apps.backend.runtime.attention import attention_function
-from apps.backend.runtime.flux.components import QKNorm, RMSNorm, SelfAttention
-from apps.backend.runtime.flux.config import FluxPositionalConfig
-from apps.backend.runtime.flux.embed import EmbedND, MLPEmbedder
-from apps.backend.runtime.flux.geometry import apply_rotary_embeddings, timestep_embedding
+from apps.backend.runtime.families.flux.components import QKNorm, RMSNorm, SelfAttention
+from apps.backend.runtime.families.flux.config import FluxPositionalConfig
+from apps.backend.runtime.families.flux.embed import EmbedND, MLPEmbedder
+from apps.backend.runtime.families.flux.geometry import apply_rotary_embeddings, timestep_embedding
 from .config import ChromaArchitectureConfig, ChromaGuidanceConfig
 
 logger = logging.getLogger("backend.runtime.chroma")

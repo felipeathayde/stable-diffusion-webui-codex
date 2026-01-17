@@ -30,9 +30,9 @@ from apps.backend.runtime.common.nn.t5 import IntegratedT5
 from apps.backend.runtime.common.nn.unet.layers import Downsample, ResBlock, SpatialTransformer, TimestepEmbedSequential
 from apps.backend.runtime.common.nn.unet.model import UNet2DConditionModel
 from apps.backend.runtime.common.nn.unet.utils import conv_nd, exists, timestep_embedding
-from apps.backend.runtime.wan22.vae import AutoencoderKLWan
-from apps.backend.runtime.flux import FluxTransformer2DModel, FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
-from apps.backend.runtime.flux.flux import (
+from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
+from apps.backend.runtime.families.flux import FluxTransformer2DModel, FluxArchitectureConfig, FluxGuidanceConfig, FluxPositionalConfig
+from apps.backend.runtime.families.flux.flux import (
     attention,
     rope,
     timestep_embedding as flux_timestep_embedding,
@@ -42,9 +42,9 @@ from apps.backend.runtime.flux.flux import (
     QKNorm,
     SelfAttention,
 )
-from apps.backend.runtime.sd.mmditx import SD3Transformer2DModel
-from apps.backend.runtime.chroma.chroma import ChromaTransformer2DModel
-from apps.backend.runtime.sd.cnets import cldm, t2i_adapter
+from apps.backend.runtime.families.sd.mmditx import SD3Transformer2DModel
+from apps.backend.runtime.families.chroma.chroma import ChromaTransformer2DModel
+from apps.backend.runtime.families.sd.cnets import cldm, t2i_adapter
 
 __all__ = [
     "AutoencoderKLWan",

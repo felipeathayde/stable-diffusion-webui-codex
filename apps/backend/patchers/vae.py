@@ -33,7 +33,7 @@ except Exception:  # noqa: BLE001
     DiffusersAutoencoderKL = None
 
 try:  # Optional; only needed to detect WAN VAEs explicitly
-    from apps.backend.runtime.wan22.vae import AutoencoderKLWan
+    from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
 except Exception:  # noqa: BLE001
     AutoencoderKLWan = None
 

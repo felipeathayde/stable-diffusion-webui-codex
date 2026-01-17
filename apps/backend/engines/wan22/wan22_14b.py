@@ -82,7 +82,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
                 blocks_per_segment,
             )
             try:
-                from apps.backend.runtime.wan22.streaming import (
+                from apps.backend.runtime.families.wan22.streaming import (
                     build_execution_plan,
                     WanCoreController,
                     WanStreamingPolicy,
@@ -212,7 +212,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         yield ProgressEvent(stage="sampling", percent=0.2, message="Starting sampling")
 
         # Import sampler
-        from apps.backend.runtime.wan22.sampler import sample_txt2vid
+        from apps.backend.runtime.families.wan22.sampler import sample_txt2vid
         
         # Resolve device and dtype
         device = torch.device(self._device if torch.cuda.is_available() or self._device == "cpu" else "cpu")

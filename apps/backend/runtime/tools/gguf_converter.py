@@ -457,20 +457,24 @@ def convert_safetensors_to_gguf(
         finally:
             writer.close()
 
-    logger.info("GGUF file written: %s", output_path)
-    check_cancel()
-    
-    # Verification step: validate the generated file
-    progress.status = "verifying"
-    update_progress()
-    check_cancel()
-    
-    _verify.verify_gguf_file(
-        gguf_path=str(output_path),
-        source_safetensors=config.safetensors_path,
-        tensor_plans=plans,
-        key_mapping=key_mapping,
-    )
+        logger.info("GGUF file written: %s", output_path)
+        check_cancel()
+
+        # Verification step: validate the generated file.
+        #
+        # Important: reuse the already-open safetensors handle from the conversion pass to avoid
+        # re-opening huge WAN22 checkpoints on Windows (observed to crash sporadically in some environments).
+        progress.status = "verifying"
+        update_progress()
+        check_cancel()
+
+        _verify.verify_gguf_file(
+            gguf_path=str(output_path),
+            source_safetensors=config.safetensors_path,
+            tensor_plans=plans,
+            key_mapping=key_mapping,
+            source_handle=sf,
+        )
     
     progress.status = "complete"
     progress.current_step = progress.total_steps

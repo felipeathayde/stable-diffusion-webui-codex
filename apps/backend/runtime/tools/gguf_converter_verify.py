@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,7 @@ def verify_gguf_file(
     *,
     tensor_plans: list[TensorPlan],
     key_mapping: dict[str, str],
+    source_handle: object | None = None,
 ) -> None:
     gguf_path_path = Path(gguf_path)
     if not gguf_path_path.exists():
@@ -78,7 +80,12 @@ def verify_gguf_file(
 
     # 2) Spot-check a few tensors against source.
     reverse_mapping = {v: k for k, v in key_mapping.items()}
-    with _safetensors_source.open_safetensors_source(source_safetensors) as source:
+    source_ctx = (
+        contextlib.nullcontext(source_handle)
+        if source_handle is not None
+        else _safetensors_source.open_safetensors_source(source_safetensors)
+    )
+    with source_ctx as source:
         for plan in tensor_plans[:3]:
             src_name = reverse_mapping.get(plan.gguf_name, plan.gguf_name)
             if src_name not in source.keys():
@@ -124,4 +131,3 @@ def verify_gguf_file(
 __all__ = [
     "verify_gguf_file",
 ]
-

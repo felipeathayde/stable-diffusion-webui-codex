@@ -15,7 +15,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_llama_mapping` (function): Build a Llama HF→GGUF key mapping from the model config.
 - `_COND_QUANTIZED` (constant): Condition helper matching any quantized preset (non-F16/F32).
 - `_COND_FLUX_MIXED` (constant): Condition helper matching Flux mixed presets (`Q5_K_M`/`Q4_K_M`).
+- `_COND_WAN22_MIXED` (constant): Condition helper matching WAN22 mixed presets (`Q5_K_M`/`Q4_K_M`).
 - `FLUX_QUANT_POLICY` (constant): Flux per-tensor dtype policy (mixed presets keep more IO weights in float32).
+- `WAN22_QUANT_POLICY` (constant): WAN22 per-tensor dtype policy (mixed presets keep sensitive weights in float32).
 - `ZIMAGE_QUANT_POLICY` (constant): ZImage per-tensor dtype policy (pad tokens must remain float).
 - `LLAMA_QUANT_POLICY` (constant): Llama per-tensor dtype policy (mixed presets bump key weights to higher precision).
 - `PROFILE_REGISTRY` (constant): Registry of built-in converter profiles (table-driven dispatch).
@@ -65,6 +67,7 @@ def _build_llama_mapping(config: Mapping[str, Any]) -> dict[str, str]:
 
 _COND_QUANTIZED = QuantizationCondition(exclude=frozenset({QuantizationType.F16, QuantizationType.F32}))
 _COND_FLUX_MIXED = QuantizationCondition(include=frozenset({QuantizationType.Q5_K_M, QuantizationType.Q4_K_M}))
+_COND_WAN22_MIXED = QuantizationCondition(include=frozenset({QuantizationType.Q5_K_M, QuantizationType.Q4_K_M}))
 
 
 FLUX_QUANT_POLICY = QuantizationPolicySpec(
@@ -162,6 +165,109 @@ FLUX_QUANT_POLICY = QuantizationPolicySpec(
             apply_to=TensorNameTarget.DST,
             when=_COND_FLUX_MIXED,
             reason="Flux mixed preset: keep final modulation float32 for higher quality",
+        ),
+    ),
+)
+
+WAN22_QUANT_POLICY = QuantizationPolicySpec(
+    id="wan22",
+    # Required model policy: do not allow user overrides to violate these.
+    required_rules=(
+        # IO projections + patch embed are quality-sensitive.
+        TensorTypeRule(
+            pattern=r"^patch_embedding\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 patch embedding is quality-sensitive; keep float",
+        ),
+        TensorTypeRule(
+            pattern=r"^head\.head\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 output projection is quality-sensitive; keep float",
+        ),
+        TensorTypeRule(
+            pattern=r"^time_embedding\.0\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 time embedding in-projection is quality-sensitive; keep float",
+        ),
+        TensorTypeRule(
+            pattern=r"^time_projection\.1\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 time projection to modulation is quality-sensitive; keep float",
+        ),
+        # Allow non-mixed quantized presets to keep the big embedder weights in float16
+        # (mixed presets can trade size for more float32 below).
+        TensorTypeRule(
+            pattern=r"^time_embedding\.2\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F16,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 time embedding out-projection can be float16 without visible regressions",
+        ),
+        TensorTypeRule(
+            pattern=r"^text_embedding\.(?:0|2)\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F16,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 text embedder weights can be float16 while preserving prompt semantics",
+        ),
+        # Stability: keep small tensors in float32.
+        TensorTypeRule(
+            pattern=r"^(?:head\.modulation|blocks\.\d+\.modulation)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 modulation tables stay float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"^blocks\.\d+\.norm3\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 LayerNorm affine tensors stay float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"^blocks\.\d+\.(?:self_attn|cross_attn)\.norm_[qk]\.weight$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 q/k norm scales stay float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"^blocks\.\d+\.(?:self_attn|cross_attn)\.(?:q|k|v|o)\.bias$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 attention biases stay float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"^blocks\.\d+\.ffn\.(?:0|2)\.bias$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="WAN22 MLP biases stay float32 for stability",
+        ),
+        # Mixed presets explicitly trade size for quality.
+        TensorTypeRule(
+            pattern=r"^time_embedding\.2\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_WAN22_MIXED,
+            reason="WAN22 mixed preset: keep time embedder out-projection float32 for higher quality",
+        ),
+        TensorTypeRule(
+            pattern=r"^text_embedding\.(?:0|2)\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_WAN22_MIXED,
+            reason="WAN22 mixed preset: keep text embedder weights float32 for higher quality",
         ),
     ),
 )
@@ -362,7 +468,7 @@ PROFILE_REGISTRY: tuple[ConverterProfileSpec, ...] = (
         arch=GGUFArch.WAN22,
         layout=GGUFKeyLayout.COMFY_CODEX,
         detect=_is_wan22,
-        quant_policy=GENERIC_QUANT_POLICY,
+        quant_policy=WAN22_QUANT_POLICY,
         planner=_WAN22_PLANNER,
     ),
     ConverterProfileSpec(
@@ -370,7 +476,7 @@ PROFILE_REGISTRY: tuple[ConverterProfileSpec, ...] = (
         arch=GGUFArch.WAN22,
         layout=GGUFKeyLayout.NATIVE_KEYS,
         detect=_is_wan22,
-        quant_policy=GENERIC_QUANT_POLICY,
+        quant_policy=WAN22_QUANT_POLICY,
         planner=_WAN22_PLANNER,
     ),
     ConverterProfileSpec(

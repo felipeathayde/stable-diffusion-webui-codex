@@ -67,6 +67,39 @@ _FLOAT_GROUPS: dict[str, tuple[FloatDtypeGroup, ...]] = {
             patterns=(r"^(?:x_pad_token|cap_pad_token)$",),
         ),
     ),
+    # WAN22 transformer (Comfy/WAN export layout keys).
+    "wan22_transformer_comfy": (
+        FloatDtypeGroup(
+            id="sensitive_weights",
+            label="Sensitive weights (patch embed + time/text embed + head)",
+            patterns=(
+                r"^patch_embedding\.weight$",
+                r"^time_embedding\.(?:0|2)\.weight$",
+                r"^time_projection\.1\.weight$",
+                r"^text_embedding\.(?:0|2)\.weight$",
+                r"^head\.head\.weight$",
+            ),
+        ),
+    ),
+    # WAN22 transformer (native/Diffusers keys). Destination keys are the source keys.
+    "wan22_transformer_native": (
+        FloatDtypeGroup(
+            id="sensitive_weights",
+            label="Sensitive weights (patch embed + time/text embed + head)",
+            patterns=(
+                r"^patch_embedding\.weight$",
+                r"^condition_embedder\.time_embedder\.linear_(?:1|2)\.weight$",
+                r"^condition_embedder\.time_proj\.weight$",
+                r"^condition_embedder\.text_embedder\.linear_(?:1|2)\.weight$",
+                r"^proj_out\.weight$",
+                # If the source is already in WAN-export layout, these keys are also valid in native mode.
+                r"^time_embedding\.(?:0|2)\.weight$",
+                r"^time_projection\.1\.weight$",
+                r"^text_embedding\.(?:0|2)\.weight$",
+                r"^head\.head\.weight$",
+            ),
+        ),
+    ),
     # LLM (HF → GGUF mapping; destination keys are GGUF names).
     "llama_hf_to_gguf": (
         FloatDtypeGroup(

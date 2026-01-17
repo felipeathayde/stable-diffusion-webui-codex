@@ -32,3 +32,4 @@ Status: Active
 - 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).
 - 2026-01-16: `ToolsTab.vue` now uses vendored model metadata only and exposes a Mixed toggle with an FP16/FP32 choice (advanced overrides are hidden).
 - 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).
+- 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.

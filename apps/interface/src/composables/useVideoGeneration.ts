@@ -217,6 +217,24 @@ export function useVideoGeneration(tabId: string) {
     return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
   }
 
+  function effectiveWanMetadataRepo(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): string {
+    const repo = normalizeWanMetadataRepo(assets.value.metadata)
+    const repoLower = (repo || '').toLowerCase()
+    const is5b = repoLower.includes('wan2.2-ti2v-5b')
+    if (is5b) return 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
+
+    const isKnown14b = repoLower.includes('wan2.2-i2v-a14b') || repoLower.includes('wan2.2-t2v-a14b')
+    if (isKnown14b) {
+      if (v.useInitImage || v.useInitVideo) return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+      return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+    }
+
+    // If a different (valid) repo id is pinned in the tab, respect it.
+    if (repo) return repo
+
+    return inferWanMetadataRepo(v, hi, lo)
+  }
+
   function blockedReasonFor(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams, initVideo: File | null): string {
     const prompt = String(v.prompt || '').trim()
     if (!prompt) return 'Prompt must not be empty.'
@@ -372,7 +390,7 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams) {
-    const metaRepo = normalizeWanMetadataRepo(assets.value.metadata) || inferWanMetadataRepo(v, hi, lo)
+    const metaRepo = effectiveWanMetadataRepo(v, hi, lo)
     const teLabel = String(assets.value.textEncoder || '').trim()
     const vaeLabel = String(assets.value.vae || '').trim()
 

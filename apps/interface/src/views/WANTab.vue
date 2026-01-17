@@ -44,7 +44,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `focusGuided` (function): Scrolls/focuses the UI control for a guided step.
 - `startGuided` (function): Starts guided-generation flow (initial step + listeners + rect scheduling).
 - `onGuidedGenEvent` (function): Handles guided-generation events emitted by other UI surfaces.
-- `onWanModeChangeEvent` (function): Handles WAN mode change events (syncs tab input mode/state).
 - `setInputMode` (function): Sets the tab input mode and resets/validates init-media state for that mode.
 - `buildCurrentSnapshot` (function): Builds a JSON-serializable snapshot of current params (used for history/clipboard/workflows).
 - `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
@@ -991,22 +990,12 @@ function onGuidedGenEvent(event: Event): void {
   startGuided()
 }
 
-function onWanModeChangeEvent(event: Event): void {
-  const e = event as CustomEvent<{ tabId?: string; mode?: string }>
-  if (e.detail?.tabId && e.detail.tabId !== props.tabId) return
-  const raw = String(e.detail?.mode || '').trim().toLowerCase()
-  const next: 'txt2vid' | 'img2vid' | 'vid2vid' = raw === 'vid2vid' ? 'vid2vid' : (raw === 'img2vid' ? 'img2vid' : 'txt2vid')
-  setInputMode(next)
-}
-
 onMounted(() => {
   window.addEventListener('codex-wan-guided-gen', onGuidedGenEvent as EventListener)
-  window.addEventListener('codex-wan-mode-change', onWanModeChangeEvent as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('codex-wan-guided-gen', onGuidedGenEvent as EventListener)
-  window.removeEventListener('codex-wan-mode-change', onWanModeChangeEvent as EventListener)
   stopGuided()
 })
 

@@ -21,3 +21,4 @@ Status: Active
 - Scanners must stay lightweight (no torch/transformers imports). Hashing and heavy metadata extraction lives in inventory/cache or runtime.
 - Root configuration comes from `apps/backend/infra/config/paths.py:get_paths_for` and `CODEX_ROOT` via `infra/config/repo_root.py`.
 - Scanners intentionally ignore ad-hoc files under `models/` (only explicit roots from `apps/paths.json` are scanned).
+- 2026-01-17: `wan22_gguf.py` stage inference now recognizes `HN`/`LN` (and avoids false positives like `flow` → `low`) so WAN High/Low selectors populate correctly.

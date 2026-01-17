@@ -11,7 +11,7 @@ Status: Active
 ## Key Files
 - `QuickSettingsBase.vue` — Generic quicksettings (mode, checkpoint, VAE, optional text encoder) for SD15/SDXL model tabs; advanced controls are rendered by `QuickSettingsBar.vue`.
 - `QuickSettingsPerf.vue` — Performance toggles shared across engines (Smart Offload/Fallback/Cache/Core Streaming) rendered in the Advanced nested area.
-- `QuickSettingsWan.vue` — WAN22-specific quicksettings (mode + `LightX2V` toggle button, high/low model dirs, metadata/text encoder/VAE selectors).
+- `QuickSettingsWan.vue` — WAN22-specific quicksettings (Mode preset selector + `LightX2V` toggle button, high/low model dirs, text encoder/VAE selectors, plus a Refresh button).
 - `QuickSettingsFlux.vue` / `QuickSettingsZImage.vue` — FLUX.1/ZImage-specific checkpoint/VAE/text encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
 
 ## Notes
@@ -23,6 +23,7 @@ Status: Active
 - 2025-12-27: Removed the `hideCheckpoint` toggle/prop; checkpoint selection is always rendered, and on `/models/:tabId` it is tab-scoped (`tab.params.checkpoint`, auto-seeded) while still filtering choices by engine-specific `*_ckpt` roots from `apps/paths.json` (plus user-added paths).
 - 2025-12-14: WAN text encoder selector now lists explicit `.safetensors` files under `wan22_tenc` and stores values as `wan22/<abs_path>` for consistent labeling; payload builders must normalize before sending to backend.
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.
+- 2026-01-17: WAN Metadata selector was removed; WAN preset Mode now drives the metadata repo id used by payloads.
 - 2025-12-15: QuickSettings WAN groups now use `.qs-group-wan-*` sizing hooks so the header flex layout doesn’t collapse all controls to the left on wide screens.
 - 2025-12-15: WAN “Browse…” actions in `QuickSettingsWan.vue` are rendered as compact `+` icon buttons to match the header quicksettings affordance.
 - 2025-12-20: Replaced WAN “Format” with a `LightX2V` toggle; per-stage LoRA selection now lives in the WAN tab (High/Low Noise) when enabled.

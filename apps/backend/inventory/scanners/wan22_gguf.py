@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import os
+import re
 from typing import Iterable, Sequence
 
 from apps.backend.infra.config.paths import get_paths_for
@@ -24,11 +25,15 @@ from apps.backend.infra.config.paths import get_paths_for
 from .base import dedupe_keep_order
 
 
+_RX_STAGE_HIGH = re.compile(r"(^|[^a-z0-9])(high|highnoise|high_noise|hn)([^a-z0-9]|$)")
+_RX_STAGE_LOW = re.compile(r"(^|[^a-z0-9])(low|lownoise|low_noise|ln)([^a-z0-9]|$)")
+
+
 def infer_wan22_stage(filename: str) -> str:
     n = str(filename or "").lower()
-    if any(k in n for k in ("high", "highnoise", "high_noise")):
+    if _RX_STAGE_HIGH.search(n):
         return "high"
-    if any(k in n for k in ("low", "lownoise", "low_noise")):
+    if _RX_STAGE_LOW.search(n):
         return "low"
     return "unknown"
 

@@ -2,7 +2,7 @@
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
 Owner: Frontend Maintainers
-Last Review: 2026-01-13
+Last Review: 2026-01-17
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 - 2025-12-31: FLUX.1 img2img requests from `useGeneration(tabId)` are routed to the Kontext workflow engine (canonical key `engine="flux1_kontext"`, previously `kontext`) and include `img2img_extras.tenc_sha` (no `text_encoder_override` for Flux.1; backend derives the override from sha).
 - 2025-12-14: `useVideoGeneration(tabId)` encapsulates WAN `/txt2vid` + `/img2vid` generation + SSE streaming state so `WANTab.vue` stays a thin view.
 - 2025-12-16: `useVideoGeneration(tabId)` now supports WAN `vid2vid` via `/api/vid2vid` multipart upload (keeps the selected video file in-memory per tab) and exposes `videoUrl` for exported outputs served by `/api/output/{rel_path}`.
+- 2026-01-17: `useVideoGeneration(tabId)` now derives `wan_metadata_repo` for the known WAN2.2 repos from the current input mode + size hint (prevents stale repo ids after switching txt/img/vid modes).
 - 2025-12-25: `usePromptCard` encapsulates shared prompt toolbar state (TI/LoRA/Styles) and negative-prompt visibility defaults.
 - 2025-12-27: Removed Checkpoints state from `usePromptCard` (PromptCard no longer renders the Checkpoints modal/button).
 - 2025-12-25: `useResultsCard` encapsulates shared “Results” helpers (clipboard copy + ephemeral notice/toast + JSON formatting) so views don’t duplicate the same wiring.

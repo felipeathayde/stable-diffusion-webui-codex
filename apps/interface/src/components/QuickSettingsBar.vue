@@ -80,14 +80,12 @@ Symbols (top-level; keep in sync; no ghosts):
       <!-- WAN-specific quicksettings -->
       <template v-if="activeFamily === 'wan'">
         <QuickSettingsWan
-          :mode="wanMode"
+          :mode="wanModelMode"
           :lightx2v="wanLightx2v"
           :high-model="wanHighModel"
           :high-choices="wanHighDirChoices"
           :low-model="wanLowModel"
           :low-choices="wanLowDirChoices"
-          :metadata-dir="wanMetadataDir"
-          :metadata-choices="wanMetadataChoices"
           :text-encoder="wanTextEncoder"
           :text-encoder-choices="wanTextEncoderChoices"
           :vae="wanVae"
@@ -96,14 +94,13 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:lightx2v="onWanLightx2vChange"
           @update:highModel="onWanHighModelChange"
           @update:lowModel="onWanLowModelChange"
-          @update:metadataDir="onWanMetadataDirChange"
           @update:textEncoder="onWanTextEncoderChange"
           @update:vae="onWanVaeChange"
           @browseHigh="onWanBrowseHigh"
           @browseLow="onWanBrowseLow"
-          @browseMetadata="onWanBrowseMetadata"
           @browseTe="onWanBrowseTe"
           @browseVae="onWanBrowseVae"
+          @refresh="refreshAll"
           @showMetadata="onShowMetadata"
         />
       </template>
@@ -269,11 +266,9 @@ const pathsConfig = ref<Record<string, string[]>>({})
 type InventoryVae = { name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }
 type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: string }
 type InventoryTextEncoder = { name: string; path: string; sha256?: string }
-type InventoryMetadata = { name: string; path: string }
 const inventoryVaes = ref<InventoryVae[]>([])
 const inventoryWan = ref<InventoryWanGguf[]>([])
 const inventoryTextEncoders = ref<InventoryTextEncoder[]>([])
-const inventoryMetadata = ref<InventoryMetadata[]>([])
 const engineCaps = useEngineCapabilitiesStore()
 const showOverridesModal = ref(false)
 const showMetadataModal = ref(false)
@@ -450,12 +445,10 @@ async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void
     }))
     // Text encoder files are available via inventory for future use (e.g., Flux overrides).
     inventoryTextEncoders.value = inv.text_encoders ?? []
-    inventoryMetadata.value = inv.metadata ?? []
   } catch (e) {
     inventoryVaes.value = []
     inventoryWan.value = []
     inventoryTextEncoders.value = []
-    inventoryMetadata.value = []
   }
 }
 
@@ -886,13 +879,27 @@ const wanLowDirChoices = computed(() => {
   return out
 })
 
-const wanMode = computed(() => {
+type WanModelMode = 'i2v_14b' | 't2v_14b' | 'i2v_5b' | 't2v_5b' | 'v2v_14b'
+
+function _wanRepoForMode(mode: WanModelMode): string {
+  if (mode === 't2v_14b') return 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+  if (mode === 'i2v_5b' || mode === 't2v_5b') return 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
+  return 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
+}
+
+const wanModelMode = computed<WanModelMode>(() => {
   const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return 'txt2vid'
+  if (!tab || tab.type !== 'wan') return 't2v_14b'
   const video = (tab.params as any).video as { useInitVideo?: boolean; useInitImage?: boolean } | undefined
-  if (video?.useInitVideo) return 'vid2vid'
-  if (video?.useInitImage) return 'img2vid'
-  return 'txt2vid'
+  const rawAssets = ((tab.params as any).assets as WanAssetsParams | undefined) || { metadata: '', textEncoder: '', vae: '' }
+  const meta = String(rawAssets.metadata || '').trim().toLowerCase()
+  const is5b = meta.includes('ti2v-5b') || meta.includes('5b')
+  const kind = video?.useInitVideo ? 'v2v' : (video?.useInitImage ? 'i2v' : 't2v')
+
+  if (is5b) return kind === 'i2v' ? 'i2v_5b' : 't2v_5b'
+  if (kind === 'v2v') return 'v2v_14b'
+  if (kind === 'i2v') return 'i2v_14b'
+  return 't2v_14b'
 })
 
 const wanLightx2v = computed(() => {
@@ -927,18 +934,6 @@ function currentWanAssets(): WanAssetsParams {
 
 const wanTextEncoder = computed(() => currentWanAssets().textEncoder || '')
 const wanVae = computed(() => currentWanAssets().vae || '')
-const wanMetadataDir = computed(() => currentWanAssets().metadata || '')
-
-const wanMetadataChoices = computed(() => {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const item of inventoryMetadata.value) {
-    const repoId = String(item.name || '').trim()
-    if (!repoId || !repoId.startsWith('Wan-AI/')) continue
-    if (!seen.has(repoId)) { seen.add(repoId); out.push(repoId) }
-  }
-  return out
-})
 
 const wanTextEncoderChoices = computed(() => {
   // WAN22 GGUF requires an explicit TE weights file (.safetensors). Prefer concrete
@@ -1058,12 +1053,51 @@ function onCoreStreamingChange(value: boolean): void {
   void store.setCoreStreaming(value)
 }
 
-function onWanModeChange(value: string): void {
+async function onWanModeChange(value: string): Promise<void> {
   const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
+
   const raw = String(value || '').trim().toLowerCase()
-  const mode = raw === 'vid2vid' ? 'vid2vid' : (raw === 'img2vid' ? 'img2vid' : 'txt2vid')
-  window.dispatchEvent(new CustomEvent('codex-wan-mode-change', { detail: { tabId: tab.id, mode } }))
+  const nextMode: WanModelMode =
+    raw === 'i2v_14b' ? 'i2v_14b'
+      : raw === 't2v_14b' ? 't2v_14b'
+        : raw === 'i2v_5b' ? 'i2v_5b'
+          : raw === 't2v_5b' ? 't2v_5b'
+            : raw === 'v2v_14b' ? 'v2v_14b'
+              : 't2v_14b'
+
+  const currentVideo = ((tab.params as any).video as any) || {}
+  const videoPatch: Record<string, unknown> = {}
+  if (nextMode === 't2v_14b' || nextMode === 't2v_5b') {
+    videoPatch.useInitVideo = false
+    videoPatch.initVideoName = ''
+    videoPatch.initVideoPath = ''
+    videoPatch.useInitImage = false
+    videoPatch.initImageData = ''
+    videoPatch.initImageName = ''
+  } else if (nextMode === 'v2v_14b') {
+    videoPatch.useInitVideo = true
+    videoPatch.useInitImage = false
+    videoPatch.initImageData = ''
+    videoPatch.initImageName = ''
+  } else {
+    // i2v
+    videoPatch.useInitVideo = false
+    videoPatch.initVideoName = ''
+    videoPatch.initVideoPath = ''
+    videoPatch.useInitImage = true
+  }
+
+  const currentAssets = currentWanAssets()
+  const nextAssets = { ...currentAssets, metadata: _wanRepoForMode(nextMode) }
+
+  await tabsStore.updateParams(
+    tab.id,
+    {
+      video: { ...currentVideo, ...videoPatch },
+      assets: nextAssets,
+    } as any,
+  )
 }
 
 async function onWanLightx2vChange(value: boolean): Promise<void> {
@@ -1084,13 +1118,6 @@ async function onWanLowModelChange(value: string): Promise<void> {
   if (!tab || tab.type !== 'wan') return
   const current = (tab.params as any).low || {}
   await tabsStore.updateParams(tab.id, { low: { ...current, modelDir: value } })
-}
-
-async function onWanMetadataDirChange(value: string): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
-  const current = currentWanAssets()
-  await tabsStore.updateParams(tab.id, { assets: { ...current, metadata: value } })
 }
 
 async function onWanTextEncoderChange(value: string): Promise<void> {
@@ -1221,11 +1248,6 @@ async function onWanBrowseHigh(): Promise<void> {
 async function onWanBrowseLow(): Promise<void> {
   const path = promptForPath('WAN Low model (.gguf) path or sha256', wanLowModel.value)
   if (path) await onWanLowModelChange(path)
-}
-
-async function onWanBrowseMetadata(): Promise<void> {
-  const next = promptForPath('WAN metadata repo id (e.g. Wan-AI/Wan2.2-T2V-A14B-Diffusers)', wanMetadataDir.value)
-  if (next) await onWanMetadataDirChange(next)
 }
 
 async function onWanBrowseTe(): Promise<void> {

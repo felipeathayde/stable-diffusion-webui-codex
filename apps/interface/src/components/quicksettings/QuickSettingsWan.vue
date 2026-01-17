@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22-specific quicksettings selectors.
-Renders WAN mode selection, LightX2V toggle, stage model dirs (high/low), metadata dir, text encoder, and VAE selectors with “Browse…” actions.
+Renders WAN model-mode selection (t2v/i2v/v2v + size), LightX2V toggle, stage model dirs (high/low), text encoder, and VAE selectors with “Browse…” actions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsWan` (component): WAN quicksettings row used by the main quicksettings bar.
@@ -20,10 +20,19 @@ Symbols (top-level; keep in sync; no ghosts):
     <label class="label-muted">Mode</label>
     <div class="qs-row">
       <select id="qs-wan-mode" class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
-        <option value="txt2vid">Text (txt2vid)</option>
-        <option value="img2vid">Image (img2vid)</option>
-        <option value="vid2vid">Video (vid2vid)</option>
+        <option value="i2v_14b">I2V 14B</option>
+        <option value="t2v_14b">T2V 14B</option>
+        <option value="i2v_5b">I2V 5B</option>
+        <option value="t2v_5b">T2V 5B</option>
+        <option value="v2v_14b">V2V 14B</option>
       </select>
+    </div>
+  </div>
+
+  <div class="quicksettings-group qs-group-wan-refresh">
+    <label class="label-muted">Lists</label>
+    <div class="qs-row">
+      <button class="btn qs-btn-secondary qs-refresh-btn" type="button" title="Refresh lists" @click="$emit('refresh')">Refresh</button>
     </div>
   </div>
 
@@ -87,19 +96,6 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
   </div>
 
-  <div class="quicksettings-group qs-group-wan-metadata">
-    <label class="label-muted">WAN Metadata</label>
-    <div class="qs-row">
-      <div class="qs-pair">
-        <select id="qs-wan-metadata" class="select-md" :value="metadataDir" @change="$emit('update:metadataDir', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ builtInLabel }}</option>
-          <option v-for="m in metadataChoices" :key="m" :value="m">{{ dirLabel(m) }}</option>
-        </select>
-        <button class="btn qs-btn-outline qs-inline-btn" type="button" title="Browse…" aria-label="Browse…" @click="$emit('browseMetadata')">+</button>
-      </div>
-    </div>
-  </div>
-
   <div class="quicksettings-group qs-group-wan-text-encoder">
     <label class="label-muted">WAN Text Encoder</label>
     <div class="qs-row">
@@ -155,8 +151,6 @@ defineProps<{
   highChoices: string[]
   lowModel: string
   lowChoices: string[]
-  metadataDir: string
-  metadataChoices: string[]
   textEncoder: string
   textEncoderChoices: string[]
   vae: string
@@ -168,14 +162,13 @@ defineEmits<{
   (e: 'update:lightx2v', value: boolean): void
   (e: 'update:highModel', value: string): void
   (e: 'update:lowModel', value: string): void
-  (e: 'update:metadataDir', value: string): void
   (e: 'update:textEncoder', value: string): void
   (e: 'update:vae', value: string): void
   (e: 'browseHigh'): void
   (e: 'browseLow'): void
-  (e: 'browseMetadata'): void
   (e: 'browseTe'): void
   (e: 'browseVae'): void
+  (e: 'refresh'): void
   (e: 'showMetadata', payload: { kind: 'wan_high_model' | 'wan_low_model' | 'wan_text_encoder' | 'wan_vae'; value: string }): void
 }>()
 

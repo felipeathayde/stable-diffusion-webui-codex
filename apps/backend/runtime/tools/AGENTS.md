@@ -40,4 +40,5 @@ Status: Active
 - 2026-01-16: Vendored selector now uses “model metadata” (org/repo + component) rather than listing raw config-dir presets.
 - 2026-01-16: Vendored model metadata scanner no longer classifies `*ForCausalLM` configs as converter components and labels diffusion components as `denoiser` for UI display.
 - 2026-01-16: GGUF converter presets now include WAN22 transformers (`WanTransformer3DModel`) and the profile registry can convert WAN22 weights using Comfy/WAN export keys.
+- 2026-01-16: WAN22 presets label the two-stage denoiser split as `high_noise` (transformer) and `low_noise` (transformer_2) for clarity in Tools UI.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

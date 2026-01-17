@@ -107,6 +107,15 @@ def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGU
     models: list[GGUFConverterModelMetadata] = []
 
     for org, repo, repo_dir in iter_vendored_hf_repos(str(vendored_root)):
+        # WAN22 repositories may expose a two-stage denoiser split (high-noise vs low-noise)
+        # under either Diffusers (`transformer`/`transformer_2`) or upstream (`high_noise_model`/`low_noise_model`).
+        wan_two_stage = False
+        for low_stage_dir in ("transformer_2", "low_noise_model"):
+            candidate = os.path.join(repo_dir, low_stage_dir)
+            if os.path.isfile(os.path.join(candidate, "config.json")) and _has_weights_index(candidate):
+                wan_two_stage = True
+                break
+
         components: list[GGUFConverterModelComponent] = []
         for subdir, config_dir in _iter_candidate_config_dirs(repo_dir):
             cfg_path = os.path.join(config_dir, "config.json")
@@ -128,6 +137,11 @@ def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGU
             component_label = subdir or "root"
             if kind in {"flux_transformer", "zimage_transformer"}:
                 component_label = "denoiser"
+            if kind == "wan22_transformer" and wan_two_stage:
+                if component_id in {"transformer", "high_noise_model"}:
+                    component_label = "high_noise"
+                elif component_id in {"transformer_2", "low_noise_model"}:
+                    component_label = "low_noise"
             components.append(
                 GGUFConverterModelComponent(
                     id=component_id,

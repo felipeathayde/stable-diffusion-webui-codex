@@ -18,6 +18,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `is_flux_transformer_config` (function): Returns True when a config.json represents a Flux transformer export.
 - `normalize_flux_transformer_metadata_config` (function): Adapts Flux transformer config fields to metadata helper inputs.
 - `plan_flux_transformer_tensors` (function): Plan tensor conversion for Diffusers-style Flux transformer weights (maps to Comfy-style keys).
+- `is_wan22_transformer_config` (function): Returns True when a config.json represents a WAN22 transformer export.
+- `normalize_wan22_transformer_metadata_config` (function): Adapts WAN22 transformer config fields to metadata helper inputs.
+- `plan_wan22_transformer_tensors` (function): Plan tensor conversion for WAN22 transformer weights (Diffusers → Comfy key mapping).
 """
 
 from __future__ import annotations
@@ -107,6 +110,10 @@ def is_flux_transformer_config(config: Mapping[str, Any]) -> bool:
     return str(config.get("_class_name") or "") == "FluxTransformer2DModel"
 
 
+def is_wan22_transformer_config(config: Mapping[str, Any]) -> bool:
+    return str(config.get("_class_name") or "") in {"WanTransformer3DModel", "WanModel"}
+
+
 def normalize_flux_transformer_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """Adapt Flux transformer config keys into the metadata helper's expected fields."""
 
@@ -135,6 +142,74 @@ def normalize_flux_transformer_metadata_config(config: Mapping[str, Any]) -> dic
         "_name_or_path": str(
             config.get("_name_or_path") or config.get("name") or "black-forest-labs/FLUX.1-Kontext-dev"
         ),
+    }
+
+
+def normalize_wan22_transformer_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt WAN22 transformer config keys into the metadata helper's expected fields."""
+
+    def _as_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(default)
+
+    def _as_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return float(default)
+
+    class_name = str(config.get("_class_name") or "")
+    if class_name == "WanModel":
+        hidden = _as_int(config.get("dim"), 4096)
+        num_layers = _as_int(config.get("num_layers"), 32)
+        num_heads = _as_int(config.get("num_heads"), 32)
+        max_pos = _as_int(config.get("text_len"), 512)
+        eps = _as_float(config.get("eps"), 1e-6)
+        model_type = str(config.get("model_type") or "").strip().lower()
+        name = "Wan-AI/Wan2.2"
+        if model_type == "i2v":
+            name = "Wan-AI/Wan2.2-I2V-A14B"
+        elif model_type == "t2v":
+            name = "Wan-AI/Wan2.2-T2V-A14B"
+        return {
+            "model_type": "wan22",
+            "num_hidden_layers": max(1, num_layers),
+            "hidden_size": max(1, hidden),
+            "num_attention_heads": max(1, num_heads),
+            "num_key_value_heads": max(1, num_heads),
+            "max_position_embeddings": max(1, max_pos),
+            "rope_theta": 10000.0,
+            "rms_norm_eps": eps,
+            "_name_or_path": str(config.get("_name_or_path") or config.get("name") or name),
+        }
+
+    num_heads = _as_int(config.get("num_attention_heads"), 40)
+    head_dim = _as_int(config.get("attention_head_dim"), 128)
+    hidden = max(1, num_heads) * max(1, head_dim)
+
+    num_layers = _as_int(config.get("num_layers"), 40)
+    max_pos = _as_int(config.get("rope_max_seq_len"), 1024)
+    eps = _as_float(config.get("eps"), 1e-6)
+
+    name = "Wan-AI/Wan2.2"
+    in_channels = _as_int(config.get("in_channels"), 16)
+    if in_channels == 36:
+        name = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+    elif in_channels == 16:
+        name = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+
+    return {
+        "model_type": "wan22",
+        "num_hidden_layers": max(1, num_layers),
+        "hidden_size": hidden,
+        "num_attention_heads": max(1, num_heads),
+        "num_key_value_heads": max(1, num_heads),
+        "max_position_embeddings": max(1, max_pos),
+        "rope_theta": 10000.0,
+        "rms_norm_eps": eps,
+        "_name_or_path": str(config.get("_name_or_path") or config.get("name") or name),
     }
 
 
@@ -194,6 +269,27 @@ _RX_ATTN_OUT = re.compile(r"^(?P<prefix>.+\.attention)\.to_out\.0\.(?P<param>wei
 _RX_ATTN_NORM = re.compile(r"^(?P<prefix>.+\.attention)\.norm_(?P<which>[qk])\.weight$")
 
 _ZIMAGE_PAD_TOKENS = {"x_pad_token", "cap_pad_token"}
+
+_WAN22_TRANSFORMER_PREFIXES = (
+    "model.diffusion_model.",
+    "model.model.diffusion_model.",
+    "model.",
+)
+
+_RX_WAN22_BLOCK_ATTN = re.compile(
+    r"^blocks\.(?P<idx>\d+)\.(?P<which>attn1|attn2)\.to_(?P<proj>[qkv])\.(?P<param>weight|bias)$"
+)
+_RX_WAN22_BLOCK_ATTN_OUT = re.compile(
+    r"^blocks\.(?P<idx>\d+)\.(?P<which>attn1|attn2)\.to_out\.0\.(?P<param>weight|bias)$"
+)
+_RX_WAN22_BLOCK_ATTN_NORM = re.compile(
+    r"^blocks\.(?P<idx>\d+)\.(?P<which>attn1|attn2)\.norm_(?P<norm>[qk])\.weight$"
+)
+_RX_WAN22_BLOCK_FFN_PROJ = re.compile(
+    r"^blocks\.(?P<idx>\d+)\.ffn\.net\.(?P<which>0\.proj|2)\.(?P<param>weight|bias)$"
+)
+_RX_WAN22_BLOCK_NORM2 = re.compile(r"^blocks\.(?P<idx>\d+)\.norm2\.(?P<param>weight|bias)$")
+_RX_WAN22_BLOCK_SCALE_SHIFT = re.compile(r"^blocks\.(?P<idx>\d+)\.scale_shift_table$")
 
 
 def _shape_of(safetensors_handle: Any, cache: dict[str, tuple[int, ...]], name: str) -> tuple[int, ...]:
@@ -436,6 +532,122 @@ def plan_zimage_transformer_tensors(
         # Provide a stable mapping for verification spot-checks.
         if src_name not in key_mapping:
             key_mapping[src_name] = gguf_name
+
+    return plans, key_mapping
+
+
+def _strip_prefixes(name: str, prefixes: tuple[str, ...]) -> str:
+    out = name
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if out.startswith(prefix):
+                out = out[len(prefix) :]
+                changed = True
+                break
+    return out
+
+
+def _map_wan22_key_to_comfy(src: str) -> str:
+    key = _strip_prefixes(src, _WAN22_TRANSFORMER_PREFIXES)
+
+    for before, after in (
+        ("condition_embedder.time_embedder.linear_1.", "time_embedding.0."),
+        ("condition_embedder.time_embedder.linear_2.", "time_embedding.2."),
+        ("condition_embedder.text_embedder.linear_1.", "text_embedding.0."),
+        ("condition_embedder.text_embedder.linear_2.", "text_embedding.2."),
+        ("condition_embedder.time_proj.", "time_projection.1."),
+        ("proj_out.", "head.head."),
+    ):
+        if key.startswith(before):
+            return after + key[len(before) :]
+
+    if key == "scale_shift_table":
+        return "head.modulation"
+
+    m = _RX_WAN22_BLOCK_ATTN.match(key)
+    if m:
+        idx = m.group("idx")
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        proj = m.group("proj")
+        param = m.group("param")
+        return f"blocks.{idx}.{which}.{proj}.{param}"
+
+    m = _RX_WAN22_BLOCK_ATTN_OUT.match(key)
+    if m:
+        idx = m.group("idx")
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        param = m.group("param")
+        return f"blocks.{idx}.{which}.o.{param}"
+
+    m = _RX_WAN22_BLOCK_ATTN_NORM.match(key)
+    if m:
+        idx = m.group("idx")
+        which = "self_attn" if m.group("which") == "attn1" else "cross_attn"
+        norm = m.group("norm")
+        return f"blocks.{idx}.{which}.norm_{norm}.weight"
+
+    m = _RX_WAN22_BLOCK_FFN_PROJ.match(key)
+    if m:
+        idx = m.group("idx")
+        which = "0" if m.group("which") == "0.proj" else "2"
+        param = m.group("param")
+        return f"blocks.{idx}.ffn.{which}.{param}"
+
+    m = _RX_WAN22_BLOCK_NORM2.match(key)
+    if m:
+        idx = m.group("idx")
+        param = m.group("param")
+        return f"blocks.{idx}.norm3.{param}"
+
+    m = _RX_WAN22_BLOCK_SCALE_SHIFT.match(key)
+    if m:
+        idx = m.group("idx")
+        return f"blocks.{idx}.modulation"
+
+    return key
+
+
+def plan_wan22_transformer_tensors(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested: GGMLQuantizationType,
+    overrides: list[CompiledTensorTypeRule],
+) -> tuple[list[TensorPlan], dict[str, str]]:
+    """Plan WAN22 transformer tensors.
+
+    When inputs use Diffusers layout keys (`condition_embedder.*`, `attn1/attn2`, `ffn.net.*`, `scale_shift_table`),
+    this normalizes them into the Comfy/WAN export layout keys used by Codex runtimes.
+    """
+
+    shapes: dict[str, tuple[int, ...]] = {}
+    plans: list[TensorPlan] = []
+    key_mapping: dict[str, str] = {}
+    claimed: dict[str, str] = {}
+
+    for src_name in tensor_names:
+        gguf_name = _map_wan22_key_to_comfy(src_name)
+        previous = claimed.get(gguf_name)
+        if previous is not None and previous != src_name:
+            raise RuntimeError(
+                f"WAN22 planner: multiple source tensors map to the same output name: {gguf_name} ({previous}, {src_name})"
+            )
+        claimed[gguf_name] = src_name
+
+        raw_shape = _shape_of(safetensors_handle, shapes, src_name)
+        plans.append(
+            _build_plan(
+                gguf_name=gguf_name,
+                raw_shape=raw_shape,
+                op="copy",
+                src_name=src_name,
+                src_names=(src_name,),
+                requested=requested,
+                overrides=overrides,
+            )
+        )
+        key_mapping[src_name] = gguf_name
 
     return plans, key_mapping
 
@@ -697,10 +909,13 @@ def plan_flux_transformer_tensors(
 __all__ = [
     "TensorPlan",
     "is_flux_transformer_config",
+    "is_wan22_transformer_config",
     "is_zimage_transformer_config",
     "normalize_flux_transformer_metadata_config",
+    "normalize_wan22_transformer_metadata_config",
     "normalize_zimage_transformer_metadata_config",
     "plan_tensors",
     "plan_flux_transformer_tensors",
+    "plan_wan22_transformer_tensors",
     "plan_zimage_transformer_tensors",
 ]

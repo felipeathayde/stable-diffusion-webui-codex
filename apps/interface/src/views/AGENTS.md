@@ -31,3 +31,4 @@ Status: Active
 - 2026-01-14: `ToolsTab.vue` GGUF converter supports Comfy/Codex key mapping for diffusion denoisers (Diffusers→Comfy keys via `comfy_layout`).
 - 2026-01-14: `ToolsTab.vue` now right-aligns the GGUF converter action rows (toggles + Convert/Cancel).
 - 2026-01-16: `ToolsTab.vue` now uses vendored model metadata only and exposes a Mixed toggle with an FP16/FP32 choice (advanced overrides are hidden).
+- 2026-01-16: `ToolsTab.vue` GGUF converter presets include WAN22 denoisers (selectable via vendored model metadata).

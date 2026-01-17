@@ -1,3 +1,7 @@
+**Wrong command:** `~/.venv/bin/python -m pytest -q tests/backend/test_wan22_sampler_timestep_multiplier.py tests/backend/test_wan22_gguf_run_config_overrides.py`
+**Cause + fix:** `Some backend modules require CODEX_ROOT (and PYTHONPATH) to resolve repo paths; running pytest without these env vars causes collection to fail. Re-run with CODEX_ROOT=$PWD PYTHONPATH=$PWD.`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q tests/backend/test_wan22_sampler_timestep_multiplier.py tests/backend/test_wan22_gguf_run_config_overrides.py`
+
 **Wrong command:** `ls -লা .sangoi/handoffs | head`
 **Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
 **Correct command:** `ls -la .sangoi/handoffs | head`

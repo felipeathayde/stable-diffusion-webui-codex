@@ -233,12 +233,13 @@ class WanTransformerBlock(nn.Module):
         hidden_dim = int(dim * mlp_ratio)
         self.ffn = nn.Sequential(
             nn.Linear(dim, hidden_dim, bias=True),
-            nn.SiLU(),
+            nn.GELU(approximate="tanh"),
             nn.Linear(hidden_dim, dim, bias=True),
         )
 
-        # Per-block modulation: [6, dim] for [sa_shift, sa_scale, sa_gate, ffn_shift, ffn_scale, ffn_gate]
-        self.modulation = nn.Parameter(torch.zeros(6, dim))
+        # Per-block modulation: [1, 6, dim] for [sa_shift, sa_scale, sa_gate, ffn_shift, ffn_scale, ffn_gate]
+        # Matches Diffusers `WanTransformerBlock.scale_shift_table` and upstream WAN exports.
+        self.modulation = nn.Parameter(torch.zeros(1, 6, dim))
 
     def forward(
         self,
@@ -247,7 +248,7 @@ class WanTransformerBlock(nn.Module):
         time_emb: torch.Tensor,  # [B, 6, dim]
     ) -> torch.Tensor:
         # Combine time embedding with per-block modulation
-        mod = time_emb + self.modulation.unsqueeze(0)  # [B, 6, dim]
+        mod = time_emb + self.modulation  # [B, 6, dim]
 
         sa_shift, sa_scale, sa_gate = mod[:, 0], mod[:, 1], mod[:, 2]
         ffn_shift, ffn_scale, ffn_gate = mod[:, 3], mod[:, 4], mod[:, 5]
@@ -335,7 +336,8 @@ class WanTransformer2DModel(nn.Module):
 
         # Output head
         self.norm_out = nn.LayerNorm(config.d_model, elementwise_affine=False)
-        self.head_modulation = nn.Parameter(torch.zeros(2, config.d_model))
+        # Head modulation: [1, 2, dim] (shift/scale). Matches Diffusers `WanTransformer3DModel.scale_shift_table`.
+        self.head_modulation = nn.Parameter(torch.zeros(1, 2, config.d_model))
         self.head = nn.Linear(config.d_model, patch_dim)
 
         logger.info(
@@ -356,7 +358,8 @@ class WanTransformer2DModel(nn.Module):
         freq = torch.arange(half, device=t.device, dtype=torch.float32)
         div_term = torch.exp(-math.log(10000.0) * freq / max(half - 1, 1))
         angles = t.to(dtype=torch.float32)[:, None] * div_term[None, :]
-        emb = torch.cat([torch.sin(angles), torch.cos(angles)], dim=1)
+        # Match Diffusers `Timesteps(..., flip_sin_to_cos=True)` and Comfy/WAN exports.
+        emb = torch.cat([torch.cos(angles), torch.sin(angles)], dim=1)
         if emb.shape[1] != base_dim:
             emb = torch.nn.functional.pad(emb, (0, base_dim - emb.shape[1]))
         return emb
@@ -410,20 +413,9 @@ class WanTransformer2DModel(nn.Module):
 
         # Output head (WAN GGUF semantics: LN without affine + repeated modulation)
         tokens = self.norm_out(tokens)
-
-        combined = self.head_modulation.unsqueeze(0) + t_proj.unsqueeze(2)
-        shift6, scale6 = combined.unbind(dim=2)  # [B, 6, C]
-
-        L = tokens.shape[1]
-        groups = int(shift6.shape[1])
-        repeats = (L + groups - 1) // groups
-        pad = repeats * groups - L
-        if pad:
-            tokens = torch.nn.functional.pad(tokens, (0, 0, 0, pad))
-        tokens_6 = tokens.view(B, repeats, groups, self.d_model).transpose(1, 2)  # [B, 6, repeats, C]
-        fused = shift6[:, :, None, :] + tokens_6 * (1.0 + scale6[:, :, None, :])
-        fused = fused.transpose(1, 2).reshape(B, repeats * groups, self.d_model)[:, :L]
-
+        # Head modulation matches upstream WAN/Comfy: shift/scale derived from the time embedding output (not `time_proj`).
+        shift, scale = (self.head_modulation + t_emb[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
+        fused = tokens * (1.0 + scale) + shift
         patches = self.head(fused)
 
         # Unpatchify: [B, L, patch_dim] -> [B, C, T, H, W]
@@ -446,9 +438,64 @@ def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
     This helper makes the GGUF path loadable without keeping a WAN-specific
     state-dict runner.
     """
+    _PREFIXES = (
+        "model.diffusion_model.",
+        "diffusion_model.",
+        "model.",
+    )
+
+    def _strip_prefixes(name: str) -> str:
+        changed = True
+        while changed:
+            changed = False
+            for prefix in _PREFIXES:
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                    changed = True
+                    break
+        return name
+
+    def _swap_norm2_norm3(name: str) -> str:
+        # Diffusers uses norm1/norm2/norm3 (SA/CA/FFN), while WAN exports use norm1/norm3/norm2.
+        # Swap only the ".norm2." and ".norm3." path segments.
+        name = name.replace(".norm2.", ".norm__placeholder.")
+        name = name.replace(".norm3.", ".norm2.")
+        name = name.replace(".norm__placeholder.", ".norm3.")
+        return name
+
     remapped: dict[str, object] = {}
     for key, value in state_dict.items():
-        k = str(key)
+        k = _strip_prefixes(str(key))
+
+        # Diffusers WanTransformer3DModel → WAN export-style names.
+        if k == "scale_shift_table":
+            k = "head.modulation"
+        elif k.endswith(".scale_shift_table"):
+            k = k[: -len(".scale_shift_table")] + ".modulation"
+        elif k.startswith("proj_out."):
+            k = "head.head." + k[len("proj_out."):]
+        else:
+            k = (
+                k.replace("condition_embedder.time_embedder.linear_1.", "time_embedding.0.")
+                .replace("condition_embedder.time_embedder.linear_2.", "time_embedding.2.")
+                .replace("condition_embedder.text_embedder.linear_1.", "text_embedding.0.")
+                .replace("condition_embedder.text_embedder.linear_2.", "text_embedding.2.")
+                .replace("condition_embedder.time_proj.", "time_projection.1.")
+            )
+
+        k = (
+            k.replace(".attn1.", ".self_attn.")
+            .replace(".attn2.", ".cross_attn.")
+            .replace(".to_out.0.", ".o.")
+            .replace(".to_q.", ".q.")
+            .replace(".to_k.", ".k.")
+            .replace(".to_v.", ".v.")
+            .replace(".ffn.net.0.proj.", ".ffn.0.")
+            .replace(".ffn.net.2.", ".ffn.2.")
+        )
+        k = _swap_norm2_norm3(k)
+
+        # WAN export-style keys → Codex-native WanTransformer2DModel keys.
         if k.startswith("patch_embedding."):
             k = "patch_embed." + k[len("patch_embedding."):]
         elif k.startswith("time_embedding."):
@@ -461,6 +508,7 @@ def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
             k = "head." + k[len("head.head."):]
         elif k == "head.modulation":
             k = "head_modulation"
+
         remapped[k] = value
     return remapped
 

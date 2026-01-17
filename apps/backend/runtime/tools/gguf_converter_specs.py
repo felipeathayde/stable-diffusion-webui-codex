@@ -40,6 +40,7 @@ class GGUFArch(str, Enum):
     LLAMA = "llama"
     FLUX = "flux"
     ZIMAGE = "zimage"
+    WAN22 = "wan22"
 
 
 class GGUFKeyLayout(str, Enum):
@@ -69,6 +70,8 @@ class ConverterProfileId(str, Enum):
     FLUX_TRANSFORMER_NATIVE = "flux_transformer_native"
     ZIMAGE_TRANSFORMER_COMFY = "zimage_transformer_comfy"
     ZIMAGE_TRANSFORMER_NATIVE = "zimage_transformer_native"
+    WAN22_TRANSFORMER_COMFY = "wan22_transformer_comfy"
+    WAN22_TRANSFORMER_NATIVE = "wan22_transformer_native"
     LLAMA_HF_TO_GGUF = "llama_hf_to_gguf"
     GENERIC_NATIVE = "generic_native"
 

@@ -352,7 +352,9 @@ const floatGroups = computed(() => {
 function formatComponentLabel(component: GGUFConverterModelComponent): string {
   const kind = String(component.kind || '')
   const base =
-    kind === 'flux_transformer' || kind === 'zimage_transformer' ? 'Denoiser' : kind || 'Component'
+    kind === 'flux_transformer' || kind === 'zimage_transformer' || kind === 'wan22_transformer'
+      ? 'Denoiser'
+      : kind || 'Component'
   const suffix =
     component.label && !['root', 'denoiser'].includes(component.label) ? ` (${component.label})` : ''
   return `${base}${suffix}`

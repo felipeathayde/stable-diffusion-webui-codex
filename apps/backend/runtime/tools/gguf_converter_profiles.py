@@ -11,6 +11,7 @@ Purpose: Converter profile registry for GGUF conversion (selects layout/planner/
 Symbols (top-level; keep in sync; no ghosts):
 - `_is_flux` (function): Detect whether a config.json describes a Flux transformer.
 - `_is_zimage` (function): Detect whether a config.json describes a ZImage transformer.
+- `_is_wan22` (function): Detect whether a config.json describes a WAN22 transformer.
 - `_build_llama_mapping` (function): Build a Llama HF→GGUF key mapping from the model config.
 - `_COND_QUANTIZED` (constant): Condition helper matching any quantized preset (non-F16/F32).
 - `_COND_FLUX_MIXED` (constant): Condition helper matching Flux mixed presets (`Q5_K_M`/`Q4_K_M`).
@@ -51,6 +52,10 @@ def _is_flux(config: Mapping[str, Any]) -> bool:
 
 def _is_zimage(config: Mapping[str, Any]) -> bool:
     return _tensor_planner.is_zimage_transformer_config(config)
+
+
+def _is_wan22(config: Mapping[str, Any]) -> bool:
+    return _tensor_planner.is_wan22_transformer_config(config)
 
 
 def _build_llama_mapping(config: Mapping[str, Any]) -> dict[str, str]:
@@ -291,6 +296,15 @@ def _plan_zimage(
     return _tensor_planner.plan_zimage_transformer_tensors(tensor_names, safetensors_handle, requested_type, rules)
 
 
+def _plan_wan22(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested_type: GGMLQuantizationType,
+    rules: list[CompiledTensorTypeRule],
+) -> tuple[list[Any], dict[str, str]]:
+    return _tensor_planner.plan_wan22_transformer_tensors(tensor_names, safetensors_handle, requested_type, rules)
+
+
 _FLUX_PLANNER = PlannerSpec(
     id="flux_transformer",
     plan=_plan_flux,
@@ -301,6 +315,12 @@ _ZIMAGE_PLANNER = PlannerSpec(
     id="zimage_transformer",
     plan=_plan_zimage,
     normalize_metadata=_tensor_planner.normalize_zimage_transformer_metadata_config,
+)
+
+_WAN22_PLANNER = PlannerSpec(
+    id="wan22_transformer",
+    plan=_plan_wan22,
+    normalize_metadata=_tensor_planner.normalize_wan22_transformer_metadata_config,
 )
 
 
@@ -338,6 +358,22 @@ PROFILE_REGISTRY: tuple[ConverterProfileSpec, ...] = (
         planner=_ZIMAGE_PLANNER,
     ),
     ConverterProfileSpec(
+        id=ConverterProfileId.WAN22_TRANSFORMER_COMFY,
+        arch=GGUFArch.WAN22,
+        layout=GGUFKeyLayout.COMFY_CODEX,
+        detect=_is_wan22,
+        quant_policy=GENERIC_QUANT_POLICY,
+        planner=_WAN22_PLANNER,
+    ),
+    ConverterProfileSpec(
+        id=ConverterProfileId.WAN22_TRANSFORMER_NATIVE,
+        arch=GGUFArch.WAN22,
+        layout=GGUFKeyLayout.NATIVE_KEYS,
+        detect=_is_wan22,
+        quant_policy=GENERIC_QUANT_POLICY,
+        planner=_WAN22_PLANNER,
+    ),
+    ConverterProfileSpec(
         id=ConverterProfileId.LLAMA_HF_TO_GGUF,
         arch=GGUFArch.LLAMA,
         layout=GGUFKeyLayout.LLAMA_GGUF,
@@ -353,7 +389,9 @@ def resolve_profile(config_json: Mapping[str, Any], *, comfy_layout: bool) -> Co
         return PROFILE_REGISTRY[0] if comfy_layout else PROFILE_REGISTRY[1]
     if _is_zimage(config_json):
         return PROFILE_REGISTRY[2] if comfy_layout else PROFILE_REGISTRY[3]
-    return PROFILE_REGISTRY[4]
+    if _is_wan22(config_json):
+        return PROFILE_REGISTRY[4] if comfy_layout else PROFILE_REGISTRY[5]
+    return PROFILE_REGISTRY[6]
 
 
 def profile_by_id(profile_id: str) -> ConverterProfileSpec:

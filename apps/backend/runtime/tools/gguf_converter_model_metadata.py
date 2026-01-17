@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Vendored model metadata for the GGUF converter UI.
 Scans the local Hugging Face mirror under `apps/backend/huggingface/**` and exposes “model metadata” entries (org/repo)
-with supported conversion components (currently Flux/ZImage denoisers).
+with supported conversion components (Flux/ZImage/WAN22 denoisers).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `GGUFConverterModelComponent` (dataclass): Convertible component entry (config dir + profile hints).
@@ -88,6 +88,14 @@ def _classify_config(cfg: dict[str, Any]) -> tuple[str, dict[str, str]]:
             {
                 "profile_id_comfy": "zimage_transformer_comfy",
                 "profile_id_native": "zimage_transformer_native",
+            },
+        )
+    if class_name in {"WanTransformer3DModel", "WanModel"}:
+        return (
+            "wan22_transformer",
+            {
+                "profile_id_comfy": "wan22_transformer_comfy",
+                "profile_id_native": "wan22_transformer_native",
             },
         )
 

@@ -936,10 +936,16 @@ const wanTextEncoder = computed(() => currentWanAssets().textEncoder || '')
 const wanVae = computed(() => currentWanAssets().vae || '')
 
 const wanTextEncoderChoices = computed(() => {
-  // WAN22 GGUF requires an explicit TE weights file (.safetensors). Prefer concrete
+  // WAN22 GGUF requires an explicit TE weights file (.safetensors or .gguf). Prefer concrete
   // files under the configured wan22_tenc roots (paths.json) rather than root labels from a dedicated endpoint.
   return inventoryTextEncoders.value
-    .filter((item) => typeof item.path === 'string' && item.path.toLowerCase().endsWith('.safetensors') && fileInPaths(item.path, 'wan22_tenc'))
+    .filter((item) => {
+      const path = typeof item.path === 'string' ? item.path : ''
+      if (!path) return false
+      const lower = path.toLowerCase()
+      if (!lower.endsWith('.safetensors') && !lower.endsWith('.gguf')) return false
+      return fileInPaths(path, 'wan22_tenc')
+    })
     .map((item) => `wan22/${item.path}`)
 })
 
@@ -1252,7 +1258,7 @@ async function onWanBrowseLow(): Promise<void> {
 
 async function onWanBrowseTe(): Promise<void> {
   const current = wanTextEncoder.value
-  const next = promptForPath('WAN Text Encoder (.safetensors) path or sha256', current)
+  const next = promptForPath('WAN Text Encoder (.safetensors or .gguf) path or sha256', current)
   if (next === null) return
   const normalized = next.replace(/\\+/g, '/')
   // Keep the stored value consistent with the dropdown labels (wan22/<abs_path>).

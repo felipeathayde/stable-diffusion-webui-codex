@@ -75,7 +75,7 @@ def get_text_context(
 
     te_path = text_encoder_dir
     te_file: Optional[str] = None
-    if te_path and os.path.isfile(te_path) and te_path.lower().endswith(".safetensors"):
+    if te_path and os.path.isfile(te_path) and te_path.lower().endswith((".safetensors", ".gguf")):
         te_file = te_path
         te_path = os.path.dirname(te_path)
     if tk_dir and os.path.isfile(tk_dir):
@@ -152,6 +152,8 @@ def get_text_context(
 
         if not te_file:
             raise RuntimeError("WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required for TE CUDA path.")
+        if te_file.lower().endswith(".gguf"):
+            raise RuntimeError("WAN22 GGUF: TE CUDA path requires a .safetensors weights file (GGUF is unsupported).")
 
         enc_dir = os.path.join(metadata_dir, "text_encoder")
         cfg_hf = AutoConfig.from_pretrained(enc_dir, local_files_only=True)
@@ -195,7 +197,7 @@ def get_text_context(
     # Strict: require a TE weights file; directory-based TE loading is not supported in WAN22 GGUF.
     if te_file is None:
         raise RuntimeError(
-            "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors file) is required. Directory-based text encoders are not supported."
+            "WAN22 GGUF: 'wan_text_encoder_path' (.safetensors or .gguf file) is required. Directory-based text encoders are not supported."
         )
 
     if not metadata_dir or not os.path.isdir(metadata_dir):
@@ -210,10 +212,15 @@ def get_text_context(
         raise RuntimeError(f"WAN22 GGUF: failed to read text encoder config from '{enc_dir}': {exc}") from exc
 
     enc = _Enc(cfg)
-    from safetensors.torch import load_file as _load_st
-
     try:
-        sd = _load_st(te_file)
+        if te_file.lower().endswith(".safetensors"):
+            from safetensors.torch import load_file as _load_st
+
+            sd = _load_st(te_file)
+        else:
+            from apps.backend.quantization.gguf_loader import load_gguf_state_dict as _load_gguf
+
+            sd = _load_gguf(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
         enc.load_state_dict(sd, strict=False)
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {exc}") from exc

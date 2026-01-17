@@ -184,6 +184,7 @@ If `.git/index.lock` is sitting there with no Git process alive, you remove it o
 When your turn is done:
 - You log the work in `.sangoi/task-logs/`.
 - You update `.sangoi/CHANGELOG.md` with what changed in the world that matters to users and to maintainers.
+- You update file headers when the work changes the story (Purpose / Symbols). No stale headers. No lies.
 - You leave the tree ready for an atomic commit: changes are clear, grouped by intent, and described in the handoff.
 
 You do **not** run `git commit` or `git push` by default.

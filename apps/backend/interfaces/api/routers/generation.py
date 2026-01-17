@@ -1319,8 +1319,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
         if not wan_tenc_path:
             raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
-        if not str(wan_tenc_path).lower().endswith(".safetensors"):
-            raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
+        te_lower = str(wan_tenc_path).lower()
+        if not (te_lower.endswith(".safetensors") or te_lower.endswith(".gguf")):
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN text encoder sha must resolve to a .safetensors or .gguf file: {wan_tenc_sha}",
+            )
         extras["wan_text_encoder_path"] = wan_tenc_path
 
         extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
@@ -1474,8 +1478,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
         if not wan_tenc_path:
             raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
-        if not str(wan_tenc_path).lower().endswith(".safetensors"):
-            raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
+        te_lower = str(wan_tenc_path).lower()
+        if not (te_lower.endswith(".safetensors") or te_lower.endswith(".gguf")):
+            raise HTTPException(
+                status_code=409,
+                detail=f"WAN text encoder sha must resolve to a .safetensors or .gguf file: {wan_tenc_sha}",
+            )
         extras["wan_text_encoder_path"] = wan_tenc_path
 
         extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)
@@ -1711,8 +1719,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             wan_tenc_path = resolve_asset_by_sha(wan_tenc_sha)
             if not wan_tenc_path:
                 raise HTTPException(status_code=409, detail=f"WAN text encoder not found for sha: {wan_tenc_sha}")
-            if not str(wan_tenc_path).lower().endswith(".safetensors"):
-                raise HTTPException(status_code=409, detail=f"WAN text encoder sha must resolve to a .safetensors file: {wan_tenc_sha}")
+            te_lower = str(wan_tenc_path).lower()
+            if not (te_lower.endswith(".safetensors") or te_lower.endswith(".gguf")):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"WAN text encoder sha must resolve to a .safetensors or .gguf file: {wan_tenc_sha}",
+                )
             extras["wan_text_encoder_path"] = wan_tenc_path
 
             extras["wan_metadata_dir"] = _resolve_wan_metadata_dir(payload)

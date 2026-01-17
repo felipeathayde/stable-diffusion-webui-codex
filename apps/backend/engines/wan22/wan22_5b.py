@@ -102,9 +102,10 @@ def _build_wan22_gguf_run_config(
         )
 
     te_path = os.path.expanduser(str(te_path))
-    if not str(te_path).lower().endswith(".safetensors"):
+    te_lower = str(te_path).lower()
+    if not (te_lower.endswith(".safetensors") or te_lower.endswith(".gguf")):
         raise RuntimeError(
-            f"WAN22 GGUF: 'wan_text_encoder_path' must be a '.safetensors' file, got: {te_path}"
+            "WAN22 GGUF: 'wan_text_encoder_path' must be a '.safetensors' or '.gguf' file, got: %s" % te_path
         )
     if not os.path.isfile(te_path):
         raise RuntimeError(f"WAN22 GGUF: text encoder weights not found: {te_path}")

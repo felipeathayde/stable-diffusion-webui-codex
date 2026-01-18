@@ -14,8 +14,10 @@ Status: Active
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.highres.refiner`; `HighresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - `payloads_video.ts` provides typed (Zod) payload builders for WAN `/txt2vid` and `/img2vid`, including stage overrides (`wan_high/wan_low`), normalization of QuickSettings-style TE labels (`wan22/<abs_path>` → `<abs_path>`), and guards against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for stage payloads and `vid2vid_model_dir`.
-- `ModelsResponse` is served by `/api/models`; it now includes a `core_only` boolean hint per checkpoint (core-only checkpoints require external assets).
-- `EngineCapabilitiesResponse` is served by `/api/engines/capabilities`; it now includes `asset_contracts` so the UI can gate required VAE/text encoder selections without duplicating backend policy.
+- `ModelsResponse` is served by `/api/models`; it includes `core_only` plus `core_only_reason` so UIs can explain why a checkpoint is treated as core-only (suffix remains a fallback).
+- `EngineCapabilitiesResponse` is served by `/api/engines/capabilities`; it includes:
+  - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)
+  - `engine_id_to_semantic_engine` (explicit key-space mapping)
 - 2026-01-06: `/api/samplers` DTO is now `{name,supported,default_scheduler,allowed_schedulers}` and WAN payload builders fail fast on non-canonical (uppercase) sampler/scheduler inputs.
 - 2025-12-16: Added `startVid2Vid(FormData)` for `/api/vid2vid` (multipart upload) and a typed builder `buildWanVid2VidPayload()`; video task events/results now include an optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
 - `Txt2ImgRequestSchema` exposes optional `smart_offload`/`smart_fallback` booleans so quicksettings can toggle smart offload and CPU fallback per-generation (mirroring `/api/options` keys `codex_smart_offload`/`codex_smart_fallback`).

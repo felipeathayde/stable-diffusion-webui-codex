@@ -60,27 +60,48 @@ class EngineAssetContract:
     """Asset requirements for an engine request context."""
 
     requires_vae: bool
-    tenc_count: int
+    tenc_slots: tuple[str, ...]
     tenc_kind: TextEncoderKind
     sha_only: bool
+    tenc_slot_labels: tuple[str, ...] | None = None
     notes: str = ""
 
     def __post_init__(self) -> None:
-        if int(self.tenc_count) < 0:
-            raise ValueError("tenc_count must be >= 0")
-        if int(self.tenc_count) == 0 and self.tenc_kind is not TextEncoderKind.NONE:
-            raise ValueError("tenc_kind must be NONE when tenc_count is 0")
-        if int(self.tenc_count) > 0 and self.tenc_kind is TextEncoderKind.NONE:
-            raise ValueError("tenc_kind must not be NONE when tenc_count is > 0")
+        slots = tuple(str(s).strip() for s in (self.tenc_slots or ()))
+        if any(not s for s in slots):
+            raise ValueError("tenc_slots must not contain empty values")
+        if len(set(slots)) != len(slots):
+            raise ValueError("tenc_slots must not contain duplicates")
+        object.__setattr__(self, "tenc_slots", slots)
+
+        labels = self.tenc_slot_labels
+        if labels is not None:
+            labels = tuple(str(s).strip() for s in labels)
+            if any(not s for s in labels):
+                raise ValueError("tenc_slot_labels must not contain empty values")
+            if len(labels) != len(slots):
+                raise ValueError("tenc_slot_labels must match tenc_slots length")
+            object.__setattr__(self, "tenc_slot_labels", labels)
+
+        if self.tenc_count == 0 and self.tenc_kind is not TextEncoderKind.NONE:
+            raise ValueError("tenc_kind must be NONE when tenc_slots is empty")
+        if self.tenc_count > 0 and self.tenc_kind is TextEncoderKind.NONE:
+            raise ValueError("tenc_kind must not be NONE when tenc_slots is non-empty")
 
     @property
     def requires_text_encoders(self) -> bool:
-        return int(self.tenc_count) > 0
+        return self.tenc_count > 0
+
+    @property
+    def tenc_count(self) -> int:
+        return len(self.tenc_slots)
 
     def as_dict(self) -> dict[str, object]:
         return {
             "requires_vae": bool(self.requires_vae),
             "tenc_count": int(self.tenc_count),
+            "tenc_slots": list(self.tenc_slots),
+            "tenc_slot_labels": list(self.tenc_slot_labels or []),
             "tenc_kind": str(self.tenc_kind.value),
             "tenc_kind_label": format_text_encoder_kind_label(self.tenc_kind),
             "sha_only": bool(self.sha_only),
@@ -92,35 +113,35 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
     # Diffusion checkpoints embed VAE/text encoders; external assets are optional overrides.
     "sd15": EngineAssetContract(
         requires_vae=False,
-        tenc_count=0,
+        tenc_slots=(),
         tenc_kind=TextEncoderKind.NONE,
         sha_only=True,
         notes="Monolithic checkpoint; external VAE/text encoders are optional overrides.",
     ),
     "sd20": EngineAssetContract(
         requires_vae=False,
-        tenc_count=0,
+        tenc_slots=(),
         tenc_kind=TextEncoderKind.NONE,
         sha_only=True,
         notes="Monolithic checkpoint; external VAE/text encoders are optional overrides.",
     ),
     "sdxl": EngineAssetContract(
         requires_vae=False,
-        tenc_count=0,
+        tenc_slots=(),
         tenc_kind=TextEncoderKind.NONE,
         sha_only=True,
         notes="Monolithic checkpoint; external VAE/text encoders are optional overrides.",
     ),
     "sdxl_refiner": EngineAssetContract(
         requires_vae=False,
-        tenc_count=0,
+        tenc_slots=(),
         tenc_kind=TextEncoderKind.NONE,
         sha_only=True,
         notes="Monolithic checkpoint; external VAE/text encoders are optional overrides.",
     ),
     "sd35": EngineAssetContract(
         requires_vae=False,
-        tenc_count=0,
+        tenc_slots=(),
         tenc_kind=TextEncoderKind.NONE,
         sha_only=True,
         notes="Diffusers-style checkpoint; external VAE/text encoders are optional overrides.",
@@ -128,21 +149,24 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
     # External-assets-first families.
     "flux1": EngineAssetContract(
         requires_vae=True,
-        tenc_count=2,
+        tenc_slots=("clip_l", "t5xxl"),
+        tenc_slot_labels=("CLIP-L", "T5-XXL"),
         tenc_kind=TextEncoderKind.CLIP_T5,
         sha_only=True,
         notes="External-assets-first: requires VAE + 2 text encoders (CLIP + T5) via sha selection.",
     ),
     "flux1_kontext": EngineAssetContract(
         requires_vae=True,
-        tenc_count=2,
+        tenc_slots=("clip_l", "t5xxl"),
+        tenc_slot_labels=("CLIP-L", "T5-XXL"),
         tenc_kind=TextEncoderKind.CLIP_T5,
         sha_only=True,
         notes="External-assets-first: requires VAE + 2 text encoders (CLIP + T5) via sha selection.",
     ),
     "zimage": EngineAssetContract(
         requires_vae=True,
-        tenc_count=1,
+        tenc_slots=("qwen3_4b",),
+        tenc_slot_labels=("Qwen3-4B",),
         tenc_kind=TextEncoderKind.QWEN,
         sha_only=True,
         notes="External-assets-first: requires Flow16 VAE + 1 Qwen text encoder via sha selection.",
@@ -150,7 +174,7 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
     # Chroma safetensors are treated as monolithic; GGUF selections remain core-only.
     "flux1_chroma": EngineAssetContract(
         requires_vae=False,
-        tenc_count=0,
+        tenc_slots=(),
         tenc_kind=TextEncoderKind.NONE,
         sha_only=True,
         notes="Chroma safetensors are treated as monolithic; external assets are optional overrides.",
@@ -186,7 +210,8 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
     if key == "flux1_chroma":
         return EngineAssetContract(
             requires_vae=True,
-            tenc_count=1,
+            tenc_slots=("t5xxl",),
+            tenc_slot_labels=("T5-XXL",),
             tenc_kind=TextEncoderKind.T5,
             sha_only=True,
             notes="Core-only checkpoint: requires external VAE + 1 T5 text encoder.",
@@ -195,16 +220,27 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
     if key in ("sd15", "sd20"):
         return EngineAssetContract(
             requires_vae=True,
-            tenc_count=1,
+            tenc_slots=("clip_l",),
+            tenc_slot_labels=("CLIP-L",),
             tenc_kind=TextEncoderKind.CLIP,
             sha_only=True,
             notes="Core-only checkpoint: requires external VAE + 1 CLIP text encoder.",
         )
 
     if key in ("sdxl", "sdxl_refiner"):
+        if key == "sdxl_refiner":
+            return EngineAssetContract(
+                requires_vae=True,
+                tenc_slots=("clip_g",),
+                tenc_slot_labels=("CLIP-G",),
+                tenc_kind=TextEncoderKind.CLIP,
+                sha_only=True,
+                notes="Core-only checkpoint: requires external VAE + 1 SDXL refiner text encoder (CLIP-G).",
+            )
         return EngineAssetContract(
             requires_vae=True,
-            tenc_count=2,
+            tenc_slots=("clip_l", "clip_g"),
+            tenc_slot_labels=("CLIP-L", "CLIP-G"),
             tenc_kind=TextEncoderKind.SDXL,
             sha_only=True,
             notes="Core-only checkpoint: requires external VAE + 2 SDXL text encoders.",
@@ -212,22 +248,25 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
 
     if key == "sd35":
         enable_t5 = env_flag("CODEX_SD3_ENABLE_T5", default=True)
-        count = 3 if enable_t5 else 2
+        slots = ("clip_l", "clip_g", "t5xxl") if enable_t5 else ("clip_l", "clip_g")
+        labels = ("CLIP-L", "CLIP-G", "T5-XXL") if enable_t5 else ("CLIP-L", "CLIP-G")
         return EngineAssetContract(
             requires_vae=True,
-            tenc_count=count,
+            tenc_slots=slots,
+            tenc_slot_labels=labels,
             tenc_kind=TextEncoderKind.SD3,
             sha_only=True,
             notes=(
                 "Core-only checkpoint: requires external VAE + SD3 text encoders "
-                f"(tenc_count={count}; CODEX_SD3_ENABLE_T5={bool(enable_t5)})."
+                f"(tenc_count={len(slots)}; CODEX_SD3_ENABLE_T5={bool(enable_t5)})."
             ),
         )
 
     base = contract_for_engine(key)
     return EngineAssetContract(
         requires_vae=True,
-        tenc_count=1,
+        tenc_slots=("clip_l",),
+        tenc_slot_labels=("CLIP-L",),
         tenc_kind=TextEncoderKind.CLIP,
         sha_only=bool(base.sha_only),
         notes="Core-only checkpoint: requires external VAE + at least one text encoder (default contract).",

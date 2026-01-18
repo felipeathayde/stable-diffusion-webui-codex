@@ -1,0 +1,323 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Header-only text encoder slot classification for sha-selected assets.
+Provides a fast, import-light helper used by API request paths to classify a resolved text encoder weights file into
+an explicit slot (`clip_l`, `clip_g`, `t5xxl`, `qwen3_4b`) without loading any tensors.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `TextEncoderSlotError` (class): Raised when a weights file cannot be classified into a known slot.
+- `classify_text_encoder_slot` (function): Classify a weights file into a slot using header-only inspection.
+- `map_text_encoder_paths_to_slots` (function): Classify paths into an expected slot set (order-independent).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import struct
+from pathlib import Path
+from typing import Mapping, Sequence
+
+
+class TextEncoderSlotError(ValueError):
+    """Raised when a text encoder weights file cannot be classified."""
+
+
+def classify_text_encoder_slot(path: str) -> str:
+    """Classify a text encoder weights file into a known slot.
+
+    This function must be safe to call in API request paths:
+    - no torch imports
+    - no tensor loading (header-only)
+    - explicit errors (no guessing)
+    """
+
+    raw = str(path or "").strip()
+    if not raw:
+        raise TextEncoderSlotError("Text encoder path is required for slot classification.")
+
+    p = Path(os.path.expanduser(raw)).resolve(strict=False)
+    if not p.exists() or not p.is_file():
+        raise TextEncoderSlotError(f"Text encoder path not found: {p}")
+
+    suffix = p.suffix.lower()
+    if suffix in {".safetensor", ".safetensors"}:
+        header = _read_safetensors_header(p)
+        return _classify_safetensors_header(header, context=str(p))
+    if suffix == ".gguf":
+        try:
+            kv = _read_gguf_kv(p)
+        except TextEncoderSlotError:
+            raise
+        except Exception as exc:
+            raise TextEncoderSlotError(f"Failed to read GGUF metadata for slot classification: {p}: {exc}") from exc
+        try:
+            return _classify_gguf_kv(kv, context=str(p))
+        except TextEncoderSlotError:
+            raise
+        except Exception as exc:
+            raise TextEncoderSlotError(f"Failed to classify GGUF text encoder slot for {p}: {exc}") from exc
+
+    raise TextEncoderSlotError(
+        "Unsupported text encoder weights extension %r (supported: .safetensors, .gguf)" % suffix
+    )
+
+
+def map_text_encoder_paths_to_slots(*, paths: Sequence[str], expected_slots: Sequence[str]) -> dict[str, str]:
+    """Classify a set of text encoder weight paths into an expected slot set (order-independent)."""
+
+    exp = tuple(str(s).strip() for s in expected_slots)
+    if any(not s for s in exp):
+        raise TextEncoderSlotError("Expected text encoder slots must not contain empty values.")
+    if len(set(exp)) != len(exp):
+        raise TextEncoderSlotError(f"Expected text encoder slots must be unique: {list(exp)}")
+
+    cleaned = [str(p).strip() for p in paths if str(p).strip()]
+    if len(cleaned) != len(exp):
+        raise TextEncoderSlotError(
+            f"Expected exactly {len(exp)} text encoder path(s) for slots={list(exp)}, got {len(cleaned)}."
+        )
+
+    slot_to_path: dict[str, str] = {}
+    for raw in cleaned:
+        slot = classify_text_encoder_slot(raw)
+        if slot not in exp:
+            raise TextEncoderSlotError(
+                f"Text encoder slot mismatch: got slot={slot!r} for path={raw!r}, expected one of {list(exp)}."
+            )
+        if slot in slot_to_path:
+            raise TextEncoderSlotError(
+                f"Duplicate text encoder slot {slot!r} for slots={list(exp)} (path={raw!r})."
+            )
+        slot_to_path[slot] = raw
+
+    missing = [slot for slot in exp if slot not in slot_to_path]
+    if missing:
+        raise TextEncoderSlotError(
+            f"Missing required text encoder slot(s) {missing} for slots={list(exp)} (classified={sorted(slot_to_path)})."
+        )
+
+    return slot_to_path
+
+
+def _classify_safetensors_header(header: Mapping[str, object], *, context: str) -> str:
+    keys = [k for k in header.keys() if k != "__metadata__"]
+    if not keys:
+        raise TextEncoderSlotError(f"Empty safetensors header (no tensors): {context}")
+
+    def _shape_for_suffix(suffixes: tuple[str, ...]) -> tuple[int, ...] | None:
+        for k, meta in header.items():
+            if k == "__metadata__":
+                continue
+            key = str(k)
+            if not any(key.endswith(suf) for suf in suffixes):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            shape = meta.get("shape")
+            if isinstance(shape, (list, tuple)) and shape and all(isinstance(x, (int, float)) for x in shape):
+                return tuple(int(x) for x in shape)
+        return None
+
+    # --- CLIP (CLIP-L / CLIP-G)
+    clip_shape = _shape_for_suffix(
+        (
+            "text_model.embeddings.token_embedding.weight",
+            "model.token_embedding.weight",
+            "token_embedding.weight",
+        )
+    )
+    if clip_shape and len(clip_shape) >= 2:
+        hidden = int(clip_shape[-1])
+        if hidden == 768:
+            return "clip_l"
+        if hidden == 1280:
+            return "clip_g"
+        raise TextEncoderSlotError(
+            f"Unrecognized CLIP hidden size {hidden} for {context} (expected 768 or 1280)."
+        )
+
+    # --- T5 (T5-XXL)
+    t5_shared = _shape_for_suffix(("shared.weight",))
+    t5_attn = _shape_for_suffix(("encoder.block.0.layer.0.SelfAttention.q.weight",))
+    if t5_shared and t5_attn and len(t5_shared) >= 2:
+        hidden = int(t5_shared[-1])
+        if hidden == 4096:
+            return "t5xxl"
+        raise TextEncoderSlotError(
+            f"Unrecognized T5 hidden size {hidden} for {context} (expected 4096 for T5-XXL)."
+        )
+
+    # --- Qwen3-4B (used by Z-Image text encoder selection)
+    qwen_embed = _shape_for_suffix(("model.embed_tokens.weight", "embed_tokens.weight"))
+    if qwen_embed and len(qwen_embed) >= 2:
+        hidden = int(qwen_embed[-1])
+        if hidden == 2560:
+            return "qwen3_4b"
+        raise TextEncoderSlotError(
+            f"Unrecognized LLM embed dim {hidden} for {context} (expected 2560 for Qwen3-4B)."
+        )
+
+    raise TextEncoderSlotError(
+        "Could not classify text encoder slot from safetensors header for %s. "
+        "Expected a CLIP (token_embedding), T5 (shared+encoder.block), or Qwen (embed_tokens) weights file."
+        % context
+    )
+
+
+_GGUF_MAGIC = 0x46554747  # 'GGUF' little-endian
+
+_GGUF_VALUE_UINT8 = 0
+_GGUF_VALUE_INT8 = 1
+_GGUF_VALUE_UINT16 = 2
+_GGUF_VALUE_INT16 = 3
+_GGUF_VALUE_UINT32 = 4
+_GGUF_VALUE_INT32 = 5
+_GGUF_VALUE_FLOAT32 = 6
+_GGUF_VALUE_BOOL = 7
+_GGUF_VALUE_STRING = 8
+_GGUF_VALUE_ARRAY = 9
+_GGUF_VALUE_UINT64 = 10
+_GGUF_VALUE_INT64 = 11
+_GGUF_VALUE_FLOAT64 = 12
+
+_SAFE_MAX_GGUF_ARRAY_ITEMS = 256
+
+
+def _read_exact(handle, n: int) -> bytes:
+    data = handle.read(n)
+    if len(data) != n:
+        raise EOFError(f"Unexpected EOF (wanted {n} bytes, got {len(data)}).")
+    return data
+
+
+def _read_u32(handle) -> int:
+    return struct.unpack("<I", _read_exact(handle, 4))[0]
+
+def _read_i32(handle) -> int:
+    return struct.unpack("<i", _read_exact(handle, 4))[0]
+
+
+def _read_u64(handle) -> int:
+    return struct.unpack("<Q", _read_exact(handle, 8))[0]
+
+def _read_i64(handle) -> int:
+    return struct.unpack("<q", _read_exact(handle, 8))[0]
+
+def _read_f32(handle) -> float:
+    return struct.unpack("<f", _read_exact(handle, 4))[0]
+
+def _read_f64(handle) -> float:
+    return struct.unpack("<d", _read_exact(handle, 8))[0]
+
+
+def _read_string(handle) -> str:
+    n = _read_u64(handle)
+    raw = _read_exact(handle, int(n))
+    return raw.decode("utf-8", errors="replace")
+
+
+def _read_gguf_value(handle, vtype: int) -> object:
+    if vtype == _GGUF_VALUE_UINT8:
+        return _read_exact(handle, 1)[0]
+    if vtype == _GGUF_VALUE_INT8:
+        return struct.unpack("<b", _read_exact(handle, 1))[0]
+    if vtype == _GGUF_VALUE_UINT16:
+        return struct.unpack("<H", _read_exact(handle, 2))[0]
+    if vtype == _GGUF_VALUE_INT16:
+        return struct.unpack("<h", _read_exact(handle, 2))[0]
+    if vtype == _GGUF_VALUE_UINT32:
+        return _read_u32(handle)
+    if vtype == _GGUF_VALUE_INT32:
+        return _read_i32(handle)
+    if vtype == _GGUF_VALUE_FLOAT32:
+        return _read_f32(handle)
+    if vtype == _GGUF_VALUE_BOOL:
+        return bool(_read_exact(handle, 1)[0])
+    if vtype == _GGUF_VALUE_UINT64:
+        return _read_u64(handle)
+    if vtype == _GGUF_VALUE_INT64:
+        return _read_i64(handle)
+    if vtype == _GGUF_VALUE_FLOAT64:
+        return _read_f64(handle)
+    if vtype == _GGUF_VALUE_STRING:
+        return _read_string(handle)
+    if vtype == _GGUF_VALUE_ARRAY:
+        elem_type = _read_u32(handle)
+        count = _read_u64(handle)
+        preview: list[object] = []
+        for i in range(int(count)):
+            value = _read_gguf_value(handle, int(elem_type))
+            if i < _SAFE_MAX_GGUF_ARRAY_ITEMS:
+                preview.append(value)
+        if count > _SAFE_MAX_GGUF_ARRAY_ITEMS:
+            return {"__truncated__": True, "count": int(count), "preview": preview, "elem_type": int(elem_type)}
+        return preview
+    raise ValueError(f"Unsupported GGUF value type: {vtype}")
+
+
+def _read_gguf_kv(path: Path) -> dict[str, object]:
+    with path.open("rb") as handle:
+        magic = _read_u32(handle)
+        if magic != _GGUF_MAGIC:
+            raise TextEncoderSlotError(f"Not a GGUF file (magic={hex(magic)}): {path}")
+        _ = _read_u32(handle)  # version
+        _ = _read_u64(handle)  # n_tensors
+        n_kv = _read_u64(handle)
+
+        kv: dict[str, object] = {}
+        for _ in range(int(n_kv)):
+            key = _read_string(handle)
+            vtype = _read_u32(handle)
+            kv[key] = _read_gguf_value(handle, int(vtype))
+
+    return kv
+
+
+def _classify_gguf_kv(kv: Mapping[str, object], *, context: str) -> str:
+    arch = str(kv.get("general.architecture") or "").strip().lower()
+    tok_model = str(kv.get("tokenizer.ggml.model") or "").strip().lower()
+    hint = arch or tok_model
+
+    if "t5" in hint:
+        return "t5xxl"
+    if "qwen" in hint:
+        return "qwen3_4b"
+    if "clip" in hint:
+        # GGUF CLIP variants are not slot-disambiguated today; fail if we ever need this.
+        raise TextEncoderSlotError(f"GGUF CLIP slot disambiguation is not supported yet: {context}")
+
+    raise TextEncoderSlotError(
+        "Could not classify GGUF text encoder slot for %s (missing/unknown 'general.architecture')." % context
+    )
+
+
+def _read_safetensors_header(path: Path) -> dict[str, object]:
+    with path.open("rb") as handle:
+        raw_len = handle.read(8)
+        if len(raw_len) != 8:
+            raise TextEncoderSlotError(f"Invalid safetensors header (short): {path}")
+        (header_len,) = struct.unpack("<Q", raw_len)
+        if header_len <= 0 or header_len > 64 * 1024 * 1024:
+            raise TextEncoderSlotError(f"Invalid safetensors header length: {header_len} ({path})")
+        raw = _read_exact(handle, int(header_len))
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise TextEncoderSlotError(f"Invalid safetensors header JSON: {path}") from exc
+    if not isinstance(data, dict):
+        raise TextEncoderSlotError(f"Invalid safetensors header (expected JSON object): {path}")
+    return data
+
+
+__all__ = [
+    "TextEncoderSlotError",
+    "classify_text_encoder_slot",
+    "map_text_encoder_paths_to_slots",
+]

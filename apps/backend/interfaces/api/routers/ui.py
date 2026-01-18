@@ -144,7 +144,7 @@ def build_router(
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
-    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "zimage", "wan"}
+    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "chroma", "zimage", "wan"}
 
     def _normalize_tab_type(value: object) -> str:
         raw = str(value or "").strip().lower()
@@ -152,6 +152,8 @@ def build_router(
             return "wan"
         if raw == "flux":
             return "flux1"
+        if raw in ("flux1_chroma", "flux1-chroma"):
+            return "chroma"
         if raw in _ALLOWED_TAB_TYPES:
             return raw
         return "sd15"
@@ -186,7 +188,9 @@ def build_router(
                 mk("sd15", "SD 1.5", 0),
                 mk("sdxl", "SDXL", 1),
                 mk("flux1", "FLUX.1", 2),
-                mk("wan", "WAN 2.2", 3),
+                mk("chroma", "Chroma", 3),
+                mk("zimage", "Z Image", 4),
+                mk("wan", "WAN 2.2", 5),
             ],
         }
 

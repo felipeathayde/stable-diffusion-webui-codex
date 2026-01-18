@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Unified generation composable for image tabs (txt2img/img2img).
+Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
 starts `/api/txt2img` and `/api/img2img`, and consumes task SSE events to update UI state.
 
@@ -207,6 +207,7 @@ export function useGeneration(tabId: string) {
 
     const tabType = String(engineType.value)
     let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
+    if (tabType === 'chroma') engineOverrideForRequest = 'flux1_chroma'
     // Flux.1 img2img should run via the Kontext workflow engine.
     if (p.useInitImage && engineOverrideForRequest === 'flux1') {
       engineOverrideForRequest = 'flux1_kontext'

@@ -128,7 +128,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     # Chroma (flow-based image generation).
     SemanticEngine.CHROMA: EngineParamSurface(
         supports_txt2img=True,
-        supports_img2img=False,
+        supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_highres=False,

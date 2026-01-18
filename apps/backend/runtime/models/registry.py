@@ -297,12 +297,19 @@ class ModelRegistry:
                 continue
             seen.add(path_str)
             suffix = file.suffix.lower()
-            if suffix == ".gguf":
-                fmt = CheckpointFormat.GGUF
-            else:
-                fmt = CheckpointFormat.CHECKPOINT
+            gguf_by_suffix = suffix == ".gguf"
+            gguf_by_magic = False
+            if not gguf_by_suffix:
+                try:
+                    with file.open("rb") as handle:
+                        gguf_by_magic = handle.read(4) == b"GGUF"
+                except Exception:
+                    gguf_by_magic = False
+            is_gguf = gguf_by_suffix or gguf_by_magic
 
-            core_only = suffix == ".gguf"
+            fmt = CheckpointFormat.GGUF if is_gguf else CheckpointFormat.CHECKPOINT
+            core_only = is_gguf
+            core_only_reason = "gguf_suffix" if gguf_by_suffix else ("gguf_magic" if gguf_by_magic else None)
             family_hint: str | None = None
             try:
                 rel = file.resolve().relative_to(self._models_root)
@@ -328,6 +335,7 @@ class ModelRegistry:
                 model_name=file.stem,
                 format=fmt,
                 core_only=core_only,
+                core_only_reason=core_only_reason,
                 family_hint=family_hint,
                 sha256=sha256,
                 short_hash=short_hash,

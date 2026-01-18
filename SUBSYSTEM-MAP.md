@@ -41,7 +41,10 @@ They are not theoretical — if you follow the drift, you end up debugging the w
 
 ### DRIFT-ASSETS-OPTIONAL: Treating VAE / text encoders as optional for core-only engines
 - Wrong assumption: “ZImage can proceed without a VAE”, or “Flux text encoders are optional”, or “return None when missing and keep going”.
-- Correct contract (backend): for `engine_id in ("flux1", "flux1_kontext", "zimage")`, **both** VAE and TE must be provided via SHA:
+- Correct contract (backend): requirements are contract-driven and enforced at the API boundary (no inference/fallbacks):
+  - Owner: `apps/backend/core/contracts/asset_requirements.py` (`contract_for_request(engine_id, checkpoint_core_only)`).
+  - Enforcer: `apps/backend/interfaces/api/routers/generation.py` (builds 400/409 errors from the same contract).
+  For `engine_id in ("flux1", "flux1_kontext", "zimage")`, **both** VAE and TE must be provided via SHA:
   - txt2img: `extras.vae_sha` + `extras.tenc_sha`
   - img2img: `img2img_extras.vae_sha` + `img2img_extras.tenc_sha`
   Missing → `400`, unknown SHA → `409`. Source: `apps/backend/interfaces/api/routers/generation.py`.
@@ -49,11 +52,13 @@ They are not theoretical — if you follow the drift, you end up debugging the w
 
 ### DRIFT-INFER-REQUIREMENTS: Inferring requirements from pipeline config / latent format
 - Wrong assumption: “If pipeline_config has a `vae` key, then VAE must be optional/required”, or “infer VAE need from latent format and guess exceptions.”
-- Correct contract: requirements are enforced at the API boundary by `engine_id` (see `requires_external_vae/requires_external_tenc` in `apps/backend/interfaces/api/routers/generation.py`). Do not “infer” — read the contract.
+- Correct contract: requirements are enforced at the API boundary by the shared asset contract (engine-id + core-only), not inferred from pipeline configs.
+  Source: `apps/backend/core/contracts/asset_requirements.py` + `apps/backend/interfaces/api/routers/generation.py`.
 
 ### DRIFT-FLUX-TE-COUNT: Treating “text encoder” as a single value for Flux/Kontext
 - Wrong assumption: “pick the first text encoder” / treat TE as a single string.
-- Correct contract: Flux/Kontext require **exactly 2** encoders (CLIP + T5) via `extras.tenc_sha` (array of 2 sha256 strings). Source: `apps/backend/interfaces/api/routers/generation.py`.
+- Correct contract: Flux/Kontext require **exactly 2** encoders (`clip_l` + `t5xxl`) via `extras.tenc_sha` (array of 2 sha256 strings).
+  The API maps order-independently using the header-only slot classifier in `apps/backend/core/contracts/text_encoder_slots.py` (no reliance on list order). Source: `apps/backend/interfaces/api/routers/generation.py`.
 
 ### DRIFT-SENTINELS: Treating `Automatic` / `Built-in` as a valid fallback for required assets
 - Wrong assumption: “if user leaves Built-in/Automatic, just don’t send it and it’ll work.”

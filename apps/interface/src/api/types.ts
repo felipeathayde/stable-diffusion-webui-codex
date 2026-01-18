@@ -61,6 +61,7 @@ export interface ModelInfo {
   filename: string
   metadata: Record<string, unknown>
   core_only: boolean
+  core_only_reason?: string | null
   family_hint?: string | null
 }
 
@@ -186,11 +187,14 @@ export interface EngineCapabilitiesResponse {
   families?: Record<string, unknown>
   smart_cache?: Record<string, { hits: number; misses: number }>
   asset_contracts?: Record<string, EngineAssetContractVariants>
+  engine_id_to_semantic_engine?: Record<string, string>
 }
 
 export interface EngineAssetContract {
   requires_vae: boolean
   tenc_count: number
+  tenc_slots?: string[]
+  tenc_slot_labels?: string[]
   tenc_kind: string
   tenc_kind_label?: string
   sha_only: boolean
@@ -262,7 +266,7 @@ export interface UiPresetApplyResponse { applied: boolean; model: string }
 
 // Tabs/workflows persistence
 export interface ApiTabMeta { createdAt: string; updatedAt: string }
-export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
+export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
 export interface TabsResponse { version: number; tabs: ApiTab[] }
 export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>}
 

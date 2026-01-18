@@ -12,7 +12,7 @@ These are the canonical representations used by registries and public APIs, avoi
 Symbols (top-level; keep in sync; no ghosts):
 - `CheckpointFormat` (enum): Origin/layout type for checkpoint assets (single-file, diffusers folder, GGUF).
 - `CheckpointPrediction` (enum): Prediction type hint for diffusion checkpoints (`epsilon`, `v_prediction`, `edm`, `unknown`).
-- `CheckpointRecord` (dataclass): Metadata describing a discoverable checkpoint (paths, hashes, format, core-only hint, defaults, `as_dict()`).
+- `CheckpointRecord` (dataclass): Metadata describing a discoverable checkpoint (paths, hashes, format, core-only hint/reason, defaults, `as_dict()`).
 - `VAERecord` (dataclass): Metadata describing a standalone VAE weights file (`as_dict()`).
 - `__all__` (constant): Explicit export list for public record types.
 """
@@ -51,6 +51,7 @@ class CheckpointRecord:
     model_name: str
     format: CheckpointFormat
     core_only: bool = False
+    core_only_reason: str | None = None
     family_hint: str | None = None
     sha256: str | None = None
     short_hash: str | None = None
@@ -72,6 +73,8 @@ class CheckpointRecord:
             "format": self.format.value,
             "core_only": bool(self.core_only),
         }
+        if self.core_only_reason:
+            payload["core_only_reason"] = str(self.core_only_reason)
         if self.family_hint:
             payload["family_hint"] = str(self.family_hint)
         if self.sha256:

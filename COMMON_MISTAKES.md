@@ -1,3 +1,7 @@
+**Wrong command:** `multi_tool_use.parallel <<'JSON' ... JSON`
+**Cause + fix:** `multi_tool_use.parallel` is a Codex tool call, not a shell command. Running it in bash fails with "command not found". Run the underlying shell commands directly (or invoke the tool via the assistant/tool interface, not via the terminal).
+**Correct command:** `nl -ba apps/backend/core/contracts/asset_requirements.py | sed -n '1,40p'; nl -ba apps/backend/core/contracts/text_encoder_slots.py | sed -n '1,40p'`
+
 **Wrong command:** `pytest -q tests/backend/test_orchestrator_purges_vram_on_model_switch.py tests/backend/test_orchestrator_purges_memory_on_failure.py`
 **Cause + fix:** `PyTest collection fails because the repo is not installed as a package; tests import via the top-level 'apps' module, so PYTHONPATH must include the repo root. Re-run with PYTHONPATH=$PWD (and CODEX_ROOT=$PWD when tests need repo-root resolution).`
 **Correct command:** `PYTHONPATH=$PWD pytest -q tests/backend/test_orchestrator_purges_vram_on_model_switch.py tests/backend/test_orchestrator_purges_memory_on_failure.py`

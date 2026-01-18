@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/ZImage/WAN).
+Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/WAN).
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
 and emits/commits overrides (device/engine/memory flags) used by generation payload builders.
 
@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `syncAdvancedHeight` (function): Measures/synchronizes advanced-row height for smooth expand/collapse transitions.
 - `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
 - `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
-- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux1`/`wan`/`zimage`).
+- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux1`/`chroma`/`wan`/`zimage`).
 - `normalizeTabFamily` (function): Normalizes unknown inputs to a `TabFamily` (or `null`).
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
 - `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
@@ -157,6 +157,32 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </template>
 
+      <!-- Chroma-specific quicksettings -->
+      <template v-else-if="activeFamily === 'chroma'">
+        <QuickSettingsChroma
+          :checkpoint="effectiveCheckpoint"
+          :checkpoints="filteredModelTitles"
+          :vae="store.currentVae"
+          :vae-choices="filteredVaeChoices"
+          :text-encoder="primaryTextEncoder"
+          :text-encoder-choices="filteredTextEncoderChoices"
+          :show-text-encoder="store.isModelCoreOnly(effectiveCheckpoint)"
+          @update:checkpoint="onModelChange"
+          @update:vae="onVaeChange"
+          @update:textEncoder="onPrimaryTextEncoderChange"
+          @addCheckpointPath="onAddCheckpointPath"
+          @addVaePath="onAddVaePath"
+          @addTencPath="onAddTencPath"
+          @showMetadata="onShowMetadata"
+        />
+        <div class="quicksettings-group qs-group-models">
+          <label class="label-muted">Models</label>
+          <div class="qs-row">
+            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+          </div>
+        </div>
+      </template>
+
       <!-- Default (SD15/SDXL) quicksettings -->
       <template v-else>
         <QuickSettingsBase
@@ -253,6 +279,7 @@ import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
 import QuickSettingsFlux from './quicksettings/QuickSettingsFlux.vue'
+import QuickSettingsChroma from './quicksettings/QuickSettingsChroma.vue'
 import QuickSettingsZImage from './quicksettings/QuickSettingsZImage.vue'
 import QuickSettingsOverridesModal from './modals/QuickSettingsOverridesModal.vue'
 import AssetMetadataModal from './modals/AssetMetadataModal.vue'
@@ -361,12 +388,13 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'wan' | 'zimage'
+type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'chroma' | 'wan' | 'zimage'
 
 function normalizeTabFamily(value: unknown): TabFamily | null {
   const raw = String(value || '').trim().toLowerCase()
   if (raw === 'wan22' || raw === 'wan22_14b' || raw === 'wan22_5b') return 'wan'
-  if (raw === 'sd15' || raw === 'sdxl' || raw === 'flux1' || raw === 'wan' || raw === 'zimage') return raw as TabFamily
+  if (raw === 'flux1_chroma') return 'chroma'
+  if (raw === 'sd15' || raw === 'sdxl' || raw === 'flux1' || raw === 'chroma' || raw === 'wan' || raw === 'zimage') return raw as TabFamily
   return null
 }
 
@@ -419,6 +447,7 @@ const activeFamily = computed<TabFamily>(() => {
 
   // Fallback to global engine selection
   const eng = (store.currentEngine || '').toLowerCase()
+  if (eng === 'flux1_chroma' || eng === 'chroma') return 'chroma'
   if (eng.startsWith('flux1')) return 'flux1'
   if (eng.startsWith('sdxl')) return 'sdxl'
   if (eng.startsWith('wan')) return 'wan'
@@ -488,7 +517,7 @@ function stripFamilyPrefix(label: string): string {
   const prefix = norm.slice(0, idx)
   const rest = norm.slice(idx + 1)
   if (!rest) return norm
-  if (['sd15', 'sdxl', 'flux1', 'wan22', 'zimage'].includes(prefix)) return rest
+  if (['sd15', 'sdxl', 'flux1', 'chroma', 'wan22', 'zimage'].includes(prefix)) return rest
   return norm
 }
 
@@ -700,7 +729,7 @@ function modelMatchesFamily(
   meta: Record<string, unknown> | undefined,
   title: string,
   file: string,
-  family: 'sd15' | 'sdxl' | 'flux1' | 'wan' | 'zimage',
+  family: TabFamily,
 ): boolean {
   const prefix = enginePrefixForFamily(family)
   const key = `${prefix}_ckpt`
@@ -713,6 +742,7 @@ function modelMatchesFamily(
   if (family === 'sdxl') return t.includes('sdxl') || f.includes('sdxl')
   if (family === 'sd15') return t.includes('1.5') || t.includes('sd15') || f.includes('sd15') || f.includes('v1-5')
   if (family === 'flux1') return false
+  if (family === 'chroma') return t.includes('chroma') || f.includes('chroma')
   if (family === 'wan') return t.includes('wan') || f.includes('wan')
   if (family === 'zimage') return t.includes('zimage') || t.includes('z-image') || t.includes('z_image') || f.includes('zimage') || f.includes('z-image') || f.includes('z_image')
   return true
@@ -731,13 +761,14 @@ function isVaeForFamily(name: string, fam: string): boolean {
   if (fam === 'sdxl') return (scale !== null) ? Math.abs(Number(scale) - 0.13025) < 1e-3 : /sdxl|xl/i.test(name)
   if (fam === 'sd15') return (scale !== null) ? Math.abs(Number(scale) - 0.18215) < 5e-3 : /sd1|1\.5|sd15|v1-5/i.test(name)
   if (fam === 'flux1') return fileInPaths(path, 'flux1_vae')
+  if (fam === 'chroma') return fileInPaths(path, 'flux1_vae')
   if (fam === 'zimage') return fileInPaths(path, 'zimage_vae') || fileInPaths(path, 'flux1_vae')  // Z Image uses same VAE as Flux.1
   return true
 }
 
 const filteredVaeChoices = computed(() => {
   const fam = activeFamily.value
-  if (fam === 'flux1') {
+  if (fam === 'flux1' || fam === 'chroma') {
     return inventoryVaes.value
       .filter((v) => typeof v.path === 'string' && fileInPaths(v.path, 'flux1_vae'))
       .map((v) => String(v.path || ''))
@@ -755,14 +786,14 @@ const filteredModeChoices = computed(() => {
   const base = store.modeChoices
   if (fam === 'sdxl') return base.filter(m => ['Normal','Lightning','Turbo'].includes(m))
   if (fam === 'sd15') return base.filter(m => ['Normal','LCM','Turbo'].includes(m))
-  if (fam === 'flux1') return base.filter(m => ['Normal'].includes(m))
+  if (fam === 'flux1' || fam === 'chroma') return base.filter(m => ['Normal'].includes(m))
   return base
 })
 
 const filteredUnetDtypeChoices = computed(() => {
   const fam = activeFamily.value
   const base = store.unetDtypeChoices
-  if (fam === 'flux1') return base.filter(x => /Automatic|float8|fp16/i.test(x))
+  if (fam === 'flux1' || fam === 'chroma') return base.filter(x => /Automatic|float8|fp16/i.test(x))
   return base
 })
 
@@ -773,6 +804,12 @@ const filteredTextEncoderChoices = computed(() => {
     return inventoryTextEncoders.value
       .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux1_tenc'))
       .map((item) => `flux1/${item.path}`)
+  }
+  if (fam === 'chroma') {
+    // Chroma uses a single T5 text encoder; roots are shared with Flux.1 (`flux1_tenc`).
+    return inventoryTextEncoders.value
+      .filter((item) => typeof item.path === 'string' && fileInPaths(item.path, 'flux1_tenc'))
+      .map((item) => `chroma/${item.path}`)
   }
   if (fam === 'zimage') {
     // For Z Image, derive choices from inventory.text_encoders constrained by zimage_tenc paths.
@@ -1146,8 +1183,9 @@ function onWanGuidedGen(): void {
   window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
 
-function enginePrefixForFamily(fam: 'sd15' | 'sdxl' | 'flux1' | 'wan' | 'zimage'): 'sd15' | 'sdxl' | 'flux1' | 'wan22' | 'zimage' {
+function enginePrefixForFamily(fam: TabFamily): 'sd15' | 'sdxl' | 'flux1' | 'wan22' | 'zimage' {
   if (fam === 'wan') return 'wan22'
+  if (fam === 'chroma') return 'flux1'
   return fam
 }
 

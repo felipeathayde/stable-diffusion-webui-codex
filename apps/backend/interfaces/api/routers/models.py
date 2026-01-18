@@ -193,11 +193,33 @@ def build_router(
                     "base": contract_for_engine(engine_id).as_dict(),
                     "core_only": contract_for_core_only(engine_id).as_dict(),
                 }
+            # Explicit mapping between key spaces (engine ids vs semantic engine tags) to prevent drift.
+            engine_id_to_semantic_engine: Dict[str, str] = {
+                # Diffusion family: SD2 behaves like SD15 in the UI surface.
+                "sd15": "sd15",
+                "sd20": "sd15",
+                "sdxl": "sdxl",
+                "sdxl_refiner": "sdxl",
+                # SD3/SD3.5 are treated as SDXL-like surface today (no dedicated semantic tag yet).
+                "sd35": "sdxl",
+                # Flow family.
+                "flux1": "flux1",
+                "flux1_kontext": "flux1",
+                "flux1_chroma": "chroma",
+                "zimage": "zimage",
+                # Video engines.
+                "wan22_5b": "wan22",
+                "wan22_14b": "wan22",
+                "wan22_animate_14b": "wan22",
+                "svd": "svd",
+                "hunyuan_video": "hunyuan_video",
+            }
             return {
                 "engines": serialize_engine_capabilities(),
                 "families": serialize_family_capabilities(),
                 "smart_cache": cache_stats,
                 "asset_contracts": asset_contracts,
+                "engine_id_to_semantic_engine": engine_id_to_semantic_engine,
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to read engine capabilities: {exc}")

@@ -2,7 +2,7 @@
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
@@ -12,7 +12,7 @@ Status: Active
 - `QuickSettingsBase.vue` — Generic quicksettings (mode, checkpoint, VAE, optional text encoder) for SD15/SDXL model tabs; advanced controls are rendered by `QuickSettingsBar.vue`.
 - `QuickSettingsPerf.vue` — Performance toggles shared across engines (Smart Offload/Fallback/Cache/Core Streaming) rendered in the Advanced nested area.
 - `QuickSettingsWan.vue` — WAN22-specific quicksettings (Mode preset selector + `LightX2V` toggle button, high/low model dirs, text encoder/VAE selectors, plus a Refresh button).
-- `QuickSettingsFlux.vue` / `QuickSettingsZImage.vue` — FLUX.1/ZImage-specific checkpoint/VAE/text encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
+- `QuickSettingsFlux.vue` / `QuickSettingsZImage.vue` / `QuickSettingsChroma.vue` — FLUX.1/ZImage/Chroma-specific checkpoint/VAE/text encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
 
 ## Notes
 - `QuickSettingsBase` stays presentational and engine-agnostic; engine-specific filtering and labels (e.g. FLUX.1-only TE layout, WAN-only selectors) live in `QuickSettingsBar.vue`.

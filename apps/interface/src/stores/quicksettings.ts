@@ -293,7 +293,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       try {
         const inv = await fetchModelInventory()
         const shaMap = new Map<string, string>()
-        const prefixes = ['sd15', 'sdxl', 'flux1', 'wan22', 'zimage']
+        const prefixes = ['sd15', 'sdxl', 'flux1', 'chroma', 'wan22', 'zimage']
         for (const te of inv.text_encoders || []) {
           const sha = typeof te.sha256 === 'string' ? te.sha256 : ''
           if (!sha) continue

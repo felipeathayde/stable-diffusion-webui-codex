@@ -145,7 +145,7 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
     id: 'chroma',
     label: 'Chroma',
     capabilities: {
-      tasks: ['txt2img'],
+      tasks: ['txt2img', 'img2img'],
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,

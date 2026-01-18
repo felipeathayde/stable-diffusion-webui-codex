@@ -10,8 +10,8 @@ Status: Active
 
 ## Key Files
 - `apps/backend/core/contracts/asset_requirements.py` — Canonical per-engine asset requirements (VAE/text encoder) used by the API and exposed to the UI.
+- `apps/backend/core/contracts/text_encoder_slots.py` — Header-only text encoder slot classifier used by the API to map sha-selected encoders into contract slots (order-independent).
 
 ## Notes
 - Contracts here must be deterministic and fail loudly when an engine key is missing (prevents drift).
 - Keep these modules lightweight: no heavy model imports at module import time.
-

@@ -10,7 +10,7 @@ Purpose: Serialization helpers for API responses.
 Keeps response shapes stable for checkpoint listings.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_serialize_checkpoint` (function): Serializes a checkpoint record for `/api/models` responses (hash/path/name metadata).
+- `_serialize_checkpoint` (function): Serializes a checkpoint record for `/api/models` responses (hash/path/name metadata + core-only hints).
 """
 
 from __future__ import annotations
@@ -29,6 +29,9 @@ def _serialize_checkpoint(info) -> Dict[str, Any]:  # type: ignore[no-untyped-de
         "metadata": info.metadata,
         "core_only": bool(getattr(info, "core_only", False)),
     }
+    core_only_reason = getattr(info, "core_only_reason", None)
+    if isinstance(core_only_reason, str) and core_only_reason.strip():
+        payload["core_only_reason"] = core_only_reason.strip()
     family_hint = getattr(info, "family_hint", None)
     if isinstance(family_hint, str) and family_hint.strip():
         payload["family_hint"] = family_hint.strip()

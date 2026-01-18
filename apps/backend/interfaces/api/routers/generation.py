@@ -521,20 +521,38 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if not path:
                     raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
                 tenc_paths.append(path)
+
+            slot_to_path: dict[str, str] | None = None
+            if contract.requires_text_encoders and contract.tenc_slots:
+                from apps.backend.core.contracts.text_encoder_slots import (
+                    TextEncoderSlotError,
+                    map_text_encoder_paths_to_slots,
+                )
+
+                try:
+                    slot_to_path = map_text_encoder_paths_to_slots(
+                        paths=tenc_paths,
+                        expected_slots=contract.tenc_slots,
+                    )
+                except TextEncoderSlotError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+                # Normalize order to the canonical slot list so downstream code never depends on user-provided ordering.
+                tenc_paths = [slot_to_path[slot] for slot in contract.tenc_slots]
+
             extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
 
             # Flux.1/Kontext: translate sha-selected encoders into a loader override (paths stay server-side).
             if engine_id in ("flux1", "flux1_kontext"):
-                if len(tenc_paths) != 2:
+                if slot_to_path is None:
                     raise HTTPException(
-                        status_code=400,
-                        detail=_format_required_tenc_message(engine_id=engine_id, contract=contract, field_label=tenc_field),
+                        status_code=500,
+                        detail=f"Internal error: slot mapping missing for engine '{engine_id}'",
                     )
-                clip_path, t5_path = tenc_paths
                 extras["text_encoder_override"] = {
-                    "family": "flux1",
-                    "label": "flux1/sha",
-                    "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
+                    "family": engine_id,
+                    "label": f"{engine_id}/sha",
+                    "components": [f"{slot}={slot_to_path[slot]}" for slot in contract.tenc_slots],
                 }
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:

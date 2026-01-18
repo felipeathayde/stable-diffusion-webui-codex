@@ -6,10 +6,14 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Backend debug utilities package marker.
-Hosts temporary debug helpers used for parity tracing and diagnosis; not part of production runtime paths unless explicitly enabled.
+Purpose: Runtime checkpoint IO helpers.
+This package contains safe loaders for checkpoints/configs used by runtime codepaths.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `apps.backend.debug` (module): Package marker for backend debug utilities.
+- `io` (module): Checkpoint IO helpers (safetensors/GGUF/pickle + config reads).
 """
-# tags: backend, debug
+
+__all__ = [
+    "io",
+]
+

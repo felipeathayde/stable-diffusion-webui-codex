@@ -877,7 +877,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 mark_done(True)
             except Exception as err:  # pragma: no cover - surfaces runtime errors
                 try:
-                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
                     _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
                 except Exception:
                     pass
@@ -1229,7 +1229,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 mark_done(True)
             except Exception as err:
                 try:
-                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
                     _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
                 except Exception:
                     pass
@@ -1967,7 +1967,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
             except Exception as err:
                 try:
-                    from apps.backend.runtime.exception_hook import dump_exception as _dump_exc
+                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
                     _dump_exc(type(err), err, err.__traceback__, where=f'{label}_worker', context={'task_id': task_id})
                 except Exception:
                     pass

@@ -41,7 +41,7 @@ from ...core.state import state as backend_state
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
-from apps.backend.runtime.timeline import timeline
+from apps.backend.runtime.diagnostics.timeline import timeline
 
 
 try:
@@ -170,7 +170,7 @@ def _run_kdiffusion_sampler(
 ) -> torch.Tensor:
     sampler_fn = None
     if sampler_fn_name.startswith("extra:"):
-        from apps.backend.runtime.modules import k_diffusion_extra as kd_extra
+        from apps.backend.runtime.k_diffusion import k_diffusion_extra as kd_extra
 
         extra_name = sampler_fn_name.split(":", 1)[1]
         sampler_fn = getattr(kd_extra, extra_name, None)

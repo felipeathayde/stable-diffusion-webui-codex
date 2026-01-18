@@ -27,7 +27,7 @@ import torch
 
 from apps.backend.runtime.misc import checkpoint_pickle
 
-from .state_dict_views import LazySafetensorsDict
+from ..state_dict.views import LazySafetensorsDict
 
 _log = logging.getLogger("backend.runtime.utils")
 

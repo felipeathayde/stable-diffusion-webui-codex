@@ -131,12 +131,12 @@ def load_flow16_vae(
             if suffix == ".gguf":
                 # VAE GGUFs are small enough to safely dequantize upfront; this also avoids
                 # requiring quantized Conv2d ops in the VAE graph.
-                from apps.backend.runtime.checkpoint_io import load_gguf_state_dict
+                from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
                 state_dict = load_gguf_state_dict(vae_path, dequantize=True, computation_dtype=dtype)
             else:
                 # Single-file weights (safetensors/ckpt/pt)
-                from apps.backend.runtime.checkpoint_io import load_torch_file
+                from apps.backend.runtime.checkpoint.io import load_torch_file
 
                 state_dict = load_torch_file(vae_path, device="cpu")
 

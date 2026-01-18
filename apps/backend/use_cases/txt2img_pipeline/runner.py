@@ -32,7 +32,7 @@ from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config import args as backend_args
-from apps.backend.runtime.pipeline_debug import pipeline_trace
+from apps.backend.runtime.diagnostics.pipeline_debug import pipeline_trace
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -423,7 +423,7 @@ class Txt2ImgPipelineRunner:
 
         # Auto-print and save timeline trace if enabled
         try:
-            from apps.backend.runtime.timeline import auto_save_and_print
+            from apps.backend.runtime.diagnostics.timeline import auto_save_and_print
             trace_path = auto_save_and_print()
             if trace_path:
                 processing.update_extra_param("Timeline Trace", trace_path)

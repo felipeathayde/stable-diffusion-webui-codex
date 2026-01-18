@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 from apps.backend.runtime import trace as _trace
-from apps.backend.runtime.state_dict_views import FilterPrefixView
+from apps.backend.runtime.state_dict.views import FilterPrefixView
 
 _log = logging.getLogger("backend.state_dict")
 _KEYMAP_DIR = Path("logs")

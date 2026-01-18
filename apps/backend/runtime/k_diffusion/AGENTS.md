@@ -1,8 +1,8 @@
-# apps/backend/runtime/modules Overview
-<!-- tags: runtime, modules, k_prediction -->
+# apps/backend/runtime/k_diffusion Overview
+<!-- tags: runtime, k_diffusion, k_prediction -->
 Date: 2025-11-10
 Owner: Runtime Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose

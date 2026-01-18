@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 _EXPORTS = {
     # Core utilities / small helpers
     "utils": "apps.backend.runtime.utils",
-    "trace": "apps.backend.runtime.trace",
+    "trace": "apps.backend.runtime.diagnostics.trace",
     # Memory stack
     "memory_management": "apps.backend.runtime.memory.memory_management",
     "stream": "apps.backend.runtime.memory.stream",

@@ -52,7 +52,7 @@ from apps.backend.interfaces.api.json_store import _save_json
 from apps.backend.interfaces.api.routers import generation, models, options, paths, settings, system, tasks, tools, ui
 from apps.backend.services import options_store
 from apps.backend.infra.config import args as config_args
-from apps.backend.runtime.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
+from apps.backend.runtime.diagnostics.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
 from apps.backend.runtime.memory import memory_management as mem_management
 from apps.backend.runtime.models import api as model_api
 from apps.backend.core.state import state as backend_state
@@ -82,12 +82,12 @@ try:
     if ("--trace-debug" in sys.argv) or (os.getenv("CODEX_TRACE_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}):
         from apps.backend.runtime import logging as runtime_logging  # type: ignore
         runtime_logging.setup_logging(level="DEBUG")
-        from apps.backend.runtime import call_trace as _call_trace  # type: ignore
+        from apps.backend.runtime.diagnostics import call_trace as _call_trace  # type: ignore
         max_per_func = _parse_trace_max(sys.argv[1:])
         _call_trace.enable(max_calls_per_func=max_per_func)
 except Exception:
-    # Never block startup because of tracing/logging issues
-    pass
+    # Never block startup because of tracing/logging issues, but don't fail silently.
+    logging.getLogger("backend.startup").exception("startup: failed to enable trace-debug")
 
 try:
     from colorama import Fore, Style  # type: ignore
@@ -101,9 +101,10 @@ except Exception:  # pragma: no cover - optional dependency missing
 
 # Install global exception hooks as early as possible so any startup errors are dumped
 try:
-    from apps.backend.runtime.exception_hook import install_exception_hooks as _install_exc_hooks
+    from apps.backend.runtime.diagnostics.exception_hook import install_exception_hooks as _install_exc_hooks
     _EXC_LOG_PATH = _install_exc_hooks(log_dir=str(CODEX_ROOT / 'logs'))
 except Exception:
+    logging.getLogger("backend.startup").exception("startup: failed to install exception hooks")
     _EXC_LOG_PATH = None
 
 
@@ -308,7 +309,7 @@ def build_app() -> FastAPI:
 
     # Exception hooks for asyncio + HTTP middleware to dump unhandled route exceptions
     try:
-        from apps.backend.runtime.exception_hook import attach_asyncio as _attach_asyncio, dump_current_exception as _dump_current_exception
+        from apps.backend.runtime.diagnostics.exception_hook import attach_asyncio as _attach_asyncio, dump_current_exception as _dump_current_exception
 
         @app.on_event('startup')
         async def _setup_exc_hooks() -> None:  # pragma: no cover
@@ -506,11 +507,11 @@ def _enable_trace_debug(ns: Any) -> None:
             from apps.backend.runtime import logging as runtime_logging  # type: ignore
 
             runtime_logging.setup_logging(level="DEBUG")
-            from apps.backend.runtime import call_trace as _call_trace  # type: ignore
+            from apps.backend.runtime.diagnostics import call_trace as _call_trace  # type: ignore
 
             _call_trace.enable(max_calls_per_func=getattr(ns, "trace_debug_max_per_func", None))
     except Exception:
-        pass
+        logging.getLogger("backend.startup").exception("startup: failed to enable trace debug")
 
 
 def create_api_app(*, argv: Optional[Sequence[str]] = None, env: Optional[Mapping[str, str]] = None) -> FastAPI:

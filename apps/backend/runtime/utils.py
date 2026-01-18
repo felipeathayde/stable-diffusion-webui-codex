@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Runtime utility facade (state_dict views, SafeTensors loading, nested device moves, and checkpoint IO).
 This module keeps a stable import surface for callers while delegating implementations to focused submodules:
-`state_dict_views.py`, `checkpoint_io.py`, `attr_access.py`, `nested.py`, and `state_dict_tools.py`.
+`state_dict/views.py`, `checkpoint/io.py`, `attr_access.py`, `nested.py`, and `state_dict/tools.py`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyPrefixView` (class): Mapping view that exposes `base` keys under a fixed prefix without materializing values.
@@ -46,7 +46,7 @@ from .attr_access import (
     set_attr_raw,
     tensor2parameter,
 )
-from .checkpoint_io import (
+from .checkpoint.io import (
     _load_gguf_state_dict,
     _load_pickled_checkpoint,
     load_gguf_state_dict,
@@ -54,8 +54,8 @@ from .checkpoint_io import (
     read_arbitrary_config,
 )
 from .nested import dtype_to_element_size, fp16_fix, nested_compute_size, nested_move_to_device
-from .state_dict_tools import calculate_parameters, beautiful_print_gguf_state_dict_statics, get_state_dict_after_quant
-from .state_dict_views import CastOnGetView, FilterPrefixView, KeyPrefixView, LazySafetensorsDict, RemapKeysView
+from .state_dict.tools import calculate_parameters, beautiful_print_gguf_state_dict_statics, get_state_dict_after_quant
+from .state_dict.views import CastOnGetView, FilterPrefixView, KeyPrefixView, LazySafetensorsDict, RemapKeysView
 
 __all__ = [
     "CastOnGetView",
@@ -82,4 +82,3 @@ __all__ = [
     "set_attr_raw",
     "tensor2parameter",
 ]
-

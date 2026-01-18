@@ -40,8 +40,8 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import DiffusionModelBundle, resolve_diffusion_bundle
 from apps.backend.runtime.models.text_encoder_overrides import TextEncoderOverrideConfig
-from apps.backend.runtime.state_dict_tools import get_state_dict_after_quant
-from apps.backend.runtime.checkpoint_io import load_torch_file
+from apps.backend.runtime.state_dict.tools import get_state_dict_after_quant
+from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 
 

@@ -29,7 +29,7 @@ from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
-from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.k_diffusion.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 
 logger = logging.getLogger("backend.engines.wan22.spec")

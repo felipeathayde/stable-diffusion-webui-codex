@@ -40,7 +40,7 @@ from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.modules.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.k_diffusion.k_prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.backend.runtime.memory import memory_management

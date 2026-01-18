@@ -28,7 +28,7 @@ from pathlib import Path
 
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime.models.state_dict import try_filter_state_dict
-from apps.backend.runtime.trace import event as trace_event
+from apps.backend.runtime.diagnostics.trace import event as trace_event
 
 from .errors import MissingComponentError
 from .specs import ComponentState, ParserContext, ParserPlan

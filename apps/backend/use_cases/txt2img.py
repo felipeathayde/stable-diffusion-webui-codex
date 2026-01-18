@@ -21,7 +21,7 @@ import logging
 from typing import Sequence
 
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
-from apps.backend.runtime.pipeline_debug import pipeline_trace
+from apps.backend.runtime.diagnostics.pipeline_debug import pipeline_trace
 from .txt2img_pipeline import Txt2ImgPipelineRunner
 
 

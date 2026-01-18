@@ -218,7 +218,7 @@ def get_text_context(
 
             sd = _load_st(te_file)
         else:
-            from apps.backend.runtime.checkpoint_io import load_gguf_state_dict
+            from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
             sd = load_gguf_state_dict(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
         enc.load_state_dict(sd, strict=False)

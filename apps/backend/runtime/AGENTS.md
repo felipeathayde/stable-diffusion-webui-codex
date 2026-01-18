@@ -11,11 +11,14 @@ Status: Active
 ## Key Subdirectories
 - `attention/` — Attention backends and related kernels.
 - `adapters/` — Runtime adapters (e.g., LoRA, SafeTensors helpers).
+- `diagnostics/` — Tracing/timeline/debug helpers (optional; used for diagnosis).
 - `model_parser/` — Codex-native checkpoint parser plans and conversions replacing `huggingface_guess`.
 - `text_processing/` — Tokenization, prompt parsing, and textual inversion helpers.
 - `sampling/` — Sigma builders, schedulers, Philox integration, and sampling drivers.
 - `memory/` — VRAM/CPU memory policies and management helpers.
 - `ops/` — Low-level tensor operations leveraged by engines.
+- `checkpoint/` — Checkpoint IO helpers (safetensors/GGUF/pickle + config reads).
+- `state_dict/` — Lightweight state-dict views + small state-dict utilities.
 - `models/` — Model registry/load helpers (checkpoints, VAEs, etc.).
 - `families/` — Model/runtime-specific implementations by engine family (`sd/`, `flux/`, `chroma/`, `zimage/`, `wan22/`).
 - `vision/` — Vision encoder runtimes (clip specs/registry/encoders) shared across engines and patchers.
@@ -23,7 +26,7 @@ Status: Active
 - `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
-- `modules/` — K-diffusion-style wrappers used by samplers/patchers (candidate for future consolidation/rename).
+- `k_diffusion/` — K-diffusion-style wrappers used by samplers/patchers.
 - `kernels/` — Custom CUDA/C++ kernels where required.
 
 ## Notes
@@ -32,8 +35,8 @@ Status: Active
 - Runtime layout: family runtimes live under `apps/backend/runtime/families/<family>/`; keep `apps/backend/runtime/` for generic runtime modules shared across families (plan: `.sangoi/plans/2026-01-17-backend-runtime-families-layout.md`).
 - 2025-12-03: Processing models expose `RefinerConfig` and carry refiner configs on `CodexProcessingTxt2Img`/`CodexHighResConfig` (global + hires) for stage-based refiner execution.
 - 2025-12-03: Sampler driver checks `backend_state.should_stop` each step and honors `/api/tasks/{id}/cancel` (immediate) by raising `RuntimeError("cancelled")` to abort sampling.
-- 2025-11-03: New `runtime.call_trace` module exposes global function-call tracing via `enable()/disable()` and `enable_from_env()`. The API entrypoint wires this behind `--trace-debug`/`CODEX_TRACE_DEBUG` and logs each Python function call at `DEBUG` using the `backend.calltrace` logger. As of 2025-11-14, only modules under `apps.*` are recorded to avoid 3rd-party flood, and each function logs at most 10 calls by default (override via `--trace-debug-max-per-func N`, `N<=0` disables the cap).
-- 2025-11-04: Added streaming materialization helpers to `runtime.utils.FilterPrefixView`/`LazySafetensorsDict` so safetensor-backed parser components load with a single handle instead of reopening per key (prevents Windows `torch_cpu.dll` crashes during SDXL parsing).
+- 2025-11-03: `runtime.diagnostics.call_trace` exposes global function-call tracing via `enable()/disable()` and `enable_from_env()`. The API entrypoint wires this behind `--trace-debug`/`CODEX_TRACE_DEBUG` and logs each Python function call at `DEBUG` using the `backend.calltrace` logger. As of 2025-11-14, only modules under `apps.*` are recorded to avoid 3rd-party flood, and each function logs at most 10 calls by default (override via `--trace-debug-max-per-func N`, `N<=0` disables the cap).
+- 2025-11-04: Added streaming materialization helpers to `runtime.state_dict.views.FilterPrefixView`/`LazySafetensorsDict` so safetensor-backed parser components load with a single handle instead of reopening per key (prevents Windows `torch_cpu.dll` crashes during SDXL parsing).
 - 2025-11-14: Weight/bias fetch logs under `runtime.ops.operations` are now rate-limited via `CODEX_WEIGHT_FETCH_LOG_LIMIT` (default 10 per layer class). Set to `0` to disable the log entirely or raise when diagnosing dtype/offload issues.
 - 2025-11-25: SDXL CLIP converters now handle OpenCLIP BigG resblock layouts without the double-`transformer` prefix bug; CLIP-G keys under `transformer.resblocks.*` are normalized to `transformer.text_model.encoder.*` (preserving `logit_scale`) so validations no longer warn on missing `layer_norm1`.
 - 2025-12-15: `runtime/tools/gguf_converter.py` emits real quantized GGUF using the shared GGUF writer + quant kernels and streams tensor data instead of buffering entire checkpoints in memory.
@@ -42,9 +45,9 @@ Status: Active
 - 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).
-- 2026-01-04: Added `runtime.utils.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).
-- 2026-01-18: `runtime.checkpoint_io.load_gguf_state_dict(...)` now supports explicit GGUF dequantization policy (`dequantize` + `computation_dtype`) so callers can centralize GGUF loads without importing `apps.backend.quantization.*` directly.
+- 2026-01-04: Added `runtime.checkpoint.io.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).
+- 2026-01-18: `runtime.checkpoint.io.load_gguf_state_dict(...)` supports explicit GGUF dequantization policy (`dequantize` + `computation_dtype`) so callers can centralize GGUF loads without importing `apps.backend.quantization.*` directly.
 - 2026-01-01: Live preview utilities now live in `runtime/live_preview.py` (method enum, preview decode helper, and debug preview-factor fitting/logging) so workflows and API layers don’t duplicate preview logic.
 - 2026-01-02: Added standardized file header docstrings to runtime modules (doc-only change; part of rollout).
-- 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py`, `pipeline_debug.py`, `trace.py`) (doc-only change; part of rollout).
+- 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py` and diagnostics modules) (doc-only change; part of rollout).
 - 2026-01-03: Standardized upstream references in runtime docs/comments to prefer Hugging Face Diffusers as the behaviour baseline.

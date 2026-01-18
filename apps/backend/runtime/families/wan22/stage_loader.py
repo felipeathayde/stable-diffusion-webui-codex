@@ -23,7 +23,7 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.checkpoint_io import load_gguf_state_dict
+from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
 from .diagnostics import get_logger
 from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict

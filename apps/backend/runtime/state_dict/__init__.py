@@ -6,9 +6,16 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN22 task package marker (reserved).
-Keeps task wiring under a stable namespace without importing WAN engine/runtime modules at import time.
+Purpose: Runtime state-dict views and helpers.
+Provides mapping views and small utilities used during checkpoint loading/normalization.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `apps.backend.engines.wan22.tasks` (module): Package marker for WAN22 engine task wiring.
+- `tools` (module): State-dict diagnostics and helper utilities.
+- `views` (module): Lightweight mapping views for state_dict handling.
 """
+
+__all__ = [
+    "tools",
+    "views",
+]
+

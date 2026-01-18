@@ -67,4 +67,3 @@ __all__ = [
     "calculate_parameters",
     "get_state_dict_after_quant",
 ]
-

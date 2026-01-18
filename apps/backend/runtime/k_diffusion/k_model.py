@@ -20,7 +20,7 @@ import logging
 
 from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.runtime import attention
-from apps.backend.runtime.modules.k_prediction import k_prediction_from_diffusers_scheduler
+from apps.backend.runtime.k_diffusion.k_prediction import k_prediction_from_diffusers_scheduler
 
 
 logger = logging.getLogger("backend.runtime.k_model")

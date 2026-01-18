@@ -11,7 +11,7 @@ Status: Draft
 
 ## 2. Retire Transitional Modules
 - 2026-01-03: Removed `apps/backend/codex/` after migrating its remaining responsibilities into native modules (options store, LoRA selections, engine loader).
-- Audit `apps/backend/runtime/modules/` for active code.
+- Audit `apps/backend/runtime/k_diffusion/` for active code.
   - For useful logic, port into the appropriate runtime/service modules using Codex conventions.
   - Archive or delete leftover shims once migration is complete.
 

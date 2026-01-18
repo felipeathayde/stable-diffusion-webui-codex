@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 
-from apps.backend.runtime.modules.k_model import KModel
+from apps.backend.runtime.k_diffusion.k_model import KModel
 from .base import ModelPatcher
 
 logger = logging.getLogger("backend.patchers.denoiser")
@@ -36,4 +36,3 @@ class DenoiserPatcher(ModelPatcher):
             offload_device=wrapped.diffusion_model.offload_device,
             current_device=wrapped.diffusion_model.initial_device,
         )
-

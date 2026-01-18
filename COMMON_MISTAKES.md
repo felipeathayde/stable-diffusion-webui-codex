@@ -285,9 +285,9 @@ PY`
 **Wrong command:** `python - <<'PY'
 from apps.backend.runtime.logging import calltrace
 PY`
-**Cause + fix:** `The calltrace module was removed; pipeline debugging now lives in apps/backend/runtime/pipeline_debug.py.`
+**Cause + fix:** `The calltrace module was removed; pipeline debugging now lives in apps/backend/runtime/diagnostics/pipeline_debug.py.`
 **Correct command:** `python - <<'PY'
-from apps.backend.runtime.pipeline_debug import set_pipeline_debug
+from apps.backend.runtime.diagnostics.pipeline_debug import set_pipeline_debug
 set_pipeline_debug(True)
 PY`
 
@@ -417,7 +417,7 @@ PY`
 **Cause + fix:** Python couldn't import the local `apps.*` packages when invoked from the repo root; the script lacked a `sys.path` entry for the repository root. Prepend the repo root to `sys.path` within the script before importing `apps.*`.
 **Correct command:** `~/.venv/bin/python tools/dev/validate_sdxl_contract.py` (after adding `sys.path.insert(0, <repo_root>)` in the script)
 
-**Wrong command:** `apply_patch` updating `apps/backend/runtime/modules/AGENTS.md` with unmatched context
+**Wrong command:** `apply_patch` updating `apps/backend/runtime/k_diffusion/AGENTS.md` with unmatched context
 **Cause + fix:** The patch assumed anchor text that didn’t exist; read the current file and update using an `Update File` hunk that matches real content, or replace the file body coherently.
 **Correct command:** `apply_patch` with a hunk aligned to the existing content (or rewrite the file section explicitly).
 **Wrong command:** `rg -n "SDXL" docs/plan`

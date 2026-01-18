@@ -28,7 +28,7 @@ from typing import Mapping, MutableMapping
 
 import torch
 
-from apps.backend.runtime.checkpoint_io import load_torch_file
+from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.vision.clip.encoder import ClipVisionEncoder
 from apps.backend.runtime.vision.clip.errors import ClipVisionError, ClipVisionLoadError
 from apps.backend.runtime.vision.clip.preprocess import preprocess_image

@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-04
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
@@ -43,6 +43,7 @@ Status: Active
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).
 - 2026-01-04: Added `runtime.utils.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).
+- 2026-01-18: `runtime.checkpoint_io.load_gguf_state_dict(...)` now supports explicit GGUF dequantization policy (`dequantize` + `computation_dtype`) so callers can centralize GGUF loads without importing `apps.backend.quantization.*` directly.
 - 2026-01-01: Live preview utilities now live in `runtime/live_preview.py` (method enum, preview decode helper, and debug preview-factor fitting/logging) so workflows and API layers don’t duplicate preview logic.
 - 2026-01-02: Added standardized file header docstrings to runtime modules (doc-only change; part of rollout).
 - 2026-01-02: Added standardized file header docstrings to runtime package scaffolding (`__init__.py`, `pipeline_debug.py`, `trace.py`) (doc-only change; part of rollout).

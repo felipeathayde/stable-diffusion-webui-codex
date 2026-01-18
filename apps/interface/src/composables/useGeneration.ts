@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
-  `vae_sha`/`tenc_sha` and sending optional ZImage `tenc_sha` overrides when a text encoder is explicitly selected.
+  `vae_sha`/`tenc_sha` and enforcing engine-level external asset requirements (Flux/ZImage).
 */
 
 import { computed, ref } from 'vue'
@@ -222,8 +222,7 @@ export function useGeneration(tabId: string) {
     const extras: Record<string, unknown> = {}
 
     const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
-    const wantsOptionalTencSha = engineType.value === 'zimage' && textEncoders.length > 0
-    if (needsTencSha || wantsOptionalTencSha) {
+    if (needsTencSha) {
       const shas: string[] = []
       for (const label of textEncoders) {
         const sha = quicksettings.resolveTextEncoderSha(label)

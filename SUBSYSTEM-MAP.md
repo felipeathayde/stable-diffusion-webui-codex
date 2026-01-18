@@ -1,8 +1,8 @@
 <!-- tags: webui, architecture, reference, map -->
 # WebUI Subsystem Map (single-file reference)
 Date: 2026-01-02
-Last Review: 2026-01-17
-Version: 2026-01-17
+Last Review: 2026-01-18
+Version: 2026-01-18
 Status: Draft
 
 This file is the **top-level map** of how the WebUI is assembled and how requests flow through the system.
@@ -11,7 +11,7 @@ For deeper specs, follow the links under “Canonical reference docs”.
 ## Index (search-first)
 - `Read-first contracts` (no guessing): see “Read-first contracts” below.
 - `Anti-drift` (common wrong assumptions): search for `DRIFT-`.
-- `API routes` (source of truth): search for `API ROUTES (run_api.py)`.
+- `API routes` (source of truth): search for `API ROUTES (routers/*.py)`.
 - `Model parts matrix` (what is required): search for `MODEL PARTS MATRIX`.
 - `Why lists are empty` (common UI symptom): search for `Why lists can look “empty”`.
 - `Debugging checklist`: search for `Debugging checklist`.
@@ -36,24 +36,24 @@ They are not theoretical — if you follow the drift, you end up debugging the w
 
 ### DRIFT-API-PREFIX: Assuming legacy endpoints exist (`/sdapi/v1/*`, `/codex/api/v1/*`, `/api/v1/*`)
 - Wrong assumption: the WebUI uses a legacy WebUI-compatible prefix (or a “codex_api” router) for generation.
-- Correct contract: current UI/backends use `/api/*` only; don’t invent endpoints — confirm in `apps/backend/interfaces/api/run_api.py`.
-- Quick verify: `rg -n \"@app\\.(get|post|patch|delete)\\('/api\" apps/backend/interfaces/api/run_api.py`.
+- Correct contract: current UI/backends use `/api/*` only; don’t invent endpoints — confirm in `apps/backend/interfaces/api/routers/*`.
+- Quick verify: `rg -n \"@router\\.(get|post|patch|delete)\\(\\\"/api\" apps/backend/interfaces/api/routers -S`.
 
 ### DRIFT-ASSETS-OPTIONAL: Treating VAE / text encoders as optional for core-only engines
 - Wrong assumption: “ZImage can proceed without a VAE”, or “Flux text encoders are optional”, or “return None when missing and keep going”.
-- Correct contract (backend): for `engine_id in ("flux", "kontext", "zimage")`, **both** VAE and TE must be provided via SHA:
+- Correct contract (backend): for `engine_id in ("flux1", "flux1_kontext", "zimage")`, **both** VAE and TE must be provided via SHA:
   - txt2img: `extras.vae_sha` + `extras.tenc_sha`
   - img2img: `img2img_extras.vae_sha` + `img2img_extras.tenc_sha`
-  Missing → `400`, unknown SHA → `409`. Source: `apps/backend/interfaces/api/run_api.py`.
+  Missing → `400`, unknown SHA → `409`. Source: `apps/backend/interfaces/api/routers/generation.py`.
 - Correct contract (UI): if the engine requires an asset and the UI cannot resolve a SHA, it must block submission (no guessing).
 
 ### DRIFT-INFER-REQUIREMENTS: Inferring requirements from pipeline config / latent format
 - Wrong assumption: “If pipeline_config has a `vae` key, then VAE must be optional/required”, or “infer VAE need from latent format and guess exceptions.”
-- Correct contract: requirements are enforced at the API boundary by `engine_id` (see `requires_external_vae/requires_external_tenc` in `apps/backend/interfaces/api/run_api.py`). Do not “infer” — read the contract.
+- Correct contract: requirements are enforced at the API boundary by `engine_id` (see `requires_external_vae/requires_external_tenc` in `apps/backend/interfaces/api/routers/generation.py`). Do not “infer” — read the contract.
 
 ### DRIFT-FLUX-TE-COUNT: Treating “text encoder” as a single value for Flux/Kontext
 - Wrong assumption: “pick the first text encoder” / treat TE as a single string.
-- Correct contract: Flux/Kontext require **exactly 2** encoders (CLIP + T5) via `extras.tenc_sha` (array of 2 sha256 strings). Source: `apps/backend/interfaces/api/run_api.py`.
+- Correct contract: Flux/Kontext require **exactly 2** encoders (CLIP + T5) via `extras.tenc_sha` (array of 2 sha256 strings). Source: `apps/backend/interfaces/api/routers/generation.py`.
 
 ### DRIFT-SENTINELS: Treating `Automatic` / `Built-in` as a valid fallback for required assets
 - Wrong assumption: “if user leaves Built-in/Automatic, just don’t send it and it’ll work.”
@@ -80,8 +80,8 @@ They are not theoretical — if you follow the drift, you end up debugging the w
   - Complements: `wan_vae_sha` + `wan_tenc_sha` (VAE + `.safetensors`)
   - Metadata/tokenizer dirs remain explicit paths (`wan_metadata_dir` or `wan_tokenizer_dir`), resolved relative to `CODEX_ROOT` when repo-relative.
 
-## API ROUTES (run_api.py)
-Source of truth: `apps/backend/interfaces/api/run_api.py` (decorators).
+## API ROUTES (routers/*.py)
+Source of truth: `apps/backend/interfaces/api/routers/*` (router decorators).
 
 Generation tasks (async; return `{task_id}`):
 - `POST /api/txt2img`
@@ -172,7 +172,7 @@ This is the “don’t drift” table for model-part requirements as enforced by
   - Normalize API paths to be repo-relative when safe.
   - Define safe roots for output serving and uploads.
   - Anchor defaults (e.g., curated model roots under `models/**`).
-  - Code: `apps/backend/interfaces/api/run_api.py`
+  - Code: `apps/backend/interfaces/api/run_api.py` (composition; passes `CODEX_ROOT` into routers)
 - Model roots configuration: `apps/paths.json`
   - Served/updated via `GET/POST /api/paths`.
   - Used by backend scanners to find checkpoints and assets.
@@ -195,7 +195,8 @@ This is the “don’t drift” table for model-part requirements as enforced by
 
 ## Backend (API + orchestration)
 ### API entrypoint
-- FastAPI router and payload enforcement: `apps/backend/interfaces/api/run_api.py`
+- FastAPI composition: `apps/backend/interfaces/api/run_api.py`
+- Route logic + payload enforcement: `apps/backend/interfaces/api/routers/*` (generation: `apps/backend/interfaces/api/routers/generation.py`)
 
 Key API families:
 - **Generation tasks**: `POST /api/txt2img`, `POST /api/img2img`, `POST /api/txt2vid`, `POST /api/img2vid`, `POST /api/vid2vid`
@@ -210,7 +211,7 @@ Key API families:
 
 ### Hard invariants enforced by the backend
 - **Explicit device selection** is required in generation payloads (no options snapshot fallback).
-  - Enforced by: `_require_explicit_device(...)` in `apps/backend/interfaces/api/run_api.py`
+  - Enforced by: `_require_explicit_device(...)` in `apps/backend/interfaces/api/routers/generation.py`
 - **No silent fallbacks for required model parts** (VAEs / text encoders / GGUF stage models).
   - Missing required SHA fields → `400`
   - Unknown SHA → `409`

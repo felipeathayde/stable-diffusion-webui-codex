@@ -218,9 +218,9 @@ def get_text_context(
 
             sd = _load_st(te_file)
         else:
-            from apps.backend.quantization.gguf_loader import load_gguf_state_dict as _load_gguf
+            from apps.backend.runtime.checkpoint_io import load_gguf_state_dict
 
-            sd = _load_gguf(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
+            sd = load_gguf_state_dict(te_file, dequantize=True, computation_dtype=as_torch_dtype(dtype))
         enc.load_state_dict(sd, strict=False)
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {exc}") from exc

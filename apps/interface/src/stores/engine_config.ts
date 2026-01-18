@@ -140,8 +140,8 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,
-      requiresTenc: false, // Required only for core-only (GGUF) checkpoints
-      requiresVae: false,  // Required only for core-only (GGUF) checkpoints
+      requiresTenc: true, // Z Image uses external Qwen text encoder selection (tenc_sha)
+      requiresVae: true,  // Z Image uses external Flow16 VAE selection (vae_sha)
       isVideoEngine: false,
     },
     defaults: {

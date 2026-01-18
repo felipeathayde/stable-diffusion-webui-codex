@@ -23,7 +23,7 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.ops.operations import using_codex_operations
-from apps.backend.runtime.checkpoint_io import _load_gguf_state_dict
+from apps.backend.runtime.checkpoint_io import load_gguf_state_dict
 
 from .diagnostics import get_logger
 from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict
@@ -62,7 +62,7 @@ def load_stage_model_from_gguf(
     logger: Any,
 ):
     log = get_logger(logger)
-    state = _load_gguf_state_dict(gguf_path)
+    state = load_gguf_state_dict(gguf_path)
     state = remap_wan22_gguf_state_dict(state)
     with using_codex_operations(device=device, dtype=dtype, bnb_dtype="gguf"):
         model = load_wan_transformer_from_state_dict(state, config=None)

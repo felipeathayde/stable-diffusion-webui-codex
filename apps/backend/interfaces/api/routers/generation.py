@@ -507,13 +507,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             model_override = record.filename
             extras["model_path"] = record.filename
 
-        # Asset requirements depend on checkpoint format:
+        # Asset requirements depend on engine family and checkpoint format:
         # - GGUF checkpoints are core-only (denoiser-only) and require external VAE + text encoder(s).
-        # - Full checkpoints (e.g. safetensors) may embed VAE/text encoders; external assets become optional overrides.
+        # - Some families (Flux/ZImage) are treated as "external-assets-first": require VAE + text encoder(s)
+        #   regardless of checkpoint format (no silent guessing).
+        # - Full diffusion checkpoints (e.g. SD/SDXL safetensors) may embed VAE/text encoders; external assets
+        #   become optional overrides.
         model_ref_for_detection = model_override or snap.sd_model_checkpoint
         model_is_gguf = _is_gguf_checkpoint(_models_api, model_ref_for_detection)
-        requires_external_vae = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
-        requires_external_tenc = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
+        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
+        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
 
         if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.vae_sha' (sha256)")
@@ -981,8 +984,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras["model_path"] = record.filename
 
         model_is_gguf = _is_gguf_checkpoint(_models_api, model_ref)
-        requires_external_vae = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
-        requires_external_tenc = engine_id in ("flux1", "flux1_kontext") or model_is_gguf
+        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
+        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
 
         if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
             raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.vae_sha' (sha256)")

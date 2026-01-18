@@ -84,22 +84,30 @@ def load_torch_file(ckpt, safe_load=True, device=None):
     return pl_sd
 
 
-def _load_gguf_state_dict(path):
-    from apps.backend.quantization.gguf_loader import load_gguf_state_dict
-    from apps.backend.infra.config.args import args as runtime_args
+def load_gguf_state_dict(
+    path: str,
+    *,
+    dequantize: bool | None = None,
+    computation_dtype: torch.dtype = torch.float16,
+):
+    """Load a GGUF state dict, with optional explicit dequantization policy.
 
-    dequantize_upfront = bool(getattr(runtime_args, "gguf_dequantize_upfront", False))
-    return load_gguf_state_dict(path, dequantize=dequantize_upfront)
-
-
-def load_gguf_state_dict(path: str):
-    """Load a GGUF state dict honoring global runtime flags.
-
-    This is a public wrapper around `_load_gguf_state_dict` to avoid runtime codepaths
-    importing the quantization loader directly (which would bypass runtime args).
+    - When `dequantize` is None, honors the global runtime flag `--gguf-dequantize-upfront`.
+    - Callers with an explicit policy (e.g. "VAE GGUFs always dequantize") should pass
+      `dequantize=True` to make the intent unambiguous and avoid drift.
     """
 
-    return _load_gguf_state_dict(path)
+    from apps.backend.quantization.gguf_loader import load_gguf_state_dict as _load
+    from apps.backend.infra.config.args import args as runtime_args
+
+    if dequantize is None:
+        dequantize = bool(getattr(runtime_args, "gguf_dequantize_upfront", False))
+    return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype)
+
+
+def _load_gguf_state_dict(path: str):
+    # Back-compat internal alias; prefer calling `load_gguf_state_dict(...)` directly.
+    return load_gguf_state_dict(path)
 
 
 def _load_pickled_checkpoint(path, device, safe_load):
@@ -119,4 +127,3 @@ __all__ = [
     "load_torch_file",
     "read_arbitrary_config",
 ]
-

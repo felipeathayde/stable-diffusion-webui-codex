@@ -11,28 +11,28 @@ Defines TypeScript interfaces/types for backend responses (models/options/sample
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelInfo` (interface): Model list entry returned by `/api/models`.
- - `SamplerInfo` (interface): Sampler metadata entry returned by `/api/samplers`.
- - `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
- - `ModelsResponse` (interface): `/api/models` response shape.
- - `SamplersResponse` (interface): `/api/samplers` response shape.
- - `SchedulersResponse` (interface): `/api/schedulers` response shape.
- - `OptionsResponse` (interface): `/api/options` response shape.
- - `OptionsUpdateResponse` (interface): `/api/options` update response shape.
- - `Txt2ImgStartResponse` (interface): Start-task response shape (`task_id`).
- - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
- - `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
- - `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
- - `MemoryResponse` (interface): `/api/memory` response shape.
- - `VersionResponse` (interface): `/api/version` response shape.
- - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
- - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
- - `EngineAssetContract` (interface): Per-engine asset requirements contract exposed by the backend (VAE/text encoders).
- - `EngineAssetContractVariants` (interface): Base vs core-only contract variants for one engine id.
- - `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
- - `PathsResponse` (interface): `/api/paths` response shape.
- - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
- - `SettingsCategory` (interface): Settings category entry in settings schema responses.
- - `SettingsSection` (interface): Settings section entry in settings schema responses.
+- `SamplerInfo` (interface): Sampler metadata entry returned by `/api/samplers`.
+- `SchedulerInfo` (interface): Scheduler metadata entry returned by `/api/schedulers`.
+- `ModelsResponse` (interface): `/api/models` response shape.
+- `SamplersResponse` (interface): `/api/samplers` response shape.
+- `SchedulersResponse` (interface): `/api/schedulers` response shape.
+- `OptionsResponse` (interface): `/api/options` response shape.
+- `OptionsUpdateResponse` (interface): `/api/options` update response shape.
+- `Txt2ImgStartResponse` (interface): Start-task response shape (`task_id`).
+- `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
+- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
+- `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
+- `MemoryResponse` (interface): `/api/memory` response shape.
+- `VersionResponse` (interface): `/api/version` response shape.
+- `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+- `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
+- `EngineAssetContract` (interface): Per-engine asset requirements contract exposed by the backend (VAE/text encoders).
+- `EngineAssetContractVariants` (interface): Base vs core-only contract variants for one engine id.
+- `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
+- `PathsResponse` (interface): `/api/paths` response shape.
+- `PathsUpdateResponse` (interface): `/api/paths` update response shape.
+- `SettingsCategory` (interface): Settings category entry in settings schema responses.
+- `SettingsSection` (interface): Settings section entry in settings schema responses.
 - `SettingsFieldType` (type): Allowed field types in settings schema definitions.
 - `SettingsField` (interface): Settings field entry in settings schema responses.
 - `SettingsSchemaResponse` (interface): `/api/settings/schema` response shape.

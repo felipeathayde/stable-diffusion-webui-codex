@@ -10,7 +10,7 @@ Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
 Contains request parsing, payload validation, and task orchestration for generation endpoints.
 
 Symbols (top-level; keep in sync; no ghosts):
-- build_router (function): Build the APIRouter for generation endpoints.
+- `build_router` (function): Build the APIRouter for generation endpoints.
 """
 
 from __future__ import annotations

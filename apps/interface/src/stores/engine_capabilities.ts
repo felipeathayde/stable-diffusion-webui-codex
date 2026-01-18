@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Pinia store for backend engine capability gating.
-Fetches `/api/engines/capabilities` once and exposes a cached map so views/components can hide unsupported UI features per engine.
+Fetches `/api/engines/capabilities` once and exposes cached capability + asset-contract maps so views/components can gate UI features and
+required asset selection per engine.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useEngineCapabilitiesStore` (store): Pinia store exposing engine capabilities, load state, and lookup helpers.

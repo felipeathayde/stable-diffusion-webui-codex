@@ -27,8 +27,8 @@ Status: Active
 - 2025-12-29: `model_tabs.load()` preserves the route-selected `activeId` when reloading tabs (reduces QuickSettings flicker on Vite reloads).
 - 2025-12-29: `model_tabs.updateParams()` mutates the params object in-place (instead of replacing it) to reduce whole-view rerenders on small boolean toggles (e.g. LightX2V / Low “Use High settings”).
 - 2026-01-01: `quicksettings.ts` now exposes a `refreshModelsList()` helper that calls `/api/models?refresh=1` so the UI can pick up new checkpoint files after changing `apps/paths.json` or copying weights into `*_ckpt` folders.
-- 2026-01-02: `quicksettings.ts` now exposes `resolveModelSha` + `isModelGguf` so callers can send checkpoint selection as a hash (instead of titles/paths) and still enforce GGUF requirements.
+- 2026-01-02: `quicksettings.ts` now exposes `resolveModelSha` + `isModelCoreOnly` so callers can send checkpoint selection as a hash (instead of titles/paths) and still enforce core-only (GGUF) requirements.
 - 2026-01-03: Added standardized file header blocks to stores (doc-only change; part of rollout).
 - 2026-01-04: Flux family backend engine keys moved to `flux1*`; stores route Flux.1 runs to the canonical keys and ignore legacy `codex_engine` values (`kontext`/`chroma`) instead of normalizing them.
-- 2026-01-18: `engine_config.ts` treats ZImage external assets as required by default (`requiresTenc/requiresVae=true`) so payload builders always include `tenc_sha`/`vae_sha` and fail fast when selections are missing.
+- 2026-01-18: `engine_capabilities.ts` now also caches backend-provided `asset_contracts` (base + core-only) from `/api/engines/capabilities`; image payload builders use these contracts (plus `models[].core_only`) to enforce required VAE/text encoder selection without duplicating per-engine policy in the UI.
 - 2026-01-06: Image tab defaults now use model_index-aligned canonical sampler/scheduler values (SD15: `pndm` + `ddim`; SDXL: `euler` + `euler_discrete`; flow: `euler` + `simple`) and normalization only fills blank/missing values (no alias/automatic shims).

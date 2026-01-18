@@ -12,7 +12,7 @@ Defines engine types and per-engine defaults/capabilities used by dynamic tabs a
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineType` (type): Known engine identifiers used by the UI config.
 - `TaskType` (type): Supported task identifiers (txt2img/img2img/txt2vid/img2vid).
-- `EngineCapabilities` (interface): Capability flags used to gate UI controls (CFG/negative prompt/asset requirements/etc.).
+- `EngineCapabilities` (interface): Capability flags used to gate UI controls (CFG/negative prompt/etc.).
 - `EngineDefaults` (interface): Default generation parameters (width/height/steps/cfg/etc.).
 - `EngineConfig` (interface): Full engine config entry (id/label/capabilities/defaults).
 - `getEngineConfig` (function): Returns the config entry for a given engine id.
@@ -42,10 +42,6 @@ export interface EngineCapabilities {
   usesCfg: boolean
   usesDistilledCfg: boolean
   usesNegativePrompt: boolean
-  
-  // Model requirements
-  requiresTenc: boolean  // If true, UI requires selecting text encoder(s) even for non-GGUF; GGUF core-only rules are enforced via `modelIsGguf`
-  requiresVae: boolean   // If true, UI requires selecting VAE even for non-GGUF; GGUF core-only rules are enforced via `modelIsGguf`
   
   // Video specific
   isVideoEngine: boolean
@@ -79,8 +75,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: true,
       usesDistilledCfg: false,
       usesNegativePrompt: true,
-      requiresTenc: false,
-      requiresVae: false,
       isVideoEngine: false,
     },
     defaults: {
@@ -99,8 +93,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: true,
       usesDistilledCfg: false,
       usesNegativePrompt: true,
-      requiresTenc: false,
-      requiresVae: false,
       isVideoEngine: false,
     },
     defaults: {
@@ -119,8 +111,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,
-      requiresTenc: true,  // GGUF core-only requires external text encoders
-      requiresVae: true,   // GGUF core-only requires external VAE
       isVideoEngine: false,
     },
     defaults: {
@@ -140,8 +130,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,
-      requiresTenc: true, // Z Image uses external Qwen text encoder selection (tenc_sha)
-      requiresVae: true,  // Z Image uses external Flow16 VAE selection (vae_sha)
       isVideoEngine: false,
     },
     defaults: {
@@ -161,8 +149,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: false,
       usesDistilledCfg: true,
       usesNegativePrompt: false,
-      requiresTenc: false,
-      requiresVae: false,
       isVideoEngine: false,
     },
     defaults: {
@@ -182,8 +168,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: true,
       usesDistilledCfg: false,
       usesNegativePrompt: true,
-      requiresTenc: true,
-      requiresVae: true,
       isVideoEngine: true,
     },
     defaults: {
@@ -202,8 +186,6 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
       usesCfg: true,
       usesDistilledCfg: false,
       usesNegativePrompt: true,
-      requiresTenc: true,
-      requiresVae: true,
       isVideoEngine: true,
     },
     defaults: {

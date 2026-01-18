@@ -175,16 +175,29 @@ def build_router(
                 serialize_engine_capabilities,
                 serialize_family_capabilities,
             )
+            from apps.backend.core.contracts.asset_requirements import (
+                contract_for_core_only,
+                contract_for_engine,
+                known_engine_ids,
+            )
             try:
                 from apps.backend.runtime.memory.smart_offload import get_smart_cache_stats
 
                 cache_stats = get_smart_cache_stats()
             except Exception:
                 cache_stats = {}
+
+            asset_contracts: Dict[str, Any] = {}
+            for engine_id in known_engine_ids():
+                asset_contracts[engine_id] = {
+                    "base": contract_for_engine(engine_id).as_dict(),
+                    "core_only": contract_for_core_only(engine_id).as_dict(),
+                }
             return {
                 "engines": serialize_engine_capabilities(),
                 "families": serialize_family_capabilities(),
                 "smart_cache": cache_stats,
+                "asset_contracts": asset_contracts,
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to read engine capabilities: {exc}")

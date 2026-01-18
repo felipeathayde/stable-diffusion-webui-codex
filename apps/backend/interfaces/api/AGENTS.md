@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-13
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
@@ -29,3 +29,4 @@ Status: Active
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.
 - Task state is centralized in `task_registry.py` so generation + tasks routers share cancellation/status logic.
 - `/api/models/file-metadata` is intended for UI/debug; it returns `flat` plus a nested view of dotted keys. Codex-generated GGUF files use `model.*`, `codex.*`, and `gguf.*` keys (no legacy `general.*` provenance fields).
+- 2026-01-18: `/api/models` checkpoint serialization now includes `core_only` (and optional `family_hint`) so the UI can stop guessing core-only status from filename suffixes.

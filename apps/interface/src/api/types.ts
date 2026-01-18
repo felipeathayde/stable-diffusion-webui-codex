@@ -26,6 +26,8 @@ Symbols (top-level; keep in sync; no ghosts):
  - `VersionResponse` (interface): `/api/version` response shape.
  - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
  - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
+ - `EngineAssetContract` (interface): Per-engine asset requirements contract exposed by the backend (VAE/text encoders).
+ - `EngineAssetContractVariants` (interface): Base vs core-only contract variants for one engine id.
  - `EmbeddingsResponse` (interface): `/api/embeddings` response shape.
  - `PathsResponse` (interface): `/api/paths` response shape.
  - `PathsUpdateResponse` (interface): `/api/paths` update response shape.
@@ -58,6 +60,8 @@ export interface ModelInfo {
   hash: string | null
   filename: string
   metadata: Record<string, unknown>
+  core_only: boolean
+  family_hint?: string | null
 }
 
 export interface SamplerInfo {
@@ -179,7 +183,23 @@ export interface EngineCapabilities {
 
 export interface EngineCapabilitiesResponse {
   engines: Record<string, EngineCapabilities>
+  families?: Record<string, unknown>
   smart_cache?: Record<string, { hits: number; misses: number }>
+  asset_contracts?: Record<string, EngineAssetContractVariants>
+}
+
+export interface EngineAssetContract {
+  requires_vae: boolean
+  tenc_count: number
+  tenc_kind: string
+  tenc_kind_label?: string
+  sha_only: boolean
+  notes: string
+}
+
+export interface EngineAssetContractVariants {
+  base: EngineAssetContract
+  core_only: EngineAssetContract
 }
 
 export interface EmbeddingsResponse {

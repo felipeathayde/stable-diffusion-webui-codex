@@ -152,20 +152,31 @@ Tools + output:
 
 ## MODEL PARTS MATRIX (what must be explicit)
 This is the “don’t drift” table for model-part requirements as enforced by the API layer.
+Source of truth:
+- Per-engine requirements: `apps/backend/core/contracts/asset_requirements.py` (also exposed to the UI via `GET /api/engines/capabilities` → `asset_contracts`).
+- Core-only hint: `GET /api/models` → `models[].core_only` (currently `.gguf` ⇒ core-only).
 
-- SD15 / SDXL (`engine_id: sd15|sdxl`)
+- SD15 / SD20 / SDXL / SDXL-refiner / SD3.5 (`engine_id: sd15|sd20|sdxl|sdxl_refiner|sd35`)
   - Checkpoint: monolithic `.safetensors` (includes UNet/TE/VAE).
   - VAE/TE: optional overrides only; `Built-in` means “no override”.
-- Flux / Kontext (`engine_id: flux|kontext`)
-  - Checkpoint: core-only (GGUF transformer) → complements required.
-  - Requires: `extras.vae_sha` + `extras.tenc_sha` (array of 2).
+  - Core-only checkpoints (`models[].core_only=true`) require external assets per contract (VAE + TE count/kind).
+- Flux / Kontext (`engine_id: flux1|flux1_kontext`)
+  - External-assets-first: always requires complements.
+  - Requires: `extras.vae_sha` + `extras.tenc_sha` (array of 2; CLIP + T5).
 - ZImage (`engine_id: zimage`)
-  - Checkpoint: core-only → complements required.
-  - Requires: `extras.vae_sha` + `extras.tenc_sha` (single).
+  - External-assets-first: always requires complements.
+  - Requires: `extras.vae_sha` + `extras.tenc_sha` (single; Qwen).
+- Chroma (`engine_id: flux1_chroma`)
+  - Safetensors treated as monolithic; core-only checkpoints require external VAE + 1 T5.
 - WAN (video endpoints)
-  - Stage models: `wan_high.model_sha` + `wan_low.model_sha` (sha → `.gguf`)
-  - Complements: `wan_vae_sha` + `wan_tenc_sha` (sha → VAE + `.safetensors`)
-  - Dirs: `wan_metadata_dir` (or `wan_tokenizer_dir`) required (path).
+  - GGUF sha-only (`method != "wan_animate"`):
+    - Stage models: `wan_high.model_sha` + `wan_low.model_sha` (sha → `.gguf`)
+    - Complements: `wan_vae_sha` + `wan_tenc_sha` (sha → VAE + `.safetensors|.gguf`)
+    - Metadata: `wan_metadata_repo` (preferred) or `wan_metadata_dir` (path)
+  - `wan_animate` (Diffusers dir; path-based but repo-scoped):
+    - Requires `vid2vid_model_dir` (directory under `CODEX_ROOT`)
+    - Stage overrides (`wan_high/wan_low`) accept `model_dir` (file/dir) and optional `lora_path` (file), all under `CODEX_ROOT`
+    - Optional `wan_metadata_dir` / `wan_tokenizer_dir` must be directories under `CODEX_ROOT`
 
 ## Repo anchors (constants and config)
 - **`CODEX_ROOT`** is the repository root resolved by the backend (and the launcher). It is used to:

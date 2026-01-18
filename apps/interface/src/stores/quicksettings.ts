@@ -466,17 +466,18 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     return wanGgufShaMap.value.get(normalized) || wanGgufShaMap.value.get(tail)
   }
 
-  function isModelGguf(label: string | null | undefined): boolean {
+  function isModelCoreOnly(label: string | null | undefined): boolean {
     const raw = String(label || '').trim()
     if (!raw) return false
-    const lower = raw.replace(/\\+/g, '/').toLowerCase()
-    if (lower.endsWith('.gguf')) return true
 
     const model = resolveModelInfo(raw)
-    if (!model) return false
-    const title = String(model.title || '').toLowerCase()
-    const filename = String(model.filename || '').toLowerCase()
-    return title.endsWith('.gguf') || filename.endsWith('.gguf')
+    if (model && typeof (model as any).core_only === 'boolean') {
+      return Boolean((model as any).core_only)
+    }
+
+    // Fallback for unknown/older model shapes: `.gguf` implies core-only.
+    const lower = raw.replace(/\\+/g, '/').toLowerCase()
+    return lower.endsWith('.gguf')
   }
 
   async function setVae(label: string): Promise<void> {
@@ -650,7 +651,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     resolveModelSha,
     resolveVaeSha,
     resolveWanGgufSha,
-    isModelGguf,
+    isModelCoreOnly,
     vaeShaMap,
     wanGgufShaMap,
   }

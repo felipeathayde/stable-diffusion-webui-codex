@@ -14,6 +14,10 @@
 **Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
 **Correct command:** `ls -la apps/interface/src/stores`
 
+**Wrong command:** `ls -لا .sangoi/task-logs | tail -n 50`
+**Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
+**Correct command:** `ls -la .sangoi/task-logs | tail -n 50`
+
 **Wrong command:** `rg -n "engine\\s*[=:]\\s*[\\\"'`]\\s*(flux|kontext|chroma|flux-1|flux\\.1)\\s*[\\\"'`]" .sangoi/plans .sangoi/tasks || true`
 **Cause + fix:** `Backticks are command substitution in bash even inside double quotes, so `rg` never receives the intended regex. Avoid backticks in double-quoted patterns, or escape them / use single quotes.`
 **Correct command:** `rg -n "engine\\s*[=:]\\s*[\\\"']\\s*(flux|kontext|chroma|flux-1|flux\\.1)\\s*[\\\"']" .sangoi/plans .sangoi/tasks || true`

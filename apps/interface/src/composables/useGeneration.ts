@@ -16,12 +16,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
-  `vae_sha`/`tenc_sha` and enforcing engine-level external asset requirements (Flux/ZImage).
+  `vae_sha`/`tenc_sha` (core-only checkpoints) and enforcing engine-level external asset requirements via backend `asset_contracts`.
 */
 
 import { computed, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
+import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { getEngineConfig, type EngineType } from '../stores/engine_config'
 import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
@@ -98,6 +99,7 @@ function getTabState(tabId: string): GenerationState {
 export function useGeneration(tabId: string) {
   const modelTabs = useModelTabsStore()
   const quicksettings = useQuicksettingsStore()
+  const backendCaps = useEngineCapabilitiesStore()
   
   // Reactive state for this tab
   const state = ref(getTabState(tabId))
@@ -168,6 +170,8 @@ export function useGeneration(tabId: string) {
       state.value.errorMessage = 'Tab not found'
       return
     }
+
+    await backendCaps.init()
     
     stopStream()
     state.value.status = 'running'
@@ -184,7 +188,7 @@ export function useGeneration(tabId: string) {
     const p = params.value
     const config = engineConfig.value!
     const checkpoint = String((p as any).checkpoint || '').trim()
-    const modelIsGguf = quicksettings.isModelGguf(checkpoint)
+    const modelIsCoreOnly = quicksettings.isModelCoreOnly(checkpoint)
     const resolvedModelSha = quicksettings.resolveModelSha(checkpoint)
     const modelOverride = resolvedModelSha || checkpoint
     if (!modelOverride) {
@@ -200,6 +204,15 @@ export function useGeneration(tabId: string) {
 
     const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
+
+    const tabType = String(engineType.value)
+    let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
+    // Flux.1 img2img should run via the Kontext workflow engine.
+    if (p.useInitImage && engineOverrideForRequest === 'flux1') {
+      engineOverrideForRequest = 'flux1_kontext'
+    }
+
+    const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
 
     if (p.useInitImage) {
       if (!config.capabilities.tasks.includes('img2img')) {
@@ -221,7 +234,7 @@ export function useGeneration(tabId: string) {
     // Build extras based on engine capabilities (e.g. tenc_sha)
     const extras: Record<string, unknown> = {}
 
-    const needsTencSha = config.capabilities.requiresTenc || modelIsGguf
+    const needsTencSha = (assetContract?.tenc_count ?? 0) > 0
     if (needsTencSha) {
       const shas: string[] = []
       for (const label of textEncoders) {
@@ -238,14 +251,13 @@ export function useGeneration(tabId: string) {
         state.value.errorMessage = 'Select a text encoder so the request can include tenc_sha.'
         return
       }
-      if (engineType.value === 'flux1' && shas.length !== 2) {
+      const requiredCount = Math.trunc(Number(assetContract?.tenc_count ?? 0))
+      if (requiredCount > 0 && shas.length !== requiredCount) {
+        const label = String(assetContract?.tenc_kind_label || assetContract?.tenc_kind || '').trim()
         state.value.status = 'error'
-        state.value.errorMessage = 'FLUX.1 requires exactly 2 text encoders (CLIP + T5).'
-        return
-      }
-      if (engineType.value === 'zimage' && shas.length !== 1) {
-        state.value.status = 'error'
-        state.value.errorMessage = 'Z Image requires exactly 1 text encoder (Qwen3).'
+        state.value.errorMessage = label
+          ? `This engine requires exactly ${requiredCount} text encoder(s) (${label}).`
+          : `This engine requires exactly ${requiredCount} text encoder(s).`
         return
       }
       if (shas.length > 0) {
@@ -255,7 +267,7 @@ export function useGeneration(tabId: string) {
 
     const selectedVae = String(quicksettings.currentVae || '').trim()
     const resolvedVaeSha = quicksettings.resolveVaeSha(selectedVae)
-    const needsVaeSha = config.capabilities.requiresVae || modelIsGguf
+    const needsVaeSha = Boolean(assetContract?.requires_vae)
     if (needsVaeSha) {
       if (!resolvedVaeSha) {
         state.value.status = 'error'
@@ -269,12 +281,6 @@ export function useGeneration(tabId: string) {
     }
     
     const device = (quicksettings.currentDevice || 'cpu') as any
-    const tabType = String(engineType.value)
-    let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
-    // Flux.1 img2img should run via the Kontext workflow engine.
-    if (p.useInitImage && engineOverrideForRequest === 'flux1') {
-      engineOverrideForRequest = 'flux1_kontext'
-    }
 
     try {
       let taskId = ''

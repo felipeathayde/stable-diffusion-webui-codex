@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 */
 
 import { computed } from 'vue'
-import { getEngineConfig, getEngineCapabilities, type EngineType, type EngineCapabilities } from '../stores/engine_config'
+import { getEngineConfig, getEngineCapabilities, type EngineType } from '../stores/engine_config'
 
 export function useEngineCapabilities(engine: EngineType) {
   const config = computed(() => getEngineConfig(engine))
@@ -24,8 +24,6 @@ export function useEngineCapabilities(engine: EngineType) {
   const showNegativePrompt = computed(() => capabilities.value.usesNegativePrompt)
   const showCfg = computed(() => capabilities.value.usesCfg)
   const showDistilledCfg = computed(() => capabilities.value.usesDistilledCfg)
-  const showTextEncoderSelector = computed(() => capabilities.value.requiresTenc)
-  const showVaeSelector = computed(() => capabilities.value.requiresVae)
   const isVideoEngine = computed(() => capabilities.value.isVideoEngine)
   
   return {
@@ -34,8 +32,6 @@ export function useEngineCapabilities(engine: EngineType) {
     showNegativePrompt,
     showCfg,
     showDistilledCfg,
-    showTextEncoderSelector,
-    showVaeSelector,
     isVideoEngine,
   }
 }

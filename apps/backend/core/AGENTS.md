@@ -9,6 +9,7 @@ Status: Active
 
 ## Subdirectories
 - `params/` — Typed parameter schemas and helpers (currently video-specific) that translate user requests into engine-friendly structures.
+- `contracts/` — Backend “contract as code” modules shared across UI ↔ API ↔ runtime (e.g. per-engine asset requirements).
 
 ## Key Files
 - `engine_interface.py` — Defines the base interfaces that engines must implement.

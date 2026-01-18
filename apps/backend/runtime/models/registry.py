@@ -301,6 +301,23 @@ class ModelRegistry:
                 fmt = CheckpointFormat.GGUF
             else:
                 fmt = CheckpointFormat.CHECKPOINT
+
+            core_only = suffix == ".gguf"
+            family_hint: str | None = None
+            try:
+                rel = file.resolve().relative_to(self._models_root)
+            except Exception:
+                rel = None
+            if rel and rel.parts:
+                top = str(rel.parts[0]).lower()
+                family_hint = {
+                    "sd15": "sd15",
+                    "sd1": "sd15",
+                    "sdxl": "sdxl",
+                    "flux": "flux1",
+                    "zimage": "zimage",
+                    "wan22": "wan22",
+                }.get(top)
             sha256, short_hash = self._hash_for(file)
             stat = file.stat()
             record = CheckpointRecord(
@@ -310,6 +327,8 @@ class ModelRegistry:
                 path=str(file.parent),
                 model_name=file.stem,
                 format=fmt,
+                core_only=core_only,
+                family_hint=family_hint,
                 sha256=sha256,
                 short_hash=short_hash,
                 file_size=stat.st_size,

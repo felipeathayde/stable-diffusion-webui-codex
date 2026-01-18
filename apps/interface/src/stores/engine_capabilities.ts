@@ -15,11 +15,12 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { EngineCapabilitiesResponse, EngineCapabilities } from '../api/types'
+import type { EngineAssetContract, EngineAssetContractVariants, EngineCapabilitiesResponse, EngineCapabilities } from '../api/types'
 import { fetchEngineCapabilities } from '../api/client'
 
 export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () => {
   const engines = ref<Record<string, EngineCapabilities>>({})
+  const assetContracts = ref<Record<string, EngineAssetContractVariants>>({})
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -30,6 +31,7 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     try {
       const res: EngineCapabilitiesResponse = await fetchEngineCapabilities()
       engines.value = res.engines ?? {}
+      assetContracts.value = res.asset_contracts ?? {}
       error.value = null
       loaded.value = true
     } catch (e: any) {
@@ -45,15 +47,32 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     return engines.value[engine] ?? null
   }
 
+  function getAssetVariants(engine: string | null | undefined): EngineAssetContractVariants | null {
+    if (!engine) return null
+    return assetContracts.value[engine] ?? null
+  }
+
+  function getAssetContract(
+    engine: string | null | undefined,
+    opts: { checkpointCoreOnly: boolean }
+  ): EngineAssetContract | null {
+    const variants = getAssetVariants(engine)
+    if (!variants) return null
+    return opts?.checkpointCoreOnly ? variants.core_only : variants.base
+  }
+
   const knownEngines = computed(() => Object.keys(engines.value))
 
   return {
     engines,
+    assetContracts,
     knownEngines,
     loaded,
     loading,
     error,
     init,
     get,
+    getAssetVariants,
+    getAssetContract,
   }
 })

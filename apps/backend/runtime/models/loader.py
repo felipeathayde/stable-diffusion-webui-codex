@@ -43,11 +43,13 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, TYPE_CHECKING
 
 import torch
-from diffusers import AutoencoderKL, DiffusionPipeline
-from transformers import modeling_utils
+
+if TYPE_CHECKING:  # pragma: no cover
+    from diffusers import AutoencoderKL, DiffusionPipeline  # noqa: F401
+    from transformers import modeling_utils  # noqa: F401
 
 from apps.backend.huggingface.assets import ensure_repo_minimal_files
 from apps.backend.infra.config.args import args
@@ -463,6 +465,8 @@ def _resolve_vae_class(signature: ModelSignature | None, *, layout: str = "diffu
     family = getattr(signature, "family", None)
     if family is ModelFamily.WAN22:
         return AutoencoderKLWan
+    from diffusers import AutoencoderKL
+
     return AutoencoderKL
 
 
@@ -1206,6 +1210,8 @@ def _load_huggingface_component(
         else:
             LOGGER.info("Using Default T5 Data Type: %s", storage_dtype)
 
+        from transformers import modeling_utils
+
         if storage_dtype in ["nf4", "fp4", "gguf"]:
             with modeling_utils.no_init_weights():
                 with using_codex_operations(
@@ -1578,6 +1584,8 @@ def codex_loader(
     include = ("config", "tokenizer", "scheduler")  # strictly minimal; no weights
     ensure_repo_minimal_files(repo_name, local_repo_path, offline=offline, include=include)
 
+    from diffusers import DiffusionPipeline
+
     pipeline_config = DiffusionPipeline.load_config(local_repo_path)
     codex_components: Dict[str, Any] = {}
 
@@ -1697,6 +1705,8 @@ def _detect_engine_from_config(config: dict) -> str:
 
 
 def load_engine_from_diffusers(repo_dir: str) -> DiffusionModelBundle:
+    from diffusers import DiffusionPipeline
+
     config: dict = DiffusionPipeline.load_config(repo_dir)
     comps = {}
     for name, (lib_name, cls_name) in (

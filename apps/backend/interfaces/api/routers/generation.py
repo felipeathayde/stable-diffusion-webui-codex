@@ -42,7 +42,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _p = param_utils
 
     from apps.backend.core.engine_interface import TaskType
-    from apps.backend.engines import register_default_engines
     from apps.backend.core.orchestrator import InferenceOrchestrator
     from apps.backend.core.requests import (
         ProgressEvent,
@@ -54,8 +53,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Vid2VidRequest,
     )
     from apps.backend.runtime.memory import memory_management as mem_management
-    # Ensure canonical engine registry is populated before validating engine keys.
-    register_default_engines(replace=False)
+
+    def _ensure_default_engines_registered() -> None:
+        # Generation endpoints require the engine registry, but API startup should remain import-light.
+        # Register engines lazily so health/models endpoints can work without pulling torch-heavy deps.
+        from apps.backend.engines import register_default_engines
+
+        register_default_engines(replace=False)
 
     from apps.backend.types.payloads import TXT2IMG_KEYS, EXTRAS_KEYS
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
@@ -385,6 +389,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         key = raw.lower()
         from apps.backend.core.registry import registry as _engine_registry
         try:
+            _ensure_default_engines_registered()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Engine registry init failed: {exc}") from exc
+        try:
             return _engine_registry.get_descriptor(key).key
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Unknown engine key: {key}") from exc
@@ -401,8 +409,133 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             record = None
         if record is None:
             return False
+        core_only = getattr(record, "core_only", None)
+        if isinstance(core_only, bool):
+            return bool(core_only)
         filename = str(getattr(record, "filename", "") or "")
         return Path(filename).suffix.lower() == ".gguf"
+
+    from apps.backend.core.contracts.asset_requirements import (
+        EngineAssetContract,
+        contract_for_request,
+        format_text_encoder_kind_label,
+    )
+
+    def _normalize_sha_field(value: object, *, field_label: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"'{field_label}' must be a string")
+        norm = value.strip().lower()
+        return norm or None
+
+    def _normalize_sha_list_field(value: object, *, field_label: str) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            sha = value.strip().lower()
+            return [sha] if sha else []
+        if isinstance(value, list):
+            out: list[str] = []
+            for entry in value:
+                if not isinstance(entry, str):
+                    raise HTTPException(status_code=400, detail=f"'{field_label}' must be a string or array of strings")
+                sha = entry.strip().lower()
+                if sha:
+                    out.append(sha)
+            return out
+        raise HTTPException(status_code=400, detail=f"'{field_label}' must be a string or array of strings")
+
+    def _format_required_tenc_message(
+        *,
+        engine_id: str,
+        contract: EngineAssetContract,
+        field_label: str,
+    ) -> str:
+        count = int(contract.tenc_count)
+        kind = format_text_encoder_kind_label(contract.tenc_kind)
+        if count == 1:
+            return f"Engine '{engine_id}' requires exactly 1 text encoder ({kind}) via '{field_label}'"
+        return f"Engine '{engine_id}' requires exactly {count} text encoders ({kind}) via '{field_label}'"
+
+    def _apply_asset_contract_to_extras(
+        *,
+        engine_id: str,
+        checkpoint_ref: object,
+        extras: Dict[str, Any],
+        field_prefix: str,
+        resolve_asset_by_sha,  # type: ignore[no-untyped-def]
+        models_api: Any,
+    ) -> None:
+        if "vae_path" in extras or "tenc_path" in extras:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{field_prefix} must not include raw '*_path' fields; use sha256 via '{field_prefix}.*_sha'"
+                ),
+            )
+
+        if engine_id in ("flux1", "flux1_kontext") and "text_encoder_override" in extras:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Do not send {field_prefix}.text_encoder_override for Flux.1; use {field_prefix}.tenc_sha only.",
+            )
+
+        is_core_only = _is_gguf_checkpoint(models_api, checkpoint_ref)
+        try:
+            contract = contract_for_request(engine_id=engine_id, checkpoint_core_only=bool(is_core_only))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Asset contract resolution failed for engine '{engine_id}': {exc}",
+            ) from exc
+
+        vae_field = f"{field_prefix}.vae_sha"
+        tenc_field = f"{field_prefix}.tenc_sha"
+
+        vae_sha = _normalize_sha_field(extras.get("vae_sha"), field_label=vae_field)
+        tenc_shas = _normalize_sha_list_field(extras.get("tenc_sha"), field_label=tenc_field)
+
+        if contract.requires_vae and not vae_sha:
+            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires '{vae_field}' (sha256)")
+
+        if contract.requires_text_encoders:
+            if len(tenc_shas) == 0:
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires '{tenc_field}' (sha256)")
+            if len(tenc_shas) != int(contract.tenc_count):
+                raise HTTPException(
+                    status_code=400,
+                    detail=_format_required_tenc_message(engine_id=engine_id, contract=contract, field_label=tenc_field),
+                )
+
+        if vae_sha:
+            vae_path = resolve_asset_by_sha(vae_sha)
+            if not vae_path:
+                raise HTTPException(status_code=409, detail=f"Asset not found for sha: {vae_sha}")
+            extras["vae_path"] = vae_path
+
+        if tenc_shas:
+            tenc_paths: list[str] = []
+            for sha in tenc_shas:
+                path = resolve_asset_by_sha(sha)
+                if not path:
+                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
+                tenc_paths.append(path)
+            extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
+
+            # Flux.1/Kontext: translate sha-selected encoders into a loader override (paths stay server-side).
+            if engine_id in ("flux1", "flux1_kontext"):
+                if len(tenc_paths) != 2:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=_format_required_tenc_message(engine_id=engine_id, contract=contract, field_label=tenc_field),
+                    )
+                clip_path, t5_path = tenc_paths
+                extras["text_encoder_override"] = {
+                    "family": "flux1",
+                    "label": "flux1/sha",
+                    "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
+                }
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
@@ -507,82 +640,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             model_override = record.filename
             extras["model_path"] = record.filename
 
-        # Asset requirements depend on engine family and checkpoint format:
-        # - GGUF checkpoints are core-only (denoiser-only) and require external VAE + text encoder(s).
-        # - Some families (Flux/ZImage) are treated as "external-assets-first": require VAE + text encoder(s)
-        #   regardless of checkpoint format (no silent guessing).
-        # - Full diffusion checkpoints (e.g. SD/SDXL safetensors) may embed VAE/text encoders; external assets
-        #   become optional overrides.
-        model_ref_for_detection = model_override or snap.sd_model_checkpoint
-        model_is_gguf = _is_gguf_checkpoint(_models_api, model_ref_for_detection)
-        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
-        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
-
-        if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
-            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.vae_sha' (sha256)")
-        if requires_external_tenc and not tenc_sha:
-            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.tenc_sha' (sha256)")
-
-        if vae_sha is not None:
-            if not isinstance(vae_sha, str):
-                raise HTTPException(status_code=400, detail="'extras.vae_sha' must be a string")
-            vae_sha_norm = vae_sha.strip().lower()
-            if vae_sha_norm:
-                vae_path = resolve_asset_by_sha(vae_sha_norm)
-                if not vae_path:
-                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {vae_sha_norm}")
-                extras["vae_path"] = vae_path
-
-        tenc_shas: list[str] = []
-        if tenc_sha is not None:
-            if isinstance(tenc_sha, str):
-                sha = tenc_sha.strip().lower()
-                if sha:
-                    tenc_shas = [sha]
-            elif isinstance(tenc_sha, list):
-                for entry in tenc_sha:
-                    if not isinstance(entry, str):
-                        raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
-                    sha = entry.strip().lower()
-                    if sha:
-                        tenc_shas.append(sha)
-            else:
-                raise HTTPException(status_code=400, detail="'extras.tenc_sha' must be a string or array of strings")
-
-        if engine_id == "zimage" and len(tenc_shas) > 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Engine 'zimage' supports exactly 1 text encoder via 'extras.tenc_sha'",
-            )
-
-        if requires_external_tenc:
-            if len(tenc_shas) == 0:
-                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'extras.tenc_sha' (sha256)")
-            if engine_id in ("flux1", "flux1_kontext"):
-                if len(tenc_shas) != 2:
-                    raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'extras.tenc_sha'")
-            elif engine_id == "zimage" and len(tenc_shas) != 1:
-                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 1 text encoder via 'extras.tenc_sha'")
-
-        if tenc_shas:
-            tenc_paths: list[str] = []
-            for sha in tenc_shas:
-                path = resolve_asset_by_sha(sha)
-                if not path:
-                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
-                tenc_paths.append(path)
-            extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
-
-            # Flux.1/Kontext: translate sha-selected encoders into a loader override (paths stay server-side).
-            if engine_id in ("flux1", "flux1_kontext"):
-                if "text_encoder_override" in extras:
-                    raise HTTPException(status_code=400, detail="Do not send extras.text_encoder_override for Flux.1; use extras.tenc_sha only.")
-                clip_path, t5_path = tenc_paths
-                extras["text_encoder_override"] = {
-                    "family": "flux1",
-                    "label": "flux1/sha",
-                    "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
-                }
+        model_ref_for_contract = model_override or snap.sd_model_checkpoint
+        _apply_asset_contract_to_extras(
+            engine_id=engine_id,
+            checkpoint_ref=model_ref_for_contract,
+            extras=extras,
+            field_prefix="extras",
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            models_api=_models_api,
+        )
 
         req = Txt2ImgRequest(
             task=TaskType.TXT2IMG,
@@ -983,74 +1049,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             model_ref = record.filename
             extras["model_path"] = record.filename
 
-        model_is_gguf = _is_gguf_checkpoint(_models_api, model_ref)
-        requires_external_vae = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
-        requires_external_tenc = engine_id in ("flux1", "flux1_kontext", "zimage") or model_is_gguf
-
-        if requires_external_vae and not (isinstance(vae_sha, str) and vae_sha.strip()):
-            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.vae_sha' (sha256)")
-        if requires_external_tenc and not tenc_sha:
-            raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.tenc_sha' (sha256)")
-
-        if vae_sha is not None:
-            if not isinstance(vae_sha, str):
-                raise HTTPException(status_code=400, detail="'img2img_extras.vae_sha' must be a string")
-            vae_sha_norm = vae_sha.strip().lower()
-            if vae_sha_norm:
-                vae_path = resolve_asset_by_sha(vae_sha_norm)
-                if not vae_path:
-                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {vae_sha_norm}")
-                extras["vae_path"] = vae_path
-
-        tenc_shas: list[str] = []
-        if tenc_sha is not None:
-            if isinstance(tenc_sha, str):
-                sha = tenc_sha.strip().lower()
-                if sha:
-                    tenc_shas = [sha]
-            elif isinstance(tenc_sha, list):
-                for entry in tenc_sha:
-                    if not isinstance(entry, str):
-                        raise HTTPException(status_code=400, detail="'img2img_extras.tenc_sha' must be a string or array of strings")
-                    sha = entry.strip().lower()
-                    if sha:
-                        tenc_shas.append(sha)
-            else:
-                raise HTTPException(status_code=400, detail="'img2img_extras.tenc_sha' must be a string or array of strings")
-
-        if engine_id == "zimage" and len(tenc_shas) > 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Engine 'zimage' supports exactly 1 text encoder via 'img2img_extras.tenc_sha'",
-            )
-
-        if requires_external_tenc:
-            if len(tenc_shas) == 0:
-                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'img2img_extras.tenc_sha' (sha256)")
-            if engine_id in ("flux1", "flux1_kontext"):
-                if len(tenc_shas) != 2:
-                    raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 2 text encoders (CLIP + T5) via 'img2img_extras.tenc_sha'")
-            elif engine_id == "zimage" and len(tenc_shas) != 1:
-                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires exactly 1 text encoder via 'img2img_extras.tenc_sha'")
-
-        if tenc_shas:
-            tenc_paths: list[str] = []
-            for sha in tenc_shas:
-                path = resolve_asset_by_sha(sha)
-                if not path:
-                    raise HTTPException(status_code=409, detail=f"Asset not found for sha: {sha}")
-                tenc_paths.append(path)
-            extras["tenc_path"] = tenc_paths[0] if len(tenc_paths) == 1 else tenc_paths
-
-            if engine_id in ("flux1", "flux1_kontext"):
-                if "text_encoder_override" in extras:
-                    raise HTTPException(status_code=400, detail="Do not send img2img_extras.text_encoder_override for Flux.1; use img2img_extras.tenc_sha only.")
-                clip_path, t5_path = tenc_paths
-                extras["text_encoder_override"] = {
-                    "family": "flux1",
-                    "label": "flux1/sha",
-                    "components": [f"clip_l={clip_path}", f"t5xxl={t5_path}"],
-                }
+        _apply_asset_contract_to_extras(
+            engine_id=engine_id,
+            checkpoint_ref=model_ref,
+            extras=extras,
+            field_prefix="img2img_extras",
+            resolve_asset_by_sha=resolve_asset_by_sha,
+            models_api=_models_api,
+        )
 
         metadata = {
             "styles": styles,
@@ -1562,6 +1568,59 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise RuntimeError(f"vid2vid {field} not found: {resolved}")
         return str(resolved)
 
+    def _resolve_vid2vid_input_dir(raw: str, *, field: str) -> str:
+        v = str(raw or "").strip()
+        if not v:
+            raise RuntimeError(f"vid2vid {field} path is empty")
+        p = Path(os.path.expanduser(v))
+        if not p.is_absolute():
+            p = CODEX_ROOT / p
+        try:
+            resolved = p.resolve()
+        except Exception:
+            resolved = p
+        root = CODEX_ROOT.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise RuntimeError(
+                f"vid2vid {field} must be under the repo root ({root}); "
+                "use upload instead for external files."
+            ) from None
+        if not resolved.is_dir():
+            raise RuntimeError(f"vid2vid {field} not found: {resolved}")
+        return str(resolved)
+
+    def _normalize_wan_stage_payload_strict(stage: object, *, field: str) -> object:
+        if not isinstance(stage, dict):
+            return stage
+        out: dict[str, object] = dict(stage)
+        if isinstance(out.get("model_dir"), str) and str(out.get("model_dir")).strip():
+            # model_dir may refer to a GGUF file or a diffusers directory; enforce repo-root scoping either way.
+            raw_model_dir = str(out.get("model_dir") or "")
+            p = Path(_path_from_api(raw_model_dir)).expanduser()
+            try:
+                resolved = p.resolve()
+            except Exception:
+                resolved = p
+            root = CODEX_ROOT.resolve()
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"'{field}.model_dir' must be under the repo root ({root}); "
+                        "use sha-only mode for WAN GGUF or upload for external files."
+                    ),
+                ) from None
+            if not (resolved.is_file() or resolved.is_dir()):
+                raise HTTPException(status_code=400, detail=f"'{field}.model_dir' not found: {resolved}")
+            out["model_dir"] = str(resolved)
+        if isinstance(out.get("lora_path"), str) and str(out.get("lora_path")).strip():
+            out["lora_path"] = _resolve_vid2vid_input_path(str(out.get("lora_path")), field=f"{field}.lora_path")
+        return out
+
     def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:
         prompt = payload.get("vid2vid_prompt", "")
         negative_prompt = payload.get("vid2vid_neg_prompt", "")
@@ -1749,12 +1808,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         else:
             # wan_animate: keep legacy path normalization for stage payloads (not GGUF sha-only).
             if isinstance(payload.get("wan_high"), dict):
-                extras["wan_high"] = _normalize_wan_stage_payload(payload.get("wan_high"))
+                extras["wan_high"] = _normalize_wan_stage_payload_strict(payload.get("wan_high"), field="wan_high")
             if isinstance(payload.get("wan_low"), dict):
-                extras["wan_low"] = _normalize_wan_stage_payload(payload.get("wan_low"))
+                extras["wan_low"] = _normalize_wan_stage_payload_strict(payload.get("wan_low"), field="wan_low")
             for key in ("wan_metadata_dir", "wan_tokenizer_dir"):
                 if key in payload and payload.get(key) is not None:
-                    extras[key] = _path_from_api(payload.get(key))
+                    extras[key] = _resolve_vid2vid_input_dir(str(payload.get(key)), field=key)
 
         extras["vid2vid"] = {
             "method": method_raw,
@@ -1805,7 +1864,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         if method == "wan_animate":
             engine_key = "wan22_animate_14b"
-            model_ref = str(payload.get("vid2vid_model_dir") or _opts_snapshot().sd_model_checkpoint)
+            model_dir = payload.get("vid2vid_model_dir")
+            if not isinstance(model_dir, str) or not model_dir.strip():
+                raise RuntimeError("vid2vid wan_animate requires 'vid2vid_model_dir' (repo-scoped path)")
+            model_ref = _resolve_vid2vid_input_dir(model_dir.strip(), field="model_dir")
             return req, engine_key, model_ref
 
         engine_key = "wan22_5b"
@@ -1828,6 +1890,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         push({"type": "status", "stage": "queued"})
         try:
             _require_explicit_device(payload)
+            _ensure_default_engines_registered()
             if task_type == TaskType.TXT2VID:
                 req, engine_key, model_ref = prepare_txt2vid(payload)
             elif task_type == TaskType.IMG2VID:

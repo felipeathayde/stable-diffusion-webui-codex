@@ -20,11 +20,16 @@ from typing import Any, Dict
 
 def _serialize_checkpoint(info) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
     short_hash = getattr(info, "short_hash", None) or getattr(info, "shorthash", None)
-    return {
+    payload: Dict[str, Any] = {
         "title": info.title,
         "name": info.name,
         "model_name": info.model_name,
         "hash": short_hash,
         "filename": info.filename,
         "metadata": info.metadata,
+        "core_only": bool(getattr(info, "core_only", False)),
     }
+    family_hint = getattr(info, "family_hint", None)
+    if isinstance(family_hint, str) and family_hint.strip():
+        payload["family_hint"] = family_hint.strip()
+    return payload

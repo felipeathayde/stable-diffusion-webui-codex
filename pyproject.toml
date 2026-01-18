@@ -33,7 +33,7 @@ dependencies = [
   "numpy==1.26.4",
   "Pillow==10.4.0",
   # Small pins to keep resolver stable across platforms
-  "filelock==3.20.1",
+  "filelock==3.20.3",
   "packaging==25.0",
   "regex==2025.9.18",
   "typing-extensions==4.15.0",

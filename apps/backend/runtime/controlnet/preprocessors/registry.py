@@ -1,3 +1,22 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed registry for ControlNet preprocessors.
+Maintains a mapping of preprocessor slugs to callables returning `PreprocessorResult`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PreprocessorResult` (dataclass): Output from a preprocessor (image + metadata).
+- `Preprocessor` (type): Callable type alias returning `PreprocessorResult`.
+- `ControlPreprocessorRegistry` (class): Registry of preprocessors keyed by slug.
+- `default_registry` (constant): Default registry instance.
+- `get_preprocessor` (function): Resolves a preprocessor by slug from a registry.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

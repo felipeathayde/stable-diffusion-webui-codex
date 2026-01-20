@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Attach ControlNet nodes to a UNet patcher (advanced weighting + masks).
+Builds validated `ControlRequest` + `ControlNode` objects and wires them into the patcher graph.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for ControlNet node attachment diagnostics.
+- `apply_controlnet_advanced` (function): Clones a UNet patcher and appends an advanced ControlNet node.
+- `_build_node_config` (function): Derives a stable `ControlNodeConfig` for a given control module.
+- `_normalize_block_weights` (function): Normalizes per-block weighting mappings into validated lists.
+- `_normalize_sequence` (function): Normalizes frame-weight sequences into a list of floats.
+- `_validate_sigma_callable` (function): Validates/normalizes the sigma-weighting callable.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -5,7 +25,7 @@ from typing import Mapping, Optional, Sequence
 
 import torch
 
-from apps.backend.runtime.controlnet import (
+from apps.backend.runtime.controlnet.config import (
     ControlMaskConfig,
     ControlNode,
     ControlNodeConfig,

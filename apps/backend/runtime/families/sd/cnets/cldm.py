@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SD-family ControlNet (CLDM-style) model definition.
+Implements a ControlNet module compatible with the common UNet blocks under `apps.backend.runtime.common.nn.unet`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ControlNet` (class): CLDM-style ControlNet model definition for SD-family pipelines.
+"""
+
+from __future__ import annotations
+
 import torch.nn as nn
 
 from apps.backend.runtime.common.nn.unet.layers import Downsample, ResBlock, SpatialTransformer, TimestepEmbedSequential

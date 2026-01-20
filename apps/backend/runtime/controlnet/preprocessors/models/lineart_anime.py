@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Lineart-anime model for ControlNet preprocessing.
+Defines a U-Net generator and a loader that validates weight compatibility.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LineartAnimeConfig` (dataclass): Weights configuration for the lineart-anime model.
+- `UnetGenerator` (class): U-Net generator producing a 1-channel lineart map.
+- `load_lineart_anime_model` (function): Loads and validates the lineart-anime model weights.
+"""
+
 from __future__ import annotations
 
 import functools

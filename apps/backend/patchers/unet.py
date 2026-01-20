@@ -27,7 +27,7 @@ from typing import Any, Iterable, List, Optional, Sequence
 import torch
 
 from apps.backend.runtime.common.nn.unet.layers import SpatialTransformer
-from apps.backend.runtime.controlnet import ControlNode, ControlNodeConfig, ControlRequest, ControlWeightSchedule
+from apps.backend.runtime.controlnet.config import ControlNode, ControlNodeConfig, ControlRequest, ControlWeightSchedule
 from apps.backend.runtime.controlnet.runtime import build_composite
 from apps.backend.runtime.k_diffusion.k_model import KModel
 from .base import ModelPatcher

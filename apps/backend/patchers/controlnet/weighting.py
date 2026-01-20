@@ -1,3 +1,27 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Merge ControlNet tensor blocks with strength, pooling, schedules, and masks.
+Implements advanced per-block/per-frame/per-sigma weighting and optional chaining of multiple ControlNet modules.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger used for control weighting diagnostics.
+- `broadcast_image_to` (function): Broadcasts a conditioning tensor to the requested batch size.
+- `merge_control_signals` (function): Merges control tensors with advanced weighting/masking and optional chaining.
+- `_process_tensor` (function): Applies pooling/strength/dtype conversion to an individual tensor.
+- `_merge_previous` (function): Merges a previous control chain into the current block dict.
+- `_apply_weighting_and_mask` (function): Applies schedule weighting and an optional spatial mask.
+- `_apply_weight_schedule` (function): Applies per-block weights derived from `ControlWeightSchedule`.
+- `_apply_mask` (function): Applies a resized spatial mask to all control tensors.
+- `_get_weight` (function): Returns a weight at an index with a default fallback.
+- `_require_option` (function): Fetches a required `transformer_options` entry or raises loudly.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -6,7 +30,7 @@ import logging
 import torch
 import torch.nn.functional as F
 
-from apps.backend.runtime.controlnet import ControlMaskConfig, ControlWeightSchedule
+from apps.backend.runtime.controlnet.config import ControlMaskConfig, ControlWeightSchedule
 
 logger = logging.getLogger("backend.patchers.controlnet.weighting")
 

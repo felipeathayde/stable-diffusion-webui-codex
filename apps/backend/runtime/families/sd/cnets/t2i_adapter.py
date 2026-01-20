@@ -1,33 +1,28 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: SD-family T2I-Adapter model definitions.
+Implements adapter networks used to project conditioning hints into ControlNet-style tensor blocks.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `Adapter` (class): T2I-Adapter model producing multi-scale features from an image hint.
+- `Adapter_light` (class): Smaller adapter variant used by some state dicts.
+- `StyleAdapter` (class): Adapter producing style tokens from CLIP-like embeddings.
+"""
+
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 
 from collections import OrderedDict
 
-
-def conv_nd(dims, *args, **kwargs):
-    """
-    Create a 1D, 2D, or 3D convolution module.
-    """
-    if dims == 1:
-        return nn.Conv1d(*args, **kwargs)
-    elif dims == 2:
-        return nn.Conv2d(*args, **kwargs)
-    elif dims == 3:
-        return nn.Conv3d(*args, **kwargs)
-    raise ValueError(f"unsupported dimensions: {dims}")
-
-
-def avg_pool_nd(dims, *args, **kwargs):
-    """
-    Create a 1D, 2D, or 3D average pooling module.
-    """
-    if dims == 1:
-        return nn.AvgPool1d(*args, **kwargs)
-    elif dims == 2:
-        return nn.AvgPool2d(*args, **kwargs)
-    elif dims == 3:
-        return nn.AvgPool3d(*args, **kwargs)
-    raise ValueError(f"unsupported dimensions: {dims}")
+from apps.backend.runtime.common.nn.unet.utils import avg_pool_nd, conv_nd
 
 
 class Downsample(nn.Module):
@@ -71,7 +66,6 @@ class ResnetBlock(nn.Module):
         if in_c != out_c or not sk:
             self.in_conv = nn.Conv2d(in_c, out_c, ksize, 1, ps)
         else:
-            # print('n_in')
             self.in_conv = None
         self.block1 = nn.Conv2d(out_c, out_c, 3, 1, 1)
         self.act = nn.ReLU()
@@ -88,7 +82,7 @@ class ResnetBlock(nn.Module):
     def forward(self, x):
         if self.down:
             x = self.down_opt(x)
-        if self.in_conv is not None:  # edit
+        if self.in_conv is not None:
             x = self.in_conv(x)
 
         h = self.block1(x)
@@ -102,7 +96,7 @@ class ResnetBlock(nn.Module):
 
 class Adapter(nn.Module):
     def __init__(self, channels=[320, 640, 1280, 1280], nums_rb=3, cin=64, ksize=3, sk=False, use_conv=True, xl=True):
-        super(Adapter, self).__init__()
+        super().__init__()
         self.unshuffle_amount = 8
         resblock_no_downsample = []
         resblock_downsample = [3, 2, 1]
@@ -263,7 +257,7 @@ class extractor(nn.Module):
 
 class Adapter_light(nn.Module):
     def __init__(self, channels=[320, 640, 1280, 1280], nums_rb=3, cin=64):
-        super(Adapter_light, self).__init__()
+        super().__init__()
         self.unshuffle_amount = 8
         self.unshuffle = nn.PixelUnshuffle(self.unshuffle_amount)
         self.input_channels = cin // (self.unshuffle_amount * self.unshuffle_amount)

@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Core ControlNet patcher types and the `ControlModuleBase` contract.
+Defines the runtime context used by advanced weighting/masking and shared lifecycle helpers used by architecture modules.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger used for ControlNet patcher diagnostics.
+- `ControlRuntimeContext` (dataclass): Immutable context used when merging control tensor blocks.
+- `ControlModuleBase` (class): Base class for ControlNet-compatible modules (lifecycle, cloning, merge helpers).
+- `_summarize_block` (function): Formats control tensor blocks for DEBUG logging.
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -7,7 +25,7 @@ from typing import Any, Dict, Optional
 import logging
 import torch
 
-from apps.backend.runtime.controlnet import ControlMaskConfig, ControlWeightSchedule
+from apps.backend.runtime.controlnet.config import ControlMaskConfig, ControlWeightSchedule
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from .weighting import merge_control_signals

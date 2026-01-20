@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: ControlNet runtime composite wrapper built on `ControlGraph`.
+Links multiple control nodes into a chain, runs `pre_run` / `get_control` / `cleanup`, and exposes legacy-facing methods.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for ControlNet runtime diagnostics.
+- `ControlComposite` (class): Composite wrapper that exposes legacy ControlNet interfaces while using `ControlGraph`.
+- `build_composite` (function): Builds a `ControlComposite` from an iterable of nodes (returns `None` if empty).
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LoRA-aware operations used by ControlNet LoRA modules.
+Provides lightweight `Linear`/`Conv2d` implementations that apply LoRA up/down matrices during forward passes while
+leveraging the Codex operations stream helpers.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ControlLoraOps` (class): Codex operations surface providing LoRA-aware layers for ControlNet LoRA materialization.
+"""
+
 from __future__ import annotations
 
 import torch

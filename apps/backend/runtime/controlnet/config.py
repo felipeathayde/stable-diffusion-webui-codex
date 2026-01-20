@@ -1,3 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Typed ControlNet graph/config dataclasses with explicit validation.
+Defines the request/schedule/mask configuration used by patchers and the runtime graph nodes that wrap ControlNet modules.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for ControlNet config/validation diagnostics.
+- `ControlWeightSchedule` (dataclass): Advanced weighting configuration for ControlNet contributions.
+- `ControlMaskConfig` (dataclass): Mask guidance configuration for ControlNet.
+- `ControlRequest` (dataclass): Input request for ControlNet execution (validation, weighting, mask).
+- `ControlNodeConfig` (dataclass): Static configuration for a ControlNet node.
+- `ControlNodeState` (dataclass): Mutable runtime state for a ControlNet node.
+- `ControlNode` (dataclass): Executable ControlNet node embedded within a graph.
+- `ControlGraph` (dataclass): Ordered collection of ControlNet nodes applied to a UNet.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -5,6 +27,8 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 import logging
 import torch
+
+logger = logging.getLogger("backend.runtime.controlnet.config")
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,4 +207,3 @@ class ControlGraph:
     def validate(self) -> None:
         for node in self.nodes:
             node.request.validate()
-logger = logging.getLogger("backend.runtime.controlnet.config")

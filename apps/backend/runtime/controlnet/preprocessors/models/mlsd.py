@@ -1,3 +1,21 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: MLSD line segment detector model for ControlNet preprocessing.
+Defines the MLSD network and utilities to decode line segments from its output maps.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `MLSDConfig` (dataclass): Weights/input-size configuration for the MLSD model.
+- `MLSD` (class): MLSD network wrapper.
+- `load_mlsd_model` (function): Loads and validates the MLSD model weights.
+- `decode_lines` (function): Decodes line segments from the MLSD tensor prediction map.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

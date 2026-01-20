@@ -1,16 +1,16 @@
-"""ControlNet preprocessors."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-from .registry import ControlPreprocessorRegistry, default_registry, get_preprocessor
-from .edges import register_edge_preprocessors
-from .depth import register_depth_preprocessors
+Purpose: ControlNet preprocessors package marker (no facade exports).
+Import preprocessor APIs from their owning modules to keep dependencies explicit and avoid import-time side effects.
 
-# Register built-in preprocessors when the package is imported.
-register_edge_preprocessors(default_registry)
-register_depth_preprocessors(default_registry)
+Symbols (top-level; keep in sync; no ghosts):
+- `__all__` (constant): Explicit export list (intentionally empty; no re-exports).
+"""
 
-__all__ = [
-    "ControlPreprocessorRegistry",
-    "default_registry",
-    "get_preprocessor",
-    "register_edge_preprocessors",
-]
+__all__: list[str] = []

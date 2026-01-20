@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: ControlNet LoRA module that materialises a ControlNet model from LoRA weights.
+Constructs a CLDM-style ControlNet module at runtime and patches weights before delegating execution to the SD `ControlNet`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ControlLora` (class): LoRA-backed ControlNet module that materialises an inner ControlNet model during `pre_run`.
+"""
+
 from __future__ import annotations
 
 from typing import Optional

@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: HED edge detector model for ControlNet preprocessing.
+Defines the HED network module and a loader that validates weight compatibility.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `HEDConfig` (dataclass): HED weights configuration (path under the ControlNet cache root).
+- `ControlNetHED` (class): HED network module producing edge projections.
+- `load_hed_model` (function): Loads and validates the HED model weights.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

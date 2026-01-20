@@ -1,15 +1,22 @@
-"""Backwards-compatible imports for ControlNet models."""
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
 
-from ..architectures.sd.control import ControlNet
-from ..architectures.sd.lora import ControlLora
-from ..architectures.sd.t2i_adapter import T2IAdapter, load_t2i_adapter
-from ..architectures.sd.control_lite import ControlNetLite, ControlLiteConfig
+Purpose: Removed ControlNet model facade (no compat shims).
+This package existed as a legacy-facing import surface. It is intentionally not supported in Codex: import the architecture modules from
+`apps.backend.patchers.controlnet.architectures` or use the public facade at `apps.backend.patchers.controlnet`.
 
-__all__ = [
-    "ControlNet",
-    "ControlLora",
-    "ControlNetLite",
-    "ControlLiteConfig",
-    "T2IAdapter",
-    "load_t2i_adapter",
-]
+Symbols (top-level; keep in sync; no ghosts):
+- `__all__` (constant): Empty export list (module import is intentionally rejected).
+"""
+
+__all__: list[str] = []
+
+raise ImportError(
+    "apps.backend.patchers.controlnet.models has been removed.\n"
+    "Use apps.backend.patchers.controlnet (public facade) or apps.backend.patchers.controlnet.architectures (architecture modules)."
+)

@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Small file/path helpers for ControlNet preprocessor weights.
+Resolves the ControlNet cache root and loads weight state dicts via `safe_torch_load`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `controlnet_cache_root` (function): Returns the ControlNet weights cache root path (env override supported).
+- `resolve_weights_file` (function): Resolves a relative weights path under the cache root or raises loudly.
+- `load_state_dict` (function): Loads a state dict via `safe_torch_load` on CPU.
+"""
+
 from __future__ import annotations
 
 import os

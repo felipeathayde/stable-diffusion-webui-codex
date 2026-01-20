@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: LeReS depth model for ControlNet preprocessing.
+Defines a ResNeXt-based encoder/decoder and a loader that maps legacy state dict keys into the Codex module layout.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `LeReSConfig` (dataclass): LeReS weights/device/dtype configuration.
+- `RelDepthModel` (class): Depth model wrapper combining the encoder and decoder.
+- `load_leres_model` (function): Loads the LeReS model and applies legacy state dict mapping.
+"""
 
 from __future__ import annotations
 
@@ -182,4 +198,3 @@ def _map_legacy_state_dict(state: Dict[str, torch.Tensor]) -> Dict[str, torch.Te
             continue
         mapped[new_key] = tensor
     return mapped
-

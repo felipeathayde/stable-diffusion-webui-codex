@@ -1,3 +1,19 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: T2I-Adapter ControlNet module and loader.
+Provides the `T2IAdapter` patcher module plus helpers to detect/load adapter state dicts into a runnable SD-family model.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `T2IAdapter` (class): Adapter-based control module projecting hints via dedicated adapter networks.
+- `load_t2i_adapter` (function): Loads a T2I-Adapter state dict into a `T2IAdapter` instance (or returns `None`).
+"""
+
 from __future__ import annotations
 
 import math
@@ -7,7 +23,7 @@ import torch
 
 from apps.backend.runtime.models.state_dict import state_dict_prefix_replace
 from apps.backend.runtime.families.sd.cnets import t2i_adapter
-from apps.backend.runtime.misc import adaptive_resize
+from apps.backend.runtime.misc.image_resize import adaptive_resize
 
 from ...base import ControlModuleBase
 from ...weighting import broadcast_image_to

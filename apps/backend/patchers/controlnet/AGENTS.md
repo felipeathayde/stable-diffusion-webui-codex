@@ -1,22 +1,25 @@
 # AGENT — apps/backend/patchers/controlnet
 Date: 2025-10-31
 Owner: Backend Runtime Maintainers
-Last Review: 2025-10-31
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
-- Provide Codex-native ControlNet patchers organised by model family (SD, SDXL, Chroma).
+- Provide Codex-native ControlNet patchers organised by architecture/family (SD, SDXL, Flux, Chroma).
 - Expose clean builders for `ControlNet`, `ControlLora`, `T2IAdapter`, and advanced request helpers without relying on legacy modules.
 - Bridge ControlNet modules with the runtime graph API (`ControlNode`, `ControlRequest`, `ControlComposite`).
 
 ## Components
+- `__init__.py` – public facade exports for patcher APIs and architecture registry helpers.
 - `base.py` – shared lifecycle helpers for control modules (hint management, weighting context, cloning).
 - `weighting.py` – advanced weighting, mask application, and tensor broadcast utilities.
 - `apply.py` – user-facing `apply_controlnet_advanced` that builds graph nodes with validation.
 - `ops/lora.py` – LoRA-aware operations used by ControlNet LoRA builds.
-- `models/sd/` – SD/SDXL-compatible implementations (`ControlNet`, `ControlLora`, `T2IAdapter`, adapter loader).
-- `models/sdxl/` – SDXL aliases / future specialisations.
-- `models/chroma/` – placeholder raising `NotImplementedError` until Chroma support lands.
+- `architectures/` – architecture registry + implementations:
+  - `architectures/factory.py` — registry that resolves constructors by name.
+  - `architectures/sd/` — production SD/SDXL-compatible modules (`ControlNet`, `ControlLora`, `T2IAdapter`) + explicit placeholders.
+  - `architectures/sdxl/` — SDXL facade re-exporting SD behaviour until specialisation lands.
+  - `architectures/flux/`, `architectures/chroma/` — explicit placeholders (raise `NotImplementedError`) until ported.
 
 ## Notes
 - All modules operate exclusivamente em imports `apps.*`; código legado em snapshots de referência é apenas referência.

@@ -1,10 +1,25 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Stable Diffusion ControlNet module implementation compatible with Codex UNet patching.
+Wraps a ControlNet model into the patcher contract and supports chaining, conditioning modifiers, and advanced weighting.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ControlNet` (class): SD ControlNet module compatible with the Codex patcher stack.
+"""
+
 from __future__ import annotations
 
 from typing import Optional
 
 import torch
 
-from apps.backend.runtime.misc import adaptive_resize
+from apps.backend.runtime.misc.image_resize import adaptive_resize
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.patchers.base import ModelPatcher

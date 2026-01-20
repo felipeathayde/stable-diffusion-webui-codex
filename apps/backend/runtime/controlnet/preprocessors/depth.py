@@ -1,3 +1,23 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Depth preprocessors for ControlNet (DPT, LeReS, ZoeDepth).
+Implements depth map extraction pipelines and registers them into `ControlPreprocessorRegistry`.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `logger` (constant): Module logger for depth preprocessing diagnostics.
+- `DepthPreprocessorConfig` (dataclass): Configuration for the DPT hybrid depth preprocessor.
+- `register_depth_preprocessors` (function): Registers depth preprocessors into a registry.
+- `preprocess_dpt_hybrid` (function): Depth map extraction via Hugging Face transformers DPT model.
+- `preprocess_leres` (function): Depth map extraction via the LeReS model.
+- `preprocess_zoe` (function): Depth map extraction via the ZoeDepth model.
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,18 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: ZoeDepth model loader for ControlNet preprocessing.
+Loads and configures the ZoeDepth model (optional dependency) for depth extraction.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `ZoeDepthConfig` (dataclass): ZoeDepth weights/device/dtype configuration.
+- `load_zoe_model` (function): Loads the ZoeDepth model or raises if the optional dependency is missing.
+"""
 
 from __future__ import annotations
 

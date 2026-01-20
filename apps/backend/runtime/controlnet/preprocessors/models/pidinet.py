@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: PiDiNet edge detector model for ControlNet preprocessing.
+Defines PiDiNet variants and a loader that validates weight compatibility.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `PiDiNetConfig` (dataclass): PiDiNet weights/variant configuration.
+- `PiDiNet` (class): PiDiNet network module.
+- `load_pidinet_model` (function): Loads and validates PiDiNet model weights.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

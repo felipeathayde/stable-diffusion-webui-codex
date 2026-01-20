@@ -1,3 +1,20 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Manga-line model for ControlNet preprocessing.
+Defines a ResSkip network and a loader that validates weight compatibility.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `MangaLineConfig` (dataclass): Weights configuration for the manga-line model.
+- `ResSkip` (class): ResSkip network producing a 1-channel line map.
+- `load_manga_line_model` (function): Loads and validates the manga-line model weights.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

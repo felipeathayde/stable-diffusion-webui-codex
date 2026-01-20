@@ -49,7 +49,7 @@ def test_zimage_diffusers(
         List of PIL images
     """
     from apps.backend.core.model_registry import get_model_registry
-    from apps.backend.engines.zimage import ZImageEngine
+    from apps.backend.engines.zimage.zimage import ZImageEngine
     
     logger.info("=== Testing Diffusers Bypass Pipeline ===")
     logger.info(f"Model: {model_name}")

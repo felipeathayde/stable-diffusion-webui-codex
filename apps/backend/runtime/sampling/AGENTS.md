@@ -1,7 +1,7 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
 Owner: Runtime Maintainers
-Last Review: 2026-01-14
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
@@ -23,7 +23,7 @@ Status: Active
   - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default runs the **native** sampler loop (no k-diffusion dependency).
   - K-diffusion integration is not exposed via env vars (settings are Web UI / payload-driven). If k-diffusion routing is needed, port it behind an explicit Web UI setting instead of env toggles.
   - Restart sampler / UniPC helpers under `k_diffusion_extra` remain optional/experimental and must not be enabled via env flags.
-- `__init__.py`
+- `__init__.py` — import-light public surface re-exporting the sampler/scheduler catalog (no torch-bound exports).
 - Sampling inner loop no longer emits legacy low-VRAM print warnings; memory pressure handling remains via `memory_management.manager.get_free_memory` without stdout noise.
 
 ## Design Notes
@@ -38,7 +38,7 @@ Status: Active
 - Precision guardrails: `driver.py` observes denoiser outputs for NaNs and escalates precision via `memory_management.manager.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 - Diagnostics: set `CODEX_LOG_SAMPLER=1` to log sampler setup and per-step norms; set `CODEX_LOG_SIGMAS=1` to dump the sigma ladder (first/last and a compact summary) for schedule comparisons.
 - 2025-12-12: Added opt-in deep logs for flow debugging: `CODEX_ZIMAGE_DEBUG=1` / `CODEX_ZIMAGE_DEBUG_SAMPLING_INNER=1` prints CFG routing + cond/uncond norms for the first few inner-loop calls.
-- 2025-12-29: `sampling/__init__.py` is now an import-light facade; torch-bound code moved to `inner_loop.py` and is only loaded by `driver.py` during sampling (keeps `sampling.catalog` usable by the API/UI without pulling torch at import time). `inner_loop.py` still imports `cleanup_cache` lazily to avoid loading `runtime.ops` until cleanup is needed.
+- 2026-01-18: `sampling/__init__.py` re-exports only the import-light sampler/scheduler catalog; torch-bound sampling internals remain in `inner_loop.py` / `driver.py`.
 - 2026-01-01: Native `DPM++ 2M` now uses the log-sigma-time DPM-Solver++(2M) update (k-diffusion parity); `DPM++ 2M SDE` uses the midpoint log-sigma form with independent noise in the native path (no BrownianTree noise sampler).
 - Distilled/turbo CFG: when unconditional conditioning is omitted (`uncond=None`), `sampling_function_inner` bypasses CFG interpolation and returns the conditional prediction directly. This allows Turbo models to run with `guidance_scale=0` without collapsing denoised to zeros.
 - Flow precision: for flow-match predictors (`prediction_type='const'`, e.g. Flux/Z-Image), `driver.py` forces sampling latents to fp32 (matching diffusers schedulers) even if the core runs in bf16/fp16.

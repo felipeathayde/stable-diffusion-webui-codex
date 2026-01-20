@@ -36,10 +36,10 @@ from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent, Vid2VidRequest
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.infra.config.repo_root import get_repo_root
-from apps.backend.video.export import export_video
-from apps.backend.video.flow import FlowGuidanceError, RaftFlowEstimator, warp_frame
+from apps.backend.video.export.ffmpeg_exporter import export_video
+from apps.backend.video.flow.torchvision_raft import FlowGuidanceError, RaftFlowEstimator, warp_frame
 from apps.backend.video.interpolation import maybe_interpolate
-from apps.backend.video.io import extract_frames, probe_video
+from apps.backend.video.io.ffmpeg import extract_frames, probe_video
 
 
 def _blend(a: Any, b: Any, *, alpha: float) -> Any:

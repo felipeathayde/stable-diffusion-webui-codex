@@ -2,7 +2,7 @@
 <!-- tags: backend, core, contracts, assets, drift -->
 Date: 2026-01-18
 Owner: Backend Core Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-19
 Status: Active
 
 ## Purpose

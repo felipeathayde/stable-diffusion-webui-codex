@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from apps.backend.runtime.sampling.catalog import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
+from apps.backend.runtime.sampling import SAMPLER_OPTIONS, SCHEDULER_OPTIONS
 from apps.backend.interfaces.api.path_utils import _normalize_inventory_for_api
 from apps.backend.interfaces.api.serializers import _serialize_checkpoint
 from apps.backend.interfaces.api.file_metadata import read_file_metadata

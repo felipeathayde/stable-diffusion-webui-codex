@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Backend package facade with lazy exports.
-Re-exports core engine/request types and lazily resolves engines/runtime/patchers/services on first access to avoid importing heavy dependencies during startup.
+Re-exports core engine/request types and lazily resolves engines/runtime/text-processing surfaces on first access to avoid importing heavy dependencies during startup.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TaskType` (enum): Canonical backend task types used across requests and orchestrator (re-export).
@@ -43,7 +43,6 @@ __all__ = [
     "Img2VidRequest",
     "InferenceEvent",
     "InferenceOrchestrator",
-    "ImageService",
     "attention",
     "logging",
     "memory_management",
@@ -53,25 +52,6 @@ __all__ = [
     "stream",
     "text_processing",
     "utils",
-    "CLIP",
-    "ControlLora",
-    "ControlNet",
-    "LoraLoader",
-    "ModelPatcher",
-    "T2IAdapter",
-    "UnetPatcher",
-    "VAE",
-    "apply_controlnet_advanced",
-    "clip_preprocess",
-    "extra_weight_calculators",
-    "load_lora",
-    "load_t2i_adapter",
-    "merge_lora_to_weight",
-    "model_lora_keys_clip",
-    "model_lora_keys_unet",
-    "set_model_options_patch_replace",
-    "set_model_options_post_cfg_function",
-    "set_model_options_pre_cfg_function",
     "ClassicTextProcessingEngine",
     "EmbeddingDatabase",
     "T5TextProcessingEngine",
@@ -80,12 +60,8 @@ __all__ = [
     "text_emphasis",
     "text_parsing",
     "textual_inversion",
-    "MediaService",
-    "OptionsService",
     "ProgressEvent",
-    "ProgressService",
     "ResultEvent",
-    "SamplerService",
     "TaskType",
     "Txt2ImgRequest",
     "Txt2VidRequest",
@@ -123,27 +99,9 @@ def __getattr__(name: str):  # pragma: no cover - runtime dispatch
         globals()[name] = value
         return value
 
-    # Patchers
-    if name in _LAZY.PATCHERS:
-        from . import patchers as _patchers
-        value = getattr(_patchers, name)
-        globals()[name] = value
-        return value
-
-    # Services
-    if name in _LAZY.SERVICES:
-        from . import services as _services
-        value = getattr(_services, name)
-        globals()[name] = value
-        return value
-
     if name == "InferenceOrchestrator":
         from .core.orchestrator import InferenceOrchestrator as _InferenceOrchestrator
         globals()[name] = _InferenceOrchestrator
         return _InferenceOrchestrator
 
-    if name == "ensure_repo_minimal_files":
-        from .huggingface import ensure_repo_minimal_files as _ermf
-        globals()[name] = _ermf
-        return _ermf
     raise AttributeError(name)

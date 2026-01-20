@@ -6,20 +6,13 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Public facade for the Codex-native UNet runtime.
-Exposes the primary model/config types; callers should import layers/utils from their defining modules.
+Purpose: UNet runtime package marker (no facade exports).
+Import UNet helpers from their owning modules (`config.py`, `model.py`, `layers.py`, `utils.py`) to keep dependencies explicit and avoid facade sprawl.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `UNet2DConditionModel` (class): UNet with cross-attention conditioning used by SD-family pipelines.
-- `UNetConfig` (dataclass): Typed config describing channel/block/attention layout for `UNet2DConditionModel`.
+- `__all__` (constant): Explicit export list (intentionally empty; no re-exports).
 """
 
 from __future__ import annotations
 
-from .config import UNetConfig
-from .model import UNet2DConditionModel
-
-__all__ = [
-    "UNet2DConditionModel",
-    "UNetConfig",
-]
+__all__: list[str] = []

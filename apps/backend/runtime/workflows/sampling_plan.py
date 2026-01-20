@@ -24,9 +24,7 @@ from typing import Any, Mapping, Sequence
 
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
 from apps.backend.runtime.processing.datatypes import SamplingPlan
-from apps.backend.runtime.sampling.catalog import (
-    SUPPORTED_SCHEDULERS,
-)
+from apps.backend.runtime.sampling import SUPPORTED_SCHEDULERS
 from apps.backend.runtime.sampling.context import SchedulerName
 from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.runtime.sampling.registry import get_sampler_spec

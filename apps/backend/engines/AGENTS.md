@@ -14,7 +14,7 @@ Status: Active
 - `util/` — Utility helpers for schedulers, attention mapping, etc.
 
 ## Key Files
-- `__init__.py` — Exposes engine registration hooks.
+- `__init__.py` — Exposes engine registration hooks and lazy engine-class exports (import-light public surface for external consumers).
 - `registration.py` — Canonical registry of available engines.
 
 ## Notes

@@ -11,7 +11,7 @@ Status: Active
 - `apps/backend/engines/zimage/spec.py` — Runtime assembly (external VAE/Qwen3 for core-only checkpoints) + flow predictor defaults.
 - `apps/backend/engines/zimage/factory.py` — Factory seam returning `(runtime, CodexObjects)` for consistent engine assembly.
 - `apps/backend/engines/zimage/zimage.py` — `ZImageEngine` implementation (prompt formatting, conditioning, VAE encode/decode semantics).
-- `apps/backend/engines/zimage/__init__.py` — Engine exports.
+- `apps/backend/engines/zimage/__init__.py` — Package marker (no re-exports); import from `spec.py` / `zimage.py`.
 
 ## References (vendored assets)
 - `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/scheduler/scheduler_config.json` — canonical `shift` + `num_train_timesteps`.

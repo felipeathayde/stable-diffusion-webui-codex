@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Quantization public API (bake/quantize/dequantize) for GGUF packed tensors.
 Exposes torch and NumPy helpers for working with GGML/GGUF quantized weights, used by runtime ops and tooling (e.g. GGUF converter).
+Imports `apps.backend.quantization.kernels` on module import to ensure the global quant registry is populated before API calls.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `bake` (function): Pre-bakes a `CodexParameter` for faster repeated dequantization.
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
+from . import kernels  # noqa: F401 - triggers quant kernel registration
 from .core import get_quant_spec, QuantType
 
 if TYPE_CHECKING:

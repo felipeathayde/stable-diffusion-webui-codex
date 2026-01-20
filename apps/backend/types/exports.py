@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Lazy export name groups for backend package facades.
-Defines frozen export sets used by backend `__getattr__`/`__all__` wiring to expose large subsystems on demand without heavy imports during startup.
+Defines frozen export sets used by backend `__getattr__`/`__all__` wiring to expose subsystems on demand without heavy imports during startup.
+Patchers/services are intentionally excluded (empty sets) so dependencies remain explicit.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `LazyExports` (dataclass): Frozen sets of export names grouped by subsystem (engines/runtime/patchers/services/etc.).
+- `LazyExports` (dataclass): Frozen sets of export names grouped by subsystem (engines/runtime/text-processing); patchers/services are intentionally empty.
 - `LAZY_EXPORTS` (constant): Singleton instance of `LazyExports`.
 - `__all__` (constant): Explicit export list for this module.
 """
@@ -54,35 +55,13 @@ class LazyExports:
         "utils",
     })
     
-    PATCHERS: FrozenSet[str] = frozenset({
-        "CLIP",
-        "ControlLora",
-        "ControlNet",
-        "LoraLoader",
-        "ModelPatcher",
-        "T2IAdapter",
-        "UnetPatcher",
-        "VAE",
-        "apply_controlnet_advanced",
-        "clip_preprocess",
-        "extra_weight_calculators",
-        "load_lora",
-        "load_t2i_adapter",
-        "merge_lora_to_weight",
-        "model_lora_keys_clip",
-        "model_lora_keys_unet",
-        "set_model_options_patch_replace",
-        "set_model_options_post_cfg_function",
-        "set_model_options_pre_cfg_function",
-    })
+    # Patcher symbols are intentionally not re-exported from `apps.backend` anymore.
+    # Import patchers from `apps.backend.patchers.*` to keep dependencies explicit.
+    PATCHERS: FrozenSet[str] = frozenset()
     
-    SERVICES: FrozenSet[str] = frozenset({
-        "ImageService",
-        "MediaService",
-        "OptionsService",
-        "ProgressService",
-        "SamplerService",
-    })
+    # Service classes are intentionally not re-exported from `apps.backend` anymore.
+    # Import services from `apps.backend.services.*` to keep dependencies explicit.
+    SERVICES: FrozenSet[str] = frozenset()
 
 
 # Singleton instance

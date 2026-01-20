@@ -32,7 +32,7 @@ import einops
 
 from apps.backend.infra.config.args import args
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.misc import efficient_dot_product_attention
+from apps.backend.runtime.misc.sub_quadratic_attention import efficient_dot_product_attention
 
 _LOGGER = logging.getLogger("backend.attention")
 

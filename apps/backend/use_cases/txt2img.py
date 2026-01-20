@@ -22,7 +22,7 @@ from typing import Sequence
 
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
 from apps.backend.runtime.diagnostics.pipeline_debug import pipeline_trace
-from .txt2img_pipeline import Txt2ImgPipelineRunner
+from .txt2img_pipeline.runner import Txt2ImgPipelineRunner
 
 
 _logger = logging.getLogger("backend.use_cases.txt2img")

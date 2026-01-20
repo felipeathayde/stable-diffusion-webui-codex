@@ -13,7 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadError` (class): Error raised when an engine fails to load required resources.
 - `EngineExecutionError` (class): Error raised when an engine fails during inference execution.
 - `register_default_engines` (function): Registers the canonical engine set into the registry.
-- `_ENGINE_EXPORTS` (constant): Lazy export map `{name: (module_path, attr)}` for optional engines.
+- `_ENGINE_EXPORTS` (constant): Lazy export map `{name: (module_path, attr)}` for engine class exports.
 - `__getattr__` (function): Lazy import hook for engine class exports.
 - `__all__` (constant): Explicit export list for the engine facade.
 """
@@ -23,9 +23,26 @@ from __future__ import annotations
 # tags: backend, engines, lazy-imports
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
 from apps.backend.core.exceptions import EngineExecutionError, EngineLoadError
 from apps.backend.core.registry import EngineRegistry
+
+if TYPE_CHECKING:
+    # Keep the surface import-light for runtime. For type-checkers, expose names without importing engine modules,
+    # which may rely on optional deps and/or heavy import graphs.
+    from typing import Any as Chroma
+    from typing import Any as Flux
+    from typing import Any as Kontext
+    from typing import Any as StableDiffusion
+    from typing import Any as StableDiffusion2
+    from typing import Any as StableDiffusion3
+    from typing import Any as StableDiffusionXL
+    from typing import Any as StableDiffusionXLRefiner
+    from typing import Any as Wan2214BEngine
+    from typing import Any as Wan225BEngine
+    from typing import Any as Wan22Animate14BEngine
+    from typing import Any as ZImageEngine
 
 
 def register_default_engines(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
@@ -63,11 +80,31 @@ __all__ = [
     "EngineLoadError",
     "EngineExecutionError",
     "register_default_engines",
+    "StableDiffusion",
+    "StableDiffusion2",
+    "StableDiffusion3",
+    "StableDiffusionXL",
+    "StableDiffusionXLRefiner",
+    "Flux",
+    "Kontext",
+    "Chroma",
+    "ZImageEngine",
+    "Wan22Animate14BEngine",
     "Wan2214BEngine",
     "Wan225BEngine",
 ]
 
 _ENGINE_EXPORTS = {
+    "StableDiffusion": ("apps.backend.engines.sd.sd15", "StableDiffusion"),
+    "StableDiffusion2": ("apps.backend.engines.sd.sd20", "StableDiffusion2"),
+    "StableDiffusion3": ("apps.backend.engines.sd.sd35", "StableDiffusion3"),
+    "StableDiffusionXL": ("apps.backend.engines.sd.sdxl", "StableDiffusionXL"),
+    "StableDiffusionXLRefiner": ("apps.backend.engines.sd.sdxl", "StableDiffusionXLRefiner"),
+    "Flux": ("apps.backend.engines.flux.flux", "Flux"),
+    "Kontext": ("apps.backend.engines.flux.kontext", "Kontext"),
+    "Chroma": ("apps.backend.engines.flux.chroma", "Chroma"),
+    "ZImageEngine": ("apps.backend.engines.zimage.zimage", "ZImageEngine"),
+    "Wan22Animate14BEngine": ("apps.backend.engines.wan22.wan22_animate_14b", "Wan22Animate14BEngine"),
     "Wan2214BEngine": ("apps.backend.engines.wan22.wan22_14b", "Wan2214BEngine"),
     "Wan225BEngine": ("apps.backend.engines.wan22.wan22_5b", "Wan225BEngine"),
 }

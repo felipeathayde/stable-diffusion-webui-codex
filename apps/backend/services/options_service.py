@@ -10,7 +10,6 @@ Purpose: Backend settings JSON read/write service.
 Persists runtime settings in `apps/settings_values.json` relative to `CODEX_ROOT` so option access does not depend on the process CWD.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `SETTINGS_PATH` (constant): Absolute path to `apps/settings_values.json` under the repo root.
 - `OptionsService` (class): Reads/writes the settings JSON and exposes API-friendly accessors.
 """
 

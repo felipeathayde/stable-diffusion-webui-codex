@@ -6,35 +6,32 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Import-light sampling facade for Codex engines.
-Exposes torch-bound inner-loop helpers via a lazy `__getattr__` hook so API/UI tooling can import sampling catalogs without pulling heavy runtime modules.
+Purpose: Import-light sampling public surface (catalog only).
+Re-exports the canonical sampler/scheduler catalog used by the API/UI without importing torch-bound sampling internals at import time.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `__getattr__` (function): Lazy import hook exposing `sampling_*` helpers from `inner_loop.py` on first access.
-- `__all__` (constant): Export list for sampling helpers exposed via the facade.
+- `SAMPLER_OPTIONS` (constant): UI-facing sampler option table (canonical name + optional scheduler allowlists) (re-export).
+- `SUPPORTED_SAMPLERS` (constant): Set of supported sampler canonical names (re-export).
+- `SCHEDULER_OPTIONS` (constant): UI-facing scheduler option table (canonical name only) (re-export).
+- `SUPPORTED_SCHEDULERS` (constant): Set of supported scheduler canonical names (re-export).
+- `SAMPLER_DEFAULT_SCHEDULER` (constant): Default scheduler per sampler (re-export).
+- `__all__` (constant): Explicit export list for the import-light public sampling surface.
 """
 
 from __future__ import annotations
 
-
-def __getattr__(name: str):  # pragma: no cover - import-time dispatch
-    if name in {
-        "sampling_function",
-        "sampling_function_inner",
-        "sampling_prepare",
-        "sampling_cleanup",
-    }:
-        from . import inner_loop as _inner_loop
-
-        value = getattr(_inner_loop, name)
-        globals()[name] = value
-        return value
-    raise AttributeError(name)
-
+from .catalog import (
+    SAMPLER_DEFAULT_SCHEDULER,
+    SAMPLER_OPTIONS,
+    SCHEDULER_OPTIONS,
+    SUPPORTED_SAMPLERS,
+    SUPPORTED_SCHEDULERS,
+)
 
 __all__ = [
-    "sampling_cleanup",
-    "sampling_function",
-    "sampling_function_inner",
-    "sampling_prepare",
+    "SAMPLER_OPTIONS",
+    "SUPPORTED_SAMPLERS",
+    "SCHEDULER_OPTIONS",
+    "SUPPORTED_SCHEDULERS",
+    "SAMPLER_DEFAULT_SCHEDULER",
 ]

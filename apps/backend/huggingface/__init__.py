@@ -6,14 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Hugging Face asset helper facade for strict/offline execution.
-Re-exports `ensure_repo_minimal_files(...)`, which validates local Hugging Face mirrors and ensures required config/tokenizer assets are present for supported engines.
+Purpose: Hugging Face package marker (no facade exports).
+Import helpers from their owning modules (e.g. `assets.py`) to keep dependencies explicit and avoid facade sprawl.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `ensure_repo_minimal_files` (function): Ensures the minimal HF file set exists under a local mirror (re-export).
-- `__all__` (constant): Explicit export list for this facade.
+- `__all__` (constant): Explicit export list (intentionally empty; no re-exports).
 """
 
-from .assets import ensure_repo_minimal_files
-
-__all__ = ["ensure_repo_minimal_files"]
+__all__: list[str] = []

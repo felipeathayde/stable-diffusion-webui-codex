@@ -9,8 +9,7 @@ Required Notice: see NOTICE
 Purpose: Backend contract modules shared across UI/API/runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `module` (module): Package marker for backend contracts.
+- `apps.backend.core.contracts` (module): Package marker for backend contracts.
 """
 
 __all__ = []
-

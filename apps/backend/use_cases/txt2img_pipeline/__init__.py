@@ -6,14 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Txt2img staged pipeline runner facade.
-Re-exports `Txt2ImgPipelineRunner`, the staged runner used by the txt2img use case to prepare prompts, sample base/hires passes, and optionally run refiner stages.
+Purpose: Txt2img pipeline package marker (no facade exports).
+Import the staged runner from `runner.py` to keep dependencies explicit and avoid facade sprawl.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Txt2ImgPipelineRunner` (class): Staged txt2img runner (re-export).
-- `__all__` (constant): Explicit export list for this facade.
+- `__all__` (constant): Explicit export list (intentionally empty; no re-exports).
 """
 
-from .runner import Txt2ImgPipelineRunner
-
-__all__ = ["Txt2ImgPipelineRunner"]
+__all__: list[str] = []

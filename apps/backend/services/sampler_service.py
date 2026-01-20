@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from fastapi.exceptions import HTTPException
 from apps.backend.engines.util.schedulers import SamplerKind
-from apps.backend.runtime.sampling.catalog import SUPPORTED_SAMPLERS
+from apps.backend.runtime.sampling import SUPPORTED_SAMPLERS
 
 
 class SamplerService:

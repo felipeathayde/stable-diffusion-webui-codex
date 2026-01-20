@@ -1,7 +1,7 @@
 # apps/backend/services Overview
 Date: 2025-10-28
 Owner: Backend Service Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-19
 Status: Active
 
 ## Purpose
@@ -17,7 +17,8 @@ Status: Active
 ## Notes
 - Services should remain stateless apart from request-scoped state managed in `core/state.py`.
 - When introducing new user-facing capabilities, add service wrappers here and expose them via the API schemas in `apps/backend/interfaces/`.
+- `__init__.py` is a package marker (no re-exports); import services from their defining modules.
 - 2026-01-01: Centralized live preview Settings parsing + SSE payload encoding/attachment in `live_preview_service.py` to keep API workers thin and avoid duplicating image encoding logic.
-- 2025-12-29: `options_service.py` now resolves `apps/settings_values.json` relative to `CODEX_ROOT` (required) so option reads/writes don’t depend on the process CWD.
+- 2025-12-29: `options_store.py` resolves `apps/settings_values.json` relative to `CODEX_ROOT` (required) so option reads/writes don’t depend on the process CWD.
 - 2026-01-03: Added standardized file header docstrings to `services/*` modules (doc-only change; part of rollout).
 - 2026-01-06: `sampler_service.py` now enforces canonical sampler names (no alias/case normalization).

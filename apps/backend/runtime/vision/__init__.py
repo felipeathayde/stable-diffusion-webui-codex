@@ -6,14 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Vision runtime package facade exposing encoder subpackages.
-Provides thin, dependency-light imports for vision helpers (CLIP vision specs, preprocessing, and encoder wrappers).
+Purpose: Vision runtime package marker (no facade exports).
+Import vision helpers from their owning subpackages/modules to keep dependencies explicit and avoid facade sprawl.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `clip` (module): Codex-native CLIP vision runtime subpackage (specs/state-dict tooling/preprocessing/encoder wrapper).
-- `__all__` (constant): Public export list for the package facade.
+- `__all__` (constant): Explicit export list (intentionally empty; no re-exports).
 """
 
-from . import clip
-
-__all__ = ["clip"]
+__all__: list[str] = []

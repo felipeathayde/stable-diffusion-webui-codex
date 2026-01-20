@@ -1,10 +1,17 @@
 # UNet (Codex) — Agent Notes
 Date: 2025-11-10
 Owner: Runtime Maintainers
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
 - Implementação nativa do `UNet2DConditionModel` com `SpatialTransformer` e suporte a condicionamento via cross-attn (`context`) e opcional ADM (`y`).
+
+## Key files
+- `apps/backend/runtime/common/nn/unet/model.py` — `UNet2DConditionModel` implementation.
+- `apps/backend/runtime/common/nn/unet/config.py` — typed `UNetConfig`.
+- `apps/backend/runtime/common/nn/unet/layers.py` — core blocks (`ResBlock`, `SpatialTransformer`, up/downsample, etc.).
+- `apps/backend/runtime/common/nn/unet/utils.py` — shared helper factories (`conv_nd`, `avg_pool_nd`) and embeddings.
 
 ## Invariantes
 - `forward(x, timesteps, context, y, ...)`:
@@ -17,3 +24,4 @@ Status: Active
 
 ## Notes
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `config.py`, and `utils.py` (doc-only change; part of rollout).
+- 2026-01-18: `__init__.py` is a package marker (no re-exports); import UNet APIs from the defining modules.

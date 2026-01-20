@@ -24,13 +24,14 @@ Status: Active
 - `inventory/` — Machine-readable registries/inventories used during audits.
 
 ## Key Files
-- `__init__.py` — Package marker.
+- `__init__.py` — Package facade (lazy exports for engines/runtime/text-processing; patchers/services are **not** re-exported).
 - `registration.py` (under `engines/`) — Canonical engine registration entrypoint.
 - `state.py`, `devices.py`, `orchestrator.py` (under `core/`) — Core primitives for backend execution.
 
 ## Notes
 - Prefer adding new functionality under the structured subpackages above; avoid creating new ad-hoc directories.
 - Keep Hugging Face helpers up to date—Codex builds on these mirrors rather than relying on upstream defaults.
+- Import patchers/services explicitly from `apps/backend/patchers/**` and `apps/backend/services/**` (no backend-level re-export surface).
 - When retiring subpackages, relocate historical context to `.sangoi/deprecated/` and update this overview.
 - 2025-11-02: Inline pipeline debugging agora usa `apps.backend.runtime.diagnostics.pipeline_debug`; ligue com `set_pipeline_debug(True)` ou defina `CODEX_PIPELINE_DEBUG=1` (também disponível na BIOS) para logar `entrou/saiu` na pipeline txt2img/SDXL. A pipeline de SDXL valida `torch.cuda.is_available()` e recusa execução quando o modelo está em CPU, evitando o crash em `torch_cpu.dll`.
 - 2025-11-02: Memory config reads device/dtype from persisted WebUI options (and CLI overrides); `DeviceRole` policies clamp dtype to fp32 when device=CPU, `get_torch_device()` honours the core policy, and loader fallbacks that forced TE onto CUDA were removed.

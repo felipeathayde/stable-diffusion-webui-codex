@@ -1,7 +1,7 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-18
 Status: Active
 
 ## Purpose
@@ -24,6 +24,7 @@ Status: Active
 - LoRA merges are transactional: loaders snapshot parameters, track deterministic patch order, surface tqdm progress, and raise on any mismatched tensor metadata.
 - When introducing new patch behaviour, add explicit configuration flags/options and document them in `.sangoi/backend/`.
 - Mutator methods must raise on invalid payloads (no fallbacks) and emit backend debug logs; `ModelPatcher` now centralises logging/telemetry for patch registration.
+- `patchers/__init__.py` is a package marker (no facade exports); import patcher APIs from their defining modules.
 - ControlNet patching lives under `apps/backend/patchers/controlnet/`, with architecture-specific modules located in `architectures/` (SD today; Flux/Chroma placeholders ready). Use `apply_controlnet_advanced` or `UnetPatcher.add_control_node` to register controls.
 - Clip vision patcher reuses the runtime encoder; avoid reintroducing preprocessing or state-dict manipulation in the patcher—extend the runtime if new variants arise.
 - Extension-facing compatibility is preserved via the new graph-backed patcher—no linked lists remain, and `UnetPatcher.add_patched_controlnet` builds `ControlNode` instances directly.

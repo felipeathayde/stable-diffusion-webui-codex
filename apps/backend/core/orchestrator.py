@@ -7,9 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Backend inference orchestrator (engine routing + caching + event streaming).
-Resolves engines from the registry, loads/unloads per request, fingerprints load-affecting options, purges VRAM on model swaps, and yields
-typed progress events back to API callers.
-On engine load/execution failures, performs a best-effort purge to release VRAM/RAM so the backend can recover without restart.
+Resolves engines from the registry, loads/unloads per request, fingerprints load-affecting options, purges VRAM on model swaps, and yields typed progress events back to API callers.
+On load/execution failures, performs a best-effort purge to release VRAM/RAM so the backend can recover without restart.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `InferenceOrchestrator` (class): Routes typed requests to engines; caches loaded engines with option fingerprinting, reloads when overrides

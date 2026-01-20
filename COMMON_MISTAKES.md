@@ -1,3 +1,7 @@
+**Wrong command:** `cd tools/dev/import-graph-viewer && rm -rf dist`
+**Cause + fix:** `In this environment, destructive shell deletes can be blocked by policy. If you need to remove generated build artifacts, delete specific files via apply_patch (or avoid producing the artifacts in the first place).`
+**Correct command:** `apply_patch` with `*** Delete File:` entries for the generated files under `tools/dev/import-graph-viewer/dist/`.
+
 **Wrong command:** ``rg -n "Docs: updated `SUBSYSTEM-MAP\.md`|PYTHON PACKAGE FACADES" .sangoi/CHANGELOG.md``
 **Cause + fix:** `Backticks are bash command substitution even inside double quotes, so the shell tries to execute `SUBSYSTEM-MAP.md` before `rg` runs. Use single quotes for patterns containing backticks (or avoid backticks by matching the filename via regex / fixed strings).`
 **Correct command:** ``rg -n 'Docs: updated .*SUBSYSTEM-MAP\.md|PYTHON PACKAGE FACADES' .sangoi/CHANGELOG.md``

@@ -1,7 +1,7 @@
 # apps/backend/runtime/controlnet Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -13,3 +13,4 @@ Status: Active
 - Patchers should call `UnetPatcher.add_control_node` with a prepared `ControlNode`; sampling activates the composite via `UnetPatcher.activate_control()`.
 - `preprocessors/` contains Codex-native preprocessing pipelines (edge detectors, etc.) registered through `ControlPreprocessorRegistry`.
 - `__init__.py` is a package marker (no re-exports); import ControlNet types/helpers from their owning modules.
+- 2026-01-20: Removed unused `converters.py` helper (no call sites).

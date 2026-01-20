@@ -1,13 +1,13 @@
 # Apps Structure & Functionality Improvements
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2026-01-03
+Last Review: 2026-01-20
 Status: Draft
 
 ## 1. Consolidate Launcher Tooling (COMPLETED — 2025-10-28)
 - Implemented namespace package `apps/launcher/` (`__init__.py`, `paths.py`, `log_buffer.py`, `checks.py`, `services.py`, `profiles.py`).
-- Added `LauncherProfileStore` with segmented persistence and common helpers for tools/TUI.
-- Updated TUI entrypoint to `apps/tui_launcher.py` and refreshed run-webui scripts + guard messages.
+- Added `LauncherProfileStore` with segmented persistence and common helpers for launcher UIs and tools.
+- Added launcher entrypoints and refreshed run-webui scripts + guard messages. (Legacy curses TUI is now repo-local under `/.deprecated/`.)
 
 ## 2. Retire Transitional Modules
 - 2026-01-03: Removed `apps/backend/codex/` after migrating its remaining responsibilities into native modules (options store, LoRA selections, engine loader).

@@ -1,7 +1,7 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -16,7 +16,6 @@ Status: Active
 - `lora_apply.py` — Applies native LoRA selections to loaded networks.
 - `unet.py` — Codex-native UNet patcher built on typed helpers (`SamplingReservation`, `ControlNetChain`) for deterministic sampling reservations, ControlNet chaining, and patch registration.
 - `denoiser.py` — Generic `DenoiserPatcher` wrapper (ControlNet-free) for non-UNet denoisers; wraps `KModel` and exposes the shared `ModelPatcher` surface.
-- `clipvision.py` — Adapter around `apps/backend/runtime/vision/clip/` providing legacy-facing APIs backed by the Codex encoder.
 - Additional patch modules (e.g., adapters) live here as they are ported.
 
 ## Notes
@@ -26,7 +25,6 @@ Status: Active
 - Mutator methods must raise on invalid payloads (no fallbacks) and emit backend debug logs; `ModelPatcher` now centralises logging/telemetry for patch registration.
 - `patchers/__init__.py` is a package marker (no facade exports); import patcher APIs from their defining modules.
 - ControlNet patching lives under `apps/backend/patchers/controlnet/`, with architecture-specific modules located in `architectures/` (SD today; Flux/Chroma placeholders ready). Use `apply_controlnet_advanced` or `UnetPatcher.add_control_node` to register controls.
-- Clip vision patcher reuses the runtime encoder; avoid reintroducing preprocessing or state-dict manipulation in the patcher—extend the runtime if new variants arise.
 - Extension-facing compatibility is preserved via the new graph-backed patcher—no linked lists remain, and `UnetPatcher.add_patched_controlnet` builds `ControlNode` instances directly.
 - VAE patcher now respects the AUTO precision ladder: decode/encode paths inspect for NaNs and escalate fp16↔bf16↔fp32 via `memory_management.manager.report_precision_failure`; user-forced dtypes skip the ladder and surface explicit errors.
 - 2025-11-03: Host pinning for offloaded models honours `RuntimeMemoryConfig.swap.pin_shared_memory`; disable the flag to avoid Windows pagefile pressure.

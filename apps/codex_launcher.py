@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: GUI launcher for Codex services (tkinter).
-Provides a touch-friendly UI to manage API/UI service processes and runtime configuration; complements the curses TUI (`apps/tui_launcher.py`).
+Provides a touch-friendly UI to manage API/UI service processes and runtime configuration.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexGUILauncher` (class): Main Tk app; builds widgets, polls service status, starts/stops services, edits env/profile values, and shows logs.

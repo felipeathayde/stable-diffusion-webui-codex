@@ -1,7 +1,7 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
 Owner: Engine Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2026-01-18: Z Image treats `vae_path`/`tenc_path` as **external asset selection** (not state-dict overrides) and the API requires sha-based selection (`vae_sha`/`tenc_sha`) for Z Image runs (no silent fallbacks).
 - 2026-01-06: Refreshed `spec.py` header block wording to reflect optional external overrides for full checkpoints (doc-only change).
 - 2026-01-08: `spec.flow_shift` now resolves from the vendored diffusers `scheduler_config.json` (HF mirror) instead of using family defaults, keeping scheduler parity as the source of truth.
+- 2026-01-20: Removed unused dev-only ZImage artifacts (`diffusers_pipeline.py`, `test_diffusers.py`) — engine wiring lives in `spec.py` / `factory.py` / `zimage.py`.

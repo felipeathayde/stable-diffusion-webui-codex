@@ -1,7 +1,7 @@
 # apps/backend/core Overview
 Date: 2025-10-28
 Owner: Backend Core Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -19,8 +19,6 @@ Status: Active
 - `rng.py` / `philox.py` — Native RNG stack (CPU/GPU/Philox) used across tasks.
 - `requests.py` — Typed request objects and validation helpers.
 - `registry.py` — Engine registration/lookup for orchestration.
-- `sampler_policy.py` — Central policy for sampler selection and validation.
-- `progress_tracker.py` / `progress_stream.py` — Shared progress reporting utilities.
 - `exceptions.py` — Core exception types surfaced by orchestration.
 
 ## Notes

@@ -2,7 +2,7 @@
 # apps/backend/quantization Overview
 Date: 2025-12-15
 Owner: Runtime Maintainers
-Last Review: 2026-01-19
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings across quantization modules (public API, registry/cache/ops, GGUF loader, kernels bootstrap, GGUF IO helpers) (doc-only change; part of rollout).
 - 2026-01-03: Standardized upstream references in quantization docs/comments (avoid naming unrelated projects as baselines; keep necessary attributions in headers/notices).
 - 2026-01-19: Made `apps.backend.quantization` import-light (lazy facade) so `apps.backend.quantization.gguf` can be torch-free on import; kernel registration now happens when importing `apps.backend.quantization.api`.
+- 2026-01-20: Removed unreferenced legacy quantization helpers (`quantization/ops.py` and `gguf/{lazy,metadata,tensor_mapping,utility,vocab}.py`).

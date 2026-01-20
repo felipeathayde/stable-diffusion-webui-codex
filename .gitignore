@@ -36,6 +36,9 @@ __pycache__/
 !/logo.png
 /*.txt
 
+# Deprecated stash (do not commit; see `gitignore.md`)
+/.deprecated/
+
 # Local one-off configs/scripts (do not commit)
 /config.json
 /ui-config.json

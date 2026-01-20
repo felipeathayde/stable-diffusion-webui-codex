@@ -1,7 +1,7 @@
 # gitignore Policy — Stable Diffusion WebUI Codex
 Date: 2025-12-04
 Owner: Repository Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -29,11 +29,13 @@ Status: Active
 - `.uv/` — repo-local `uv` installer state + managed CPython installs.
 - `.npm-cache/` — repo-local npm cache (installer sets `NPM_CONFIG_CACHE`).
 - `.ts-out/` — TypeScript output folder (root `tsconfig.json` `outDir`).
+- `artifacts/` — repo-local build/script artifacts (generated; do not commit).
 - `.refs/` — local upstream/reference snapshots (read-only; never committed).
 
 ## Root scratch (tracked? no)
 - Repo-root `/*.png` and `/*.txt` — ad-hoc outputs/notes. If you need to version images, place them under `.sangoi/assets/` (or another tracked docs folder) instead.
 - `/logo.png` is explicitly tracked as a repo asset.
+- Repo-root `/.deprecated/` — local “quarantine” folder for removed/legacy files during refactors (kept out of Git on purpose). Do not import code from here.
 
 ## Repo-root local configs/scripts (tracked? no)
 - `config.json` — local scratch config; do not commit.
@@ -49,7 +51,7 @@ Status: Active
 - `apps/interface/tabs.json` — backend-managed persisted tab state (created if missing).
 - `apps/interface/workflows.json` — backend-managed persisted workflows state (created if missing).
 - `apps/settings_values.json` — backend-managed persisted options snapshot (created/overwritten locally).
-- `.sangoi/launcher/` — launcher profile persistence (meta + env areas + per-model env overlays); created/overwritten locally by the TUI/GUI launcher and will drift across machines.
+- `.sangoi/launcher/` — launcher profile persistence (meta + env areas + per-model env overlays); created/overwritten locally by the launcher and will drift across machines.
 
 ## Extending the ignore set
 - Prefer directory-level ignores (e.g., `apps/interface/dist/`) over broad `*` patterns.

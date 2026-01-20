@@ -2,7 +2,7 @@
 # apps/backend/infra/registry Overview
 Date: 2025-12-05
 Owner: Backend Infra Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-20
 Status: Active
 
 ## Purpose
@@ -13,10 +13,7 @@ Status: Active
 - `vae.py` — VAE discovery + describe helpers.
 - `lora.py` — LoRA discovery + describe helpers (per-engine roots from `get_paths_for("<engine>_loras")`).
 - `embeddings.py` — Textual inversion (TI) discovery + metadata.
-- `text_encoders.py` — Vendored text encoder metadata under `apps/backend/huggingface`.
-- `text_encoder_dirs.py` — Flat list of vendored text encoder dirs (`org/repo/{text_encoder,t5,clip}`).
-- `tokenizers.py` — Vendored tokenizer dirs under `apps/backend/huggingface`.
-- `wan22.py` — WAN22-specific registry helpers.
+- `text_encoder_roots.py` — Engine text encoder roots registry (per-family paths and stable labels).
 
 ## Notes
 - These registries must stay “thin”: no torch/transformers imports, no engine loading. They are intended for inventories, API listings, and future tooling.
@@ -26,4 +23,4 @@ Status: Active
 - 2026-01-04: Tokenizer discovery now uses the shared vendored HF scanner (`apps/backend/inventory/scanners/vendored_hf.py`) to keep traversal/sorting consistent with inventory metadata.
 - 2025-12-29: Added `zimage_tenc` to the text encoder roots registry and `zimage_vae` to VAE discovery so ZImage assets show up in inventory + QuickSettings.
 - 2025-12-29: Text encoder root labels (`TextEncoderRoot.name`) now prefer repo-relative paths when roots live under `CODEX_ROOT` (keeps override labels stable and avoids leaking absolute host paths).
-- 2026-01-02: Added standardized file header docstrings to `base.py`, `embeddings.py`, `lora.py`, `text_encoder_*.py`, `text_encoders.py`, `tokenizers.py`, `wan22.py`, and package `__init__.py` (doc-only change; part of rollout).
+- 2026-01-02: Added standardized file header docstrings to `base.py`, `embeddings.py`, `lora.py`, `text_encoder_roots.py`, and package `__init__.py` (doc-only change; part of rollout).

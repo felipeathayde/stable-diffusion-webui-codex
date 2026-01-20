@@ -1,3 +1,15 @@
+**Wrong command:** ``rg -n "Docs: updated `SUBSYSTEM-MAP\.md`|PYTHON PACKAGE FACADES" .sangoi/CHANGELOG.md``
+**Cause + fix:** `Backticks are bash command substitution even inside double quotes, so the shell tries to execute `SUBSYSTEM-MAP.md` before `rg` runs. Use single quotes for patterns containing backticks (or avoid backticks by matching the filename via regex / fixed strings).`
+**Correct command:** ``rg -n 'Docs: updated .*SUBSYSTEM-MAP\.md|PYTHON PACKAGE FACADES' .sangoi/CHANGELOG.md``
+
+**Wrong command:** `rg -n --show-body-diff .sangoi/.tools/AGENTS.md`
+**Cause + fix:** `Ripgrep treats a pattern starting with \`--\` as a CLI flag. Use \`--\` to end option parsing (or quote the pattern).`
+**Correct command:** `rg -n -- '--show-body-diff' .sangoi/.tools/AGENTS.md`
+
+**Wrong command:** ``rg -n "Symbols \(top-level; keep in sync; no ghosts\):\n- `?logger`?" .sangoi/reports/tooling/apps-file-header-blocks.md -n || true``
+**Cause + fix:** `Backticks inside double quotes trigger bash command substitution, so the shell tries to execute `?logger` before `rg` runs. Also, ripgrep disallows `\n` in regexes unless multiline mode is enabled. Fix by avoiding backticks (or using single quotes) and either enable multiline mode (`-U`) or search without newline matching.`
+**Correct command:** `rg -n --fixed-strings 'logger' .sangoi/reports/tooling/apps-file-header-blocks.md | head -n 50`
+
 **Wrong command:** `multi_tool_use.parallel <<'JSON' ... JSON`
 **Cause + fix:** `multi_tool_use.parallel` is a Codex tool call, not a shell command. Running it in bash fails with "command not found". Run the underlying shell commands directly (or invoke the tool via the assistant/tool interface, not via the terminal).
 **Correct command:** `nl -ba apps/backend/core/contracts/asset_requirements.py | sed -n '1,40p'; nl -ba apps/backend/core/contracts/text_encoder_slots.py | sed -n '1,40p'`

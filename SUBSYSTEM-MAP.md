@@ -1,8 +1,8 @@
 <!-- tags: webui, architecture, reference, map -->
 # WebUI Subsystem Map (single-file reference)
 Date: 2026-01-02
-Last Review: 2026-01-18
-Version: 2026-01-18
+Last Review: 2026-01-19
+Version: 2026-01-19
 Status: Draft
 
 This file is the **top-level map** of how the WebUI is assembled and how requests flow through the system.
@@ -12,6 +12,7 @@ For deeper specs, follow the links under “Canonical reference docs”.
 - `Read-first contracts` (no guessing): see “Read-first contracts” below.
 - `Anti-drift` (common wrong assumptions): search for `DRIFT-`.
 - `API routes` (source of truth): search for `API ROUTES (routers/*.py)`.
+- `Python package facades` (stable import surfaces): search for `PYTHON PACKAGE FACADES`.
 - `Model parts matrix` (what is required): search for `MODEL PARTS MATRIX`.
 - `Why lists are empty` (common UI symptom): search for `Why lists can look “empty”`.
 - `Debugging checklist`: search for `Debugging checklist`.
@@ -20,6 +21,7 @@ For deeper specs, follow the links under “Canonical reference docs”.
 - Model assets (discovery → inventory → SHA selection): `.sangoi/reference/models/model-assets-selection-and-inventory.md`
 - API tasks + SSE streaming: `.sangoi/reference/api/tasks-and-streaming.md`
 - UI model tabs + QuickSettings + generation flow: `.sangoi/reference/ui/model-tabs-and-quicksettings.md`
+- Python package facades (rules + guardrails): `.sangoi/policies/python-package-facades.md`
 
 ## Read-first contracts (do not infer)
 - **No free-form model paths in normal image generation.** UI sends stable IDs only:
@@ -246,6 +248,23 @@ Key API families:
   - Exposes the active `CodexMemoryManager` as `memory_management.manager` and supports runtime device/dtype switching.
 - Central memory policy + loaded-model registry: `apps/backend/runtime/memory/manager.py`
   - Owns the loaded-model registry, swap/offload policies, and best-effort cache eviction (`unload_all_models`, `soft_empty_cache`).
+
+### PYTHON PACKAGE FACADES (stable import surfaces)
+These are the intended “public surfaces” for external callers (`tools/**`, `tests/**`, UI/API wiring, etc.).
+They stabilize import paths and enforce import-light boundaries (no surprise `torch`/`diffusers` loads at package import time).
+
+- Policy (rules + change protocol): `.sangoi/policies/python-package-facades.md`
+- Guardrails (tests):
+  - `tests/test_facade_surfaces_import_light.py` (subprocess): surfaces stay import-light (torch/diffusers-free), and selected `from ... import <Export>` imports work.
+  - `tests/test_facade_import_guardrails.py` (AST): internal modules must not import their own surface (anti-cycle/anti-hub).
+- Inventory (audit): `.sangoi/.tools/inventory_python_package_facades.py` → `.sangoi/reports/tooling/python-package-facades-inventory.md`
+
+Current enforced facade surfaces:
+- `apps.backend.engines` — canonical surface for engine classes (lazy exports; don’t import leaf engine modules externally).
+- `apps.backend.runtime.sampling` — torch-free sampler/scheduler catalog constants for UI/API.
+- `apps.backend.runtime.memory` — import-light package; torch-bound helpers live in lazily-imported submodules.
+- `apps.backend.quantization.gguf` — torch-free GGUF IO surface (reader/writer/constants); safe for tooling.
+  - Note: `apps.backend.quantization` is also import-light, but accessing torch-bound symbols (`dequantize`, `quantize`, …) will import torch; kernel registration happens when importing `apps.backend.quantization.api`.
 
 ## Model discovery + inventory (hash/SHA-based selection)
 This is the “weight selection layer” shared by UI and backend.

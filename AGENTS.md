@@ -112,7 +112,10 @@ bash .sangoi/.tools/link-check.sh .sangoi
 Sub-agents (`AGENTS.md` across the project) tell the truth or they shut up.
 
 * If you touch a folder, you touch its `AGENTS.md`. Same day. Same commit.
-* If you touch an `apps/**` source file, you keep its file header block honest. Same day. Same commit. If the purpose or top-level symbols changed, you update them — no ghosts, no lies. (Standard: `.sangoi/policies/file-header-block.md`)
+* If you touch an `apps/**` source file, you keep its **file header block** honest. Same day. Same commit. If the purpose or top-level symbols changed, you update them — no ghosts, no lies.
+  - What it is: the standardized top-of-file block containing `Repository:` + `SPDX-License-Identifier:` + `Purpose:` + `Symbols (top-level; keep in sync; no ghosts):`.
+  - Where it lives: `.py` = module docstring (first statement); `.ts` = top block comment (`/* ... */`); `.vue` = top HTML comment (before `<template>`).
+  - Standard: `.sangoi/policies/file-header-block.md`. Helper: `python3 .sangoi/.tools/review_apps_header_updates.py`.
 * You add one when a folder earns moving parts.
 * Minimum you keep: Purpose. Key files with real paths. Notes/decisions that survived daylight. Last Review with a real date.
 * When a file moves, you fix the path and you run the link checker.
@@ -188,7 +191,7 @@ If `.git/index.lock` is sitting there with no Git process alive, you remove it o
 When your turn is done:
 - You log the work in `.sangoi/task-logs/`.
 - You update `.sangoi/CHANGELOG.md` with what changed in the world that matters to users and to maintainers.
-- You update file headers when the work changes the story (Purpose / Symbols). No stale headers. No lies.
+- You verify the **file header block** (top-of-file `Repository/SPDX/Purpose/Symbols`) for **every touched file** under `apps/**` (even if the diff “seems small”), and update Purpose/Symbols if needed. Use `python3 .sangoi/.tools/review_apps_header_updates.py --show-body-diff` to review “changed body, unchanged header” cases. No stale headers. No lies.
 - You leave the tree ready for an atomic commit: changes are clear, grouped by intent, and described in the handoff.
 
 You do **not** run `git commit` or `git push` by default.

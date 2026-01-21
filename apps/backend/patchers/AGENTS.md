@@ -33,6 +33,7 @@ Status: Active
 - 2026-01-02: Removed token merging patches; prompt token-merging tags are stripped but have no effect.
 - 2026-01-02: Added standardized file header docstrings to patcher modules (doc-only change; part of rollout).
 - 2026-01-04: Added `DenoiserPatcher` for Flux/Z-Image/WAN runtimes; `UnetPatcher` remains UNet/ControlNet-specific.
+- 2026-01-20: Global LoRA apply mode now supports `merge` (default; merges into weights once) vs `online` (patch during forward) via `CODEX_LORA_APPLY_MODE` / `--lora-apply-mode`.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

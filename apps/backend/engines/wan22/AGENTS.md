@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-08
+Last Review: 2026-01-21
 Status: Active
 
 ## Purpose
@@ -32,6 +32,7 @@ Status: Active
 - 2026-01-03: `Wan2214BEngine` now assembles via `CodexWan22Factory` (factory-first seam; reduces drift in `_build_components`).
 - 2026-01-06: GGUF stage overrides now fall back to canonical sampler/scheduler (`uni-pc`/`simple`) when unset (no `"Automatic"` placeholder).
 - 2026-01-08: Flow-match `flow_shift` is sourced from diffusers `scheduler_config.json` (vendored HF mirror); WAN22 GGUF stages require an explicit `flow_shift` value (auto-resolved from the vendor config when not provided in `extras.wan_high/wan_low`).
+- 2026-01-21: Stage LoRA selection is sha-only via `extras.wan_high/wan_low.lora_sha` (sha → `.safetensors`) + optional `lora_weight`; stage `lora_path` is rejected.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

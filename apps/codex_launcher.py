@@ -265,11 +265,39 @@ class CodexGUILauncher(tk.Tk):
                             row=row, column=0, columnspan=2, sticky="w", padx=16, pady=8)
         row += 1
 
+        # LoRA apply mode (global; backend restart required)
+        raw_lora_mode = str(self.env.get("CODEX_LORA_APPLY_MODE", "merge") or "").strip().lower()
+        if raw_lora_mode not in {"merge", "online"}:
+            raw_lora_mode = "merge"
+        self._var_lora_apply_mode = tk.StringVar(value=raw_lora_mode)
+        ttk.Label(scrollable, text="LoRA apply mode (requires API restart):").grid(
+            row=row, column=0, sticky="w", padx=16, pady=8
+        )
+        lora_mode_combo = ttk.Combobox(
+            scrollable,
+            textvariable=self._var_lora_apply_mode,
+            values=["merge", "online"],
+            state="readonly",
+            width=12,
+        )
+        lora_mode_combo.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+        lora_mode_combo.bind("<<ComboboxSelected>>", lambda _e: self._mark_changed())
+        row += 1
+        ttk.Label(
+            scrollable,
+            text=(
+                "merge: rewrites weights once at apply-time (default).\n"
+                "online: applies LoRA patches on-the-fly during forward."
+            ),
+            justify="left",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
+        row += 1
+
         ttk.Label(
             scrollable,
             text=(
                 "Runtime settings (device/dtype/attention/cache/offload) are configured via the Web UI.\n"
-                "This launcher no longer applies CODEX_* runtime settings via environment variables."
+                "This launcher no longer applies CODEX_* device/dtype/attention settings via environment variables."
             ),
             justify="left",
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 0))
@@ -554,6 +582,7 @@ class CodexGUILauncher(tk.Tk):
 
         # Meta
         self.meta.external_terminal = self._var_ext_term.get()
+        env["CODEX_LORA_APPLY_MODE"] = str(self._var_lora_apply_mode.get()).strip().lower() or "merge"
 
         # Debug
         for key, var in self._debug_flags.items():

@@ -18,11 +18,12 @@ Starts:
   - Frontend UI (Vite) from ${UI_DIR}
 
 Backend args:
-  - Any extra args are forwarded to the backend entrypoint (e.g. `--gguf-dequantize-upfront`).
+  - Any extra args are forwarded to the backend entrypoint (e.g. `--gguf-dequantize-upfront`, `--lora-apply-mode online`).
 
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
   - PYTHON           (default: \$CODEX_VENV_DIR/bin/python)
+  - CODEX_LORA_APPLY_MODE (merge|online; default: merge)
   - API_PORT_OVERRIDE / API_PORT / WEB_PORT (advanced; ports are auto-paired when unset)
 EOF
   exit 0

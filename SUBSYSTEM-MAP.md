@@ -178,11 +178,13 @@ Source of truth:
 - WAN (video endpoints)
   - GGUF sha-only (`method != "wan_animate"`):
     - Stage models: `wan_high.model_sha` + `wan_low.model_sha` (sha → `.gguf`)
+    - Stage LoRAs (optional): `wan_high.lora_sha` / `wan_low.lora_sha` (sha → `.safetensors`) + optional `lora_weight`
+      - Mode is global: `CODEX_LORA_APPLY_MODE=merge|online` (default `merge`; restart backend to change).
     - Complements: `wan_vae_sha` + `wan_tenc_sha` (sha → VAE + `.safetensors|.gguf`)
     - Metadata: `wan_metadata_repo` (preferred) or `wan_metadata_dir` (path)
   - `wan_animate` (Diffusers dir; path-based but repo-scoped):
     - Requires `vid2vid_model_dir` (directory under `CODEX_ROOT`)
-    - Stage overrides (`wan_high/wan_low`) accept `model_dir` (file/dir) and optional `lora_path` (file), all under `CODEX_ROOT`
+    - Stage overrides (`wan_high/wan_low`) accept `model_dir` (file/dir) and optional `lora_sha` (sha → `.safetensors`) + optional `lora_weight`
     - Optional `wan_metadata_dir` / `wan_tokenizer_dir` must be directories under `CODEX_ROOT`
 
 ## Repo anchors (constants and config)

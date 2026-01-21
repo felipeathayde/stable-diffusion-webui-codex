@@ -3,7 +3,7 @@
 # apps/backend/inventory Overview
 Date: 2025-10-28
 Owner: Backend Maintainers
-Last Review: 2026-01-04
+Last Review: 2026-01-21
 Status: Active
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Active
 - 2026-01-04: Inventory now builds VAEs/LoRAs/text encoders/WAN22 GGUF via shared scanners (`inventory/scanners/*`) so `/api/models/inventory` and registries don’t drift on roots/extension policy.
 - 2026-01-04: Vendored HF `{org}/{repo}` traversal was centralized in `inventory/scanners/vendored_hf.py` and reused for inventory metadata (keeps metadata/tokenizer listings consistent).
 - 2026-01-03: Added standardized file header docstring to `cache.py` (doc-only change; part of rollout).
+- 2026-01-21: Inventory now requires `sha256` for file assets; `cache.py` falls back to direct hashing when the registry cache fails and clears the sha→path cache on `init()/refresh()`.

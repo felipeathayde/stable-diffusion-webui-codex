@@ -480,6 +480,13 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
             os.environ["CODEX_DEBUG_PREVIEW_FACTORS"] = "1"
     except Exception:
         pass
+    # Expose resolved LoRA apply mode as env var for patchers/runtime modules.
+    try:
+        mode = getattr(ns, "lora_apply_mode", None)
+        if mode is not None:
+            os.environ["CODEX_LORA_APPLY_MODE"] = str(mode)
+    except Exception:
+        pass
     mem_management.reinitialize(runtime_config)
     # Pre-warm model inventory at process bootstrap so `/api/models/inventory`
     # is already hot when the UI first loads quicksettings. This avoids paying

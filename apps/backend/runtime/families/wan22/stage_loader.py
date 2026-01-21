@@ -8,9 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model loading.
 Validates stage GGUF paths and loads stage weights into `WanTransformer2DModel` via Codex GGUF operations and WAN key remapping.
+Optionally applies a per-stage LoRA file (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `normalize_win_path` (function): Normalizes Windows drive paths to WSL-style `/mnt/<drive>/...` paths when running on non-Windows.
 - `pick_stage_gguf` (function): Validates and returns the stage GGUF file path (strict: must be an explicit `.gguf` file).
 - `load_stage_model_from_gguf` (function): Loads a stage GGUF into a runtime transformer (wraps ops + key remapping).
 """
@@ -27,16 +27,8 @@ from apps.backend.runtime.checkpoint.io import load_gguf_state_dict
 
 from .diagnostics import get_logger
 from .model import load_wan_transformer_from_state_dict, remap_wan22_gguf_state_dict
-
-
-def normalize_win_path(path: str) -> str:
-    if os.name == "nt":
-        return path
-    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
-        drive = path[0].lower()
-        rest = path[2:].lstrip("\\/")
-        return f"/mnt/{drive}/" + rest.replace("\\\\", "/").replace("\\", "/")
-    return path
+from .paths import normalize_win_path
+from .stage_lora import apply_wan22_stage_lora
 
 
 def pick_stage_gguf(dir_path: Optional[str], *, stage: str) -> Optional[str]:
@@ -57,8 +49,11 @@ def pick_stage_gguf(dir_path: Optional[str], *, stage: str) -> Optional[str]:
 def load_stage_model_from_gguf(
     gguf_path: str,
     *,
+    stage: str,
     device: torch.device,
     dtype: torch.dtype,
+    lora_path: Optional[str] = None,
+    lora_weight: Optional[float] = None,
     logger: Any,
 ):
     log = get_logger(logger)
@@ -67,5 +62,12 @@ def load_stage_model_from_gguf(
     with using_codex_operations(device=device, dtype=dtype, bnb_dtype="gguf"):
         model = load_wan_transformer_from_state_dict(state, config=None)
     model.eval()
+    apply_wan22_stage_lora(
+        model,
+        stage=stage,
+        lora_path=lora_path,
+        lora_weight=lora_weight,
+        logger=logger,
+    )
     log.info("[wan22.gguf] loaded stage model: %s", os.path.basename(gguf_path))
     return model

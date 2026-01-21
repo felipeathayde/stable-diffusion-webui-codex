@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional, List
 
@@ -68,14 +69,36 @@ class WanStageOptions:
     def from_mapping(obj: Any, *, default_steps: int = 12, default_cfg: Optional[float] = None) -> "WanStageOptions":
         if not isinstance(obj, dict):
             return WanStageOptions(steps=default_steps, cfg_scale=default_cfg)
+        if obj.get("lora_path") not in (None, ""):
+            raise ValueError("WAN stage 'lora_path' is unsupported; use 'lora_sha' instead.")
+
+        lora_sha = str(obj.get("lora_sha") or "").strip().lower() or None
+        lora_weight = float(obj.get("lora_weight")) if obj.get("lora_weight") is not None else None
+        if lora_weight is not None and not lora_sha:
+            raise ValueError("WAN stage 'lora_weight' requires 'lora_sha'.")
+        lora_path = None
+        if lora_sha:
+            if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                raise ValueError("WAN stage 'lora_sha' must be sha256 (64 lowercase hex).")
+            from apps.backend.inventory.cache import resolve_asset_by_sha
+
+            resolved = resolve_asset_by_sha(lora_sha)
+            if not resolved:
+                raise ValueError(f"WAN stage LoRA not found for sha: {lora_sha}")
+            lora_path = os.path.expanduser(str(resolved))
+            if not lora_path.lower().endswith(".safetensors"):
+                raise ValueError(f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+            if not os.path.isfile(lora_path):
+                raise ValueError(f"WAN stage LoRA file not found: {lora_path}")
+
         return WanStageOptions(
             model_dir=str(obj.get("model_dir")) if obj.get("model_dir") else None,
             sampler=str(obj.get("sampler")) if obj.get("sampler") else None,
             scheduler=str(obj.get("scheduler")) if obj.get("scheduler") else None,
             steps=int(obj.get("steps") or default_steps),
             cfg_scale=(float(obj.get("cfg_scale")) if obj.get("cfg_scale") is not None else default_cfg),
-            lora_path=str(obj.get("lora_path")) if obj.get("lora_path") else None,
-            lora_weight=(float(obj.get("lora_weight")) if obj.get("lora_weight") is not None else None),
+            lora_path=lora_path,
+            lora_weight=lora_weight,
             lightning=bool(obj.get("lightning", False)),
         )
 

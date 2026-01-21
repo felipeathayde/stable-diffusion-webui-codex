@@ -10,7 +10,7 @@ Purpose: WAN 2.2 GGUF runtime facade (entrypoints + config types).
 Keeps the stable import path used by WAN engines by re-exporting the run functions and config dataclasses implemented in focused modules.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `StageConfig` (class): Stage-level configuration for a WAN run (stage GGUF path + sampler/scheduler/steps/cfg).
+- `StageConfig` (class): Stage-level configuration for a WAN run (stage GGUF path + sampler/scheduler/steps/cfg + optional LoRA).
 - `RunConfig` (class): Full run configuration for txt2vid/img2vid (assets, devices/dtypes, stage configs).
 - `run_txt2vid` (function): Batch txt2vid runner (GGUF stages → sampling → VAE decode).
 - `stream_txt2vid` (function): Streaming txt2vid generator yielding progress events and final frames.
@@ -32,4 +32,3 @@ __all__ = [
     "stream_txt2vid",
     "stream_img2vid",
 ]
-

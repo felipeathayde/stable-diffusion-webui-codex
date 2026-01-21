@@ -2,7 +2,7 @@
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-21
 Status: Active
 
 ## Purpose
@@ -13,7 +13,7 @@ Status: Active
 - Regenerate or update the client whenever backend schemas change.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.highres.refiner`; `HighresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
-- `payloads_video.ts` provides typed (Zod) payload builders for WAN `/txt2vid` and `/img2vid`, including stage overrides (`wan_high/wan_low`), normalization of QuickSettings-style TE labels (`wan22/<abs_path>` → `<abs_path>`), and guards against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for stage payloads and `vid2vid_model_dir`.
+- `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `lora_sha` (sha256), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`; stage LoRA remains sha-only via `lora_sha`.
 - `ModelsResponse` is served by `/api/models`; it includes `core_only` plus `core_only_reason` so UIs can explain why a checkpoint is treated as core-only (suffix remains a fallback).
 - `EngineCapabilitiesResponse` is served by `/api/engines/capabilities`; it includes:
   - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)

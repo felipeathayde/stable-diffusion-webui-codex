@@ -99,8 +99,8 @@
 **Correct command:** `find apps/backend -maxdepth 4 -name AGENTS.md`
 
 **Wrong command:** `python -m pytest tests/test_backend_import_lightweight.py`
-**Cause + fix:** `Pytest is not installed in the current environment; install pytest (preferably in the active venv) before running the test suite.`
-**Correct command:** `python -m pip install pytest && python -m pytest tests/test_backend_import_lightweight.py`
+**Cause + fix:** `This repo expects the global venv at ~/.venv; running pyenv/system python may not have pytest installed. Use ~/.venv/bin/python (and set CODEX_ROOT/PYTHONPATH when the test touches repo-root resolution).`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q tests/test_backend_import_lightweight.py`
 
 **Wrong command:** `sed -n '1,200p' .bottle/handoffs/HANDOFF_GUIDE`
 **Cause + fix:** `This repository keeps the handoff guide under .sangoi/handoffs/HANDOFF_GUIDE.md; the .bottle path does not exist. Check the actual guide location before reading.`

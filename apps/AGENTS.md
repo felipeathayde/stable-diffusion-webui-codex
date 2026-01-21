@@ -22,7 +22,8 @@ Status: Active
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.
 - 2025-11-02: Launcher surfaces device/dtype configuration via persisted WebUI options (`apps/settings_values.json`); env overrides for runtime settings were removed.
 - 2025-11-02: launcher services persist selections in `apps/settings_values.json`; when unset, backend startup defaults components to CPU with a warning.
-- 2025-11-03: Launcher runtime settings (device/dtype/attention/cache/offload) are configured via Web UI; launchers no longer write CODEX_* runtime settings env vars.
+- 2025-11-03: Launcher runtime settings (device/dtype/attention/cache/offload) are configured via Web UI; launchers no longer write CODEX_* device/dtype/attention/cache/offload env vars.
+- 2026-01-20: Launchers can set `CODEX_LORA_APPLY_MODE` (merge|online) to control whether native LoRA selections are merged into weights (default) or applied on-the-fly; backend CLI also supports `--lora-apply-mode`.
 - 2025-11-03: Launcher UI exposes "Conditioning Debug" toggle, wiring to `CODEX_DEBUG_COND` and the backend `--debug-conditioning` flag.
 - 2025-11-03: (Deprecated) "Pin Shared Memory" launcher toggle removed; `--pin-shared-memory` remains a CLI-only switch (no env overrides).
 - 2025-11-03: Logging tab now includes a "Trace Debug" toggle that sets `CODEX_TRACE_DEBUG=1`, enabling the global call tracer behind `--trace-debug`.

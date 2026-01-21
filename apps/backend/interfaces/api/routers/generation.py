@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -28,7 +29,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
-from apps.backend.interfaces.api.path_utils import _path_from_api, _normalize_wan_stage_payload
+from apps.backend.interfaces.api.path_utils import _path_from_api
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task, tasks, tasks_lock
 
 
@@ -1312,6 +1313,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
+            if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
             sha_raw = raw.get("model_sha")
             if not isinstance(sha_raw, str) or not sha_raw.strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
@@ -1324,8 +1327,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out: dict[str, object] = dict(raw)
             out.pop("model_sha", None)
             out["model_dir"] = model_path
-            if isinstance(out.get("lora_path"), str):
-                out["lora_path"] = _path_from_api(out.get("lora_path"))
+            if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
+            if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
+                lora_sha = str(out.get("lora_sha")).strip().lower()
+                if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_sha' must be sha256 (64 lowercase hex)")
+                lora_path = resolve_asset_by_sha(lora_sha)
+                if not lora_path:
+                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
+                if not str(lora_path).lower().endswith(".safetensors"):
+                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+                out["lora_sha"] = lora_sha
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -1471,6 +1484,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
+            if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
             sha_raw = raw.get("model_sha")
             if not isinstance(sha_raw, str) or not sha_raw.strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
@@ -1483,8 +1498,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out: dict[str, object] = dict(raw)
             out.pop("model_sha", None)
             out["model_dir"] = model_path
-            if isinstance(out.get("lora_path"), str):
-                out["lora_path"] = _path_from_api(out.get("lora_path"))
+            if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
+                raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
+            if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
+                lora_sha = str(out.get("lora_sha")).strip().lower()
+                if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_sha' must be sha256 (64 lowercase hex)")
+                lora_path = resolve_asset_by_sha(lora_sha)
+                if not lora_path:
+                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
+                if not str(lora_path).lower().endswith(".safetensors"):
+                    raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+                out["lora_sha"] = lora_sha
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -1636,7 +1661,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail=f"'{field}.model_dir' not found: {resolved}")
             out["model_dir"] = str(resolved)
         if isinstance(out.get("lora_path"), str) and str(out.get("lora_path")).strip():
-            out["lora_path"] = _resolve_vid2vid_input_path(str(out.get("lora_path")), field=f"{field}.lora_path")
+            raise HTTPException(status_code=400, detail=f"'{field}.lora_path' is unsupported; use '{field}.lora_sha'")
+
+        if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
+            raise HTTPException(status_code=400, detail=f"'{field}.lora_weight' requires '{field}.lora_sha'")
+        if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
+            from apps.backend.inventory.cache import resolve_asset_by_sha
+
+            lora_sha = str(out.get("lora_sha")).strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                raise HTTPException(status_code=400, detail=f"'{field}.lora_sha' must be sha256 (64 lowercase hex)")
+            lora_path = resolve_asset_by_sha(lora_sha)
+            if not lora_path:
+                raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
+            if not str(lora_path).lower().endswith(".safetensors"):
+                raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+            out["lora_sha"] = lora_sha
         return out
 
     def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:
@@ -1766,6 +1806,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
                 if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                     raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
+                if isinstance(raw.get("lora_path"), str) and str(raw.get("lora_path")).strip():
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_path' is unsupported; use '{stage_key}.lora_sha'")
                 sha_raw = raw.get("model_sha")
                 if not isinstance(sha_raw, str) or not sha_raw.strip():
                     raise HTTPException(status_code=400, detail=f"'{stage_key}.model_sha' is required (sha256)")
@@ -1778,8 +1820,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 out: dict[str, object] = dict(raw)
                 out.pop("model_sha", None)
                 out["model_dir"] = model_path
-                if isinstance(out.get("lora_path"), str):
-                    out["lora_path"] = _path_from_api(out.get("lora_path"))
+                if out.get("lora_weight") not in (None, "") and not (isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip()):
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_weight' requires '{stage_key}.lora_sha'")
+                if isinstance(out.get("lora_sha"), str) and str(out.get("lora_sha")).strip():
+                    lora_sha = str(out.get("lora_sha")).strip().lower()
+                    if not re.fullmatch(r"[0-9a-f]{64}", lora_sha):
+                        raise HTTPException(status_code=400, detail=f"'{stage_key}.lora_sha' must be sha256 (64 lowercase hex)")
+                    lora_path = resolve_asset_by_sha(lora_sha)
+                    if not lora_path:
+                        raise HTTPException(status_code=409, detail=f"WAN stage LoRA not found for sha: {lora_sha}")
+                    if not str(lora_path).lower().endswith(".safetensors"):
+                        raise HTTPException(status_code=409, detail=f"WAN stage LoRA sha must resolve to a .safetensors file: {lora_sha}")
+                    out["lora_sha"] = lora_sha
                 return out
 
             extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -1824,7 +1876,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if key in payload and payload.get(key) is not None:
                     extras[key] = payload.get(key)
         else:
-            # wan_animate: keep legacy path normalization for stage payloads (not GGUF sha-only).
+            # wan_animate: keep repo-scoped model_dir normalization (Diffusers dir inputs); stage LoRA is sha-only (`lora_sha`).
             if isinstance(payload.get("wan_high"), dict):
                 extras["wan_high"] = _normalize_wan_stage_payload_strict(payload.get("wan_high"), field="wan_high")
             if isinstance(payload.get("wan_low"), dict):

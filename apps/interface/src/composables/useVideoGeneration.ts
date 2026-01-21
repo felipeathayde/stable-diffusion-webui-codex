@@ -127,7 +127,7 @@ function defaultStage(): WanStageParams {
     steps: 30,
     cfgScale: 7,
     seed: -1,
-    loraPath: '',
+    loraSha: '',
     loraWeight: 1.0,
   }
 }
@@ -311,7 +311,7 @@ export function useVideoGeneration(tabId: string) {
     const fps = Number(v.fps) || 0
     const seconds = fps > 0 ? (frames / fps) : 0
     const strength = v.useInitVideo ? ` · strength ${Number(v.vid2vidStrength).toFixed(2)}` : ''
-    const loraTag = lightx2v.value && String(hi.loraPath || '').trim() ? ' · lightx2v' : ''
+    const loraTag = lightx2v.value && String(hi.loraSha || '').trim() ? ' · lightx2v' : ''
     return `${w}×${h} · ${frames}f @ ${fps}fps (~${seconds.toFixed(2)}s) · steps ${hi.steps} · cfg ${hi.cfgScale}${strength}${loraTag}`
   }
 
@@ -352,7 +352,7 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        loraPath: lightx2v.value ? hi.loraPath : '',
+        loraSha: lightx2v.value ? hi.loraSha : '',
         loraWeight: hi.loraWeight,
       },
       low: {
@@ -362,7 +362,7 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        loraPath: lightx2v.value ? lo.loraPath : '',
+        loraSha: lightx2v.value ? lo.loraSha : '',
         loraWeight: lo.loraWeight,
       },
       output: {
@@ -414,7 +414,7 @@ export function useVideoGeneration(tabId: string) {
         steps: hi.steps,
         cfgScale: hi.cfgScale,
         seed: hi.seed,
-        loraPath: lightx2v.value ? hi.loraPath : '',
+        loraSha: lightx2v.value ? hi.loraSha : '',
         loraWeight: hi.loraWeight,
       },
       low: {
@@ -424,7 +424,7 @@ export function useVideoGeneration(tabId: string) {
         steps: lo.steps,
         cfgScale: lo.cfgScale,
         seed: lo.seed,
-        loraPath: lightx2v.value ? lo.loraPath : '',
+        loraSha: lightx2v.value ? lo.loraSha : '',
         loraWeight: lo.loraWeight,
       },
       format: 'auto' as const,

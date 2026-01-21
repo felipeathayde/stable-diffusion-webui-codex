@@ -2,7 +2,7 @@
 # apps/interface Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-21
 Status: Active
 
 ## Purpose
@@ -30,3 +30,4 @@ Status: Active
 - 2026-01-01: Updated `apps/interface/README.md` to reflect the repo-local `.venv` (and `run-webui.sh` as the recommended dev entrypoint).
 - 2026-01-01: Added a branded `public/favicon.ico` and referenced it from `index.html` so the browser tab icon matches the project branding.
 - 2026-01-03: Added standardized file header blocks to WebUI entrypoints/config (`vite.config.ts`, `src/{App,main,router}.ts/.vue`, `src/api/types.ts`) (doc-only change; part of rollout).
+- 2026-01-21: Updated `blocks.json` WAN22 stage fields to sha-only (`model_sha`/`lora_sha`) to match backend enforcement.

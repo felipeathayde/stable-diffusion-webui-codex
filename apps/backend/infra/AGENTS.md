@@ -22,4 +22,5 @@ Status: Active
 - 2025-12-29: Repo root resolution now prefers `CODEX_ROOT` (launchers) over process CWD so configs like `apps/paths.json` and `apps/settings_values.json` stay stable across launch methods.
 - 2026-01-01: Added `--gguf-dequantize-upfront` to opt into load-time GGUF dequantization (trades RAM/VRAM for speed; default remains on-the-fly).
 - 2026-01-04: Added `config/env_flags.py` as the canonical env-flag parsing helper to keep debug/feature toggle semantics consistent across runtime subsystems.
+- 2026-01-20: Added `--lora-apply-mode` (and `CODEX_LORA_APPLY_MODE`) as a global LoRA application switch: `merge` (default; rewrites weights once) vs `online` (apply on-the-fly during forward). Requires restarting the backend process to take effect.
 - 2026-01-02: Added standardized file header docstrings to `infra/__init__.py`, `infra/accelerators/*`, `infra/config/*`, and `infra/registry/*` modules (doc-only change; part of rollout).

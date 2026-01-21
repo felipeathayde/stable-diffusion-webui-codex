@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_path_for_api` (function): Normalizes filesystem paths for API responses (prefer repo-relative under CODEX_ROOT).
 - `_normalize_inventory_for_api` (function): Applies `_path_for_api` to inventory items before returning them to the UI.
 - `_path_from_api` (function): Resolves repo-relative paths from API payloads back to absolute paths under CODEX_ROOT.
-- `_normalize_wan_stage_payload` (function): Normalizes WAN stage override payload fields (`model_dir`, `lora_path`) to absolute paths.
+- `_normalize_wan_stage_payload` (function): Normalizes WAN stage override payload fields (`model_dir`) to absolute paths; rejects stage `lora_path`.
 """
 
 from __future__ import annotations
@@ -89,12 +89,16 @@ def _path_from_api(raw: object) -> str:
 
 
 def _normalize_wan_stage_payload(raw: object) -> object:
-    """Normalize WAN stage override payloads (model_dir, lora_path) to absolute paths."""
+    """Normalize WAN stage override payloads.
+
+    - `model_dir`: repo-relative path → absolute path under CODEX_ROOT.
+    - `lora_path`: rejected (use `lora_sha`).
+    """
     if not isinstance(raw, dict):
         return raw
     out: dict[str, object] = dict(raw)
     if isinstance(out.get("model_dir"), str):
         out["model_dir"] = _path_from_api(out.get("model_dir"))
-    if isinstance(out.get("lora_path"), str):
-        out["lora_path"] = _path_from_api(out.get("lora_path"))
+    if isinstance(out.get("lora_path"), str) and str(out.get("lora_path")).strip():
+        raise ValueError("WAN stage 'lora_path' is unsupported; use 'lora_sha' instead.")
     return out

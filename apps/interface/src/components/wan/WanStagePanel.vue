@@ -91,11 +91,11 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <div v-if="lightx2v">
       <WanStageLoraField
-        :loraPath="stage.loraPath"
+        :loraSha="stage.loraSha"
         :loraWeight="stage.loraWeight"
         :choices="loraChoices"
         :disabled="disabled"
-        @update:loraPath="(v) => updateStage({ loraPath: v })"
+        @update:loraSha="(v) => updateStage({ loraSha: v })"
         @update:loraWeight="(v) => updateStage({ loraWeight: v })"
       />
     </div>
@@ -120,7 +120,7 @@ const props = withDefaults(defineProps<{
   stage: WanStageParams
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
-  loraChoices?: Array<{ name: string; path: string }>
+  loraChoices?: Array<{ name: string; sha256: string }>
   showModelDir?: boolean
   embedded?: boolean
   disabled?: boolean

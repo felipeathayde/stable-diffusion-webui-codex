@@ -31,6 +31,8 @@ import os
 import sys
 from typing import Mapping, MutableMapping, Sequence
 
+from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
+
 from apps.backend.runtime.memory.config import (
     AttentionBackend,
     AttentionConfig,
@@ -116,6 +118,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gguf-dequantize-upfront",
         action="store_true",
         help="Dequantize GGUF tensors to float at load time (uses more RAM/VRAM, can improve runtime speed).",
+    )
+
+    parser.add_argument(
+        "--lora-apply-mode",
+        choices=[m.value for m in LoraApplyMode],
+        default=None,
+        help=(
+            "Global LoRA application mode: "
+            "'merge' rewrites weights (default), "
+            "'online' applies patches on-the-fly during forward. "
+            "Changing this requires restarting the backend process."
+        ),
     )
 
     parser.add_argument(
@@ -495,6 +509,14 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         except Exception:
             ns.trace_debug_max_per_func = TRACE_DEBUG_DEFAULT
 
+    # LoRA apply mode (global): honour env only when CLI arg is unset.
+    raw_lora_mode = env.get(ENV_LORA_APPLY_MODE)
+    if raw_lora_mode is not None and not _has_value(getattr(ns, "lora_apply_mode", None)):
+        try:
+            ns.lora_apply_mode = parse_lora_apply_mode(raw_lora_mode).value
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:
     if ns.attention_split:
@@ -620,6 +642,8 @@ def initialize(
     elif namespace.trace_debug_max_per_func < 0:
         namespace.trace_debug_max_per_func = 0
     _apply_env_overrides(namespace, env_map)
+    if getattr(namespace, "lora_apply_mode", None) is None:
+        namespace.lora_apply_mode = DEFAULT_LORA_APPLY_MODE.value
 
     if strict:
         _validate_required_devices(namespace)

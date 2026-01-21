@@ -497,7 +497,7 @@ const workflows = useWorkflowsStore()
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
-const wanLoras = ref<Array<{ name: string; path: string }>>([])
+const wanLoras = ref<Array<{ name: string; path: string; sha256: string }>>([])
 
 	onMounted(async () => {
 	  if (!store.tabs.length) store.load()
@@ -511,7 +511,10 @@ const wanLoras = ref<Array<{ name: string; path: string }>>([])
 	  schedulers.value = sched.schedulers
 	
 	  const roots = Array.isArray((pathsRes as any)?.paths?.wan22_loras) ? ((pathsRes as any).paths.wan22_loras as string[]) : []
-	  wanLoras.value = ((inv as any)?.loras || []).filter((l: any) => fileInRoots(String(l?.path || ''), roots))
+	  wanLoras.value = ((inv as any)?.loras || [])
+	    .filter((l: any) => fileInRoots(String(l?.path || ''), roots))
+	    .filter((l: any) => typeof l?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(l.sha256)))
+	    .map((l: any) => ({ name: String(l.name || ''), path: String(l.path || ''), sha256: String(l.sha256 || '').toLowerCase() }))
 	})
 
 const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
@@ -536,7 +539,7 @@ function fileInRoots(file: string, roots: string[]): boolean {
 }
 
 function defaultStage(): WanStageParams {
-  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraPath: '', loraWeight: 1.0 }
+  return { modelDir: '', sampler: '', scheduler: '', steps: 30, cfgScale: 7, seed: -1, loraSha: '', loraWeight: 1.0 }
 }
 function defaultVideo(): WanVideoParams {
   return {
@@ -612,7 +615,7 @@ function syncLowFromHighIfNeeded(): void {
     steps: high.value.steps,
     cfgScale: high.value.cfgScale,
     seed: high.value.seed,
-    loraPath: high.value.loraPath,
+    loraSha: high.value.loraSha,
     loraWeight: high.value.loraWeight,
   }
   const needsUpdate = Object.entries(patch).some(([k, v]) => (low.value as any)[k] !== v)
@@ -633,7 +636,7 @@ function onLowFollowsHighChange(enabled: boolean): void {
     steps: high.value.steps,
     cfgScale: high.value.cfgScale,
     seed: high.value.seed,
-    loraPath: high.value.loraPath,
+    loraSha: high.value.loraSha,
     loraWeight: high.value.loraWeight,
   }
   store.updateParams(props.tabId, { lowFollowsHigh: true, low: { ...(low.value as any), ...nextLow } } as any)
@@ -651,7 +654,7 @@ watch(
     high.value.steps,
     high.value.cfgScale,
     high.value.seed,
-    high.value.loraPath,
+    high.value.loraSha,
     high.value.loraWeight,
   ] as const),
   ([enabled]) => {
@@ -668,7 +671,7 @@ watch(
     low.value.steps,
     low.value.cfgScale,
     low.value.seed,
-    low.value.loraPath,
+    low.value.loraSha,
     low.value.loraWeight,
   ] as const),
   ([enabled]) => {
@@ -1067,7 +1070,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: high.value.steps,
       cfgScale: high.value.cfgScale,
       seed: high.value.seed,
-      loraPath: lightx2v.value ? high.value.loraPath : '',
+      loraSha: lightx2v.value ? high.value.loraSha : '',
       loraWeight: high.value.loraWeight,
     },
     low: {
@@ -1077,7 +1080,7 @@ function buildCurrentSnapshot(): Record<string, unknown> {
       steps: low.value.steps,
       cfgScale: low.value.cfgScale,
       seed: low.value.seed,
-      loraPath: lightx2v.value ? low.value.loraPath : '',
+      loraSha: lightx2v.value ? low.value.loraSha : '',
       loraWeight: low.value.loraWeight,
     },
     output: {
@@ -1169,7 +1172,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
   const snapLightx2v =
     typeof snap.lightx2v === 'boolean'
       ? Boolean(snap.lightx2v)
-      : Boolean((hi as any).loraEnabled || (lo as any).loraEnabled || (hi as any).loraPath || (lo as any).loraPath)
+      : Boolean((hi as any).loraSha || (lo as any).loraSha)
   store.updateParams(props.tabId, { lightx2v: snapLightx2v } as any)
 
   const snapAssets = snap.assets || {}
@@ -1184,7 +1187,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(hi.steps) || high.value.steps,
     cfgScale: Number(hi.cfgScale) || high.value.cfgScale,
     seed: Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
-    loraPath: snapLightx2v ? String(hi.loraPath || '') : '',
+    loraSha: snapLightx2v ? String(hi.loraSha || '') : '',
     loraWeight: Number.isFinite(hi.loraWeight) ? Number(hi.loraWeight) : high.value.loraWeight,
   })
 
@@ -1195,7 +1198,7 @@ function applyHistory(item: VideoRunHistoryItem): void {
     steps: Number(lo.steps) || low.value.steps,
     cfgScale: Number(lo.cfgScale) || low.value.cfgScale,
     seed: Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
-    loraPath: snapLightx2v ? String(lo.loraPath || '') : '',
+    loraSha: snapLightx2v ? String(lo.loraSha || '') : '',
     loraWeight: Number.isFinite(lo.loraWeight) ? Number(lo.loraWeight) : low.value.loraWeight,
   })
 

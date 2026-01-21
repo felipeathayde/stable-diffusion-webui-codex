@@ -53,8 +53,8 @@ from .vae_io import decode_latents_to_frames, vae_encode_init
 class _MemoryManagedModule:
     """Tiny wrapper to integrate plain nn.Modules with the Codex memory manager.
 
-    We intentionally keep this minimal (no LoRA/object patch plumbing) and rely on the
-    runtime to construct models in the desired dtype; memory manager controls device moves.
+    We intentionally keep this minimal (no patch plumbing during device moves).
+    Stage-level LoRAs (when configured) are applied at load time by `stage_loader.load_stage_model_from_gguf(...)`.
     """
 
     def __init__(self, model: torch.nn.Module, *, load_device: torch.device) -> None:
@@ -151,7 +151,15 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lvl = _resolve_offload_level(cfg)
 
     # Load GGUF weights on CPU first; the memory manager will move to GPU right before sampling.
-    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_model = load_stage_model_from_gguf(
+        hi_path,
+        stage="high",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+        logger=log,
+    )
     hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     if on_progress:
         try:
@@ -260,7 +268,15 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         _try_clear_cache()
         cuda_empty_cache(log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(
+        lo_path,
+        stage="low",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+        logger=log,
+    )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     log.info(
@@ -341,7 +357,15 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     dt = as_torch_dtype(cfg.dtype)
     lvl = _resolve_offload_level(cfg)
 
-    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_model = load_stage_model_from_gguf(
+        hi_path,
+        stage="high",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+        logger=log,
+    )
     hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_t2v_{variant}"
@@ -406,7 +430,15 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         _try_clear_cache()
         cuda_empty_cache(log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(
+        lo_path,
+        stage="low",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+        logger=log,
+    )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
@@ -527,7 +559,15 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lat0 = lat0.repeat(1, 1, t, 1, 1)
     lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
 
-    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_model = load_stage_model_from_gguf(
+        hi_path,
+        stage="high",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+        logger=log,
+    )
     hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     if on_progress:
         try:
@@ -574,7 +614,15 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         _try_clear_cache()
         cuda_empty_cache(logger=log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(
+        lo_path,
+        stage="low",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+        logger=log,
+    )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
@@ -673,7 +721,15 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     lat0 = lat0.repeat(1, 1, t, 1, 1)
     lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
 
-    hi_model = load_stage_model_from_gguf(hi_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    hi_model = load_stage_model_from_gguf(
+        hi_path,
+        stage="high",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.high, "lora_path", None) if cfg.high else None),
+        lora_weight=(getattr(cfg.high, "lora_weight", None) if cfg.high else None),
+        logger=log,
+    )
     hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
@@ -710,7 +766,15 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         _try_clear_cache()
         cuda_empty_cache(logger=log, label="after-high")
 
-    lo_model = load_stage_model_from_gguf(lo_path, device=torch.device("cpu"), dtype=dt, logger=log)
+    lo_model = load_stage_model_from_gguf(
+        lo_path,
+        stage="low",
+        device=torch.device("cpu"),
+        dtype=dt,
+        lora_path=(getattr(cfg.low, "lora_path", None) if cfg.low else None),
+        lora_weight=(getattr(cfg.low, "lora_weight", None) if cfg.low else None),
+        logger=log,
+    )
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)

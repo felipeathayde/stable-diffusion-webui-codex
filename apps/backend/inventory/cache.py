@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_repo_root` (function): Resolves the repository root used for scan defaults.
 - `_models_root` (function): Returns the default `models/` root path under the repo.
 - `_hf_root` (function): Returns the default Hugging Face metadata root path under `apps/backend/huggingface`.
+- `_hash_file_sha256` (function): Computes sha256 by directly reading the file (fallback when the registry cache fails).
 - `_get_file_sha256` (function): Computes/loads SHA256 for a file via the model registry cache.
 - `resolve_asset_by_sha` (function): Resolves a SHA256 hash to a file path using the current inventory snapshot.
 - `_SHA_TO_PATH` (constant): Lazy cache mapping `sha256 -> path` populated from the current inventory.
@@ -26,6 +27,8 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -63,15 +66,34 @@ def _hf_root() -> str:
     return str(_repo_root() / "apps" / "backend" / "huggingface")
 
 
-def _get_file_sha256(path: str) -> str | None:
-    """Get SHA256 for a file via the model registry hash cache."""
+def _hash_file_sha256(path: str) -> str:
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+def _get_file_sha256(path: str) -> str:
+    """Get SHA256 for a file via the model registry hash cache.
+
+    Falls back to direct hashing when the registry cache is unavailable.
+    """
     try:
         from apps.backend.runtime.models.registry import get_registry
+
         reg = get_registry()
         sha256, _ = reg.hash_for(Path(path))
+        if not sha256:
+            raise RuntimeError("hash cache returned empty sha256")
         return sha256
-    except Exception:
-        return None
+    except Exception as exc:
+        logging.getLogger("backend.inventory").warning(
+            "inventory sha cache failed for %s (%s); falling back to direct hashing",
+            path,
+            exc.__class__.__name__,
+        )
+        return _hash_file_sha256(path)
 
 
 # SHA256 -> Path resolution cache (populated during scan)
@@ -103,9 +125,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     for full in iter_vae_files(models_root=mr):
         name = os.path.basename(full)
         entry: Dict[str, str] = {"name": name, "path": full}
-        sha = _get_file_sha256(full)
-        if sha:
-            entry["sha256"] = sha
+        entry["sha256"] = _get_file_sha256(full)
         vaes.append(entry)
     vaes.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
 
@@ -114,18 +134,14 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     for full in iter_text_encoder_files(models_root=mr):
         name = os.path.basename(full)
         entry: Dict[str, str] = {"name": name, "path": full}
-        sha = _get_file_sha256(full)
-        if sha:
-            entry["sha256"] = sha
+        entry["sha256"] = _get_file_sha256(full)
         text_encoders.append(entry)
     text_encoders.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
     loras: List[Dict[str, str]] = []
     for full in iter_lora_files(models_root=mr):
         name = os.path.basename(full)
         entry = {"name": name, "path": full}
-        sha = _get_file_sha256(full)
-        if sha:
-            entry["sha256"] = sha
+        entry["sha256"] = _get_file_sha256(full)
         loras.append(entry)
     loras.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
 
@@ -134,9 +150,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
         name = os.path.basename(full)
         stage = infer_wan22_stage(name)
         entry: Dict[str, str] = {"name": name, "path": full, "stage": stage}
-        sha = _get_file_sha256(full)
-        if sha:
-            entry["sha256"] = sha
+        entry["sha256"] = _get_file_sha256(full)
         wan22.append(entry)
     if wan22:
         wan22.sort(key=lambda d: d["name"].lower())
@@ -151,14 +165,18 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
     try:
         from apps.backend.runtime.models.registry import get_registry
         get_registry().flush_hash_cache()
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.getLogger("backend.inventory").warning(
+            "inventory hash cache flush failed (%s)",
+            exc.__class__.__name__,
+        )
 
     return Inventory(vaes=vaes, text_encoders=text_encoders, loras=loras, wan22=wan22, metadata=metadata)
 
 
 def init(models_root: str | None = None, hf_root: str | None = None) -> None:
     global _CACHE
+    _SHA_TO_PATH.clear()
     _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
 
 
@@ -176,5 +194,6 @@ def refresh(models_root: str | None = None, hf_root: str | None = None) -> Dict[
     Returns the refreshed inventory as a plain dict suitable for JSON responses.
     """
     global _CACHE
+    _SHA_TO_PATH.clear()
     _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
     return asdict(_CACHE)

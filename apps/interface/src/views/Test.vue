@@ -29,20 +29,20 @@ Symbols (top-level; keep in sync; no ghosts):
         <div class="panel-body">
           <div class="test-section">
             <h4 class="h5">Global Overrides</h4>
-            <p class="muted test-sublabel">Provide explicit paths when you want to override the default WAN assets.</p>
+            <p class="muted test-sublabel">Provide explicit sha256 values (64-hex) for WAN assets.</p>
             <div class="test-grid test-grid-two">
               <div class="field-stack">
-                <label class="label" for="vaeDir">VAE (input list)</label>
-                <input id="vaeDir" class="ui-input" list="dl-vaes" v-model="state.vaeDir" placeholder="/models/wan22-vae/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <label class="label" for="vaeSha">VAE sha256 (input list)</label>
+                <input id="vaeSha" class="ui-input" list="dl-vaes" v-model="state.vaeSha" placeholder="64-hex sha256" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-vaes">
-                  <option v-for="opt in options.vaes" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+                  <option v-for="opt in options.vaes" :key="opt.sha256" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div class="field-stack">
-                <label class="label" for="textEncoderDir">Text Encoder (input list)</label>
-                <input id="textEncoderDir" class="ui-input" list="dl-te" v-model="state.textEncoderDir" placeholder="/models/wan22-tenc/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+                <label class="label" for="textEncoderSha">Text Encoder sha256 (input list)</label>
+                <input id="textEncoderSha" class="ui-input" list="dl-te" v-model="state.textEncoderSha" placeholder="64-hex sha256" autocomplete="off" autocapitalize="off" spellcheck="false" />
                 <datalist id="dl-te">
-                  <option v-for="opt in options.textEncoders" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+                  <option v-for="opt in options.textEncoders" :key="opt.sha256" :value="opt.name">{{ opt.name }}</option>
                 </datalist>
               </div>
               <div class="field-stack">
@@ -112,9 +112,9 @@ Symbols (top-level; keep in sync; no ghosts):
             <div class="test-grid test-grid-three">
               <div class="field-stack">
                 <label class="label" for="highModel">High Model (.gguf)</label>
-                <select id="highModel" class="select-md" v-model="state.high.modelDir">
+                <select id="highModel" class="select-md" v-model="state.high.modelSha">
                   <option value="">— Select —</option>
-                  <option v-for="opt in options.wanHigh" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.wanHigh" :key="opt.sha256" :value="opt.sha256">{{ opt.name }}</option>
                 </select>
               </div>
               <div>
@@ -134,9 +134,9 @@ Symbols (top-level; keep in sync; no ghosts):
                 </label>
 	                <div v-if="state.high.useLora">
 	                  <label class="label" for="highLora">LoRA (input list)</label>
-	                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraPath" placeholder="/models/wan22-loras/*.safetensors" autocomplete="off" autocapitalize="off" spellcheck="false" />
+	                  <input id="highLora" class="ui-input" list="dl-lora" v-model="state.high.loraSha" placeholder="64-hex sha256" autocomplete="off" autocapitalize="off" spellcheck="false" />
 	                  <datalist id="dl-lora">
-	                    <option v-for="opt in options.loras" :key="opt.path" :value="opt.name">{{ opt.name }}</option>
+	                    <option v-for="opt in options.loras" :key="opt.sha256" :value="opt.name">{{ opt.name }}</option>
 	                  </datalist>
 	                </div>
               </div>
@@ -152,9 +152,9 @@ Symbols (top-level; keep in sync; no ghosts):
             <div class="test-grid test-grid-three">
               <div class="field-stack">
                 <label class="label" for="lowModel">Low Model (.gguf)</label>
-                <select id="lowModel" class="select-md" v-model="state.low.modelDir">
+                <select id="lowModel" class="select-md" v-model="state.low.modelSha">
                   <option value="">— Select —</option>
-                  <option v-for="opt in options.wanLow" :key="opt.path" :value="opt.path">{{ opt.name }}</option>
+                  <option v-for="opt in options.wanLow" :key="opt.sha256" :value="opt.sha256">{{ opt.name }}</option>
                 </select>
               </div>
               <div>
@@ -174,7 +174,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 </label>
 	                <div v-if="state.low.useLora">
 	                  <label class="label" for="lowLora">LoRA (input list)</label>
-	                  <input id="lowLora" class="ui-input" list="dl-lora" v-model="state.low.loraPath" placeholder="/models/wan22-loras/*.safetensors" />
+	                  <input id="lowLora" class="ui-input" list="dl-lora" v-model="state.low.loraSha" placeholder="64-hex sha256" />
 	                </div>
 	              </div>
               <div>
@@ -249,19 +249,21 @@ const state = reactive({
   useInitImage: true,
   initImageData: '',
   initImageName: '',
-  vaeDir: '',
-  textEncoderDir: '',
+  vaeSha: '',
+  textEncoderSha: '',
   tokenizerDir: '',
   metadataDir: '',
   high: {
-    modelDir: '',
+    modelSha: '',
     steps: 2, cfgScale: 3,
-    loraPath: '', loraWeight: 1.0,
+    useLora: false,
+    loraSha: '', loraWeight: 1.0,
   },
   low: {
-    modelDir: '',
+    modelSha: '',
     steps: 2, cfgScale: 3,
-    loraPath: '', loraWeight: 1.0,
+    useLora: false,
+    loraSha: '', loraWeight: 1.0,
   },
   sampler: 'euler', scheduler: 'simple', wanFormat: 'gguf',
   // Offload level and TE kernel are controlled via env vars only
@@ -274,12 +276,12 @@ const framesResult = ref<GeneratedImage[]>([])
 let unsubscribe: (() => void) | null = null
 
 const options = reactive({
-  vaes: [] as Array<{ name: string; path: string }>,
-  textEncoders: [] as Array<{ name: string; path: string }>,
+  vaes: [] as Array<{ name: string; sha256: string }>,
+  textEncoders: [] as Array<{ name: string; sha256: string }>,
   metadata: [] as Array<{ name: string; path: string }>,
-  loras: [] as Array<{ name: string; path: string }>,
-  wanHigh: [] as Array<{ name: string; path: string }>,
-  wanLow: [] as Array<{ name: string; path: string }>,
+  loras: [] as Array<{ name: string; sha256: string }>,
+  wanHigh: [] as Array<{ name: string; sha256: string }>,
+  wanLow: [] as Array<{ name: string; sha256: string }>,
 })
 
 const maps = reactive({
@@ -308,21 +310,29 @@ function readFileAsDataURL(file: File): Promise<string> {
 (async () => {
   try {
     const inv = await fetchModelInventory()
-    options.vaes = (inv.vaes || []).map((v: any) => ({ name: v.name, path: v.path }))
-    options.textEncoders = (inv.text_encoders || []).map((t: any) => ({ name: t.name, path: t.path }))
+    options.vaes = (inv.vaes || [])
+      .filter((v: any) => typeof v?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(v.sha256)))
+      .map((v: any) => ({ name: String(v.name || ''), sha256: String(v.sha256 || '').toLowerCase() }))
+    options.textEncoders = (inv.text_encoders || [])
+      .filter((t: any) => typeof t?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(t.sha256)))
+      .map((t: any) => ({ name: String(t.name || ''), sha256: String(t.sha256 || '').toLowerCase() }))
     options.metadata = (inv.metadata || []).map((m: any) => ({ name: m.name, path: m.path }))
-    options.loras = (inv.loras || []).map((l: any) => ({ name: l.name, path: l.path }))
+    options.loras = (inv.loras || [])
+      .filter((l: any) => typeof l?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(l.sha256)))
+      .map((l: any) => ({ name: String(l.name || ''), sha256: String(l.sha256 || '').toLowerCase() }))
     const gguf = inv.wan22?.gguf || []
     // List all .gguf files under models/wan22 without stage filtering
-    options.wanHigh = gguf.map((e: any) => ({ name: e.name, path: e.path }))
-    options.wanLow = gguf.map((e: any) => ({ name: e.name, path: e.path }))
+    options.wanHigh = gguf
+      .filter((e: any) => typeof e?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(e.sha256)))
+      .map((e: any) => ({ name: String(e.name || ''), sha256: String(e.sha256 || '').toLowerCase() }))
+    options.wanLow = options.wanHigh
     // Build name->path maps for resolution at submit
-    maps.vae = Object.fromEntries(options.vaes.map((x) => [x.name, x.path]))
-    maps.te = Object.fromEntries(options.textEncoders.map((x) => [x.name, x.path]))
+    maps.vae = Object.fromEntries(options.vaes.map((x) => [x.name, x.sha256]))
+    maps.te = Object.fromEntries(options.textEncoders.map((x) => [x.name, x.sha256]))
     maps.meta = Object.fromEntries(options.metadata.map((x) => [x.name, x.path]))
-    maps.lora = Object.fromEntries(options.loras.map((x) => [x.name, x.path]))
-    maps.wanHigh = Object.fromEntries(options.wanHigh.map((x) => [x.name, x.path]))
-    maps.wanLow = Object.fromEntries(options.wanLow.map((x) => [x.name, x.path]))
+    maps.lora = Object.fromEntries(options.loras.map((x) => [x.name, x.sha256]))
+    maps.wanHigh = Object.fromEntries(options.wanHigh.map((x) => [x.name, x.sha256]))
+    maps.wanLow = maps.wanHigh
   } catch (err) {
     console.error('[inventory] failed to load', err)
   }
@@ -349,24 +359,33 @@ async function generate(): Promise<void> {
   errorMessage.value = ''
   framesResult.value = []
   try {
-    const resolve = (val: string, map: Record<string, string>) => (map && map[val]) ? map[val] : val
-    const highModel = resolve(state.high.modelDir, maps.wanHigh)
-    const lowModel = resolve(state.low.modelDir, maps.wanLow)
-    const vaePath = resolve(state.vaeDir, maps.vae)
-    const tePath = resolve(state.textEncoderDir, maps.te)
-    const metaDir = resolve(state.metadataDir, maps.meta)
+    const shaRe = /^[0-9a-f]{64}$/i
+    const resolveSha = (val: string, map: Record<string, string>) => {
+      const raw = String(val || '').trim()
+      if (!raw) return ''
+      if (shaRe.test(raw)) return raw.toLowerCase()
+      const mapped = (map && map[raw]) ? map[raw] : raw
+      if (!shaRe.test(mapped)) throw new Error(`expected sha256 (64 hex), got: ${mapped}`)
+      return mapped.toLowerCase()
+    }
+    const resolvePath = (val: string, map: Record<string, string>) => (map && map[val]) ? map[val] : val
+
+    const highSha = resolveSha(state.high.modelSha, maps.wanHigh)
+    const lowSha = resolveSha(state.low.modelSha, maps.wanLow)
+    const vaeSha = resolveSha(state.vaeSha, maps.vae)
+    const teSha = resolveSha(state.textEncoderSha, maps.te)
+    const metaDir = resolvePath(state.metadataDir, maps.meta)
 
     const extras: Record<string, unknown> = {
-      wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_dir: highModel || undefined },
-      wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_dir: lowModel || undefined },
-      wan_format: state.wanFormat,
-      wan_vae_path: vaePath || undefined,
-      wan_text_encoder_path: tePath || undefined,
+      wan_high: { sampler: state.sampler, scheduler: state.scheduler, steps: state.high.steps, cfg_scale: state.high.cfgScale, model_sha: highSha || undefined },
+      wan_low: { sampler: state.sampler, scheduler: state.scheduler, steps: state.low.steps, cfg_scale: state.low.cfgScale, model_sha: lowSha || undefined },
+      wan_vae_sha: vaeSha || undefined,
+      wan_tenc_sha: teSha || undefined,
       wan_metadata_dir: metaDir || undefined,
     }
     // Offload/kernel controls removed (payload/options-driven; no env overrides).
-    if (state.high.useLora && state.high.loraPath) { (extras.wan_high as any).lora_path = resolve(state.high.loraPath, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
-    if (state.low.useLora && state.low.loraPath) { (extras.wan_low as any).lora_path = resolve(state.low.loraPath, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
+    if (state.high.useLora && state.high.loraSha) { (extras.wan_high as any).lora_sha = resolveSha(state.high.loraSha, maps.lora); (extras.wan_high as any).lora_weight = state.high.loraWeight }
+    if (state.low.useLora && state.low.loraSha) { (extras.wan_low as any).lora_sha = resolveSha(state.low.loraSha, maps.lora); (extras.wan_low as any).lora_weight = state.low.loraWeight }
     if (state.useInitImage && state.initImageData) {
       const payload = {
         __strict_version: 1,
@@ -462,25 +481,25 @@ const STORAGE_KEY = 'codex.test.profile.v1'
     assign('frames', Number(snap.frames))
     assign('fps', Number(snap.fps))
     assign('useInitImage', !!snap.useInitImage)
-    assign('vaeDir', snap.vaeDir)
-    assign('textEncoderDir', snap.textEncoderDir)
+    assign('vaeSha', snap.vaeSha)
+    assign('textEncoderSha', snap.textEncoderSha)
     assign('tokenizerDir', snap.tokenizerDir)
     assign('metadataDir', snap.metadataDir)
     // high/low blocks
     if (snap.high) {
-      state.high.modelDir = snap.high.modelDir ?? state.high.modelDir
+      state.high.modelSha = snap.high.modelSha ?? state.high.modelSha
       state.high.steps = Number(snap.high.steps ?? state.high.steps)
       state.high.cfgScale = Number(snap.high.cfgScale ?? state.high.cfgScale)
       state.high.useLora = !!snap.high.useLora
-      state.high.loraPath = snap.high.loraPath ?? ''
+      state.high.loraSha = snap.high.loraSha ?? ''
       state.high.loraWeight = Number(snap.high.loraWeight ?? 1.0)
     }
     if (snap.low) {
-      state.low.modelDir = snap.low.modelDir ?? state.low.modelDir
+      state.low.modelSha = snap.low.modelSha ?? state.low.modelSha
       state.low.steps = Number(snap.low.steps ?? state.low.steps)
       state.low.cfgScale = Number(snap.low.cfgScale ?? state.low.cfgScale)
       state.low.useLora = !!snap.low.useLora
-      state.low.loraPath = snap.low.loraPath ?? ''
+      state.low.loraSha = snap.low.loraSha ?? ''
       state.low.loraWeight = Number(snap.low.loraWeight ?? 1.0)
     }
     assign('sampler', snap.sampler)
@@ -503,8 +522,8 @@ function saveProfile(): void {
       frames: state.frames,
       fps: state.fps,
       useInitImage: state.useInitImage,
-      vaeDir: state.vaeDir,
-      textEncoderDir: state.textEncoderDir,
+      vaeSha: state.vaeSha,
+      textEncoderSha: state.textEncoderSha,
       tokenizerDir: state.tokenizerDir,
       metadataDir: state.metadataDir,
       high: { ...state.high },

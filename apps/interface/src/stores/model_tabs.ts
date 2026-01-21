@@ -47,7 +47,7 @@ export interface WanStageParams {
   steps: number
   cfgScale: number
   seed: number
-  loraPath: string
+  loraSha: string
   loraWeight: number
 }
 
@@ -149,7 +149,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       steps: 30,
       cfgScale: 7,
       seed: -1,
-      loraPath: '',
+      loraSha: '',
       loraWeight: 1.0,
     })
     const video: WanVideoParams = {

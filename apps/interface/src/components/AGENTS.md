@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-21
 Status: Active
 
 ## Purpose
@@ -50,3 +50,4 @@ Status: Active
 - 2026-01-03: Continued the header rollout across remaining core component modules (doc-only change; part of rollout).
 - 2026-01-06: `BasicParametersCard.vue` now defaults to explicit sampler/scheduler selection (no empty option) and selector components tolerate missing `label` by falling back to `name`.
 - 2026-01-06: Sampler/Scheduler selectors now default the empty-option label to “Select” (no `Automatic` placeholder); WAN stage panels still override with “Inherit”.
+- 2026-01-21: WAN stage LoRA UI (`components/wan/WanStageLoraField.vue`) selects by sha (`loraSha`) and payload builders emit `lora_sha` (no stage `lora_path`).

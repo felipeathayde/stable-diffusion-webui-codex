@@ -70,7 +70,7 @@ const WanStageSchema = z
     cfg_scale: z.number(),
     seed: z.number().int().optional(),
     lightning: z.boolean().optional(),
-    lora_path: z.string().min(1).optional(),
+    lora_sha: Sha256Schema.optional(),
     lora_weight: z.number().optional(),
     flow_shift: z.number().optional(),
   })
@@ -174,7 +174,7 @@ export interface WanStageInput {
   steps: number
   cfgScale: number
   seed: number
-  loraPath?: string
+  loraSha?: string
   loraWeight?: number
   flowShift?: number
 }
@@ -274,9 +274,12 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
     }
     payload.scheduler = scheduler
   }
-  const loraPath = String(stage.loraPath || '').trim()
-  if (loraPath) {
-    payload.lora_path = loraPath
+  const loraSha = String(stage.loraSha || '').trim().toLowerCase()
+  if (loraSha) {
+    if (!/^[0-9a-f]{64}$/.test(loraSha)) {
+      throw new Error(`WAN stage lora_sha must be sha256 (64 lowercase hex), got '${stage.loraSha}'`)
+    }
+    payload.lora_sha = loraSha
     if (typeof stage.loraWeight === 'number') payload.lora_weight = stage.loraWeight
   }
   if (typeof stage.flowShift === 'number') payload.flow_shift = stage.flowShift

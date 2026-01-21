@@ -186,6 +186,18 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         str(bool(te_required)).lower(),
     )
 
+    h_lat = max(8, int(cfg.height) // 8)
+    w_lat = max(8, int(cfg.width) // 8)
+    t = max(1, int(cfg.num_frames))
+
+    # Encode init image *before* loading the text encoder on CUDA to avoid allocator fragmentation
+    # causing large conv3d workspace allocations to fail.
+    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat0.ndim == 4:
+        lat0 = lat0.unsqueeze(2)
+    lat0 = lat0.repeat(1, 1, t, 1, 1)
+    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
+
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -558,16 +570,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    h_lat = max(8, int(cfg.height) // 8)
-    w_lat = max(8, int(cfg.width) // 8)
-    t = max(1, int(cfg.num_frames))
-
-    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat0.ndim == 4:
-        lat0 = lat0.unsqueeze(2)
-    lat0 = lat0.repeat(1, 1, t, 1, 1)
-    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
-
     hi_model = load_stage_model_from_gguf(
         hi_path,
         stage="high",
@@ -708,6 +710,18 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     if te_required:
         te_dev_eff = "cuda"
 
+    h_lat = max(8, int(cfg.height) // 8)
+    w_lat = max(8, int(cfg.width) // 8)
+    t = max(1, int(cfg.num_frames))
+
+    # Encode init image before running the text encoder on CUDA to avoid allocator fragmentation
+    # causing large conv3d workspace allocations to fail.
+    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat0.ndim == 4:
+        lat0 = lat0.unsqueeze(2)
+    lat0 = lat0.repeat(1, 1, t, 1, 1)
+    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
+
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -727,16 +741,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     )
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
-
-    h_lat = max(8, int(cfg.height) // 8)
-    w_lat = max(8, int(cfg.width) // 8)
-    t = max(1, int(cfg.num_frames))
-
-    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat0.ndim == 4:
-        lat0 = lat0.unsqueeze(2)
-    lat0 = lat0.repeat(1, 1, t, 1, 1)
-    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
 
     hi_model = load_stage_model_from_gguf(
         hi_path,

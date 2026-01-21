@@ -43,6 +43,7 @@ Status: Active
 - 2026-01-16: Updated `model.py` remapping to accept Diffusers `WanTransformer3DModel` key layout (`condition_embedder.*`, `attn1/attn2`, `scale_shift_table`, `proj_out`, `norm2↔norm3`) and aligned modulation parameter shapes/head modulation semantics with upstream exports.
 - 2026-01-18: Centralized GGUF state-dict loading in runtime IO (`apps/backend/runtime/checkpoint/io.py:load_gguf_state_dict`) for WAN22 (stage loader + text encoder GGUF path), avoiding private helpers and direct quantization imports.
 - 2026-01-20: WAN22 GGUF agora suporta LoRA por stage (High/Low) via `wan_high/wan_low.lora_sha` (sha → `.safetensors`) + `lora_weight` e aplica no load do stage; modo global `CODEX_LORA_APPLY_MODE=merge|online` (default `merge`).
+- 2026-01-21: WAN22 GGUF now honors Smart flags in video runs: TE runs on CUDA for embedding generation and offloads to CPU when Smart Offload is enabled; VAE IO honors `vae_always_tiled` (Diffusers tiling) and retries encode/decode on CPU under Smart Fallback.
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

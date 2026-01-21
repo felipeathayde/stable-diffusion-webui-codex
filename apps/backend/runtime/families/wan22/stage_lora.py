@@ -6,11 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models.
-Supports both offline merge (default) and online patching, controlled globally by `CODEX_LORA_APPLY_MODE`.
-Implements a robust LoRA-key → model-parameter mapping strategy:
-- Prefer direct matches against the Codex-native WAN transformer keys.
-- Otherwise remap Diffusers/WAN-export naming into Codex keys via `remap_wan22_gguf_state_dict`.
+Purpose: Apply per-stage LoRA patches to WAN22 GGUF stage models (merge or online).
+Controlled by `CODEX_LORA_APPLY_MODE` and maps LoRA keys to Codex WAN transformer keys (direct match or via `remap_wan22_gguf_state_dict`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `apply_wan22_stage_lora` (function): Applies a LoRA file to a loaded stage model (merge or online).

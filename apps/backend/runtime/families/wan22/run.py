@@ -29,6 +29,7 @@ from typing import Any, Optional
 import torch
 
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 
 from .config import (
     RunConfig,
@@ -170,7 +171,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_t2v_{variant}"
 
-    te_dev_eff = getattr(cfg, "te_device", None) or ("cuda" if lvl <= 1 else "cpu")
+    te_dev_eff = getattr(cfg, "te_device", None) or dev_name
     te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
     if bool(getattr(cfg, "te_kernel_required", False)):
         te_impl_val = "cuda_fp8"
@@ -197,7 +198,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         model_key=model_key,
         metadata_dir=cfg.metadata_dir,
         logger=log,
-        offload_after=(lvl >= 1),
+        offload_after=smart_offload_enabled(),
         te_device=(cfg.te_device or te_dev_eff),
         te_impl=getattr(cfg, "te_impl", None),
         te_kernel_required=getattr(cfg, "te_kernel_required", None),
@@ -370,6 +371,14 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_t2v_{variant}"
 
+    te_dev_eff = getattr(cfg, "te_device", None) or dev_name
+    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
+    if bool(getattr(cfg, "te_kernel_required", False)):
+        te_impl_val = "cuda_fp8"
+    te_required = te_impl_val == "cuda_fp8"
+    if te_required:
+        te_dev_eff = "cuda"
+
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -382,10 +391,10 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         model_key=model_key,
         metadata_dir=cfg.metadata_dir,
         logger=log,
-        offload_after=(lvl >= 1),
-        te_device=getattr(cfg, "te_device", None),
-        te_impl=getattr(cfg, "te_impl", None),
-        te_kernel_required=getattr(cfg, "te_kernel_required", None),
+        offload_after=smart_offload_enabled(),
+        te_device=(cfg.te_device or te_dev_eff),
+        te_impl=te_impl_val,
+        te_kernel_required=te_required,
     )
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
@@ -514,7 +523,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_i2v_{variant}"
 
-    te_dev_eff = getattr(cfg, "te_device", None) or ("cuda" if lvl <= 1 else "cpu")
+    te_dev_eff = getattr(cfg, "te_device", None) or dev_name
     te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
     if bool(getattr(cfg, "te_kernel_required", False)):
         te_impl_val = "cuda_fp8"
@@ -541,7 +550,7 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         model_key=model_key,
         metadata_dir=cfg.metadata_dir,
         logger=log,
-        offload_after=(lvl >= 1),
+        offload_after=smart_offload_enabled(),
         te_device=(cfg.te_device or te_dev_eff),
         te_impl=getattr(cfg, "te_impl", None),
         te_kernel_required=getattr(cfg, "te_kernel_required", None),
@@ -691,6 +700,14 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     variant = "5b" if "5b" in os.path.basename(hi_path).lower() else "14b"
     model_key = f"wan_i2v_{variant}"
 
+    te_dev_eff = getattr(cfg, "te_device", None) or dev_name
+    te_impl_val = (getattr(cfg, "te_impl", None) or "hf").strip().lower()
+    if bool(getattr(cfg, "te_kernel_required", False)):
+        te_impl_val = "cuda_fp8"
+    te_required = te_impl_val == "cuda_fp8"
+    if te_required:
+        te_dev_eff = "cuda"
+
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
         prompt=cfg.prompt or "",
@@ -703,10 +720,10 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         model_key=model_key,
         metadata_dir=cfg.metadata_dir,
         logger=log,
-        offload_after=(lvl >= 1),
-        te_device=getattr(cfg, "te_device", None),
-        te_impl=getattr(cfg, "te_impl", None),
-        te_kernel_required=getattr(cfg, "te_kernel_required", None),
+        offload_after=smart_offload_enabled(),
+        te_device=(cfg.te_device or te_dev_eff),
+        te_impl=te_impl_val,
+        te_kernel_required=te_required,
     )
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)

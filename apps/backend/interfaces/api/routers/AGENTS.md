@@ -29,3 +29,4 @@ Status: Active
 - 2026-01-18: `generation.py` enforces image asset requirements via `apps/backend/core/contracts/asset_requirements.py` and keeps engine registration lazy (avoids torch-heavy startup for non-generation endpoints).
 - 2026-01-18: `generation.py` `vid2vid.method="wan_animate"` enforces repo-scoped paths under `CODEX_ROOT` (requires `vid2vid_model_dir`; stage `model_dir` must exist under the repo root).
 - 2026-01-21: WAN stage LoRA selection is sha-only via `lora_sha` (sha → `.safetensors`); stage `lora_path` is rejected.
+- 2026-01-21: Video tasks now honor Smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) by propagating them into requests and applying `smart_runtime_overrides(...)` inside the video worker thread.

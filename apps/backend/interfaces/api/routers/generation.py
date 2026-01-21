@@ -72,6 +72,29 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if unknown:
             raise HTTPException(status_code=400, detail=f"Unexpected {context} key(s): {', '.join(unknown)}")
 
+    def _resolve_smart_flags(payload: Mapping[str, Any]) -> Tuple[bool, bool, bool]:
+        """Resolve per-request smart flags (offload/fallback/cache).
+
+        Precedence: payload value when present (not null) → options snapshot.
+        """
+        snap = _opts_snapshot()
+        smart_offload = (
+            bool(payload.get("smart_offload"))
+            if payload.get("smart_offload") is not None
+            else bool(getattr(snap, "codex_smart_offload", False))
+        )
+        smart_fallback = (
+            bool(payload.get("smart_fallback"))
+            if payload.get("smart_fallback") is not None
+            else bool(getattr(snap, "codex_smart_fallback", False))
+        )
+        smart_cache = (
+            bool(payload.get("smart_cache"))
+            if payload.get("smart_cache") is not None
+            else bool(getattr(snap, "codex_smart_cache", False))
+        )
+        return smart_offload, smart_fallback, smart_cache
+
 
     def _require_str_field(payload: Dict[str, Any], key: str, *, allow_empty: bool = False, trim: bool = True) -> str:
         if key not in payload:
@@ -1385,6 +1408,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
         req = Txt2VidRequest(
             task=TaskType.TXT2VID,
             prompt=prompt,
@@ -1400,6 +1424,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             guidance_scale=cfg_val,
             video_options=video_options,
             extras=extras,
+            smart_offload=smart_offload,
+            smart_fallback=smart_fallback,
+            smart_cache=smart_cache,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
                 "mode": _opts_snapshot().codex_mode,
@@ -1556,6 +1583,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if key in payload and payload.get(key) is not None:
                 extras[key] = payload.get(key)
 
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
         req = Img2VidRequest(
             task=TaskType.IMG2VID,
             prompt=prompt,
@@ -1572,6 +1600,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             guidance_scale=cfg_val,
             video_options=video_options,
             extras=extras,
+            smart_offload=smart_offload,
+            smart_fallback=smart_fallback,
+            smart_cache=smart_cache,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
                 "mode": _opts_snapshot().codex_mode,
@@ -1903,6 +1934,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             "device": payload.get("vid2vid_flow_device", None),
         }
 
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags(payload)
         req = Vid2VidRequest(
             task=TaskType.VID2VID,
             prompt=prompt,
@@ -1929,6 +1961,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             strength=strength,
             video_options=video_options,
             extras=extras,
+            smart_offload=smart_offload,
+            smart_fallback=smart_fallback,
+            smart_cache=smart_cache,
             metadata={"mode": _opts_snapshot().codex_mode},
         )
 
@@ -1985,35 +2020,42 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
-                    for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
-                        if entry.cancel_requested and entry.cancel_mode == "immediate":
-                            entry.error = "cancelled"
-                            push({"type": "error", "message": "cancelled"})
-                            push({"type": "end"})
-                            mark_done(False)
-                            return
-                        if isinstance(ev, ProgressEvent):
-                            push({
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            })
-                        elif isinstance(ev, ResultEvent):
-                            payload_obj = ev.payload or {}
-                            info_raw = payload_obj.get("info", "{}")
-                            try:
-                                info_obj = json.loads(info_raw)
-                            except Exception:
-                                info_obj = info_raw
-                            encoded = encode_images(payload_obj.get("images", []))
-                            result = {"images": encoded, "info": info_obj}
-                            if isinstance(payload_obj.get("video"), dict):
-                                result["video"] = payload_obj.get("video")
-                            entry.result = {"status": "completed", "result": result}
-                            push({"type": "result", **result})
+                    from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+
+                    with smart_runtime_overrides(
+                        smart_offload=bool(getattr(req, "smart_offload", False)),
+                        smart_fallback=bool(getattr(req, "smart_fallback", False)),
+                        smart_cache=bool(getattr(req, "smart_cache", False)),
+                    ):
+                        for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
+                            if entry.cancel_requested and entry.cancel_mode == "immediate":
+                                entry.error = "cancelled"
+                                push({"type": "error", "message": "cancelled"})
+                                push({"type": "end"})
+                                mark_done(False)
+                                return
+                            if isinstance(ev, ProgressEvent):
+                                push({
+                                    "type": "progress",
+                                    "stage": ev.stage,
+                                    "percent": ev.percent,
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "eta_seconds": ev.eta_seconds,
+                                })
+                            elif isinstance(ev, ResultEvent):
+                                payload_obj = ev.payload or {}
+                                info_raw = payload_obj.get("info", "{}")
+                                try:
+                                    info_obj = json.loads(info_raw)
+                                except Exception:
+                                    info_obj = info_raw
+                                encoded = encode_images(payload_obj.get("images", []))
+                                result = {"images": encoded, "info": info_obj}
+                                if isinstance(payload_obj.get("video"), dict):
+                                    result["video"] = payload_obj.get("video")
+                                entry.result = {"status": "completed", "result": result}
+                                push({"type": "result", **result})
                 push({"type": "end"})
                 mark_done(True)
                 logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)

@@ -23,12 +23,15 @@ from typing import Any, Optional
 
 import torch
 
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
+
 from .config import RunConfig, as_torch_dtype, resolve_device_name, resolve_i2v_order
 from .diagnostics import cuda_empty_cache, get_logger
 from .wan_latent_norms import resolve_norm
 
 
-def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype):
+def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling: bool = False):
     if not vae_path:
         raise RuntimeError("WAN22 GGUF: wan_vae_dir is required when running the GGUF runtime (VAE path missing).")
 
@@ -36,14 +39,26 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype):
 
     path = os.path.expanduser(str(vae_path))
     if os.path.isdir(path):
-        return AutoencoderKLWan.from_pretrained(path, torch_dtype=torch_dtype, local_files_only=True)
+        vae = AutoencoderKLWan.from_pretrained(path, torch_dtype=torch_dtype, local_files_only=True)
+        if enable_tiling and hasattr(vae, "enable_tiling"):
+            try:
+                vae.enable_tiling()
+            except Exception:
+                pass
+        return vae
     if os.path.isfile(path):
         loader = getattr(AutoencoderKLWan, "from_single_file", None)
         if loader is None:
             raise RuntimeError(
                 f"AutoencoderKLWan.from_single_file not available; provide a directory instead of file: {path}"
             )
-        return loader(path, torch_dtype=torch_dtype)
+        vae = loader(path, torch_dtype=torch_dtype)
+        if enable_tiling and hasattr(vae, "enable_tiling"):
+            try:
+                vae.enable_tiling()
+            except Exception:
+                pass
+        return vae
     raise RuntimeError(f"WAN22 GGUF: VAE path not found: {path}")
 
 
@@ -58,7 +73,7 @@ def vae_encode_init(
 ) -> torch.Tensor:
     log = get_logger(logger)
     torch_dtype = as_torch_dtype(dtype)
-    vae = load_vae(vae_dir, torch_dtype=torch_dtype)
+    vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
 
     norm = resolve_norm(None, channels=16)
     log.info("[wan22.gguf] VAE latent norm=%s channels=%d", norm.name, norm.channels)
@@ -66,15 +81,7 @@ def vae_encode_init(
     dev_name = resolve_device_name(device)
     target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
 
-    # Force tiled VAE decode/encode for WAN (legacy global switch, scoped).
-    from apps.backend.runtime.memory import memory_management as _mm
-
-    old_tiled = _mm.manager.vae_always_tiled
-    try:
-        _mm.manager.vae_always_tiled = True
-        vae = vae.to(device=target, dtype=torch_dtype)
-    finally:
-        _mm.manager.vae_always_tiled = old_tiled
+    vae = vae.to(device=target, dtype=torch_dtype)
 
     # Preprocess init image into [-1,1] tensor [B,C,T,H,W] with T=1
     if not hasattr(init_image, "to"):
@@ -106,7 +113,16 @@ def vae_encode_init(
             raise RuntimeError("WAN22 GGUF: init_image must be 4D (B,C,H,W) or 5D (B,C,T,H,W) after preprocessing")
 
     with torch.no_grad():
-        encoded = vae.encode(init_image).latent_dist.sample()
+        try:
+            encoded = vae.encode(init_image).latent_dist.sample()
+        except torch.OutOfMemoryError as exc:
+            if target != "cuda" or not smart_fallback_enabled():
+                raise
+            log.warning("[wan22.gguf] VAE encode OOM on CUDA; retrying on CPU.")
+            cuda_empty_cache(logger, label="vae-encode-oom")
+            vae = vae.to(device="cpu", dtype=torch.float32)
+            init_image = init_image.to(device="cpu", dtype=torch.float32)
+            encoded = vae.encode(init_image).latent_dist.sample()
         encoded = norm.process_in(encoded)
 
     if offload_after:
@@ -133,7 +149,7 @@ def vae_decode_video(
     _ = model_dir  # kept for signature symmetry (callers pass stage dir; current VAE loads from explicit path)
     log = get_logger(logger)
     torch_dtype = as_torch_dtype(dtype)
-    vae = load_vae(vae_dir, torch_dtype=torch_dtype)
+    vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
 
     dev_name = resolve_device_name(device)
     target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
@@ -164,7 +180,18 @@ def vae_decode_video(
         for ti in range(t):
             lat = video_latents[:, :, ti : ti + 1]
             lat = norm.process_out(lat)
-            img = vae.decode(lat).sample
+            try:
+                img = vae.decode(lat).sample
+            except torch.OutOfMemoryError:
+                if target != "cuda" or not smart_fallback_enabled():
+                    raise
+                log.warning("[wan22.gguf] VAE decode OOM on CUDA; retrying on CPU.")
+                cuda_empty_cache(logger, label="vae-decode-oom")
+                vae = vae.to(device="cpu", dtype=torch.float32)
+                lat_cpu = lat.to(device="cpu", dtype=torch.float32)
+                img = vae.decode(lat_cpu).sample
+                video_latents = video_latents.to(device="cpu", dtype=torch.float32)
+                target = "cpu"
             if ti == 0:
                 log.info("[wan22.gguf] VAE decode output shape=%s", tuple(getattr(img, "shape", ())))
             x = img[0].detach()

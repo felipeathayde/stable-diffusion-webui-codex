@@ -162,7 +162,7 @@ def get_text_context(
 
         from apps.backend.runtime.families.wan22.wan_te_encoder import encode_fp8 as _encode_fp8
 
-        dev = torch.device("cuda" if te_dev_eff == "cuda" and torch.cuda.is_available() else "cpu")
+        dev = torch.device(te_dev_eff if te_dev_eff.startswith("cuda") and torch.cuda.is_available() else "cpu")
         if dev.type != "cuda":
             raise RuntimeError("WAN22 TE CUDA path requested but selected device is not CUDA")
 
@@ -226,7 +226,7 @@ def get_text_context(
         raise RuntimeError(f"WAN22 GGUF: failed to load text encoder weights '{te_file}': {exc}") from exc
 
     use_dev_name = (te_dev_eff or device or "cpu").lower().strip()
-    dev = torch.device("cuda" if use_dev_name == "cuda" and torch.cuda.is_available() else "cpu")
+    dev = torch.device(use_dev_name if use_dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu")
     try:
         enc = enc.to(device=dev, dtype=as_torch_dtype(dtype))
     except Exception:
@@ -259,6 +259,8 @@ def get_text_context(
             enc.to("cpu")
         except Exception:
             pass
+        if dev.type == "cuda":
+            log.info("[wan22.gguf] text-encoder offloaded to CPU (smart_offload)")
         del enc
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

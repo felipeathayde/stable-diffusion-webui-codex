@@ -20,10 +20,14 @@ Starts:
 Backend args:
   - Any extra args are forwarded to the backend entrypoint (e.g. `--gguf-dequantize-upfront`, `--lora-apply-mode online`).
 
+Launcher args:
+  - `--pytorch-cuda-alloc-conf <value>`: sets `PYTORCH_CUDA_ALLOC_CONF` for the backend process (requires restart).
+
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
   - PYTHON           (default: \$CODEX_VENV_DIR/bin/python)
   - CODEX_LORA_APPLY_MODE (merge|online; default: merge)
+  - PYTORCH_CUDA_ALLOC_CONF (PyTorch CUDA allocator tuning; optional)
   - API_PORT_OVERRIDE / API_PORT / WEB_PORT (advanced; ports are auto-paired when unset)
 EOF
   exit 0
@@ -65,6 +69,30 @@ export CODEX_ROOT="${ROOT_DIR}"
 export PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export FORCE_COLOR="${FORCE_COLOR:-1}"
+
+# Launcher-only arg parsing (strip args that are not backend CLI flags).
+api_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pytorch-cuda-alloc-conf)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --pytorch-cuda-alloc-conf requires a value." >&2
+        exit 2
+      fi
+      export PYTORCH_CUDA_ALLOC_CONF="$2"
+      shift 2
+      ;;
+    --pytorch-cuda-alloc-conf=*)
+      export PYTORCH_CUDA_ALLOC_CONF="${1#*=}"
+      shift
+      ;;
+    *)
+      api_args+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${api_args[@]}"
 
 is_uint() {
   [[ "${1:-}" =~ ^[0-9]+$ ]]

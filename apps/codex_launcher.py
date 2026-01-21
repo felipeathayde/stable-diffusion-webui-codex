@@ -293,6 +293,26 @@ class CodexGUILauncher(tk.Tk):
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
         row += 1
 
+        # PyTorch CUDA allocator tuning (global; backend restart required)
+        raw_alloc_conf = str(self.env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
+        self._var_pytorch_cuda_alloc_conf = tk.StringVar(value=raw_alloc_conf)
+        ttk.Label(scrollable, text="PyTorch CUDA alloc conf (requires API restart):").grid(
+            row=row, column=0, sticky="w", padx=16, pady=8
+        )
+        alloc_entry = ttk.Entry(scrollable, textvariable=self._var_pytorch_cuda_alloc_conf, width=48)
+        alloc_entry.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+        alloc_entry.bind("<KeyRelease>", lambda _e: self._mark_changed())
+        row += 1
+        ttk.Label(
+            scrollable,
+            text=(
+                "Env var: PYTORCH_CUDA_ALLOC_CONF\n"
+                "Example: max_split_size_mb:256,garbage_collection_threshold:0.8"
+            ),
+            justify="left",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
+        row += 1
+
         ttk.Label(
             scrollable,
             text=(
@@ -583,6 +603,11 @@ class CodexGUILauncher(tk.Tk):
         # Meta
         self.meta.external_terminal = self._var_ext_term.get()
         env["CODEX_LORA_APPLY_MODE"] = str(self._var_lora_apply_mode.get()).strip().lower() or "merge"
+        alloc_conf = str(self._var_pytorch_cuda_alloc_conf.get() or "").strip()
+        if alloc_conf:
+            env["PYTORCH_CUDA_ALLOC_CONF"] = alloc_conf
+        else:
+            env.pop("PYTORCH_CUDA_ALLOC_CONF", None)
 
         # Debug
         for key, var in self._debug_flags.items():

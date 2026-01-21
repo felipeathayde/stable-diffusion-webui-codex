@@ -263,6 +263,31 @@ You redesign in Codex style:
 * Explicit errors.
 * Readable names.
 
+Drift is not a vibe. Drift is a bug.
+
+When we say "pipeline" in this repo, we mean the whole trip:
+front command → API request → task_id → SSE events → model load → sampling → postprocess/encode → finished artifact.
+
+Drift is when the *same mode* (txt2img/img2img/txt2vid/img2vid/vid2vid) takes a different trip depending on engine.
+That’s how you get bugs that only exist on Tuesdays and only on Flux.
+We don't do that here.
+
+Drift counts as drift when any of this changes per engine for the same mode:
+* Contract drift: request schema/defaults, progress semantics, preview semantics, error semantics, or result fields.
+* Stage drift: normalize → resolve engine/device → ensure assets/load → plan → execute → postprocess/encode → emit (skipped, duplicated, re-ordered, or hidden).
+* Ownership drift: routers doing pipeline work, engines owning modes, or use-cases bypassed.
+
+**Policy (Option A): one canonical use-case per mode.**
+* `apps/backend/use_cases/{txt2img,img2img,txt2vid,img2vid,vid2vid}.py` owns the mode pipeline.
+* Engines are adapters and hooks. They load models and expose primitives. They do **not** re-implement the mode.
+* Routers stay thin: validate + dispatch + stream.
+* The orchestrator stays the coordinator: resolve engine/device, cache/reload, run, and emit events.
+* Shared, reusable stages live in `apps/backend/runtime/workflows/`. If it’s shared, it goes there. If it’s not shared, it stays in the canonical use-case.
+
+If an engine needs special behavior, you add a hook that the canonical use-case calls.
+If you can’t express it as a hook, you stop and redesign until you can.
+No engine-specific pipelines. No zoo.
+
 Imports outside `/apps` are banned.
 Only `apps.*` lives in active code.
 

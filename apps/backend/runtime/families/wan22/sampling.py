@@ -47,7 +47,7 @@ class PatchGeometry:
     grid: Tuple[int, int, int]
     token_count: int
     token_dim: int
-    latent_channels: int
+    in_channels: int
     patch_kernel: Tuple[int, int, int]
 
 
@@ -109,7 +109,7 @@ def infer_patch_geometry(model: Any, *, t: int, h_lat: int, w_lat: int) -> Patch
         grid=(gT, gH, gW),
         token_count=token_count,
         token_dim=c_out,
-        latent_channels=c_in,
+        in_channels=c_in,
         patch_kernel=(kT, kH, kW),
     )
 
@@ -185,7 +185,7 @@ def prepare_stage_seed_latents(
     logger: logging.Logger | None,
 ) -> torch.Tensor:
     c_src = int(latents.shape[1])
-    c_dst = int(target_geom.latent_channels)
+    c_dst = int(target_geom.in_channels)
     if c_src == c_dst:
         return ensure_latent_shape(latents, target_geom)
     if c_src >= 16 and c_dst == 16:
@@ -322,12 +322,30 @@ def sample_stage_latents_generator(
     t_lat, h_lat, w_lat = latent_dimensions(geom)
     steps = max(int(steps), 1)
 
+    cfg = getattr(model, "config", None)
+    if cfg is None:
+        raise RuntimeError("WAN22: expected model with .config (WanTransformer2DModel)")
+    cin = int(getattr(cfg, "in_channels", 0) or 0)
+    cout = int(getattr(cfg, "latent_channels", 0) or 0)
+    if cin <= 0 or cout <= 0:
+        raise RuntimeError(f"WAN22: invalid model channels (in_channels={cin}, latent_channels={cout})")
+
+    if int(geom.in_channels) != cin:
+        raise RuntimeError(
+            f"WAN22: geometry/model mismatch (geom.cin={int(geom.in_channels)} vs model.in_channels={cin})."
+        )
+
     batch = int(state_init.shape[0]) if state_init is not None else 1
-    shape = (batch, int(geom.latent_channels), t_lat, h_lat, w_lat)
+    shape = (batch, int(geom.in_channels), t_lat, h_lat, w_lat)
 
     if state_init is not None:
         state = ensure_latent_shape(state_init.to(device=device, dtype=dtype), geom).clone()
     else:
+        if cin != cout:
+            raise RuntimeError(
+                "WAN22 GGUF: state_init is required when model.in_channels != model.latent_channels "
+                f"(in_channels={cin}, latent_channels={cout})."
+            )
         if seed is not None and int(seed) >= 0:
             generator = torch.Generator(device=device)
             generator.manual_seed(int(seed))
@@ -401,14 +419,46 @@ def sample_stage_latents_generator(
                 v_cond, v_uncond = v_pred.chunk(2, dim=0)
                 eps = cfg_merge(v_uncond, v_cond, cfg_scale)
 
-            if eps.shape != state.shape:
+            if eps.ndim != 5 or eps.shape[0] != state.shape[0] or eps.shape[2:] != state.shape[2:]:
                 raise RuntimeError(
                     f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent state {tuple(state.shape)} "
                     f"(patch_size={geom.patch_kernel} grid={geom.grid})"
                 )
 
-            out = scheduler.step(model_output=eps, timestep=timestep, sample=state)
-            state = out.prev_sample
+            if int(eps.shape[1]) != cout:
+                raise RuntimeError(
+                    f"WAN22 GGUF: model output channels C={int(eps.shape[1])} does not match expected latent_channels={cout}."
+                )
+
+            if int(state.shape[1]) == cout:
+                out = scheduler.step(model_output=eps, timestep=timestep, sample=state)
+                state = out.prev_sample
+            else:
+                if int(state.shape[1]) != cin:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected in_channels={cin}."
+                    )
+
+                # Inpainting-style I2V: state is [latents + conditioning], while the model predicts only the latent channels.
+                order = resolve_i2v_order()
+                if order == "lat_first":
+                    state_lat = state[:, :cout, ...]
+                    state_cond = state[:, cout:, ...]
+                else:
+                    state_cond = state[:, :-cout, ...]
+                    state_lat = state[:, -cout:, ...]
+                if state_lat.shape != eps.shape:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent slice {tuple(state_lat.shape)} "
+                        f"(patch_size={geom.patch_kernel} grid={geom.grid})"
+                    )
+
+                out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
+                lat_next = out.prev_sample
+                if order == "lat_first":
+                    state = torch.cat([lat_next, state_cond], dim=1)
+                else:
+                    state = torch.cat([state_cond, lat_next], dim=1)
 
         pct = float(idx + 1) / float(max(1, total))
         if log_mem_interval is not None:

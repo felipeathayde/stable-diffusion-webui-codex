@@ -226,7 +226,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         "[wan22.gguf] HIGH geom: grid=%s kernel=%s cin=%d",
         geom_hi.grid,
         geom_hi.patch_kernel,
-        geom_hi.latent_channels,
+        geom_hi.in_channels,
     )
     log_cuda_mem(log, label="after-high-setup")
     if lvl >= 3:
@@ -296,7 +296,7 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         "[wan22.gguf] LOW geom: grid=%s kernel=%s cin=%d",
         geom_lo.grid,
         geom_lo.patch_kernel,
-        geom_lo.latent_channels,
+        geom_lo.in_channels,
     )
 
     seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)

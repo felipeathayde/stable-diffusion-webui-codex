@@ -70,6 +70,8 @@ export PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export FORCE_COLOR="${FORCE_COLOR:-1}"
 
+DEFAULT_PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:256,garbage_collection_threshold:0.8"
+
 # Launcher-only arg parsing (strip args that are not backend CLI flags).
 api_args=()
 while [[ $# -gt 0 ]]; do
@@ -93,6 +95,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 set -- "${api_args[@]}"
+
+if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
+  export PYTORCH_CUDA_ALLOC_CONF="${DEFAULT_PYTORCH_CUDA_ALLOC_CONF}"
+fi
 
 is_uint() {
   [[ "${1:-}" =~ ^[0-9]+$ ]]

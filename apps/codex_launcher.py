@@ -41,6 +41,7 @@ if str(CODEX_ROOT) not in sys.path:
 from apps.launcher import (
     CodexLogBuffer,
     CodexServiceHandle,
+    DEFAULT_PYTORCH_CUDA_ALLOC_CONF,
     LauncherProfileStore,
     ServiceStatus,
     default_services,
@@ -294,7 +295,7 @@ class CodexGUILauncher(tk.Tk):
         row += 1
 
         # PyTorch CUDA allocator tuning (global; backend restart required)
-        raw_alloc_conf = str(self.env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
+        raw_alloc_conf = str(self.env.get("PYTORCH_CUDA_ALLOC_CONF") or DEFAULT_PYTORCH_CUDA_ALLOC_CONF).strip()
         self._var_pytorch_cuda_alloc_conf = tk.StringVar(value=raw_alloc_conf)
         ttk.Label(scrollable, text="PyTorch CUDA alloc conf (requires API restart):").grid(
             row=row, column=0, sticky="w", padx=16, pady=8
@@ -307,7 +308,7 @@ class CodexGUILauncher(tk.Tk):
             scrollable,
             text=(
                 "Env var: PYTORCH_CUDA_ALLOC_CONF\n"
-                "Example: max_split_size_mb:256,garbage_collection_threshold:0.8"
+                f"Default: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}"
             ),
             justify="left",
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))

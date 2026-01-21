@@ -2,7 +2,7 @@
 Date: 2025-10-28
 Owner: Repository Maintainers
 Status: Active
-Last Review: 2026-01-06
+Last Review: 2026-01-21
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -27,3 +27,4 @@ Last Review: 2026-01-06
 - 2026-01-02: Added standardized file header docstrings to launcher modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining launcher modules (`__init__.py`, `checks.py`, `log_buffer.py`, `paths.py`) (doc-only change; part of rollout).
 - 2026-01-06: Launcher Python preflight now matches `.python-version` (3.12.10) instead of allowing stale 3.10/3.11.
+- 2026-01-21: Launcher profiles now default `PYTORCH_CUDA_ALLOC_CONF` (global PyTorch CUDA allocator tuning) to `max_split_size_mb:256,garbage_collection_threshold:0.8` when unset.

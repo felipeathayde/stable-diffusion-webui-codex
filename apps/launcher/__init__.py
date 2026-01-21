@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `default_services` (function): Constructs the default launcher service set (re-export).
 - `LauncherMeta` (dataclass): Launcher metadata persisted alongside profiles (re-export).
 - `LauncherProfileStore` (class): Profile store for launcher settings and selections (re-export).
+- `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
 - `__all__` (constant): Explicit export list for this facade.
 """
 
@@ -36,6 +37,7 @@ from .services import (
     default_services,
 )
 from .profiles import (
+    DEFAULT_PYTORCH_CUDA_ALLOC_CONF,
     LauncherMeta,
     LauncherProfileStore,
 )
@@ -52,4 +54,5 @@ __all__ = [
     "default_services",
     "LauncherMeta",
     "LauncherProfileStore",
+    "DEFAULT_PYTORCH_CUDA_ALLOC_CONF",
 ]

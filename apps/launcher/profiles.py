@@ -12,6 +12,7 @@ expose a mapping-like interface for editing environment variables with per-area 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log only).
+- `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
 - `LauncherProfileStore` (dataclass): Main profile store; loads/saves meta/env maps, resolves key routing, and provides lookup helpers
@@ -55,6 +56,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
 
 
 DEFAULT_MODEL_NAME = "default"
+DEFAULT_PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:256,garbage_collection_threshold:0.8"
 
 
 @dataclass
@@ -145,6 +147,8 @@ class LauncherProfileStore:
             env.update(mapping)
         active_model = self.meta.active_model
         env.update(self.models.get(active_model, {}))
+        if not str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip():
+            env["PYTORCH_CUDA_ALLOC_CONF"] = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
         return env
 
     def lookup_env(self, key: str) -> str | None:

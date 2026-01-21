@@ -33,6 +33,7 @@ from typing import Optional, Tuple
 import torch
 from torch import nn
 
+from apps.backend.runtime.ops.operations import get_operation_context
 from apps.backend.runtime.ops.operations_gguf import CodexParameter, dequantize_tensor as gguf_dequantize_tensor
 
 from .inference import infer_wan22_latent_channels, infer_wan22_patch_embedding, infer_wan22_patch_size_and_in_channels
@@ -239,7 +240,13 @@ class WanTransformerBlock(nn.Module):
 
         # Per-block modulation: [1, 6, dim] for [sa_shift, sa_scale, sa_gate, ffn_shift, ffn_scale, ffn_gate]
         # Matches Diffusers `WanTransformerBlock.scale_shift_table` and upstream WAN exports.
-        self.modulation = nn.Parameter(torch.zeros(1, 6, dim))
+        op_ctx = get_operation_context()
+        modulation_kwargs = {}
+        if op_ctx.device is not None:
+            modulation_kwargs["device"] = op_ctx.device
+        if op_ctx.dtype is not None:
+            modulation_kwargs["dtype"] = op_ctx.dtype
+        self.modulation = nn.Parameter(torch.zeros(1, 6, dim, **modulation_kwargs))
 
     def forward(
         self,
@@ -337,7 +344,13 @@ class WanTransformer2DModel(nn.Module):
         # Output head
         self.norm_out = nn.LayerNorm(config.d_model, elementwise_affine=False)
         # Head modulation: [1, 2, dim] (shift/scale). Matches Diffusers `WanTransformer3DModel.scale_shift_table`.
-        self.head_modulation = nn.Parameter(torch.zeros(1, 2, config.d_model))
+        op_ctx = get_operation_context()
+        modulation_kwargs = {}
+        if op_ctx.device is not None:
+            modulation_kwargs["device"] = op_ctx.device
+        if op_ctx.dtype is not None:
+            modulation_kwargs["dtype"] = op_ctx.dtype
+        self.head_modulation = nn.Parameter(torch.zeros(1, 2, config.d_model, **modulation_kwargs))
         self.head = nn.Linear(config.d_model, patch_dim)
 
         logger.info(

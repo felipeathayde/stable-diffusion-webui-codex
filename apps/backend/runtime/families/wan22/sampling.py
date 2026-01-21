@@ -390,24 +390,25 @@ def sample_stage_latents_generator(
                 str(sched_sigma),
             )
 
-        if cfg_scale is None:
-            eps = model(state, di_timestep, prompt_embeds)
-        else:
-            x_in = torch.cat([state, state], dim=0)
-            ctx_in = torch.cat([prompt_embeds, negative_embeds], dim=0)
-            t_in = torch.full((x_in.shape[0],), float(di_timestep), device=device, dtype=torch.float32)
-            v_pred = model(x_in, t_in, ctx_in)
-            v_cond, v_uncond = v_pred.chunk(2, dim=0)
-            eps = cfg_merge(v_uncond, v_cond, cfg_scale)
+        with torch.no_grad():
+            if cfg_scale is None:
+                eps = model(state, di_timestep, prompt_embeds)
+            else:
+                x_in = torch.cat([state, state], dim=0)
+                ctx_in = torch.cat([prompt_embeds, negative_embeds], dim=0)
+                t_in = torch.full((x_in.shape[0],), float(di_timestep), device=device, dtype=torch.float32)
+                v_pred = model(x_in, t_in, ctx_in)
+                v_cond, v_uncond = v_pred.chunk(2, dim=0)
+                eps = cfg_merge(v_uncond, v_cond, cfg_scale)
 
-        if eps.shape != state.shape:
-            raise RuntimeError(
-                f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent state {tuple(state.shape)} "
-                f"(patch_size={geom.patch_kernel} grid={geom.grid})"
-            )
+            if eps.shape != state.shape:
+                raise RuntimeError(
+                    f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent state {tuple(state.shape)} "
+                    f"(patch_size={geom.patch_kernel} grid={geom.grid})"
+                )
 
-        out = scheduler.step(model_output=eps, timestep=timestep, sample=state)
-        state = out.prev_sample
+            out = scheduler.step(model_output=eps, timestep=timestep, sample=state)
+            state = out.prev_sample
 
         pct = float(idx + 1) / float(max(1, total))
         if log_mem_interval is not None:

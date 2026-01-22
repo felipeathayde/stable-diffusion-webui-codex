@@ -333,6 +333,7 @@ function addWanInterpolation(payload: Record<string, unknown>, interpolation: Wa
 }
 
 export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPayload {
+  const totalSteps = input.high.steps + input.low.steps
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     txt2vid_prompt: input.prompt,
@@ -341,8 +342,9 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
     txt2vid_height: input.height,
     txt2vid_fps: input.fps,
     txt2vid_num_frames: input.frames,
-    // Use High as the representative defaults for engines that ignore stage overrides.
-    txt2vid_steps: input.high.steps,
+    // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
+    // high/low stage steps differ.
+    txt2vid_steps: totalSteps,
     txt2vid_cfg_scale: input.high.cfgScale,
     txt2vid_seed: input.high.seed,
   }
@@ -364,6 +366,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 }
 
 export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageData: string }): WanImg2VidPayload {
+  const totalSteps = input.high.steps + input.low.steps
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     img2vid_prompt: input.prompt,
@@ -372,8 +375,9 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
     img2vid_height: input.height,
     img2vid_fps: input.fps,
     img2vid_num_frames: input.frames,
-    // Use High as the representative defaults for engines that ignore stage overrides.
-    img2vid_steps: input.high.steps,
+    // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
+    // high/low stage steps differ.
+    img2vid_steps: totalSteps,
     img2vid_cfg_scale: input.high.cfgScale,
     img2vid_seed: input.high.seed,
     img2vid_init_image: input.initImageData,
@@ -396,6 +400,7 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
 }
 
 export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayload {
+  const totalSteps = input.high.steps + input.low.steps
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     vid2vid_prompt: input.prompt,
@@ -404,8 +409,9 @@ export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayloa
     vid2vid_height: input.height,
     vid2vid_fps: input.fps,
     vid2vid_num_frames: input.frames,
-    // Use High as the representative defaults for engines that ignore stage overrides.
-    vid2vid_steps: input.high.steps,
+    // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
+    // high/low stage steps differ.
+    vid2vid_steps: totalSteps,
     vid2vid_cfg_scale: input.high.cfgScale,
     vid2vid_seed: input.high.seed,
     vid2vid_strength: input.strength,

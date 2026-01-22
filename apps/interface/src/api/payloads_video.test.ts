@@ -76,7 +76,7 @@ describe('WAN video payload builders', () => {
 
     expect(payload.codex_device).toBe('cuda')
     expect(payload.txt2vid_prompt).toBe('test prompt')
-    expect(payload.txt2vid_steps).toBe(4)
+    expect(payload.txt2vid_steps).toBe(6)
     expect(payload.txt2vid_cfg_scale).toBe(7)
     expect(payload.wan_format).toBe('gguf')
     expect(payload.wan_high).toMatchObject({ model_sha: hiSha, steps: 4, cfg_scale: 7, flow_shift: 8.2 })
@@ -141,6 +141,7 @@ describe('WAN video payload builders', () => {
 
     expect(payload.codex_device).toBe('cpu')
     expect(payload.img2vid_init_image).toBe('data:image/png;base64,AAAA')
+    expect(payload.img2vid_steps).toBe(24)
     expect(payload.wan_tenc_sha).toBe(sha)
     expect(payload.wan_vae_sha).toBe(sha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
@@ -184,6 +185,7 @@ describe('WAN video payload builders', () => {
 
     expect(payload.codex_device).toBe('cuda')
     expect(payload.vid2vid_prompt).toBe('v2v')
+    expect(payload.vid2vid_steps).toBe(24)
     expect(payload.vid2vid_strength).toBe(0.75)
     expect(payload.vid2vid_method).toBe('flow_chunks')
     expect(payload.vid2vid_flow_enabled).toBe(true)

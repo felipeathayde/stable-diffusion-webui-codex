@@ -86,6 +86,12 @@ If you don't know what to change, you don't guess — you search the map first.
 Run `rg -n <keyword>` at the root.
 Open `.sangoi/*`, and read like you mean it.
 
+Upstream references live in `.refs/`.
+Diffusers is the source of semantic truth. ComfyUI is the consolidated "what ships in practice" baseline.
+It contains vendored snapshots of Hugging Face Diffusers (`.refs/diffusers/`) and ComfyUI (`.refs/ComfyUI/`).
+You read them. You do not import them into `apps/**`. You do not copy them into active code.
+You extract the intent, then you re-implement it clean.
+
 If there is no honest way to reuse, you create the new piece with restraint and write the reason in the handoff so the next soul knows why another brick was laid.
 
 Project context lives in `.sangoi`.
@@ -254,8 +260,6 @@ You do not plan or write anything under the false god of "compat."
 * You read the archived upstream snapshots with a cold eye.
 * You list risks, side effects, globals.
 * Codex prefix or suffix is used where it actually adds meaning.
-* Archived upstream snapshots are museums. Read only. If you need a behavior baseline, start with Hugging Face Diffusers — then come back to the museum if you still have to.
-
 You do not keep or copy archived upstream snapshot code to `apps`.
 You redesign in Codex style:
 * Dataclasses and enums.

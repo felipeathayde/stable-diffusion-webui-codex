@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-22
 Status: Active
 
 ## Purpose
@@ -40,7 +40,8 @@ Status: Active
 - 2025-12-29: API port-guard (`port_free`) now checks IPv4 + IPv6 loopback/wildcard (0.0.0.0/127.0.0.1/::/::1) to avoid “localhost” split-brain where an IPv6-only listener exists but the guard only tested IPv4.
 - 2025-12-30: Suppressed uvicorn access-log spam for `/api/tools/convert-gguf/{job_id}` polling; opt out via `CODEX_UVICORN_ACCESS_LOG_TOOLS=1`.
 - 2025-12-31: `/api/img2img` now accepts `img2img_extras` (incl. `text_encoder_override` + `tenc_sha`), enforces `tenc_sha` for `.gguf`, and forwards request-level `engine_options` into the orchestrator (parity with `/api/txt2img`, needed for Flux/Kontext GGUF runs).
-- 2025-12-31: `/api/img2img` now infers missing `img2img_width/img2img_height` from the init image (snapped to multiples of 8) and provides Kontext defaults when `img2img_steps/img2img_cfg_scale/img2img_distilled_cfg_scale` are omitted (`28/1.0/2.5`).
+- 2025-12-31: `/api/img2img` now infers missing `img2img_width/img2img_height` from the init image (snapped to multiples of 8).
+- 2026-01-22: `/api/img2img` no longer applies engine-specific Kontext defaults for omitted fields; request validation is uniform across engines (fail fast when required fields are missing).
 - 2026-01-01: `/api/txt2img` now accepts `clip_skip`, and `/api/img2img` accepts `img2img_clip_skip` (wired into prompt controls before conditioning is computed).
 - 2026-01-01: `/api/{txt2img,img2img}` now supports live preview streaming: backend reads UI settings (`show_progress_every_n_steps`, `show_progress_type`, `live_previews_image_format`) and attaches `preview_image`/`preview_step` to task `progress` SSE events when a new preview is available.
 - 2026-01-01: Live preview config parsing + payload encoding/attachment now live in `apps/backend/services/live_preview_service.py` so `api/run_api.py` doesn’t duplicate preview logic.

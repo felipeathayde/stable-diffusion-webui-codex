@@ -931,7 +931,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not engine_key:
             raise HTTPException(status_code=400, detail="Missing engine key (engine/codex_engine)")
         model_ref = model_override or snap.sd_model_checkpoint
-        is_kontext = engine_key == "flux1_kontext"
 
         prompt = _p.require(payload, 'img2img_prompt') or ''
         negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
@@ -940,21 +939,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
         if 'img2img_steps' in payload:
             steps_val = _p.as_int(payload, 'img2img_steps')
-        elif is_kontext:
-            steps_val = 28
         else:
             raise HTTPException(status_code=400, detail="'img2img_steps' is required")
 
         if 'img2img_cfg_scale' in payload:
             cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
-        elif is_kontext:
-            cfg_scale = 1.0
         else:
             raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
 
         distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
-        if distilled_cfg_scale is None and is_kontext:
-            distilled_cfg_scale = 2.5
         image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
         denoise = _p.as_float(payload, 'img2img_denoising_strength')
         def _snap_dim(value: int) -> int:

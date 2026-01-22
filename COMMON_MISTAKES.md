@@ -657,3 +657,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "^<<<
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n -- "open\\(.*paths\\.json|with open\\(.*paths\\.json" apps/backend --glob '!apps/backend/infra/config/paths.py'
 Cause and fix: `rg` options like `--glob` must appear before the search paths; placing `apps/backend` before `--glob` made ripgrep treat `--glob` (and the negated glob) as a literal file path and fail. Move `--glob` before the search path argument.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n --glob '!apps/backend/infra/config/paths.py' -- "open\\(.*paths\\.json|with open\\(.*paths\\.json" apps/backend
+
+Wrong command: rg -n "(?:api/tasks\\/{|EventSource|/events\\'\\))" apps/backend/interfaces/api/routers | head -n 80
+Cause and fix: The pattern used regex syntax that was not valid under ripgrep's regex rules (unescaped `{` inside a `(?:...)` group), triggering a regex parse error. This search did not require regex at all; use a fixed-string search (or escape the regex properly) to avoid noisy failures.
+Correct command: rg -n "/api/tasks" apps/backend/interfaces/api/routers -S | head -n 80

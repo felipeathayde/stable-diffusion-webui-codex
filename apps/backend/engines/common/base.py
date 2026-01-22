@@ -923,8 +923,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def img2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:
         """Generic img2img implementation over the native workflow helpers.
 
-        Engines that need a different img2img contract (e.g. Flux Kontext) should
-        override this method.
+        Keep mode orchestration in the canonical use-case (`apps/backend/use_cases/img2img.py`).
+        Engines should stay adapter-level and avoid owning per-mode pipelines.
         """
         import json
         import secrets

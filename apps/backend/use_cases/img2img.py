@@ -11,11 +11,14 @@ Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image 
 performs a hires second pass.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
 - `_build_hires_plan` (function): Builds a `HiResPlan` from the processing config (or returns `None` when disabled).
 - `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
 - `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples.
+- `_compute_conditioning_payload` (function): Ensure (cond/uncond) conditioning exists for a prompt context.
+- `_generate_kontext_img2img` (function): Flux Kontext img2img implementation (init image as `image_latents`, no denoise schedule).
 - `_derive_seeds` (function): Normalizes seed/subseed inputs from processing config.
-- `generate_img2img` (function): Core img2img implementation; applies overrides, computes conditioning/init bundle, executes sampling, and returns samples.
+- `generate_img2img` (function): Canonical img2img implementation; selects the variant and executes sampling.
 - `run_img2img` (function): Thin wrapper used by orchestrators to run img2img with an engine + prepared processing object.
 """
 
@@ -24,6 +27,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Sequence
 
+import logging
 import torch
 
 from apps.backend.core.rng import ImageRNG
@@ -58,6 +62,189 @@ from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, fin
 from PIL import Image
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+logger = logging.getLogger(__name__)
+
+_KONTEXT_MULTIPLE_OF = 16
+
+# Recommended resolutions from upstream diffusers FluxKontextPipeline.
+_PREFERRED_KONTEXT_RESOLUTIONS: list[tuple[int, int]] = [
+    (672, 1568),
+    (688, 1504),
+    (720, 1456),
+    (752, 1392),
+    (800, 1328),
+    (832, 1248),
+    (880, 1184),
+    (944, 1104),
+    (1024, 1024),
+    (1104, 944),
+    (1184, 880),
+    (1248, 832),
+    (1328, 800),
+    (1392, 752),
+    (1456, 720),
+    (1504, 688),
+    (1568, 672),
+]
+
+
+def _resolve_img2img_variant(processing: CodexProcessingImg2Img) -> str:
+    engine_id = str(getattr(getattr(processing, "sd_model", None), "engine_id", "") or "")
+    return "kontext" if engine_id == "flux1_kontext" else "classic"
+
+
+def _floor_multiple(value: int, *, multiple_of: int) -> int:
+    if multiple_of <= 0:
+        raise ValueError("multiple_of must be positive")
+    if value <= 0:
+        raise ValueError("value must be positive")
+    floored = (int(value) // multiple_of) * multiple_of
+    return max(multiple_of, floored)
+
+
+def _pick_preferred_kontext_resolution(image: Image.Image) -> tuple[int, int]:
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        raise ValueError("Invalid init_image size")
+    aspect = float(width) / float(height)
+    _, best_w, best_h = min((abs(aspect - w / h), w, h) for w, h in _PREFERRED_KONTEXT_RESOLUTIONS)
+    return int(best_w), int(best_h)
+
+
+def _compute_conditioning_payload(
+    processing: CodexProcessingImg2Img,
+    prompt_context: PromptContext,
+    prompts: Sequence[str],
+    conditioning: Any,
+    unconditional_conditioning: Any,
+) -> ConditioningPayload:
+    cond = conditioning
+    uncond = unconditional_conditioning
+
+    sd_model = getattr(processing, "sd_model", None)
+    if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
+        raise RuntimeError("img2img requires processing.sd_model with get_learned_conditioning")
+
+    if cond is None:
+        texts = list(prompt_context.prompts or [getattr(processing, "prompt", "")])
+        if hasattr(sd_model, "_prepare_prompt_wrappers"):
+            wrapped = sd_model._prepare_prompt_wrappers(texts, processing, is_negative=False)
+            cond = sd_model.get_learned_conditioning(wrapped)
+        else:
+            cond = sd_model.get_learned_conditioning(texts)
+        if cond is None:
+            raise RuntimeError("Failed to build conditioning for img2img; get_learned_conditioning returned None.")
+
+    uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
+    if uncond is None and not uses_distilled_cfg:
+        negatives = list(prompt_context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+        if hasattr(sd_model, "_prepare_prompt_wrappers"):
+            wrapped = sd_model._prepare_prompt_wrappers(negatives, processing, is_negative=True)
+            uncond = sd_model.get_learned_conditioning(wrapped)
+        else:
+            uncond = sd_model.get_learned_conditioning(negatives)
+
+    return ConditioningPayload(conditioning=cond, unconditional=uncond)
+
+
+def _generate_kontext_img2img(
+    processing: CodexProcessingImg2Img,
+    conditioning: Any,
+    unconditional_conditioning: Any,
+    prompts: Sequence[str],
+    *,
+    seeds: Sequence[int] | None,
+    subseeds: Sequence[int] | None,
+    subseed_strength: float | None,
+) -> torch.Tensor:
+    if getattr(processing, "init_image", None) is None:
+        raise ValueError("img2img requires processing.init_image")
+
+    prompt_context = build_prompt_context(processing, prompts)
+    apply_prompt_context(processing, prompt_context)
+    apply_dimension_overrides(processing, prompt_context.controls)
+
+    overrides = getattr(processing, "override_settings", {})
+    auto_resize = True
+    if isinstance(overrides, dict) and "kontext_auto_resize" in overrides:
+        auto_resize = bool(overrides.get("kontext_auto_resize"))
+
+    init_image: Image.Image = processing.init_image.convert("RGB")
+    if auto_resize:
+        target_width, target_height = _pick_preferred_kontext_resolution(init_image)
+    else:
+        target_width, target_height = int(processing.width), int(processing.height)
+
+    target_width = _floor_multiple(target_width, multiple_of=_KONTEXT_MULTIPLE_OF)
+    target_height = _floor_multiple(target_height, multiple_of=_KONTEXT_MULTIPLE_OF)
+
+    if init_image.size != (target_width, target_height):
+        init_image = init_image.resize((target_width, target_height), _RESAMPLE_LANCZOS)
+    processing.init_image = init_image
+    processing.width = target_width
+    processing.height = target_height
+
+    # Kontext does not use denoise strength / init_latent.
+    if hasattr(processing, "denoising_strength"):
+        try:
+            denoise = float(getattr(processing, "denoising_strength", 0.0) or 0.0)
+        except Exception:
+            denoise = None
+        if denoise not in (None, 0.0, 1.0):
+            logger.warning("[kontext] denoising_strength is ignored (got=%s)", denoise)
+
+    seed_list, subseed_list, subseed_value = _derive_seeds(processing)
+    if seeds is not None:
+        seed_list = list(seeds)
+    if subseeds is not None:
+        subseed_list = list(subseeds)
+    if subseed_strength is not None:
+        subseed_value = float(subseed_strength)
+
+    plan = build_sampling_plan(processing, seed_list, subseed_list, subseed_value)
+    plan = apply_sampling_overrides(processing, prompt_context.controls, plan)
+    rng = ensure_sampler_and_rng(processing, plan)
+
+    processing.seeds = list(plan.seeds)
+    processing.subseeds = list(plan.subseeds)
+    processing.guidance_scale = plan.guidance_scale
+    processing.cfg_scale = plan.guidance_scale
+    processing.steps = plan.steps
+    processing.prepare_prompt_data()
+
+    run_process_scripts(processing)
+
+    payload = _compute_conditioning_payload(processing, prompt_context, prompts, conditioning, unconditional_conditioning)
+
+    bundle = prepare_init_bundle(processing)
+    image_latents = bundle.latents
+    if not isinstance(payload.conditioning, dict):
+        raise TypeError(
+            "kontext requires dict conditioning (crossattn/vector) to pass image_latents; "
+            f"got {type(payload.conditioning).__name__}"
+        )
+    payload.conditioning["image_latents"] = image_latents
+    if isinstance(payload.unconditional, dict):
+        payload.unconditional["image_latents"] = image_latents
+
+    tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
+    try:
+        samples = execute_sampling(
+            processing,
+            plan,
+            payload,
+            prompt_context,
+            prompt_context.loras,
+            prompt_context.controls,
+            rng=rng,
+            init_latent=None,
+            start_at_step=0,
+        )
+    finally:
+        finalize_tiling(tiling_applied, old_tiled)
+
+    return samples
 
 
 def _build_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
@@ -226,6 +413,17 @@ def generate_img2img(
     if not isinstance(processing, CodexProcessingImg2Img):
         raise TypeError("generate_img2img expects CodexProcessingImg2Img")
 
+    if _resolve_img2img_variant(processing) == "kontext":
+        return _generate_kontext_img2img(
+            processing,
+            conditioning,
+            unconditional_conditioning,
+            prompts,
+            seeds=seeds,
+            subseeds=subseeds,
+            subseed_strength=subseed_strength,
+        )
+
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
     apply_dimension_overrides(processing, prompt_context.controls)
@@ -255,31 +453,13 @@ def generate_img2img(
 
     run_process_scripts(processing)
 
-    # Compute conditioning when not provided by a higher-level pipeline.
-    sd_model = getattr(processing, "sd_model", None)
-    if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
-        raise RuntimeError("img2img requires processing.sd_model with get_learned_conditioning")
-
-    if conditioning is None:
-        texts = list(prompt_context.prompts or [getattr(processing, "prompt", "")])
-        if hasattr(sd_model, "_prepare_prompt_wrappers"):
-            wrapped = sd_model._prepare_prompt_wrappers(texts, processing, is_negative=False)
-            conditioning = sd_model.get_learned_conditioning(wrapped)
-        else:
-            conditioning = sd_model.get_learned_conditioning(texts)
-        if conditioning is None:
-            raise RuntimeError("Failed to build conditioning for img2img; get_learned_conditioning returned None.")
-
-    uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
-    if unconditional_conditioning is None and not uses_distilled_cfg:
-        negatives = list(prompt_context.negative_prompts or [getattr(processing, "negative_prompt", "")])
-        if hasattr(sd_model, "_prepare_prompt_wrappers"):
-            wrapped = sd_model._prepare_prompt_wrappers(negatives, processing, is_negative=True)
-            unconditional_conditioning = sd_model.get_learned_conditioning(wrapped)
-        else:
-            unconditional_conditioning = sd_model.get_learned_conditioning(negatives)
-
-    payload = ConditioningPayload(conditioning=conditioning, unconditional=unconditional_conditioning)
+    payload = _compute_conditioning_payload(
+        processing,
+        prompt_context,
+        prompts,
+        conditioning,
+        unconditional_conditioning,
+    )
 
     bundle = prepare_init_bundle(processing)
     processing.init_latent = bundle.latents

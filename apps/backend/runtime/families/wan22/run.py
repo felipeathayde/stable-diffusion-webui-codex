@@ -18,10 +18,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
+- `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (seeded noise + deterministic condition).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
-- `run_img2vid` (function): Batch img2vid runner; encodes init image, runs stages, decodes frames.
-- `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding.
+- `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames.
+- `stream_img2vid` (function): Streaming img2vid generator; yields progress while sampling/decoding (I2V conditioning + seeded noise state).
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ from .config import (
 )
 from .diagnostics import cuda_empty_cache, get_logger, log_cuda_mem
 from .sampling import (
+    assemble_i2v_state,
+    build_i2v_mask4,
     infer_patch_geometry,
     make_scheduler,
     prepare_stage_seed_latents,
@@ -53,7 +56,7 @@ from .sampling import (
 from .sdpa import set_sdpa_settings
 from .stage_loader import load_stage_model_from_gguf, pick_stage_gguf
 from .text_context import get_text_context
-from .vae_io import decode_latents_to_frames, vae_encode_init
+from .vae_io import decode_latents_to_frames, vae_encode_video_condition
 
 
 class _MemoryManagedModule:
@@ -214,6 +217,91 @@ def _resolve_frame_counts(num_frames: int, *, logger: Any) -> tuple[int, int]:
         effective = max(1, rounded)
     latent_frames = int((effective - 1) // scale + 1)
     return effective, latent_frames
+
+
+def _build_i2v_seed_state(
+    *,
+    cfg: RunConfig,
+    scheduler: Any,
+    geom_hi: Any,
+    latent_condition: torch.Tensor,
+    num_frames: int,
+    latent_frames: int,
+    h_lat: int,
+    w_lat: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    logger: Any,
+) -> torch.Tensor:
+    """Build the initial I2V state `[lat16 + mask4 + img16]` (Diffusers-compatible).
+
+    This is the critical ownership seam for WAN22 GGUF img2vid:
+    - Noise latents must be seeded from RNG (not from VAE init-image latents).
+    - The conditioning channels are constant across timesteps (mask4 + VAE-encoded video_condition).
+    """
+
+    log = get_logger(logger)
+
+    cin = int(getattr(geom_hi, "in_channels", 0) or 0)
+    if cin <= 0:
+        raise RuntimeError(f"WAN22 GGUF: invalid geom_hi.in_channels={cin}")
+
+    img = latent_condition
+    if img.ndim == 4:
+        img = img.unsqueeze(2)
+    if img.ndim != 5:
+        raise RuntimeError(f"WAN22 GGUF: I2V latent_condition must be 4D/5D, got {tuple(img.shape)}")
+    img = resize_latents_hw(img, height=h_lat, width=w_lat).to(device=device, dtype=dtype)
+    if int(img.shape[2]) != int(latent_frames):
+        raise RuntimeError(
+            "WAN22 GGUF: I2V latent_condition temporal mismatch "
+            f"(got_T={int(img.shape[2])} expected_T_lat={int(latent_frames)})"
+        )
+
+    mask4 = build_i2v_mask4(
+        batch=int(img.shape[0]),
+        num_frames=int(num_frames),
+        latent_frames=int(latent_frames),
+        height=int(h_lat),
+        width=int(w_lat),
+        device=device,
+        dtype=dtype,
+        scale_factor_temporal=4,
+    )
+
+    c_lat = int(cin) - 4 - 16
+    if c_lat != 16:
+        raise RuntimeError(
+            "WAN22 GGUF: unexpected I2V channel split "
+            f"(cin={cin} implies latents={c_lat}, expected 16 for [lat16+mask4+img16])."
+        )
+
+    shape = (int(img.shape[0]), int(c_lat), int(latent_frames), int(h_lat), int(w_lat))
+    seed_val = getattr(cfg, "seed", None)
+    if seed_val is not None and int(seed_val) >= 0:
+        gen = torch.Generator(device=device)
+        gen.manual_seed(int(seed_val))
+        latents = torch.randn(shape, generator=gen, device=device, dtype=dtype)
+    else:
+        latents = torch.randn(shape, device=device, dtype=dtype)
+
+    sigmas = getattr(scheduler, "sigmas", None)
+    if sigmas is None or len(sigmas) < 1:
+        raise RuntimeError("WAN22 GGUF: scheduler is missing sigmas; cannot seed latents correctly.")
+    sigma0 = float(sigmas[0])
+    sigma_init = sigma0 * float(WAN_FLOW_MULTIPLIER)
+    latents = latents * float(sigma_init)
+
+    state = assemble_i2v_state(latents, mask4=mask4, image_latents=img, expected_cin=cin, logger=log)
+    state = prepare_stage_seed_latents(state, geom_hi, logger=log)
+    log.info(
+        "[wan22.gguf] i2v seed: seed=%s sigma0=%.6g flow_multiplier=%.1f sigma_init=%.6g",
+        str(seed_val),
+        float(sigma0),
+        float(WAN_FLOW_MULTIPLIER),
+        float(sigma_init),
+    )
+    return state
 
 
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
@@ -704,13 +792,30 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     w_lat = max(8, int(cfg.width) // 8)
     t = int(t_lat)
 
-    # Encode init image *before* loading the text encoder on CUDA to avoid allocator fragmentation
+    # Encode conditioning video *before* loading the text encoder on CUDA to avoid allocator fragmentation
     # causing large conv3d workspace allocations to fail.
-    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat0.ndim == 4:
-        lat0 = lat0.unsqueeze(2)
-    lat0 = lat0.repeat(1, 1, t, 1, 1)
-    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
+    #
+    # Diffusers I2V condition is a video where:
+    # - frame 0 = init image
+    # - frames 1.. = 0 (0.5 gray in [0,1] space), then VAE-encoded deterministically (mode/argmax)
+    latent_condition = vae_encode_video_condition(
+        cfg.init_image,
+        num_frames=t_out,
+        height=int(cfg.height),
+        width=int(cfg.width),
+        device=dev_name,
+        dtype=cfg.dtype,
+        vae_dir=cfg.vae_dir,
+        logger=log,
+    )
+    if latent_condition.ndim == 4:
+        latent_condition = latent_condition.unsqueeze(2)
+    latent_condition = resize_latents_hw(latent_condition, height=h_lat, width=w_lat)
+    if int(latent_condition.shape[2]) != int(t):
+        raise RuntimeError(
+            "WAN22 GGUF: unexpected latent_condition temporal size after VAE encode "
+            f"(got_T={int(latent_condition.shape[2])} expected_T_lat={int(t)})"
+        )
 
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
@@ -749,7 +854,6 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
             pass
 
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
 
     steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
@@ -775,6 +879,20 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         flow_shift_lo=flow_shift_lo_value,
     )
     log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
+    seed_hi = _build_i2v_seed_state(
+        cfg=cfg,
+        scheduler=scheduler,
+        geom_hi=geom_hi,
+        latent_condition=latent_condition,
+        num_frames=t_out,
+        latent_frames=t,
+        h_lat=h_lat,
+        w_lat=w_lat,
+        device=dev,
+        dtype=dt,
+        logger=log,
+    )
 
     memory_management.manager.load_model(hi_mm)
     latents_hi = sample_stage_latents(
@@ -911,13 +1029,26 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     w_lat = max(8, int(cfg.width) // 8)
     t = int(t_lat)
 
-    # Encode init image before running the text encoder on CUDA to avoid allocator fragmentation
+    # Encode conditioning video before running the text encoder on CUDA to avoid allocator fragmentation
     # causing large conv3d workspace allocations to fail.
-    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat0.ndim == 4:
-        lat0 = lat0.unsqueeze(2)
-    lat0 = lat0.repeat(1, 1, t, 1, 1)
-    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
+    latent_condition = vae_encode_video_condition(
+        cfg.init_image,
+        num_frames=t_out,
+        height=int(cfg.height),
+        width=int(cfg.width),
+        device=dev_name,
+        dtype=cfg.dtype,
+        vae_dir=cfg.vae_dir,
+        logger=log,
+    )
+    if latent_condition.ndim == 4:
+        latent_condition = latent_condition.unsqueeze(2)
+    latent_condition = resize_latents_hw(latent_condition, height=h_lat, width=w_lat)
+    if int(latent_condition.shape[2]) != int(t):
+        raise RuntimeError(
+            "WAN22 GGUF: unexpected latent_condition temporal size after VAE encode "
+            f"(got_T={int(latent_condition.shape[2])} expected_T_lat={int(t)})"
+        )
 
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
@@ -950,7 +1081,6 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     )
     hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
-    seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
     steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
     sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
@@ -975,6 +1105,20 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         flow_shift_lo=flow_shift_lo_value,
     )
     log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
+    seed_hi = _build_i2v_seed_state(
+        cfg=cfg,
+        scheduler=scheduler,
+        geom_hi=geom_hi,
+        latent_condition=latent_condition,
+        num_frames=t_out,
+        latent_frames=t,
+        h_lat=h_lat,
+        w_lat=w_lat,
+        device=dev,
+        dtype=dt,
+        logger=log,
+    )
 
     memory_management.manager.load_model(hi_mm)
     latents_hi = yield from sample_stage_latents_generator(

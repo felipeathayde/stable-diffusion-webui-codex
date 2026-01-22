@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-22
 Status: Active
 
 ## Purpose
@@ -13,7 +13,7 @@ Status: Active
 ## Key Files
 - `apps/backend/engines/wan22/spec.py` — Codex runtime containers + assembly (`WanEngineSpec`/`WanEngineRuntime`, `assemble_wan_runtime`).
 - `apps/backend/engines/wan22/factory.py` — Factory seam returning `(runtime, CodexObjects)` for consistent Codex runtime assembly.
-- `apps/backend/engines/wan22/wan22_14b.py` — `Wan2214BEngine` (txt2vid/img2vid; supports optional core streaming for Codex runtime path).
+- `apps/backend/engines/wan22/wan22_14b.py` — `Wan2214BEngine` (txt2vid; `img2vid` not yet ported and fails loud).
 - `apps/backend/engines/wan22/wan22_5b.py` — `Wan225BEngine` (older/legacy-heavy; Diffusers/GGUF paths + per-stage overrides).
 
 ## Notes
@@ -33,6 +33,7 @@ Status: Active
 - 2026-01-06: GGUF stage overrides now fall back to canonical sampler/scheduler (`uni-pc`/`simple`) when unset (no `"Automatic"` placeholder).
 - 2026-01-08: Flow-match `flow_shift` is sourced from diffusers `scheduler_config.json` (vendored HF mirror); WAN22 GGUF stages require an explicit `flow_shift` value (auto-resolved from the vendor config when not provided in `extras.wan_high/wan_low`).
 - 2026-01-21: Stage LoRA selection is sha-only via `extras.wan_high/wan_low.lora_sha` (sha → `.safetensors`) + optional `lora_weight`; stage `lora_path` is rejected.
+- 2026-01-22: `wan22_14b` no longer advertises `TaskType.IMG2VID`; `img2vid` raises `NotImplementedError` to avoid “success with empty frames”. The practical A14B I2V path remains the WAN22 GGUF runtime (invoked via the `wan22_5b` engine wrapper).
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

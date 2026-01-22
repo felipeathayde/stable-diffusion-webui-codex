@@ -92,6 +92,29 @@ It contains vendored snapshots of Hugging Face Diffusers (`.refs/diffusers/`) an
 You read them. You do not import them into `apps/**`. You do not copy them into active code.
 You extract the intent, then you re-implement it clean.
 
+---
+
+### INTERLUDE — "PROMPT PRA TI MESMO" (CONTEXT RESET)
+
+If the user asks for **"um prompt pra ti mesmo"**, you produce a single copy/paste prompt they can drop into a brand‑new session with clean context.
+No stories. No archaeology. No missing pieces.
+
+You follow `.sangoi/howto/PROMPT_GUIDE.md` and use `.sangoi/templates/PROMPT_TO_SELF_TEMPLATE.md`.
+
+That prompt must include:
+* The repo identity: repo name + CWD + branch + last commit (hash).
+* The objective (what we are trying to achieve) and the **current status** (done / in-progress / blocked).
+* Decisions that are locked (e.g., Option A rules) and the constraints that matter.
+* The follow-up list (ordered) and the **single next step** you would execute first.
+* Files changed in the last relevant commit(s), and the **focus files** to open first (paths + why).
+* Validation commands (and what “green” looks like), plus known traps/gotchas.
+* Links to the relevant `.sangoi/**` docs (plans, reports, task-logs, handoffs).
+
+Format rules:
+* Output the prompt inside **one** fenced code block.
+* Prefer repo-relative paths and exact commands.
+* No secrets. No giant logs. No giant diffs.
+
 If there is no honest way to reuse, you create the new piece with restraint and write the reason in the handoff so the next soul knows why another brick was laid.
 
 Project context lives in `.sangoi`.

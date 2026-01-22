@@ -10,18 +10,53 @@ Purpose: WAN22 GGUF text conditioning builder (tokenizer + text encoder).
 Loads tokenizer metadata and text encoder weights from local paths only, then builds prompt/negative embeddings for the WAN GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH` (constant): Default token length used for WAN22 prompt embeddings (aligns with Diffusers default).
+- `_prompt_clean` (function): Diffusers-style prompt cleaning (optional ftfy + HTML unescape + whitespace collapse).
+- `_resolve_max_sequence_length` (function): Chooses a safe tokenizer max length, clamped to `WAN22_DEFAULT_MAX_SEQUENCE_LENGTH`.
 - `get_text_context` (function): Builds text conditioning/context (prompt + negative prompt) for the WAN transformer.
 """
 
 from __future__ import annotations
 
+import html
 import os
+import re
 from typing import Any, Optional, Tuple
 
 import torch
 
 from .config import as_torch_dtype, resolve_device_name
 from .diagnostics import get_logger
+
+
+WAN22_DEFAULT_MAX_SEQUENCE_LENGTH = 512
+
+
+def _prompt_clean(text: str) -> str:
+    text = str(text or "")
+    try:
+        import ftfy  # type: ignore
+
+        text = ftfy.fix_text(text)
+    except ModuleNotFoundError:
+        pass
+    text = html.unescape(html.unescape(text))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _resolve_max_sequence_length(tok: Any) -> int:
+    raw = getattr(tok, "model_max_length", None)
+    try:
+        raw_int = int(raw) if raw is not None else WAN22_DEFAULT_MAX_SEQUENCE_LENGTH
+    except Exception:
+        raw_int = WAN22_DEFAULT_MAX_SEQUENCE_LENGTH
+
+    # Some tokenizers expose an absurd sentinel (e.g. 1e30); clamp to WAN defaults.
+    max_len = min(raw_int, WAN22_DEFAULT_MAX_SEQUENCE_LENGTH)
+    if max_len <= 0:
+        max_len = WAN22_DEFAULT_MAX_SEQUENCE_LENGTH
+    return int(max_len)
 
 
 def get_text_context(
@@ -91,10 +126,15 @@ def get_text_context(
     except Exception as exc:
         raise RuntimeError(f"WAN22 GGUF: failed to load tokenizer from '{tk_dir}': {exc}") from exc
 
+    max_sequence_length = _resolve_max_sequence_length(tok)
+    prompt_cleaned = _prompt_clean(prompt)
+    negative_cleaned = _prompt_clean(negative or "")
+
     log.info(
-        "[wan22.gguf] tokenizer loaded: dir=%s model_max_len=%s",
+        "[wan22.gguf] tokenizer loaded: dir=%s model_max_len=%s effective_max_len=%d",
         tk_dir,
         str(getattr(tok, "model_max_length", None)),
+        int(max_sequence_length),
     )
 
     # Effective TE preferences (extras > env > defaults)
@@ -137,10 +177,12 @@ def get_text_context(
             raise RuntimeError("WAN22 TE CUDA kernel required but not available. Build wan_te_cuda.")
 
         inputs = tok(
-            [prompt or "", negative or ""],
+            [prompt_cleaned, negative_cleaned],
             padding="max_length",
             truncation=True,
-            max_length=225,
+            max_length=int(max_sequence_length),
+            add_special_tokens=True,
+            return_attention_mask=True,
             return_tensors="pt",
         )
         input_ids = inputs["input_ids"]  # [2,L]
@@ -181,8 +223,14 @@ def get_text_context(
                 log_metrics=True,
             )
 
-        p = _run_one(input_ids[0:1], attn_mask[0:1] if attn_mask is not None else None)
-        n = _run_one(input_ids[1:2], attn_mask[1:2] if attn_mask is not None else None)
+        p_mask = (attn_mask[0:1] if attn_mask is not None else None)
+        n_mask = (attn_mask[1:2] if attn_mask is not None else None)
+        p = _run_one(input_ids[0:1], p_mask)
+        n = _run_one(input_ids[1:2], n_mask)
+        if p_mask is not None:
+            p = p * p_mask.to(dtype=p.dtype, device=p.device).unsqueeze(-1)
+        if n_mask is not None:
+            n = n * n_mask.to(dtype=n.dtype, device=n.device).unsqueeze(-1)
         log.info(
             "[wan22.gguf] TE(fp8) outputs: prompt=%s negative=%s dtype=%s device=%s",
             tuple(p.shape),
@@ -232,15 +280,26 @@ def get_text_context(
     except Exception:
         enc = enc.to(device=dev)
 
-    def _do(txt: str) -> torch.Tensor:
-        inputs = tok([txt], padding="max_length", truncation=True, max_length=225, return_tensors="pt")
+    def _do(clean_txt: str) -> torch.Tensor:
+        inputs = tok(
+            [clean_txt],
+            padding="max_length",
+            truncation=True,
+            max_length=int(max_sequence_length),
+            add_special_tokens=True,
+            return_attention_mask=True,
+            return_tensors="pt",
+        )
         inputs = {k: v.to(dev) for k, v in inputs.items()}
         with torch.no_grad():
             out = enc(**inputs).last_hidden_state
+            mask = inputs.get("attention_mask", None)
+            if mask is not None:
+                out = out * mask.to(dtype=out.dtype).unsqueeze(-1)
             return out.to(as_torch_dtype(dtype))
 
-    p = _do(prompt or "")
-    n = _do(negative or "") if negative is not None else _do("")
+    p = _do(prompt_cleaned)
+    n = _do(negative_cleaned)
 
     cfg_hidden = int(getattr(getattr(enc, "config", None), "hidden_size", p.shape[-1]))
     if int(p.shape[-1]) != cfg_hidden:

@@ -8,14 +8,14 @@ Required Notice: see NOTICE
 
 Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
 Defines `CodexObjects` and the shared engine load/unload path, including fail-fast `.gguf` core-only validation and explicit `vae_source`/`tenc_source`
-selection.
+selection. Also provides canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
-- `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration and runtime helpers
-  including explicit asset-source selection (`vae_source`/`tenc_source`) and fail-fast validation for core-only `.gguf` checkpoints (subclasses implement
-  task-specific inference behavior and required component sets).
+- `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration, canonical task wrappers
+  (e.g. `txt2img` delegates to `apps/backend/use_cases/txt2img.py`), and runtime helpers including explicit asset-source selection
+  (`vae_source`/`tenc_source`) and fail-fast validation for core-only `.gguf` checkpoints (subclasses implement required component sets).
 """
 
 from __future__ import annotations
@@ -737,188 +737,11 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     # ------------------------------------------------------------------ Tasks
     def txt2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:
-        """Generic txt2img implementation using the staged pipeline runner.
-        
-        This default implementation uses the same pipeline as SDXL.
-        Subclasses can override for custom behavior.
-        
-        Required engine methods:
-        - get_learned_conditioning(prompts) -> conditioning dict or cross-attn tensor
-        - decode_first_stage(latents) -> decoded tensor
-        """
-        import json
-        import secrets
-        import threading
-        import time
-        
-        from apps.backend.core.requests import Txt2ImgRequest, ProgressEvent, ResultEvent
-        from apps.backend.core.state import state as backend_state
-        from apps.backend.engines.util.adapters import build_txt2img_processing
-        from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
-        from apps.backend.runtime.processing.conditioners import decode_latent_batch
-        from apps.backend.runtime.workflows.image_io import latents_to_pil
-        from apps.backend.runtime.text_processing import last_extra_generation_params
-        
-        self.ensure_loaded()
+        """Canonical txt2img wrapper (delegates to the use-case)."""
 
-        if not isinstance(request, Txt2ImgRequest):
-            raise TypeError(f"{self.__class__.__name__}.txt2img expects Txt2ImgRequest")
+        from apps.backend.use_cases.txt2img import run_txt2img as _run_txt2img
 
-        # Build processing descriptor from request
-        raw_seed = int(getattr(request, "seed", -1) or -1)
-        if raw_seed < 0:
-            raw_seed = secrets.randbits(32) & 0x7FFFFFFF
-
-        proc = build_txt2img_processing(request)
-        proc.sd_model = self
-        proc.seed = raw_seed
-        proc.seeds = [raw_seed]
-        proc.subseed = -1
-        proc.subseeds = [-1]
-
-        # Defer conditioning to the pipeline runner
-        prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
-        prompts = prompt_texts
-        seeds = [raw_seed]
-        subseeds = [-1]
-        subseed_strength = 0.0
-        cond = None
-        uncond = None
-
-        # Run pipeline on a worker thread while streaming progress
-        result: dict[str, Any] = {"latents": None, "error": None}
-        sampling_times: dict[str, float | None] = {"start": None, "end": None}
-        done = threading.Event()
-
-        def _worker() -> None:
-            try:
-                sampling_times["start"] = time.perf_counter()
-                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
-
-                with smart_runtime_overrides(
-                    smart_offload=bool(getattr(proc, "smart_offload", False)),
-                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-                    smart_cache=bool(getattr(proc, "smart_cache", False)),
-                ):
-                    result["latents"] = _generate_txt2img(
-                        processing=proc,
-                        conditioning=cond,
-                        unconditional_conditioning=uncond,
-                        seeds=seeds,
-                        subseeds=subseeds,
-                        subseed_strength=subseed_strength,
-                        prompts=prompts,
-                    )
-            except Exception as _exc:
-                result["error"] = _exc
-            finally:
-                sampling_times["end"] = time.perf_counter()
-                done.set()
-
-        threading.Thread(target=_worker, name=f"{self.engine_id}-txt2img-worker", daemon=True).start()
-
-        t0 = time.perf_counter()
-        last_step = -1
-        while not done.is_set():
-            try:
-                step = int(getattr(backend_state, "sampling_step", 0) or 0)
-                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
-            except Exception:
-                step, total = 0, 0
-            if total > 0 and step != last_step:
-                elapsed = time.perf_counter() - t0
-                eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
-                pct = max(5.0, min(99.0, (step / total) * 100.0))
-                yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
-                last_step = step
-            time.sleep(0.12)
-
-        if result["error"] is not None:
-            raise result["error"]
-        latents = result["latents"]
-
-        if not isinstance(latents, torch.Tensor):
-            raise RuntimeError(
-                f"txt2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
-            )
-
-        # Decode to RGB and package result
-        decode_start = time.perf_counter()
-        # Check if bypass already decoded (latents has _already_decoded flag)
-        if getattr(latents, "_already_decoded", False):
-            decoded = latents  # Skip decode, already RGB tensor
-        else:
-            decoded = decode_latent_batch(self, latents)
-        images = latents_to_pil(decoded)
-        decode_end = time.perf_counter()
-
-        # Build result metadata
-        try:
-            primary_prompt = getattr(proc, "primary_prompt", proc.prompt)
-        except Exception:
-            primary_prompt = str(getattr(proc, "prompt", ""))
-
-        try:
-            primary_negative = getattr(proc, "primary_negative_prompt", proc.negative_prompt)
-        except Exception:
-            primary_negative = str(getattr(proc, "negative_prompt", ""))
-
-        all_seeds = list(getattr(proc, "all_seeds", []) or [])
-        seed_value = None
-        if all_seeds:
-            try:
-                seed_value = int(all_seeds[0])
-            except Exception:
-                seed_value = None
-        else:
-            raw_seed = getattr(proc, "seed", None)
-            if raw_seed is not None:
-                try:
-                    seed_value = int(raw_seed)
-                except Exception:
-                    seed_value = None
-
-        extra_params: dict[str, object] = {}
-        try:
-            extra_params.update(last_extra_generation_params)
-            extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
-        except Exception:
-            extra_params = getattr(proc, "extra_generation_params", {}) or {}
-
-        info: dict[str, object] = {
-            "engine": self.engine_id,
-            "task": "txt2img",
-            "width": int(proc.width),
-            "height": int(proc.height),
-            "steps": int(proc.steps),
-            "guidance_scale": float(proc.guidance_scale),
-            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
-            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
-        }
-        if primary_prompt:
-            info["prompt"] = str(primary_prompt)
-        if primary_negative:
-            info["negative_prompt"] = str(primary_negative)
-        if seed_value is not None:
-            info["seed"] = int(seed_value)
-        if all_seeds:
-            info["all_seeds"] = [int(s) for s in all_seeds]
-        if extra_params:
-            info["extra"] = extra_params
-        
-        timings: dict[str, float] = {}
-        try:
-            if sampling_times["start"] is not None and sampling_times["end"] is not None:
-                timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
-            timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
-            info["timings_ms"] = timings
-        except Exception:
-            pass
-
-        # Post-job cleanup hook
-        self._post_txt2img_cleanup()
-
-        yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
+        yield from _run_txt2img(engine=self, request=request)
 
     def img2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:
         """Generic img2img implementation over the native workflow helpers.

@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RunConfig` (class): Full run configuration for txt2vid/img2vid (assets, devices/dtypes, stage configs).
 - `run_txt2vid` (function): Batch txt2vid runner (GGUF stages → sampling → VAE decode).
 - `stream_txt2vid` (function): Streaming txt2vid generator yielding progress events and final frames.
-- `run_img2vid` (function): Batch img2vid runner (VAE encode init → stages → VAE decode).
+- `run_img2vid` (function): Batch img2vid runner (encode I2V conditioning video → seeded noise state → stages → VAE decode).
 - `stream_img2vid` (function): Streaming img2vid generator yielding progress events and final frames.
 - `__all__` (constant): Export list for the WAN22 GGUF runtime facade.
 """

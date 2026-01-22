@@ -3,7 +3,7 @@
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-22
 Status: Active
 
 ## Purpose
@@ -16,7 +16,7 @@ Status: Active
 - `run.py`: entrypoints `run_txt2vid`/`run_img2vid` + versões streaming; orquestra TE, sampling por stage e VAE IO.
 - `sampling.py`: geometria + scheduler + loop de sampling por stage (`sample_stage_latents*`) e adaptação de shape/I2V channels.
 - `text_context.py`: tokenizer + text encoder (strict local-files-only) para embeddings de prompt/negative.
-- `vae_io.py`: VAE encode/decode + latent norms (img2vid init + decode frames), com offload.
+- `vae_io.py`: VAE encode/decode + latent norms (I2V conditioning encode + decode frames), com offload.
 - `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., bnb_dtype="gguf")` + remap de chaves.
 - `stage_lora.py`: aplicação de LoRA por stage (High/Low) no caminho GGUF (LightX2V), com mapping Diffusers→Codex e modo global `CODEX_LORA_APPLY_MODE`.
 - `paths.py`: normalização de paths Windows (`C:\\...`) para WSL (`/mnt/c/...`) usada por config + loaders (evita drift).
@@ -30,7 +30,7 @@ Status: Active
 
 ## Notes
 - Ensure updates stay synchronized with `apps/backend/engines/wan22/` and the shared GGUF quantization/ops layer (`apps/backend/quantization/**`, `apps/backend/runtime/ops/operations.py`, `apps/backend/runtime/ops/operations_gguf.py`); the production GGUF runtime remains `wan22.py`.
-- 2025-12-04: `_vae_encode_init`/`_get_text_context` continuam a requerer `vae_dir`/`text_encoder_dir` explícitos; esses diretórios são normalmente preenchidos via WAN22 defaults em `apps/paths.json` quando engines GGUF não recebem `extras` explícitos.
+- 2025-12-04: VAE/TE loading in the GGUF runtime requires explicit `vae_dir`/`text_encoder_dir`-style assets; these are normally provided via request `extras` (sha-only), with UI defaults resolved from `apps/paths.json` where applicable.
 - 2025-12-06: `streaming/` adiciona infraestrutura de streaming de core para WAN 2.2 14B, operando em nível de `nn.Module` (wrapper `StreamedWanTransformer`) com offload por segmentos.
 - 2025-12-06: `model.py`/`sampler.py` introduzem o caminho nn.Module (`WanTransformer2DModel` + `WanVideoSampler`/`sample_txt2vid`) espelhando a arquitetura da branch `feature/flux-core-streaming`; o engine 14B (`Wan2214BEngine`) já consome esse caminho para `txt2vid` quando o runtime/spec Codex está ativo (flag + `_bundle`), mantendo GGUF/Diffusers como defaults.
 - 2025-12-13: GGUF WAN22 deixou de usar o runner WAN-específico (`WanDiTGGUF`) e passou a carregar o stage GGUF direto em `WanTransformer2DModel`, com SDPA policy/chunk centralizados em `sdpa.py` e dependência de `CodexOperationsGGUF` para suportar módulos GGUF em `nn.Module`.
@@ -44,6 +44,7 @@ Status: Active
 - 2026-01-18: Centralized GGUF state-dict loading in runtime IO (`apps/backend/runtime/checkpoint/io.py:load_gguf_state_dict`) for WAN22 (stage loader + text encoder GGUF path), avoiding private helpers and direct quantization imports.
 - 2026-01-20: WAN22 GGUF agora suporta LoRA por stage (High/Low) via `wan_high/wan_low.lora_sha` (sha → `.safetensors`) + `lora_weight` e aplica no load do stage; modo global `CODEX_LORA_APPLY_MODE=merge|online` (default `merge`).
 - 2026-01-21: WAN22 GGUF now honors Smart flags in video runs: TE runs on CUDA for embedding generation and offloads to CPU when Smart Offload is enabled; VAE IO honors `vae_always_tiled` (Diffusers tiling) and retries encode/decode on CPU under Smart Fallback.
+- 2026-01-22: WAN22 GGUF I2V assembly is now upstream-faithful: seed `lat16` from RNG at `sigma_init`, build `mask4` with Diffusers temporal layout, and encode `img16` from a deterministic VAE encode of Diffusers-style `video_condition` (frame0=init image, rest=0.5 fill). Legacy “assemble Cin=36 from lat16 alone” fallback is removed (fail loud).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

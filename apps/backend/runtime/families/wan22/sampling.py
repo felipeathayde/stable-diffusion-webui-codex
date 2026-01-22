@@ -19,7 +19,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
 - `time_snr_shift` (function): Time/SNR shift helper used in scheduler-time transformations.
 - `prepare_stage_seed_latents` (function): Prepares seeded stage latents (for determinism across runs/stages).
-- `assemble_i2v_input` (function): Builds img2vid latent inputs to match expected input channels/order.
+- `build_i2v_mask4` (function): Builds the 4-channel I2V first-frame mask (Diffusers-compatible; latent time scale=4).
+- `assemble_i2v_state` (function): Assembles I2V model state `[lat16 + mask4 + img16]` (order-aware, strict).
 - `sample_stage_latents` (function): Core latent sampling for a single WAN stage (high/low) using the selected scheduler/sampler.
 - `sample_stage_latents_generator` (function): Generator version of stage sampling for streaming progress (yields intermediate states).
 """
@@ -266,54 +267,143 @@ def prepare_stage_seed_latents(
         sliced = latents[:, :16, ...] if resolve_i2v_order() == "lat_first" else latents[:, -16:, ...]
         return ensure_latent_shape(sliced, target_geom)
     if c_src == 16 and c_dst == 36:
-        assembled = assemble_i2v_input(latents, expected_cin=c_dst, logger=logger)
-        return ensure_latent_shape(assembled, target_geom)
+        raise RuntimeError(
+            "WAN22 GGUF: cannot assemble I2V (Cin=36) state from 16-channel latents alone. "
+            "Build the full I2V state explicitly (noise latents + mask4 + image_latents) in the img2vid runner."
+        )
     raise RuntimeError(f"Cannot adapt latent channels from {c_src} to {c_dst}; unsupported hand-off configuration")
 
 
-def assemble_i2v_input(
+
+def build_i2v_mask4(
+    *,
+    batch: int,
+    num_frames: int,
+    latent_frames: int,
+    height: int,
+    width: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    scale_factor_temporal: int = 4,
+) -> torch.Tensor:
+    """Build the 4-channel I2V mask (Diffusers-compatible).
+
+    Diffusers (WanImageToVideoPipeline.prepare_latents) builds a 4-channel mask by:
+    - creating a 1-channel per-frame mask at *output* time resolution,
+    - repeating the first frame mask by `scale_factor_temporal`,
+    - reshaping into `[B, 4, T_lat, H_lat, W_lat]` where `T_lat=(T_out-1)//scale+1`.
+
+    For the I2V case (no `last_image`), the mask is 1 on the first latent-time chunk and 0 elsewhere.
+    """
+
+    if num_frames <= 0:
+        raise RuntimeError(f"build_i2v_mask4: num_frames must be > 0, got {num_frames}")
+    if scale_factor_temporal <= 0:
+        raise RuntimeError(f"build_i2v_mask4: scale_factor_temporal must be > 0, got {scale_factor_temporal}")
+    if num_frames % scale_factor_temporal != 1:
+        raise RuntimeError(
+            "build_i2v_mask4: num_frames must satisfy num_frames % scale_factor_temporal == 1 "
+            f"(num_frames={num_frames} scale={scale_factor_temporal})"
+        )
+
+    expected_latent = int((int(num_frames) - 1) // int(scale_factor_temporal) + 1)
+    if int(latent_frames) != expected_latent:
+        raise RuntimeError(
+            "build_i2v_mask4: latent_frames mismatch "
+            f"(latent_frames={int(latent_frames)} expected={expected_latent} from num_frames={num_frames} scale={scale_factor_temporal})"
+        )
+
+    # mask_lat_size: [B,1,T_out,H_lat,W_lat]
+    mask_lat_size = torch.ones((int(batch), 1, int(num_frames), int(height), int(width)), device=device, dtype=dtype)
+    # I2V: only first frame is conditioned
+    if int(num_frames) > 1:
+        mask_lat_size[:, :, 1:int(num_frames)] = 0
+
+    # Expand first frame to cover the first latent-time chunk
+    first_frame_mask = mask_lat_size[:, :, 0:1]
+    first_frame_mask = torch.repeat_interleave(first_frame_mask, dim=2, repeats=int(scale_factor_temporal))
+    mask_lat_size = torch.cat([first_frame_mask, mask_lat_size[:, :, 1:, ...]], dim=2)
+
+    expected_frames = int(latent_frames) * int(scale_factor_temporal)
+    if int(mask_lat_size.shape[2]) != expected_frames:
+        raise RuntimeError(
+            "build_i2v_mask4: internal frame count mismatch after expansion "
+            f"(got={int(mask_lat_size.shape[2])} expected={expected_frames})"
+        )
+
+    # Reshape and transpose to `[B,4,T_lat,H_lat,W_lat]`
+    mask_lat_size = mask_lat_size.view(int(batch), -1, int(scale_factor_temporal), int(height), int(width))
+    mask_lat_size = mask_lat_size.transpose(1, 2).contiguous()
+    if tuple(mask_lat_size.shape) != (int(batch), int(scale_factor_temporal), int(latent_frames), int(height), int(width)):
+        raise RuntimeError(
+            "build_i2v_mask4: unexpected output shape "
+            f"(got={tuple(mask_lat_size.shape)} expected={(int(batch), int(scale_factor_temporal), int(latent_frames), int(height), int(width))})"
+        )
+    return mask_lat_size
+
+
+def assemble_i2v_state(
     latents: torch.Tensor,
     *,
+    mask4: torch.Tensor,
+    image_latents: torch.Tensor,
     expected_cin: int,
     logger: logging.Logger | None,
 ) -> torch.Tensor:
-    """Assemble I2V input volume to match expected Cin for patch embedding."""
+    """Assemble I2V model input state to match expected Cin for patch embedding.
+
+    This is the strict, canonical assembly for WAN I2V:
+    - `latents`: noise latents (16ch) at latent time resolution
+    - `mask4`: 4-channel first-frame mask at latent time resolution
+    - `image_latents`: VAE-encoded video_condition latents (16ch) at latent time resolution
+    """
 
     if latents.ndim != 5:
-        raise RuntimeError(f"assemble_i2v_input: expected 5D latents [B,C,T,H,W], got {tuple(latents.shape)}")
-    b, c, t, h, w = latents.shape
-    extra = expected_cin - c
-    if extra <= 0:
-        return latents
+        raise RuntimeError(f"assemble_i2v_state: expected 5D latents [B,C,T,H,W], got {tuple(latents.shape)}")
+    if mask4.ndim != 5:
+        raise RuntimeError(f"assemble_i2v_state: expected 5D mask4 [B,4,T,H,W], got {tuple(mask4.shape)}")
+    if image_latents.ndim != 5:
+        raise RuntimeError(f"assemble_i2v_state: expected 5D image_latents [B,16,T,H,W], got {tuple(image_latents.shape)}")
 
-    if extra == 20:
-        # Build mask (zeros if not provided): [B,4,T,H,W]
-        mask = latents.new_zeros((b, 4, t, h, w))
-        # Image features: reuse VAE latents as 16-ch features by default
-        image_feats = latents[:, : min(16, c)]
-        if image_feats.shape[1] < 16:
-            pad = 16 - image_feats.shape[1]
-            image_feats = torch.cat([image_feats, latents.new_zeros((b, pad, t, h, w))], dim=1)
+    b, c_lat, t, h, w = latents.shape
+    if mask4.shape[0] != b or mask4.shape[2:] != (t, h, w):
+        raise RuntimeError(
+            "assemble_i2v_state: mask4 shape mismatch "
+            f"(mask4={tuple(mask4.shape)} latents={tuple(latents.shape)})"
+        )
+    if image_latents.shape[0] != b or image_latents.shape[2:] != (t, h, w):
+        raise RuntimeError(
+            "assemble_i2v_state: image_latents shape mismatch "
+            f"(image_latents={tuple(image_latents.shape)} latents={tuple(latents.shape)})"
+        )
+    if int(mask4.shape[1]) != 4:
+        raise RuntimeError(f"assemble_i2v_state: expected mask4 to have 4 channels, got {int(mask4.shape[1])}")
+    if int(image_latents.shape[1]) != 16:
+        raise RuntimeError(
+            f"assemble_i2v_state: expected image_latents to have 16 channels, got {int(image_latents.shape[1])}"
+        )
 
-        order = resolve_i2v_order()
-        if order == "lat_first":
-            assembled = torch.cat([latents, mask, image_feats], dim=1)
-            layout = f"[lat{c} + mask4 + img16]"
-        else:
-            assembled = torch.cat([mask, image_feats, latents], dim=1)
-            layout = f"[mask4 + img16 + lat{c}]"
-        if assembled.shape[1] != expected_cin:
-            raise RuntimeError(
-                f"I2V assembly produced {assembled.shape[1]} channels, expected {expected_cin} (mask4 + img16 + lat{c})."
-            )
-        if logger is not None:
-            logger.info("[wan22.gguf] i2v assemble: order=%s %s → C=%d", order, layout, assembled.shape[1])
-        return assembled
+    expected = int(c_lat) + 4 + 16
+    if int(expected_cin) != expected:
+        raise RuntimeError(
+            "assemble_i2v_state: expected_cin mismatch "
+            f"(expected_cin={int(expected_cin)} expected={expected} from latents={int(c_lat)} + mask4 + img16)"
+        )
 
-    raise RuntimeError(
-        f"WAN22 GGUF (img2vid): expected C_in={expected_cin} but VAE produced C={c}. "
-        f"I2V assembly requires extra={extra} channels (mask+image). Unsupported combo."
-    )
+    order = resolve_i2v_order()
+    if order == "lat_first":
+        assembled = torch.cat([latents, mask4, image_latents], dim=1)
+        layout = f"[lat{int(c_lat)} + mask4 + img16]"
+    else:
+        assembled = torch.cat([mask4, image_latents, latents], dim=1)
+        layout = f"[mask4 + img16 + lat{int(c_lat)}]"
+    if int(assembled.shape[1]) != int(expected_cin):
+        raise RuntimeError(
+            f"assemble_i2v_state: produced C={int(assembled.shape[1])}, expected C_in={int(expected_cin)} ({layout})."
+        )
+    if logger is not None:
+        logger.info("[wan22.gguf] i2v assemble: order=%s %s → C=%d", order, layout, int(assembled.shape[1]))
+    return assembled
 
 
 def sample_stage_latents(

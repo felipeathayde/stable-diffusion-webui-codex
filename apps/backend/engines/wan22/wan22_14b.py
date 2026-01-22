@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN 2.2 14B engine (Codex runtime assembly) for txt2vid/img2vid.
+Purpose: WAN 2.2 14B engine (Codex runtime assembly) for txt2vid.
 Resolves the model bundle, assembles a `WanEngineRuntime` via `CodexWan22Factory`, and executes video requests with optional core
 streaming settings (Flux-like engine pattern).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Wan2214BEngine` (class): Codex diffusion engine for WAN22 14B; assembles runtime, handles txt2vid/img2vid runs, and streams progress/events
+- `Wan2214BEngine` (class): Codex diffusion engine for WAN22 14B; assembles runtime and handles txt2vid runs (img2vid is not yet ported).
   (contains nested helpers for core streaming and bundle resolution).
 """
 
@@ -23,7 +23,7 @@ from typing import Any, Iterator, Mapping, Optional
 import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
-from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest, Img2VidRequest
+from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
@@ -51,7 +51,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2VID, TaskType.IMG2VID),
+            tasks=(TaskType.TXT2VID,),
             model_types=("wan-2.2-14b",),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
@@ -299,21 +299,5 @@ class Wan2214BEngine(CodexDiffusionEngine):
                 "info": {"engine": self.engine_id, "task": "txt2vid", "error": str(e)},
             })
 
-    def img2vid(self, request: Img2VidRequest, **kwargs: Any) -> Iterator[InferenceEvent]:
-        """Generate video from image."""
-        self.ensure_loaded()
-        self._require_runtime()
-
-        if getattr(request, "init_image", None) is None:
-            raise RuntimeError("img2vid requires 'init_image'")
-
-        yield ProgressEvent(stage="prepare", percent=0.0, message="Preparing img2vid")
-
-        # TODO: Implement img2vid pipeline
-        logger.warning("img2vid not fully implemented yet")
-
-        yield ProgressEvent(stage="complete", percent=1.0, message="Generation complete")
-        yield ResultEvent(payload={
-            "images": [],
-            "info": {"engine": self.engine_id, "task": "img2vid", "status": "placeholder"},
-        })
+    def img2vid(self, request: Any, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
+        raise NotImplementedError("wan22_14b img2vid not yet ported")

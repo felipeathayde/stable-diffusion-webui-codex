@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN22 GGUF VAE IO helpers (init encode + decode to frames).
+Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads the WAN VAE via Diffusers, applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `load_vae` (function): Loads the WAN VAE component (from directory or single-file weights).
-- `vae_encode_init` (function): Encodes an init image into latents for img2vid.
+- `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode).
 - `vae_decode_video` (function): Decodes video latents to frames; can validate the expected output frame count.
 - `decode_latents_to_frames` (function): Adapts latents to the expected 16-channel VAE decode input and returns frames (optional frame-count validation).
 """
@@ -62,9 +62,92 @@ def load_vae(vae_path: Optional[str], *, torch_dtype: torch.dtype, enable_tiling
     raise RuntimeError(f"WAN22 GGUF: VAE path not found: {path}")
 
 
-def vae_encode_init(
+def _retrieve_latents(encoder_output: Any, *, sample_mode: str) -> torch.Tensor:
+    dist = getattr(encoder_output, "latent_dist", None)
+    if dist is not None:
+        mode = str(sample_mode or "").strip().lower()
+        if mode in {"mode", "argmax"}:
+            return dist.mode()
+        if mode in {"sample", ""}:
+            return dist.sample()
+        raise ValueError(f"Unsupported VAE sample_mode: {sample_mode!r} (expected 'mode' or 'sample')")
+    if hasattr(encoder_output, "latents"):
+        return encoder_output.latents
+    raise AttributeError("VAE encode output has neither latent_dist nor latents")
+
+
+def _maybe_resize_hw(x: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
+    if x.ndim != 4:
+        return x
+    _, _, h, w = x.shape
+    if int(h) == int(height) and int(w) == int(width):
+        return x
+    import torch.nn.functional as F
+
+    return F.interpolate(x, size=(int(height), int(width)), mode="bilinear", align_corners=False)
+
+
+def _prepare_init_image_tensor(
     init_image: Any,
     *,
+    device: str,
+    dtype: str,
+    height: int,
+    width: int,
+) -> torch.Tensor:
+    torch_dtype = as_torch_dtype(dtype)
+    dev_name = resolve_device_name(device)
+    target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
+
+    if hasattr(init_image, "to"):
+        t = init_image
+        if hasattr(t, "ndim") and int(t.ndim) == 5:
+            t = t[:, :, 0, ...]
+        if hasattr(t, "ndim") and int(t.ndim) == 3:
+            t = t.unsqueeze(0)
+        if not hasattr(t, "ndim") or int(getattr(t, "ndim", 0)) != 4:
+            raise RuntimeError(
+                "WAN22 GGUF: init_image tensor must be 4D [B,C,H,W] (or 5D [B,C,T,H,W]); "
+                f"got {getattr(t, 'shape', None)}"
+            )
+        try:
+            t = t.to(target).to(torch_dtype)
+        except Exception:
+            t = t.to(target)
+        t = _maybe_resize_hw(t, height=height, width=width)
+        return t
+
+    from PIL import Image
+    import numpy as np
+
+    if isinstance(init_image, Image.Image):
+        img = init_image.convert("RGB")
+        img = img.resize((int(width), int(height)), resample=Image.BICUBIC)
+        arr = np.array(img).astype("float32") / 255.0
+        t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+        t = t.to(target).to(torch_dtype)
+        return t * 2.0 - 1.0
+
+    arr = np.asarray(init_image).astype("float32")
+    if arr.ndim == 3 and arr.shape[2] in (1, 3):
+        arr = arr / 255.0 if arr.max() > 1.0 else arr
+        t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+    elif arr.ndim == 3 and arr.shape[0] in (1, 3):
+        t = torch.from_numpy(arr).unsqueeze(0)
+    else:
+        raise RuntimeError("WAN22 GGUF: unsupported init_image array shape")
+
+    t = t.to(target).to(torch_dtype)
+    t = _maybe_resize_hw(t, height=height, width=width)
+    return t * 2.0 - 1.0
+
+
+def vae_encode_video_condition(
+    init_image: Any,
+    *,
+    num_frames: int,
+    height: int,
+    width: int,
     device: str,
     dtype: str,
     vae_dir: str | None = None,
@@ -83,46 +166,34 @@ def vae_encode_init(
 
     vae = vae.to(device=target, dtype=torch_dtype)
 
-    # Preprocess init image into [-1,1] tensor [B,C,T,H,W] with T=1
-    if not hasattr(init_image, "to"):
-        from PIL import Image
-        import numpy as np
+    if int(num_frames) <= 0:
+        raise RuntimeError(f"WAN22 GGUF: invalid num_frames={num_frames} for I2V video_condition")
 
-        if isinstance(init_image, Image.Image):
-            img = init_image.convert("RGB")
-            arr = np.array(img).astype("float32") / 255.0
-            t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
-            t = t.to(target).to(torch_dtype)
-            init_image = t * 2.0 - 1.0
-        else:
-            arr = np.asarray(init_image).astype("float32")
-            if arr.ndim == 3 and arr.shape[2] in (1, 3):
-                arr = arr / 255.0 if arr.max() > 1.0 else arr
-                t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
-            elif arr.ndim == 3 and arr.shape[0] in (1, 3):
-                t = torch.from_numpy(arr).unsqueeze(0)
-            else:
-                raise RuntimeError("WAN22 GGUF: unsupported init_image array shape")
-            t = t.to(target).to(torch_dtype)
-            init_image = t * 2.0 - 1.0
+    image = _prepare_init_image_tensor(init_image, device=device, dtype=dtype, height=height, width=width)
+    if image.ndim != 4:
+        raise RuntimeError(
+            "WAN22 GGUF: expected preprocessed init image to be 4D [B,C,H,W], "
+            f"got {tuple(image.shape)}"
+        )
 
-    if hasattr(init_image, "ndim"):
-        if init_image.ndim == 4:
-            init_image = init_image.unsqueeze(2)
-        elif init_image.ndim != 5:
-            raise RuntimeError("WAN22 GGUF: init_image must be 4D (B,C,H,W) or 5D (B,C,T,H,W) after preprocessing")
+    # Diffusers-style I2V conditioning video: first frame is the init image; remaining frames are 0 (i.e., 0.5 gray).
+    image = image.unsqueeze(2)  # [B,C,1,H,W]
+    video_condition = torch.cat(
+        [image, image.new_zeros((image.shape[0], image.shape[1], int(num_frames) - 1, int(height), int(width)))],
+        dim=2,
+    )
 
     with torch.no_grad():
         try:
-            encoded = vae.encode(init_image).latent_dist.sample()
+            encoded = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
         except torch.OutOfMemoryError as exc:
             if target != "cuda" or not smart_fallback_enabled():
                 raise
-            log.warning("[wan22.gguf] VAE encode OOM on CUDA; retrying on CPU.")
+            log.warning("[wan22.gguf] VAE encode (video_condition) OOM on CUDA; retrying on CPU.")
             cuda_empty_cache(logger, label="vae-encode-oom")
             vae = vae.to(device="cpu", dtype=torch.float32)
-            init_image = init_image.to(device="cpu", dtype=torch.float32)
-            encoded = vae.encode(init_image).latent_dist.sample()
+            video_condition = video_condition.to(device="cpu", dtype=torch.float32)
+            encoded = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
         encoded = norm.process_in(encoded)
 
     if offload_after:

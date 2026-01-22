@@ -24,6 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 import re
 from typing import Any, Mapping, Optional
@@ -212,13 +213,155 @@ def build_wan22_gguf_run_config(
                     )
                 raise RuntimeError(f"WAN22 GGUF: '{stage_name}.{key}' is not supported (use Diffusers path).")
 
-    default_steps = int(getattr(request, "steps", 12) or 12)
+    total_steps = int(getattr(request, "steps", 12) or 12)
+    if total_steps < 2:
+        raise RuntimeError(f"WAN22 GGUF requires steps >= 2, got: {total_steps}")
     default_cfg = getattr(request, "guidance_scale", None)
+
+    vendor_dir = str(meta_dir or "").strip()
+    vendor_dir = os.path.expanduser(vendor_dir)
+    if not os.path.isdir(os.path.join(vendor_dir, "scheduler")):
+        parent = os.path.dirname(vendor_dir)
+        if parent and os.path.isdir(os.path.join(parent, "scheduler")):
+            vendor_dir = parent
+    model_index_path = os.path.join(vendor_dir, "model_index.json")
+    if not os.path.isfile(model_index_path):
+        raise RuntimeError(f"WAN22 GGUF: missing model_index.json under: {vendor_dir!r}")
+    try:
+        model_index = json.loads(open(model_index_path, encoding="utf-8").read())
+    except Exception as exc:  # noqa: BLE001 - strict decode
+        raise RuntimeError(f"WAN22 GGUF: invalid model_index.json under {vendor_dir!r}: {exc}") from exc
+    if not isinstance(model_index, dict):
+        raise RuntimeError(f"WAN22 GGUF: model_index.json must be a JSON object: {model_index_path}")
+    boundary_ratio_raw = model_index.get("boundary_ratio")
+    if boundary_ratio_raw is None:
+        raise RuntimeError(f"WAN22 GGUF: model_index.json missing boundary_ratio: {model_index_path}")
+    try:
+        boundary_ratio = float(boundary_ratio_raw)
+    except Exception as exc:  # noqa: BLE001 - strict parsing
+        raise RuntimeError(f"WAN22 GGUF: invalid boundary_ratio={boundary_ratio_raw!r} in {model_index_path}") from exc
+    if not (0.0 < boundary_ratio < 1.0):
+        raise RuntimeError(
+            f"WAN22 GGUF: boundary_ratio must be in (0,1), got {boundary_ratio} in {model_index_path}"
+        )
+
+    from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+
+    default_flow_shift = flow_shift_spec_from_repo_dir(vendor_dir).resolve()
+    hi_flow_shift_override = None
+    if isinstance(wh_raw, dict) and wh_raw.get("flow_shift") is not None:
+        hi_flow_shift_override = _coerce_float(wh_raw.get("flow_shift"))
+        if hi_flow_shift_override is None:
+            raise RuntimeError(
+                f"WAN22 GGUF: wan_high.flow_shift must be a float, got: {wh_raw.get('flow_shift')!r}"
+            )
+    lo_flow_shift_override = None
+    if isinstance(wl_raw, dict) and wl_raw.get("flow_shift") is not None:
+        lo_flow_shift_override = _coerce_float(wl_raw.get("flow_shift"))
+        if lo_flow_shift_override is None:
+            raise RuntimeError(
+                f"WAN22 GGUF: wan_low.flow_shift must be a float, got: {wl_raw.get('flow_shift')!r}"
+            )
+    if hi_flow_shift_override is not None and lo_flow_shift_override is not None:
+        if float(hi_flow_shift_override) != float(lo_flow_shift_override):
+            raise RuntimeError(
+                "WAN22 GGUF: high/low flow_shift mismatch. "
+                f"wan_high.flow_shift={hi_flow_shift_override} wan_low.flow_shift={lo_flow_shift_override}. "
+                "Schedule must be continuous."
+            )
+    effective_flow_shift = float(hi_flow_shift_override or lo_flow_shift_override or default_flow_shift)
+
+    hi_steps_override = None
+    if isinstance(wh_raw, dict) and wh_raw.get("steps") is not None:
+        hi_steps_override = _coerce_int(wh_raw.get("steps"))
+        if hi_steps_override is None:
+            raise RuntimeError(f"WAN22 GGUF: wan_high.steps must be an int, got: {wh_raw.get('steps')!r}")
+    lo_steps_override = None
+    if isinstance(wl_raw, dict) and wl_raw.get("steps") is not None:
+        lo_steps_override = _coerce_int(wl_raw.get("steps"))
+        if lo_steps_override is None:
+            raise RuntimeError(f"WAN22 GGUF: wan_low.steps must be an int, got: {wl_raw.get('steps')!r}")
+
+    if hi_steps_override is not None and lo_steps_override is not None:
+        default_steps_high = int(hi_steps_override)
+        default_steps_low = int(lo_steps_override)
+        if default_steps_high < 1 or default_steps_low < 1:
+            raise RuntimeError(
+                f"WAN22 GGUF: stage steps must be >= 1 (wan_high.steps={default_steps_high} wan_low.steps={default_steps_low})."
+            )
+        if (default_steps_high + default_steps_low) != int(total_steps):
+            raise RuntimeError(
+                "WAN22 GGUF: stage steps must sum to request.steps for schedule continuity "
+                f"(request.steps={total_steps} wan_high.steps={default_steps_high} wan_low.steps={default_steps_low})."
+            )
+    elif hi_steps_override is not None:
+        default_steps_high = int(hi_steps_override)
+        default_steps_low = int(total_steps - default_steps_high)
+        if default_steps_high < 1 or default_steps_low < 1:
+            raise RuntimeError(
+                "WAN22 GGUF: stage steps must sum to request.steps for schedule continuity "
+                f"(request.steps={total_steps} wan_high.steps={default_steps_high} wan_low.steps={default_steps_low})."
+            )
+    elif lo_steps_override is not None:
+        default_steps_low = int(lo_steps_override)
+        default_steps_high = int(total_steps - default_steps_low)
+        if default_steps_high < 1 or default_steps_low < 1:
+            raise RuntimeError(
+                "WAN22 GGUF: stage steps must sum to request.steps for schedule continuity "
+                f"(request.steps={total_steps} wan_high.steps={default_steps_high} wan_low.steps={default_steps_low})."
+            )
+    else:
+        scheduler_config_path = None
+        for fname in ("scheduler_config.json", "config.json"):
+            candidate = os.path.join(vendor_dir, "scheduler", fname)
+            if os.path.isfile(candidate):
+                scheduler_config_path = candidate
+                break
+        if not scheduler_config_path:
+            raise RuntimeError(f"WAN22 GGUF: missing scheduler_config.json under: {vendor_dir!r}")
+        try:
+            scheduler_cfg = json.loads(open(scheduler_config_path, encoding="utf-8").read())
+        except Exception as exc:  # noqa: BLE001 - strict decode
+            raise RuntimeError(f"WAN22 GGUF: invalid scheduler config JSON: {scheduler_config_path}: {exc}") from exc
+        if not isinstance(scheduler_cfg, dict):
+            raise RuntimeError(f"WAN22 GGUF: scheduler config must be a JSON object: {scheduler_config_path}")
+
+        class_name = str(scheduler_cfg.get("_class_name") or "").strip()
+        if not class_name:
+            raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {scheduler_config_path}")
+
+        try:
+            import diffusers  # type: ignore
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "WAN22 GGUF: diffusers is required to derive default High/Low step split from boundary_ratio."
+            ) from exc
+        cls = getattr(diffusers, class_name, None)
+        if cls is None:
+            raise RuntimeError(
+                f"WAN22 GGUF: diffusers does not expose scheduler class {class_name!r} required by {scheduler_config_path}."
+            )
+        try:
+            sched = cls.from_pretrained(vendor_dir, subfolder="scheduler", local_files_only=True)
+        except TypeError:
+            sched = cls.from_pretrained(vendor_dir, subfolder="scheduler")
+        except Exception as exc:  # noqa: BLE001 - strict load
+            raise RuntimeError(f"WAN22 GGUF: failed to load scheduler from {vendor_dir!r}: {exc}") from exc
+        register = getattr(sched, "register_to_config", None)
+        if callable(register):
+            register(flow_shift=float(effective_flow_shift))
+        sched.set_timesteps(total_steps)
+        boundary_timestep = float(boundary_ratio) * float(getattr(sched.config, "num_train_timesteps", 1000))
+        hi_steps = int((sched.timesteps >= boundary_timestep).sum().item())
+        hi_steps = max(1, min(hi_steps, total_steps - 1))
+        default_steps_high = hi_steps
+        default_steps_low = int(total_steps - hi_steps)
 
     def _stage_opts(
         raw: dict | None,
         *,
         stage: str,
+        default_steps: int,
     ) -> tuple[str, int, Optional[float], Optional[str], Optional[str], Optional[float], Optional[int], Optional[str], Optional[float]]:
         if not isinstance(raw, dict):
             raise RuntimeError(f"WAN22 GGUF requires {stage}.model_dir (resolved from model_sha).")
@@ -232,7 +375,9 @@ def build_wan22_gguf_run_config(
             raise RuntimeError(f"WAN22 GGUF: {stage} model not found: {model_dir}")
 
         steps = _coerce_int(raw.get("steps"))
-        steps = int(steps) if steps is not None else default_steps
+        steps = int(steps) if steps is not None else int(default_steps)
+        if int(steps) < 1:
+            raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be >= 1, got: {steps}")
 
         cfg_scale = _coerce_float(raw.get("cfg_scale")) if raw.get("cfg_scale") is not None else default_cfg
         sampler = str(raw.get("sampler")).strip() if raw.get("sampler") else None
@@ -260,28 +405,21 @@ def build_wan22_gguf_run_config(
         return model_dir, steps, cfg_scale, sampler, scheduler, flow_shift, seed, lora_path, lora_weight
 
     hi_dir, hi_steps, hi_cfg, hi_sampler, hi_scheduler, hi_flow_shift, hi_seed, hi_lora_path, hi_lora_weight = _stage_opts(
-        wh_raw, stage="wan_high"
+        wh_raw, stage="wan_high", default_steps=default_steps_high
     )
     lo_dir, lo_steps, lo_cfg, lo_sampler, lo_scheduler, lo_flow_shift, _lo_seed, lo_lora_path, lo_lora_weight = _stage_opts(
-        wl_raw, stage="wan_low"
+        wl_raw, stage="wan_low", default_steps=default_steps_low
     )
 
-    if hi_flow_shift is None or lo_flow_shift is None:
-        from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+    explicit_stage_steps = bool((wh_raw and wh_raw.get("steps") is not None) or (wl_raw and wl_raw.get("steps") is not None))
+    if explicit_stage_steps and (int(hi_steps) + int(lo_steps)) != int(total_steps):
+        raise RuntimeError(
+            "WAN22 GGUF: stage steps must sum to request.steps for schedule continuity "
+            f"(request.steps={total_steps} wan_high.steps={hi_steps} wan_low.steps={lo_steps})."
+        )
 
-        vendor_dir = str(meta_dir or "").strip()
-        if not vendor_dir:
-            raise RuntimeError("WAN22 GGUF requires flow_shift defaults from scheduler_config.json, but wan_metadata_dir is missing.")
-        if not os.path.isdir(os.path.join(vendor_dir, "scheduler")):
-            parent = os.path.dirname(vendor_dir)
-            if parent and os.path.isdir(os.path.join(parent, "scheduler")):
-                vendor_dir = parent
-        spec = flow_shift_spec_from_repo_dir(vendor_dir)
-        default_flow_shift = spec.resolve()
-        if hi_flow_shift is None:
-            hi_flow_shift = default_flow_shift
-        if lo_flow_shift is None:
-            lo_flow_shift = default_flow_shift
+    hi_flow_shift = effective_flow_shift
+    lo_flow_shift = effective_flow_shift
 
     seed = getattr(request, "seed", None)
     if hi_seed is not None:

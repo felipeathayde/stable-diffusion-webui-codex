@@ -1,3 +1,7 @@
+**Wrong command:** `python -c "import torch; import diffusers; print(torch.__version__, diffusers.__version__)"`
+**Cause + fix:** `Repo dependencies live in the project venv at .venv/; calling the pyenv/system python will raise ModuleNotFoundError. Use the repo venv interpreter (and set PYTHONPATH when running tests/imports from the repo root).`
+**Correct command:** `PYTHONPATH=$PWD .venv/bin/python -c "import torch, diffusers; print(torch.__version__, diffusers.__version__)"`
+
 **Wrong command:** `cd tools/dev/import-graph-viewer && rm -rf dist`
 **Cause + fix:** `In this environment, destructive shell deletes can be blocked by policy. If you need to remove generated build artifacts, delete specific files via apply_patch (or avoid producing the artifacts in the first place).`
 **Correct command:** `apply_patch` with `*** Delete File:` entries for the generated files under `tools/dev/import-graph-viewer/dist/`.

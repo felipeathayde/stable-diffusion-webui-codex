@@ -177,36 +177,44 @@ def vae_decode_video(
 
     frames: list[Image.Image] = []
     with torch.no_grad():
+        lat = norm.process_out(video_latents)
+        try:
+            img = vae.decode(lat).sample
+        except torch.OutOfMemoryError:
+            if target != "cuda" or not smart_fallback_enabled():
+                raise
+            log.warning("[wan22.gguf] VAE decode OOM on CUDA; retrying on CPU.")
+            cuda_empty_cache(logger, label="vae-decode-oom")
+            vae = vae.to(device="cpu", dtype=torch.float32)
+            lat = lat.to(device="cpu", dtype=torch.float32)
+            img = vae.decode(lat).sample
+            target = "cpu"
+
+        log.info("[wan22.gguf] VAE decode output shape=%s", tuple(getattr(img, "shape", ())))
+        if not hasattr(img, "ndim") or img.ndim != 5:
+            raise RuntimeError(
+                f"WAN22 GGUF: VAE decode produced unexpected rank: shape={tuple(getattr(img,'shape',()))}; expected [B,C,T,H,W]"
+            )
+        if int(img.shape[0]) < 1 or int(img.shape[1]) != 3:
+            raise RuntimeError(
+                f"WAN22 GGUF: VAE decode produced unexpected shape: {tuple(img.shape)}; expected B>=1 and C=3."
+            )
+        if int(img.shape[2]) != int(t):
+            raise RuntimeError(
+                f"WAN22 GGUF: VAE decode time dimension mismatch: expected T={t} got T={int(img.shape[2])}."
+            )
+
         for ti in range(t):
-            lat = video_latents[:, :, ti : ti + 1]
-            lat = norm.process_out(lat)
-            try:
-                img = vae.decode(lat).sample
-            except torch.OutOfMemoryError:
-                if target != "cuda" or not smart_fallback_enabled():
-                    raise
-                log.warning("[wan22.gguf] VAE decode OOM on CUDA; retrying on CPU.")
-                cuda_empty_cache(logger, label="vae-decode-oom")
-                vae = vae.to(device="cpu", dtype=torch.float32)
-                lat_cpu = lat.to(device="cpu", dtype=torch.float32)
-                img = vae.decode(lat_cpu).sample
-                video_latents = video_latents.to(device="cpu", dtype=torch.float32)
-                target = "cpu"
-            if ti == 0:
-                log.info("[wan22.gguf] VAE decode output shape=%s", tuple(getattr(img, "shape", ())))
-            x = img[0].detach()
-            if x.ndim == 4:
-                if x.shape[1] == 1:
-                    x = x[:, 0, ...]
-                if x.ndim == 4:
-                    x = x.squeeze()
+            x = img[0, :, ti, :, :].detach()
             if x.ndim != 3:
                 raise RuntimeError(
-                    f"WAN22 GGUF: VAE decode produced unexpected tensor rank: shape={tuple(x.shape)}; expected [C,H,W]"
+                    f"WAN22 GGUF: VAE decode produced unexpected frame tensor rank: shape={tuple(x.shape)}; expected [C,H,W]"
                 )
             if not torch.isfinite(x).all():
                 n_bad = int((~torch.isfinite(x)).sum().item())
                 raise RuntimeError(f"WAN22 GGUF: VAE decode produced non-finite outputs (count={n_bad}).")
+            # Diffusers VAEs output [-1, 1]; convert to [0, 1] for image conversion.
+            x = (x + 1.0) * 0.5
             x = x.clamp(0, 1)
             arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
             frames.append(Image.fromarray(arr))

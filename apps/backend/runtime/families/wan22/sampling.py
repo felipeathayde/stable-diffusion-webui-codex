@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Constructs the scheduler instance for a run (based on sampler/scheduler selection).
+- `make_scheduler` (function): Loads the Diffusers scheduler from vendored WAN metadata (`scheduler_config.json`) and validates sampler strings.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
 - `time_snr_shift` (function): Time/SNR shift helper used in scheduler-time transformations.
 - `prepare_stage_seed_latents` (function): Prepares seeded stage latents (for determinism across runs/stages).
@@ -114,53 +114,127 @@ def infer_patch_geometry(model: Any, *, t: int, h_lat: int, w_lat: int) -> Patch
     )
 
 
-def make_scheduler(steps: int, *, sampler: Optional[str] = None, scheduler: Optional[str] = None):
-    """Instantiate a Diffusers scheduler based on requested sampler/scheduler names."""
+def make_scheduler(
+    steps: int,
+    *,
+    metadata_dir: str,
+    flow_shift: float,
+    sampler: Optional[str] = None,
+    scheduler: Optional[str] = None,
+):
+    """Instantiate the WAN22 scheduler from vendored diffusers metadata.
 
-    from diffusers import (
-        DDIMScheduler,
-        DPMSolverMultistepScheduler,
-        EulerAncestralDiscreteScheduler,
-        EulerDiscreteScheduler,
-        LMSDiscreteScheduler,
-        PNDMScheduler,
-        UniPCMultistepScheduler,
-    )
+    Source of truth is `model_index.json` + `scheduler/scheduler_config.json` shipped with the official repos.
+    We do **not** silently fall back to unrelated schedulers (e.g., SD-style Euler) because WAN uses flow prediction.
+    """
 
-    s = (sampler or "").strip().lower()
-    sch = (scheduler or "").strip().lower()
+    import json
+    import os
 
-    cls = EulerDiscreteScheduler  # default
-    if s in ("euler",):
-        cls = EulerDiscreteScheduler
-    elif s in ("euler a", "euler_a", "euler-ancestral", "ancestral"):
-        cls = EulerAncestralDiscreteScheduler
-    elif s in ("ddim",):
-        cls = DDIMScheduler
-    elif s in ("dpm++ 2m", "dpm++ 2m sde", "dpm2m", "dpmpp2m", "dpmpp2m sde"):
-        cls = DPMSolverMultistepScheduler
-    elif s in ("plms", "lms"):
-        cls = LMSDiscreteScheduler
-    elif s in ("pndm",):
-        cls = PNDMScheduler
-    elif s in ("uni-pc",):
-        cls = UniPCMultistepScheduler
-    else:
-        # Fall back to scheduler hint, if provided
-        if "euler a" in sch or "ancestral" in sch:
-            cls = EulerAncestralDiscreteScheduler
-        elif "euler" in sch:
-            cls = EulerDiscreteScheduler
-        elif "ddim" in sch:
-            cls = DDIMScheduler
-        elif "dpm" in sch:
-            cls = DPMSolverMultistepScheduler
-        elif "lms" in sch:
-            cls = LMSDiscreteScheduler
-        elif "pndm" in sch:
-            cls = PNDMScheduler
+    if not metadata_dir:
+        raise RuntimeError("WAN22 GGUF: metadata_dir is required to build the scheduler (missing WAN metadata).")
 
-    sched = cls()
+    raw_sampler = str(sampler or "").strip().lower()
+    raw_scheduler = str(scheduler or "").strip().lower()
+    if raw_sampler in {"", "inherit", "auto", "default"}:
+        raw_sampler = ""
+    if raw_scheduler in {"", "inherit", "auto", "default"}:
+        raw_scheduler = ""
+
+    vendor_dir = os.path.expanduser(str(metadata_dir))
+    scheduler_dir = os.path.join(vendor_dir, "scheduler")
+    if not os.path.isdir(scheduler_dir):
+        parent = os.path.dirname(vendor_dir)
+        scheduler_dir = os.path.join(parent, "scheduler") if parent else ""
+        if scheduler_dir and os.path.isdir(scheduler_dir):
+            vendor_dir = parent
+        else:
+            raise RuntimeError(
+                f"WAN22 GGUF: metadata_dir must be a diffusers repo dir (or a tokenizer dir whose parent is one): {metadata_dir!r}"
+            )
+
+    config_path = None
+    for fname in ("scheduler_config.json", "config.json"):
+        candidate = os.path.join(vendor_dir, "scheduler", fname)
+        if os.path.isfile(candidate):
+            config_path = candidate
+            break
+    if not config_path:
+        raise RuntimeError(f"WAN22 GGUF: scheduler config not found under: {vendor_dir!r} (expected scheduler_config.json)")
+
+    try:
+        config_raw = json.loads(open(config_path, encoding="utf-8").read())
+    except Exception as exc:  # noqa: BLE001 - strict decode
+        raise RuntimeError(f"WAN22 GGUF: invalid scheduler config JSON: {config_path}: {exc}") from exc
+    if not isinstance(config_raw, dict):
+        raise RuntimeError(f"WAN22 GGUF: scheduler config must be a JSON object: {config_path}")
+
+    class_name = str(config_raw.get("_class_name") or "").strip()
+    if not class_name:
+        raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {config_path}")
+
+    # Validate user-provided sampler strings against metadata (fail-fast, no silent fallbacks).
+    if raw_sampler:
+        parts = raw_sampler.split()
+        if len(parts) > 2:
+            raise RuntimeError(
+                f"WAN22 GGUF: invalid sampler={sampler!r} (expected e.g. 'uni-pc' or 'uni-pc bh2')."
+            )
+        sampler_name = parts[0]
+        sampler_solver = parts[1] if len(parts) == 2 else None
+
+        if class_name == "UniPCMultistepScheduler":
+            if sampler_name != "uni-pc":
+                raise RuntimeError(
+                    f"WAN22 GGUF: sampler={sampler!r} is incompatible with metadata scheduler {class_name!r}. "
+                    "Use 'uni-pc' for WAN2.2."
+                )
+            config_solver = str(config_raw.get("solver_type") or "").strip().lower() or None
+            if sampler_solver is not None:
+                if config_solver is None:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: sampler={sampler!r} specifies solver_type={sampler_solver!r}, "
+                        f"but scheduler_config has no solver_type: {config_path}"
+                    )
+                if sampler_solver != config_solver:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: sampler={sampler!r} solver_type mismatch "
+                        f"(requested={sampler_solver!r} config={config_solver!r})."
+                    )
+        else:
+            raise RuntimeError(
+                f"WAN22 GGUF: sampler override is not supported for metadata scheduler {class_name!r}. "
+                "Use the defaults from scheduler_config.json."
+            )
+
+    # Note: `scheduler` is a legacy UI knob (sigma ladder families) in other engines.
+    # WAN22 stage sampling uses the diffusers `scheduler_config.json` as source of truth.
+
+    try:
+        import diffusers  # type: ignore
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "WAN22 GGUF: diffusers is required for stage sampling (scheduler missing). "
+            "Install diffusers or use the WAN22 spec runtime path."
+        ) from exc
+
+    cls = getattr(diffusers, class_name, None)
+    if cls is None:
+        raise RuntimeError(
+            f"WAN22 GGUF: diffusers does not expose scheduler class {class_name!r} required by {config_path}."
+        )
+
+    try:
+        sched = cls.from_pretrained(vendor_dir, subfolder="scheduler", local_files_only=True)
+    except TypeError:
+        sched = cls.from_pretrained(vendor_dir, subfolder="scheduler")
+    except Exception as exc:  # noqa: BLE001 - strict load
+        raise RuntimeError(f"WAN22 GGUF: failed to load scheduler from {vendor_dir!r}: {exc}") from exc
+
+    register = getattr(sched, "register_to_config", None)
+    if callable(register):
+        register(flow_shift=float(flow_shift))
+
     sched.set_timesteps(max(1, int(steps)))
     return sched
 
@@ -255,6 +329,10 @@ def sample_stage_latents(
     logger: logging.Logger | None,
     sampler_name: Optional[str] = None,
     scheduler_name: Optional[str] = None,
+    metadata_dir: Optional[str] = None,
+    scheduler_obj: Any | None = None,
+    timestep_start: int = 0,
+    timestep_end: Optional[int] = None,
     seed: Optional[int] = None,
     state_init: Optional[torch.Tensor] = None,
     on_progress: Optional[Any] = None,
@@ -275,6 +353,10 @@ def sample_stage_latents(
         logger=logger,
         sampler_name=sampler_name,
         scheduler_name=scheduler_name,
+        metadata_dir=metadata_dir,
+        scheduler_obj=scheduler_obj,
+        timestep_start=timestep_start,
+        timestep_end=timestep_end,
         seed=seed,
         state_init=state_init,
         log_mem_interval=log_mem_interval,
@@ -310,6 +392,10 @@ def sample_stage_latents_generator(
     logger: logging.Logger | None,
     sampler_name: Optional[str] = None,
     scheduler_name: Optional[str] = None,
+    metadata_dir: Optional[str] = None,
+    scheduler_obj: Any | None = None,
+    timestep_start: int = 0,
+    timestep_end: Optional[int] = None,
     seed: Optional[int] = None,
     state_init: Optional[torch.Tensor] = None,
     log_mem_interval: Optional[int] = None,
@@ -335,6 +421,44 @@ def sample_stage_latents_generator(
             f"WAN22: geometry/model mismatch (geom.cin={int(geom.in_channels)} vs model.in_channels={cin})."
         )
 
+    scheduler = scheduler_obj
+    if scheduler is None:
+        if metadata_dir is None:
+            raise RuntimeError("WAN22 GGUF: metadata_dir is required for stage sampling (missing WAN metadata).")
+        scheduler = make_scheduler(
+            steps,
+            metadata_dir=metadata_dir,
+            flow_shift=flow_shift,
+            sampler=sampler_name,
+            scheduler=scheduler_name,
+        )
+
+    timesteps = scheduler.timesteps
+    total_all = len(timesteps)
+
+    start = int(timestep_start or 0)
+    end = int(timestep_end) if timestep_end is not None else int(total_all)
+    if start < 0 or end < 0 or start > end or end > total_all:
+        raise RuntimeError(
+            f"WAN22 GGUF: invalid timestep slice start={start} end={end} (timesteps={total_all})."
+        )
+    total = int(end - start)
+    if total <= 0:
+        raise RuntimeError("WAN22 GGUF: timestep slice is empty (no steps to run).")
+    if scheduler_obj is not None and int(steps) != total:
+        raise RuntimeError(
+            f"WAN22 GGUF: step count mismatch for stage {stage_name!r} (steps={int(steps)} slice={total})."
+        )
+    if state_init is None and start != 0:
+        raise RuntimeError("WAN22 GGUF: state_init is required when starting from a non-zero timestep index.")
+
+    sigmas = getattr(scheduler, "sigmas", None)
+    if sigmas is None or len(sigmas) not in (total_all, total_all + 1):
+        raise RuntimeError(
+            f"WAN22 GGUF: scheduler {scheduler.__class__.__name__} is missing a usable sigma ladder "
+            f"(sigmas_len={len(sigmas) if sigmas is not None else None} timesteps={total_all})."
+        )
+
     batch = int(state_init.shape[0]) if state_init is not None else 1
     shape = (batch, int(geom.in_channels), t_lat, h_lat, w_lat)
 
@@ -352,19 +476,10 @@ def sample_stage_latents_generator(
             state = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         else:
             state = torch.randn(shape, device=device, dtype=dtype)
-        sigma_init = time_snr_shift(flow_shift, 1.0) * flow_multiplier
+        sigma_init = float(sigmas[0]) * float(flow_multiplier)
         state = state * float(sigma_init)
 
-    scheduler = make_scheduler(steps, sampler=sampler_name, scheduler=scheduler_name)
-    timesteps = scheduler.timesteps
-    total = len(timesteps)
-
-    flow_progress = (
-        torch.linspace(1.0, 0.0, total, device=device, dtype=torch.float32)
-        if total > 1
-        else torch.ones(1, device=device, dtype=torch.float32)
-    )
-    parity_idxs = {0, max(0, total // 2 - 1), max(0, total - 1)}
+    parity_idxs = {start, max(start, start + total // 2 - 1), max(start, end - 1)}
 
     if log_sigmas_enabled():
         sigmas = getattr(scheduler, "sigmas", None)
@@ -385,34 +500,62 @@ def sample_stage_latents_generator(
     t0 = time.perf_counter()
     last = t0
 
-    for idx, timestep in enumerate(timesteps):
-        percent = float(flow_progress[idx].item()) if total > 1 else 1.0
-        sigma_value = time_snr_shift(flow_shift, percent)
-        di_timestep = float(sigma_value * flow_multiplier)
+    order = resolve_i2v_order()
+
+    for local_idx, idx in enumerate(range(start, end)):
+        timestep = timesteps[idx]
+        sigma_value = float(sigmas[idx])
+        di_timestep = float(sigma_value) * float(flow_multiplier)
 
         if log_sigmas_enabled() and idx in parity_idxs:
-            sched_sigmas = getattr(scheduler, "sigmas", None)
-            sched_sigma = None
-            if isinstance(sched_sigmas, torch.Tensor) and sched_sigmas.numel() >= (idx + 1):
-                sched_sigma = float(sched_sigmas[idx].item())
             log.info(
-                "[wan22.gguf] %s t-in[%d/%d]: percent=%.4f sigma_shifted=%.6g flow_multiplier=%.1f di_timestep=%.6g sched_timestep=%s sched_sigma=%s",
+                "[wan22.gguf] %s t-in[%d/%d]: idx=%d sigma=%.6g flow_multiplier=%.1f di_timestep=%.6g sched_timestep=%s",
                 stage_name,
-                idx + 1,
+                local_idx + 1,
                 total,
-                percent,
+                idx,
                 float(sigma_value),
                 float(flow_multiplier),
                 float(di_timestep),
                 str(timestep),
-                str(sched_sigma),
             )
 
         with torch.no_grad():
-            if cfg_scale is None:
-                eps = model(state, di_timestep, prompt_embeds)
+            if int(state.shape[1]) == cout:
+                state_lat = state
+                state_cond = None
             else:
-                x_in = torch.cat([state, state], dim=0)
+                if int(state.shape[1]) != cin:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected in_channels={cin}."
+                    )
+
+                # Inpainting-style I2V: state is [latents + conditioning], while the model predicts only the latent channels.
+                if order == "lat_first":
+                    state_lat = state[:, :cout, ...]
+                    state_cond = state[:, cout:, ...]
+                else:
+                    state_cond = state[:, :-cout, ...]
+                    state_lat = state[:, -cout:, ...]
+
+            state_lat_scaled = state_lat
+            scaler = getattr(scheduler, "scale_model_input", None)
+            if callable(scaler):
+                state_lat_scaled = scaler(state_lat, timestep)
+
+            if state_cond is None:
+                model_state = state_lat_scaled
+            else:
+                model_state = (
+                    torch.cat([state_lat_scaled, state_cond], dim=1)
+                    if order == "lat_first"
+                    else torch.cat([state_cond, state_lat_scaled], dim=1)
+                )
+
+            if cfg_scale is None:
+                eps = model(model_state, di_timestep, prompt_embeds)
+            else:
+                x_in = torch.cat([model_state, model_state], dim=0)
                 ctx_in = torch.cat([prompt_embeds, negative_embeds], dim=0)
                 t_in = torch.full((x_in.shape[0],), float(di_timestep), device=device, dtype=torch.float32)
                 v_pred = model(x_in, t_in, ctx_in)
@@ -430,23 +573,10 @@ def sample_stage_latents_generator(
                     f"WAN22 GGUF: model output channels C={int(eps.shape[1])} does not match expected latent_channels={cout}."
                 )
 
-            if int(state.shape[1]) == cout:
-                out = scheduler.step(model_output=eps, timestep=timestep, sample=state)
+            if state_cond is None:
+                out = scheduler.step(model_output=eps, timestep=timestep, sample=state_lat)
                 state = out.prev_sample
             else:
-                if int(state.shape[1]) != cin:
-                    raise RuntimeError(
-                        f"WAN22 GGUF: latent state channels C={int(state.shape[1])} does not match expected in_channels={cin}."
-                    )
-
-                # Inpainting-style I2V: state is [latents + conditioning], while the model predicts only the latent channels.
-                order = resolve_i2v_order()
-                if order == "lat_first":
-                    state_lat = state[:, :cout, ...]
-                    state_cond = state[:, cout:, ...]
-                else:
-                    state_cond = state[:, :-cout, ...]
-                    state_lat = state[:, -cout:, ...]
                 if state_lat.shape != eps.shape:
                     raise RuntimeError(
                         f"WAN22 GGUF: model output shape {tuple(eps.shape)} does not match latent slice {tuple(state_lat.shape)} "
@@ -460,26 +590,26 @@ def sample_stage_latents_generator(
                 else:
                     state = torch.cat([state_cond, lat_next], dim=1)
 
-        pct = float(idx + 1) / float(max(1, total))
+        pct = float(local_idx + 1) / float(max(1, total))
         if log_mem_interval is not None:
             n = int(log_mem_interval or 0)
-            if n > 0 and ((idx + 1) % n) == 0:
-                log_cuda_mem(logger, label=f"{stage_name}-step-{idx + 1}")
+            if n > 0 and ((local_idx + 1) % n) == 0:
+                log_cuda_mem(logger, label=f"{stage_name}-step-{local_idx + 1}")
 
         now = time.perf_counter()
         step_dt = now - last
         elapsed = now - t0
-        remain = max(0, total - (idx + 1))
-        eta = (elapsed / max(1, idx + 1)) * remain
+        remain = max(0, total - (local_idx + 1))
+        eta = (elapsed / max(1, local_idx + 1)) * remain
         last = now
 
-        if emit_logs and ((idx + 1) % 5 == 0 or idx + 1 == total):
-            log.info("[wan22.gguf] %s step %d/%d (%.1f%%)", stage_name.upper(), idx + 1, total, pct * 100.0)
+        if emit_logs and ((local_idx + 1) % 5 == 0 or local_idx + 1 == total):
+            log.info("[wan22.gguf] %s step %d/%d (%.1f%%)", stage_name.upper(), local_idx + 1, total, pct * 100.0)
 
         yield {
             "type": "progress",
             "stage": stage_name,
-            "step": idx + 1,
+            "step": local_idx + 1,
             "total": total,
             "percent": pct,
             "eta_seconds": eta,

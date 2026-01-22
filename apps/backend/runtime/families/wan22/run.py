@@ -10,10 +10,13 @@ Purpose: WAN22 GGUF run entrypoints (txt2vid/img2vid; batch + streaming).
 Orchestrates text context, per-stage sampling, and VAE encode/decode while keeping GGUF support anchored in the shared quantization/ops layer.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_MemoryManagedModule` (class): Small adapter integrating plain nn.Modules with the Codex memory manager.
 - `_try_set_cache_policy` (function): Configure GGUF dequant cache policy + limit when supported.
 - `_try_clear_cache` (function): Clear GGUF dequant cache when supported.
 - `_resolve_offload_level` (function): Resolve the effective offload profile level from the run config.
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
+- `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
+- `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; encodes init image, runs stages, decodes frames.
@@ -40,6 +43,7 @@ from .config import (
 from .diagnostics import cuda_empty_cache, get_logger, log_cuda_mem
 from .sampling import (
     infer_patch_geometry,
+    make_scheduler,
     prepare_stage_seed_latents,
     resize_latents_hw,
     sample_stage_latents,
@@ -126,6 +130,63 @@ def _require_flow_shift(stage: str, value: object | None) -> float:
         return float(value)
     except Exception as exc:  # noqa: BLE001 - strict input validation
         raise RuntimeError(f"WAN22 GGUF stage '{stage}' has invalid flow_shift: {value!r}") from exc
+
+
+def _parse_sampler(value: object | None) -> tuple[str | None, str | None]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None, None
+    parts = raw.split()
+    if len(parts) == 1:
+        return parts[0], None
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    raise RuntimeError(f"WAN22 GGUF: invalid sampler={value!r} (expected e.g. 'uni-pc' or 'uni-pc bh2').")
+
+
+def _build_shared_scheduler(
+    cfg: RunConfig,
+    *,
+    steps_hi: int,
+    steps_lo: int,
+    sampler_hi: object | None,
+    sampler_lo: object | None,
+    scheduler_hi: object | None,
+    scheduler_lo: object | None,
+    flow_shift_hi: float,
+    flow_shift_lo: float,
+):
+    if float(flow_shift_hi) != float(flow_shift_lo):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low flow_shift mismatch. "
+            f"High={flow_shift_hi} Low={flow_shift_lo}. Schedule must be continuous."
+        )
+
+    hi_name, hi_solver = _parse_sampler(sampler_hi)
+    lo_name, lo_solver = _parse_sampler(sampler_lo)
+    if hi_name and lo_name and hi_name != lo_name:
+        raise RuntimeError(
+            f"WAN22 GGUF: high/low sampler mismatch (high={sampler_hi!r} low={sampler_lo!r})."
+        )
+    if hi_solver and lo_solver and hi_solver != lo_solver:
+        raise RuntimeError(
+            f"WAN22 GGUF: high/low UniPC solver_type mismatch (high={sampler_hi!r} low={sampler_lo!r})."
+        )
+
+    total_steps = int(steps_hi) + int(steps_lo)
+    if total_steps < 2:
+        raise RuntimeError(f"WAN22 GGUF requires total steps >=2, got: {total_steps} ({steps_hi}+{steps_lo}).")
+
+    sampler_eff = str(sampler_hi).strip() if sampler_hi else (str(sampler_lo).strip() if sampler_lo else None)
+    scheduler_eff = str(scheduler_hi).strip() if scheduler_hi else (str(scheduler_lo).strip() if scheduler_lo else None)
+
+    return make_scheduler(
+        total_steps,
+        metadata_dir=str(cfg.metadata_dir or ""),
+        flow_shift=float(flow_shift_hi),
+        sampler=sampler_eff,
+        scheduler=scheduler_eff,
+    ), total_steps
 
 
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
@@ -242,6 +303,25 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+
+    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+    scheduler, total_steps = _build_shared_scheduler(
+        cfg,
+        steps_hi=steps_hi,
+        steps_lo=steps_lo,
+        sampler_hi=sampler_hi,
+        sampler_lo=sampler_lo,
+        scheduler_hi=sched_hi,
+        scheduler_lo=sched_lo,
+        flow_shift_hi=flow_shift_hi_value,
+        flow_shift_lo=flow_shift_lo_value,
+    )
+    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
     log.info(
         "[wan22.gguf] HIGH: steps=%s sampler=%s scheduler=%s cfg_scale=%s seed=%s",
         steps_hi,
@@ -264,6 +344,10 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         logger=log,
         sampler_name=sampler_hi,
         scheduler_name=sched_hi,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=0,
+        timestep_end=steps_hi,
         seed=cfg.seed,
         state_init=None,
         on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
@@ -300,12 +384,11 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     )
 
     seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+    if tuple(seed_latents.shape) != tuple(latents_hi.shape):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
+        )
     log.info(
         "[wan22.gguf] LOW: steps=%s sampler=%s scheduler=%s cfg_scale=%s",
         steps_lo,
@@ -327,6 +410,10 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         logger=log,
         sampler_name=sampler_lo,
         scheduler_name=sched_lo,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=steps_hi,
+        timestep_end=total_steps,
         seed=None,
         state_init=seed_latents,
         on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
@@ -421,6 +508,25 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
+    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+    scheduler, total_steps = _build_shared_scheduler(
+        cfg,
+        steps_hi=steps_hi,
+        steps_lo=steps_lo,
+        sampler_hi=sampler_hi,
+        sampler_lo=sampler_lo,
+        scheduler_hi=sched_hi,
+        scheduler_lo=sched_lo,
+        flow_shift_hi=flow_shift_hi_value,
+        flow_shift_lo=flow_shift_lo_value,
+    )
+    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
     memory_management.manager.load_model(hi_mm)
     latents_hi = yield from sample_stage_latents_generator(
         model=hi_model,
@@ -434,6 +540,10 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         logger=log,
         sampler_name=sampler_hi,
         scheduler_name=sched_hi,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=0,
+        timestep_end=steps_hi,
         seed=cfg.seed,
         state_init=None,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
@@ -463,12 +573,11 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_latents = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+    if tuple(seed_latents.shape) != tuple(latents_hi.shape):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_latents.shape)}"
+        )
 
     memory_management.manager.load_model(lo_mm)
     latents_lo = yield from sample_stage_latents_generator(
@@ -483,6 +592,10 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         logger=log,
         sampler_name=sampler_lo,
         scheduler_name=sched_lo,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=steps_hi,
+        timestep_end=total_steps,
         seed=None,
         state_init=seed_latents,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
@@ -595,6 +708,25 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
 
+    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+    scheduler, total_steps = _build_shared_scheduler(
+        cfg,
+        steps_hi=steps_hi,
+        steps_lo=steps_lo,
+        sampler_hi=sampler_hi,
+        sampler_lo=sampler_lo,
+        scheduler_hi=sched_hi,
+        scheduler_lo=sched_lo,
+        flow_shift_hi=flow_shift_hi_value,
+        flow_shift_lo=flow_shift_lo_value,
+    )
+    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
+
     memory_management.manager.load_model(hi_mm)
     latents_hi = sample_stage_latents(
         model=hi_model,
@@ -608,6 +740,10 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         logger=log,
         sampler_name=sampler_hi,
         scheduler_name=sched_hi,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=0,
+        timestep_end=steps_hi,
         seed=None,
         state_init=seed_hi,
         on_progress=(lambda **p: on_progress(stage="high", **p)) if on_progress else None,
@@ -637,12 +773,11 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-
-    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
-    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
-    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+    if tuple(seed_lo.shape) != tuple(latents_hi.shape):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
+        )
 
     memory_management.manager.load_model(lo_mm)
     latents_lo = sample_stage_latents(
@@ -657,6 +792,10 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         logger=log,
         sampler_name=sampler_lo,
         scheduler_name=sched_lo,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=steps_hi,
+        timestep_end=total_steps,
         seed=None,
         state_init=seed_lo,
         on_progress=(lambda **p: on_progress(stage="low", **p)) if on_progress else None,
@@ -754,22 +893,48 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     hi_mm = _MemoryManagedModule(hi_model, load_device=dev)
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_hi = prepare_stage_seed_latents(lat0.to(device=dev, dtype=dt), geom_hi, logger=log)
+    steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
+    sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
+    sched_hi = getattr(cfg.high, "scheduler", None) if cfg.high else None
     flow_shift_hi = getattr(cfg.high, "flow_shift", None) if cfg.high else None
     flow_shift_hi_value = _require_flow_shift("high", flow_shift_hi)
+
+    steps_lo = int(getattr(cfg.low, "steps", 12) if cfg.low else 12)
+    sampler_lo = getattr(cfg.low, "sampler", None) if cfg.low else None
+    sched_lo = getattr(cfg.low, "scheduler", None) if cfg.low else None
+    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
+    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+
+    scheduler, total_steps = _build_shared_scheduler(
+        cfg,
+        steps_hi=steps_hi,
+        steps_lo=steps_lo,
+        sampler_hi=sampler_hi,
+        sampler_lo=sampler_lo,
+        scheduler_hi=sched_hi,
+        scheduler_lo=sched_lo,
+        flow_shift_hi=flow_shift_hi_value,
+        flow_shift_lo=flow_shift_lo_value,
+    )
+    log.info("[wan22.gguf] schedule: steps_total=%d steps_high=%d steps_low=%d", total_steps, steps_hi, steps_lo)
 
     memory_management.manager.load_model(hi_mm)
     latents_hi = yield from sample_stage_latents_generator(
         model=hi_model,
         geom=geom_hi,
-        steps=int(getattr(cfg.high, "steps", 12) if cfg.high else 12),
+        steps=steps_hi,
         cfg_scale=(getattr(cfg.high, "cfg_scale", None) if cfg.high else cfg.guidance_scale),
         prompt_embeds=prompt_embeds,
         negative_embeds=negative_embeds,
         device=dev,
         dtype=dt,
         logger=log,
-        sampler_name=(getattr(cfg.high, "sampler", None) if cfg.high else None),
-        scheduler_name=(getattr(cfg.high, "scheduler", None) if cfg.high else None),
+        sampler_name=sampler_hi,
+        scheduler_name=sched_hi,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=0,
+        timestep_end=steps_hi,
         seed=None,
         state_init=seed_hi,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),
@@ -799,22 +964,29 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     lo_mm = _MemoryManagedModule(lo_model, load_device=dev)
     geom_lo = infer_patch_geometry(lo_model, t=t, h_lat=h_lat, w_lat=w_lat)
     seed_lo = prepare_stage_seed_latents(latents_hi, geom_lo, logger=log)
-    flow_shift_lo = getattr(cfg.low, "flow_shift", None) if cfg.low else None
-    flow_shift_lo_value = _require_flow_shift("low", flow_shift_lo)
+    if tuple(seed_lo.shape) != tuple(latents_hi.shape):
+        raise RuntimeError(
+            "WAN22 GGUF: high/low latent shapes differ after hand-off; cannot maintain a continuous schedule. "
+            f"high={tuple(latents_hi.shape)} low_init={tuple(seed_lo.shape)}"
+        )
 
     memory_management.manager.load_model(lo_mm)
     latents_lo = yield from sample_stage_latents_generator(
         model=lo_model,
         geom=geom_lo,
-        steps=int(getattr(cfg.low, "steps", 12) if cfg.low else 12),
+        steps=steps_lo,
         cfg_scale=(getattr(cfg.low, "cfg_scale", None) if cfg.low else cfg.guidance_scale),
         prompt_embeds=prompt_embeds,
         negative_embeds=negative_embeds,
         device=dev,
         dtype=dt,
         logger=log,
-        sampler_name=(getattr(cfg.low, "sampler", None) if cfg.low else None),
-        scheduler_name=(getattr(cfg.low, "scheduler", None) if cfg.low else None),
+        sampler_name=sampler_lo,
+        scheduler_name=sched_lo,
+        metadata_dir=cfg.metadata_dir,
+        scheduler_obj=scheduler,
+        timestep_start=steps_hi,
+        timestep_end=total_steps,
         seed=None,
         state_init=seed_lo,
         log_mem_interval=getattr(cfg, "log_mem_interval", None),

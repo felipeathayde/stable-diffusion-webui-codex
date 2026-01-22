@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_require_flow_shift` (function): Validate that a stage has a usable flow_shift value (strict).
 - `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
+- `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; encodes init image, runs stages, decodes frames.
@@ -189,6 +190,32 @@ def _build_shared_scheduler(
     ), total_steps
 
 
+def _resolve_frame_counts(num_frames: int, *, logger: Any) -> tuple[int, int]:
+    """Resolve (T_out, T_lat) for WAN video.
+
+    Diffusers WAN pipelines enforce:
+      - `num_frames % vae_scale_factor_temporal == 1`
+      - `num_latent_frames = (num_frames - 1) // vae_scale_factor_temporal + 1`
+
+    WAN video VAEs use a temporal scale factor of 4.
+    """
+    log = get_logger(logger)
+    scale = 4
+    requested = max(1, int(num_frames))
+    effective = requested
+    if effective % scale != 1:
+        rounded = int(effective // scale * scale + 1)
+        log.warning(
+            "[wan22.gguf] num_frames=%d is incompatible with VAE temporal scale=%d; rounding to %d.",
+            requested,
+            scale,
+            rounded,
+        )
+        effective = max(1, rounded)
+    latent_frames = int((effective - 1) // scale + 1)
+    return effective, latent_frames
+
+
 def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) -> list[object]:
     log = get_logger(logger)
     hi_path = pick_stage_gguf(getattr(cfg.high, "model_dir", None) if cfg.high else None, stage="high")
@@ -247,17 +274,12 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         str(bool(te_required)).lower(),
     )
 
+    t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
+    log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+
     h_lat = max(8, int(cfg.height) // 8)
     w_lat = max(8, int(cfg.width) // 8)
-    t = max(1, int(cfg.num_frames))
-
-    # Encode init image *before* loading the text encoder on CUDA to avoid allocator fragmentation
-    # causing large conv3d workspace allocations to fail.
-    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
-    if lat0.ndim == 4:
-        lat0 = lat0.unsqueeze(2)
-    lat0 = lat0.repeat(1, 1, t, 1, 1)
-    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
+    t = int(t_lat)
 
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
@@ -279,9 +301,6 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
-    h_lat = max(8, int(cfg.height) // 8)
-    w_lat = max(8, int(cfg.width) // 8)
-    t = max(1, int(cfg.num_frames))
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     log.info(
         "[wan22.gguf] HIGH geom: grid=%s kernel=%s cin=%d",
@@ -432,7 +451,13 @@ def run_txt2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         _try_clear_cache()
         cuda_empty_cache(log, label="after-low")
 
-    frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
+    frames = decode_latents_to_frames(
+        latents=latents_lo,
+        model_dir=os.path.dirname(lo_path),
+        cfg=cfg,
+        logger=log,
+        expected_frames=t_out,
+    )
     if lvl >= 3:
         cuda_empty_cache(log, label="after-decode")
     _try_clear_cache()
@@ -498,9 +523,12 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
     prompt_embeds = prompt_embeds.to(device=dev, dtype=dt)
     negative_embeds = negative_embeds.to(device=dev, dtype=dt)
 
+    t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
+    log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+
     h_lat = max(8, int(cfg.height) // 8)
     w_lat = max(8, int(cfg.width) // 8)
-    t = max(1, int(cfg.num_frames))
+    t = int(t_lat)
     geom_hi = infer_patch_geometry(hi_model, t=t, h_lat=h_lat, w_lat=w_lat)
     steps_hi = int(getattr(cfg.high, "steps", 12) if cfg.high else 12)
     sampler_hi = getattr(cfg.high, "sampler", None) if cfg.high else None
@@ -614,7 +642,13 @@ def stream_txt2vid(cfg: RunConfig, *, logger: Any = None):
         _try_clear_cache()
         cuda_empty_cache(log, label="after-low")
 
-    frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
+    frames = decode_latents_to_frames(
+        latents=latents_lo,
+        model_dir=os.path.dirname(lo_path),
+        cfg=cfg,
+        logger=log,
+        expected_frames=t_out,
+    )
     _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
@@ -662,6 +696,21 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         te_impl_val,
         str(bool(te_required)).lower(),
     )
+
+    t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
+    log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+
+    h_lat = max(8, int(cfg.height) // 8)
+    w_lat = max(8, int(cfg.width) // 8)
+    t = int(t_lat)
+
+    # Encode init image *before* loading the text encoder on CUDA to avoid allocator fragmentation
+    # causing large conv3d workspace allocations to fail.
+    lat0 = vae_encode_init(cfg.init_image, device=dev_name, dtype=cfg.dtype, vae_dir=cfg.vae_dir, logger=log)
+    if lat0.ndim == 4:
+        lat0 = lat0.unsqueeze(2)
+    lat0 = lat0.repeat(1, 1, t, 1, 1)
+    lat0 = resize_latents_hw(lat0, height=h_lat, width=w_lat)
 
     prompt_embeds, negative_embeds = get_text_context(
         model_dir=os.path.dirname(hi_path),
@@ -814,7 +863,13 @@ def run_img2vid(cfg: RunConfig, *, logger: Any = None, on_progress: Any = None) 
         _try_clear_cache()
         cuda_empty_cache(log, label="after-low")
 
-    frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
+    frames = decode_latents_to_frames(
+        latents=latents_lo,
+        model_dir=os.path.dirname(lo_path),
+        cfg=cfg,
+        logger=log,
+        expected_frames=t_out,
+    )
     _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")
@@ -849,9 +904,12 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
     if te_required:
         te_dev_eff = "cuda"
 
+    t_out, t_lat = _resolve_frame_counts(int(cfg.num_frames), logger=log)
+    log.info("[wan22.gguf] frames: requested=%d effective=%d latent=%d", int(cfg.num_frames), t_out, t_lat)
+
     h_lat = max(8, int(cfg.height) // 8)
     w_lat = max(8, int(cfg.width) // 8)
-    t = max(1, int(cfg.num_frames))
+    t = int(t_lat)
 
     # Encode init image before running the text encoder on CUDA to avoid allocator fragmentation
     # causing large conv3d workspace allocations to fail.
@@ -1005,7 +1063,13 @@ def stream_img2vid(cfg: RunConfig, *, logger: Any = None):
         _try_clear_cache()
         cuda_empty_cache(log, label="after-low")
 
-    frames = decode_latents_to_frames(latents=latents_lo, model_dir=os.path.dirname(lo_path), cfg=cfg, logger=log)
+    frames = decode_latents_to_frames(
+        latents=latents_lo,
+        model_dir=os.path.dirname(lo_path),
+        cfg=cfg,
+        logger=log,
+        expected_frames=t_out,
+    )
     _try_clear_cache()
     if not frames:
         raise RuntimeError("WAN22 GGUF: Low stage produced no frames")

@@ -12,8 +12,8 @@ Loads the WAN VAE via Diffusers, applies latent normalization, and converts betw
 Symbols (top-level; keep in sync; no ghosts):
 - `load_vae` (function): Loads the WAN VAE component (from directory or single-file weights).
 - `vae_encode_init` (function): Encodes an init image into latents for img2vid.
-- `vae_decode_video` (function): Decodes video latents to frames and optionally offloads/cleans up after decode.
-- `decode_latents_to_frames` (function): Adapts latents to the expected 16-channel VAE decode input and returns frames.
+- `vae_decode_video` (function): Decodes video latents to frames; can validate the expected output frame count.
+- `decode_latents_to_frames` (function): Adapts latents to the expected 16-channel VAE decode input and returns frames (optional frame-count validation).
 """
 
 from __future__ import annotations
@@ -145,6 +145,7 @@ def vae_decode_video(
     vae_dir: str | None = None,
     logger: Any = None,
     offload_after: bool = True,
+    expected_frames: int | None = None,
 ) -> list[object]:
     _ = model_dir  # kept for signature symmetry (callers pass stage dir; current VAE loads from explicit path)
     log = get_logger(logger)
@@ -165,7 +166,7 @@ def vae_decode_video(
                 f"WAN22 VAE decode expects 4D or 5D latents; got shape={tuple(getattr(video_latents,'shape',()))}"
             )
 
-    b, c, t, h, w = video_latents.shape
+    b, c, t_lat, h, w = video_latents.shape
 
     if int(c) != 16:
         raise RuntimeError(
@@ -199,12 +200,14 @@ def vae_decode_video(
             raise RuntimeError(
                 f"WAN22 GGUF: VAE decode produced unexpected shape: {tuple(img.shape)}; expected B>=1 and C=3."
             )
-        if int(img.shape[2]) != int(t):
+        t_out = int(img.shape[2])
+        if expected_frames is not None and int(expected_frames) != t_out:
             raise RuntimeError(
-                f"WAN22 GGUF: VAE decode time dimension mismatch: expected T={t} got T={int(img.shape[2])}."
+                "WAN22 GGUF: VAE decode time dimension mismatch: "
+                f"expected T={int(expected_frames)} got T={t_out} (latent_T={int(t_lat)})."
             )
 
-        for ti in range(t):
+        for ti in range(t_out):
             x = img[0, :, ti, :, :].detach()
             if x.ndim != 3:
                 raise RuntimeError(
@@ -237,6 +240,7 @@ def decode_latents_to_frames(
     cfg: RunConfig,
     logger: Any = None,
     debug_preview: bool = False,
+    expected_frames: int | None = None,
 ) -> list[object]:
     log = get_logger(logger)
     x = latents
@@ -261,4 +265,5 @@ def decode_latents_to_frames(
         dtype=cfg.dtype,
         vae_dir=cfg.vae_dir,
         logger=logger,
+        expected_frames=expected_frames,
     )

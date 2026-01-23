@@ -8,9 +8,12 @@ Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF VAE IO helpers (I2V condition encode + decode to frames).
 Loads the WAN VAE via Diffusers, applies latent normalization, and converts between latents and RGB frames for the WAN22 GGUF runtime.
+Includes strict finite checks and explicit dtype/device retry logic (no silent fallbacks).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `load_vae` (function): Loads the WAN VAE component (from directory or single-file weights).
+- `_cuda_bf16_supported` (function): Best-effort BF16 support probe for CUDA (used for dtype fallbacks).
+- `_vae_dtype_candidates` (function): Ordered dtype candidates for VAE encode/decode attempts (requested dtype first).
 - `vae_encode_video_condition` (function): Encodes the Diffusers-style I2V conditioning video into latents (deterministic mode).
 - `vae_decode_video` (function): Decodes video latents to frames; can validate the expected output frame count.
 - `decode_latents_to_frames` (function): Adapts latents to the expected 16-channel VAE decode input and returns frames (optional frame-count validation).
@@ -27,7 +30,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
 
 from .config import RunConfig, as_torch_dtype, resolve_device_name, resolve_i2v_order
-from .diagnostics import cuda_empty_cache, get_logger
+from .diagnostics import cuda_empty_cache, get_logger, log_numerics_enabled, summarize_numerics, warn_fallback
 from .wan_latent_norms import resolve_norm
 
 
@@ -91,11 +94,10 @@ def _prepare_init_image_tensor(
     init_image: Any,
     *,
     device: str,
-    dtype: str,
+    torch_dtype: torch.dtype,
     height: int,
     width: int,
 ) -> torch.Tensor:
-    torch_dtype = as_torch_dtype(dtype)
     dev_name = resolve_device_name(device)
     target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
 
@@ -142,6 +144,42 @@ def _prepare_init_image_tensor(
     return t * 2.0 - 1.0
 
 
+def _cuda_bf16_supported() -> bool:
+    if not (getattr(torch, "cuda", None) and torch.cuda.is_available()):
+        return False
+    fn = getattr(torch.cuda, "is_bf16_supported", None)
+    if callable(fn):
+        try:
+            return bool(fn())
+        except Exception:
+            return False
+    return False
+
+
+def _vae_dtype_candidates(*, device: str, preferred: torch.dtype) -> list[torch.dtype]:
+    dev = resolve_device_name(device)
+    if dev.startswith("cuda") and torch.cuda.is_available():
+        out: list[torch.dtype] = [preferred]
+        if preferred == torch.float16 and _cuda_bf16_supported():
+            out.append(getattr(torch, "bfloat16", torch.float16))
+        if preferred != torch.float32:
+            out.append(torch.float32)
+        if preferred != torch.float16:
+            out.append(torch.float16)
+        # Deduplicate while preserving order.
+        seen: set[torch.dtype] = set()
+        uniq: list[torch.dtype] = []
+        for dt in out:
+            if dt in seen:
+                continue
+            seen.add(dt)
+            uniq.append(dt)
+        return uniq
+
+    # CPU: default to float32 for stability (BF16 is optional and hardware-dependent).
+    return [torch.float32]
+
+
 def vae_encode_video_condition(
     init_image: Any,
     *,
@@ -155,56 +193,97 @@ def vae_encode_video_condition(
     offload_after: bool = True,
 ) -> torch.Tensor:
     log = get_logger(logger)
-    torch_dtype = as_torch_dtype(dtype)
-    vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
-
     norm = resolve_norm(None, channels=16)
     log.info("[wan22.gguf] VAE latent norm=%s channels=%d", norm.name, norm.channels)
-
-    dev_name = resolve_device_name(device)
-    target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
-
-    vae = vae.to(device=target, dtype=torch_dtype)
 
     if int(num_frames) <= 0:
         raise RuntimeError(f"WAN22 GGUF: invalid num_frames={num_frames} for I2V video_condition")
 
-    image = _prepare_init_image_tensor(init_image, device=device, dtype=dtype, height=height, width=width)
-    if image.ndim != 4:
-        raise RuntimeError(
-            "WAN22 GGUF: expected preprocessed init image to be 4D [B,C,H,W], "
-            f"got {tuple(image.shape)}"
-        )
+    dev_name = resolve_device_name(device)
+    target = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    preferred = as_torch_dtype(dtype)
+    dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
+    last_exc: Exception | None = None
 
-    # Diffusers-style I2V conditioning video: first frame is the init image; remaining frames are 0 (i.e., 0.5 gray).
-    image = image.unsqueeze(2)  # [B,C,1,H,W]
-    video_condition = torch.cat(
-        [image, image.new_zeros((image.shape[0], image.shape[1], int(num_frames) - 1, int(height), int(width)))],
-        dim=2,
-    )
-
-    with torch.no_grad():
+    for attempt_idx, torch_dtype in enumerate(dtypes):
+        vae = None
         try:
-            encoded = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
+            if attempt_idx > 0:
+                warn_fallback(
+                    logger,
+                    component="VAE encode",
+                    detail=f"retrying with dtype={torch_dtype} device={target}",
+                    reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+                )
+            vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
+            vae = vae.to(device=target, dtype=torch_dtype)
+
+            image = _prepare_init_image_tensor(
+                init_image,
+                device=device,
+                torch_dtype=torch_dtype,
+                height=height,
+                width=width,
+            )
+            if image.ndim != 4:
+                raise RuntimeError(
+                    "WAN22 GGUF: expected preprocessed init image to be 4D [B,C,H,W], "
+                    f"got {tuple(image.shape)}"
+                )
+
+            # Diffusers-style I2V conditioning video: first frame is the init image; remaining frames are 0 (i.e., 0.5 gray).
+            image = image.unsqueeze(2)  # [B,C,1,H,W]
+            video_condition = torch.cat(
+                [image, image.new_zeros((image.shape[0], image.shape[1], int(num_frames) - 1, int(height), int(width)))],
+                dim=2,
+            )
+
+            with torch.no_grad():
+                encoded = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
+            encoded = norm.process_in(encoded)
+
+            if not torch.isfinite(encoded).all():
+                n_bad = int((~torch.isfinite(encoded)).sum().item())
+                raise RuntimeError(
+                    "WAN22 GGUF: VAE encode produced non-finite latents "
+                    f"(bad={n_bad} dtype={torch_dtype} device={target}; {summarize_numerics(encoded, name='encoded')})."
+                )
+
+            if log_numerics_enabled():
+                log.info(
+                    "[wan22.gguf] VAE encode ok: device=%s dtype=%s %s",
+                    target,
+                    str(torch_dtype),
+                    summarize_numerics(encoded, name="encoded"),
+                )
+
+            return encoded
         except torch.OutOfMemoryError as exc:
+            last_exc = exc
             if target != "cuda" or not smart_fallback_enabled():
                 raise
-            log.warning("[wan22.gguf] VAE encode (video_condition) OOM on CUDA; retrying on CPU.")
+            warn_fallback(
+                logger,
+                component="VAE encode",
+                detail=f"OOM on CUDA at dtype={torch_dtype}; retrying on CPU fp32",
+                reason="cuda_oom",
+            )
             cuda_empty_cache(logger, label="vae-encode-oom")
-            vae = vae.to(device="cpu", dtype=torch.float32)
-            video_condition = video_condition.to(device="cpu", dtype=torch.float32)
-            encoded = _retrieve_latents(vae.encode(video_condition), sample_mode="mode")
-        encoded = norm.process_in(encoded)
+            target = "cpu"
+            # CPU retry (single attempt).
+            dtypes = [torch.float32]
+        except Exception as exc:
+            last_exc = exc
+        finally:
+            if offload_after and vae is not None:
+                try:
+                    vae.to("cpu")
+                except Exception:
+                    pass
+                del vae
+                cuda_empty_cache(logger, label="after-vae-encode")
 
-    if offload_after:
-        try:
-            vae.to("cpu")
-        except Exception:
-            pass
-        del vae
-        cuda_empty_cache(logger, label="after-vae-encode")
-
-    return encoded
+    raise RuntimeError("WAN22 GGUF: VAE encode failed for all dtype fallbacks.") from last_exc
 
 
 def vae_decode_video(
@@ -220,12 +299,6 @@ def vae_decode_video(
 ) -> list[object]:
     _ = model_dir  # kept for signature symmetry (callers pass stage dir; current VAE loads from explicit path)
     log = get_logger(logger)
-    torch_dtype = as_torch_dtype(dtype)
-    vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
-
-    dev_name = resolve_device_name(device)
-    target = "cuda" if dev_name == "cuda" and torch.cuda.is_available() else "cpu"
-    vae = vae.to(device=target, dtype=torch_dtype)
 
     norm = resolve_norm(None, channels=16)
 
@@ -248,58 +321,120 @@ def vae_decode_video(
     from PIL import Image
 
     frames: list[Image.Image] = []
-    with torch.no_grad():
-        lat = norm.process_out(video_latents)
+    dev_name = resolve_device_name(device)
+    target = "cuda" if dev_name.startswith("cuda") and torch.cuda.is_available() else "cpu"
+    preferred = as_torch_dtype(dtype)
+    dtypes = _vae_dtype_candidates(device=device, preferred=preferred)
+    last_exc: Exception | None = None
+
+    def _decode_attempt(*, attempt_device: str, torch_dtype: torch.dtype) -> torch.Tensor:
+        vae = load_vae(vae_dir, torch_dtype=torch_dtype, enable_tiling=bool(memory_management.manager.vae_always_tiled))
+        vae = vae.to(device=attempt_device, dtype=torch_dtype)
+        lat_in = video_latents.to(device=attempt_device, dtype=torch_dtype)
+        lat = norm.process_out(lat_in)
+        if not torch.isfinite(lat).all():
+            n_bad = int((~torch.isfinite(lat)).sum().item())
+            raise RuntimeError(
+                "WAN22 GGUF: non-finite latents after unnormalize; refusing to decode "
+                f"(bad={n_bad} dtype={torch_dtype} device={attempt_device}; {summarize_numerics(lat, name='lat_unnorm')})."
+            )
+        with torch.no_grad():
+            img = vae.decode(lat).sample
+        if offload_after:
+            try:
+                vae.to("cpu")
+            except Exception:
+                pass
+            del vae
+            cuda_empty_cache(logger, label="after-vae-decode")
+        return img
+
+    img = None
+    for attempt_idx, torch_dtype in enumerate(dtypes):
+        if attempt_idx > 0:
+            warn_fallback(
+                logger,
+                component="VAE decode",
+                detail=f"retrying with dtype={torch_dtype} device={target}",
+                reason=str(last_exc) if last_exc is not None else "previous attempt failed",
+            )
         try:
-            img = vae.decode(lat).sample
-        except torch.OutOfMemoryError:
-            if target != "cuda" or not smart_fallback_enabled():
-                raise
-            log.warning("[wan22.gguf] VAE decode OOM on CUDA; retrying on CPU.")
-            cuda_empty_cache(logger, label="vae-decode-oom")
-            vae = vae.to(device="cpu", dtype=torch.float32)
-            lat = lat.to(device="cpu", dtype=torch.float32)
-            img = vae.decode(lat).sample
-            target = "cpu"
-
-        log.info("[wan22.gguf] VAE decode output shape=%s", tuple(getattr(img, "shape", ())))
-        if not hasattr(img, "ndim") or img.ndim != 5:
-            raise RuntimeError(
-                f"WAN22 GGUF: VAE decode produced unexpected rank: shape={tuple(getattr(img,'shape',()))}; expected [B,C,T,H,W]"
-            )
-        if int(img.shape[0]) < 1 or int(img.shape[1]) != 3:
-            raise RuntimeError(
-                f"WAN22 GGUF: VAE decode produced unexpected shape: {tuple(img.shape)}; expected B>=1 and C=3."
-            )
-        t_out = int(img.shape[2])
-        if expected_frames is not None and int(expected_frames) != t_out:
-            raise RuntimeError(
-                "WAN22 GGUF: VAE decode time dimension mismatch: "
-                f"expected T={int(expected_frames)} got T={t_out} (latent_T={int(t_lat)})."
-            )
-
-        for ti in range(t_out):
-            x = img[0, :, ti, :, :].detach()
-            if x.ndim != 3:
+            img = _decode_attempt(attempt_device=target, torch_dtype=torch_dtype)
+            bad = int((~torch.isfinite(img)).sum().item()) if isinstance(img, torch.Tensor) else -1
+            if bad > 0:
                 raise RuntimeError(
-                    f"WAN22 GGUF: VAE decode produced unexpected frame tensor rank: shape={tuple(x.shape)}; expected [C,H,W]"
+                    "WAN22 GGUF: VAE decode produced non-finite outputs "
+                    f"(bad={bad} dtype={torch_dtype} device={target}; {summarize_numerics(img, name='vae_out')})."
                 )
-            if not torch.isfinite(x).all():
-                n_bad = int((~torch.isfinite(x)).sum().item())
-                raise RuntimeError(f"WAN22 GGUF: VAE decode produced non-finite outputs (count={n_bad}).")
-            # Diffusers VAEs output [-1, 1]; convert to [0, 1] for image conversion.
-            x = (x + 1.0) * 0.5
-            x = x.clamp(0, 1)
-            arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
-            frames.append(Image.fromarray(arr))
+            break
+        except torch.OutOfMemoryError as exc:
+            last_exc = exc
+            if target == "cuda" and smart_fallback_enabled():
+                warn_fallback(
+                    logger,
+                    component="VAE decode",
+                    detail=f"OOM on CUDA at dtype={torch_dtype}; will retry other dtypes and then CPU fp32",
+                    reason="cuda_oom",
+                )
+                cuda_empty_cache(logger, label="vae-decode-oom")
+                continue
+            raise
+        except Exception as exc:
+            last_exc = exc
+            # Continue to next dtype.
+            continue
 
-    if offload_after:
-        try:
-            vae.to("cpu")
-        except Exception:
-            pass
-        del vae
-        cuda_empty_cache(logger, label="after-vae-decode")
+    if img is None or not isinstance(img, torch.Tensor):
+        raise RuntimeError("WAN22 GGUF: VAE decode failed (no tensor output).") from last_exc
+
+    # Last-resort: if CUDA path fails, try CPU fp32 (only when smart fallback is enabled).
+    if not torch.isfinite(img).all() and target == "cuda" and smart_fallback_enabled():
+        warn_fallback(
+            logger,
+            component="VAE decode",
+            detail="all CUDA dtype attempts produced non-finite outputs; retrying on CPU fp32",
+            reason="nonfinite_cuda",
+        )
+        cuda_empty_cache(logger, label="vae-decode-nonfinite")
+        img = _decode_attempt(attempt_device="cpu", torch_dtype=torch.float32)
+
+    log.info("[wan22.gguf] VAE decode output shape=%s", tuple(getattr(img, "shape", ())))
+    if not hasattr(img, "ndim") or img.ndim != 5:
+        raise RuntimeError(
+            f"WAN22 GGUF: VAE decode produced unexpected rank: shape={tuple(getattr(img,'shape',()))}; expected [B,C,T,H,W]"
+        )
+    if int(img.shape[0]) < 1 or int(img.shape[1]) != 3:
+        raise RuntimeError(
+            f"WAN22 GGUF: VAE decode produced unexpected shape: {tuple(img.shape)}; expected B>=1 and C=3."
+        )
+    t_out = int(img.shape[2])
+    if expected_frames is not None and int(expected_frames) != t_out:
+        raise RuntimeError(
+            "WAN22 GGUF: VAE decode time dimension mismatch: "
+            f"expected T={int(expected_frames)} got T={t_out} (latent_T={int(t_lat)})."
+        )
+
+    if not torch.isfinite(img).all():
+        n_bad = int((~torch.isfinite(img)).sum().item())
+        raise RuntimeError(
+            "WAN22 GGUF: VAE decode produced non-finite outputs after fallbacks "
+            f"(bad={n_bad}; {summarize_numerics(img, name='vae_out')})."
+        )
+
+    if log_numerics_enabled():
+        log.info("[wan22.gguf] VAE decode ok: %s", summarize_numerics(img, name="vae_out"))
+
+    for ti in range(t_out):
+        x = img[0, :, ti, :, :].detach()
+        if x.ndim != 3:
+            raise RuntimeError(
+                f"WAN22 GGUF: VAE decode produced unexpected frame tensor rank: shape={tuple(x.shape)}; expected [C,H,W]"
+            )
+        # Diffusers VAEs output [-1, 1]; convert to [0, 1] for image conversion.
+        x = (x + 1.0) * 0.5
+        x = x.clamp(0, 1)
+        arr = (x.permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
+        frames.append(Image.fromarray(arr))
 
     return frames
 
@@ -328,6 +463,16 @@ def decode_latents_to_frames(
             log.info("[wan22.gguf] decode latents: sliced to 16 channels from C=%d", c)
         else:
             raise RuntimeError(f"WAN22 GGUF: expected ≥16 latent channels for decode, got {c}")
+
+    if not torch.isfinite(x).all():
+        n_bad = int((~torch.isfinite(x)).sum().item())
+        raise RuntimeError(
+            "WAN22 GGUF: decode input latents are non-finite; aborting before VAE decode "
+            f"(bad={n_bad}; {summarize_numerics(x, name='latents_in')})."
+        )
+
+    if log_numerics_enabled():
+        log.info("[wan22.gguf] decode latents (pre-VAE): %s", summarize_numerics(x, name="latents_in"))
 
     return vae_decode_video(
         x,

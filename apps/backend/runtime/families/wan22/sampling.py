@@ -39,9 +39,11 @@ from .config import WAN_FLOW_MULTIPLIER, resolve_i2v_order
 from .diagnostics import (
     get_logger,
     log_cuda_mem,
+    log_numerics_enabled,
     log_sigmas_enabled,
     log_t_mapping,
     summarize_tensor,
+    summarize_numerics,
 )
 
 

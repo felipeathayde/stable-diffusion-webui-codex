@@ -11,16 +11,20 @@ Centralizes opt-in debug logging (sigma/timestep parity, CUDA memory snapshots) 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `log_sigmas_enabled` (function): Enables/disables sigma/timestep parity logs via env toggles.
+- `log_numerics_enabled` (function): Enables/disables numeric debug logs (NaN/Inf checks + stats) via env toggles.
 - `summarize_tensor` (function): Debug helper summarizing tensor-ish objects (shape/dtype/range sample).
+- `summarize_numerics` (function): Debug helper summarizing tensor numerics (finite counts + min/max/mean/std).
 - `get_logger` (function): Normalizes an optional logger argument into a `logging.Logger`.
 - `cuda_empty_cache` (function): Best-effort CUDA cache emptying with optional logging.
 - `log_cuda_mem` (function): Logs CUDA memory stats for debugging long video runs.
 - `log_t_mapping` (function): Logs a coarse mapping of scheduler index → normalized timestep for parity debugging.
+- `warn_fallback` (function): Emits an emphatic warning for any runtime fallback (dtype/device/precision/etc).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import torch
@@ -31,6 +35,49 @@ from apps.backend.infra.config.env_flags import env_flag
 def log_sigmas_enabled() -> bool:
     return env_flag("CODEX_LOG_SIGMAS", default=False)
 
+
+def log_numerics_enabled() -> bool:
+    return env_flag("CODEX_WAN22_DEBUG_NUMERICS", default=False)
+
+
+def warn_fallback(logger: Any, *, component: str, detail: str, reason: str) -> None:
+    log = get_logger(logger)
+    # Intentionally loud: fallbacks must be visible in logs.
+    log.warning("!!! [WAN22][FALLBACK] %s: %s (reason=%s) !!!", component, detail, reason)
+
+
+def summarize_numerics(t: object, *, name: str = "tensor") -> str:
+    if not isinstance(t, torch.Tensor):
+        return f"{name}: <not-a-tensor>"
+
+    try:
+        shape = tuple(int(x) for x in t.shape)
+        n = int(t.numel())
+        if n == 0:
+            return f"{name}: empty shape={shape} dtype={t.dtype} device={t.device}"
+
+        x = t.detach().to(device="cpu", dtype=torch.float32)
+        finite = torch.isfinite(x)
+        bad = int((~finite).sum().item())
+        if bad >= n:
+            return f"{name}: ALL_NONFINITE shape={shape} dtype={t.dtype} device={t.device}"
+
+        x0 = x.masked_fill(~finite, 0.0)
+        count = float(n - bad)
+        sumv = float(x0.sum().item())
+        sumsq = float((x0 * x0).sum().item())
+        mean = sumv / count
+        var = max(0.0, (sumsq / count) - (mean * mean))
+        std = math.sqrt(var)
+
+        x_min = float(x.masked_fill(~finite, float("inf")).min().item())
+        x_max = float(x.masked_fill(~finite, float("-inf")).max().item())
+        return (
+            f"{name}: shape={shape} dtype={t.dtype} device={t.device} "
+            f"finite={int(count)}/{n} min={x_min:.6g} max={x_max:.6g} mean={mean:.6g} std={std:.6g}"
+        )
+    except Exception:
+        return f"{name}: <stats unavailable>"
 
 def summarize_tensor(t: object, *, window: int = 6) -> str:
     if not isinstance(t, torch.Tensor):

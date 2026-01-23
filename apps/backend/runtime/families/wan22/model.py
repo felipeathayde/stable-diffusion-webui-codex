@@ -13,6 +13,7 @@ multiple formats (GGUF, safetensors, etc.) via the operations registry; GGUF han
 Symbols (top-level; keep in sync; no ghosts):
 - `WanArchitectureConfig` (dataclass): Architecture hyperparameters for WAN (dims/heads/blocks/patch size/etc) used for construction/inference.
 - `WanRMSNorm` (class): RMSNorm with optional GGUF parameter dequantization (supports `CodexParameter` weights).
+- `WanFP32LayerNorm` (class): LayerNorm that computes in float32 and casts back (Diffusers parity; improves fp16 stability).
 - `WanRotaryPosEmbed` (class): Rotary positional embedding (RoPE) cache + per-input embedding builder for WAN tokens.
 - `WanSelfAttention` (class): Self-attention block for WAN (QKV projection + SDPA implementation).
 - `WanCrossAttention` (class): Cross-attention block for WAN (text context attention path).
@@ -32,6 +33,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from apps.backend.runtime.ops.operations import get_operation_context
@@ -82,6 +84,24 @@ class WanRMSNorm(nn.Module):
             w = torch.as_tensor(w)
         w = w.to(device=x.device, dtype=x.dtype)
         return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)) * w
+
+
+class WanFP32LayerNorm(nn.LayerNorm):
+    """LayerNorm that computes in float32 and casts back to the input dtype.
+
+    Diffusers uses FP32 LayerNorms throughout WAN to avoid fp16 numerical issues that can
+    cascade into unstable sampling (and eventually VAE decode NaNs).
+    """
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        origin_dtype = inputs.dtype
+        return F.layer_norm(
+            inputs.float(),
+            self.normalized_shape,
+            self.weight.float() if self.weight is not None else None,
+            self.bias.float() if self.bias is not None else None,
+            self.eps,
+        ).to(origin_dtype)
 
 
 def _wan_1d_rope_cos_sin(
@@ -361,9 +381,9 @@ class WanTransformerBlock(nn.Module):
         # WAN GGUF semantics:
         # - norm1/norm2: LayerNorm without affine (pre-norm for SA/FFN)
         # - norm3: LayerNorm with affine (pre-norm for CA)
-        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
-        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
-        self.norm3 = nn.LayerNorm(dim, elementwise_affine=True)
+        self.norm1 = WanFP32LayerNorm(dim, eps=1e-6, elementwise_affine=False)
+        self.norm2 = WanFP32LayerNorm(dim, eps=1e-6, elementwise_affine=False)
+        self.norm3 = WanFP32LayerNorm(dim, eps=1e-6, elementwise_affine=True)
 
         self.self_attn = WanSelfAttention(dim, num_heads, qkv_bias)
         self.cross_attn = WanCrossAttention(dim, context_dim, num_heads, qkv_bias)
@@ -392,28 +412,26 @@ class WanTransformerBlock(nn.Module):
         time_emb: torch.Tensor,  # [B, 6, dim]
         rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
-        # Combine time embedding with per-block modulation
-        mod = time_emb + self.modulation  # [B, 6, dim]
+        # Combine time embedding with per-block modulation in float32 for stability (Diffusers parity).
+        mod = time_emb.float() + self.modulation.float()  # [B, 6, dim]
 
         sa_shift, sa_scale, sa_gate = mod[:, 0], mod[:, 1], mod[:, 2]
         ffn_shift, ffn_scale, ffn_gate = mod[:, 3], mod[:, 4], mod[:, 5]
 
-        # Self-attention: pre-norm (no affine) + time modulation + gated residual
-        x_sa = self.norm1(x)
-        x_sa = x_sa * (1 + sa_scale[:, None, :]) + sa_shift[:, None, :]
+        # Self-attention: pre-norm (no affine) + time modulation + gated residual.
+        x_sa = (self.norm1(x.float()) * (1.0 + sa_scale[:, None, :]) + sa_shift[:, None, :]).type_as(x)
         sa_out = self.self_attn(x_sa, rotary_emb=rotary_emb)
-        x = x + sa_out * sa_gate[:, None, :]
+        x = (x.float() + sa_out.float() * sa_gate[:, None, :]).type_as(x)
 
-        # Cross-attention: pre-norm3 (affine) + residual (no time modulation)
-        x_ca = self.norm3(x)
+        # Cross-attention: pre-norm3 (affine) + residual (no time modulation).
+        x_ca = self.norm3(x.float()).type_as(x)
         ca_out = self.cross_attn(x_ca, context)
         x = x + ca_out
 
-        # FFN: pre-norm (no affine) + time modulation + gated residual
-        x_ffn = self.norm2(x)
-        x_ffn = x_ffn * (1 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]
+        # FFN: pre-norm (no affine) + time modulation + gated residual.
+        x_ffn = (self.norm2(x.float()) * (1.0 + ffn_scale[:, None, :]) + ffn_shift[:, None, :]).type_as(x)
         ffn_out = self.ffn(x_ffn)
-        x = x + ffn_out * ffn_gate[:, None, :]
+        x = (x.float() + ffn_out.float() * ffn_gate[:, None, :]).type_as(x)
 
         return x
 
@@ -487,7 +505,7 @@ class WanTransformer2DModel(nn.Module):
         ])
 
         # Output head
-        self.norm_out = nn.LayerNorm(config.d_model, elementwise_affine=False)
+        self.norm_out = WanFP32LayerNorm(config.d_model, eps=1e-6, elementwise_affine=False)
         # Head modulation: [1, 2, dim] (shift/scale). Matches Diffusers `WanTransformer3DModel.scale_shift_table`.
         op_ctx = get_operation_context()
         modulation_kwargs = {}
@@ -572,11 +590,10 @@ class WanTransformer2DModel(nn.Module):
         for block in self.blocks:
             tokens = block(tokens, ctx, t_proj, rotary_emb=rotary_emb)
 
-        # Output head (WAN GGUF semantics: LN without affine + repeated modulation)
-        tokens = self.norm_out(tokens)
-        # Head modulation matches upstream WAN/Comfy: shift/scale derived from the time embedding output (not `time_proj`).
-        shift, scale = (self.head_modulation + t_emb[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
-        fused = tokens * (1.0 + scale) + shift
+        # Output head (Diffusers parity: float32 norm + float32 modulation, then cast back before projection).
+        shift, scale = (self.head_modulation.float() + t_emb.float()[:, None, :]).chunk(2, dim=1)  # [B, 1, C] each
+        tokens_f32 = self.norm_out(tokens.float())
+        fused = (tokens_f32 * (1.0 + scale) + shift).type_as(tokens)
         patches = self.head(fused)
 
         # Unpatchify: [B, L, patch_dim] -> [B, C, T, H, W]

@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `remap_wan22_gguf_state_dict` (function): Remaps WAN22 GGUF key names into this module’s expected parameter keys.
 - `infer_wan_architecture_from_state_dict` (function): Infers `WanArchitectureConfig` from a loaded state dict (dims/layers/heads).
 - `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with remapping).
+- `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with remapping; handles Diffusers vs WAN-export key styles).
 """
 
 from __future__ import annotations
@@ -641,6 +642,21 @@ def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
         name = name.replace(".norm__placeholder.", ".norm3.")
         return name
 
+    keys = [str(k) for k in state_dict.keys()]
+    is_diffusers_style = any(
+        k.startswith("model.diffusion_model.")
+        or k.startswith("diffusion_model.")
+        or ".diffusion_model." in k
+        or "condition_embedder." in k
+        or ".attn1." in k
+        or ".attn2." in k
+        or ".ffn.net." in k
+        or "proj_out." in k
+        or k == "scale_shift_table"
+        or k.endswith(".scale_shift_table")
+        for k in keys
+    )
+
     remapped: dict[str, object] = {}
     for key, value in state_dict.items():
         k = _strip_prefixes(str(key))
@@ -671,7 +687,8 @@ def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
             .replace(".ffn.net.0.proj.", ".ffn.0.")
             .replace(".ffn.net.2.", ".ffn.2.")
         )
-        k = _swap_norm2_norm3(k)
+        if is_diffusers_style:
+            k = _swap_norm2_norm3(k)
 
         # WAN export-style keys → Codex-native WanTransformer2DModel keys.
         if k.startswith("patch_embedding."):

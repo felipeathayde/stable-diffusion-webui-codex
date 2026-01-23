@@ -3,7 +3,7 @@
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
-Last Review: 2026-01-22
+Last Review: 2026-01-23
 Status: Active
 
 ## Purpose
@@ -45,6 +45,7 @@ Status: Active
 - 2026-01-20: WAN22 GGUF agora suporta LoRA por stage (High/Low) via `wan_high/wan_low.lora_sha` (sha → `.safetensors`) + `lora_weight` e aplica no load do stage; modo global `CODEX_LORA_APPLY_MODE=merge|online` (default `merge`).
 - 2026-01-21: WAN22 GGUF now honors Smart flags in video runs: TE runs on CUDA for embedding generation and offloads to CPU when Smart Offload is enabled; VAE IO honors `vae_always_tiled` (Diffusers tiling) and retries encode/decode on CPU under Smart Fallback.
 - 2026-01-22: WAN22 GGUF I2V assembly is now upstream-faithful: seed `lat16` from RNG scaled by `scheduler.init_noise_sigma` (Diffusers parity), build `mask4` with Diffusers temporal layout, and encode `img16` from a deterministic VAE encode of Diffusers-style `video_condition` (frame0=init image, rest=0.5 fill). Legacy “assemble Cin=36 from lat16 alone” fallback is removed (fail loud).
+- 2026-01-23: WAN22 GGUF enforces `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping when latent H/W are odd (e.g. 360px → 352px).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

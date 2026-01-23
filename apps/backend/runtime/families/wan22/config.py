@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN 2.2 GGUF runtime config types and small parsing helpers.
-Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs.
+Defines the dataclasses used by the WAN22 GGUF runners (RunConfig/StageConfig) and small env-driven knobs, including
+geometry validation (e.g. `height/width % 16 == 0`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WAN_FLOW_MULTIPLIER` (constant): Multiplier applied to shifted sigma to build the model timestep input.
@@ -445,9 +446,14 @@ def build_wan22_gguf_run_config(
         except Exception:
             pass
 
+    width = int(getattr(request, "width", 768) or 768)
+    height = int(getattr(request, "height", 432) or 432)
+    if height % 16 != 0 or width % 16 != 0:
+        raise RuntimeError(f"WAN22 GGUF: height and width have to be divisible by 16 but are {height} and {width}.")
+
     return RunConfig(
-        width=int(getattr(request, "width", 768) or 768),
-        height=int(getattr(request, "height", 432) or 432),
+        width=width,
+        height=height,
         fps=int(getattr(request, "fps", 24) or 24),
         num_frames=int(getattr(request, "num_frames", 16) or 16),
         guidance_scale=getattr(request, "guidance_scale", None),

@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
 - `make_scheduler` (function): Loads the Diffusers scheduler from vendored WAN metadata (`scheduler_config.json`) and validates sampler strings.
+- `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
 - `time_snr_shift` (function): Time/SNR shift helper used in scheduler-time transformations.
 - `prepare_stage_seed_latents` (function): Prepares seeded stage latents (for determinism across runs/stages).
@@ -27,6 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import math
 import logging
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
@@ -238,6 +240,25 @@ def make_scheduler(
 
     sched.set_timesteps(max(1, int(steps)))
     return sched
+
+
+def resolve_init_noise_sigma(scheduler: Any) -> float:
+    """Return the scheduler-defined initial noise sigma (Diffusers parity).
+
+    Diffusers pipelines scale the initial Gaussian noise by `scheduler.init_noise_sigma`.
+    WAN22 GGUF uses the same behavior; `WAN_FLOW_MULTIPLIER` is only for model timestep inputs.
+    """
+
+    raw = getattr(scheduler, "init_noise_sigma", None)
+    if raw is None:
+        return 1.0
+    try:
+        val = float(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"WAN22 GGUF: invalid scheduler.init_noise_sigma={raw!r}") from exc
+    if not math.isfinite(val) or val <= 0:
+        raise RuntimeError(f"WAN22 GGUF: invalid scheduler.init_noise_sigma={raw!r} (expected finite > 0)")
+    return val
 
 
 def cfg_merge(uncond: torch.Tensor, cond: torch.Tensor, scale: float | None) -> torch.Tensor:
@@ -566,8 +587,8 @@ def sample_stage_latents_generator(
             state = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         else:
             state = torch.randn(shape, device=device, dtype=dtype)
-        sigma_init = float(sigmas[0]) * float(flow_multiplier)
-        state = state * float(sigma_init)
+        init_noise_sigma = resolve_init_noise_sigma(scheduler)
+        state = state * float(init_noise_sigma)
 
     parity_idxs = {start, max(start, start + total // 2 - 1), max(start, end - 1)}
 

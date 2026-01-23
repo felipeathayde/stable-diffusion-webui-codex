@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_parse_sampler` (function): Parse canonical WAN sampler strings (e.g. 'uni-pc bh2').
 - `_build_shared_scheduler` (function): Build a single shared scheduler instance for high/low stage continuity.
 - `_resolve_frame_counts` (function): Resolve output vs latent frame counts for the WAN VAE temporal scale.
-- `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (seeded noise + deterministic condition).
+- `_build_i2v_seed_state` (function): Build the initial I2V state `[lat16 + mask4 + img16]` (RNG noise scaled by `init_noise_sigma` + deterministic condition).
 - `run_txt2vid` (function): Batch txt2vid runner; orchestrates text context, stage sampling, and VAE decode.
 - `stream_txt2vid` (function): Streaming txt2vid generator; yields progress while sampling/decoding.
 - `run_img2vid` (function): Batch img2vid runner; builds I2V conditioning + seeded noise state, runs stages, decodes frames.
@@ -48,6 +48,7 @@ from .sampling import (
     build_i2v_mask4,
     infer_patch_geometry,
     make_scheduler,
+    resolve_init_noise_sigma,
     prepare_stage_seed_latents,
     resize_latents_hw,
     sample_stage_latents,
@@ -236,7 +237,8 @@ def _build_i2v_seed_state(
     """Build the initial I2V state `[lat16 + mask4 + img16]` (Diffusers-compatible).
 
     This is the critical ownership seam for WAN22 GGUF img2vid:
-    - Noise latents must be seeded from RNG (not from VAE init-image latents).
+    - Noise latents must be seeded from RNG and scaled by `scheduler.init_noise_sigma`
+      (Diffusers parity; do **not** multiply by `WAN_FLOW_MULTIPLIER`).
     - The conditioning channels are constant across timesteps (mask4 + VAE-encoded video_condition).
     """
 
@@ -285,21 +287,22 @@ def _build_i2v_seed_state(
     else:
         latents = torch.randn(shape, device=device, dtype=dtype)
 
+    init_noise_sigma = resolve_init_noise_sigma(scheduler)
+    latents = latents * float(init_noise_sigma)
+
     sigmas = getattr(scheduler, "sigmas", None)
     if sigmas is None or len(sigmas) < 1:
         raise RuntimeError("WAN22 GGUF: scheduler is missing sigmas; cannot seed latents correctly.")
     sigma0 = float(sigmas[0])
-    sigma_init = sigma0 * float(WAN_FLOW_MULTIPLIER)
-    latents = latents * float(sigma_init)
 
     state = assemble_i2v_state(latents, mask4=mask4, image_latents=img, expected_cin=cin, logger=log)
     state = prepare_stage_seed_latents(state, geom_hi, logger=log)
     log.info(
-        "[wan22.gguf] i2v seed: seed=%s sigma0=%.6g flow_multiplier=%.1f sigma_init=%.6g",
+        "[wan22.gguf] i2v seed: seed=%s init_noise_sigma=%.6g sigma0=%.6g flow_multiplier=%.1f",
         str(seed_val),
+        float(init_noise_sigma),
         float(sigma0),
         float(WAN_FLOW_MULTIPLIER),
-        float(sigma_init),
     )
     return state
 

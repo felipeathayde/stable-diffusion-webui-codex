@@ -55,7 +55,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `isRecord` (function): Type guard for `Record<string, unknown>`.
 - `formatDiffValue` (function): Formats values for the “params diff” UI.
 - `diffObjects` (function): Recursively diffs two objects into `{path, before, after}` entries (used for history diff).
-- `snapDim` (function): Snaps a dimension to model constraints (e.g., multiple-of-8).
+- `snapDim` (function): Snaps a dimension to WAN constraints (multiple-of-16, rounding up; Diffusers parity).
 - `ratioForMode` (function): Returns the target aspect ratio for a given `AspectMode` preset.
 - `onAspectModeChange` (function): Applies aspect-mode changes and updates width/height accordingly.
 - `applyWidth` (function): Applies width updates (snapping + aspect-mode handling).
@@ -131,8 +131,8 @@ Symbols (top-level; keep in sync; no ghosts):
                 :min="64"
                 :max="2048"
                 :step="64"
-                :inputStep="8"
-                :nudgeStep="8"
+                :inputStep="16"
+                :nudgeStep="16"
                 :disabled="isRunning"
                 inputClass="cdx-input-w-md"
                 @update:modelValue="applyWidth"
@@ -142,8 +142,8 @@ Symbols (top-level; keep in sync; no ghosts):
                     :modelValue="video.width"
                     :min="64"
                     :max="2048"
-                    :step="8"
-                    :nudgeStep="8"
+                    :step="16"
+                    :nudgeStep="16"
                     inputClass="cdx-input-w-md"
                     :disabled="isRunning"
                     @update:modelValue="applyWidth"
@@ -176,8 +176,8 @@ Symbols (top-level; keep in sync; no ghosts):
                 :min="64"
                 :max="2048"
                 :step="64"
-                :inputStep="8"
-                :nudgeStep="8"
+                :inputStep="16"
+                :nudgeStep="16"
                 :disabled="isRunning"
                 inputClass="cdx-input-w-md"
                 @update:modelValue="applyHeight"
@@ -733,6 +733,11 @@ async function onGenerateClick(): Promise<void> {
     return
   }
   stopGuided()
+  const snappedW = snapDim(video.value.width)
+  const snappedH = snapDim(video.value.height)
+  if (snappedW !== video.value.width || snappedH !== video.value.height) {
+    setVideo({ width: snappedW, height: snappedH })
+  }
   await generate()
 }
 
@@ -1293,11 +1298,11 @@ const aspectMode = ref<AspectMode>('free')
 const aspectRatio = ref<number | null>(null)
 
 function snapDim(value: number): number {
-  const step = 8
+  const step = 16
   const min = 64
   const max = 2048
   const v = Number.isFinite(value) ? value : min
-  return Math.min(max, Math.max(min, Math.round(v / step) * step))
+  return Math.min(max, Math.max(min, Math.ceil(v / step) * step))
 }
 
 function ratioForMode(mode: AspectMode): number | null {

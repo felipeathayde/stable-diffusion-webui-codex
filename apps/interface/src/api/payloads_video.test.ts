@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Vitest coverage for WAN video payload builders (txt2vid/img2vid/vid2vid).
-Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields.
+Ensures request inputs (stage overrides + assets by sha) are mapped into the expected backend payload fields, including
+WAN dimension snapping to `%16 == 0` (rounded up; Diffusers parity).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `payloads_video.test` (module): WAN video payload builder tests (field mapping + defaults).
@@ -192,5 +193,38 @@ describe('WAN video payload builders', () => {
     expect(payload.wan_tenc_sha).toBe(sha)
     expect(payload.wan_vae_sha).toBe(sha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
+  })
+
+  it('rounds WAN video dimensions up to a multiple of 16', () => {
+    const sha = '1'.repeat(64)
+    const metaRepo = 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
+    const payload = buildWanTxt2VidPayload({
+      device: 'cuda',
+      prompt: 'p',
+      negativePrompt: '',
+      width: 480,
+      height: 360,
+      fps: 24,
+      frames: 16,
+      high: { modelSha: sha, sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
+      low: { modelSha: sha, sampler: '', scheduler: '', steps: 2, cfgScale: 1, seed: -1 },
+      format: 'auto',
+      assets: { metadataRepo: metaRepo, textEncoderSha: sha, vaeSha: sha },
+      output: {
+        filenamePrefix: '',
+        format: '',
+        pixFmt: '',
+        crf: 15,
+        loopCount: 0,
+        pingpong: false,
+        trimToAudio: false,
+        saveMetadata: true,
+        saveOutput: true,
+      },
+      interpolation: { enabled: false, model: '', times: 2 },
+    })
+
+    expect(payload.txt2vid_width).toBe(480)
+    expect(payload.txt2vid_height).toBe(368)
   })
 })

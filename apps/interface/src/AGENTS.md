@@ -2,7 +2,7 @@
 # apps/interface/src Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-23
 Status: Active
 
 ## Purpose
@@ -32,3 +32,4 @@ Status: Active
 - 2026-01-01: Image model tabs now include `clipSkip` in their per-tab params and send `clip_skip`/`img2img_clip_skip` to the backend (no prompt-tag injection needed).
 - 2026-01-03: Added standardized file header blocks to `App.vue`, `main.ts`, and `router.ts` (doc-only change; part of rollout).
 - 2026-01-21: WAN video tabs now use sha-only stage LoRA inputs (`loraSha` → payload `lora_sha`), aligning with backend validation.
+- 2026-01-23: WAN video width/height now snap to multiples of 16 (rounded up; Diffusers parity) to avoid backend validation errors and patch-grid drift.

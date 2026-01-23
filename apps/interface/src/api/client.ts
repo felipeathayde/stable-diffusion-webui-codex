@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `API_BASE` (const): Base URL prefix for backend endpoints (from Vite env, default `/api`).
 - `requestJson` (function): JSON request helper with consistent error handling.
 - `requestForm` (function): Form POST helper for multipart endpoints.
+- `readErrorDetail` (function): Extracts a human-friendly error message from failed backend responses.
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
  - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
@@ -84,6 +85,31 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 const _jsonCache = new Map<string, unknown>()
 const _jsonInflight = new Map<string, Promise<unknown>>()
 
+async function readErrorDetail(res: Response): Promise<string> {
+  const text = await res.text()
+  if (!text) return ''
+  try {
+    const data = JSON.parse(text) as unknown
+    if (data && typeof data === 'object') {
+      const detail = (data as any).detail
+      if (typeof detail === 'string' && detail.trim()) return detail.trim()
+      if (Array.isArray(detail)) {
+        const msgs = detail
+          .map((item) => {
+            const msg = (item && typeof item === 'object') ? (item as any).msg : null
+            return typeof msg === 'string' ? msg : String(item)
+          })
+          .filter((s) => String(s || '').trim())
+        if (msgs.length) return msgs.join('\n')
+      }
+      if (detail !== undefined) return JSON.stringify(detail)
+    }
+  } catch {
+    // not JSON; fall through
+  }
+  return text
+}
+
 function invalidateJsonCache(prefixPath: string): void {
   for (const key of Array.from(_jsonCache.keys())) {
     if (key === prefixPath || key.startsWith(`${prefixPath}?`)) _jsonCache.delete(key)
@@ -102,8 +128,8 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!res.ok) {
-    const detail = await res.text()
-    throw new Error(detail || `${res.status} ${res.statusText}`)
+    const detail = await readErrorDetail(res)
+    throw new Error(detail || `HTTP ${res.status} ${res.statusText}`)
   }
   return (await res.json()) as T
 }
@@ -133,8 +159,8 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
     body: form,
   })
   if (!res.ok) {
-    const detail = await res.text()
-    throw new Error(detail || `${res.status} ${res.statusText}`)
+    const detail = await readErrorDetail(res)
+    throw new Error(detail || `HTTP ${res.status} ${res.statusText}`)
   }
   return (await res.json()) as T
 }

@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (prompt, dims, steps, seed, stage params, assets).
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
+- `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
 - `stageToPayload` (function): Converts a `WanStageInput` into the backend stage override object (drops unset fields).
 - `isUnsetSentinel` (function): Detects UI sentinel values (e.g., “Automatic”/“Built-in”) that must not be sent as real asset paths.
 - `addWanAssets` (function): Injects selected WAN assets into the payload (skips unset/empty values).
@@ -42,6 +43,8 @@ const PromptSchema = z
   .refine((value) => value.length > 0, { message: 'Prompt must not be empty' })
 
 const WanFormatEnum = z.enum(['auto', 'diffusers', 'gguf'])
+
+const WAN_DIM_STEP = 16
 
 const Sha256Schema = z
   .string()
@@ -246,6 +249,12 @@ function normalizeDevice(device: string): WanTxt2VidPayload['codex_device'] {
   throw new Error(`Unsupported device '${device}'`)
 }
 
+function snapWanDim(value: number): number {
+  if (!Number.isFinite(value)) return value
+  const v = Math.trunc(value)
+  return Math.ceil(v / WAN_DIM_STEP) * WAN_DIM_STEP
+}
+
 function stageToPayload(stage: WanStageInput): Record<string, unknown> {
   const modelSha = String(stage.modelSha || '').trim().toLowerCase()
   if (!modelSha) {
@@ -334,12 +343,14 @@ function addWanInterpolation(payload: Record<string, unknown>, interpolation: Wa
 
 export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPayload {
   const totalSteps = input.high.steps + input.low.steps
+  const width = snapWanDim(input.width)
+  const height = snapWanDim(input.height)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     txt2vid_prompt: input.prompt,
     txt2vid_neg_prompt: input.negativePrompt,
-    txt2vid_width: input.width,
-    txt2vid_height: input.height,
+    txt2vid_width: width,
+    txt2vid_height: height,
     txt2vid_fps: input.fps,
     txt2vid_num_frames: input.frames,
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
@@ -367,12 +378,14 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 
 export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageData: string }): WanImg2VidPayload {
   const totalSteps = input.high.steps + input.low.steps
+  const width = snapWanDim(input.width)
+  const height = snapWanDim(input.height)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     img2vid_prompt: input.prompt,
     img2vid_neg_prompt: input.negativePrompt,
-    img2vid_width: input.width,
-    img2vid_height: input.height,
+    img2vid_width: width,
+    img2vid_height: height,
     img2vid_fps: input.fps,
     img2vid_num_frames: input.frames,
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
@@ -401,12 +414,14 @@ export function buildWanImg2VidPayload(input: WanVideoCommonInput & { initImageD
 
 export function buildWanVid2VidPayload(input: WanVid2VidInput): WanVid2VidPayload {
   const totalSteps = input.high.steps + input.low.steps
+  const width = snapWanDim(input.width)
+  const height = snapWanDim(input.height)
   const payload: Record<string, unknown> = {
     codex_device: normalizeDevice(input.device),
     vid2vid_prompt: input.prompt,
     vid2vid_neg_prompt: input.negativePrompt,
-    vid2vid_width: input.width,
-    vid2vid_height: input.height,
+    vid2vid_width: width,
+    vid2vid_height: height,
     vid2vid_fps: input.fps,
     vid2vid_num_frames: input.frames,
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
 Contains request parsing, payload validation, and task orchestration for generation endpoints.
-WAN video tasks enforce `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping.
+WAN video tasks enforce `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping and return suggested rounded-up
+dimensions on invalid requests.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for generation endpoints.
@@ -1259,16 +1260,31 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
         thread.start()
 
+    def _wan_require_dims_multiple_of_16(*, task: str, width: int, height: int) -> None:
+        """WAN video geometry guard (Diffusers parity).
+
+        WAN requires width/height divisible by 16; otherwise the latent patch grid silently crops.
+        The frontend rounds up, but the backend must fail loud for direct API callers.
+        """
+
+        if height % 16 == 0 and width % 16 == 0:
+            return
+        w_up = ((int(width) + 15) // 16) * 16
+        h_up = ((int(height) + 15) // 16) * 16
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"WAN22 {task}: width/height must be divisible by 16 (Diffusers parity). "
+                f"Got {int(width)}x{int(height)}. Suggested: {w_up}x{h_up} (rounded up)."
+            ),
+        )
+
     def prepare_txt2vid(payload: Dict[str, Any]) -> Tuple[Txt2VidRequest, str, Optional[str]]:
         prompt = payload.get('txt2vid_prompt', '')
         negative_prompt = payload.get('txt2vid_neg_prompt', '')
         width_val = int(payload.get('txt2vid_width', 768))
         height_val = int(payload.get('txt2vid_height', 432))
-        if height_val % 16 != 0 or width_val % 16 != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"txt2vid height and width have to be divisible by 16 but are {height_val} and {width_val}.",
-            )
+        _wan_require_dims_multiple_of_16(task="txt2vid", width=width_val, height=height_val)
         steps_val = int(payload.get('txt2vid_steps', 30))
         fps_val = int(payload.get('txt2vid_fps', 24))
         frames_val = int(payload.get('txt2vid_num_frames', 16))
@@ -1442,11 +1458,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         negative_prompt = payload.get('img2vid_neg_prompt', '')
         width_val = int(payload.get('img2vid_width', 768))
         height_val = int(payload.get('img2vid_height', 432))
-        if height_val % 16 != 0 or width_val % 16 != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"img2vid height and width have to be divisible by 16 but are {height_val} and {width_val}.",
-            )
+        _wan_require_dims_multiple_of_16(task="img2vid", width=width_val, height=height_val)
         steps_val = int(payload.get('img2vid_steps', 30))
         fps_val = int(payload.get('img2vid_fps', 24))
         frames_val = int(payload.get('img2vid_num_frames', 16))
@@ -1719,11 +1731,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         negative_prompt = payload.get("vid2vid_neg_prompt", "")
         width_val = int(payload.get("vid2vid_width", 768))
         height_val = int(payload.get("vid2vid_height", 432))
-        if height_val % 16 != 0 or width_val % 16 != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"vid2vid height and width have to be divisible by 16 but are {height_val} and {width_val}.",
-            )
+        _wan_require_dims_multiple_of_16(task="vid2vid", width=width_val, height=height_val)
         steps_val = int(payload.get("vid2vid_steps", 30))
         fps_val = int(payload.get("vid2vid_fps", 24))
         frames_val = int(payload.get("vid2vid_num_frames", 16))

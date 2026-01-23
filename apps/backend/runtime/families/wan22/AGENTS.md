@@ -46,6 +46,7 @@ Status: Active
 - 2026-01-21: WAN22 GGUF now honors Smart flags in video runs: TE runs on CUDA for embedding generation and offloads to CPU when Smart Offload is enabled; VAE IO honors `vae_always_tiled` (Diffusers tiling) and retries encode/decode on CPU under Smart Fallback.
 - 2026-01-22: WAN22 GGUF I2V assembly is now upstream-faithful: seed `lat16` from RNG scaled by `scheduler.init_noise_sigma` (Diffusers parity), build `mask4` with Diffusers temporal layout, and encode `img16` from a deterministic VAE encode of Diffusers-style `video_condition` (frame0=init image, rest=0.5 fill). Legacy “assemble Cin=36 from lat16 alone” fallback is removed (fail loud).
 - 2026-01-23: WAN22 GGUF enforces `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping when latent H/W are odd (e.g. 360px → 352px).
+- 2026-01-23: WAN22 GGUF core model parity: self-attn now applies RoPE + Q/K RMSNorm across heads (qk_norm), cross-attn applies Q/K RMSNorm, and the timestep embedding matches Diffusers `Timesteps(..., downscale_freq_shift=0, flip_sin_to_cos=True)` (fixes noisy outputs caused by missing positional/timestep semantics).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

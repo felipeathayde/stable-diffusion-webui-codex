@@ -13,6 +13,7 @@ multiple formats (GGUF, safetensors, etc.) via the operations registry; GGUF han
 Symbols (top-level; keep in sync; no ghosts):
 - `WanArchitectureConfig` (dataclass): Architecture hyperparameters for WAN (dims/heads/blocks/patch size/etc) used for construction/inference.
 - `WanRMSNorm` (class): RMSNorm with optional GGUF parameter dequantization (supports `CodexParameter` weights).
+- `WanRotaryPosEmbed` (class): Rotary positional embedding (RoPE) cache + per-input embedding builder for WAN tokens.
 - `WanSelfAttention` (class): Self-attention block for WAN (QKV projection + SDPA implementation).
 - `WanCrossAttention` (class): Cross-attention block for WAN (text context attention path).
 - `WanFFN` (class): Feed-forward (MLP) block used in WAN transformer blocks.
@@ -54,6 +55,7 @@ class WanArchitectureConfig:
     mlp_ratio: float = 4.0
     context_dim: int = 4096
     time_embed_dim: int = 256
+    rope_max_seq_len: int = 1024
     patch_size: Tuple[int, int, int] = (1, 2, 2)  # T, H, W
     in_channels: int = 16
     latent_channels: int = 16
@@ -82,6 +84,115 @@ class WanRMSNorm(nn.Module):
         return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)) * w
 
 
+def _wan_1d_rope_cos_sin(
+    dim: int,
+    max_seq_len: int,
+    *,
+    theta: float = 10000.0,
+    freqs_dtype: torch.dtype,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if int(dim) % 2 != 0:
+        raise ValueError(f"WAN RoPE: dim must be even; got dim={dim}")
+    if int(max_seq_len) <= 0:
+        raise ValueError(f"WAN RoPE: max_seq_len must be > 0; got max_seq_len={max_seq_len}")
+
+    pos = torch.arange(int(max_seq_len), device=device, dtype=freqs_dtype)
+    freqs = 1.0 / (float(theta) ** (torch.arange(0, int(dim), 2, device=device, dtype=freqs_dtype) / float(dim)))
+    freqs = torch.outer(pos, freqs)  # [S, dim/2]
+    freqs_cos = freqs.cos().repeat_interleave(2, dim=1).to(torch.float32)  # [S, dim]
+    freqs_sin = freqs.sin().repeat_interleave(2, dim=1).to(torch.float32)  # [S, dim]
+    return freqs_cos, freqs_sin
+
+
+class WanRotaryPosEmbed(nn.Module):
+    def __init__(
+        self,
+        *,
+        attention_head_dim: int,
+        patch_size: Tuple[int, int, int],
+        max_seq_len: int,
+        theta: float = 10000.0,
+    ) -> None:
+        super().__init__()
+        if attention_head_dim <= 0:
+            raise ValueError(f"WAN RoPE: attention_head_dim must be > 0; got {attention_head_dim}")
+        if attention_head_dim % 2 != 0:
+            raise ValueError(
+                f"WAN RoPE: attention_head_dim must be even (pairs for complex rotation); got {attention_head_dim}"
+            )
+        self.attention_head_dim = int(attention_head_dim)
+        self.patch_size = tuple(int(x) for x in patch_size)
+        self.max_seq_len = int(max_seq_len)
+
+        h_dim = w_dim = 2 * (self.attention_head_dim // 6)
+        t_dim = self.attention_head_dim - h_dim - w_dim
+        if t_dim <= 0 or t_dim % 2 != 0:
+            raise ValueError(
+                "WAN RoPE: invalid head_dim split "
+                f"(head_dim={self.attention_head_dim}, t_dim={t_dim}, h_dim={h_dim}, w_dim={w_dim})"
+            )
+
+        self.t_dim = int(t_dim)
+        self.h_dim = int(h_dim)
+        self.w_dim = int(w_dim)
+
+        freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
+
+        freqs_cos = []
+        freqs_sin = []
+        for dim in (self.t_dim, self.h_dim, self.w_dim):
+            cos, sin = _wan_1d_rope_cos_sin(
+                dim,
+                self.max_seq_len,
+                theta=theta,
+                freqs_dtype=freqs_dtype,
+                device=torch.device("cpu"),
+            )
+            freqs_cos.append(cos)
+            freqs_sin.append(sin)
+
+        self.register_buffer("freqs_cos", torch.cat(freqs_cos, dim=1), persistent=False)
+        self.register_buffer("freqs_sin", torch.cat(freqs_sin, dim=1), persistent=False)
+
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if hidden_states.ndim != 5:
+            raise ValueError(f"WAN RoPE: expected hidden_states [B,C,T,H,W], got shape={tuple(hidden_states.shape)}")
+        _b, _c, num_frames, height, width = hidden_states.shape
+        p_t, p_h, p_w = self.patch_size
+
+        if int(num_frames) % int(p_t) != 0:
+            raise ValueError(f"WAN RoPE: num_frames={num_frames} not divisible by patch_t={p_t}")
+        if int(height) % int(p_h) != 0:
+            raise ValueError(f"WAN RoPE: height={height} not divisible by patch_h={p_h}")
+        if int(width) % int(p_w) != 0:
+            raise ValueError(f"WAN RoPE: width={width} not divisible by patch_w={p_w}")
+
+        ppf, pph, ppw = int(num_frames) // int(p_t), int(height) // int(p_h), int(width) // int(p_w)
+        if ppf > self.max_seq_len or pph > self.max_seq_len or ppw > self.max_seq_len:
+            raise ValueError(
+                "WAN RoPE: token grid exceeds rope cache "
+                f"(ppf={ppf}, pph={pph}, ppw={ppw}, rope_max_seq_len={self.max_seq_len})"
+            )
+
+        split_sizes = [self.t_dim, self.h_dim, self.w_dim]
+        freqs_cos = self.freqs_cos.split(split_sizes, dim=1)
+        freqs_sin = self.freqs_sin.split(split_sizes, dim=1)
+
+        freqs_cos_f = freqs_cos[0][:ppf].view(ppf, 1, 1, -1).expand(ppf, pph, ppw, -1)
+        freqs_cos_h = freqs_cos[1][:pph].view(1, pph, 1, -1).expand(ppf, pph, ppw, -1)
+        freqs_cos_w = freqs_cos[2][:ppw].view(1, 1, ppw, -1).expand(ppf, pph, ppw, -1)
+
+        freqs_sin_f = freqs_sin[0][:ppf].view(ppf, 1, 1, -1).expand(ppf, pph, ppw, -1)
+        freqs_sin_h = freqs_sin[1][:pph].view(1, pph, 1, -1).expand(ppf, pph, ppw, -1)
+        freqs_sin_w = freqs_sin[2][:ppw].view(1, 1, ppw, -1).expand(ppf, pph, ppw, -1)
+
+        freqs_cos_out = torch.cat([freqs_cos_f, freqs_cos_h, freqs_cos_w], dim=-1).reshape(1, ppf * pph * ppw, 1, -1)
+        freqs_sin_out = torch.cat([freqs_sin_f, freqs_sin_h, freqs_sin_w], dim=-1).reshape(1, ppf * pph * ppw, 1, -1)
+
+        return freqs_cos_out.to(device=hidden_states.device), freqs_sin_out.to(device=hidden_states.device)
+
+
 class WanSelfAttention(nn.Module):
     """Self-attention layer for WAN transformer."""
 
@@ -100,27 +211,52 @@ class WanSelfAttention(nn.Module):
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
         self.o = nn.Linear(dim, dim, bias=True)
 
-    def forward(
+        # Diffusers/Comfy WAN uses q/k RMSNorm across heads (dim = head_dim * heads).
+        self.norm_q = WanRMSNorm(dim)
+        self.norm_k = WanRMSNorm(dim)
+
+    def _apply_rope(
         self,
-        x: torch.Tensor,
+        hidden_states: torch.Tensor,  # [B, L, H, D]
+        freqs_cos: torch.Tensor,
+        freqs_sin: torch.Tensor,
     ) -> torch.Tensor:
+        x1 = hidden_states[..., 0::2]
+        x2 = hidden_states[..., 1::2]
+        cos = freqs_cos[..., 0::2]
+        sin = freqs_sin[..., 1::2]
+        out = torch.empty_like(hidden_states)
+        out[..., 0::2] = x1 * cos - x2 * sin
+        out[..., 1::2] = x1 * sin + x2 * cos
+        return out
+
+    def forward(self, x: torch.Tensor, *, rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None) -> torch.Tensor:
         B, L, C = x.shape
 
         # QKV projections
-        q = self.q(x)
-        k = self.k(x)
+        q = self.norm_q(self.q(x))
+        k = self.norm_k(self.k(x))
         v = self.v(x)
 
-        # Reshape to heads
-        q = q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+        # Reshape to heads (keep token-major layout for RoPE parity with Diffusers)
+        q = q.view(B, L, self.num_heads, self.head_dim)
+        k = k.view(B, L, self.num_heads, self.head_dim)
+        v = v.view(B, L, self.num_heads, self.head_dim)
+
+        if rotary_emb is not None:
+            freqs_cos, freqs_sin = rotary_emb
+            q = self._apply_rope(q, freqs_cos, freqs_sin)
+            k = self._apply_rope(k, freqs_cos, freqs_sin)
+
+        q = q.permute(0, 2, 1, 3)
+        k = k.permute(0, 2, 1, 3)
+        v = v.permute(0, 2, 1, 3)
 
         # Scaled dot-product attention
         attn_out = wan_sdpa(q, k, v, causal=False)
 
         # Merge heads
-        attn_out = attn_out.transpose(1, 2).contiguous().view(B, L, C)
+        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, C)
 
         return self.o(attn_out)
 
@@ -144,8 +280,9 @@ class WanCrossAttention(nn.Module):
         self.v = nn.Linear(context_dim, dim, bias=qkv_bias)
         self.o = nn.Linear(dim, dim, bias=True)
 
-        # WAN GGUF uses an affine RMSNorm weight for the K path.
-        self.norm_k = WanRMSNorm(context_dim)
+        # Diffusers/Comfy WAN uses q/k RMSNorm across heads (dim = head_dim * heads).
+        self.norm_q = WanRMSNorm(dim)
+        self.norm_k = WanRMSNorm(dim)
 
     def forward(
         self,
@@ -156,20 +293,20 @@ class WanCrossAttention(nn.Module):
         _, S, _ = context.shape
 
         # QKV projections
-        q = self.q(x)
-        k = self.k(self.norm_k(context))
+        q = self.norm_q(self.q(x))
+        k = self.norm_k(self.k(context))
         v = self.v(context)
 
         # Reshape to heads
-        q = q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
+        q = q.view(B, L, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        k = k.view(B, S, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = v.view(B, S, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
         # Scaled dot-product attention
         attn_out = wan_sdpa(q, k, v, causal=False)
 
         # Merge heads
-        attn_out = attn_out.transpose(1, 2).contiguous().view(B, L, C)
+        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, C)
 
         return self.o(attn_out)
 
@@ -253,6 +390,7 @@ class WanTransformerBlock(nn.Module):
         x: torch.Tensor,
         context: torch.Tensor,
         time_emb: torch.Tensor,  # [B, 6, dim]
+        rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
         # Combine time embedding with per-block modulation
         mod = time_emb + self.modulation  # [B, 6, dim]
@@ -263,7 +401,7 @@ class WanTransformerBlock(nn.Module):
         # Self-attention: pre-norm (no affine) + time modulation + gated residual
         x_sa = self.norm1(x)
         x_sa = x_sa * (1 + sa_scale[:, None, :]) + sa_shift[:, None, :]
-        sa_out = self.self_attn(x_sa)
+        sa_out = self.self_attn(x_sa, rotary_emb=rotary_emb)
         x = x + sa_out * sa_gate[:, None, :]
 
         # Cross-attention: pre-norm3 (affine) + residual (no time modulation)
@@ -329,6 +467,13 @@ class WanTransformer2DModel(nn.Module):
         else:
             self.text_embed = nn.Identity()
 
+        # Rotary positional embedding (RoPE) used by WAN self-attention.
+        self.rope = WanRotaryPosEmbed(
+            attention_head_dim=(config.d_model // config.n_heads),
+            patch_size=config.patch_size,
+            max_seq_len=config.rope_max_seq_len,
+        )
+
         # Transformer blocks
         self.blocks = nn.ModuleList([
             WanTransformerBlock(
@@ -369,7 +514,8 @@ class WanTransformer2DModel(nn.Module):
         base_dim = int(dim if dim is not None else self.config.time_embed_dim)
         half = max(base_dim // 2, 1)
         freq = torch.arange(half, device=t.device, dtype=torch.float32)
-        div_term = torch.exp(-math.log(10000.0) * freq / max(half - 1, 1))
+        # Diffusers `Timesteps(..., downscale_freq_shift=0)` => denominator is `half_dim`.
+        div_term = torch.exp(-math.log(10000.0) * freq / float(half))
         angles = t.to(dtype=torch.float32)[:, None] * div_term[None, :]
         # Match Diffusers `Timesteps(..., flip_sin_to_cos=True)` and Comfy/WAN exports.
         emb = torch.cat([torch.cos(angles), torch.sin(angles)], dim=1)
@@ -404,6 +550,8 @@ class WanTransformer2DModel(nn.Module):
         if timestep.numel() == 1 and B > 1:
             timestep = timestep.expand(B)
 
+        rotary_emb = self.rope(x)
+
         # Time embedding
         t_emb = self._timestep_embedding(timestep)
         t_emb = self.time_embed(t_emb.to(dtype))  # [B, d_model]
@@ -422,7 +570,7 @@ class WanTransformer2DModel(nn.Module):
 
         # Apply transformer blocks
         for block in self.blocks:
-            tokens = block(tokens, ctx, t_proj)
+            tokens = block(tokens, ctx, t_proj, rotary_emb=rotary_emb)
 
         # Output head (WAN GGUF semantics: LN without affine + repeated modulation)
         tokens = self.norm_out(tokens)

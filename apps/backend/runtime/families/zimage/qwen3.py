@@ -554,66 +554,24 @@ class Qwen3_4B(nn.Module):
 # GGUF Key Mapping
 # =============================================================================
 
-GGUF_TO_NATIVE_KEY_MAP = {
-    # Embeddings
-    "token_embd.weight": "model.embed_tokens.weight",
-    
-    # Final norm
-    "output_norm.weight": "model.norm.weight",
-    
-    # Per-layer mappings (use {i} as placeholder)
-    "blk.{i}.attn_q.weight": "model.layers.{i}.self_attn.q_proj.weight",
-    "blk.{i}.attn_k.weight": "model.layers.{i}.self_attn.k_proj.weight",
-    "blk.{i}.attn_v.weight": "model.layers.{i}.self_attn.v_proj.weight",
-    "blk.{i}.attn_output.weight": "model.layers.{i}.self_attn.o_proj.weight",
-    "blk.{i}.attn_q_norm.weight": "model.layers.{i}.self_attn.q_norm.weight",
-    "blk.{i}.attn_k_norm.weight": "model.layers.{i}.self_attn.k_norm.weight",
-    "blk.{i}.ffn_gate.weight": "model.layers.{i}.mlp.gate_proj.weight",
-    "blk.{i}.ffn_up.weight": "model.layers.{i}.mlp.up_proj.weight",
-    "blk.{i}.ffn_down.weight": "model.layers.{i}.mlp.down_proj.weight",
-    "blk.{i}.attn_norm.weight": "model.layers.{i}.input_layernorm.weight",
-    "blk.{i}.ffn_norm.weight": "model.layers.{i}.post_attention_layernorm.weight",
-}
-
-
 def remap_gguf_keys(gguf_state_dict: dict, num_layers: int = 36) -> dict:
-    """Remap GGUF state dict keys to native model keys.
-    
-    Args:
-        gguf_state_dict: State dict with GGUF-style keys
-        num_layers: Number of transformer layers
-    
-    Returns:
-        State dict with native model keys
+    """Remap llama.cpp-style GGUF tensor keys to this Qwen3 implementation’s expected parameter keys.
+
+    This is strict by default: if the input looks like llama.cpp GGUF keys (`token_embd.weight`, `blk.N.*`), all keys must be understood.
     """
-    remapped = {}
-    
-    for gguf_key, value in gguf_state_dict.items():
-        native_key = None
-        
-        # Check direct mappings
-        if gguf_key in GGUF_TO_NATIVE_KEY_MAP:
-            native_key = GGUF_TO_NATIVE_KEY_MAP[gguf_key]
-        else:
-            # Check layer-indexed mappings
-            for pattern, target in GGUF_TO_NATIVE_KEY_MAP.items():
-                if "{i}" in pattern:
-                    for i in range(num_layers):
-                        gguf_pattern = pattern.replace("{i}", str(i))
-                        if gguf_key == gguf_pattern:
-                            native_key = target.replace("{i}", str(i))
-                            break
-                    if native_key:
-                        break
-        
-        if native_key:
-            remapped[native_key] = value
-        else:
-            # Keep original key if no mapping found
-            remapped[gguf_key] = value
-            logger.debug("No mapping for GGUF key: %s", gguf_key)
-    
-    return remapped
+
+    from apps.backend.runtime.state_dict.keymap_llama_gguf import (
+        QWEN3_LLAMA_GGUF_LAYER_SUFFIX_TO_HF_PREFIX,
+        remap_llama_gguf_text_model_state_dict,
+    )
+
+    style, view = remap_llama_gguf_text_model_state_dict(
+        gguf_state_dict,
+        num_layers=num_layers,
+        layer_suffix_to_hf_prefix=QWEN3_LLAMA_GGUF_LAYER_SUFFIX_TO_HF_PREFIX,
+    )
+    logger.debug("Qwen3 remap: detected style=%s", style.value)
+    return dict(view)
 
 
 __all__ = [
@@ -621,5 +579,4 @@ __all__ = [
     "Qwen3_4B",
     "Qwen3Model",
     "remap_gguf_keys",
-    "GGUF_TO_NATIVE_KEY_MAP",
 ]

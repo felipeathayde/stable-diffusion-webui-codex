@@ -20,10 +20,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanFFN` (class): Feed-forward (MLP) block used in WAN transformer blocks.
 - `WanTransformerBlock` (class): One transformer block combining attention + FFN + norms/residuals.
 - `WanTransformer2DModel` (class): Full WAN transformer stack (embeddings/blocks/forward); used by `runtime/wan22/wan22.py`.
-- `remap_wan22_gguf_state_dict` (function): Remaps WAN22 GGUF key names into this module’s expected parameter keys.
+- `remap_wan22_gguf_state_dict` (function): Remaps WAN22 transformer state-dict keys into this module’s expected parameter keys (Diffusers/WAN-export/Codex).
 - `infer_wan_architecture_from_state_dict` (function): Infers `WanArchitectureConfig` from a loaded state dict (dims/layers/heads).
 - `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with remapping).
-- `load_wan_transformer_from_state_dict` (function): Constructs `WanTransformer2DModel` and loads weights from a state dict (with remapping; handles Diffusers vs WAN-export key styles).
 """
 
 from __future__ import annotations
@@ -608,104 +607,21 @@ class WanTransformer2DModel(nn.Module):
 
 # Weight loading helper
 def remap_wan22_gguf_state_dict(state_dict: dict) -> dict:
-    """Remap WAN GGUF checkpoint keys to WanTransformer2DModel keys.
+    """Remap WAN transformer checkpoint keys to WanTransformer2DModel keys.
 
-    The WAN GGUF files use common checkpoint-export names (e.g. `patch_embedding.*`,
-    `time_embedding.*`, `head.head.*`). The nn.Module implementation uses
-    Codex-native names (e.g. `patch_embed.*`, `time_embed.*`, `head.*`).
+    Supported input styles:
+    - Diffusers-style keys (e.g. `condition_embedder.*`, `blocks.N.attn1/attn2.*`, `ffn.net.*`, `proj_out.*`).
+    - WAN export / Comfy-style keys (e.g. `patch_embedding.*`, `time_embedding.*`, `head.head.*`, `head.modulation`).
+    - Codex-native keys (e.g. `patch_embed.*`, `time_embed.*`, `head.*`, `head_modulation`).
 
-    This helper makes the GGUF path loadable without keeping a WAN-specific
-    state-dict runner.
+    This function is strict and fails loud on unknown/ambiguous layouts.
     """
-    _PREFIXES = (
-        "model.diffusion_model.",
-        "diffusion_model.",
-        "model.",
-    )
 
-    def _strip_prefixes(name: str) -> str:
-        changed = True
-        while changed:
-            changed = False
-            for prefix in _PREFIXES:
-                if name.startswith(prefix):
-                    name = name[len(prefix):]
-                    changed = True
-                    break
-        return name
+    from apps.backend.runtime.state_dict.keymap_wan22_transformer import remap_wan22_transformer_state_dict
 
-    def _swap_norm2_norm3(name: str) -> str:
-        # Diffusers uses norm1/norm2/norm3 (SA/CA/FFN), while WAN exports use norm1/norm3/norm2.
-        # Swap only the ".norm2." and ".norm3." path segments.
-        name = name.replace(".norm2.", ".norm__placeholder.")
-        name = name.replace(".norm3.", ".norm2.")
-        name = name.replace(".norm__placeholder.", ".norm3.")
-        return name
-
-    keys = [str(k) for k in state_dict.keys()]
-    is_diffusers_style = any(
-        k.startswith("model.diffusion_model.")
-        or k.startswith("diffusion_model.")
-        or ".diffusion_model." in k
-        or "condition_embedder." in k
-        or ".attn1." in k
-        or ".attn2." in k
-        or ".ffn.net." in k
-        or "proj_out." in k
-        or k == "scale_shift_table"
-        or k.endswith(".scale_shift_table")
-        for k in keys
-    )
-
-    remapped: dict[str, object] = {}
-    for key, value in state_dict.items():
-        k = _strip_prefixes(str(key))
-
-        # Diffusers WanTransformer3DModel → WAN export-style names.
-        if k == "scale_shift_table":
-            k = "head.modulation"
-        elif k.endswith(".scale_shift_table"):
-            k = k[: -len(".scale_shift_table")] + ".modulation"
-        elif k.startswith("proj_out."):
-            k = "head.head." + k[len("proj_out."):]
-        else:
-            k = (
-                k.replace("condition_embedder.time_embedder.linear_1.", "time_embedding.0.")
-                .replace("condition_embedder.time_embedder.linear_2.", "time_embedding.2.")
-                .replace("condition_embedder.text_embedder.linear_1.", "text_embedding.0.")
-                .replace("condition_embedder.text_embedder.linear_2.", "text_embedding.2.")
-                .replace("condition_embedder.time_proj.", "time_projection.1.")
-            )
-
-        k = (
-            k.replace(".attn1.", ".self_attn.")
-            .replace(".attn2.", ".cross_attn.")
-            .replace(".to_out.0.", ".o.")
-            .replace(".to_q.", ".q.")
-            .replace(".to_k.", ".k.")
-            .replace(".to_v.", ".v.")
-            .replace(".ffn.net.0.proj.", ".ffn.0.")
-            .replace(".ffn.net.2.", ".ffn.2.")
-        )
-        if is_diffusers_style:
-            k = _swap_norm2_norm3(k)
-
-        # WAN export-style keys → Codex-native WanTransformer2DModel keys.
-        if k.startswith("patch_embedding."):
-            k = "patch_embed." + k[len("patch_embedding."):]
-        elif k.startswith("time_embedding."):
-            k = "time_embed." + k[len("time_embedding."):]
-        elif k.startswith("time_projection."):
-            k = "time_proj." + k[len("time_projection."):]
-        elif k.startswith("text_embedding."):
-            k = "text_embed." + k[len("text_embedding."):]
-        elif k.startswith("head.head."):
-            k = "head." + k[len("head.head."):]
-        elif k == "head.modulation":
-            k = "head_modulation"
-
-        remapped[k] = value
-    return remapped
+    style, view = remap_wan22_transformer_state_dict(state_dict)
+    logger.debug("WAN22 remap: detected style=%s", style.value)
+    return dict(view)
 
 
 def infer_wan_architecture_from_state_dict(state_dict: dict) -> WanArchitectureConfig:

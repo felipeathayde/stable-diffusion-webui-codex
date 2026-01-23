@@ -121,6 +121,8 @@ def _build_to_load_map(model: torch.nn.Module, tensors: Mapping[str, torch.Tenso
     out: dict[str, str] = {}
     target_owner: dict[str, str] = {}
 
+    from apps.backend.runtime.state_dict.key_mapping import KeyStyleDetectionError
+
     for logical_key in logical_keys:
         stripped = _strip_known_prefixes(logical_key)
         direct_weight_key = f"{stripped}.weight"
@@ -129,7 +131,10 @@ def _build_to_load_map(model: torch.nn.Module, tensors: Mapping[str, torch.Tenso
         if direct_weight_key in model_keys:
             target = direct_weight_key
         else:
-            remapped = remap_wan22_gguf_state_dict({direct_weight_key: 0})
+            try:
+                remapped = remap_wan22_gguf_state_dict({direct_weight_key: 0})
+            except KeyStyleDetectionError:
+                remapped = {}
             if len(remapped) == 1:
                 candidate = next(iter(remapped.keys()))
                 if candidate in model_keys:

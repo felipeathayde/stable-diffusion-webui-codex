@@ -48,6 +48,7 @@ Status: Active
 - 2026-01-23: WAN22 GGUF enforces `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping when latent H/W are odd (e.g. 360px → 352px).
 - 2026-01-23: WAN22 GGUF core model parity: self-attn now applies RoPE + Q/K RMSNorm across heads (qk_norm), cross-attn applies Q/K RMSNorm, and the timestep embedding matches Diffusers `Timesteps(..., downscale_freq_shift=0, flip_sin_to_cos=True)` (fixes noisy outputs caused by missing positional/timestep semantics).
 - 2026-01-23: WAN22 GGUF numeric stability parity: transformer LayerNorms and gated residual math now follow Diffusers’ FP32 strategy (FP32 LayerNorm + float32 accumulations), addressing VAE decode non-finite outputs caused by fp16 instability drifting latents out of range.
+- 2026-01-23: Centralized WAN22 transformer key remapping in `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`; `model.py:remap_wan22_gguf_state_dict` delegates to it and `stage_lora.py` treats key-style detection failures as “no match” (so LoRA application remains fail-loud at the “0 targets” boundary).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

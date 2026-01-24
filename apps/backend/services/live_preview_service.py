@@ -12,7 +12,7 @@ Builds per-task preview settings, encodes a resized preview image, and attaches 
 Symbols (top-level; keep in sync; no ghosts):
 - `LivePreviewImageFormat` (enum): Supported output formats for encoded preview images.
 - `LivePreviewEncodedImage` (dataclass): Encoded preview payload (`format` + base64 `data`).
-- `LivePreviewTaskConfig` (dataclass): Preview config for a task; can apply runtime env vars for the engine runtime.
+- `LivePreviewTaskConfig` (dataclass): Preview config for a task; can apply per-task runtime overrides for the sampling runtime.
 - `LivePreviewService` (class): Builds preview config, encodes images, and attaches previews to progress events.
 - `__all__` (constant): Explicit export list for this module.
 """
@@ -20,15 +20,19 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import io
 import logging
-import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from apps.backend.core.state import state as backend_state
-from apps.backend.runtime.live_preview import LivePreviewMethod, debug_preview_factors_enabled, live_preview_method_to_env
+from apps.backend.runtime.live_preview import (
+    LivePreviewMethod,
+    debug_preview_factors_enabled,
+    preview_runtime_overrides,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +71,14 @@ class LivePreviewTaskConfig:
     image_format: LivePreviewImageFormat
     max_dim: int = 512
 
-    def apply_runtime_env(self, env: Optional[dict[str, str]] = None) -> None:
-        target = os.environ if env is None else env
-        target["CODEX_PREVIEW_INTERVAL"] = str(int(self.runtime_interval_steps))
-        target["CODEX_LIVE_PREVIEW_METHOD"] = live_preview_method_to_env(self.runtime_method)
+    @contextmanager
+    def runtime_overrides(self) -> Iterator[None]:
+        """Apply per-task preview settings to the current thread runtime."""
+        with preview_runtime_overrides(
+            interval_steps=int(self.runtime_interval_steps),
+            method=self.runtime_method,
+        ):
+            yield
 
 
 class LivePreviewService:

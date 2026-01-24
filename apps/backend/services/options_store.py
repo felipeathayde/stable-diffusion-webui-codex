@@ -18,10 +18,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `set_values` (function): Persists a mapping of option updates and returns the updated keys.
 - `OptionsSnapshot` (class): Typed snapshot of option values used by runtime/engines/launchers.
 - `get_snapshot` (function): Builds an `OptionsSnapshot` from persisted values.
-- `get_selected_vae` (function): Convenience accessor for the selected VAE label/path (`sd_vae`).
-- `get_mode` (function): Convenience accessor for the current mode string (UI-facing).
-- `get_engine` (function): Convenience accessor for the current engine key string (UI-facing).
-- `get_current_checkpoint` (function): Convenience accessor for the configured checkpoint name/path.
 """
 
 from __future__ import annotations
@@ -29,7 +25,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping
 
 from apps.backend.infra.config.repo_root import get_repo_root
 
@@ -71,51 +67,25 @@ def set_values(payload: Mapping[str, Any]) -> list[str]:
     return updated
 
 
-def get_selected_vae(default: str = "Automatic") -> str:
-    return str(get_value("sd_vae", default))
-
-
-def get_mode(default: str = "Normal") -> str:
-    return str(get_value("codex_mode", default))
-
-
-def get_engine(default: str = "sd15") -> str:
-    return str(get_value("codex_engine", default))
-
-
-def get_current_checkpoint(default: str | None = None) -> str | None:
-    v = get_value("sd_model_checkpoint", default)
-    return None if v is None else str(v)
-
-
 @dataclass
 class OptionsSnapshot:
-    codex_mode: str = "Normal"
-    codex_engine: str = "sd15"
-    sd_model_checkpoint: Optional[str] = None
     codex_export_video: bool = False
-    sd_vae: str = "Automatic"
-    codex_diffusion_device: Optional[str] = None
-    codex_diffusion_dtype: Optional[str] = None
-    codex_te_device: Optional[str] = None
-    codex_te_dtype: Optional[str] = None
-    codex_vae_device: Optional[str] = None
-    codex_vae_dtype: Optional[str] = None
+    codex_core_device: str = "auto"
+    codex_core_dtype: str = "auto"
+    codex_te_device: str = "auto"
+    codex_te_dtype: str = "auto"
+    codex_vae_device: str = "auto"
+    codex_vae_dtype: str = "auto"
     codex_smart_offload: bool = False
     codex_smart_fallback: bool = False
-    codex_smart_cache: bool = False
+    codex_smart_cache: bool = True
     codex_core_streaming: bool = False
-    codex_wan22_use_spec_runtime: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
         return {
-            "codex_mode": self.codex_mode,
-            "codex_engine": self.codex_engine,
-            "sd_model_checkpoint": self.sd_model_checkpoint,
             "codex_export_video": self.codex_export_video,
-            "sd_vae": self.sd_vae,
-            "codex_diffusion_device": self.codex_diffusion_device,
-            "codex_diffusion_dtype": self.codex_diffusion_dtype,
+            "codex_core_device": self.codex_core_device,
+            "codex_core_dtype": self.codex_core_dtype,
             "codex_te_device": self.codex_te_device,
             "codex_te_dtype": self.codex_te_dtype,
             "codex_vae_device": self.codex_vae_device,
@@ -124,39 +94,37 @@ class OptionsSnapshot:
             "codex_smart_fallback": self.codex_smart_fallback,
             "codex_smart_cache": self.codex_smart_cache,
             "codex_core_streaming": self.codex_core_streaming,
-            "codex_wan22_use_spec_runtime": self.codex_wan22_use_spec_runtime,
         }
 
 
 def get_snapshot() -> OptionsSnapshot:
     v = load_values()
+
+    def _str_value(key: str, default: str) -> str:
+        raw = v.get(key)
+        if raw is None:
+            return default
+        text = str(raw).strip()
+        return text or default
+
     return OptionsSnapshot(
-        codex_mode=str(v.get("codex_mode", "Normal")),
-        codex_engine=str(v.get("codex_engine", "sd15")),
-        sd_model_checkpoint=v.get("sd_model_checkpoint"),
         codex_export_video=bool(v.get("codex_export_video", False)),
-        sd_vae=str(v.get("sd_vae", "Automatic")),
-        codex_diffusion_device=v.get("codex_diffusion_device"),
-        codex_diffusion_dtype=v.get("codex_diffusion_dtype"),
-        codex_te_device=v.get("codex_te_device"),
-        codex_te_dtype=v.get("codex_te_dtype"),
-        codex_vae_device=v.get("codex_vae_device"),
-        codex_vae_dtype=v.get("codex_vae_dtype"),
+        codex_core_device=_str_value("codex_core_device", "auto"),
+        codex_core_dtype=_str_value("codex_core_dtype", "auto"),
+        codex_te_device=_str_value("codex_te_device", "auto"),
+        codex_te_dtype=_str_value("codex_te_dtype", "auto"),
+        codex_vae_device=_str_value("codex_vae_device", "auto"),
+        codex_vae_dtype=_str_value("codex_vae_dtype", "auto"),
         codex_smart_offload=bool(v.get("codex_smart_offload", False)),
         codex_smart_fallback=bool(v.get("codex_smart_fallback", False)),
-        codex_smart_cache=bool(v.get("codex_smart_cache", False)),
+        codex_smart_cache=bool(v.get("codex_smart_cache", True)),
         codex_core_streaming=bool(v.get("codex_core_streaming", False)),
-        codex_wan22_use_spec_runtime=bool(v.get("codex_wan22_use_spec_runtime", False)),
     )
 
 
 __all__ = [
     "SETTINGS_PATH",
     "OptionsSnapshot",
-    "get_current_checkpoint",
-    "get_engine",
-    "get_mode",
-    "get_selected_vae",
     "get_snapshot",
     "get_value",
     "load_values",

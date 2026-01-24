@@ -48,7 +48,6 @@ from apps.backend.services.output_service import save_generated_images as _save_
 from apps.backend.services.media_service import MediaService
 from apps.backend.services.live_preview_service import LivePreviewService
 from apps.backend.interfaces.api.path_utils import CODEX_ROOT
-from apps.backend.interfaces.api.json_store import _save_json
 from apps.backend.interfaces.api.routers import generation, models, options, paths, settings, system, tasks, tools, ui
 from apps.backend.services import options_store
 from apps.backend.infra.config import args as config_args
@@ -301,10 +300,10 @@ def build_app() -> FastAPI:
     from apps.backend.services.options_store import (
         get_value as _opts_get,
         set_values as _opts_set_many,
+        save_values as _opts_save_native,
         get_snapshot as _opts_snapshot,
         load_values as _opts_load_native,
     )
-    _settings_values_path = str(CODEX_ROOT / 'apps' / 'settings_values.json')
     _ui_dist_dir = str(CODEX_ROOT / 'apps' / 'interface' / 'dist')
 
     # Exception hooks for asyncio + HTTP middleware to dump unhandled route exceptions
@@ -334,7 +333,7 @@ def build_app() -> FastAPI:
 
     # Settings registry (hardcoded dataclasses/enums via codegen)
     try:
-        # Generated from scripts/generate_settings_registry.py
+        # Generated from tools/settings/generate_settings_registry.py
         from apps.backend.interfaces.schemas.settings_registry import (  # type: ignore
             schema_to_json as _schema_hardcoded,
             field_index as _field_index,
@@ -351,7 +350,7 @@ def build_app() -> FastAPI:
 
         _SettingType = None
 
-    # Load saved settings on startup and apply to shared.opts with validation
+    # Load saved settings on startup and normalize them against the settings registry.
     def _apply_saved_settings() -> None:
         if not _settings_registry_ok:
             return
@@ -361,14 +360,17 @@ def build_app() -> FastAPI:
         idx = _field_index()
         # Validate and normalize persisted values against schema, then re-save
         changed = False
+        dropped: list[str] = []
         for k in list(saved.keys()):
             f = idx.get(k)
             if not f:
+                dropped.append(k)
                 saved.pop(k, None)
                 changed = True
                 continue
             try:
                 if getattr(f, 'choices', None) and isinstance(f.choices, list) and saved[k] not in f.choices:
+                    dropped.append(k)
                     saved.pop(k, None)
                     changed = True
                     continue
@@ -386,9 +388,14 @@ def build_app() -> FastAPI:
                     saved[k] = saved[k].lower() in ('1','true','yes','on')
                     changed = True
             except Exception:
+                dropped.append(k)
+                saved.pop(k, None)
+                changed = True
                 continue
         if changed:
-            _save_json(_settings_values_path, saved)
+            if dropped:
+                print(color_red(f"[settings] dropped invalid/unknown keys from settings_values.json: {', '.join(sorted(set(dropped)))}"))
+            _opts_save_native(saved)
 
     # Apply saved settings early (after modules init) before serving
     try:
@@ -410,14 +417,10 @@ def build_app() -> FastAPI:
     ))
     app.include_router(ui.build_router(
         codex_root=CODEX_ROOT,
-        opts_load_native=_opts_load_native,
         opts_set_many=_opts_set_many,
         model_api=model_api,
     ))
     app.include_router(models.build_router(
-        codex_root=CODEX_ROOT,
-        opts_load_native=_opts_load_native,
-        opts_get=_opts_get,
         model_api=model_api,
     ))
     app.include_router(paths.build_router(codex_root=CODEX_ROOT))

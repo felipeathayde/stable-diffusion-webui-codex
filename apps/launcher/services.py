@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `CodexServiceHandle` (dataclass): Runtime service handle; spawns/monitors subprocess and forwards stdout to a log buffer.
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
+- `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings.
 - `_now` (function): Timestamp helper for launcher log lines.
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
@@ -91,7 +92,15 @@ class CodexServiceHandle:
 
         command = list(self.spec.command)
         if self.spec.name.upper() == "API":
+            command.extend(_api_backend_args_from_env(env))
             port = _extract_cli_port(command)
+            if port is None:
+                raw_env_port = env.get("API_PORT_OVERRIDE") or env.get("API_PORT")
+                if raw_env_port is not None:
+                    try:
+                        port = int(str(raw_env_port).strip())
+                    except Exception:
+                        port = None
             if port is not None:
                 ok, blocked = _port_free_everywhere(port)
                 if not ok:
@@ -235,25 +244,16 @@ def _codex_root() -> Path:
 def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, CodexServiceHandle]:
     root = _codex_root()
     py_exe = Path(sys.executable)
-    api_target = "apps.backend.interfaces.api.run_api:create_api_app"
     api_port = os.getenv("API_PORT_OVERRIDE", "7850")
     web_port = os.getenv("WEB_PORT", "7860")
-    api_host = os.getenv("API_HOST", "0.0.0.0")
     api_spec = CodexServiceSpec(
         name="API",
         command=[
             str(py_exe),
-            "-m",
-            "uvicorn",
-            "--factory",
-            api_target,
-            "--host",
-            api_host,
-            "--port",
-            str(api_port),
+            str(root / "apps" / "backend" / "interfaces" / "api" / "run_api.py"),
         ],
         cwd=root,
-        base_env={"PYTHONUNBUFFERED": "1"},
+        base_env={"PYTHONUNBUFFERED": "1", "API_PORT_OVERRIDE": str(api_port)},
         allow_external_terminal=True,
     )
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
@@ -274,6 +274,24 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
         "API": CodexServiceHandle(api_spec, log_buffer=log_buffer),
         "UI": CodexServiceHandle(ui_spec, log_buffer=log_buffer),
     }
+
+
+def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
+    args: List[str] = []
+
+    raw_exec = str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower()
+    if raw_exec:
+        args.append(f"--gguf-exec={raw_exec}")
+
+    raw_lora_mode = str(env.get("CODEX_LORA_APPLY_MODE", "") or "").strip().lower()
+    if raw_lora_mode:
+        args.append(f"--lora-apply-mode={raw_lora_mode}")
+
+    raw_lora_math = str(env.get("CODEX_LORA_ONLINE_MATH", "") or "").strip().lower()
+    if raw_lora_math:
+        args.append(f"--lora-online-math={raw_lora_math}")
+
+    return args
 
 
 def _now() -> str:

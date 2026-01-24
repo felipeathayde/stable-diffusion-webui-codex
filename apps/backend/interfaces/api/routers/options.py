@@ -24,7 +24,7 @@ def build_router(
     *,
     opts_load_native: Callable[[], Dict[str, Any]],
     opts_snapshot,
-    opts_set_many: Callable[[Dict[str, Any]], Dict[str, Any]],
+    opts_set_many: Callable[[Dict[str, Any]], list[str]],
     settings_registry_ok: bool,
     field_index: Callable[[], Dict[str, Any]],
     setting_type,
@@ -82,43 +82,24 @@ def build_router(
 
     def _validate_options(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
-            return {}
+            raise HTTPException(status_code=400, detail="invalid payload")
         if not settings_registry_ok:
             return dict(payload)
         try:
             idx = field_index()
-        except Exception:
-            return dict(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"registry unavailable: {exc}")
 
-        # Native UI keys that are persisted but not yet modeled in the generated settings registry.
-        extra_keys = {
-            "text_encoder_overrides",
-            "text_encoder_overrides_sha",
-            "codex_unet_storage_dtype",
-            "codex_inference_memory_mb",
-        }
+        unknown = sorted(k for k in payload.keys() if k not in idx)
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"unknown option key(s): {', '.join(unknown)}")
+
         out: Dict[str, Any] = {}
         for k, v in payload.items():
-            f = idx.get(k)
-            if not f:
-                if k not in extra_keys:
-                    continue
-                try:
-                    if k in {"text_encoder_overrides", "text_encoder_overrides_sha"}:
-                        if isinstance(v, (list, tuple)):
-                            out[k] = [str(item).strip() for item in v if str(item).strip()]
-                    elif k == "codex_unet_storage_dtype":
-                        if isinstance(v, str):
-                            out[k] = v
-                    elif k == "codex_inference_memory_mb":
-                        out[k] = max(0.0, float(v))
-                except Exception:
-                    continue
-                continue
+            f = idx[k]
             try:
-                if getattr(f, "choices", None) and isinstance(f.choices, list):
-                    if v not in f.choices:
-                        continue
+                if getattr(f, "choices", None) and isinstance(f.choices, list) and v not in f.choices:
+                    raise HTTPException(status_code=400, detail=f"Invalid value for {k}: not in choices")
                 if getattr(f, "type", None) in (setting_type.SLIDER, setting_type.NUMBER):
                     num = float(v)
                     lo = getattr(f, "min", None)
@@ -135,16 +116,15 @@ def build_router(
                         out[k] = bool(v)
                 else:
                     out[k] = v
-            except Exception:
-                continue
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid value for {k}: {exc}") from exc
         return out
 
     @router.post("/api/options")
     def set_options(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="invalid payload")
         updates = _validate_options(payload)
-        updated = opts_set_many(updates)
 
         # Apply memory manager overrides when present
         from apps.backend.runtime import memory_management as mem_management
@@ -157,7 +137,13 @@ def build_router(
             "codex_te_dtype": ("text_encoder", "dtype"),
             "codex_vae_dtype": ("vae", "dtype"),
         }
-        for key, value in payload.items():
+        for key, value in updates.items():
+            if key == "codex_attention_backend":
+                try:
+                    mem_management.set_attention_backend(str(value))
+                except Exception as exc:
+                    raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
+                continue
             if key not in role_map:
                 continue
             role, kind = role_map[key]
@@ -169,6 +155,7 @@ def build_router(
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
 
+        updated = opts_set_many(updates)
         return {"updated": updated}
 
     @router.post("/api/options/validate")

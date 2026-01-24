@@ -16,7 +16,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -48,19 +47,10 @@ def build_router(
                     _settings_schema_cache = None
             if _settings_schema_cache is None:
                 schema_path = str(codex_root / "apps" / "backend" / "interfaces" / "schemas" / "settings_schema.json")
-                if not os.path.isfile(schema_path):
-                    schema_path = str(codex_root / "apps" / "server" / "settings_schema.json")
                 _settings_schema_cache = _load_json(schema_path)
                 if not _settings_schema_cache:
                     raise HTTPException(status_code=500, detail="settings schema not found (registry and JSON)")
-
-        # Hydrate dynamic choices on-the-fly
-        try:
-            from apps.backend.interfaces.schemas.settings_hydration import hydrate_schema  # type: ignore
-
-            return hydrate_schema(_settings_schema_cache)
-        except Exception:
-            return _settings_schema_cache
+        return _settings_schema_cache
 
     @router.get("/api/settings/values")
     def settings_values() -> Dict[str, Any]:

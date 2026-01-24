@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: GUI launcher for Codex services (tkinter).
-Provides a touch-friendly UI to manage API/UI service processes and runtime configuration.
+Provides a touch-friendly UI to manage API/UI service processes and runtime configuration (e.g. GGUF exec and LoRA behaviour flags).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexGUILauncher` (class): Main Tk app; builds widgets, polls service status, starts/stops services, edits env/profile values, and shows logs.
@@ -282,13 +282,80 @@ class CodexGUILauncher(tk.Tk):
             width=12,
         )
         lora_mode_combo.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
-        lora_mode_combo.bind("<<ComboboxSelected>>", lambda _e: self._mark_changed())
+        lora_mode_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: (self._sync_runtime_flag_deps(), self._mark_changed()),
+        )
         row += 1
         ttk.Label(
             scrollable,
             text=(
                 "merge: rewrites weights once at apply-time (default).\n"
                 "online: applies LoRA patches on-the-fly during forward."
+            ),
+            justify="left",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
+        row += 1
+
+        # GGUF execution mode (global; backend restart required)
+        raw_gguf_exec = str(self.env.get("CODEX_GGUF_EXEC", "dequant_forward") or "").strip().lower()
+        if raw_gguf_exec not in {"dequant_forward", "dequant_upfront", "cuda_pack"}:
+            raw_gguf_exec = "dequant_forward"
+        self._var_gguf_exec = tk.StringVar(value=raw_gguf_exec)
+        ttk.Label(scrollable, text="GGUF exec mode (requires API restart):").grid(
+            row=row, column=0, sticky="w", padx=16, pady=8
+        )
+        gguf_exec_combo = ttk.Combobox(
+            scrollable,
+            textvariable=self._var_gguf_exec,
+            values=["dequant_forward", "dequant_upfront", "cuda_pack"],
+            state="readonly",
+            width=16,
+        )
+        gguf_exec_combo.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+        gguf_exec_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: (self._sync_runtime_flag_deps(), self._mark_changed()),
+        )
+        row += 1
+        ttk.Label(
+            scrollable,
+            text=(
+                "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
+                "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
+                "cuda_pack: reserved for future packed GGUF CUDA kernels (will fail until implemented)."
+            ),
+            justify="left",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
+        row += 1
+
+        # Online LoRA math mode (only meaningful when LoRA apply-mode is 'online')
+        raw_lora_online_math = str(self.env.get("CODEX_LORA_ONLINE_MATH", "weight_merge") or "").strip().lower()
+        if raw_lora_online_math not in {"weight_merge", "activation"}:
+            raw_lora_online_math = "weight_merge"
+        self._var_lora_online_math = tk.StringVar(value=raw_lora_online_math)
+        ttk.Label(scrollable, text="LoRA online math (requires API restart):").grid(
+            row=row, column=0, sticky="w", padx=16, pady=8
+        )
+        lora_math_combo = ttk.Combobox(
+            scrollable,
+            textvariable=self._var_lora_online_math,
+            values=["weight_merge", "activation"],
+            state="readonly",
+            width=16,
+        )
+        lora_math_combo.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+        lora_math_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: (self._sync_runtime_flag_deps(), self._mark_changed()),
+        )
+        self._lora_math_combo = lora_math_combo
+        row += 1
+        ttk.Label(
+            scrollable,
+            text=(
+                "weight_merge: current online behavior (materializes patched weights per-forward).\n"
+                "activation: reserved for packed GGUF kernels (activation-side delta; supports LoRA/DoRA only)."
             ),
             justify="left",
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
@@ -322,6 +389,8 @@ class CodexGUILauncher(tk.Tk):
             ),
             justify="left",
         ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 0))
+
+        self._sync_runtime_flag_deps()
 
         return frame
 
@@ -604,6 +673,8 @@ class CodexGUILauncher(tk.Tk):
         # Meta
         self.meta.external_terminal = self._var_ext_term.get()
         env["CODEX_LORA_APPLY_MODE"] = str(self._var_lora_apply_mode.get()).strip().lower() or "merge"
+        env["CODEX_LORA_ONLINE_MATH"] = str(self._var_lora_online_math.get()).strip().lower() or "weight_merge"
+        env["CODEX_GGUF_EXEC"] = str(self._var_gguf_exec.get()).strip().lower() or "dequant_forward"
         alloc_conf = str(self._var_pytorch_cuda_alloc_conf.get() or "").strip()
         if alloc_conf:
             env["PYTORCH_CUDA_ALLOC_CONF"] = alloc_conf
@@ -635,6 +706,40 @@ class CodexGUILauncher(tk.Tk):
                 env["CODEX_LOG_FILE"] = str(logs_dir / f"codex-{stamp}.log")
         else:
             env.pop("CODEX_LOG_FILE", None)
+
+    def _sync_runtime_flag_deps(self) -> None:
+        """Normalize dependent runtime flags and disable invalid UI combinations."""
+        gguf_exec = str(self._var_gguf_exec.get() or "").strip().lower()
+        lora_apply_mode = str(self._var_lora_apply_mode.get() or "").strip().lower()
+        lora_online_math = str(self._var_lora_online_math.get() or "").strip().lower()
+
+        if gguf_exec == "cuda_pack":
+            if lora_apply_mode != "online":
+                self._var_lora_apply_mode.set("online")
+                lora_apply_mode = "online"
+            if lora_online_math != "activation":
+                self._var_lora_online_math.set("activation")
+                lora_online_math = "activation"
+
+        if lora_online_math == "activation" and gguf_exec != "cuda_pack":
+            self._var_gguf_exec.set("cuda_pack")
+            gguf_exec = "cuda_pack"
+
+        if lora_online_math == "activation" and lora_apply_mode != "online":
+            self._var_lora_apply_mode.set("online")
+            lora_apply_mode = "online"
+
+        if lora_apply_mode != "online":
+            self._var_lora_online_math.set("weight_merge")
+            try:
+                self._lora_math_combo.configure(state="disabled")
+            except Exception:
+                pass
+        else:
+            try:
+                self._lora_math_combo.configure(state="readonly")
+            except Exception:
+                pass
 
     def _save_and_notify(self) -> None:
         """Save settings and notify user."""

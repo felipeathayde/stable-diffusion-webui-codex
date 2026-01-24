@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/WAN).
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
-and emits/commits overrides (device/engine/memory flags) used by generation payload builders.
+and commits overrides (device + runtime flags) used by generation payload builders.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -32,8 +32,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `textEncoderLabel` (function): Converts raw TE selector values into a canonical label (handles WAN-style prefixes).
 - `onPrimaryTextEncoderChange` (function): Applies primary text-encoder selection changes (and triggers dependent updates).
 - `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (Flux/Kontext dual-encoder workflows).
-- `onUnetDtypeChange` (function): Updates UNet dtype selection in quicksettings/store.
-- `onGpuWeightsChange` (function): Updates GPU weights slider value for relevant engines.
 - `onAttentionChange` (function): Updates attention implementation selection (backend/runtime policy).
 - `onSmartOffloadChange` (function): Updates Smart Offload toggle (impacts per-request memory behavior).
 - `onSmartFallbackChange` (function): Updates Smart Fallback toggle (best-effort OOM fallback behavior).
@@ -186,8 +184,6 @@ Symbols (top-level; keep in sync; no ghosts):
       <!-- Default (SD15/SDXL) quicksettings -->
       <template v-else>
         <QuickSettingsBase
-          :mode="store.currentMode"
-          :mode-choices="filteredModeChoices"
           :checkpoint="effectiveCheckpoint"
           :checkpoints="filteredModelTitles"
           :vae="store.currentVae"
@@ -196,7 +192,6 @@ Symbols (top-level; keep in sync; no ghosts):
           :text-encoder-choices="filteredTextEncoderChoices"
           text-encoder-automatic-label="Built-in"
           :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
-          @update:mode="onModeChange"
           @update:checkpoint="onModelChange"
           @update:vae="onVaeChange"
           @update:textEncoder="onPrimaryTextEncoderChange"
@@ -221,20 +216,6 @@ Symbols (top-level; keep in sync; no ghosts):
             <select class="select-md" :value="store.currentAttention" @change="onAttentionChange(($event.target as HTMLSelectElement).value)">
               <option v-for="opt in store.attentionChoices" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
-          </div>
-        </div>
-
-        <div class="quicksettings-group qs-group-perf qs-group-perf-vram">
-          <label class="label-muted">GPU VRAM (MB)</label>
-          <div class="qs-row">
-            <input
-              class="ui-input"
-              type="number"
-              :min="0"
-              :max="store.gpuTotalMb"
-              :value="store.gpuWeightsMb"
-              @change="onGpuWeightsChange(Number(($event.target as HTMLInputElement).value))"
-            />
           </div>
         </div>
 
@@ -445,8 +426,8 @@ const activeFamily = computed<TabFamily>(() => {
     if (type) return type
   }
 
-  // Fallback to global engine selection
-  const eng = (store.currentEngine || '').toLowerCase()
+  // Fallback when no model tab is active (settings/tools pages etc.)
+  const eng = String(uiBlocks.semanticEngine || 'sd15').toLowerCase()
   if (eng === 'flux1_chroma' || eng === 'chroma') return 'chroma'
   if (eng.startsWith('flux1')) return 'flux1'
   if (eng.startsWith('sdxl')) return 'sdxl'
@@ -458,8 +439,7 @@ const activeFamily = computed<TabFamily>(() => {
 const semanticEngine = computed<string>(() => {
   // Prefer semantic engine from UI blocks when available (video tabs etc.).
   if (uiBlocks.semanticEngine) return uiBlocks.semanticEngine
-  // Fallback to global Codex engine selection.
-  return store.currentEngine || 'sd15'
+  return 'sd15'
 })
 
 async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void> {
@@ -781,22 +761,6 @@ const filteredVaeChoices = computed(() => {
   return (store.vaeChoices.length ? store.vaeChoices : ['Automatic']).filter(v => v === 'Automatic' || isVaeForFamily(v, fam))
 })
 
-const filteredModeChoices = computed(() => {
-  const fam = activeFamily.value
-  const base = store.modeChoices
-  if (fam === 'sdxl') return base.filter(m => ['Normal','Lightning','Turbo'].includes(m))
-  if (fam === 'sd15') return base.filter(m => ['Normal','LCM','Turbo'].includes(m))
-  if (fam === 'flux1' || fam === 'chroma') return base.filter(m => ['Normal'].includes(m))
-  return base
-})
-
-const filteredUnetDtypeChoices = computed(() => {
-  const fam = activeFamily.value
-  const base = store.unetDtypeChoices
-  if (fam === 'flux1' || fam === 'chroma') return base.filter(x => /Automatic|float8|fp16/i.test(x))
-  return base
-})
-
 const filteredTextEncoderChoices = computed(() => {
   const fam = activeFamily.value
   if (fam === 'flux1') {
@@ -999,10 +963,6 @@ const wanVaeChoices = computed(() => {
 })
 
 // Event handlers
-async function onModeChange(value: string): Promise<void> {
-  await store.setMode(value)
-}
-
 async function onModelChange(value: string): Promise<void> {
   const tab = activeImageTab.value
   if (tab) {
@@ -1065,15 +1025,6 @@ function onSecondaryTextEncoderChange(value: string): void {
   const primary = flux1TextEncoderPrimary.value || ''
   const secondary = value || ''
   void updateFlux1TextEncoders(primary, secondary)
-}
-
-function onUnetDtypeChange(value: string): void {
-  void store.setUnetDtype(value)
-}
-
-function onGpuWeightsChange(value: number): void {
-  const v = Number(value)
-  if (Number.isFinite(v)) void store.setGpuWeightsMb(v)
 }
 
 function onAttentionChange(value: string): void {

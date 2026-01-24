@@ -31,8 +31,7 @@ from apps.backend.interfaces.api.json_store import _load_json
 def build_router(
     *,
     codex_root: Path,
-    opts_load_native: Callable[[], Dict[str, Any]],
-    opts_set_many: Callable[[Dict[str, Any]], Dict[str, Any]],
+    opts_set_many: Callable[[Dict[str, Any]], list[str]],
     model_api: Any,
 ) -> APIRouter:
     router = APIRouter()
@@ -81,50 +80,15 @@ def build_router(
         _ui_blocks_cache, _ui_blocks_mtime = out, mtime
         return out
 
-    def _detect_semantic_engine() -> str:
-        """Infer a semantic engine tag from the currently selected checkpoint."""
-        try:
-            current = str((opts_load_native() or {}).get("sd_model_checkpoint") or "")
-            infos = model_api.list_checkpoints_as_dict(refresh=False)
-            target = None
-            for i in infos:
-                if i.get("name") == current or i.get("title") == current:
-                    target = i
-                    break
-            blob = ""
-            if target:
-                blob = " ".join(
-                    [str(target.get("title") or ""), str(target.get("path") or ""), str(target.get("format") or "")]
-                ).lower()
-                comps = target.get("components") or []
-                if any("flux" in blob for blob in [blob]) or "transformer" in comps:
-                    if "flux" in blob:
-                        return "flux1"
-                if "text_encoder_2" in comps and "tokenizer_2" in comps:
-                    return "sdxl"
-                if "hunyuan" in blob:
-                    return "hunyuan_video"
-                if "svd" in blob:
-                    return "svd"
-                if "wan" in blob:
-                    return "wan22"
-            # Fallback on title string hints
-            t = (current or "").lower()
-            if "flux" in t:
-                return "flux1"
-            if "xl" in t:
-                return "sdxl"
-            if "wan" in t:
-                return "wan22"
-        except Exception:
-            pass
-        return "sd15"
-
     @router.get("/api/ui/blocks")
-    def ui_blocks(tab: Optional[str] = None) -> Dict[str, Any]:
-        """Return UI blocks filtered by tab and current semantic engine."""
+    def ui_blocks(tab: Optional[str] = None, engine: Optional[str] = None) -> Dict[str, Any]:
+        """Return UI blocks filtered by tab and semantic engine.
+
+        The backend no longer infers a “current engine” from a global checkpoint selection.
+        Callers should pass `engine=<semantic_engine>` when engine-scoped blocks are needed.
+        """
         data = _load_ui_blocks()
-        sem = _detect_semantic_engine()
+        sem = str(engine or "").strip().lower() or "sd15"
         blocks_in = list(data.get("blocks") or [])
         out: list[dict] = []
         tab_norm = str(tab).strip().lower() if tab else None
@@ -461,7 +425,11 @@ def build_router(
 
     @router.post("/api/ui/presets/apply")
     def ui_presets_apply(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """Apply a Model UI preset: resolve checkpoint and set options atomically."""
+        """Apply a UI preset: resolve checkpoint selector and apply options.
+
+        Presets no longer mutate a global “current checkpoint” option; callers must
+        apply the returned checkpoint to their per-tab state.
+        """
         try:
             preset_id = str(payload.get("id"))
             tab = str(payload.get("tab")) if payload.get("tab") else None
@@ -502,16 +470,14 @@ def build_router(
         if not target:
             raise HTTPException(status_code=409, detail=f"checkpoint not found for selector: {sel_type}:{sel_value}")
 
-        # Apply options atomically
+        # Apply registry-backed options atomically (checkpoint selection is returned, not persisted).
         try:
-            updates = {"sd_model_checkpoint": str(target)}
             extra = preset.get("options") or {}
-            if isinstance(extra, dict):
-                updates.update(extra)
-            opts_set_many(updates)
+            updates = dict(extra) if isinstance(extra, dict) else {}
+            updated = opts_set_many(updates) if updates else []
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to apply preset: {exc}")
 
-        return {"applied": True, "model": target}
+        return {"applied": True, "checkpoint": target, "model": target, "updated": updated}
 
     return router

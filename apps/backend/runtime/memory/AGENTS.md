@@ -1,7 +1,7 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2026-01-05
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 - `manager.py` hosts `CodexMemoryManager`; `memory_management.py` exposes the active singleton as `memory_management.manager` (call sites should use manager methods/properties directly).
 - `config.py` defines typed configuration (devices, swap policies, attention backends). Update both docs and `apps/backend/infra/config/args.py` when adding new options.
 - Keep policy changes centralized here to ensure consistent behaviour across tasks (engines, patchers, workflows).
+- 2026-01-24: Attention backend can be switched at runtime via `memory_management.set_attention_backend(...)` (used by `POST /api/options` key `codex_attention_backend`); the attention dispatcher is runtime-config-driven (no import-time binding).
 - AUTO precision is coordinated via a native ladder: VAE supports bf16→fp16→fp32, diffusion/text encoders bf16→fp16. Fallbacks are handled by `CodexMemoryManager.report_precision_failure` and will refuse to advance when users forced a dtype.
 - 2025-11-04: `CodexMemoryManager` unwraps wrappers (e.g., VAE) to their `ModelPatcher`/`nn.Module` targets before allocation/load so engines can call `memory_management.manager.load_model(wrapper)` without tripping AttributeErrors.
 - 2025-12-05: `smart_offload` and `smart_fallback` flags are driven via Codex options (`codex_smart_offload`, `codex_smart_fallback`); the VAE patcher now uses `smart_fallback` to reroute decode and encode to CPU após um CUDA OOM instead of repeatedly retrying on GPU (encode falls back to tiled mode when Smart Fallback is disabled).

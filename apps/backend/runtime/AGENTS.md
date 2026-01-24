@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -32,6 +32,7 @@ Status: Active
 ## Notes
 - Keep runtime logic model-agnostic when possible; place model-specific code under `families/<family>/`.
 - Avoid duplicating helpers across engines—centralize them here to maintain parity.
+- 2026-01-24: Attention backend selection is now driven by the runtime memory config (seeded from `/api/options` key `codex_attention_backend` at bootstrap, and switchable at runtime via `memory_management.set_attention_backend(...)`).
 - Runtime layout: family runtimes live under `apps/backend/runtime/families/<family>/`; keep `apps/backend/runtime/` for generic runtime modules shared across families (plan: `.sangoi/plans/2026-01-17-backend-runtime-families-layout.md`).
 - 2025-12-03: Processing models expose `RefinerConfig` and carry refiner configs on `CodexProcessingTxt2Img`/`CodexHighResConfig` (global + hires) for stage-based refiner execution.
 - 2025-12-03: Sampler driver checks `backend_state.should_stop` each step and honors `/api/tasks/{id}/cancel` (immediate) by raising `RuntimeError("cancelled")` to abort sampling.
@@ -44,7 +45,8 @@ Status: Active
 - 2025-12-30: GGUF converter now supports sharded SafeTensors inputs via `*.safetensors.index.json` (or by pointing at a directory containing the index); no manual shard merge required.
 - 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
-- 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-dequantize-upfront` (otherwise weights dequantize on the fly).
+- 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-exec=dequant_upfront` (otherwise weights dequantize on the fly via `dequant_forward`).
+- 2026-01-23: Started gating future GGUF packed-kernel execution via `--gguf-exec=cuda_pack` (reserved; fail loud until implemented) and introduced `--lora-online-math` to make online LoRA semantics explicit.
 - 2026-01-04: Added `runtime.checkpoint.io.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).
 - 2026-01-18: `runtime.checkpoint.io.load_gguf_state_dict(...)` supports explicit GGUF dequantization policy (`dequantize` + `computation_dtype`) so callers can centralize GGUF loads without importing `apps.backend.quantization.*` directly.
 - 2026-01-01: Live preview utilities now live in `runtime/live_preview.py` (method enum, preview decode helper, and debug preview-factor fitting/logging) so workflows and API layers don’t duplicate preview logic.

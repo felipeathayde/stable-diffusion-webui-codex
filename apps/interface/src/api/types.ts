@@ -262,7 +262,7 @@ export interface UiBlocksResponse { version: number; blocks: UiBlock[]; semantic
 // UI Presets (Model UI)
 export interface UiPreset { id: string; title: string; tabs?: string[]; model_select: { type: 'exact' | 'pattern'; value: string }; options?: Record<string, unknown> }
 export interface UiPresetsResponse { version: number; presets: UiPreset[] }
-export interface UiPresetApplyResponse { applied: boolean; model: string }
+export interface UiPresetApplyResponse { applied: boolean; model: string; checkpoint: string; updated: string[] }
 
 // Tabs/workflows persistence
 export interface ApiTabMeta { createdAt: string; updatedAt: string }

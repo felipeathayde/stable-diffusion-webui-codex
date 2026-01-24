@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -14,7 +14,7 @@ Status: Active
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
 - Generation + highres + refiner controls live in `GenerationSettingsCard.vue`, `HighresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.
 - Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
-- `QuickSettingsBar.vue` surfaces engine/tab selectors in the main header row; it renders a nested, collapsible Advanced area (Smart toggles + GPU VRAM / Attention Backend / Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `quicksettings.currentEngine`.
+- `QuickSettingsBar.vue` renders per-tab selectors in the main header row; it includes a nested, collapsible Advanced area (Smart toggles + Attention Backend / Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `uiBlocks.semanticEngine` when available (otherwise `sd15`).
 - 2026-01-18: `QuickSettingsBar.vue` now supports the `chroma` model tab type (mapped to backend engine id `flux1_chroma`) and renders a dedicated `QuickSettingsChroma.vue` selector row.
 - 2026-01-13: Metadata modal payload now uses a single `metadata` object (no `codex_metadata` wrapper; `file_metadata` → `metadata`).
 - 2026-01-13: Metadata modal adds a toggle to switch between raw (flat) and nested (organized) views for file metadata.

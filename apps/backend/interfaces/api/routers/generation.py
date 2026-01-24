@@ -631,7 +631,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         batch_size = int(extras.pop('batch_size', 1)) if 'batch_size' in extras else 1
         batch_count = int(extras.pop('batch_count', 1)) if 'batch_count' in extras else 1
 
-        metadata.setdefault("mode", _opts_snapshot().codex_mode)
         metadata["styles"] = styles
         metadata["n_iter"] = batch_count
         metadata["batch_count"] = batch_count
@@ -654,15 +653,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         else:
             smart_cache = bool(getattr(snap, "codex_smart_cache", False))
 
-        engine_override = payload.get('engine') or payload.get('codex_engine')
-        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
+        engine_override = payload.get('engine')
+        model_override = payload.get('model')
 
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
-        engine_key = _canonical_engine_key(engine_override or snap.codex_engine)
+        engine_key = _canonical_engine_key(engine_override)
         if not engine_key:
-            raise HTTPException(status_code=400, detail="Missing engine key (engine/codex_engine)")
+            raise HTTPException(status_code=400, detail="Missing engine key (engine)")
         engine_id = engine_key
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
@@ -683,7 +682,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             model_override = record.filename
             extras["model_path"] = record.filename
 
-        model_ref_for_contract = model_override or snap.sd_model_checkpoint
+        if not isinstance(model_override, str) or not model_override.strip():
+            raise HTTPException(status_code=400, detail="Missing model selection: provide 'model' or 'extras.model_sha'")
+        model_override = model_override.strip()
+        model_ref_for_contract = model_override
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
             checkpoint_ref=model_ref_for_contract,
@@ -714,8 +716,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_cache=smart_cache,
         )
 
-        model_ref = model_override or snap.sd_model_checkpoint
-        return req, engine_key, model_ref
+        return req, engine_key, model_override
 
     def encode_images(images: Any, *, metadata: Optional[Mapping[str, str]] = None) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
         encoded: list[Dict[str, str]] = []
@@ -763,7 +764,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         raw = (
             payload.get('codex_device')
             or payload.get('device')
-            or payload.get('codex_diffusion_device')
             or ""
         )
         dev = str(raw).strip().lower()
@@ -811,7 +811,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             try:
                 push({"type": "status", "stage": "running"})
                 preview_cfg = live_preview.build_task_config(_opts_get)
-                preview_cfg.apply_runtime_env()
                 entry.last_preview_id_sent = 0
 
                 engine_options: Dict[str, object] = {}
@@ -846,58 +845,59 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if getattr(snap, "codex_core_streaming", False):
                     engine_options["codex_core_streaming"] = True
                 with tasks_lock:
-                    for ev in _ORCH.run(
-                        TaskType.TXT2IMG,
-                        engine_key,
-                        req,
-                        model_ref=model_ref,
-                        engine_options=engine_options,
-                    ):
-                        if entry.cancel_requested and entry.cancel_mode == "immediate":
-                            entry.error = "cancelled"
-                            push({"type": "error", "message": "cancelled"})
-                            push({"type": "end"})
-                            mark_done(False)
-                            return
-                        if isinstance(ev, ProgressEvent):
-                            evt: Dict[str, Any] = {
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            }
-                            live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
-                            push(evt)
-                        elif isinstance(ev, ResultEvent):
-                            payload_obj = ev.payload or {}
-                            info_raw = payload_obj.get("info", "{}")
-                            try:
-                                info_obj = json.loads(info_raw)
-                            except Exception:
-                                info_obj = info_raw
-                            info_dict = info_obj if isinstance(info_obj, dict) else None
-                            if isinstance(info_obj, dict):
-                                for key, value in _GENERATION_PROVENANCE.items():
-                                    info_obj.setdefault(key, value)
-                            if bool(_opts_get("samples_save", True)):
-                                _save_generated_images(
-                                    payload_obj.get("images", []),
-                                    task=TaskType.TXT2IMG,
-                                    info=info_dict,
-                                    metadata=_GENERATION_PROVENANCE,
-                                )
-                            encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
-                            result = {
-                                "images": encoded,
-                                "info": info_obj,
-                            }
-                            entry.result = {
-                                "status": "completed",
-                                "result": result,
-                            }
-                            push({"type": "result", **result})
+                    with preview_cfg.runtime_overrides():
+                        for ev in _ORCH.run(
+                            TaskType.TXT2IMG,
+                            engine_key,
+                            req,
+                            model_ref=model_ref,
+                            engine_options=engine_options,
+                        ):
+                            if entry.cancel_requested and entry.cancel_mode == "immediate":
+                                entry.error = "cancelled"
+                                push({"type": "error", "message": "cancelled"})
+                                push({"type": "end"})
+                                mark_done(False)
+                                return
+                            if isinstance(ev, ProgressEvent):
+                                evt: Dict[str, Any] = {
+                                    "type": "progress",
+                                    "stage": ev.stage,
+                                    "percent": ev.percent,
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "eta_seconds": ev.eta_seconds,
+                                }
+                                live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
+                                push(evt)
+                            elif isinstance(ev, ResultEvent):
+                                payload_obj = ev.payload or {}
+                                info_raw = payload_obj.get("info", "{}")
+                                try:
+                                    info_obj = json.loads(info_raw)
+                                except Exception:
+                                    info_obj = info_raw
+                                info_dict = info_obj if isinstance(info_obj, dict) else None
+                                if isinstance(info_obj, dict):
+                                    for key, value in _GENERATION_PROVENANCE.items():
+                                        info_obj.setdefault(key, value)
+                                if bool(_opts_get("samples_save", True)):
+                                    _save_generated_images(
+                                        payload_obj.get("images", []),
+                                        task=TaskType.TXT2IMG,
+                                        info=info_dict,
+                                        metadata=_GENERATION_PROVENANCE,
+                                    )
+                                encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
+                                result = {
+                                    "images": encoded,
+                                    "info": info_obj,
+                                }
+                                entry.result = {
+                                    "status": "completed",
+                                    "result": result,
+                                }
+                                push({"type": "result", **result})
                 push({"type": "end"})
                 mark_done(True)
             except Exception as err:  # pragma: no cover - surfaces runtime errors
@@ -925,13 +925,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mask_data = payload.get('img2img_mask')
         mask_image = media.decode_image(mask_data) if mask_data else None
 
-        engine_override = payload.get('engine') or payload.get('codex_engine')
-        model_override = payload.get('model') or payload.get('sd_model_checkpoint')
-        snap = _opts_snapshot()
-        engine_key = _canonical_engine_key(engine_override or snap.codex_engine)
+        engine_override = payload.get('engine')
+        model_override = payload.get('model')
+        engine_key = _canonical_engine_key(engine_override)
         if not engine_key:
-            raise HTTPException(status_code=400, detail="Missing engine key (engine/codex_engine)")
-        model_ref = model_override or snap.sd_model_checkpoint
+            raise HTTPException(status_code=400, detail="Missing engine key (engine)")
+        model_ref = model_override
 
         prompt = _p.require(payload, 'img2img_prompt') or ''
         negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
@@ -1085,6 +1084,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             model_ref = record.filename
             extras["model_path"] = record.filename
 
+        if not isinstance(model_ref, str) or not model_ref.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Missing model selection: provide 'model' or 'img2img_extras.model_sha'",
+            )
+        model_ref = model_ref.strip()
+
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
             checkpoint_ref=model_ref,
@@ -1162,7 +1168,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             try:
                 push({"type": "status", "stage": "running"})
                 preview_cfg = live_preview.build_task_config(_opts_get)
-                preview_cfg.apply_runtime_env()
                 entry.last_preview_id_sent = 0
 
                 engine_options: Dict[str, object] = {}
@@ -1197,52 +1202,53 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if getattr(snap, "codex_core_streaming", False):
                     engine_options["codex_core_streaming"] = True
                 with tasks_lock:
-                    for ev in _ORCH.run(
-                        TaskType.IMG2IMG,
-                        engine_key,
-                        req,
-                        model_ref=model_ref,
-                        engine_options=engine_options,
-                    ):
-                        if entry.cancel_requested and entry.cancel_mode == "immediate":
-                            entry.error = "cancelled"
-                            push({"type": "error", "message": "cancelled"})
-                            push({"type": "end"})
-                            mark_done(False)
-                            return
-                        if isinstance(ev, ProgressEvent):
-                            evt: Dict[str, Any] = {
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            }
-                            live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
-                            push(evt)
-                        elif isinstance(ev, ResultEvent):
-                            payload_obj = ev.payload or {}
-                            info_raw = payload_obj.get("info", "{}")
-                            try:
-                                info_obj = json.loads(info_raw)
-                            except Exception:
-                                info_obj = info_raw
-                            info_dict = info_obj if isinstance(info_obj, dict) else None
-                            if isinstance(info_obj, dict):
-                                for key, value in _GENERATION_PROVENANCE.items():
-                                    info_obj.setdefault(key, value)
-                            if bool(_opts_get("samples_save", True)):
-                                _save_generated_images(
-                                    payload_obj.get("images", []),
-                                    task=TaskType.IMG2IMG,
-                                    info=info_dict,
-                                    metadata=_GENERATION_PROVENANCE,
-                                )
-                            encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
-                            result = {"images": encoded, "info": info_obj}
-                            entry.result = {"status": "completed", "result": result}
-                            push({"type": "result", **result})
+                    with preview_cfg.runtime_overrides():
+                        for ev in _ORCH.run(
+                            TaskType.IMG2IMG,
+                            engine_key,
+                            req,
+                            model_ref=model_ref,
+                            engine_options=engine_options,
+                        ):
+                            if entry.cancel_requested and entry.cancel_mode == "immediate":
+                                entry.error = "cancelled"
+                                push({"type": "error", "message": "cancelled"})
+                                push({"type": "end"})
+                                mark_done(False)
+                                return
+                            if isinstance(ev, ProgressEvent):
+                                evt: Dict[str, Any] = {
+                                    "type": "progress",
+                                    "stage": ev.stage,
+                                    "percent": ev.percent,
+                                    "step": ev.step,
+                                    "total_steps": ev.total_steps,
+                                    "eta_seconds": ev.eta_seconds,
+                                }
+                                live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
+                                push(evt)
+                            elif isinstance(ev, ResultEvent):
+                                payload_obj = ev.payload or {}
+                                info_raw = payload_obj.get("info", "{}")
+                                try:
+                                    info_obj = json.loads(info_raw)
+                                except Exception:
+                                    info_obj = info_raw
+                                info_dict = info_obj if isinstance(info_obj, dict) else None
+                                if isinstance(info_obj, dict):
+                                    for key, value in _GENERATION_PROVENANCE.items():
+                                        info_obj.setdefault(key, value)
+                                if bool(_opts_get("samples_save", True)):
+                                    _save_generated_images(
+                                        payload_obj.get("images", []),
+                                        task=TaskType.IMG2IMG,
+                                        info=info_dict,
+                                        metadata=_GENERATION_PROVENANCE,
+                                    )
+                                encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
+                                result = {"images": encoded, "info": info_obj}
+                                entry.result = {"status": "completed", "result": result}
+                                push({"type": "result", **result})
                 push({"type": "end"})
                 mark_done(True)
             except Exception as err:
@@ -1443,7 +1449,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_cache=smart_cache,
             metadata={
                 "styles": payload.get('txt2vid_styles', []),
-                "mode": _opts_snapshot().codex_mode,
             },
         )
 
@@ -1620,7 +1625,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_cache=smart_cache,
             metadata={
                 "styles": payload.get('img2vid_styles', []),
-                "mode": _opts_snapshot().codex_mode,
             },
         )
 
@@ -1980,7 +1984,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             smart_offload=smart_offload,
             smart_fallback=smart_fallback,
             smart_cache=smart_cache,
-            metadata={"mode": _opts_snapshot().codex_mode},
         )
 
         if method == "wan_animate":

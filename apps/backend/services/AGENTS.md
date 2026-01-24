@@ -1,7 +1,7 @@
 # apps/backend/services Overview
 Date: 2025-10-28
 Owner: Backend Service Maintainers
-Last Review: 2026-01-20
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -20,3 +20,5 @@ Status: Active
 - 2026-01-01: Centralized live preview Settings parsing + SSE payload encoding/attachment in `live_preview_service.py` to keep API workers thin and avoid duplicating image encoding logic.
 - 2025-12-29: `options_store.py` resolves `apps/settings_values.json` relative to `CODEX_ROOT` (required) so option reads/writes don’t depend on the process CWD.
 - 2026-01-03: Added standardized file header docstrings to `services/*` modules (doc-only change; part of rollout).
+- 2026-01-24: `options_store.py` now only exposes the minimal, registry-backed options surface (global defaults + smart flags + memory overrides); unknown keys are pruned from `apps/settings_values.json` at backend startup.
+- 2026-01-24: `live_preview_service.py` no longer mutates `os.environ` to apply per-task preview settings; API worker threads use `LivePreviewTaskConfig.runtime_overrides()` (thread-local) around sampling.

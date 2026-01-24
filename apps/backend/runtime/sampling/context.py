@@ -27,7 +27,8 @@ import torch
 
 from apps.backend.core.rng import NoiseSettings, NoiseSourceKind
 from apps.backend.engines.util.schedulers import SamplerKind
-from apps.backend.infra.config.env_flags import env_flag, env_int
+from apps.backend.infra.config.env_flags import env_flag
+from apps.backend.runtime.live_preview import preview_interval_steps
 from apps.backend.runtime.sampling.flow_shift_resolver import resolve_flow_shift_for_sampling
 from apps.backend.runtime.sampling.sigma_schedules import SchedulerName, build_sigma_schedule
 
@@ -140,7 +141,7 @@ def build_sampling_context(
         sigmas=sigmas,
         steps=steps,
         noise_settings=noise_settings,
-        preview_interval=env_int("CODEX_PREVIEW_INTERVAL", default=0, min_value=0),
+        preview_interval=preview_interval_steps(default=0),
         enable_progress=env_flag("CODEX_PROGRESS_BAR", default=False),
         prediction_type=prediction_type,
         sigma_min=sigma_min,

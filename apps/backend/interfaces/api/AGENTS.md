@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -33,3 +33,4 @@ Status: Active
 - 2026-01-18: `/api/engines/capabilities` now also includes `engine_id_to_semantic_engine` so UI callers can keep engine-id and semantic-engine key spaces explicit.
 - 2026-01-20: Removed unreferenced API helper modules (`media_helpers.py`, `script_models.py`) (no call sites).
 - 2026-01-21: WAN stage LoRA inputs are sha-only (`lora_sha`); raw-path stage `lora_path` is rejected during payload normalization/validation.
+- 2026-01-24: Settings schema/values are now strict: schema is served from the generated registry (JSON fallback), and persisted values are pruned against the registry on startup (unknown keys dropped; invalid values clamped).

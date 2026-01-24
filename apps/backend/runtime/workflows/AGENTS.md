@@ -1,7 +1,7 @@
 # apps/backend/runtime/workflows Overview
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-08
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -33,3 +33,4 @@ Status: Active
 - 2026-01-03: Split the former `common.py` golema into focused modules and removed the workflow re-export facade (`__init__.py` is now intentionally empty).
 - 2026-01-06: `sampling_plan.py` scheduler normalization is strict (no alias/case normalization) and invalid schedulers now raise instead of falling back.
 - 2026-01-08: `sampling_execute.py` passes `width/height` into `build_sampling_context(...)` so flow-match models with dynamic shifting (Flux) can resolve `flow_shift` from scheduler_config (fail-fast when missing).
+- 2026-01-24: Live preview interval/method are applied per task via thread-local overrides (no process-global `os.environ` mutation); env vars remain as fallbacks only.

@@ -12,6 +12,7 @@ Status: Active
 
 ## Key Files
 - `constants.py` — GGUF file constants, enums, key namespace (`Keys`, `GGUFValueType`, `GGMLQuantizationType`, etc.).
+- `codexpack.py` — CodexPack GGUF contract helpers (schema keys + strict manifest parsing/validation).
 - `quant_shapes.py` — Quantized tensor shape conversion helpers.
 - `reader.py` — `GGUFReader` (memmap-based GGUF parsing).
 - `writer.py` — `GGUFWriter` (GGUF v3 writer, tensor info + KV store).

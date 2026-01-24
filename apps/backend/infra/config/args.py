@@ -14,6 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_truthy` (function): Parses a string env/arg into a boolean (truthy/falsey).
 - `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
 - `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
+- `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (GGUF exec modes, online LoRA math).
 - `_validate_required_devices` (function): Validates required device flags are present/consistent (raises on invalid combos).
 - `_normalize_device_choice` (function): Normalizes device choice strings (e.g., cpu/cuda/directml) into canonical form.
 - `_normalize_dtype_choice` (function): Normalizes dtype choice strings (fp32/fp16/bf16/fp8) into canonical form.
@@ -32,6 +33,8 @@ import sys
 from typing import Mapping, MutableMapping, Sequence
 
 from .lora_apply_mode import DEFAULT_LORA_APPLY_MODE, ENV_LORA_APPLY_MODE, LoraApplyMode, parse_lora_apply_mode
+from .gguf_exec_mode import DEFAULT_GGUF_EXEC_MODE, GgufExecMode
+from .lora_online_math import DEFAULT_LORA_ONLINE_MATH, LoraOnlineMath
 
 from apps.backend.runtime.memory.config import (
     AttentionBackend,
@@ -80,6 +83,16 @@ def _build_parser() -> argparse.ArgumentParser:
     attn_group.add_argument("--attention-split", action="store_true")
     attn_group.add_argument("--attention-quad", action="store_true")
     attn_group.add_argument("--attention-pytorch", action="store_true")
+    attn_group.add_argument(
+        "--attention-backend",
+        choices=["pytorch", "xformers", "split", "quad"],
+        default=None,
+        help=(
+            "Attention backend selection (restart required). "
+            "Use 'pytorch' for Torch SDPA, 'xformers' for xFormers attention, "
+            "'split' for chunked attention, or 'quad' for sub-quadratic attention."
+        ),
+    )
 
     upcast = parser.add_mutually_exclusive_group()
     upcast.add_argument("--force-upcast-attention", action="store_true")
@@ -115,9 +128,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-online-tokenizer", action="store_true")
 
     parser.add_argument(
-        "--gguf-dequantize-upfront",
-        action="store_true",
-        help="Dequantize GGUF tensors to float at load time (uses more RAM/VRAM, can improve runtime speed).",
+        "--gguf-exec",
+        choices=[m.value for m in GgufExecMode],
+        default=None,
+        help=(
+            "GGUF execution mode: "
+            "'dequant_forward' (default) keeps GGUF tensors byte-packed and dequantizes on demand during forward; "
+            "'dequant_upfront' dequantizes GGUF tensors to float at load time (uses more RAM/VRAM, can improve speed); "
+            "'cuda_pack' is reserved for Codex packed GGUF execution via fused CUDA kernels (NVIDIA-only)."
+        ),
     )
 
     parser.add_argument(
@@ -129,6 +148,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "'merge' rewrites weights (default), "
             "'online' applies patches on-the-fly during forward. "
             "Changing this requires restarting the backend process."
+        ),
+    )
+
+    parser.add_argument(
+        "--lora-online-math",
+        choices=[m.value for m in LoraOnlineMath],
+        default=None,
+        help=(
+            "Online LoRA math mode when '--lora-apply-mode online' is active: "
+            "'weight_merge' (default) materializes patched weights per forward; "
+            "'activation' applies LoRA as an activation-side delta (reserved for packed GGUF kernels)."
         ),
     )
 
@@ -219,13 +249,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 _DEVICE_DIRECTIVES = (
-    ("core_device", "codex_diffusion_device"),
+    ("core_device", "codex_core_device"),
     ("te_device", "codex_te_device"),
     ("vae_device", "codex_vae_device"),
 )
 
 _DTYPE_DIRECTIVES = (
-    ("core_dtype", "codex_diffusion_dtype"),
+    ("core_dtype", "codex_core_dtype"),
     ("te_dtype", "codex_te_dtype"),
     ("vae_dtype", "codex_vae_dtype"),
 )
@@ -269,14 +299,27 @@ def _apply_source_overrides(
             continue
 
         setting_val = _setting_value(settings_key)
-        # Back-compat: WebUI persists per-component core settings under `codex_core_*`,
-        # while the runtime namespace uses `codex_diffusion_*` for the diffusion core.
-        if settings_key == "codex_diffusion_device":
-            setting_val = _setting_value("codex_core_device") or setting_val
-        elif settings_key == "codex_diffusion_dtype":
-            setting_val = _setting_value("codex_core_dtype") or setting_val
         if setting_val:
             setattr(ns, settings_key, setting_val)
+
+    # Attention backend is a runtime-wide policy (not per-request). Allow saved settings
+    # to seed the initial runtime config when no CLI override was provided.
+    attention_cli_override = any(
+        bool(getattr(ns, name, False))
+        for name in (
+            "attention_split",
+            "attention_quad",
+            "attention_pytorch",
+        )
+    ) or _has_value(getattr(ns, "attention_backend", None))
+    if not attention_cli_override:
+        raw_backend = _setting_value("codex_attention_backend")
+        if raw_backend:
+            mapped = raw_backend.strip().lower()
+            if mapped == "torch-sdpa":
+                mapped = "pytorch"
+            if mapped in {"pytorch", "xformers", "split", "quad"}:
+                ns.attention_backend = mapped
 
     if getattr(ns, "debug_conditioning", False):
         env_map["CODEX_DEBUG_COND"] = "1"
@@ -287,10 +330,41 @@ def _apply_source_overrides(
     _ = env_map  # env_map only carries debug/log vars now (settings are payload/options-driven)
 
 
+def _validate_runtime_flags(ns: argparse.Namespace) -> None:
+    gguf_exec = str(getattr(ns, "gguf_exec", DEFAULT_GGUF_EXEC_MODE.value))
+    lora_apply_mode = str(getattr(ns, "lora_apply_mode", DEFAULT_LORA_APPLY_MODE.value))
+    lora_online_math = str(getattr(ns, "lora_online_math", DEFAULT_LORA_ONLINE_MATH.value))
+
+    if lora_online_math == LoraOnlineMath.ACTIVATION.value:
+        if lora_apply_mode != LoraApplyMode.ONLINE.value:
+            raise RuntimeError("--lora-online-math=activation requires '--lora-apply-mode online'.")
+        if gguf_exec != GgufExecMode.CUDA_PACK.value:
+            raise RuntimeError("--lora-online-math=activation is reserved for '--gguf-exec=cuda_pack'.")
+
+    if gguf_exec == GgufExecMode.CUDA_PACK.value:
+        if lora_apply_mode != LoraApplyMode.ONLINE.value:
+            raise RuntimeError("--gguf-exec=cuda_pack requires '--lora-apply-mode online'.")
+        if lora_online_math != LoraOnlineMath.ACTIVATION.value:
+            raise RuntimeError("--gguf-exec=cuda_pack requires '--lora-online-math activation'.")
+        raise RuntimeError(
+            "--gguf-exec=cuda_pack is reserved and not implemented yet in this build. "
+            "Use 'dequant_forward' or 'dequant_upfront' for now.",
+        )
+
+    attn_backend = _resolve_attention_backend(ns)
+    if attn_backend == AttentionBackend.XFORMERS:
+        if getattr(ns, "disable_xformers", False):
+            raise RuntimeError("xformers attention backend is incompatible with --disable-xformers.")
+        try:
+            import xformers  # type: ignore # noqa: F401
+        except Exception as exc:
+            raise RuntimeError(f"xformers attention backend requested, but xformers is not available: {exc}") from exc
+
+
 def _validate_required_devices(ns: argparse.Namespace) -> None:
     missing: list[str] = []
     for attr, label in (
-        ("codex_diffusion_device", "codex_diffusion_device"),
+        ("codex_core_device", "codex_core_device"),
         ("codex_te_device", "codex_te_device"),
         ("codex_vae_device", "codex_vae_device"),
     ):
@@ -375,7 +449,7 @@ def _torch_dtype_for_choice(choice: str | None) -> str | None:
 
 def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.Namespace) -> None:
     role_choices = (
-        (DeviceRole.CORE, getattr(ns, "codex_diffusion_device", None), getattr(ns, "codex_diffusion_dtype", None)),
+        (DeviceRole.CORE, getattr(ns, "codex_core_device", None), getattr(ns, "codex_core_dtype", None)),
         (DeviceRole.TEXT_ENCODER, getattr(ns, "codex_te_device", None), getattr(ns, "codex_te_dtype", None)),
         (DeviceRole.VAE, getattr(ns, "codex_vae_device", None), getattr(ns, "codex_vae_dtype", None)),
     )
@@ -455,14 +529,14 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
         elif v in {"fp8_e5m2", "fp8-e5m2", "fp8_e5"}:
             ns.clip_in_fp8_e5m2 = True
 
-    diffusion_device_choice = _normalize_device_choice(getattr(ns, "codex_diffusion_device", None))
-    diffusion_dtype_raw = getattr(ns, "codex_diffusion_dtype", None)
-    diffusion_dtype_choice = _normalize_dtype_choice(diffusion_dtype_raw, allow_fp8=True)
-    if diffusion_device_choice == "cpu" and diffusion_dtype_choice not in (None, "fp32"):
-        diffusion_dtype_choice = "fp32"
-    _set_core_dtype(diffusion_dtype_choice or diffusion_dtype_raw)
-    ns.codex_diffusion_device = diffusion_device_choice
-    ns.codex_diffusion_dtype = diffusion_dtype_choice
+    core_device_choice = _normalize_device_choice(getattr(ns, "codex_core_device", None))
+    core_dtype_raw = getattr(ns, "codex_core_dtype", None)
+    core_dtype_choice = _normalize_dtype_choice(core_dtype_raw, allow_fp8=True)
+    if core_device_choice == "cpu" and core_dtype_choice not in (None, "fp32"):
+        core_dtype_choice = "fp32"
+    _set_core_dtype(core_dtype_choice or core_dtype_raw)
+    ns.codex_core_device = core_device_choice
+    ns.codex_core_dtype = core_dtype_choice
 
     vae_device_choice = _normalize_device_choice(getattr(ns, "codex_vae_device", None))
     vae_dtype_raw = getattr(ns, "codex_vae_dtype", None)
@@ -519,6 +593,21 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
 
 
 def _resolve_attention_backend(ns: argparse.Namespace) -> AttentionBackend:
+    explicit = getattr(ns, "attention_backend", None)
+    if isinstance(explicit, str) and explicit.strip():
+        normalized = explicit.strip().lower()
+        mapping = {
+            "pytorch": AttentionBackend.PYTORCH,
+            "xformers": AttentionBackend.XFORMERS,
+            "split": AttentionBackend.SPLIT,
+            "quad": AttentionBackend.QUAD,
+        }
+        resolved = mapping.get(normalized)
+        if resolved is not None:
+            return resolved
+        _LOG.warning("Unsupported attention backend '%s'; falling back to PyTorch.", explicit)
+        return AttentionBackend.PYTORCH
+
     if ns.attention_split:
         return AttentionBackend.SPLIT
     if ns.attention_quad:
@@ -644,8 +733,13 @@ def initialize(
     _apply_env_overrides(namespace, env_map)
     if getattr(namespace, "lora_apply_mode", None) is None:
         namespace.lora_apply_mode = DEFAULT_LORA_APPLY_MODE.value
+    if getattr(namespace, "gguf_exec", None) is None:
+        namespace.gguf_exec = DEFAULT_GGUF_EXEC_MODE.value
+    if getattr(namespace, "lora_online_math", None) is None:
+        namespace.lora_online_math = DEFAULT_LORA_ONLINE_MATH.value
 
     if strict:
+        _validate_runtime_flags(namespace)
         _validate_required_devices(namespace)
     config = build_runtime_memory_config(namespace)
 

@@ -261,18 +261,6 @@ export const useXyzStore = defineStore('xyz', () => {
     cells.value = comboList.map((combo) => ({ x: combo.x, y: combo.y, z: combo.z, status: 'queued' }))
     jobs.value = []
 
-    // Ensure engine/model are set before firing many tasks
-    if (quick.currentModel) {
-      try {
-        const engineKey = activeTab?.type === 'wan' ? 'wan22' : (activeTab?.type || 'sdxl')
-        await updateOptions({ codex_engine: engineKey, sd_model_checkpoint: quick.currentModel })
-      } catch (err) {
-        errorMessage.value = err instanceof Error ? err.message : String(err)
-        status.value = 'error'
-        return
-      }
-    }
-
     // Pre-build job queue with payload snapshots
     for (const combo of comboList) {
       const form = buildBaseForm()

@@ -199,7 +199,7 @@ Source of truth:
   - Also used by the UI to constrain dropdowns; if `/api/paths` is empty or wrong, some per-family selectors will render empty even when inventory has items.
 - Settings persistence:
   - Options values file: `apps/settings_values.json` (backend-managed).
-  - Settings schema: `apps/backend/interfaces/schemas/settings_schema.json` (preferred) with legacy fallback.
+  - Settings schema: `apps/backend/interfaces/schemas/settings_schema.json` (source) and `apps/backend/interfaces/schemas/settings_registry.py` (generated; preferred for serving).
 
 ## End-to-end flow (txt2img/img2img)
 1) UI loads lists/options (models, inventory, samplers, schedulers, options).

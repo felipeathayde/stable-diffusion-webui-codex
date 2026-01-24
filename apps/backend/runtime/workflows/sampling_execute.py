@@ -32,7 +32,7 @@ from apps.backend.runtime.live_preview import (
     LivePreviewMethod,
     decode_preview_image,
     debug_preview_factors_enabled,
-    live_preview_method_from_env,
+    live_preview_method,
     maybe_log_preview_factors,
 )
 from apps.backend.runtime.processing.conditioners import txt2img_conditioning
@@ -130,7 +130,7 @@ def execute_sampling(
         noise = processing.modified_noise
         processing.modified_noise = None
 
-    preview_method = live_preview_method_from_env(default=LivePreviewMethod.FULL)
+    preview_method = live_preview_method(default=LivePreviewMethod.FULL)
     debug_factors = debug_preview_factors_enabled()
 
     def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int) -> None:

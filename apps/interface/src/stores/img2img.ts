@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ModelInfo, SamplerInfo, SchedulerInfo, GeneratedImage, TaskEvent } from '../api/types'
-import { fetchModels, fetchSamplers, fetchSchedulers, updateOptions, startImg2Img, subscribeTask } from '../api/client'
+import { fetchModels, fetchSamplers, fetchSchedulers, startImg2Img, subscribeTask } from '../api/client'
 import { useQuicksettingsStore } from './quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
@@ -88,13 +88,11 @@ export const useImg2ImgStore = defineStore('img2img', () => {
       selectedModel.value = res.current
     } else if (!selectedModel.value && res.models.length > 0) {
       selectedModel.value = res.models[0].title
-      await updateModel(res.models[0].title)
     }
   }
 
-  async function updateModel(title: string): Promise<void> {
+  function updateModel(title: string): void {
     selectedModel.value = title
-    await updateOptions({ sd_model_checkpoint: title })
   }
 
   async function loadSamplers(): Promise<void> {
@@ -150,9 +148,13 @@ export const useImg2ImgStore = defineStore('img2img', () => {
     if (!initImageData.value) {
       throw new Error('Please select an initial image.')
     }
+    if (!selectedModel.value) {
+      throw new Error('Please select a model.')
+    }
 
     const qs = useQuicksettingsStore()
     return {
+      model: selectedModel.value,
       device: qs.currentDevice,
       img2img_init_image: initImageData.value,
       img2img_prompt: prompt.value,
@@ -186,10 +188,6 @@ export const useImg2ImgStore = defineStore('img2img', () => {
       status.value = 'error'
       errorMessage.value = 'Initial image required.'
       throw new Error(errorMessage.value)
-    }
-
-    if (selectedModel.value) {
-      await updateOptions({ sd_model_checkpoint: selectedModel.value })
     }
 
     const payload = buildPayload()

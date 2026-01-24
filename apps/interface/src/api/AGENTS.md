@@ -2,7 +2,7 @@
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-23
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -16,6 +16,7 @@ Status: Active
 - `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `lora_sha` (sha256), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`; stage LoRA remains sha-only via `lora_sha`.
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).
+- 2026-01-24: Removed the static `/settings_schema.json` fallback; the frontend now requires `/api/settings/schema` to be available.
 - `ModelsResponse` is served by `/api/models`; it includes `core_only` plus `core_only_reason` so UIs can explain why a checkpoint is treated as core-only (suffix remains a fallback).
 - `EngineCapabilitiesResponse` is served by `/api/engines/capabilities`; it includes:
   - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)

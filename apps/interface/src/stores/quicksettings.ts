@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: QuickSettings global store (models/samplers/schedulers/options + asset SHA selection).
+Purpose: QuickSettings global store (models/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
 resolve to backend SHA-based assets (no raw-path inputs). Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`.
 
@@ -17,19 +17,16 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ModelInfo, SamplerInfo, SchedulerInfo } from '../api/types'
-import { fetchModels, refreshModels, fetchSamplers, fetchSchedulers, fetchOptions, updateOptions, fetchMemory, fetchModelInventory, fetchPaths } from '../api/client'
+import type { ModelInfo } from '../api/types'
+import { fetchModels, refreshModels, fetchOptions, updateOptions, fetchModelInventory, fetchPaths } from '../api/client'
+
+const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_overrides'
+const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
+const VAE_STORAGE_KEY = 'codex.quicksettings.vae'
 
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
-  const samplers = ref<SamplerInfo[]>([])
-  const schedulers = ref<SchedulerInfo[]>([])
   const currentModel = ref<string>('')
-  const currentSampler = ref<string>('')
-  const currentScheduler = ref<string>('')
-  const currentSeed = ref<number | string>('-1')
-  const currentEngine = ref<string>('sd15')
-  const currentMode = ref<string>('Normal')
   const vaeChoices = ref<string[]>([])
   const currentVae = ref<string>('Automatic')
   const textEncoderChoices = ref<string[]>([])
@@ -41,7 +38,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const attentionChoices = ref<{ value: string; label: string }[]>([
     { value: 'torch-sdpa', label: 'Torch (SDPA)' },
     { value: 'xformers', label: 'xFormers' },
-    { value: 'sage', label: 'SAGE' },
   ])
   const currentAttention = ref<string>('torch-sdpa')
   const deviceChoices = ref<{ value: string; label: string }[]>([
@@ -59,56 +55,80 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const coreDtype = ref<string>('auto')
   const teDtype = ref<string>('auto')
   const vaeDtype = ref<string>('auto')
-  const unetDtypeChoices = ref<string[]>([
-    'Automatic',
-    'Automatic (fp16 LoRA)',
-    'bnb-nf4',
-    'bnb-nf4 (fp16 LoRA)',
-    'float8-e4m3fn',
-    'float8-e4m3fn (fp16 LoRA)',
-    'bnb-fp4',
-    'bnb-fp4 (fp16 LoRA)',
-    'float8-e5m2',
-    'float8-e5m2 (fp16 LoRA)'
-  ])
-  const currentUnetDtype = ref<string>('Automatic')
-  const gpuTotalMb = ref<number>(12288)
-  const gpuWeightsMb = ref<number>(12288)
   const smartOffload = ref<boolean>(false)
   const smartFallback = ref<boolean>(false)
   const smartCache = ref<boolean>(true)
   const coreStreaming = ref<boolean>(false)
 
-  // Basic engine/mode options
-  const engineChoices = ref<string[]>([
-    'sd15',
-    'sdxl',
-    'flux1',
-    'flux1_kontext',
-    'flux1_chroma',
-    'zimage',
-    'svd',
-    'hunyuan_video',
-    'wan22',
-  ])
-  const modeChoices = ref<string[]>(['Normal', 'LCM', 'Turbo', 'Lightning'])
+  function loadTextEncoderOverridesFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(TEXT_ENCODER_OVERRIDES_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return
+      currentTextEncoders.value = parsed
+        .map((entry) => String(entry).trim())
+        .filter((entry) => entry.length > 0)
+    } catch (err) {
+      console.warn('[quicksettings] failed to load text encoder overrides from localStorage', err)
+    }
+  }
 
-  function normalizeEngineKey(value: string): string {
-    const raw = String(value || '').trim()
-    if (!raw) return ''
-    const key = raw.toLowerCase()
-    if (!engineChoices.value.includes(key)) return ''
-    return key
+  function saveTextEncoderOverridesToStorage(labels: string[]): void {
+    try {
+      localStorage.setItem(TEXT_ENCODER_OVERRIDES_STORAGE_KEY, JSON.stringify(labels))
+    } catch (err) {
+      console.warn('[quicksettings] failed to persist text encoder overrides to localStorage', err)
+    }
+  }
+
+  function loadDeviceFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(DEVICE_STORAGE_KEY)
+      if (!raw) return
+      const normalized = String(raw).trim().toLowerCase()
+      if (!normalized) return
+      if (deviceChoices.value.some((d) => d.value === normalized)) {
+        currentDevice.value = normalized
+      }
+    } catch (err) {
+      console.warn('[quicksettings] failed to load device from localStorage', err)
+    }
+  }
+
+  function saveDeviceToStorage(device: string): void {
+    try {
+      localStorage.setItem(DEVICE_STORAGE_KEY, String(device))
+    } catch (err) {
+      console.warn('[quicksettings] failed to persist device to localStorage', err)
+    }
+  }
+
+  function loadVaeFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(VAE_STORAGE_KEY)
+      if (!raw) return
+      const normalized = String(raw).trim()
+      if (!normalized) return
+      currentVae.value = normalized
+    } catch (err) {
+      console.warn('[quicksettings] failed to load VAE selection from localStorage', err)
+    }
+  }
+
+  function saveVaeToStorage(label: string): void {
+    try {
+      localStorage.setItem(VAE_STORAGE_KEY, String(label))
+    } catch (err) {
+      console.warn('[quicksettings] failed to persist VAE selection to localStorage', err)
+    }
   }
 
   async function init(): Promise<void> {
     await Promise.all([
       loadModels(),
-      loadSamplers(),
-      loadSchedulers(),
       loadVaes(),
       loadTextEncoders(),
-      loadMemory(),
       loadOptions(),
     ])
   }
@@ -129,68 +149,20 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
-  async function loadSamplers(): Promise<void> {
-    const res = await fetchSamplers()
-    samplers.value = res.samplers
-    if (!currentSampler.value && res.samplers.length > 0) {
-      currentSampler.value = res.samplers[0].name
-    }
-  }
-
-  async function loadSchedulers(): Promise<void> {
-    const res = await fetchSchedulers()
-    schedulers.value = res.schedulers
-    if (!currentScheduler.value && res.schedulers.length > 0) {
-      currentScheduler.value = res.schedulers[0].name
-    }
-  }
-
   async function loadOptions(): Promise<void> {
+    loadDeviceFromStorage()
+    loadVaeFromStorage()
+    loadTextEncoderOverridesFromStorage()
+
     const res = await fetchOptions()
     const opts = res.values
-    if (typeof opts.sd_model_checkpoint === 'string') {
-      currentModel.value = opts.sd_model_checkpoint
-    }
-    if (typeof opts.sampler_name === 'string') {
-      currentSampler.value = opts.sampler_name
-    }
-    if (typeof opts.scheduler_name === 'string') {
-      currentScheduler.value = opts.scheduler_name
-    }
-    if (typeof opts.seed === 'number' || typeof opts.seed === 'string') {
-      currentSeed.value = opts.seed
-    }
-    if (typeof opts.codex_engine === 'string') {
-      const engine = normalizeEngineKey(opts.codex_engine)
-      if (engine) {
-        currentEngine.value = engine
-        if (!engineChoices.value.includes(engine)) engineChoices.value.push(engine)
-      }
-    }
-    if (typeof opts.codex_mode === 'string') {
-      currentMode.value = opts.codex_mode
-      if (!modeChoices.value.includes(opts.codex_mode)) modeChoices.value.push(opts.codex_mode)
-    }
-    if (typeof (opts as any).sd_vae === 'string') {
-      currentVae.value = (opts as any).sd_vae || 'Automatic'
-    }
-    if (Array.isArray((opts as any).text_encoder_overrides)) {
-      currentTextEncoders.value = ((opts as any).text_encoder_overrides as unknown[])
-        .map((entry) => String(entry).trim())
-        .filter((entry) => entry.length > 0)
-    }
-    if (typeof (opts as any).codex_unet_storage_dtype === 'string') {
-      currentUnetDtype.value = (opts as any).codex_unet_storage_dtype
-    }
     if (typeof (opts as any).codex_attention_backend === 'string') {
       currentAttention.value = (opts as any).codex_attention_backend
-    }
-    if (typeof (opts as any).codex_diffusion_device === 'string') {
-      currentDevice.value = (opts as any).codex_diffusion_device
     }
     if (typeof (opts as any).codex_core_device === 'string') {
       coreDevice.value = (opts as any).codex_core_device
       currentDevice.value = coreDevice.value === 'auto' ? currentDevice.value : coreDevice.value
+      if (coreDevice.value !== 'auto') saveDeviceToStorage(coreDevice.value)
     }
     if (typeof (opts as any).codex_te_device === 'string') {
       teDevice.value = (opts as any).codex_te_device
@@ -201,9 +173,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_core_dtype === 'string') coreDtype.value = (opts as any).codex_core_dtype
     if (typeof (opts as any).codex_te_dtype === 'string') teDtype.value = (opts as any).codex_te_dtype
     if (typeof (opts as any).codex_vae_dtype === 'string') vaeDtype.value = (opts as any).codex_vae_dtype
-    if (typeof (opts as any).codex_inference_memory_mb === 'number') {
-      gpuWeightsMb.value = (opts as any).codex_inference_memory_mb
-    }
     if (typeof (opts as any).codex_smart_offload === 'boolean') {
       smartOffload.value = (opts as any).codex_smart_offload
     }
@@ -220,34 +189,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setModel(title: string): Promise<void> {
     currentModel.value = title
-    await updateOptions({ sd_model_checkpoint: title })
-  }
-
-  async function setSampler(name: string): Promise<void> {
-    currentSampler.value = name
-    await updateOptions({ sampler_name: name })
-  }
-
-  async function setScheduler(name: string): Promise<void> {
-    currentScheduler.value = name
-    await updateOptions({ scheduler_name: name })
-  }
-
-  async function setSeed(value: number | string): Promise<void> {
-    currentSeed.value = value
-    await updateOptions({ seed: value })
-  }
-
-  async function setEngine(name: string): Promise<void> {
-    const engine = normalizeEngineKey(name)
-    if (!engine) return
-    currentEngine.value = engine
-    await updateOptions({ codex_engine: engine })
-  }
-
-  async function setMode(name: string): Promise<void> {
-    currentMode.value = name
-    await updateOptions({ codex_mode: name })
   }
 
   async function loadVaes(): Promise<void> {
@@ -482,42 +423,12 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setVae(label: string): Promise<void> {
     currentVae.value = label
-    await updateOptions({ sd_vae: label })
+    saveVaeToStorage(label)
   }
 
   async function setTextEncoders(labels: string[]): Promise<void> {
     currentTextEncoders.value = labels.slice()
-    // Look up SHA256 for each label from our inventory map
-    const shas: string[] = []
-    for (const label of labels) {
-      const sha = resolveTextEncoderSha(label)
-      if (sha) shas.push(sha)
-    }
-    // Labels may be backend text encoder roots or direct file paths; they are
-    // persisted as-is so future overrides can resolve them centrally.
-    // Also send SHA256 values for direct backend resolution.
-    const opts: Record<string, unknown> = { text_encoder_overrides: labels }
-    if (shas.length > 0) {
-      opts.text_encoder_overrides_sha = shas
-    }
-    await updateOptions(opts)
-  }
-
-  async function loadMemory(): Promise<void> {
-    try {
-      const res = await fetchMemory()
-      if (res.total_vram_mb && res.total_vram_mb > 0) {
-        gpuTotalMb.value = res.total_vram_mb
-        if (gpuWeightsMb.value > gpuTotalMb.value) gpuWeightsMb.value = gpuTotalMb.value
-      }
-    } catch (e) {
-      // Optional endpoint; keep defaults
-    }
-  }
-
-  async function setUnetDtype(name: string): Promise<void> {
-    currentUnetDtype.value = name
-    await updateOptions({ codex_unet_storage_dtype: name })
+    saveTextEncoderOverridesToStorage(labels)
   }
 
   async function setAttentionBackend(value: string): Promise<void> {
@@ -527,12 +438,15 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function setDevice(value: string): Promise<void> {
     currentDevice.value = value
-    coreDevice.value = value
-    await updateOptions({ codex_diffusion_device: value, codex_core_device: value })
+    saveDeviceToStorage(value)
   }
 
   async function setCoreDevice(value: string): Promise<void> {
     coreDevice.value = value
+    if (value !== 'auto') {
+      currentDevice.value = value
+      saveDeviceToStorage(value)
+    }
     await updateOptions({ codex_core_device: value })
   }
 
@@ -561,11 +475,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     await updateOptions({ codex_vae_dtype: value })
   }
 
-  async function setGpuWeightsMb(value: number): Promise<void> {
-    gpuWeightsMb.value = value
-    await updateOptions({ codex_inference_memory_mb: value })
-  }
-
   async function setSmartOffload(value: boolean): Promise<void> {
     smartOffload.value = value
     await updateOptions({ codex_smart_offload: value })
@@ -588,20 +497,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   return {
     models,
-    samplers,
-    schedulers,
     currentModel,
-    currentSampler,
-    currentScheduler,
-    currentSeed,
-    currentEngine,
-    currentMode,
     vaeChoices,
     currentVae,
     textEncoderChoices,
     currentTextEncoders,
-    engineChoices,
-    modeChoices,
     attentionChoices,
     currentAttention,
     deviceChoices,
@@ -609,21 +509,10 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     init,
     refreshModelsList,
     setModel,
-    setSampler,
-    setScheduler,
-    setSeed,
-    setEngine,
-    setMode,
     setVae,
     setTextEncoders,
-    unetDtypeChoices,
-    currentUnetDtype,
-    setUnetDtype,
     setAttentionBackend,
     setDevice,
-    gpuTotalMb,
-    gpuWeightsMb,
-    setGpuWeightsMb,
     coreDevice,
     teDevice,
     vaeDevice,

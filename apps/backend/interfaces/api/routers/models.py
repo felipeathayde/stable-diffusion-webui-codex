@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
@@ -29,9 +29,6 @@ from apps.backend.interfaces.api.file_metadata import read_file_metadata
 
 def build_router(
     *,
-    codex_root: Path,
-    opts_load_native: Callable[[], Dict[str, Any]],
-    opts_get: Callable[[str, Any], Any],
     model_api: Any,
 ) -> APIRouter:
     router = APIRouter()
@@ -42,10 +39,7 @@ def build_router(
         entries = model_api.list_checkpoints(refresh=bool(refresh))
         models = [_serialize_checkpoint(entry) for entry in entries]
         models_info = [e.as_dict() for e in entries]
-        try:
-            current = (opts_load_native() or {}).get("sd_model_checkpoint") or (models[0]["name"] if models else None)
-        except Exception:
-            current = models[0]["name"] if models else None
+        current = models[0]["title"] if models else None
         return {"models": models, "current": current, "models_info": models_info}
 
     @router.get("/api/models/inventory")

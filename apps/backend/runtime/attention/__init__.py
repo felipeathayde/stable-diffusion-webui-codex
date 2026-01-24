@@ -18,6 +18,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `attention_split` (function): Splits attention computation into chunks to reduce peak memory.
 - `attention_xformers` (function): xFormers attention path (when available and not broken).
 - `attention_pytorch` (function): PyTorch SDPA attention path (uses `efficient_dot_product_attention`).
+- `attention_function` (function): Runtime-selected cross-attention dispatcher (driven by `memory_management.manager.config.attention.backend`).
+- `attention_function_single_head_spatial` (function): Runtime-selected single-head spatial attention dispatcher (VAE; driven by runtime config).
 - `slice_attention_single_head_spatial` (function): Single-head spatial attention variant using slicing/chunking.
 - `normal_attention_single_head_spatial` (function): Baseline single-head spatial attention.
 - `xformers_attention_single_head_spatial` (function): xFormers-backed single-head spatial attention.
@@ -32,6 +34,7 @@ import einops
 
 from apps.backend.infra.config.args import args
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import AttentionBackend
 from apps.backend.runtime.misc.sub_quadratic_attention import efficient_dot_product_attention
 
 _LOGGER = logging.getLogger("backend.attention")
@@ -39,16 +42,34 @@ _LOGGER = logging.getLogger("backend.attention")
 # Avoid importing via backend facade during runtime package init to prevent cycles
 
 
-BROKEN_XFORMERS = False
-if memory_management.manager.xformers_enabled():
-    import xformers
-    import xformers.ops
-
-    x_vers = xformers.__version__
-    BROKEN_XFORMERS = x_vers.startswith("0.0.2") and not x_vers.startswith("0.0.20")
+_XFORMERS_OPS = None
+_XFORMERS_BROKEN = None
+_XFORMERS_VERSION = None
+_XFORMERS_IMPORT_ERROR: Exception | None = None
 
 
-FORCE_UPCAST_ATTENTION_DTYPE = memory_management.manager.force_upcast_attention_dtype()
+def _require_xformers_ops():
+    global _XFORMERS_OPS, _XFORMERS_BROKEN, _XFORMERS_VERSION, _XFORMERS_IMPORT_ERROR
+
+    if _XFORMERS_OPS is not None:
+        return _XFORMERS_OPS, bool(_XFORMERS_BROKEN), str(_XFORMERS_VERSION or "")
+
+    if _XFORMERS_IMPORT_ERROR is not None:
+        raise ModuleNotFoundError(f"xformers is not available: {_XFORMERS_IMPORT_ERROR}") from _XFORMERS_IMPORT_ERROR
+
+    try:
+        import xformers  # type: ignore
+        import xformers.ops  # type: ignore
+    except Exception as exc:
+        _XFORMERS_IMPORT_ERROR = exc
+        raise ModuleNotFoundError(f"xformers is not available: {exc}") from exc
+
+    version = str(getattr(xformers, "__version__", "") or "")
+    _XFORMERS_VERSION = version
+    _XFORMERS_BROKEN = version.startswith("0.0.2") and not version.startswith("0.0.20")
+    _XFORMERS_OPS = xformers.ops
+
+    return _XFORMERS_OPS, bool(_XFORMERS_BROKEN), version
 
 __all__ = [name for name in globals() if not name.startswith("_")]
 
@@ -56,8 +77,9 @@ __all__ = [name for name in globals() if not name.startswith("_")]
 def get_attn_precision(attn_precision=torch.float32):
     if args.disable_attention_upcast:
         return None
-    if FORCE_UPCAST_ATTENTION_DTYPE is not None:
-        return FORCE_UPCAST_ATTENTION_DTYPE
+    forced = memory_management.manager.force_upcast_attention_dtype()
+    if forced is not None:
+        return forced
     return attn_precision
 
 
@@ -284,13 +306,20 @@ def attention_split(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
 
 
 def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
+    if not memory_management.manager.xformers_enabled():
+        raise RuntimeError(
+            "xformers attention was requested, but the active runtime is not configured for xformers. "
+            "Set attention backend to xformers and ensure xformers is installed (and not disabled)."
+        )
+
+    xops, broken, _version = _require_xformers_ops()
     if skip_reshape:
         b, _, _, dim_head = q.shape
     else:
         b, _, dim_head = q.shape
         dim_head //= heads
 
-    if BROKEN_XFORMERS and b * heads > 65535:
+    if broken and b * heads > 65535:
         raise RuntimeError("xformers is broken for this batch*heads size; refusing to fall back to PyTorch attention")
 
     if skip_reshape:
@@ -310,7 +339,7 @@ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_resh
         mask_out[:, :, :mask.shape[-1]] = mask
         mask = mask_out[:, :, :mask.shape[-1]]
 
-    out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=mask)
+    out = xops.memory_efficient_attention(q, k, v, attn_bias=mask)
 
     if skip_reshape:
         out = (
@@ -398,6 +427,13 @@ def normal_attention_single_head_spatial(q, k, v):
 
 
 def xformers_attention_single_head_spatial(q, k, v):
+    if not memory_management.manager.xformers_enabled_vae():
+        raise RuntimeError(
+            "xformers VAE attention was requested, but the active runtime is not configured for xformers VAE attention. "
+            "Ensure xformers is installed, the attention backend is set to xformers, and VAE xformers is enabled."
+        )
+    xops, _broken, _version = _require_xformers_ops()
+
     # compute attention
     B, C, H, W = q.shape
     q, k, v = map(
@@ -405,7 +441,7 @@ def xformers_attention_single_head_spatial(q, k, v):
         (q, k, v),
     )
 
-    out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None)
+    out = xops.memory_efficient_attention(q, k, v, attn_bias=None)
     out = out.transpose(1, 2).reshape(B, C, H, W)
     return out
 
@@ -422,29 +458,34 @@ def pytorch_attention_single_head_spatial(q, k, v):
     out = out.transpose(2, 3).reshape(B, C, H, W)
     return out
 
+def _selected_backend() -> AttentionBackend:
+    try:
+        backend = memory_management.manager.config.attention.backend
+    except Exception:
+        backend = AttentionBackend.PYTORCH
+    return backend
 
-if memory_management.manager.xformers_enabled():
-    _LOGGER.info("using xformers cross attention")
-    attention_function = attention_xformers
-elif memory_management.manager.pytorch_attention_enabled():
-    _LOGGER.info("using pytorch cross attention")
-    attention_function = attention_pytorch
-elif args.attention_split:
-    _LOGGER.info("using split optimization for cross attention")
-    attention_function = attention_split
-else:
-    _LOGGER.info("using sub quadratic optimization for cross attention")
-    attention_function = attention_sub_quad
 
-if memory_management.manager.xformers_enabled_vae():
-    _LOGGER.info("using xformers attention for VAE")
-    attention_function_single_head_spatial = xformers_attention_single_head_spatial
-elif memory_management.manager.pytorch_attention_enabled():
-    _LOGGER.info("using pytorch attention for VAE")
-    attention_function_single_head_spatial = pytorch_attention_single_head_spatial
-else:
-    _LOGGER.info("using split attention for VAE")
-    attention_function_single_head_spatial = normal_attention_single_head_spatial
+def attention_function(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False):
+    backend = _selected_backend()
+    if backend == AttentionBackend.XFORMERS:
+        return attention_xformers(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
+    if backend == AttentionBackend.PYTORCH:
+        return attention_pytorch(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
+    if backend == AttentionBackend.SPLIT:
+        return attention_split(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
+    if backend == AttentionBackend.QUAD:
+        return attention_sub_quad(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
+    return attention_pytorch(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape)
+
+
+def attention_function_single_head_spatial(q, k, v):
+    backend = _selected_backend()
+    if backend == AttentionBackend.XFORMERS:
+        return xformers_attention_single_head_spatial(q, k, v)
+    if backend == AttentionBackend.PYTORCH:
+        return pytorch_attention_single_head_spatial(q, k, v)
+    return normal_attention_single_head_spatial(q, k, v)
 
 
 class AttentionProcessorCodex:

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Base quicksettings selectors for diffusion tabs (SD15/SDXL).
-Renders Mode/Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and “add path” actions to the parent quicksettings bar.
+Renders Checkpoint/VAE selectors (plus optional Text Encoder) for model tabs, emitting updates and “add path” actions to the parent quicksettings bar.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBase` (component): Base quicksettings selectors for diffusion model tabs.
@@ -15,14 +15,6 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <div class="quicksettings-group qs-group-mode">
-    <label class="label-muted">Mode</label>
-    <div class="qs-row">
-      <select class="select-md" :value="mode" @change="$emit('update:mode', ($event.target as HTMLSelectElement).value)">
-        <option v-for="m in modeChoices" :key="m" :value="m">{{ m }}</option>
-      </select>
-    </div>
-  </div>
   <div class="quicksettings-group qs-group-checkpoint">
     <label class="label-muted">Checkpoint</label>
     <div class="qs-row">
@@ -85,8 +77,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 const props = defineProps<{
-  mode: string
-  modeChoices: string[]
   checkpoint: string
   checkpoints: string[]
   vae: string
@@ -98,7 +88,6 @@ const props = defineProps<{
 }>()
 
 defineEmits<{
-  (e: 'update:mode', value: string): void
   (e: 'update:checkpoint', value: string): void
   (e: 'update:vae', value: string): void
   (e: 'update:textEncoder', value: string): void

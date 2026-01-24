@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-23
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -32,3 +32,6 @@ Status: Active
 - 2026-01-21: Video tasks now honor Smart flags (`smart_offload`/`smart_fallback`/`smart_cache`) by propagating them into requests and applying `smart_runtime_overrides(...)` inside the video worker thread.
 - 2026-01-23: `generation.py` enforces WAN video `height/width % 16 == 0` (txt2vid/img2vid/vid2vid; Diffusers parity) to avoid silent patch-grid cropping in the WAN22 runtime.
 - 2026-01-23: WAN `%16` validation errors include an explicit `WIDTHxHEIGHT` + suggested rounded-up dimensions (for direct API callers; the UI snaps dims before POST).
+- 2026-01-24: `settings.py` serves schema from the generated registry (JSON fallback) with no legacy static fallback; `run_api.py` prunes `apps/settings_values.json` against the registry on startup.
+- 2026-01-24: `options.py` applies `codex_attention_backend` immediately via `memory_management.set_attention_backend(...)` (unloads/reinitializes runtime memory config; no backend restart required).
+- 2026-01-24: `generation.py` applies live preview interval/method via thread-local `LivePreviewTaskConfig.runtime_overrides()` (no process-global `os.environ` mutation; avoids cross-request drift).

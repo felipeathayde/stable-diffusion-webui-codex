@@ -14,6 +14,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `debug_preview_factors_enabled` (function): Indicates whether preview factor fitting logs are enabled.
 - `debug_preview_factors_sample_limit` (function): Returns the pixel sample cap used for factor fitting.
 - `LivePreviewMethod` (enum): Preview decode strategy (`Full` VAE vs `Approx cheap`).
+- `preview_runtime_overrides` (function): Context manager for per-thread preview overrides (interval + method).
+- `preview_interval_steps` (function): Returns the effective preview interval (thread overrides first, env fallback).
+- `live_preview_method` (function): Returns the effective preview method (thread overrides first, env fallback).
 - `live_preview_method_from_env` (function): Reads `CODEX_LIVE_PREVIEW_METHOD` into a `LivePreviewMethod`.
 - `live_preview_method_to_env` (function): Converts a `LivePreviewMethod` into an env-friendly string.
 - `_tensor_to_pil_rgb` (function): Converts a tensor image into a PIL RGB image.
@@ -27,9 +30,11 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from apps.backend.core.state import state as backend_state
 from apps.backend.infra.config.env_flags import env_flag, env_int
@@ -51,6 +56,35 @@ _LATENT_RGB_FACTORS_SDXL: tuple[tuple[float, float, float], ...] = (
 )
 
 _DEBUG_PREVIEW_FACTORS_LAST_JOB_TS: str | None = None
+
+_THREAD_OVERRIDES = threading.local()
+
+
+def _get_override(name: str) -> object | None:
+    return getattr(_THREAD_OVERRIDES, name, None)
+
+
+@contextmanager
+def preview_runtime_overrides(
+    *,
+    interval_steps: int | None = None,
+    method: "LivePreviewMethod" | None = None,
+) -> Iterator[None]:
+    """Temporarily override preview settings for the current thread.
+
+    This avoids mutating `os.environ` (process-global) for per-task settings. It is safe for
+    concurrent generation because worker threads carry independent thread-local overrides.
+    """
+
+    prev_interval = _get_override("preview_interval_steps")
+    prev_method = _get_override("live_preview_method")
+    _THREAD_OVERRIDES.preview_interval_steps = interval_steps
+    _THREAD_OVERRIDES.live_preview_method = method
+    try:
+        yield
+    finally:
+        _THREAD_OVERRIDES.preview_interval_steps = prev_interval
+        _THREAD_OVERRIDES.live_preview_method = prev_method
 
 
 def debug_preview_factors_enabled() -> bool:
@@ -79,8 +113,31 @@ def live_preview_method_from_env(*, default: LivePreviewMethod = LivePreviewMeth
     return LivePreviewMethod.from_string(os.getenv("CODEX_LIVE_PREVIEW_METHOD"), default=default)
 
 
+def live_preview_method(*, default: LivePreviewMethod = LivePreviewMethod.FULL) -> LivePreviewMethod:
+    """Return the effective live preview method (thread overrides first)."""
+
+    override = _get_override("live_preview_method")
+    if override is not None:
+        if isinstance(override, LivePreviewMethod):
+            return override
+        return LivePreviewMethod.from_string(str(override), default=default)
+    return live_preview_method_from_env(default=default)
+
+
 def live_preview_method_to_env(method: LivePreviewMethod) -> str:
     return method.value
+
+
+def preview_interval_steps(*, default: int = 0) -> int:
+    """Return the effective preview interval in steps (thread overrides first)."""
+
+    override = _get_override("preview_interval_steps")
+    if override is not None:
+        try:
+            return max(0, int(override))
+        except Exception:
+            return max(0, int(default))
+    return env_int("CODEX_PREVIEW_INTERVAL", default=default, min_value=0)
 
 
 def _tensor_to_pil_rgb(tensor: Any) -> Any:
@@ -274,7 +331,10 @@ __all__ = [
     "debug_preview_factors_sample_limit",
     "decode_preview_image",
     "fit_preview_factors",
+    "live_preview_method",
     "live_preview_method_from_env",
     "live_preview_method_to_env",
     "maybe_log_preview_factors",
+    "preview_interval_steps",
+    "preview_runtime_overrides",
 ]

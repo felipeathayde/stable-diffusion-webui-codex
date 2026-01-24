@@ -1,7 +1,7 @@
 # apps/backend/infra Overview
 Date: 2025-10-28
 Owner: Backend Infra Maintainers
-Last Review: 2026-01-04
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -20,7 +20,9 @@ Status: Active
 - 2026-01-01: Added `--debug-preview-factors` to log best-fit latent→RGB preview factors for tuning `Approx cheap` live previews.
 - 2025-12-06: `config/paths.py` agora garante, em best-effort, que roots relativos de modelos definidos em `apps/paths.json` (`sd15_*`, `sdxl_*`, `flux_*`, `wan22_*`) existam sob o repo root, criando diretórios ausentes apenas para entradas relativas; paths absolutos continuam dependendo de provisionamento manual.
 - 2025-12-29: Repo root resolution now prefers `CODEX_ROOT` (launchers) over process CWD so configs like `apps/paths.json` and `apps/settings_values.json` stay stable across launch methods.
-- 2026-01-01: Added `--gguf-dequantize-upfront` to opt into load-time GGUF dequantization (trades RAM/VRAM for speed; default remains on-the-fly).
+- 2026-01-01: Added opt-in load-time GGUF dequantization (now `--gguf-exec=dequant_upfront`) trading RAM/VRAM for speed; default remains on-the-fly (`dequant_forward`).
+- 2026-01-23: Migrated GGUF execution flags to `--gguf-exec` (single canonical switch) and added `--lora-online-math` for explicit online LoRA semantics (reserved for future packed GGUF kernels).
+- 2026-01-24: `config/args.py` now supports `--attention-backend` and seeds attention backend from the saved WebUI option `codex_attention_backend` when no CLI override is provided.
 - 2026-01-04: Added `config/env_flags.py` as the canonical env-flag parsing helper to keep debug/feature toggle semantics consistent across runtime subsystems.
 - 2026-01-20: Added `--lora-apply-mode` (and `CODEX_LORA_APPLY_MODE`) as a global LoRA application switch: `merge` (default; rewrites weights once) vs `online` (apply on-the-fly during forward). Requires restarting the backend process to take effect.
 - 2026-01-02: Added standardized file header docstrings to `infra/__init__.py`, `infra/accelerators/*`, `infra/config/*`, and `infra/registry/*` modules (doc-only change; part of rollout).

@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-22
+Last Review: 2026-01-24
 Status: Active
 
 ## Purpose
@@ -17,7 +17,7 @@ Status: Active
 - Avoid embedding business logic here—delegate to services/use cases and focus on validation and serialization.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` captures the “how assets are listed + selected” contract (inventory → SHA selection → backend resolution).
 - API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/routers/generation.py` (`_ORCH` singleton).
-- 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.highres`) but still tolerates compatibility keys (`codex_engine`, `codex_diffusion_device`, `sd_model_checkpoint`) while downstream clients migrate; prompts may be empty to support negative-only runs.
+- 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.highres`); legacy compat keys were removed (requests must use the canonical selectors / payload fields).
 - 2025-11-21: SPA static mount now registers after all `/api/*` routes to prevent POSTs from being intercepted by the UI fallback; invalid txt2/img2/video payloads raise HTTP errors instead of returning 200 with a background error.
 - 2025-11-21: Module-level `app` remains available for ASGI servers, but the preferred entrypoint is the uvicorn factory `apps.backend.interfaces.api.run_api:create_api_app`. Factory and direct `:app` both build the same FastAPI instance.
 - 2025-11-14: `create_api_app(argv, env)` is the canonical FastAPI factory; when launching uvicorn manually use `--factory apps.backend.interfaces.api.run_api:create_api_app` so the runtime bootstraps before serving (the TUI/launcher already calls it).
@@ -29,7 +29,6 @@ Status: Active
 - 2025-12-05: `/api/engines/capabilities` passa a incluir um bloco opcional `smart_cache` com contadores de hits/misses agregados (por bucket) para diagnóstico de caching de SDXL no runtime.
 - 2025-12-05: `/api/memory` agora usa `apps.backend.runtime.memory.memory_management.memory_snapshot()` para expor um snapshot estruturado de VRAM/CPU (backend, dispositivo primário, probe, budgets, stats do torch e modelos carregados); clientes que só leem `total_vram_mb` continuam atendidos, mas novas UIs devem consumir o snapshot completo.
 - 2025-12-06: `_bootstrap_runtime` agora pré-calcula o inventário de modelos (`apps.backend.inventory.cache.refresh()`) durante o bootstrap do backend, de forma que `/api/models/inventory` esteja quente quando a UI abrir o QuickSettings; a rota continua expondo `?refresh=true` e `POST /api/models/inventory/refresh` para rescans explícitos.
-- 2025-12-06: `settings_schema.json` e `settings_registry.py` incluem chaves `codex_flux_core_streaming_*` (enabled/policy/blocks_per_segment/window_size/auto_threshold_mb) sob a seção SDXL, pensadas para controlar streaming do core Flux via `/api/options`. Por enquanto, apenas o backend consome esses valores convertendo-os em `engine_options` para o engine Flux; a UI pode optar por expô-los como controles avançados em uma fase posterior.
 - 2025-12-14: `/api/txt2vid` e `/api/img2vid` populam `steps` em `Txt2VidRequest/Img2VidRequest` e o plano de vídeo (`build_video_plan`) lê `guidance_scale` (alinhamento de contrato com o runtime).
 - 2025-12-16: Added `/api/vid2vid` (multipart: `video` upload + JSON `payload`) and `/api/output/{rel_path}` for root-scoped serving of exported videos. Path-based vid2vid inputs are allowed but restricted to the backend working directory to avoid permission surprises; upload is recommended.
 - 2025-12-16: `/api/vid2vid` now supports `vid2vid_method="wan_animate"` with extra multipart inputs (`reference_image`, preprocessed `pose_video`/`face_video`, and optional `background_video`/`mask_video` for replacement mode).
@@ -46,7 +45,8 @@ Status: Active
 - 2026-01-01: `/api/{txt2img,img2img}` now supports live preview streaming: backend reads UI settings (`show_progress_every_n_steps`, `show_progress_type`, `live_previews_image_format`) and attaches `preview_image`/`preview_step` to task `progress` SSE events when a new preview is available.
 - 2026-01-01: Live preview config parsing + payload encoding/attachment now live in `apps/backend/services/live_preview_service.py` so `api/run_api.py` doesn’t duplicate preview logic.
 - 2026-01-01: Added `--debug-preview-factors` (launcher arg) so the runtime can log best-fit latent→RGB preview factors (`[preview-factors]`) for deriving new `Approx cheap` mappings.
-- 2026-01-02: `/api/{txt2img,img2img}` now accepts checkpoint selection by SHA (10-char short hash or 64-char sha256) via `model`/`sd_model_checkpoint` or `extras.model_sha`; SDXL ignores global VAE/TE overrides (`sd_vae`, `text_encoder_overrides`) unless explicit request-level sha selectors are supplied (`extras.vae_sha`/`extras.tenc_sha` or `img2img_extras.vae_sha`/`img2img_extras.tenc_sha`).
+- 2026-01-02: `/api/{txt2img,img2img}` accepts checkpoint selection by SHA (10-char short hash or 64-char sha256) via `model` or `extras.model_sha`; VAE/TE selection is request-driven via `extras.vae_sha`/`extras.tenc_sha` (or `img2img_extras.*`).
+- 2026-01-24: Settings schema/options were tightened: `/api/settings/schema` is served from `apps/backend/interfaces/schemas/settings_registry.py` (generated from `settings_schema.json`) with JSON fallback, and `apps/settings_values.json` is pruned against the registry on startup (unknown keys dropped; invalid values clamped).
 - 2026-01-01: `/api/models` now accepts `?refresh=1` to re-scan checkpoint roots so the UI can pick up newly copied weights without restarting the backend.
 - 2026-01-02: Added standardized file header docstrings to interface modules (doc-only change; part of rollout).
 - 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); `run_api.py` resolves engine keys via the registry and rejects unknown keys with HTTP 400.

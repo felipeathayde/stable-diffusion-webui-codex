@@ -17,15 +17,15 @@ Symbols (top-level; keep in sync; no ghosts):
 - `readErrorDetail` (function): Extracts a human-friendly error message from failed backend responses.
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
- - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
- - `fetchFileMetadata` (function): Reads GGUF/SafeTensors file metadata (`/models/file-metadata`).
- - `fetchCheckpointMetadata` (function): Fetches the metadata modal payload for a checkpoint selection (`/models/checkpoint-metadata`).
- - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
- - `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
- - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
- - `fetchOptions` (function): Fetches runtime options (`/options`).
- - `updateOptions` (function): Updates runtime options (`POST /options`).
- - `startTxt2Img` (function): Starts a txt2img task (`POST /txt2img`).
+- `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
+- `fetchFileMetadata` (function): Reads GGUF/SafeTensors file metadata (`/models/file-metadata`).
+- `fetchCheckpointMetadata` (function): Fetches the metadata modal payload for a checkpoint selection (`/models/checkpoint-metadata`).
+- `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
+- `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
+- `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
+- `fetchOptions` (function): Fetches runtime options (`/options`).
+- `updateOptions` (function): Updates runtime options (`POST /options`).
+- `startTxt2Img` (function): Starts a txt2img task (`POST /txt2img`).
 - `startImg2Img` (function): Starts an img2img task (`POST /img2img`).
 - `startTxt2Vid` (function): Starts a txt2vid task (`POST /txt2vid`).
 - `startImg2Vid` (function): Starts an img2vid task (`POST /img2vid`).
@@ -34,12 +34,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `cancelTask` (function): Requests task cancellation (`/tasks/:id/cancel`).
 - `subscribeTask` (function): Subscribes to task SSE events and returns an unsubscribe closure.
 - `fetchMemory` (function): Fetches memory stats (`/memory`).
- - `fetchVersion` (function): Fetches backend version (`/version`).
- - `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
- - `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
- - `fetchPaths` (function): Fetches configured paths (`/paths`).
- - `updatePaths` (function): Updates configured paths (`POST /paths`).
- - `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`) with a static fallback.
+- `fetchVersion` (function): Fetches backend version (`/version`).
+- `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
+- `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
+- `fetchPaths` (function): Fetches configured paths (`/paths`).
+- `updatePaths` (function): Updates configured paths (`POST /paths`).
+- `fetchSettingsSchema` (function): Fetches settings schema (`/settings/schema`).
 - `fetchUiBlocks` (function): Fetches UI blocks schema (`/ui/blocks`).
 - `fetchUiPresets` (function): Fetches UI presets (`/ui/presets`).
 - `applyUiPreset` (function): Applies a UI preset (`POST /ui/presets/apply`).
@@ -314,12 +314,7 @@ export function updatePaths(paths: Record<string, string[]>): Promise<PathsUpdat
 }
 
 export function fetchSettingsSchema(): Promise<SettingsSchemaResponse> {
-  return requestJson<SettingsSchemaResponse>('/settings/schema').catch(async (err) => {
-    console.warn('[api] /settings/schema not available, falling back to static /settings_schema.json', err)
-    const res = await fetch('/settings_schema.json')
-    if (!res.ok) throw err
-    return (await res.json()) as SettingsSchemaResponse
-  })
+  return requestJson<SettingsSchemaResponse>('/settings/schema')
 }
 
 export function fetchUiBlocks(tab?: string): Promise<UiBlocksResponse> {

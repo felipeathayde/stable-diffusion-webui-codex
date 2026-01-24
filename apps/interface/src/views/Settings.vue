@@ -78,12 +78,7 @@ onMounted(async () => {
   try {
     const [schema, opts] = await Promise.all([fetchSettingsSchema(), fetchOptions()])
     categories.value = schema.categories
-    // Dedup sections by key (legacy has repeated key 'ui' with different labels)
-    const secMap = new Map<string, SettingsSection>()
-    for (const s of schema.sections) {
-      if (!secMap.has(s.key)) secMap.set(s.key, s)
-    }
-    sections.value = Array.from(secMap.values())
+    sections.value = schema.sections
     fields.value = schema.fields
     values.value = opts.values
     // Default selection

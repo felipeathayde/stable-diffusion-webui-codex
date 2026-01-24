@@ -118,6 +118,14 @@
 **Correct command:** `rg -n "iq1" . -g"*.py"`
 **Wrong command:** `find . -path './.legacy' -prune -o -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** The bulk add still walks ignored caches (`__pycache__/`, etc.), causing `git add` to abort; stage the known documentation files explicitly instead of using the sweeping find.
+
+**Wrong command:** `rg -n "^ - `" apps/interface/src/api/client.ts`
+**Cause + fix:** Backticks are bash command substitution; the unmatched backtick breaks the shell before `rg` runs. Use single quotes (or avoid backticks entirely) when searching for patterns that include them.
+**Correct command:** `rg -n '^ - ' apps/interface/src/api/client.ts`
+
+**Wrong command:** `rg -n "_opts_get\\(\\\"|_opts_get\\('\\\"" apps/backend/interfaces/api/routers/generation.py`
+**Cause + fix:** Quoting got mangled (mixed quotes + escapes), producing an unterminated string error in bash. Search for the function name directly, or use a simpler regex.
+**Correct command:** `rg -n "_opts_get\\(" apps/backend/interfaces/api/routers/generation.py`
 **Correct command:** `git add AGENTS.md THIRD_PARTY_NOTICES.md COMMON_MISTAKES.md .sangoi/CHANGELOG.md .sangoi/task-logs/2025-10-30-docs-legacy-paths.md .sangoi/handoffs/2025-10-30-docs-legacy-paths.md`
 **Wrong command:** `cat .sangoi/task-guidelines.md`
 **Cause + fix:** Task guidelines file lives under `.sangoi/templates/document-guidelines.md`; referencing the old path triggers a file-not-found. Repeated slip—double-check the path before running.
@@ -661,3 +669,7 @@ Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n --glo
 Wrong command: rg -n "(?:api/tasks\\/{|EventSource|/events\\'\\))" apps/backend/interfaces/api/routers | head -n 80
 Cause and fix: The pattern used regex syntax that was not valid under ripgrep's regex rules (unescaped `{` inside a `(?:...)` group), triggering a regex parse error. This search did not require regex at all; use a fixed-string search (or escape the regex properly) to avoid noisy failures.
 Correct command: rg -n "/api/tasks" apps/backend/interfaces/api/routers -S | head -n 80
+
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "options_store\\.get_value\\(\\\"([^"]+)\\\"" apps/backend | head -n 200
+Cause and fix: The pattern included an unescaped `"` inside a double-quoted shell string, so bash terminated the string early and produced a syntax error. Use single quotes around the pattern (or escape the inner quotes) when the regex contains `"`.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n 'options_store\\.get_value\\(\"([^\"]+)\"' apps/backend | head -n 200

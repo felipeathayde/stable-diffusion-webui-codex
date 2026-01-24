@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { UiPreset, UiPresetsResponse } from '../api/types'
+import type { UiPreset, UiPresetApplyResponse, UiPresetsResponse } from '../api/types'
 import { fetchUiPresets, applyUiPreset } from '../api/client'
 
 export const useUiPresetsStore = defineStore('uiPresets', () => {
@@ -50,10 +50,10 @@ export const useUiPresetsStore = defineStore('uiPresets', () => {
     return p ? p.id : null
   }
 
-  async function applyByTitle(title: string, tab: string): Promise<void> {
+  async function applyByTitle(title: string, tab: string): Promise<UiPresetApplyResponse> {
     const id = idByTitle(title)
     if (!id) throw new Error(`Unknown preset: ${title}`)
-    await applyUiPreset(id, tab)
+    return await applyUiPreset(id, tab)
   }
 
   return { version, presets, loaded, error, init, namesFor, applyByTitle }

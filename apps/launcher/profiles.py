@@ -11,7 +11,7 @@ Implements the profile store used by the TUI/GUI launchers to load/save settings
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_default_area_env` (function): Builds default per-area env maps (debug/log only).
+- `_default_area_env` (function): Builds default per-area env maps (debug/log + GGUF/LoRA runtime knobs).
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
@@ -51,7 +51,12 @@ ENV_PREFIX_AREAS: Dict[str, str] = {
 
 def _default_area_env() -> Dict[str, Dict[str, str]]:
     """Compute default environment values partitioned by area."""
-    core = {"CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0")}
+    core = {
+        "CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0"),
+        "CODEX_GGUF_EXEC": "dequant_forward",
+        "CODEX_LORA_APPLY_MODE": "merge",
+        "CODEX_LORA_ONLINE_MATH": "weight_merge",
+    }
     return {"core": core}
 
 

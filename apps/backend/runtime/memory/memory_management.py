@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `reinitialize` (function): Replaces the active memory manager with a new `RuntimeMemoryConfig`.
 - `memory_snapshot` (function): Returns a JSON-serializable snapshot of current memory/config state.
 - `switch_primary_device` (function): Changes the primary device backend (cpu/cuda/mps/xpu/directml) at runtime (returns success bool).
+- `set_attention_backend` (function): Sets the global attention backend (pytorch/xformers/split/quad) at runtime (returns success bool).
 - `set_component_backend` (function): Sets preferred backend for a role (core/vae/tenc/vision/intermediate) at runtime (returns success bool).
 - `set_component_dtype` (function): Sets forced dtype for a role (core/vae/tenc/vision/intermediate) at runtime (returns success bool).
 """
@@ -26,7 +27,7 @@ from copy import deepcopy
 
 from apps.backend.infra.config import args as config_args
 
-from .config import DeviceBackend, DeviceRole, RuntimeMemoryConfig
+from .config import AttentionBackend, DeviceBackend, DeviceRole, RuntimeMemoryConfig
 from .manager import CodexMemoryManager
 
 
@@ -93,6 +94,60 @@ def switch_primary_device(backend: str) -> bool:
     new_cfg.device_backend = target
     reinitialize(new_cfg)
     logger.info("[memory] primary device switched to %s", normalized)
+    return True
+
+
+def set_attention_backend(backend: str) -> bool:
+    """Set the global attention backend and reinitialize the memory manager.
+
+    This is a runtime change (no backend restart) but it triggers a full unload/reload
+    cycle via `reinitialize(...)`.
+
+    Accepted values:
+    - pytorch | torch-sdpa
+    - xformers
+    - split
+    - quad
+    """
+
+    normalized = (backend or "").strip().lower()
+    mapping = {
+        "pytorch": AttentionBackend.PYTORCH,
+        "torch-sdpa": AttentionBackend.PYTORCH,
+        "xformers": AttentionBackend.XFORMERS,
+        "split": AttentionBackend.SPLIT,
+        "quad": AttentionBackend.QUAD,
+        "sub_quad": AttentionBackend.QUAD,
+        "sub-quadratic": AttentionBackend.QUAD,
+    }
+    if normalized not in mapping:
+        allowed = ", ".join(sorted({k for k in mapping if not k.startswith("sub")}))
+        raise ValueError(f"Invalid attention backend '{backend}'. Allowed: {allowed}")
+
+    target = mapping[normalized]
+    current_cfg = manager.config
+    if current_cfg.attention.backend == target:
+        return False
+
+    if target == AttentionBackend.XFORMERS:
+        if current_cfg.disable_xformers:
+            raise ValueError("xformers attention backend requested, but xformers is disabled via --disable-xformers.")
+        try:
+            import xformers  # type: ignore # noqa: F401
+        except Exception as exc:
+            raise ValueError(f"xformers attention backend requested, but xformers is not available: {exc}") from exc
+
+    new_cfg = deepcopy(current_cfg)
+    new_cfg.attention.backend = target
+    if target == AttentionBackend.PYTORCH:
+        new_cfg.attention.enable_flash = True
+        new_cfg.attention.enable_mem_efficient = True
+    else:
+        new_cfg.attention.enable_flash = False
+        new_cfg.attention.enable_mem_efficient = False
+
+    reinitialize(new_cfg)
+    logger.info("[memory] attention backend set to %s", target.value)
     return True
 
 
@@ -206,7 +261,7 @@ __all__ = [
     "reinitialize",
     "memory_snapshot",
     "switch_primary_device",
+    "set_attention_backend",
     "set_component_backend",
     "set_component_dtype",
 ]
-

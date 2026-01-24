@@ -203,6 +203,8 @@ class LauncherProfileStore:
             self.models[self.meta.active_model] = {}
 
         # Drop legacy env knobs (WAN_* and CODEX_* runtime settings).
+        # Keep bootstrap-critical device defaults (CODEX_*_DEVICE) in launcher env so
+        # the API can start in non-interactive spawns without prompting/fallbacks.
         for container in list(self.areas.values()) + list(self.models.values()):
             for key in list(container.keys()):
                 if key.startswith("WAN_"):
@@ -214,9 +216,7 @@ class LauncherProfileStore:
                     "CODEX_GGUF_CACHE_LIMIT_MB",
                     "CODEX_DIFFUSION_DEVICE",
                     "CODEX_DIFFUSION_DTYPE",
-                    "CODEX_TE_DEVICE",
                     "CODEX_TE_DTYPE",
-                    "CODEX_VAE_DEVICE",
                     "CODEX_VAE_DTYPE",
                     "CODEX_SWAP_POLICY",
                     "CODEX_SWAP_METHOD",

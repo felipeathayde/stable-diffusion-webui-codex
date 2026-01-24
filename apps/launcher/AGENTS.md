@@ -2,7 +2,7 @@
 Date: 2025-10-28
 Owner: Repository Maintainers
 Status: Active
-Last Review: 2026-01-21
+Last Review: 2026-01-24
 
 ## Purpose
 - Provide reusable launcher infrastructure (path resolution, environment checks, service supervision, segmented profile persistence) for Codex entrypoints.
@@ -25,6 +25,7 @@ Last Review: 2026-01-21
 - 2025-12-29: Launcher now resolves the repo root via `CODEX_ROOT` (shared helper) instead of `Path(__file__).parents[...]`, so Windows/WSL launch methods stay consistent.
 - 2025-12-29: Launcher UI service now always receives `API_PORT` (prevents Vite proxy/API_PORT derivation from a fallback WEB_PORT), and the API service performs a strict preflight port check across IPv4/IPv6 localhost (helps diagnose WSL/Windows double-run and “localhost” split-brain).
 - 2026-01-23: Launcher now persists GGUF/LoRA runtime knobs (`CODEX_GGUF_EXEC`, `CODEX_LORA_APPLY_MODE`, `CODEX_LORA_ONLINE_MATH`) and forwards them to the backend as CLI flags when starting the API (`--gguf-exec`, `--lora-apply-mode`, `--lora-online-math`). API is started via `apps/backend/interfaces/api/run_api.py` so backend args are supported.
+- 2026-01-24: Launcher profiles now include explicit device defaults (`CODEX_CORE_DEVICE`, `CODEX_TE_DEVICE`, `CODEX_VAE_DEVICE`) and `services.py` forwards them to the backend as CLI flags (`--core-device`, `--te-device`, `--vae-device`) to avoid bootstrap-time fallback/prompt failures in non-interactive spawns.
 - 2026-01-02: Added standardized file header docstrings to launcher modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining launcher modules (`__init__.py`, `checks.py`, `log_buffer.py`, `paths.py`) (doc-only change; part of rollout).
 - 2026-01-06: Launcher Python preflight now matches `.python-version` (3.12.10) instead of allowing stale 3.10/3.11.

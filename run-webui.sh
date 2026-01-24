@@ -26,6 +26,9 @@ Launcher args:
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
   - PYTHON           (default: \$CODEX_VENV_DIR/bin/python)
+  - CODEX_CORE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
+  - CODEX_TE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
+  - CODEX_VAE_DEVICE (auto|cuda|cpu|mps|xpu|directml; required when no saved setting exists)
   - CODEX_LORA_APPLY_MODE (merge|online; default: merge)
   - PYTORCH_CUDA_ALLOC_CONF (PyTorch CUDA allocator tuning; optional)
   - API_PORT_OVERRIDE / API_PORT / WEB_PORT (advanced; ports are auto-paired when unset)
@@ -95,6 +98,199 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 set -- "${api_args[@]}"
+
+normalize_device_choice() {
+  local raw="${1:-}"
+  raw="$(echo "${raw}" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "${raw}" in
+    "") echo "" ;;
+    auto) echo "auto" ;;
+    cuda|gpu) echo "cuda" ;;
+    cpu) echo "cpu" ;;
+    mps) echo "mps" ;;
+    xpu) echo "xpu" ;;
+    directml|dml) echo "directml" ;;
+    *) return 1 ;;
+  esac
+}
+
+has_backend_flag() {
+  local name="$1"
+  shift || true
+  local arg
+  for arg in "$@"; do
+    if [[ "${arg}" == "${name}" || "${arg}" == "${name}="* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+read_saved_device() {
+  local key="$1"
+  "${PY_BIN}" - "$ROOT_DIR/apps/settings_values.json" "$key" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+if not path.exists():
+    raise SystemExit(0)
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"[webui] Error: invalid JSON in {path}: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+if not isinstance(data, dict):
+    print(f"[webui] Error: invalid settings file (expected object): {path}", file=sys.stderr)
+    raise SystemExit(2)
+value = data.get(key)
+if value is None:
+    raise SystemExit(0)
+text = str(value).strip()
+if text:
+    print(text)
+PY
+}
+
+prompt_device() {
+  local label="$1"
+  local choices=(auto cuda cpu mps xpu directml)
+  echo "" >&2
+  echo "[webui] Missing ${label}. Choose one:" >&2
+  local i
+  for i in "${!choices[@]}"; do
+    printf "  %d) %s\n" "$((i + 1))" "${choices[i]}" >&2
+  done
+  while true; do
+    local choice=""
+    read -r -p "Select ${label} (1-${#choices[@]} or value, q to abort): " choice
+    local lowered
+    lowered="$(echo "${choice}" | tr '[:upper:]' '[:lower:]' | xargs)"
+    if [[ "${lowered}" == "q" || "${lowered}" == "quit" || "${lowered}" == "exit" ]]; then
+      echo "[webui] Aborted." >&2
+      exit 130
+    fi
+    choice="$(normalize_device_choice "${choice}")" || choice=""
+    if [[ -z "${choice}" ]]; then
+      echo "Invalid choice. Allowed: ${choices[*]}" >&2
+      continue
+    fi
+    echo "${choice}"
+    return 0
+  done
+}
+
+# Ensure backend device defaults are explicit (no silent fallbacks). We prefer:
+# 1) explicit backend args
+# 2) CODEX_*_DEVICE env vars
+# 3) persisted values in apps/settings_values.json
+# 4) interactive prompt (TTY only)
+core_device=""
+te_device=""
+vae_device=""
+
+if ! has_backend_flag "--core-device" "$@"; then
+  raw_core_env="$(echo "${CODEX_CORE_DEVICE:-}" | xargs)"
+  if [[ -n "${raw_core_env}" ]]; then
+    core_device="$(normalize_device_choice "${raw_core_env}")" || {
+      echo "[webui] Error: invalid CODEX_CORE_DEVICE='${CODEX_CORE_DEVICE}'." >&2
+      echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+      exit 2
+    }
+  fi
+  if [[ -z "${core_device}" ]]; then
+    core_device="$(read_saved_device "codex_core_device")"
+    if [[ -n "${core_device}" ]]; then
+      core_device="$(normalize_device_choice "${core_device}")" || {
+        echo "[webui] Error: invalid saved setting codex_core_device='${core_device}' in apps/settings_values.json." >&2
+        echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+        exit 2
+      }
+    fi
+  fi
+fi
+
+if ! has_backend_flag "--te-device" "$@"; then
+  raw_te_env="$(echo "${CODEX_TE_DEVICE:-}" | xargs)"
+  if [[ -n "${raw_te_env}" ]]; then
+    te_device="$(normalize_device_choice "${raw_te_env}")" || {
+      echo "[webui] Error: invalid CODEX_TE_DEVICE='${CODEX_TE_DEVICE}'." >&2
+      echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+      exit 2
+    }
+  fi
+  if [[ -z "${te_device}" ]]; then
+    te_device="$(read_saved_device "codex_te_device")"
+    if [[ -n "${te_device}" ]]; then
+      te_device="$(normalize_device_choice "${te_device}")" || {
+        echo "[webui] Error: invalid saved setting codex_te_device='${te_device}' in apps/settings_values.json." >&2
+        echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+        exit 2
+      }
+    fi
+  fi
+fi
+
+if ! has_backend_flag "--vae-device" "$@"; then
+  raw_vae_env="$(echo "${CODEX_VAE_DEVICE:-}" | xargs)"
+  if [[ -n "${raw_vae_env}" ]]; then
+    vae_device="$(normalize_device_choice "${raw_vae_env}")" || {
+      echo "[webui] Error: invalid CODEX_VAE_DEVICE='${CODEX_VAE_DEVICE}'." >&2
+      echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+      exit 2
+    }
+  fi
+  if [[ -z "${vae_device}" ]]; then
+    vae_device="$(read_saved_device "codex_vae_device")"
+    if [[ -n "${vae_device}" ]]; then
+      vae_device="$(normalize_device_choice "${vae_device}")" || {
+        echo "[webui] Error: invalid saved setting codex_vae_device='${vae_device}' in apps/settings_values.json." >&2
+        echo "[webui] Allowed: auto, cuda, cpu, mps, xpu, directml." >&2
+        exit 2
+      }
+    fi
+  fi
+fi
+
+need_prompt=0
+if [[ -z "${core_device}" && ! has_backend_flag "--core-device" "$@" ]]; then
+  need_prompt=1
+fi
+if [[ -z "${te_device}" && ! has_backend_flag "--te-device" "$@" ]]; then
+  need_prompt=1
+fi
+if [[ -z "${vae_device}" && ! has_backend_flag "--vae-device" "$@" ]]; then
+  need_prompt=1
+fi
+
+if (( need_prompt == 1 )); then
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    echo "[webui] Error: backend device defaults are not configured and no TTY is available for prompting." >&2
+    echo "[webui] Provide flags: --core-device/--te-device/--vae-device, or set CODEX_CORE_DEVICE/CODEX_TE_DEVICE/CODEX_VAE_DEVICE." >&2
+    exit 2
+  fi
+  if [[ -z "${core_device}" && ! has_backend_flag "--core-device" "$@" ]]; then
+    core_device="$(prompt_device "CORE_DEVICE")"
+  fi
+  if [[ -z "${te_device}" && ! has_backend_flag "--te-device" "$@" ]]; then
+    te_device="$(prompt_device "TE_DEVICE")"
+  fi
+  if [[ -z "${vae_device}" && ! has_backend_flag "--vae-device" "$@" ]]; then
+    vae_device="$(prompt_device "VAE_DEVICE")"
+  fi
+fi
+
+if [[ -n "${core_device}" && ! has_backend_flag "--core-device" "$@" ]]; then
+  set -- "--core-device=${core_device}" "$@"
+fi
+if [[ -n "${te_device}" && ! has_backend_flag "--te-device" "$@" ]]; then
+  set -- "--te-device=${te_device}" "$@"
+fi
+if [[ -n "${vae_device}" && ! has_backend_flag "--vae-device" "$@" ]]; then
+  set -- "--vae-device=${vae_device}" "$@"
+fi
 
 if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
   export PYTORCH_CUDA_ALLOC_CONF="${DEFAULT_PYTORCH_CUDA_ALLOC_CONF}"

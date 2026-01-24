@@ -279,6 +279,19 @@ def default_services(log_buffer: CodexLogBuffer | None = None) -> Dict[str, Code
 def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     args: List[str] = []
 
+    # Device defaults (required at backend bootstrap; explicit, no silent fallbacks).
+    raw_core_device = str(env.get("CODEX_CORE_DEVICE", "") or "").strip().lower()
+    if raw_core_device:
+        args.append(f"--core-device={raw_core_device}")
+
+    raw_te_device = str(env.get("CODEX_TE_DEVICE", "") or "").strip().lower()
+    if raw_te_device:
+        args.append(f"--te-device={raw_te_device}")
+
+    raw_vae_device = str(env.get("CODEX_VAE_DEVICE", "") or "").strip().lower()
+    if raw_vae_device:
+        args.append(f"--vae-device={raw_vae_device}")
+
     raw_exec = str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower()
     if raw_exec:
         args.append(f"--gguf-exec={raw_exec}")

@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_has_value` (function): Checks whether a parsed CLI option has a meaningful value (vs unset/default).
 - `_apply_source_overrides` (function): Applies overrides from a source mapping onto the argparse namespace.
 - `_validate_runtime_flags` (function): Validates behavior-changing runtime flag combinations (GGUF exec modes, online LoRA math).
-- `_validate_required_devices` (function): Validates required device flags are present/consistent (raises on invalid combos).
+- `_validate_required_devices` (function): Ensures device defaults are configured (prompts in foreground TTY; raises in non-interactive).
 - `_normalize_device_choice` (function): Normalizes device choice strings (e.g., cpu/cuda/directml) into canonical form.
 - `_normalize_dtype_choice` (function): Normalizes dtype choice strings (fp32/fp16/bf16/fp8) into canonical form.
 - `_torch_dtype_for_choice` (function): Maps a dtype choice string to a torch dtype name (string form used across config objects).
@@ -295,7 +295,7 @@ def _apply_source_overrides(
         raw = getattr(ns, flag_attr, None)
         if raw is not None:
             text = str(raw).strip().lower()
-            setattr(ns, settings_key, None if not text or text == "auto" else text)
+            setattr(ns, settings_key, text or None)
             continue
 
         setting_val = _setting_value(settings_key)
@@ -361,31 +361,14 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
             raise RuntimeError(f"xformers attention backend requested, but xformers is not available: {exc}") from exc
 
 
-def _validate_required_devices(ns: argparse.Namespace) -> None:
-    missing: list[str] = []
-    for attr, label in (
-        ("codex_core_device", "codex_core_device"),
-        ("codex_te_device", "codex_te_device"),
-        ("codex_vae_device", "codex_vae_device"),
-    ):
-        value = getattr(ns, attr, None)
-        if value is None:
-            missing.append(label)
-            setattr(ns, attr, "cpu")
-
-    if missing:
-        logging.getLogger("backend.config").warning(
-            "Device configuration not provided (%s); defaulting all components to CPU.",
-            ", ".join(missing),
-        )
-
-
 def _normalize_device_choice(value: str | None) -> str | None:
     if value is None:
         return None
     v = value.strip().lower()
-    if not v or v == "auto":
+    if not v:
         return None
+    if v == "auto":
+        return "auto"
     if v in {"cuda", "gpu"}:
         return "cuda"
     if v == "cpu":
@@ -396,8 +379,7 @@ def _normalize_device_choice(value: str | None) -> str | None:
         return "xpu"
     if v in {"directml", "dml"}:
         return "directml"
-    _LOG.warning("Unsupported device option '%s'; ignoring.", value)
-    return None
+    raise ValueError(f"Unsupported device option '{value}'. Allowed: auto, cuda, cpu, mps, xpu, directml")
 
 
 def _normalize_dtype_choice(value: str | None, *, allow_fp8: bool = False) -> str | None:
@@ -430,8 +412,75 @@ def _normalize_dtype_choice(value: str | None, *, allow_fp8: bool = False) -> st
         )
     result = mapping.get(v)
     if result is None:
-        _LOG.warning("Unsupported dtype option '%s'; ignoring.", value)
+        allowed = ", ".join(sorted(set(mapping.values())))
+        raise ValueError(f"Unsupported dtype option '{value}'. Allowed: {allowed}")
     return result
+
+
+def _validate_required_devices(ns: argparse.Namespace) -> None:
+    """Ensure device defaults are explicitly configured (no silent fallbacks).
+
+    In interactive terminals, missing device values are prompted from the user.
+    In non-interactive contexts, we fail loud with a clear error message.
+    """
+
+    required: list[tuple[str, str]] = [
+        ("codex_core_device", "diffusion core"),
+        ("codex_te_device", "text encoder"),
+        ("codex_vae_device", "VAE"),
+    ]
+
+    missing = [(attr, label) for attr, label in required if getattr(ns, attr, None) is None]
+    if not missing:
+        return
+
+    choices = ["auto", "cuda", "cpu", "mps", "xpu", "directml"]
+
+    def _interactive() -> bool:
+        try:
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                return False
+            # Avoid prompting when the process is in the background (would SIGTTIN / hang).
+            return os.getpgrp() == os.tcgetpgrp(sys.stdin.fileno())
+        except Exception:
+            return False
+
+    if not _interactive():
+        keys = ", ".join(attr for attr, _label in missing)
+        raise RuntimeError(
+            "Device configuration is required but missing: "
+            f"{keys}. Provide it via startup flags "
+            "(`--core-device`, `--te-device`, `--vae-device`) or set persisted defaults in "
+            "`apps/settings_values.json` (keys `codex_core_device`, `codex_te_device`, `codex_vae_device`)."
+        )
+
+    def _prompt(attr: str, label: str) -> str:
+        sys.stdout.write("\n")
+        sys.stdout.write(f"[config] Missing {attr} ({label}). Choose one:\n")
+        for idx, option in enumerate(choices, start=1):
+            sys.stdout.write(f"  {idx}) {option}\n")
+        sys.stdout.flush()
+        while True:
+            try:
+                raw = input(f"Select {attr} (1-{len(choices)} or value, 'q' to abort): ").strip()
+            except EOFError as exc:
+                raise RuntimeError(f"Missing {attr} and no input available (stdin closed).") from exc
+            if not raw:
+                continue
+            lowered = raw.strip().lower()
+            if lowered in {"q", "quit", "exit"}:
+                raise RuntimeError("Aborted by user.")
+            if lowered.isdigit():
+                n = int(lowered)
+                if 1 <= n <= len(choices):
+                    return choices[n - 1]
+            if lowered in choices:
+                return lowered
+            sys.stdout.write(f"Invalid choice {raw!r}. Allowed: {', '.join(choices)}\n")
+            sys.stdout.flush()
+
+    for attr, label in missing:
+        setattr(ns, attr, _prompt(attr, label))
 
 
 def _torch_dtype_for_choice(choice: str | None) -> str | None:

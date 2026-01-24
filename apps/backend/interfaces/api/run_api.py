@@ -477,17 +477,15 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
         settings=settings,
         strict=True,
     )
-    # Expose CLI debug flags as env vars for runtime modules that rely on os.getenv.
+    # Publish resolved bootstrap values (after CLI/env/settings precedence) without mutating os.environ.
     try:
+        from apps.backend.infra.config.bootstrap_env import set_bootstrap_env as _set_bootstrap_env
+
         if getattr(ns, "debug_preview_factors", False):
-            os.environ["CODEX_DEBUG_PREVIEW_FACTORS"] = "1"
-    except Exception:
-        pass
-    # Expose resolved LoRA apply mode as env var for patchers/runtime modules.
-    try:
+            _set_bootstrap_env("CODEX_DEBUG_PREVIEW_FACTORS", "1")
         mode = getattr(ns, "lora_apply_mode", None)
         if mode is not None:
-            os.environ["CODEX_LORA_APPLY_MODE"] = str(mode)
+            _set_bootstrap_env("CODEX_LORA_APPLY_MODE", str(mode))
     except Exception:
         pass
     mem_management.reinitialize(runtime_config)

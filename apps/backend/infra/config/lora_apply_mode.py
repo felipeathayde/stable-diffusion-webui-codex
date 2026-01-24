@@ -24,6 +24,8 @@ import os
 from enum import Enum
 from typing import Mapping, Optional
 
+from .bootstrap_env import get_bootstrap_env
+
 ENV_LORA_APPLY_MODE = "CODEX_LORA_APPLY_MODE"
 
 
@@ -50,12 +52,15 @@ def read_lora_apply_mode(env: Optional[Mapping[str, str]] = None) -> LoraApplyMo
     """Return the configured LoRA apply mode.
 
     Precedence:
+    - bootstrap override (resolved CLI) when env is None
     - env[CODEX_LORA_APPLY_MODE] if set (strict)
     - DEFAULT_LORA_APPLY_MODE
     """
 
     env_map = os.environ if env is None else env
-    raw = env_map.get(ENV_LORA_APPLY_MODE)
+    raw = None if env is not None else get_bootstrap_env(ENV_LORA_APPLY_MODE)
+    if raw is None:
+        raw = env_map.get(ENV_LORA_APPLY_MODE)
     if raw is None:
         return DEFAULT_LORA_APPLY_MODE
     text = str(raw).strip()

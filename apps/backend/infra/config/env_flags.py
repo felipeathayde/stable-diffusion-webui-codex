@@ -6,8 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Shared environment flag parsing helpers for backend/runtime modules.
-Centralizes env parsing semantics (truthy/falsy sets, defaults, and numeric clamping) so subsystems don't drift on debug/feature toggles.
+Purpose: Shared env-flag parsing helpers for backend/runtime modules.
+Centralizes flag parsing semantics (truthy/falsy sets, defaults, and numeric clamping) so subsystems don't drift on debug/feature toggles.
+Reads from `bootstrap_env` overrides first (set at backend startup) to avoid runtime `os.environ` mutation.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_TRUE` (constant): Truthy token set for env flags.
@@ -21,6 +22,8 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+
+from .bootstrap_env import get_bootstrap_env
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -36,7 +39,9 @@ def env_flag(name: str, default: bool = False) -> bool:
     - unknown/empty → default
     """
 
-    raw = os.getenv(name)
+    raw = get_bootstrap_env(name)
+    if raw is None:
+        raw = os.getenv(name)
     if raw is None:
         return bool(default)
     value = str(raw).strip().lower()
@@ -54,7 +59,9 @@ def env_int(name: str, default: int, *, min_value: Optional[int] = None, max_val
     - min_value/max_value apply after parsing.
     """
 
-    raw = os.getenv(name)
+    raw = get_bootstrap_env(name)
+    if raw is None:
+        raw = os.getenv(name)
     if raw is None:
         value = int(default)
     else:

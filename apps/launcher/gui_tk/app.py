@@ -35,7 +35,7 @@ from apps.launcher.services import default_services
 
 from .controller import LauncherController
 from .styles import Palette, apply_style
-from .tabs import DiagnosticsTab, LogsTab, RuntimeTab, ServicesTab, WanTab
+from .tabs import DiagnosticsTab, LogsTab, RuntimeTab, ServicesTab
 
 
 _GEOMETRY_RE = re.compile(r"^\d+x\d+(?:[+-]\d+[+-]\d+)?$")
@@ -86,7 +86,6 @@ class CodexLauncherApp(tk.Tk):
             canvas_bg=self._palette.bg0,
             mark_changed=self._mark_changed,
         )
-        self._wan_tab = WanTab()
         self._diagnostics_tab = DiagnosticsTab(
             self._controller,
             mark_changed=self._mark_changed,
@@ -101,7 +100,6 @@ class CodexLauncherApp(tk.Tk):
         tabs = [
             ("Services", self._services_tab.build(self._notebook)),
             ("Runtime", self._runtime_tab.build(self._notebook)),
-            ("WAN", self._wan_tab.build(self._notebook)),
             ("Diagnostics", self._diagnostics_tab.build(self._notebook)),
             ("Logs", self._logs_tab.build(self._notebook)),
         ]

@@ -17,15 +17,12 @@ from __future__ import annotations
 
 from .services import ServicesTab
 from .runtime import RuntimeTab
-from .wan import WanTab
 from .diagnostics import DiagnosticsTab
 from .logs import LogsTab
 
 __all__ = [
     "ServicesTab",
     "RuntimeTab",
-    "WanTab",
     "DiagnosticsTab",
     "LogsTab",
 ]
-

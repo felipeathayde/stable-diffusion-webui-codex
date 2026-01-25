@@ -14,7 +14,7 @@ Last Review: 2026-01-25
 - `services.py` – Service specifications and process supervision helpers for API/UI processes.
 - `profiles.py` – Segmented profile persistence (`.sangoi/launcher/`) with area/model separation and legacy migration support.
 - `settings.py` – Typed launcher settings + validation helpers (env-backed, UI/service friendly).
-- `gui_tk.py` – Tk-based GUI launcher implementation (UI around profiles/checks/services).
+- `gui_tk/` – Tk-based GUI launcher package (UI around profiles/checks/services).
 - `__init__.py` – Re-exports public APIs for callers (`CodexPaths`, `run_launch_checks`, `LauncherProfileStore`, etc.).
 
 ## Notes

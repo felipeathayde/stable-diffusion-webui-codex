@@ -18,7 +18,6 @@ Last Review: 2026-01-25
 - `tabs/runtime.py` – Device defaults + GGUF/LoRA + PyTorch alloc conf.
 - `tabs/diagnostics.py` – Preflight checks + debug/logging env flags.
 - `tabs/logs.py` – Log viewer (filter/search/export).
-- `tabs/wan.py` – Informational WAN tab.
 
 ## Notes
 - UI state (tab index, window geometry, external terminal) is auto-persisted via `LauncherProfileStore.save_meta()`; env changes require explicit “Save Settings”.

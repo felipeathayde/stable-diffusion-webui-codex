@@ -82,6 +82,34 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
     style.map("TCheckbutton", background=[("active", palette.bg0)])
 
     style.configure(
+        "TEntry",
+        fieldbackground=palette.bg1,
+        background=palette.bg1,
+        foreground=palette.fg0,
+    )
+    style.map(
+        "TEntry",
+        fieldbackground=[("disabled", palette.bg0)],
+        foreground=[("disabled", palette.fg_muted)],
+    )
+
+    style.configure(
+        "TCombobox",
+        fieldbackground=palette.bg1,
+        background=palette.bg1,
+        foreground=palette.fg0,
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", palette.bg1), ("disabled", palette.bg0)],
+        foreground=[("readonly", palette.fg0), ("disabled", palette.fg_muted)],
+    )
+    root.option_add("*TCombobox*Listbox.background", palette.bg1)
+    root.option_add("*TCombobox*Listbox.foreground", palette.fg0)
+    root.option_add("*TCombobox*Listbox.selectBackground", palette.accent)
+    root.option_add("*TCombobox*Listbox.selectForeground", palette.bg0)
+
+    style.configure(
         "Treeview",
         background=palette.bg1,
         fieldbackground=palette.bg1,
@@ -102,4 +130,3 @@ def apply_style(root: tk.Tk, palette: Palette) -> None:
     style.configure("Status.Running.TLabel", background=palette.bg0, foreground=palette.ok, font=("Segoe UI", 12, "bold"))
     style.configure("Status.Stopped.TLabel", background=palette.bg0, foreground=palette.warn, font=("Segoe UI", 12, "bold"))
     style.configure("Status.Error.TLabel", background=palette.bg0, foreground=palette.err, font=("Segoe UI", 12, "bold"))
-

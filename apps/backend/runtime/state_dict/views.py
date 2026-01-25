@@ -14,11 +14,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FilterPrefixView` (class): Mapping view that filters keys by prefix and optionally re-prefixes them lazily.
 - `RemapKeysView` (class): Mapping view that remaps keys through a mapping dict (useful for on-the-fly state_dict key conversion).
 - `CastOnGetView` (class): Mapping view that casts tensors/values on access (`__getitem__`) to a target dtype/device (no eager conversion).
-- `LazySafetensorsDict` (class): Lazy mapping over a SafeTensors file; keeps a single handle and loads tensors on demand.
+- `LazySafetensorsDict` (class): Lazy SafeTensors-backed state_dict; keeps a single handle and loads tensors on demand (Windows: materializes on first access to avoid repeated opens).
 """
 
 from __future__ import annotations
 
+import sys
+import threading
 from collections.abc import MutableMapping
 from typing import Dict
 
@@ -183,6 +185,9 @@ class RemapKeysView(MutableMapping):
     def __len__(self):
         return len(self._map)
 
+    def __contains__(self, k: object) -> bool:
+        return k in self._map
+
     def keys(self):
         return list(self._map.keys())
 
@@ -243,27 +248,39 @@ class LazySafetensorsDict(MutableMapping):
 
     Windows crash prevention: Once any tensor is accessed, the entire file is
     materialized into memory to avoid reopening the file repeatedly (which causes
-    torch_cpu.dll crashes on Windows).
+    torch_cpu.dll crashes on Windows). On non-Windows platforms, keep a single
+    SafeTensors handle open and load tensors on demand to stay truly lazy.
     """
 
     def __init__(self, filepath: str, device: str = "cpu"):
         self.filepath = filepath
         self.device = device or "cpu"
+        self._platform_windows = sys.platform.startswith("win")
         self._overlay = {}  # in-memory writes/overrides
         self._deleted = set()  # keys logically removed
         self._keys_cache = None  # cached set of underlying keys
         self._materialized = None  # holds all tensors after first access
         self._materialized_triggered = False
+        self._handle = None  # persistent SafeTensors handle (non-Windows only)
+        self._handle_lock = threading.Lock()
 
     def _base_keys(self):
         if self._keys_cache is None:
-            with safe_open(self.filepath, framework="pt", device=self.device) as f:
-                self._keys_cache = set(f.keys())
+            if self._platform_windows:
+                with safe_open(self.filepath, framework="pt", device=self.device) as f:
+                    self._keys_cache = set(f.keys())
+            else:
+                with self._handle_lock:
+                    if self._handle is None:
+                        self._handle = safe_open(self.filepath, framework="pt", device=self.device)
+                    self._keys_cache = set(self._handle.keys())
         return self._keys_cache
 
     def _ensure_materialized(self):
         """Load all tensors from file once to avoid reopening repeatedly."""
 
+        if not self._platform_windows:
+            return
         if self._materialized is None and not self._materialized_triggered:
             self._materialized_triggered = True
             self._materialized = {}
@@ -284,20 +301,27 @@ class LazySafetensorsDict(MutableMapping):
         if key in self._deleted:
             raise KeyError(key)
 
-        # Materialize all tensors on first access to avoid repeated file opens
-        self._ensure_materialized()
+        if self._platform_windows:
+            # Materialize all tensors on first access to avoid repeated file opens.
+            self._ensure_materialized()
 
-        if self._materialized is not None:
-            if key in self._materialized:
-                return self._materialized[key]
-            raise KeyError(key)
+            if self._materialized is not None:
+                if key in self._materialized:
+                    return self._materialized[key]
+                raise KeyError(key)
 
-        # Fallback for edge cases (should rarely happen)
+            # Fallback for edge cases (should rarely happen)
+            if key not in self._base_keys():
+                raise KeyError(key)
+            with safe_open(self.filepath, framework="pt", device=self.device) as f:
+                return f.get_tensor(key)
+
         if key not in self._base_keys():
             raise KeyError(key)
-        with safe_open(self.filepath, framework="pt", device=self.device) as f:
-            t = f.get_tensor(key)
-        return t
+        with self._handle_lock:
+            if self._handle is None:
+                self._handle = safe_open(self.filepath, framework="pt", device=self.device)
+            return self._handle.get_tensor(key)
 
     def __setitem__(self, key, value):
         self._overlay[key] = value
@@ -324,15 +348,30 @@ class LazySafetensorsDict(MutableMapping):
             yield k
 
     def __len__(self):
-        return len([k for k in self._base_keys() if k not in self._deleted and k not in self._overlay]) + len(self._overlay)
+        base_keys = self._base_keys()
+        overlay_keys = set(self._overlay.keys())
+        return len(base_keys - self._deleted - overlay_keys) + len(self._overlay)
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        if key in self._overlay:
+            return True
+        if key in self._deleted:
+            return False
+        try:
+            return key in self._base_keys()
+        except Exception:
+            return False
 
     # Convenience helpers
     def keys(self):
         return list(iter(self))
 
     def items(self):
-        # Use materialization to avoid per-item file opens
-        self._ensure_materialized()
+        # Use materialization to avoid per-item file opens (Windows only)
+        if self._platform_windows:
+            self._ensure_materialized()
         for k in self:
             yield k, self[k]
 
@@ -355,17 +394,33 @@ class LazySafetensorsDict(MutableMapping):
 
         result: Dict[str, object] = {}
         mapping: Dict[str, str] = {}
-        with safe_open(self.filepath, framework="pt", device=self.device) as handle:
-            for key in handle.keys():
-                if prefix and not key.startswith(prefix):
-                    continue
-                if key in self._deleted:
-                    continue
-                if key in self._overlay:
-                    continue
-                presented = _translate(key)
-                result[presented] = handle.get_tensor(key)
-                mapping[presented] = key
+        if self._platform_windows:
+            with safe_open(self.filepath, framework="pt", device=self.device) as handle:
+                for key in handle.keys():
+                    if prefix and not key.startswith(prefix):
+                        continue
+                    if key in self._deleted:
+                        continue
+                    if key in self._overlay:
+                        continue
+                    presented = _translate(key)
+                    result[presented] = handle.get_tensor(key)
+                    mapping[presented] = key
+        else:
+            with self._handle_lock:
+                if self._handle is None:
+                    self._handle = safe_open(self.filepath, framework="pt", device=self.device)
+                handle = self._handle
+                for key in handle.keys():
+                    if prefix and not key.startswith(prefix):
+                        continue
+                    if key in self._deleted:
+                        continue
+                    if key in self._overlay:
+                        continue
+                    presented = _translate(key)
+                    result[presented] = handle.get_tensor(key)
+                    mapping[presented] = key
 
         for key, value in self._overlay.items():
             if prefix and not key.startswith(prefix):
@@ -379,6 +434,14 @@ class LazySafetensorsDict(MutableMapping):
         if return_mapping:
             return result, mapping
         return result
+
+    def __del__(self):
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            try:
+                handle.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 __all__ = [

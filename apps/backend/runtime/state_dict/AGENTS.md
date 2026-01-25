@@ -12,7 +12,8 @@ Key files:
 
 Notes:
 - Views should stay lightweight and avoid eagerly materializing large state dicts.
+- 2026-01-25: `LazySafetensorsDict` is now truly lazy on non-Windows (persistent `safe_open` handle) and implements `__contains__` so key checks don’t load tensors; `RemapKeysView` also implements `__contains__` for the same reason.
 - Helpers should remain generic and not import model-family runtime code.
 - Key remaps must be explicit and strict: unknown/ambiguous layouts raise (no silent fallbacks). Use the family-specific keymap modules from loaders.
 
-Last Review: 2026-01-23
+Last Review: 2026-01-25

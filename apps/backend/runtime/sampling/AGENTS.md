@@ -31,6 +31,7 @@ Status: Active
 - Canonical names: sampler/scheduler strings are strict and must match `SamplerKind` / `SchedulerName` values (no alias mapping; empty values are invalid).
 - Karras Sigmas: Euler in diffusers typically uses Karras sigmas when enabled. We intentionally reuse the Karras schedule for `EULER_DISCRETE`. The integrator determines ODE vs ancestral behavior.
 - Simple schedule: `SIMPLE` is predictor-aware and always appends a terminal 0.
+- Sigma dtype: the sigma ladder is always built and used in **fp32** (even when the diffusion core runs bf16/fp16). Casting sigmas to low precision quantizes the schedule/timestep mapping and can cause severe “golesma/checkerboard/noise soup” regressions (notably SDXL).
 - Flow-match shift source-of-truth: for flow-match predictors (`prediction_type='const'`), the schedule uses `flow_shift` resolved from diffusers `scheduler_config.json` (vendored HF mirror or diffusers repo dir):
   - Fixed shift: applies `shift * t / (1 + (shift - 1) * t)` on a base `linspace(1→1/N)` ladder.
   - Dynamic shift (Flux): computes `mu(seq_len)` from config and uses `exp(mu)` (exponential) or `mu` (linear) as the effective shift; requires explicit `width/height`.

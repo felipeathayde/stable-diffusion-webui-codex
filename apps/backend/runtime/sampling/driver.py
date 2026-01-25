@@ -357,7 +357,9 @@ class CodexSampler:
                         is_sdxl=bool(getattr(getattr(self.sd_model, "engine", None), "is_sdxl", False)),
                     )
 
-                sigmas = active_context.sigmas.to(device=noise.device, dtype=noise.dtype)
+                # Keep sigma ladder in fp32 for numeric stability; casting to bf16/fp16
+                # quantizes the schedule and can produce severe quality regressions.
+                sigmas = active_context.sigmas.to(device=noise.device, dtype=torch.float32)
                 steps = active_context.steps
 
                 if self._log_sigmas or self._log_enabled:
@@ -382,7 +384,9 @@ class CodexSampler:
                 if init_latent is not None:
                     x = init_latent + float(sigmas_run[0]) * noise
                 else:
-                    x = model.predictor.noise_scaling(sigmas_run[:1], noise, torch.zeros_like(noise))
+                    # Keep x in the core dtype (bf16/fp16) while preserving the sigma ladder precision.
+                    sigma0 = sigmas_run[:1].to(dtype=noise.dtype)
+                    x = model.predictor.noise_scaling(sigma0, noise, torch.zeros_like(noise))
 
                 if self._log_enabled:
                     try:
@@ -545,7 +549,7 @@ class CodexSampler:
                         raise _SamplingCancelled("cancelled")
                     sigma = sigmas[i]
                     sigma_next = sigmas[i + 1]
-                    sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=x.dtype)
+                    sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=torch.float32)
 
                     if log_cfg_delta and (i - start_idx) < cfg_delta_steps:
                         denoised, cond_pred, uncond_pred = sampling_function_inner(
@@ -698,7 +702,7 @@ class CodexSampler:
                     elif sampler_kind is SamplerKind.UNI_PC:
                         delta = float(sigma) - float(sigma_next)
                         x_pred = x - delta * eps
-                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
+                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
                         denoised_next = sampling_function_inner(
                             model,
                             x_pred,
@@ -716,7 +720,7 @@ class CodexSampler:
                         # Reuse the UniPC two-stage update as a BH2 variant placeholder.
                         delta = float(sigma) - float(sigma_next)
                         x_pred = x - delta * eps
-                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=x.dtype)
+                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
                         denoised_next = sampling_function_inner(
                             model,
                             x_pred,

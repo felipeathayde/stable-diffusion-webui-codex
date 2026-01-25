@@ -106,6 +106,10 @@ def build_sampling_context(
 
     dev = device or predictor_container.diffusion_model.load_device
     dt = dtype or getattr(predictor_container.diffusion_model, "dtype", torch.float32)
+    # Sigma schedules are numerically sensitive (timestep mapping, step sizes). Using
+    # bf16/fp16 here quantizes the ladder and can severely degrade output quality
+    # (e.g., SDXL "checkerboard/golesma" artifacts). Keep schedules in fp32.
+    sigma_dtype = dt if dt not in (torch.float16, torch.bfloat16) else torch.float32
 
     flow_shift_value: float | None = None
     flow_shift_config_path: str | None = None
@@ -122,7 +126,7 @@ def build_sampling_context(
         sigma_min=sigma_min,
         sigma_max=sigma_max,
         device=dev,
-        dtype=dt,
+        dtype=sigma_dtype,
         predictor=pred,
         flow_shift=flow_shift_value,
         is_sdxl=is_sdxl or bool(getattr(sd_model, "is_sdxl", False)),

@@ -1,7 +1,7 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-22
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -13,6 +13,7 @@ Status: Active
 - Model family flags (`is_sd1`, `is_sd2`, `is_sd3`, `is_sdxl`) remain read-only; call `register_model_family(...)` inside `_build_components` after deriving the runtime.
 - Lifecycle hooks: `_on_unload()` lets subclasses clear caches, while `status()` now reports `model_ref`, bundle source, and registered families.
 - Tiling/CFG scale toggles remain available but emit structured logs when changed.
+- 2026-01-25: SDXL VAE overrides (`vae_path`) now run through the SDXL VAE keymap (LDM→diffusers, wrapper prefix stripping, drop `model_ema.*`); SDXL override unexpected keys are fatal to prevent silent drift.
 - 2026-01-22: `CodexDiffusionEngine.txt2img` now delegates to the canonical mode wrapper `apps/backend/use_cases/txt2img.py:run_txt2img` (Option A: engines are adapters; mode orchestration lives in use-cases).
 - 2025-12-30: `CodexDiffusionEngine.load()` now calls `unload()` when already loaded, and `unload()` clears bound components from the memory manager (prevents duplicate model instances accumulating when reloading with different overrides).
 - 2026-01-01: Engine docs note that `get_learned_conditioning(...)` may return either a dict or a cross-attn tensor (both supported by `compile_conditions`).

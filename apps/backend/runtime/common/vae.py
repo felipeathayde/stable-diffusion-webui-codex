@@ -143,17 +143,9 @@ def load_flow16_vae(
             if isinstance(state_dict, Mapping):
                 state_dict = _strip_known_prefixes(state_dict)
                 # Normalize LDM-style Flow16 VAEs (same conversion as SDXL/Flux).
-                try:
-                    from types import SimpleNamespace
-                    from apps.backend.runtime.models.loader import _maybe_convert_sdxl_vae_state_dict
-                    from apps.backend.runtime.model_registry.specs import ModelFamily
+                from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
 
-                    state_dict = _maybe_convert_sdxl_vae_state_dict(
-                        state_dict,
-                        SimpleNamespace(family=ModelFamily.ZIMAGE),
-                    )
-                except Exception as exc:
-                    logger.debug("Flow16 VAE key conversion skipped/failed: %s", exc)
+                _, state_dict = remap_sdxl_vae_state_dict(state_dict)
             
             vae = AutoencoderKL(**FLOW16_VAE_CONFIG)
             expected_total = len(vae.state_dict())

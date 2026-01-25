@@ -13,7 +13,7 @@ without ad-hoc string-replace chains or silent fallbacks.
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyMappingError` (exception): Raised when key-style detection or remapping fails (unknown style, ambiguous style, collisions).
 - `KeyStyleDetectionError` (exception): Raised when key-style detection fails (unknown/ambiguous layout).
-- `KeyStyle` (enum): Stable identifiers for common key layouts (Codex, Diffusers, WAN export, llama.cpp GGUF, HF).
+- `KeyStyle` (enum): Stable identifiers for common key layouts (Codex, Diffusers, LDM, WAN export, llama.cpp GGUF, HF).
 - `SentinelKind` (enum): Sentinel matching strategy (exact/prefix/substring/regex).
 - `KeySentinel` (dataclass): A single “style signal” used to detect a key layout.
 - `KeyStyleSpec` (dataclass): A named key-style + its sentinel set and matching threshold.
@@ -46,6 +46,7 @@ class KeyStyleDetectionError(KeyMappingError):
 class KeyStyle(str, Enum):
     CODEX = "codex"
     DIFFUSERS = "diffusers"
+    LDM = "ldm"
     WAN_EXPORT = "wan_export"
     LLAMA_GGUF = "llama_gguf"
     HF = "hf"
@@ -182,6 +183,7 @@ def remap_state_dict_view(
     detector: KeyStyleDetector,
     normalize: Callable[[str], str],
     mappers: Mapping[KeyStyle, Callable[[str], str]],
+    view_factory: Callable[[MutableMapping[str, _T], dict[str, str]], MutableMapping[str, _T]] | None = None,
     output_validator: Callable[[Sequence[str]], None] | None = None,
 ) -> tuple[KeyStyle, MutableMapping[str, _T]]:
     keys = list(state_dict.keys())
@@ -206,4 +208,5 @@ def remap_state_dict_view(
     if output_validator is not None:
         output_validator(list(mapping.keys()))
 
-    return style, RemapKeysView(state_dict, mapping)
+    factory = view_factory or (lambda base, mapping: RemapKeysView(base, mapping))
+    return style, factory(state_dict, mapping)

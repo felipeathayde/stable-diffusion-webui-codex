@@ -520,6 +520,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 )
             vae_device = getattr(components.vae, "device", None) or getattr(components.vae, "load_device", None)
             state_dict = load_torch_file(vae_path, device=vae_device)
+            if bundle.family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+                from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
+
+                _, state_dict = remap_sdxl_vae_state_dict(state_dict)
             vae_target = getattr(components.vae, "first_stage_model", components.vae)
             if not hasattr(vae_target, "state_dict"):
                 raise TypeError(
@@ -540,6 +544,12 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                     f"Ensure the override matches the expected VAE architecture for {family_hint or 'this checkpoint'}."
                 )
             if unexpected:
+                if bundle.family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+                    raise RuntimeError(
+                        "VAE override produced unexpected keys for SDXL. "
+                        "This indicates a keymap/conversion mismatch; refusing to continue. "
+                        f"unexpected_count={len(unexpected)} sample={unexpected[:10]}"
+                    )
                 logger.warning("VAE override: unexpected %d keys (sample=%s)", len(unexpected), unexpected[:10])
 
         # Optional: best-effort probe for internal diagnostics (no console output)

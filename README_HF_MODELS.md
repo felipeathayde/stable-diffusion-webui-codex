@@ -1,17 +1,15 @@
-<!--
-This file is the canonical `README.md` content for this Hugging Face model repository:
-- https://huggingface.co/sangoi-exe/sd-webui-codex
-
-Keep this file in sync with the Hugging Face repo `README.md`.
--->
-
 ---
 tags:
   - stable-diffusion
   - stable-diffusion-xl
+  - sdxl
   - flux
+  - wan22
   - lora
   - gguf
+  - klein
+  - ltx-2
+  - ltx2
   - text-to-image
   - image-to-image
   - video
@@ -32,7 +30,7 @@ This Hugging Face repository is the **official companion model hub** for **Codex
 
 **This is:**
 - A curated set of model files (checkpoints / LoRAs / VAEs / text encoders, depending on the folder).
-- Organized to plug directly into Codex WebUI’s default `models/` layout (as configured by `apps/paths.json` in the WebUI repo).
+- Organized to plug directly into Codex WebUI's default `models/` layout (as configured by `apps/paths.json` in the WebUI repo).
 
 **This is not:**
 - An official upstream distribution of third-party models by their authors.
@@ -43,7 +41,7 @@ This Hugging Face repository is the **official companion model hub** for **Codex
 
 1) **I did not create or train the models stored here.** All model names, files, and trademarks remain the property of their respective owners.
 2) **Each model keeps its own license/terms.** This repository does not change those terms. Always check the original model card/license and comply with it.
-3) **Codex WebUI’s license applies to the WebUI code, not the model weights.** Codex WebUI is licensed under the **PolyForm Noncommercial License 1.0.0** (noncommercial only). For commercial use, see the WebUI repository documentation.
+3) **Codex WebUI's license applies to the WebUI code, not the model weights.** Codex WebUI is licensed under the **PolyForm Noncommercial License 1.0.0** (noncommercial only). For commercial use, see the WebUI repository documentation.
 4) **Removal / rights-holder requests:** open a **Discussion** on this Hugging Face repo (title: “Removal request”) or a **GitHub issue** on the Codex WebUI repo. Include the repo path(s) and proof of ownership/authority. (I intentionally do not publish a direct email address in this README to reduce bot scraping/spam.)
 5) **No license bypass:** if an upstream model requires accepting terms (gated access), you must obtain and use it under those terms. This repo is not intended to bypass gating or restrictions.
 
@@ -53,19 +51,17 @@ Codex WebUI is the intended client for this repository.
 
 Use Codex WebUI to discover, download, and manage models from this official hub.
 
-This README intentionally does **not** provide command-line download instructions (Git LFS / `huggingface-cli`) to keep the supported path clear.
-
 ## How this repo integrates with Codex WebUI
 
 Codex WebUI discovers model files by scanning configured model roots and then exposes them in the UI.
 
-This repository is laid out to match Codex WebUI’s default model roots as defined in `apps/paths.json` (in the WebUI repo). In other words: the folder names here are part of the contract.
+This repository is laid out to match Codex WebUI's default model roots as defined in `apps/paths.json` (in the WebUI repo). In other words: the folder names here are part of the contract.
 
 If you customize model roots, update `apps/paths.json` accordingly.
 
 ## Folder layout (matches Codex WebUI defaults)
 
-These folder names are intentionally aligned with Codex WebUI’s default mapping in `apps/paths.json`. Treat the names as part of the contract (rename only if you also update the paths).
+These folder names are intentionally aligned with Codex WebUI's default mapping in `apps/paths.json`. Treat the names as part of the contract (rename only if you also update the paths).
 
 - `sd15/` — SD 1.5 checkpoints (`.safetensors`)
 - `sd15-loras/` — SD 1.5 LoRAs
@@ -88,13 +84,7 @@ These folder names are intentionally aligned with Codex WebUI’s default mappin
 - `zimage-vae/` — ZImage VAEs
 - `zimage-tenc/` — ZImage text encoders
 
-If you change the layout, update `apps/paths.json` accordingly (otherwise Codex WebUI won’t find your files).
-
-## Integrity and safety notes
-
-- Prefer **SafeTensors** when available. Avoid untrusted pickle-based weight formats.
-- Verify downloads when possible (e.g. `sha256sum <file>`).
-- Model files are large; make sure you have enough disk space and a stable connection.
+If you change the layout, update `apps/paths.json` accordingly (otherwise Codex WebUI won't find your files).
 
 ## Support
 

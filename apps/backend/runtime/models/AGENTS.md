@@ -67,3 +67,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-18: `loader.py` now lazily imports `diffusers`/`transformers` (keeps `create_api_app` import-light for health/models endpoints and torch-stub tests).
 - 2026-01-25: SDXL loads are strict on missing/unexpected keys (fail loud); CLIP normalization now drops `position_ids`, canonicalizes `logit_scale`, and keeps only `transformer.text_projection.weight`.
 - 2026-01-25: Loader dtype selection no longer overrides memory-manager role defaults using a whole-file SafeTensors “primary dtype” guess; the hint is now debug-only (prevents TE bf16 vs UNet fp16 drift under AUTO).
+- 2026-01-25: SDXL/Flow16 VAE key normalization now lives in `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`; `_maybe_convert_sdxl_vae_state_dict` delegates to the keymap (single source of truth) and drops `model_ema.*` metadata keys.

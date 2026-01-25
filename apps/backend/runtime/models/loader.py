@@ -482,183 +482,33 @@ def _maybe_convert_sdxl_vae_state_dict(
     state_dict: Mapping[str, Any],
     signature: Optional[ModelSignature],
 ) -> Mapping[str, Any]:
-    """Normalise SDXL VAE weights that use the original LDM naming.
+    """Normalize SDXL/Flow16 VAE weights into diffusers `AutoencoderKL` keyspace.
 
-    Some SDXL checkpoints (including some exported variants) store VAE weights
-    under ``first_stage_model.*`` with keys like::
+    This is a thin wrapper around the strict, string-only keymap in
+    `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`. It:
+    - Strips wrapper prefixes (`first_stage_model.`, `vae.`, `model.`, `module.`).
+    - Detects diffusers vs. LDM-style SDXL layouts and remaps LDM → diffusers keys.
+    - Flattens mid-block attention projection weights stored as 1×1 Conv2d
+      (`[C_out, C_in, 1, 1]`) into Linear weights (`[C_out, C_in]`) lazily on access.
+    - Drops known non-weight training metadata (`model_ema.*`).
 
-        encoder.down.{i}.block.{j}.*
-        encoder.down.{i}.downsample.*
-        decoder.up.{k}.block.{j}.*
-        decoder.up.{k}.upsample.*
-        decoder.mid.block_{1,2}.*
-        decoder.mid.attn_1.{q,k,v,proj_out,norm}.*
-
-    Diffusers ``AutoencoderKL`` expects the canonical SDXL layout instead::
-
-        encoder.down_blocks.{i}.resnets.{j}.*
-        encoder.down_blocks.{i}.downsamplers.0.*
-        decoder.up_blocks.{i}.resnets.{j}.*
-        decoder.up_blocks.{i}.upsamplers.0.*
-        mid_block.resnets.{0,1}.*
-        mid_block.attentions.0.*
-
-    This helper rewrites keys for SDXL families only and leaves other layouts
-    untouched. It also flattens 1x1 conv attention weights into linear weights
-    where necessary (q/k/v/proj_out) so they match diffusers expectations.
+    Unknown/ambiguous layouts raise (fail loud). Non-SDXL/Flow16 families are returned
+    unchanged.
     """
-
     family = getattr(signature, "family", None) if signature is not None else None
-    # Support SDXL, FLUX and ZIMAGE families (all share the same VAE key layout)
-    if family not in (ModelFamily.SDXL, ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT, ModelFamily.ZIMAGE):
+    if family not in (
+        ModelFamily.SDXL,
+        ModelFamily.SDXL_REFINER,
+        ModelFamily.FLUX,
+        ModelFamily.FLUX_KONTEXT,
+        ModelFamily.ZIMAGE,
+    ):
         return state_dict
 
-    keys = list(state_dict.keys())
-    # Already in diffusers-style layout; nothing to do.
-    if any(isinstance(k, str) and k.startswith("encoder.down_blocks.") for k in keys):
-        return state_dict
-    # Only touch classic SDXL/LDM style VAEs.
-    if not any(isinstance(k, str) and k.startswith("encoder.down.") for k in keys):
-        return state_dict
+    from apps.backend.runtime.state_dict.keymap_sdxl_vae import remap_sdxl_vae_state_dict
 
-    # Materialise the VAE tensors before mutating them. Lazy SafeTensors views
-    # (LazySafetensorsDict/FilterPrefixView) reopen the file for every
-    # __getitem__, and calling .contiguous() on those per-key views has been
-    # observed to crash torch_cpu.dll on Windows. A single streaming
-    # materialisation detaches the tensors from the underlying file before we
-    # reshape mid-attention weights.
-    materialize = getattr(state_dict, "materialize", None)
-    if callable(materialize):
-        try:
-            state_dict = materialize()
-        except TypeError:
-            state_dict = materialize(prefix="", new_prefix="")
-    elif not isinstance(state_dict, dict):
-        state_dict = dict(state_dict)
-
-    def _flatten_conv_to_linear(tensor: torch.Tensor) -> torch.Tensor:
-        """Convert 1x1 conv weights to linear weights when safe.
-
-        Some SDXL checkpoints store mid attention projections (q/k/v/proj_out)
-        as Conv2d weights with shape [C_out, C_in, 1, 1], while diffusers
-        AutoencoderKL expects Linear weights [C_out, C_in].
-        """
-        if not isinstance(tensor, torch.Tensor):
-            return tensor
-        if tensor.ndim == 4 and tensor.shape[-2:] == (1, 1):
-            return tensor[:, :, 0, 0].contiguous()
-        return tensor
-
-    converted: Dict[str, Any] = {}
-
-    for raw_key, value in state_dict.items():
-        key = str(raw_key)
-        new_key = key
-        tensor = value
-
-        # Encoder down blocks: encoder.down.{i}.block.{j}.*
-        if key.startswith("encoder.down."):
-            parts = key.split(".")
-            # encoder.down.{i}.block.{j}.rest...
-            if len(parts) >= 6 and parts[2].isdigit() and parts[4].isdigit() and parts[3] == "block":
-                i = int(parts[2])
-                j = int(parts[4])
-                rest = ".".join(parts[5:])
-                new_key = f"encoder.down_blocks.{i}.resnets.{j}.{rest}"
-            # encoder.down.{i}.downsample.*
-            elif len(parts) >= 4 and parts[2].isdigit() and parts[3] == "downsample":
-                i = int(parts[2])
-                rest = ".".join(parts[4:])
-                new_key = f"encoder.down_blocks.{i}.downsamplers.0.{rest}"
-
-        # Decoder up blocks: decoder.up.{k}.block.{j}.*
-        elif key.startswith("decoder.up."):
-            parts = key.split(".")
-            # decoder.up.{k}.block.{j}.rest...
-            if len(parts) >= 6 and parts[2].isdigit() and parts[4].isdigit() and parts[3] == "block":
-                k = int(parts[2])
-                j = int(parts[4])
-                # SDXL VAE indexes up_blocks in reverse order vs. LDM-style up.{k}
-                i = 3 - k
-                rest = ".".join(parts[5:])
-                new_key = f"decoder.up_blocks.{i}.resnets.{j}.{rest}"
-            # decoder.up.{k}.upsample.*
-            elif len(parts) >= 4 and parts[2].isdigit() and parts[3] == "upsample":
-                k = int(parts[2])
-                i = 3 - k
-                rest = ".".join(parts[4:])
-                new_key = f"decoder.up_blocks.{i}.upsamplers.0.{rest}"
-
-        # Mid blocks (resnets): encoder.mid.block_1/2.*, decoder.mid.block_1/2.*
-        elif key.startswith("encoder.mid.block_") or key.startswith("decoder.mid.block_"):
-            parts = key.split(".")
-            # {encoder,decoder}.mid.block_{1,2}.rest...
-            if len(parts) >= 4 and parts[2].startswith("block_"):
-                try:
-                    block_index = int(parts[2].split("_", 1)[1]) - 1
-                except (IndexError, ValueError):
-                    block_index = 0
-                rest = ".".join(parts[3:])
-                prefix = "encoder" if parts[0] == "encoder" else "decoder"
-                new_key = f"{prefix}.mid_block.resnets.{block_index}.{rest}"
-
-        # Mid attention: encoder/decoder.mid.attn_1.{q,k,v,proj_out,norm,query,key,value,proj_attn}.*
-        elif key.startswith("encoder.mid.attn_1.") or key.startswith("decoder.mid.attn_1."):
-            is_encoder = key.startswith("encoder.")
-            base = "encoder.mid.attn_1." if is_encoder else "decoder.mid.attn_1."
-            suffix = key[len(base) :]
-            prefix = "encoder" if is_encoder else "decoder"
-
-            try:
-                head, rest = suffix.split(".", 1)
-            except ValueError:
-                head, rest = suffix, ""
-
-            table = {
-                "q": "to_q",
-                "k": "to_k",
-                "v": "to_v",
-                "proj_out": "to_out.0",
-                "norm": "group_norm",
-                # older / alternative naming
-                "query": "to_q",
-                "key": "to_k",
-                "value": "to_v",
-                "proj_attn": "to_out.0",
-            }
-
-            mapped = table.get(head)
-            if mapped is not None and rest:
-                new_key = f"{prefix}.mid_block.attentions.0.{mapped}.{rest}"
-                if mapped in ("to_q", "to_k", "to_v", "to_out.0") and rest.startswith("weight"):
-                    tensor = _flatten_conv_to_linear(tensor)
-
-        # Conv shortcuts: nin_shortcut (LDM) -> conv_shortcut (diffusers)
-        if "nin_shortcut." in key:
-            parts = key.split(".")
-            # Handle encoder.down.{i}.block.0.nin_shortcut.{weight,bias}
-            if key.startswith("encoder.down.") and len(parts) >= 7 and parts[2].isdigit() and parts[3] == "block" and parts[4] == "0":
-                i = int(parts[2])
-                rest = ".".join(parts[6:])
-                new_key = f"encoder.down_blocks.{i}.resnets.0.conv_shortcut.{rest}"
-            # Handle decoder.up.{k}.block.0.nin_shortcut.{weight,bias} (map k -> up_blocks.{3-k})
-            elif key.startswith("decoder.up.") and len(parts) >= 7 and parts[2].isdigit() and parts[3] == "block" and parts[4] == "0":
-                k = int(parts[2])
-                i = 3 - k
-                rest = ".".join(parts[6:])
-                new_key = f"decoder.up_blocks.{i}.resnets.0.conv_shortcut.{rest}"
-
-        # Output norm: norm_out (LDM) -> conv_norm_out (diffusers)
-        if key.startswith("encoder.norm_out."):
-            rest = key[len("encoder.norm_out.") :]
-            new_key = f"encoder.conv_norm_out.{rest}"
-        elif key.startswith("decoder.norm_out."):
-            rest = key[len("decoder.norm_out.") :]
-            new_key = f"decoder.conv_norm_out.{rest}"
-
-        converted[new_key] = tensor
-
-    return converted
+    _, remapped = remap_sdxl_vae_state_dict(state_dict)  # fail loud on unknown/ambiguous layouts
+    return remapped
 
 
 def _detect_vae_layout(sd: Mapping[str, Any]) -> str:

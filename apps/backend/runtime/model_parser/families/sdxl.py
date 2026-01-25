@@ -15,10 +15,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_CLIP_L_REQUIRED` (constant): Required CLIP-L keys checked after conversion.
 - `_CLIP_G_REQUIRED` (constant): Required CLIP-G keys checked after conversion.
 - `_convert_clip_l` (function): Converts CLIP-L tensors and registers the `clip_l` alias mapping.
-- `_convert_clip_g` (function): Converts CLIP-G tensors and registers the `clip_g` alias mapping.
+- `_convert_clip_g_base` (function): Converts CLIP-G tensors and registers the SDXL base `clip_g` alias mapping.
+- `_convert_clip_g_refiner` (function): Converts CLIP-G tensors and registers the SDXL refiner `clip_g` alias mapping.
 - `_validate_unet_channels` (function): Validates UNet `channels_in` vs the `ModelSignature` expectation.
 - `_validate_clip_l` (function): Validates CLIP-L required keys exist after conversion.
-- `_validate_clip_g` (function): Validates CLIP-G required keys exist after conversion.
+- `_validate_base_clip_g` (function): Validates SDXL base CLIP-G required keys exist after conversion.
+- `_validate_refiner_clip_g` (function): Validates SDXL refiner CLIP-G required keys exist after conversion.
 - `_normalize_unet_label_embeddings` (function): Normalizes nested SDXL label-embedding keys on the UNet component.
 """
 
@@ -28,7 +30,7 @@ from typing import Dict
 
 import torch
 
-from apps.backend.runtime.model_registry.specs import ModelSignature
+from apps.backend.runtime.model_registry.specs import ModelFamily, ModelSignature
 
 from ..builders import build_estimated_config, register_text_encoder
 from ..converters.clip import convert_sdxl_clip_g, convert_sdxl_clip_l
@@ -45,22 +47,42 @@ from ..quantization import validate_component_dtypes
 
 
 def build_plan(signature: ModelSignature) -> ParserPlanBundle:
+    is_refiner = signature.family is ModelFamily.SDXL_REFINER
+    if is_refiner:
+        plan = ParserPlan(
+            splits=[
+                SplitSpec(name="unet", prefixes=("model.diffusion_model.",)),
+                SplitSpec(name="vae", prefixes=("first_stage_model.", "vae."), required=False),
+                SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.",)),
+            ],
+            converters=(
+                ConverterSpec(component="unet", function=_normalize_unet_label_embeddings),
+                ConverterSpec(component="text_encoder", function=_convert_clip_g_refiner),
+            ),
+            validations=(
+                ValidationSpec(name="unet_channels", function=_validate_unet_channels),
+                ValidationSpec(name="clip_g_presence", function=_validate_refiner_clip_g),
+                ValidationSpec(name="dtype_sanity", function=validate_component_dtypes),
+            ),
+        )
+        return ParserPlanBundle(plan=plan, build_config=lambda ctx: build_estimated_config(ctx, signature))
+
     plan = ParserPlan(
         splits=[
             SplitSpec(name="unet", prefixes=("model.diffusion_model.",)),
             SplitSpec(name="vae", prefixes=("first_stage_model.", "vae."), required=False),
-            SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.",)),
-            SplitSpec(name="text_encoder_2", prefixes=("conditioner.embedders.1.model.",)),
+            SplitSpec(name="text_encoder", prefixes=("conditioner.embedders.0.model.", "conditioner.embedders.0.")),
+            SplitSpec(name="text_encoder_2", prefixes=("conditioner.embedders.1.model.", "conditioner.embedders.1.")),
         ],
         converters=(
             ConverterSpec(component="unet", function=_normalize_unet_label_embeddings),
             ConverterSpec(component="text_encoder", function=_convert_clip_l),
-            ConverterSpec(component="text_encoder_2", function=_convert_clip_g),
+            ConverterSpec(component="text_encoder_2", function=_convert_clip_g_base),
         ),
         validations=(
             ValidationSpec(name="unet_channels", function=_validate_unet_channels),
             ValidationSpec(name="clip_l_presence", function=_validate_clip_l),
-            ValidationSpec(name="clip_g_presence", function=_validate_clip_g),
+            ValidationSpec(name="clip_g_presence", function=_validate_base_clip_g),
             ValidationSpec(name="dtype_sanity", function=validate_component_dtypes),
         ),
     )
@@ -90,12 +112,6 @@ def _convert_clip_l(tensors: Dict[str, torch.Tensor], context):
     return converted
 
 
-def _convert_clip_g(tensors: Dict[str, torch.Tensor], context):
-    converted = convert_sdxl_clip_g(tensors)
-    register_text_encoder(context, "clip_g", "text_encoder_2")
-    return converted
-
-
 def _validate_unet_channels(context):
     unet = context.require("unet").tensors
     key = "input_blocks.0.0.weight"
@@ -121,7 +137,7 @@ def _validate_clip_l(context):
         )
 
 
-def _validate_clip_g(context):
+def _validate_base_clip_g(context):
     clip = context.require("text_encoder_2").tensors
     missing = [key for key in _CLIP_G_REQUIRED if key not in clip]
     if missing:
@@ -129,6 +145,29 @@ def _validate_clip_g(context):
         raise ValidationError(
             f"SDXL CLIP-G is missing required tensors ({sample}); re-download the checkpoint or supply intact CLIP weights.",
             component="text_encoder_2",
+        )
+
+
+def _convert_clip_g_base(tensors: Dict[str, torch.Tensor], context):
+    converted = convert_sdxl_clip_g(tensors)
+    register_text_encoder(context, "clip_g", "text_encoder_2")
+    return converted
+
+
+def _convert_clip_g_refiner(tensors: Dict[str, torch.Tensor], context):
+    converted = convert_sdxl_clip_g(tensors)
+    register_text_encoder(context, "clip_g", "text_encoder")
+    return converted
+
+
+def _validate_refiner_clip_g(context):
+    clip = context.require("text_encoder").tensors
+    missing = [key for key in _CLIP_G_REQUIRED if key not in clip]
+    if missing:
+        sample = ", ".join(missing[:3])
+        raise ValidationError(
+            f"SDXL refiner CLIP-G is missing required tensors ({sample}); re-download the checkpoint or supply intact CLIP weights.",
+            component="text_encoder",
         )
 def _normalize_unet_label_embeddings(tensors: Dict[str, torch.Tensor], context):
     return normalize_label_embeddings(tensors)

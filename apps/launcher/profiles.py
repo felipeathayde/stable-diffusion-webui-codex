@@ -73,6 +73,7 @@ class LauncherMeta:
     sdpa_policy: str = "mem_efficient"
     tab_index: int = 0
     active_model: str = DEFAULT_MODEL_NAME
+    window_geometry: str = ""
 
 
 class _EnvironmentView(MutableMapping[str, str]):
@@ -191,6 +192,12 @@ class LauncherProfileStore:
         _write_env_maps(self.root / "areas", self.areas)
         _write_env_maps(self.root / "models", self.models)
 
+    def save_meta(self) -> None:
+        """Persist launcher metadata (meta.json) without touching env maps."""
+        LOGGER.debug("Persisting launcher meta to %s", self.root)
+        _ensure_tree(self.root)
+        _write_meta(self.root, self.meta)
+
     # ------------------------------------------------------------------ internal
 
     def _ensure_consistency(self) -> None:
@@ -252,6 +259,7 @@ def _load_meta(root: Path) -> LauncherMeta:
         sdpa_policy=str(data.get("sdpa_policy", "mem_efficient")),
         tab_index=int(data.get("tab_index", 0)),
         active_model=str(data.get("active_model", DEFAULT_MODEL_NAME)),
+        window_geometry=str(data.get("window_geometry", "") or ""),
     )
 
 
@@ -263,6 +271,9 @@ def _write_meta(root: Path, meta: LauncherMeta) -> None:
         "tab_index": meta.tab_index,
         "active_model": meta.active_model,
     }
+    window_geometry = str(getattr(meta, "window_geometry", "") or "").strip()
+    if window_geometry:
+        payload["window_geometry"] = window_geometry
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
 

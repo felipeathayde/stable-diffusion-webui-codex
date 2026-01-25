@@ -28,6 +28,7 @@ from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 
@@ -45,6 +46,7 @@ class StableDiffusion3(CodexDiffusionEngine):
     """Codex-native Stable Diffusion 3 engine."""
 
     engine_id = "sd35"
+    expected_family = ModelFamily.SD35
 
     def __init__(self) -> None:
         super().__init__()

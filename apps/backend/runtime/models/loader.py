@@ -383,6 +383,10 @@ def _parse_checkpoint(
     expected_family: ModelFamily | None = None,
 ) -> ParsedCheckpoint:
     base_state = _load_state_dict(primary_path)
+    if expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+        from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import remap_sdxl_checkpoint_state_dict
+
+        _, base_state = remap_sdxl_checkpoint_state_dict(base_state)
     if expected_family is ModelFamily.ZIMAGE:
         signature = _zimage_signature_from_vendored_hf(model_path=primary_path)
     elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:
@@ -403,6 +407,10 @@ def _parse_checkpoint(
         replacements: Dict[str, Mapping[str, Any]] = {}
         for extra in additional_paths:
             extra_state = _load_state_dict(extra)
+            if expected_family in {ModelFamily.SDXL, ModelFamily.SDXL_REFINER}:
+                from apps.backend.runtime.state_dict.keymap_sdxl_checkpoint import remap_sdxl_checkpoint_state_dict
+
+                _, extra_state = remap_sdxl_checkpoint_state_dict(extra_state)
             if expected_family is ModelFamily.ZIMAGE:
                 extra_signature = _zimage_signature_from_vendored_hf(model_path=extra)
             elif expected_family in {ModelFamily.FLUX, ModelFamily.FLUX_KONTEXT}:

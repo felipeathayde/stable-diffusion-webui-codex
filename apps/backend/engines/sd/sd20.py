@@ -20,6 +20,7 @@ from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.classic_base import CodexSDClassicEngineBase
 from apps.backend.engines.sd.spec import SD20_SPEC
+from apps.backend.runtime.model_registry.specs import ModelFamily
 
 _SD20_FACTORY = CodexSDFamilyFactory(spec=SD20_SPEC)
 
@@ -28,6 +29,7 @@ class StableDiffusion2(CodexSDClassicEngineBase):
     """Codex-native Stable Diffusion 2.x engine."""
 
     engine_id = "sd20"
+    expected_family = ModelFamily.SD20
     _factory = _SD20_FACTORY
     _model_family = "sd2"
 

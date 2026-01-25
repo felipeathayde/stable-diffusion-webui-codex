@@ -13,11 +13,10 @@ availability checks (IPv4/IPv6) before starting the API.
 Symbols (top-level; keep in sync; no ghosts):
 - `ServiceStatus` (enum): Launcher service lifecycle status.
 - `CodexServiceSpec` (dataclass): Static service definition (command/cwd/env + external-terminal policy).
-- `CodexServiceHandle` (dataclass): Runtime service handle; spawns/monitors subprocess and forwards stdout to a log buffer.
+- `CodexServiceHandle` (dataclass): Runtime service handle; spawns/monitors subprocess and forwards stdout/stderr to a log buffer.
 - `_codex_root` (function): Resolves the repo root used for service working directories.
 - `default_services` (function): Builds default API+UI service handles with ports/env derived from the environment.
 - `_api_backend_args_from_env` (function): Builds backend CLI args for the API service from launcher env settings.
-- `_now` (function): Timestamp helper for launcher log lines.
 - `_extract_cli_port` (function): Extracts a `--port` value from a command list.
 - `_port_free_everywhere` (function): Validates a port is bindable on common IPv4/IPv6 local hosts.
 - `_windows_no_activate` (function): Windows startupinfo helper to open consoles without stealing focus.
@@ -40,7 +39,6 @@ from enum import StrEnum
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Dict, Iterator, List, Mapping, Optional
-
 
 from .log_buffer import CodexLogBuffer
 from apps.backend.infra.config.repo_root import get_repo_root
@@ -74,15 +72,23 @@ class CodexServiceHandle:
     status: ServiceStatus = ServiceStatus.STOPPED
     pid: Optional[int] = None
     started_at: Optional[float] = None
+    last_exit_code: int | None = None
+    process_group_id: int | None = None
+    _stop_requested: bool = False
+    _stop_reason: str | None = None
     _stdout_thread: Optional[threading.Thread] = None
+    _stderr_thread: Optional[threading.Thread] = None
     _queue: Queue[str] = field(default_factory=Queue, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def start(self, overrides: Mapping[str, str], *, external_terminal: bool = False) -> None:
-        if self.process and self.process.poll() is None:
-            LOGGER.info("Service %s already running (pid=%s)", self.spec.name, self.process.pid)
-            self.status = ServiceStatus.RUNNING
-            self.pid = self.process.pid
-            return
+        with self._lock:
+            proc = self.process
+            if proc and proc.poll() is None:
+                LOGGER.info("Service %s already running (pid=%s)", self.spec.name, proc.pid)
+                self.status = ServiceStatus.RUNNING
+                self.pid = proc.pid
+                return
 
         overrides_map = dict(overrides)
 
@@ -110,7 +116,7 @@ class CodexServiceHandle:
                         "Stop the other instance or set API_PORT_OVERRIDE/WEB_PORT to a free pair."
                     )
                     if self.log_buffer:
-                        self.log_buffer.append(f"[{_now()}] [launcher] {hint}")
+                        self.log_buffer.log("launcher", hint)
                     raise RuntimeError(hint)
         flags = 0
         startupinfo = None
@@ -119,19 +125,30 @@ class CodexServiceHandle:
             flags |= getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
             startupinfo = _windows_no_activate()
             command = ["cmd.exe", "/K", subprocess.list2cmdline(command)]
+        elif os.name == "nt":
+            # Needed for CTRL_BREAK_EVENT to be deliverable (best-effort graceful stop).
+            flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
         stdout = subprocess.PIPE
-        stderr = subprocess.STDOUT
+        stderr = subprocess.PIPE
         stdin = subprocess.DEVNULL
         if use_external:
             stdout = None
             stderr = None
             stdin = None
 
-        self.status = ServiceStatus.STARTING
-        self.started_at = time.time()
+        with self._lock:
+            self.status = ServiceStatus.STARTING
+            self.started_at = time.time()
+            self._stop_requested = False
+            self._stop_reason = None
+            self.last_exit_code = None
+            self.process_group_id = None
         try:
-            self.process = subprocess.Popen(
+            popen_kwargs: dict[str, object] = {}
+            if os.name != "nt" and not use_external:
+                popen_kwargs["start_new_session"] = True
+            proc = subprocess.Popen(
                 command,
                 cwd=str(self.spec.cwd),
                 env=env,
@@ -142,57 +159,127 @@ class CodexServiceHandle:
                 bufsize=1,
                 creationflags=flags,
                 startupinfo=startupinfo,
+                **popen_kwargs,
             )
         except Exception as exc:
-            self.status = ServiceStatus.ERROR
-            self.pid = None
-            self.process = None
+            with self._lock:
+                self.status = ServiceStatus.ERROR
+                self.pid = None
+                self.process = None
             LOGGER.error("Failed to start %s: %s", self.spec.name, exc)
             raise
 
-        self.pid = self.process.pid
-        self.status = ServiceStatus.RUNNING
-        if stdout is subprocess.PIPE:
-            self._stdout_thread = threading.Thread(target=self._capture_output, daemon=True)
+        with self._lock:
+            self.process = proc
+            self.pid = proc.pid
+        if os.name != "nt" and not use_external:
+            # When `start_new_session=True`, the child becomes a new process group leader.
+            with self._lock:
+                self.process_group_id = proc.pid
+        with self._lock:
+            self.status = ServiceStatus.RUNNING
+        if stdout is subprocess.PIPE and stderr is subprocess.PIPE:
+            self._stdout_thread = threading.Thread(target=self._capture_output, args=("stdout",), daemon=True)
             self._stdout_thread.start()
-        threading.Thread(target=self._wait_for_exit, daemon=True).start()
+            self._stderr_thread = threading.Thread(target=self._capture_output, args=("stderr",), daemon=True)
+            self._stderr_thread.start()
+        threading.Thread(target=self._wait_for_exit, args=(proc,), daemon=True).start()
 
     def stop(self, *, wait: float = 10.0) -> None:
-        if not self.process or self.process.poll() is not None:
-            self.status = ServiceStatus.STOPPED
-            self.pid = None
-            self.process = None
-            return
-        LOGGER.info("Stopping service %s", self.spec.name)
+        with self._lock:
+            proc = self.process
+            if not proc or proc.poll() is not None:
+                self.status = ServiceStatus.STOPPED
+                self.pid = None
+                self.process = None
+                self.process_group_id = None
+                self.started_at = None
+                return
+            LOGGER.info("Stopping service %s", self.spec.name)
+            self._stop_requested = True
+            if not self._stop_reason:
+                self._stop_reason = "stopped"
+            reason = str(self._stop_reason or "stopped")
+            pgid = self.process_group_id
+        exit_code: int | None = None
         try:
             if os.name == "nt":
-                self.process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))  # type: ignore[attr-defined]
+                try:
+                    proc.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))  # type: ignore[attr-defined]
+                except Exception:
+                    proc.terminate()
             else:
-                self.process.terminate()
-            self.process.wait(timeout=wait)
+                if pgid:
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    proc.terminate()
+            exit_code = proc.wait(timeout=wait)
+            with self._lock:
+                self.last_exit_code = exit_code
         except Exception:
             LOGGER.warning("Terminate failed, killing %s", self.spec.name)
             try:
-                self.process.kill()
+                if os.name != "nt" and pgid:
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    proc.kill()
             except Exception:
                 pass
         finally:
-            self.status = ServiceStatus.STOPPED
-            self.pid = None
-            self.process = None
-            self.started_at = None
+            with self._lock:
+                if self.process is proc:
+                    self.status = ServiceStatus.STOPPED
+                    self.pid = None
+                    self.process = None
+                    self.process_group_id = None
+                    self.started_at = None
+            if self.log_buffer and exit_code is not None:
+                self.log_buffer.log(self.spec.name, f"{reason} (code {exit_code})", stream="event")
 
-    def kill(self) -> None:
-        if not self.process or self.process.poll() is not None:
-            return
-        LOGGER.warning("Killing service %s", self.spec.name)
+    def kill(self, *, wait: float = 10.0) -> None:
+        with self._lock:
+            proc = self.process
+            if not proc or proc.poll() is not None:
+                self.status = ServiceStatus.STOPPED
+                self.pid = None
+                self.process = None
+                self.process_group_id = None
+                self.started_at = None
+                return
+            LOGGER.warning("Killing service %s", self.spec.name)
+            self._stop_requested = True
+            if not self._stop_reason:
+                self._stop_reason = "killed"
+            reason = str(self._stop_reason or "killed")
+            pgid = self.process_group_id
+        exit_code: int | None = None
         try:
-            self.process.kill()
-        except Exception:
-            pass
+            if os.name != "nt" and pgid:
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                proc.kill()
+            try:
+                exit_code = proc.wait(timeout=wait)
+                with self._lock:
+                    self.last_exit_code = exit_code
+            except Exception:
+                pass
+        finally:
+            with self._lock:
+                if self.process is proc:
+                    self.status = ServiceStatus.STOPPED
+                    self.pid = None
+                    self.process = None
+                    self.process_group_id = None
+                    self.started_at = None
+            if self.log_buffer and exit_code is not None:
+                self.log_buffer.log(self.spec.name, f"{reason} (code {exit_code})", stream="event")
 
     def restart(self, overrides: Mapping[str, str], *, external_terminal: bool = False) -> None:
-        self.stop()
+        with self._lock:
+            self._stop_requested = True
+            self._stop_reason = "restarting"
+        self.stop(wait=10.0)
         time.sleep(0.2)
         self.start(overrides, external_terminal=external_terminal)
 
@@ -203,38 +290,51 @@ class CodexServiceHandle:
             except Empty:
                 continue
 
-    def _capture_output(self) -> None:
-        assert self.process and self.process.stdout
+    def _capture_output(self, stream_name: str) -> None:
+        proc = self.process
+        if not proc:
+            return
+        stream = getattr(proc, stream_name, None)
+        if stream is None:
+            return
         try:
-            for line in self.process.stdout:
+            for line in stream:
                 cleaned = (line.rstrip("\n") or " ")
                 if self.log_buffer:
-                    self.log_buffer.append(f"[{_now()}] [{self.spec.name}] {cleaned}")
+                    self.log_buffer.log(self.spec.name, cleaned, stream=stream_name)
                 self._queue.put(cleaned)
         except Exception:
             pass
         finally:
             try:
-                self.process.stdout.close()  # type: ignore[union-attr]
+                stream.close()
             except Exception:
                 pass
 
-    def _wait_for_exit(self) -> None:
-        if not self.process:
-            return
-        code = self.process.wait()
-        if code == 0:
-            status = ServiceStatus.STOPPED
-            message = "exited cleanly"
-        else:
-            status = ServiceStatus.ERROR
-            message = f"exited with code {code}"
-        if self.log_buffer:
-            self.log_buffer.append(f"[{_now()}] [{self.spec.name}] {message}")
-        self.status = status
-        self.pid = None
-        self.process = None
-        self.started_at = None
+    def _wait_for_exit(self, proc: subprocess.Popen) -> None:
+        code = proc.wait()
+        with self._lock:
+            if self.process is not proc:
+                return
+            self.last_exit_code = code
+            if self._stop_requested:
+                status = ServiceStatus.STOPPED
+                reason = str(self._stop_reason or "stopped")
+                message = f"{reason} (code {code})"
+            else:
+                if code == 0:
+                    status = ServiceStatus.STOPPED
+                    message = "exited cleanly"
+                else:
+                    status = ServiceStatus.ERROR
+                    message = f"exited with code {code}"
+            self.status = status
+            self.pid = None
+            self.process = None
+            self.process_group_id = None
+            self.started_at = None
+        if self.log_buffer and not self._stop_requested:
+            self.log_buffer.log(self.spec.name, message, stream="event")
 
 
 def _codex_root() -> Path:
@@ -305,10 +405,6 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
         args.append(f"--lora-online-math={raw_lora_math}")
 
     return args
-
-
-def _now() -> str:
-    return time.strftime("%H:%M:%S")
 
 
 def _extract_cli_port(command: List[str]) -> int | None:

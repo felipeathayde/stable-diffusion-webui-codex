@@ -24,6 +24,7 @@ from apps.backend.engines.common.base import CodexObjects
 from apps.backend.engines.flux.flux import Flux
 from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import FLUX_SPEC
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.flux.kontext")
@@ -35,6 +36,7 @@ class Kontext(Flux):
     """Flux Kontext engine (Flux-derived, image-conditioned)."""
 
     engine_id = "flux1_kontext"
+    expected_family = ModelFamily.FLUX_KONTEXT
 
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(

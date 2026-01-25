@@ -25,6 +25,7 @@ from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
 logger = logging.getLogger("backend.engines.flux.chroma")
@@ -36,6 +37,7 @@ class Chroma(CodexDiffusionEngine):
     """Codex native Chroma engine built on Flux toolkit."""
 
     engine_id = "flux1_chroma"
+    expected_family = ModelFamily.CHROMA
 
     def __init__(self) -> None:
         super().__init__()

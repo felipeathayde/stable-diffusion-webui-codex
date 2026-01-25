@@ -45,7 +45,7 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet.layers import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
-from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
+from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
 import json
 from apps.backend.core.requests import ProgressEvent, ResultEvent
@@ -217,6 +217,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
     """Codex-native SDXL base engine."""
 
     engine_id = "sdxl"
+    expected_family = ModelFamily.SDXL
 
     def __init__(self) -> None:
         super().__init__()
@@ -259,7 +260,9 @@ class StableDiffusionXL(CodexDiffusionEngine):
         self._embed_cache.clear()
 
         base_vae = getattr(runtime.vae.first_stage_model, "_base", runtime.vae.first_stage_model)
-        if isinstance(base_vae, AutoencoderKLWan):
+        base_vae_mod = getattr(getattr(base_vae, "__class__", object), "__module__", "")
+        base_vae_name = getattr(getattr(base_vae, "__class__", object), "__name__", "")
+        if base_vae_name == "AutoencoderKLWan" and "wan22.vae" in str(base_vae_mod):
             raise RuntimeError(
                 "SDXL engine received a WAN22-style VAE (AutoencoderKLWan); "
                 "this combination is not supported. Use a compatible SDXL VAE or remove the WAN VAE from the checkpoint."
@@ -692,6 +695,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     """Codex-native SDXL refiner engine."""
 
     engine_id = "sdxl_refiner"
+    expected_family = ModelFamily.SDXL_REFINER
 
     def __init__(self) -> None:
         super().__init__()

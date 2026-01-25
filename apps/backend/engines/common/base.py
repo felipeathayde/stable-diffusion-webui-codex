@@ -196,6 +196,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
     engine_id = "codex.diffusion"
     matched_guesses: tuple[str, ...] = ()
+    expected_family: ModelFamily | None = None
 
     _MODEL_FAMILY_FLAGS: dict[str, str] = {
         "sd1": "is_sd1",
@@ -417,12 +418,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 vae_path_for_bundle = None
             else:
                 vae_path_for_bundle = vae_path_for_bundle.strip()
-            expected_family = {
-                "zimage": ModelFamily.ZIMAGE,
-                "flux1": ModelFamily.FLUX,
-                "flux1_kontext": ModelFamily.FLUX_KONTEXT,
-                "flux1_chroma": ModelFamily.CHROMA,
-            }.get(self.engine_id)
+            expected_family = self.expected_family
             bundle = resolve_diffusion_bundle(
                 model_ref,
                 text_encoder_override=te_override_cfg,

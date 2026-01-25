@@ -34,6 +34,7 @@ from apps.backend.runtime.memory.smart_offload import (
     smart_cache_enabled,
 )
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.runtime.model_registry.specs import ModelFamily
 
 logger = logging.getLogger("backend.engines.flux")
 
@@ -59,6 +60,7 @@ class Flux(CodexDiffusionEngine):
     """Codex native Flux engine."""
 
     engine_id = "flux1"
+    expected_family = ModelFamily.FLUX
 
     def __init__(self) -> None:
         super().__init__()

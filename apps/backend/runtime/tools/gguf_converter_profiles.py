@@ -12,15 +12,20 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_is_flux` (function): Detect whether a config.json describes a Flux transformer.
 - `_is_zimage` (function): Detect whether a config.json describes a ZImage transformer.
 - `_is_wan22` (function): Detect whether a config.json describes a WAN22 transformer.
+- `_is_ltx2` (function): Detect whether a config.json describes an LTX2 transformer.
+- `_is_gemma3_tenc` (function): Detect whether a config.json describes a Gemma3 text encoder export.
 - `_build_llama_mapping` (function): Build a Llama HF→GGUF key mapping from the model config.
 - `_plan_flux` (function): Delegates Flux tensor planning to the tensor planner (supports key remaps and QKV packing).
 - `_plan_zimage` (function): Delegates ZImage tensor planning to the tensor planner (supports key remaps and QKV packing).
 - `_plan_wan22` (function): Delegates WAN22 tensor planning to the tensor planner (Diffusers → Comfy key mapping).
+- `_plan_ltx2` (function): Delegates LTX2 tensor planning to the tensor planner (Diffusers → Comfy key mapping).
+- `_plan_gemma3_tenc` (function): Delegates Gemma3 TE tensor planning to the tensor planner (prefix stripping).
 - `_COND_QUANTIZED` (constant): Condition helper matching any quantized preset (non-F16/F32).
 - `_COND_FLUX_MIXED` (constant): Condition helper matching Flux mixed presets (`Q5_K_M`/`Q4_K_M`).
 - `_COND_WAN22_MIXED` (constant): Condition helper matching WAN22 mixed presets (`Q5_K_M`/`Q4_K_M`).
 - `FLUX_QUANT_POLICY` (constant): Flux per-tensor dtype policy (mixed presets keep more IO weights in float32).
 - `WAN22_QUANT_POLICY` (constant): WAN22 per-tensor dtype policy (mixed presets keep sensitive weights in float32).
+- `LTX2_QUANT_POLICY` (constant): LTX2 per-tensor dtype policy (stability-sensitive tensors stay float).
 - `ZIMAGE_QUANT_POLICY` (constant): ZImage per-tensor dtype policy (pad tokens must remain float).
 - `LLAMA_QUANT_POLICY` (constant): Llama per-tensor dtype policy (mixed presets bump key weights to higher precision).
 - `PROFILE_REGISTRY` (constant): Registry of built-in converter profiles (table-driven dispatch).
@@ -61,6 +66,14 @@ def _is_zimage(config: Mapping[str, Any]) -> bool:
 
 def _is_wan22(config: Mapping[str, Any]) -> bool:
     return _tensor_planner.is_wan22_transformer_config(config)
+
+
+def _is_ltx2(config: Mapping[str, Any]) -> bool:
+    return _tensor_planner.is_ltx2_transformer_config(config)
+
+
+def _is_gemma3_tenc(config: Mapping[str, Any]) -> bool:
+    return _tensor_planner.is_gemma3_text_encoder_config(config)
 
 
 def _build_llama_mapping(config: Mapping[str, Any]) -> dict[str, str]:
@@ -276,6 +289,69 @@ WAN22_QUANT_POLICY = QuantizationPolicySpec(
 )
 
 
+LTX2_QUANT_POLICY = QuantizationPolicySpec(
+    id="ltx2",
+    required_rules=(
+        TensorTypeRule(
+            pattern=r"(?:^|\.)bias$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 biases stay float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"^(?:patchify_proj|audio_patchify_proj|proj_out|audio_proj_out)\.(?:weight|bias)$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 IO projections are quality-sensitive; keep float",
+        ),
+        TensorTypeRule(
+            pattern=r"(?:^|\.)scale_shift_table(?:$|\.)",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 modulation tables stay float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"(?:^|\.)adaln_single\.linear\.weight$",
+            ggml_type=GGMLQuantizationType.F16,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 adaLN linear weights stay float16 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"(?:^|\.)audio_adaln_single\.linear\.weight$",
+            ggml_type=GGMLQuantizationType.F16,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 audio adaLN linear weights stay float16 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"(?:^|\.)av_ca_(?:video_scale_shift|audio_scale_shift|a2v_gate|v2a_gate)_adaln_single\.linear\.weight$",
+            ggml_type=GGMLQuantizationType.F16,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 AV cross-attn adaLN weights stay float16 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"(?:^|\.)q_norm\.weight$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 q_norm stays float32 for stability",
+        ),
+        TensorTypeRule(
+            pattern=r"(?:^|\.)k_norm\.weight$",
+            ggml_type=GGMLQuantizationType.F32,
+            apply_to=TensorNameTarget.DST,
+            when=_COND_QUANTIZED,
+            reason="LTX2 k_norm stays float32 for stability",
+        ),
+    ),
+)
+
+
 ZIMAGE_QUANT_POLICY = QuantizationPolicySpec(
     id="zimage",
     required_rules=(
@@ -414,6 +490,24 @@ def _plan_wan22(
     return _tensor_planner.plan_wan22_transformer_tensors(tensor_names, safetensors_handle, requested_type, rules)
 
 
+def _plan_ltx2(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested_type: GGMLQuantizationType,
+    rules: list[CompiledTensorTypeRule],
+) -> tuple[list[Any], dict[str, str]]:
+    return _tensor_planner.plan_ltx2_transformer_tensors(tensor_names, safetensors_handle, requested_type, rules)
+
+
+def _plan_gemma3_tenc(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested_type: GGMLQuantizationType,
+    rules: list[CompiledTensorTypeRule],
+) -> tuple[list[Any], dict[str, str]]:
+    return _tensor_planner.plan_gemma3_text_encoder_tensors(tensor_names, safetensors_handle, requested_type, rules)
+
+
 _FLUX_PLANNER = PlannerSpec(
     id="flux_transformer",
     plan=_plan_flux,
@@ -430,6 +524,18 @@ _WAN22_PLANNER = PlannerSpec(
     id="wan22_transformer",
     plan=_plan_wan22,
     normalize_metadata=_tensor_planner.normalize_wan22_transformer_metadata_config,
+)
+
+_LTX2_PLANNER = PlannerSpec(
+    id="ltx2_transformer",
+    plan=_plan_ltx2,
+    normalize_metadata=_tensor_planner.normalize_ltx2_transformer_metadata_config,
+)
+
+_GEMMA3_TENC_PLANNER = PlannerSpec(
+    id="gemma3_text_encoder",
+    plan=_plan_gemma3_tenc,
+    normalize_metadata=_tensor_planner.normalize_gemma3_text_encoder_metadata_config,
 )
 
 
@@ -483,10 +589,46 @@ PROFILE_REGISTRY: tuple[ConverterProfileSpec, ...] = (
         planner=_WAN22_PLANNER,
     ),
     ConverterProfileSpec(
+        id=ConverterProfileId.LTX2_TRANSFORMER_COMFY,
+        arch=GGUFArch.LTX2,
+        layout=GGUFKeyLayout.COMFY_CODEX,
+        detect=_is_ltx2,
+        quant_policy=LTX2_QUANT_POLICY,
+        planner=_LTX2_PLANNER,
+    ),
+    ConverterProfileSpec(
+        id=ConverterProfileId.LTX2_TRANSFORMER_NATIVE,
+        arch=GGUFArch.LTX2,
+        layout=GGUFKeyLayout.NATIVE_KEYS,
+        detect=_is_ltx2,
+        quant_policy=LTX2_QUANT_POLICY,
+        planner=_LTX2_PLANNER,
+    ),
+    ConverterProfileSpec(
+        id=ConverterProfileId.GEMMA3_TENC_COMFY,
+        arch=GGUFArch.GEMMA3,
+        layout=GGUFKeyLayout.COMFY_CODEX,
+        detect=_is_gemma3_tenc,
+        quant_policy=LLAMA_QUANT_POLICY,
+        planner=_GEMMA3_TENC_PLANNER,
+    ),
+    ConverterProfileSpec(
+        id=ConverterProfileId.GEMMA3_TENC_NATIVE,
+        arch=GGUFArch.GEMMA3,
+        layout=GGUFKeyLayout.NATIVE_KEYS,
+        detect=_is_gemma3_tenc,
+        quant_policy=LLAMA_QUANT_POLICY,
+        planner=_GEMMA3_TENC_PLANNER,
+    ),
+    ConverterProfileSpec(
         id=ConverterProfileId.LLAMA_HF_TO_GGUF,
         arch=GGUFArch.LLAMA,
         layout=GGUFKeyLayout.LLAMA_GGUF,
-        detect=lambda cfg: not _is_flux(cfg) and not _is_zimage(cfg),
+        detect=lambda cfg: not _is_flux(cfg)
+        and not _is_zimage(cfg)
+        and not _is_wan22(cfg)
+        and not _is_ltx2(cfg)
+        and not _is_gemma3_tenc(cfg),
         quant_policy=LLAMA_QUANT_POLICY,
         key_mapping=_LLAMA_KEY_MAPPING,
     ),
@@ -500,7 +642,11 @@ def resolve_profile(config_json: Mapping[str, Any], *, comfy_layout: bool) -> Co
         return PROFILE_REGISTRY[2] if comfy_layout else PROFILE_REGISTRY[3]
     if _is_wan22(config_json):
         return PROFILE_REGISTRY[4] if comfy_layout else PROFILE_REGISTRY[5]
-    return PROFILE_REGISTRY[6]
+    if _is_ltx2(config_json):
+        return PROFILE_REGISTRY[6] if comfy_layout else PROFILE_REGISTRY[7]
+    if _is_gemma3_tenc(config_json):
+        return PROFILE_REGISTRY[8] if comfy_layout else PROFILE_REGISTRY[9]
+    return PROFILE_REGISTRY[10]
 
 
 def profile_by_id(profile_id: str) -> ConverterProfileSpec:

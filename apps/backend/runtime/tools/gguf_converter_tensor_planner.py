@@ -27,6 +27,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `is_wan22_transformer_config` (function): Returns True when a config.json represents a WAN22 transformer export.
 - `normalize_wan22_transformer_metadata_config` (function): Adapts WAN22 transformer config fields to metadata helper inputs.
 - `plan_wan22_transformer_tensors` (function): Plan tensor conversion for WAN22 transformer weights (Diffusers → Comfy key mapping).
+- `is_ltx2_transformer_config` (function): Returns True when a config.json represents an LTX2 transformer export.
+- `normalize_ltx2_transformer_metadata_config` (function): Adapts LTX2 transformer config fields to metadata helper inputs.
+- `plan_ltx2_transformer_tensors` (function): Plan tensor conversion for LTX2 transformer weights (Diffusers → Comfy key mapping).
+- `is_gemma3_text_encoder_config` (function): Returns True when a config.json represents a Gemma3 text encoder export.
+- `normalize_gemma3_text_encoder_metadata_config` (function): Adapts Gemma3 config fields to metadata helper inputs.
+- `plan_gemma3_text_encoder_tensors` (function): Plan tensor conversion for Gemma3 text encoders (prefix stripping + strict filtering).
 """
 
 from __future__ import annotations
@@ -118,6 +124,14 @@ def is_flux_transformer_config(config: Mapping[str, Any]) -> bool:
 
 def is_wan22_transformer_config(config: Mapping[str, Any]) -> bool:
     return str(config.get("_class_name") or "") in {"WanTransformer3DModel", "WanModel"}
+
+
+def is_ltx2_transformer_config(config: Mapping[str, Any]) -> bool:
+    return str(config.get("_class_name") or "") == "LTX2VideoTransformer3DModel"
+
+
+def is_gemma3_text_encoder_config(config: Mapping[str, Any]) -> bool:
+    return str(config.get("model_type") or "").strip() == "gemma3"
 
 
 def normalize_flux_transformer_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -216,6 +230,84 @@ def normalize_wan22_transformer_metadata_config(config: Mapping[str, Any]) -> di
         "rope_theta": 10000.0,
         "rms_norm_eps": eps,
         "_name_or_path": str(config.get("_name_or_path") or config.get("name") or name),
+    }
+
+
+def normalize_ltx2_transformer_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt LTX2 transformer config keys into the metadata helper's expected fields."""
+
+    def _as_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(default)
+
+    def _as_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return float(default)
+
+    num_heads = _as_int(config.get("num_attention_heads"), 32)
+    head_dim = _as_int(config.get("attention_head_dim"), 128)
+    hidden = max(1, num_heads) * max(1, head_dim)
+    num_layers = _as_int(config.get("num_layers"), 48)
+    rope_theta = _as_float(config.get("rope_theta"), 10000.0)
+    norm_eps = _as_float(config.get("norm_eps"), 1e-6)
+
+    return {
+        "model_type": "ltx2",
+        "num_hidden_layers": max(1, num_layers),
+        "hidden_size": hidden,
+        "num_attention_heads": max(1, num_heads),
+        "num_key_value_heads": max(1, num_heads),
+        "max_position_embeddings": 4096,
+        "rope_theta": rope_theta,
+        "rms_norm_eps": norm_eps,
+        "_name_or_path": str(config.get("_name_or_path") or config.get("name") or "Lightricks/LTX-2"),
+    }
+
+
+def normalize_gemma3_text_encoder_metadata_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt Gemma3 text encoder config keys into the metadata helper's expected fields.
+
+    Gemma3 `config.json` used by Diffusers is a multimodal envelope that contains the LLM config under `text_config`.
+    """
+
+    text_cfg = config.get("text_config")
+    if not isinstance(text_cfg, dict):
+        raise ValueError("Gemma3 metadata normalize: expected `text_config` dict in config.json")
+
+    def _as_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(default)
+
+    def _as_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return float(default)
+
+    num_layers = _as_int(text_cfg.get("num_hidden_layers"), 48)
+    hidden = _as_int(text_cfg.get("hidden_size"), 3840)
+    num_heads = _as_int(text_cfg.get("num_attention_heads"), 16)
+    num_kv = _as_int(text_cfg.get("num_key_value_heads"), 8)
+    max_pos = _as_int(text_cfg.get("max_position_embeddings"), 131072)
+    rope_theta = _as_float(text_cfg.get("rope_theta"), 1000000.0)
+    eps = _as_float(text_cfg.get("rms_norm_eps"), 1e-6)
+
+    return {
+        "model_type": "gemma3",
+        "num_hidden_layers": max(1, num_layers),
+        "hidden_size": max(1, hidden),
+        "num_attention_heads": max(1, num_heads),
+        "num_key_value_heads": max(1, num_kv),
+        "max_position_embeddings": max(1, max_pos),
+        "rope_theta": rope_theta,
+        "rms_norm_eps": eps,
+        "_name_or_path": str(config.get("_name_or_path") or config.get("name") or "google/gemma-3"),
     }
 
 
@@ -553,6 +645,173 @@ def _strip_prefixes(name: str, prefixes: tuple[str, ...]) -> str:
                 changed = True
                 break
     return out
+
+
+_LTX2_TRANSFORMER_PREFIXES = (
+    # Common wrappers used by combined checkpoints.
+    "model.diffusion_model.",
+    "model.model.diffusion_model.",
+    # Some exports use a top-level `transformer.` prefix.
+    "transformer.",
+    # Loose wrapper (avoid in production exports, but observed in the wild).
+    "model.",
+)
+
+_LTX2_DISALLOWED_PREFIXES = (
+    # LTX2 transformer conversion is denoiser-only: these indicate a combined checkpoint.
+    "vae.",
+    "audio_vae.",
+    "vocoder.",
+    "connectors.",
+    "text_encoder.",
+    "tokenizer.",
+    "scheduler.",
+    # Connectors / TE-only submodules embedded in some combined checkpoints.
+    "video_embeddings_connector",
+    "audio_embeddings_connector",
+    "text_embedding_projection",
+)
+
+
+def _map_ltx2_key_to_comfy(src: str) -> str:
+    key = _strip_prefixes(src, _LTX2_TRANSFORMER_PREFIXES)
+
+    for bad_prefix in _LTX2_DISALLOWED_PREFIXES:
+        if key.startswith(bad_prefix):
+            raise RuntimeError(
+                "LTX2 planner: transformer conversion expects denoiser-only safetensors; "
+                f"found non-transformer tensor key prefix {bad_prefix!r} in src={src!r}"
+            )
+
+    # Diffusers → Comfy/Lightricks naming.
+    for before, after in (
+        ("audio_proj_in.", "audio_patchify_proj."),
+        ("proj_in.", "patchify_proj."),
+        ("audio_time_embed.", "audio_adaln_single."),
+        ("time_embed.", "adaln_single."),
+        ("av_cross_attn_video_scale_shift.", "av_ca_video_scale_shift_adaln_single."),
+        ("av_cross_attn_video_a2v_gate.", "av_ca_a2v_gate_adaln_single."),
+        ("av_cross_attn_audio_scale_shift.", "av_ca_audio_scale_shift_adaln_single."),
+        ("av_cross_attn_audio_v2a_gate.", "av_ca_v2a_gate_adaln_single."),
+        ("video_a2v_cross_attn_scale_shift_table", "scale_shift_table_a2v_ca_video"),
+        ("audio_a2v_cross_attn_scale_shift_table", "scale_shift_table_a2v_ca_audio"),
+    ):
+        if before in key:
+            key = key.replace(before, after)
+
+    # Attention Q/K norms.
+    key = key.replace("norm_q.", "q_norm.")
+    key = key.replace("norm_k.", "k_norm.")
+
+    return key
+
+
+def plan_ltx2_transformer_tensors(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested: GGMLQuantizationType,
+    overrides: list[CompiledTensorTypeRule],
+) -> tuple[list[TensorPlan], dict[str, str]]:
+    """Plan LTX2 transformer tensors from Diffusers key layout into Comfy/Codex runtime keys."""
+
+    shapes: dict[str, tuple[int, ...]] = {}
+    plans: list[TensorPlan] = []
+    key_mapping: dict[str, str] = {}
+    claimed: dict[str, str] = {}
+
+    for src_name in tensor_names:
+        gguf_name = _map_ltx2_key_to_comfy(src_name)
+        previous = claimed.get(gguf_name)
+        if previous is not None and previous != src_name:
+            raise RuntimeError(
+                "LTX2 planner: multiple source tensors map to the same output name: "
+                f"{gguf_name} ({previous}, {src_name})"
+            )
+        claimed[gguf_name] = src_name
+
+        raw_shape = _shape_of(safetensors_handle, shapes, src_name)
+        plans.append(
+            _build_plan(
+                gguf_name=gguf_name,
+                raw_shape=raw_shape,
+                op="copy",
+                src_name=src_name,
+                src_names=(src_name,),
+                requested=requested,
+                overrides=overrides,
+            )
+        )
+        key_mapping[src_name] = gguf_name
+
+    return plans, key_mapping
+
+
+_GEMMA3_BASE_PREFIX = "base_text_encoder."
+
+_GEMMA3_SENTINELS = (
+    "base_text_encoder.language_model.embed_tokens.weight",
+    "language_model.embed_tokens.weight",
+    "model.embed_tokens.weight",
+)
+
+
+def _map_gemma3_text_encoder_key(src: str) -> str:
+    key = src[len(_GEMMA3_BASE_PREFIX) :] if src.startswith(_GEMMA3_BASE_PREFIX) else src
+    if key.startswith("language_model."):
+        key = "model." + key[len("language_model.") :]
+    return key
+
+
+def plan_gemma3_text_encoder_tensors(
+    tensor_names: list[str],
+    safetensors_handle: Any,
+    requested: GGMLQuantizationType,
+    overrides: list[CompiledTensorTypeRule],
+) -> tuple[list[TensorPlan], dict[str, str]]:
+    """Plan Gemma3 text encoder tensors.
+
+    This is intentionally simple:
+    - Strip the `base_text_encoder.` wrapper prefix to keep GGUF tensor names stable.
+    - Fail loud on collisions and on missing expected sentinels.
+    """
+
+    if not any(s in tensor_names for s in _GEMMA3_SENTINELS):
+        sample = ", ".join(sorted(tensor_names)[:8])
+        raise RuntimeError(
+            "Gemma3 planner: input safetensors do not look like LTX-2 Gemma3 TE weights "
+            f"(missing expected keys like {_GEMMA3_SENTINELS[0]!r}). sample_keys=[{sample}]"
+        )
+
+    shapes: dict[str, tuple[int, ...]] = {}
+    plans: list[TensorPlan] = []
+    key_mapping: dict[str, str] = {}
+    claimed: dict[str, str] = {}
+
+    for src_name in tensor_names:
+        gguf_name = _map_gemma3_text_encoder_key(src_name)
+        previous = claimed.get(gguf_name)
+        if previous is not None and previous != src_name:
+            raise RuntimeError(
+                "Gemma3 planner: multiple source tensors map to the same output name: "
+                f"{gguf_name} ({previous}, {src_name})"
+            )
+        claimed[gguf_name] = src_name
+
+        raw_shape = _shape_of(safetensors_handle, shapes, src_name)
+        plans.append(
+            _build_plan(
+                gguf_name=gguf_name,
+                raw_shape=raw_shape,
+                op="copy",
+                src_name=src_name,
+                src_names=(src_name,),
+                requested=requested,
+                overrides=overrides,
+            )
+        )
+        key_mapping[src_name] = gguf_name
+
+    return plans, key_mapping
 
 
 def _map_wan22_key_to_comfy(src: str) -> str:

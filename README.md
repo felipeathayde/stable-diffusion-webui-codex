@@ -12,6 +12,7 @@ This project started as a fork in the WebUI ecosystem and was heavily inspired b
 - Install (Backend + Vue UI): `INSTALL.md`
 - Subsystem map (single-file reference): `SUBSYSTEM-MAP.md`
 - Changelog (project-facing): `.sangoi/CHANGELOG.md`
+- Hugging Face models repo README (keep in sync): `README_HF_MODELS.md`
 - Model assets selection/inventory: `.sangoi/reference/models/model-assets-selection-and-inventory.md`
 - API tasks + SSE streaming: `.sangoi/reference/api/tasks-and-streaming.md`
 - UI model tabs + QuickSettings flow: `.sangoi/reference/ui/model-tabs-and-quicksettings.md`
@@ -26,4 +27,3 @@ This project started as a fork in the WebUI ecosystem and was heavily inspired b
 ## Source link (optional)
 - The UI footer can show a “Source” link. Configure its target at build time using `VITE_SOURCE_URL`.
 - Example: `VITE_SOURCE_URL=https://github.com/your-org/stable-diffusion-webui-codex`.
-

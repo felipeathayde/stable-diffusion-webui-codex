@@ -34,16 +34,27 @@ def _get_layer_key_mapping(layer_idx: int) -> Dict[str, str]:
 
     return {
         f"{prefix_hf}.self_attn.q_proj.weight": f"{prefix_gguf}.attn_q.weight",
+        f"{prefix_hf}.self_attn.q_proj.bias": f"{prefix_gguf}.attn_q.bias",
         f"{prefix_hf}.self_attn.k_proj.weight": f"{prefix_gguf}.attn_k.weight",
+        f"{prefix_hf}.self_attn.k_proj.bias": f"{prefix_gguf}.attn_k.bias",
         f"{prefix_hf}.self_attn.v_proj.weight": f"{prefix_gguf}.attn_v.weight",
+        f"{prefix_hf}.self_attn.v_proj.bias": f"{prefix_gguf}.attn_v.bias",
         f"{prefix_hf}.self_attn.o_proj.weight": f"{prefix_gguf}.attn_output.weight",
+        f"{prefix_hf}.self_attn.o_proj.bias": f"{prefix_gguf}.attn_output.bias",
         f"{prefix_hf}.self_attn.q_norm.weight": f"{prefix_gguf}.attn_q_norm.weight",
+        f"{prefix_hf}.self_attn.q_norm.bias": f"{prefix_gguf}.attn_q_norm.bias",
         f"{prefix_hf}.self_attn.k_norm.weight": f"{prefix_gguf}.attn_k_norm.weight",
+        f"{prefix_hf}.self_attn.k_norm.bias": f"{prefix_gguf}.attn_k_norm.bias",
         f"{prefix_hf}.mlp.gate_proj.weight": f"{prefix_gguf}.ffn_gate.weight",
+        f"{prefix_hf}.mlp.gate_proj.bias": f"{prefix_gguf}.ffn_gate.bias",
         f"{prefix_hf}.mlp.up_proj.weight": f"{prefix_gguf}.ffn_up.weight",
+        f"{prefix_hf}.mlp.up_proj.bias": f"{prefix_gguf}.ffn_up.bias",
         f"{prefix_hf}.mlp.down_proj.weight": f"{prefix_gguf}.ffn_down.weight",
+        f"{prefix_hf}.mlp.down_proj.bias": f"{prefix_gguf}.ffn_down.bias",
         f"{prefix_hf}.input_layernorm.weight": f"{prefix_gguf}.attn_norm.weight",
+        f"{prefix_hf}.input_layernorm.bias": f"{prefix_gguf}.attn_norm.bias",
         f"{prefix_hf}.post_attention_layernorm.weight": f"{prefix_gguf}.ffn_norm.weight",
+        f"{prefix_hf}.post_attention_layernorm.bias": f"{prefix_gguf}.ffn_norm.bias",
     }
 
 
@@ -59,4 +70,3 @@ def build_key_mapping(num_layers: int) -> Dict[str, str]:
 __all__ = [
     "build_key_mapping",
 ]
-

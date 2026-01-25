@@ -1,7 +1,7 @@
 # apps Overview
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -13,11 +13,12 @@ Status: Active
 
 ## Key Files
 - `launcher/` — Package exposing launcher infrastructure (`checks`, `services`, `profiles`, `paths`).
-- `codex_launcher.py` — Tk-based GUI launcher for managing API/UI services (Windows).
+- `codex_launcher.py` — Tk-based GUI launcher entrypoint for managing API/UI services (Windows). Implementation lives in `launcher/gui_tk.py`.
 - `__init__.py` — Marks `apps` as a Python package so relative imports resolve cleanly across backend modules.
 
 ## Notes
 - New code must target `apps/backend` and `apps/interface`. The launcher infrastructure lives under `apps/launcher/`; the GUI launcher entrypoint is `apps/codex_launcher.py` (Windows).
+- The GUI code should live under `apps/launcher/` so the entrypoint stays stable while the implementation evolves.
 - 2026-01-20: Deprecated the curses TUI launcher (`apps/tui_launcher.py` + `run-tui.bat`) by moving it to repo-local `/.deprecated/` (ignored by Git).
 - When adding new subpackages, create an `AGENTS.md` describing responsibilities to keep this overview accurate.
 - 2025-11-02: Launcher surfaces device/dtype configuration via persisted WebUI options (`apps/settings_values.json`); env overrides for runtime settings were removed.

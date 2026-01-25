@@ -38,9 +38,11 @@ _TensorNameTargetLiteral = Literal["src", "dst", "both"]
 
 class GGUFArch(str, Enum):
     LLAMA = "llama"
+    GEMMA3 = "gemma3"
     FLUX = "flux"
     ZIMAGE = "zimage"
     WAN22 = "wan22"
+    LTX2 = "ltx2"
 
 
 class GGUFKeyLayout(str, Enum):
@@ -72,6 +74,10 @@ class ConverterProfileId(str, Enum):
     ZIMAGE_TRANSFORMER_NATIVE = "zimage_transformer_native"
     WAN22_TRANSFORMER_COMFY = "wan22_transformer_comfy"
     WAN22_TRANSFORMER_NATIVE = "wan22_transformer_native"
+    LTX2_TRANSFORMER_COMFY = "ltx2_transformer_comfy"
+    LTX2_TRANSFORMER_NATIVE = "ltx2_transformer_native"
+    GEMMA3_TENC_COMFY = "gemma3_tenc_comfy"
+    GEMMA3_TENC_NATIVE = "gemma3_tenc_native"
     LLAMA_HF_TO_GGUF = "llama_hf_to_gguf"
     GENERIC_NATIVE = "generic_native"
 

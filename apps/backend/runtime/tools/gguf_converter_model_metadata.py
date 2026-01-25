@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Vendored model metadata for the GGUF converter UI.
 Scans the local Hugging Face mirror under `apps/backend/huggingface/**` and exposes “model metadata” entries (org/repo)
-with supported conversion components (Flux/ZImage/WAN22 denoisers).
+with supported conversion components (Flux/ZImage/WAN22/LTX2 denoisers).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `GGUFConverterModelComponent` (dataclass): Convertible component entry (config dir + profile hints).
@@ -101,6 +101,14 @@ def _classify_config(cfg: dict[str, Any]) -> tuple[str, dict[str, str]]:
                 "profile_id_native": "wan22_transformer_native",
             },
         )
+    if class_name == "LTX2VideoTransformer3DModel":
+        return (
+            "ltx2_transformer",
+            {
+                "profile_id_comfy": "ltx2_transformer_comfy",
+                "profile_id_native": "ltx2_transformer_native",
+            },
+        )
 
     return ("unknown", {})
 
@@ -138,7 +146,7 @@ def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGU
 
             component_id = subdir or "root"
             component_label = subdir or "root"
-            if kind in {"flux_transformer", "zimage_transformer"}:
+            if kind in {"flux_transformer", "zimage_transformer", "ltx2_transformer"}:
                 component_label = "denoiser"
             if kind == "wan22_transformer" and wan_two_stage:
                 if component_id in {"transformer", "high_noise_model"}:
@@ -160,7 +168,7 @@ def list_vendored_gguf_converter_model_metadata(*, codex_root: Path) -> list[GGU
         if not components:
             continue
 
-        kind_priority = {"flux_transformer": 0, "zimage_transformer": 0}
+        kind_priority = {"flux_transformer": 0, "zimage_transformer": 0, "ltx2_transformer": 0}
         components.sort(key=lambda c: (kind_priority.get(c.kind, 9), c.label.lower()))
         model_id = f"{org}/{repo}"
         models.append(

@@ -44,4 +44,5 @@ Status: Active
 - 2026-01-16: WAN22 GGUF converter now has a mixed-preset dtype policy (Q*_K_M) keeping sensitive embedder/head weights in float (F16/F32) for quality.
 - 2026-01-16: WAN22 converter presets now expose float dtype groups so the Mixed AUTO/FP16/FP32 knob can force sensitive weights to FP16/FP32.
 - 2026-01-16: GGUF converter verification reuses the conversion safetensors handle (avoids re-opening huge WAN22 weights twice; improves Windows stability).
+- 2026-01-24: Added GGUF converter support for LTX-2 denoiser weights (`LTX2VideoTransformer3DModel`) via profiles `ltx2_transformer_{comfy,native}` and for the LTX-2 Gemma3 text encoder via `gemma3_tenc_{comfy,native}` (wrapper stripping + stable key layout).
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

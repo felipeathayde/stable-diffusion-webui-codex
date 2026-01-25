@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
 - `_default_hf_root` (function): Returns the default Hugging Face vendor cache root under `CODEX_ROOT` (when used).
 - `_sha256` (function): Computes sha256 digest for a file path.
-- `_detect_safetensors_primary_dtype` (function): Best-effort safetensors dtype hint reader (header-only parse; used for defaults/telemetry).
+- `detect_safetensors_primary_dtype` (function): Best-effort safetensors dtype hint reader (header-only parse; used for defaults/telemetry).
 - `_HashCacheEntry` (dataclass): Cache entry for one file (sha + mtime + size) used to avoid re-hashing unchanged files.
 - `_load_hash_cache` (function): Loads `.hashes.json` cache from disk.
 - `_save_hash_cache` (function): Writes `.hashes.json` cache to disk.
@@ -31,7 +31,6 @@ import hashlib
 import json
 import logging
 import os
-import struct
 import threading
 import time
 from dataclasses import dataclass
@@ -41,6 +40,7 @@ from typing import Dict, Iterable, List, Tuple
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.infra.config.repo_root import get_repo_root
 from apps.backend.runtime import trace as _trace
+from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
 
 from .types import (
     CheckpointFormat,
@@ -68,71 +68,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _detect_safetensors_primary_dtype(path: Path) -> str | None:
-    """Best-effort dtype hint for `.safetensors` (header-only parse).
-
-    This reads only the SafeTensors JSON header (no tensor payloads) and returns a
-    normalized dtype label suitable for defaults (e.g. `fp16`, `bf16`, `fp32`).
-    """
-
-    suffix = path.suffix.lower()
-    if suffix not in {".safetensor", ".safetensors"}:
-        return None
-
-    try:
-        with path.open("rb") as handle:
-            raw_len = handle.read(8)
-            if len(raw_len) != 8:
-                return None
-            (header_len,) = struct.unpack("<Q", raw_len)
-            # Defensive cap: corrupted files can claim absurd header sizes.
-            if header_len <= 0 or header_len > 64 * 1024 * 1024:
-                return None
-            header = handle.read(int(header_len))
-        data = json.loads(header.decode("utf-8"))
-    except Exception:
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    float_types = {"F16", "BF16", "F32", "F64", "F8_E4M3FN", "F8_E5M2"}
-    totals: Dict[str, int] = {}
-    for name, meta in data.items():
-        if name == "__metadata__":
-            continue
-        if not isinstance(meta, dict):
-            continue
-        dtype = meta.get("dtype")
-        if not isinstance(dtype, str) or dtype not in float_types:
-            continue
-        offsets = meta.get("data_offsets")
-        if not isinstance(offsets, (list, tuple)) or len(offsets) != 2:
-            continue
-        try:
-            start = int(offsets[0])
-            end = int(offsets[1])
-        except Exception:
-            continue
-        if end < start:
-            continue
-        totals[dtype] = totals.get(dtype, 0) + (end - start)
-
-    if not totals:
-        return None
-
-    best = max(totals.items(), key=lambda kv: kv[1])[0]
-    mapping = {
-        "F16": "fp16",
-        "BF16": "bf16",
-        "F32": "fp32",
-        "F64": "fp64",
-        "F8_E4M3FN": "fp8_e4m3fn",
-        "F8_E5M2": "fp8_e5m2",
-    }
-    return mapping.get(best)
 
 
 @dataclass
@@ -442,7 +377,7 @@ class ModelRegistry:
         # Cache hit: validate by mtime AND size (both must match)
         if entry and entry.mtime == stat.st_mtime and entry.size == stat.st_size:
             if entry.dtype is None:
-                dtype = _detect_safetensors_primary_dtype(path)
+                dtype = detect_safetensors_primary_dtype(path)
                 if dtype:
                     entry.dtype = dtype
                     self._hash_cache_dirty = True
@@ -458,7 +393,7 @@ class ModelRegistry:
             sha256 = None
             short_hash = None
         if sha256:
-            dtype = _detect_safetensors_primary_dtype(path)
+            dtype = detect_safetensors_primary_dtype(path)
             cache[key] = _HashCacheEntry(stat.st_mtime, stat.st_size, sha256, short_hash or "", dtype=dtype)
             self._hash_cache_dirty = True  # Mark for persistence
         return sha256, short_hash

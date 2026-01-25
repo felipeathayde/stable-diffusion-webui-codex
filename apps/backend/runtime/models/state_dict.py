@@ -8,8 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: State dict loading and key-mapping helpers with trace/keymap logging.
 Provides relaxed load helpers that log missing/unexpected keys and write diagnostics to `logs/parser_keymap.log`, plus utilities for
-filtering and renaming keys (including transformer-style conversions) without eagerly materializing tensors (SafeTensors is only
-materialized up-front on Windows to avoid repeated-open crashes).
+filtering and renaming keys (including transformer-style conversions) without eagerly materializing tensors (SafeTensors is only materialized up-front on Windows).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_append_key_record` (function): Appends a JSON record to the parser keymap log.

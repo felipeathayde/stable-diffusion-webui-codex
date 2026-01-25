@@ -9,8 +9,7 @@ Required Notice: see NOTICE
 
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence),
-and mounts the built UI as SPA static files after API routes.
-Uses FastAPI lifespan handlers (when available) for startup hooks (no deprecated `on_event`).
+and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).

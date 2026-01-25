@@ -8,8 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
 This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
-ready for orchestrator/engine execution (with memory-management hooks). For SDXL families, loads are strict: missing/unexpected keys are treated as fatal errors to
-surface keymap/conversion mismatches early.
+ready for orchestrator/engine execution (with memory-management hooks). SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -26,8 +25,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_vae_class` (function): Picks the VAE class/loader path based on model signature and layout (`diffusers` vs legacy layouts).
 - `_maybe_convert_sdxl_vae_state_dict` (function): Applies SDXL-specific VAE key conversions when the checkpoint layout requires it.
 - `_detect_vae_layout` (function): Detects VAE state dict layout (used to choose conversion/loading strategy).
-- `_SAFETENSORS_DTYPE_LABEL_TO_TORCH` (constant): Maps safetensors dtype labels to torch dtypes for default precision selection.
-- `_maybe_default_dtype_from_weights` (function): Picks a default dtype from safetensors header dtype hints when no dtype was forced.
+- `_safetensors_primary_dtype_hint` (function): Best-effort safetensors dtype hint reader (header-only, whole-file).
+- `_log_weights_dtype_hint` (function): Emits pipeline-debug logs for (role, selected dtype, weights dtype hint).
 - `_load_huggingface_component` (function): Loads a diffusers component/pipeline from a local HF-style repo directory.
 - `_apply_prediction_type` (function): Applies prediction-type overrides to loaded components/configs when specified.
 - `codex_loader` (function): Primary loader entrypoint; coordinates checkpoint parsing, TE override resolution (incl. `tenc_path` shorthand),
@@ -89,7 +88,7 @@ from apps.backend.runtime.ops import using_codex_operations
 from apps.backend.runtime.checkpoint.io import load_torch_file, read_arbitrary_config
 from apps.backend.runtime.state_dict.tools import beautiful_print_gguf_state_dict_statics
 from apps.backend.runtime.families.wan22.vae import AutoencoderKLWan
-from apps.backend.runtime.models.registry import _detect_safetensors_primary_dtype
+from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
 
 LOGGER = logging.getLogger(__name__)
 CLIP_LOG = logging.getLogger(__name__ + ".clip")
@@ -674,39 +673,42 @@ def _detect_vae_layout(sd: Mapping[str, Any]) -> str:
     return "diffusers"
 
 
-_SAFETENSORS_DTYPE_LABEL_TO_TORCH: dict[str, torch.dtype] = {
-    "fp16": torch.float16,
-    "bf16": torch.bfloat16,
-    "fp32": torch.float32,
-    "fp64": torch.float64,
-}
-
-
-def _maybe_default_dtype_from_weights(
-    *,
-    role: DeviceRole,
-    current: torch.dtype,
-    weights_path: str | None,
-    supported: tuple[torch.dtype, ...] = (torch.float16, torch.bfloat16, torch.float32),
-) -> torch.dtype:
+def _safetensors_primary_dtype_hint(weights_path: str | None) -> str | None:
     if not weights_path:
-        return current
+        return None
     try:
-        forced = memory_management.manager.config.component_policy(role).forced_dtype
+        return detect_safetensors_primary_dtype(Path(weights_path))
     except Exception:
-        forced = None
-    if forced:
-        return current
+        return None
 
-    label = _detect_safetensors_primary_dtype(Path(weights_path))
-    if not label:
-        return current
-    detected = _SAFETENSORS_DTYPE_LABEL_TO_TORCH.get(label)
-    if detected is None:
-        return current
-    if detected not in supported:
-        return current
-    return detected
+
+def _log_weights_dtype_hint(*, role: DeviceRole, selected: torch.dtype, hint: str | None) -> None:
+    try:
+        from apps.backend.runtime.diagnostics import pipeline_debug as _pipeline_debug
+    except Exception:
+        return
+    if not hint:
+        return
+
+    hint_map: dict[str, object] = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+        "fp64": torch.float64,
+    }
+    # Float8 dtypes may not exist on all torch builds.
+    fp8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
+    fp8_e5m2 = getattr(torch, "float8_e5m2", None)
+    if fp8_e4m3fn is not None:
+        hint_map["fp8_e4m3fn"] = fp8_e4m3fn
+    if fp8_e5m2 is not None:
+        hint_map["fp8_e5m2"] = fp8_e5m2
+
+    expected = hint_map.get(hint)
+    if expected is not None and expected == selected:
+        return
+
+    _pipeline_debug.log(f"[dtype] role={role.value} selected={selected} weights_primary={hint}")
 
 
 def _load_huggingface_component(
@@ -834,7 +836,11 @@ def _load_huggingface_component(
             config_json = _load_component_config(component_path)
         vae_device = memory_management.manager.get_device(DeviceRole.VAE)
         vae_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
-        vae_dtype = _maybe_default_dtype_from_weights(role=DeviceRole.VAE, current=vae_dtype, weights_path=weights_path)
+        _log_weights_dtype_hint(
+            role=DeviceRole.VAE,
+            selected=vae_dtype,
+            hint=_safetensors_primary_dtype_hint(weights_path),
+        )
         _trace.event("vae_construct", device=str(vae_device), dtype=str(vae_dtype), cls=vae_cls.__name__)
 
         with using_codex_operations(device=vae_device, dtype=vae_dtype, manual_cast_enabled=True):
@@ -905,7 +911,11 @@ def _load_huggingface_component(
         strict_sdxl = family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER)
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
         te_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
-        te_dtype = _maybe_default_dtype_from_weights(role=DeviceRole.TEXT_ENCODER, current=te_dtype, weights_path=weights_path)
+        _log_weights_dtype_hint(
+            role=DeviceRole.TEXT_ENCODER,
+            selected=te_dtype,
+            hint=_safetensors_primary_dtype_hint(weights_path),
+        )
         to_args = dict(device=te_device, dtype=te_dtype)
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
@@ -1097,10 +1107,10 @@ def _load_huggingface_component(
                 t5_config = _T5_XXL_DEFAULT_CONFIG
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
         storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
-        storage_dtype = _maybe_default_dtype_from_weights(
+        _log_weights_dtype_hint(
             role=DeviceRole.TEXT_ENCODER,
-            current=storage_dtype,
-            weights_path=weights_path,
+            selected=storage_dtype,
+            hint=_safetensors_primary_dtype_hint(weights_path),
         )
         state_dict_dtype = detect_state_dict_dtype(state_dict)
         if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
@@ -1230,11 +1240,10 @@ def _load_huggingface_component(
         supported_dtypes = _supported_inference_dtypes(family)
         quant_kind = config.quantization.kind
         storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
-        storage_dtype = _maybe_default_dtype_from_weights(
+        _log_weights_dtype_hint(
             role=DeviceRole.CORE,
-            current=storage_dtype,
-            weights_path=weights_path,
-            supported=tuple(supported_dtypes),
+            selected=storage_dtype,
+            hint=_safetensors_primary_dtype_hint(weights_path),
         )
         if quant_kind == QuantizationKind.NF4:
             storage_dtype = "nf4"

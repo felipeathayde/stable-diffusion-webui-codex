@@ -10,6 +10,7 @@ Required Notice: see NOTICE
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence),
 and mounts the built UI as SPA static files after API routes.
+Uses FastAPI lifespan handlers (when available) for startup hooks (no deprecated `on_event`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
@@ -22,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `pick_api_port_simple` (function): Picks a free port near a base port (and reports whether it was the base).
 - `banner` (function): Prints the startup banner with the selected port.
 - `_DummyRequest` (class): Minimal request shim used where a request-like object is needed without FastAPI internals.
-- `build_app` (function): Constructs the FastAPI app; wires router modules, configures middleware, and mounts the UI SPA.
+- `build_app` (function): Constructs the FastAPI app; wires router modules, configures middleware, and mounts the UI SPA (lifespan-aware).
 - `_bootstrap_runtime` (function): Bootstraps runtime settings/env before app creation (used by the uvicorn factory path).
 - `_enable_trace_debug` (function): Enables global tracing/debug logging when requested via argv/env.
 - `create_api_app` (function): Canonical uvicorn `--factory` entrypoint; calls bootstrap and returns the built FastAPI app.
@@ -34,7 +35,7 @@ import errno
 import os
 import socket
 import sys
-from contextlib import closing
+from contextlib import closing, asynccontextmanager
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 import logging
 
@@ -282,8 +283,35 @@ def build_app() -> FastAPI:
     # Native parameter helpers (replace legacy _txt2img/_img2img parsers)
     from apps.backend.services import param_utils as _p
 
+    # Exception hooks for asyncio + HTTP middleware to dump unhandled route exceptions
+    lifespan = None
+    dump_current_exception = None
+    try:
+        from apps.backend.runtime.diagnostics.exception_hook import (
+            attach_asyncio as _attach_asyncio,
+            dump_current_exception as _dump_current_exception,
+        )
 
-    app = FastAPI()
+        dump_current_exception = _dump_current_exception
+
+        @asynccontextmanager
+        async def _lifespan(app: FastAPI):  # pragma: no cover
+            try:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.get_event_loop()
+                _attach_asyncio(loop)
+            except Exception:  # noqa: BLE001
+                logging.getLogger("backend.startup").exception("startup: failed to attach asyncio exception hook")
+            yield
+
+        lifespan = _lifespan
+    except Exception:
+        lifespan = None
+        dump_current_exception = None
+
+    app = FastAPI(lifespan=lifespan) if lifespan is not None else FastAPI()
 
     # middleware
     app.add_middleware(
@@ -305,31 +333,17 @@ def build_app() -> FastAPI:
         load_values as _opts_load_native,
     )
     _ui_dist_dir = str(CODEX_ROOT / 'apps' / 'interface' / 'dist')
-
-    # Exception hooks for asyncio + HTTP middleware to dump unhandled route exceptions
-    try:
-        from apps.backend.runtime.diagnostics.exception_hook import attach_asyncio as _attach_asyncio, dump_current_exception as _dump_current_exception
-
-        @app.on_event('startup')
-        async def _setup_exc_hooks() -> None:  # pragma: no cover
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.get_event_loop()
-            _attach_asyncio(loop)
-
+    if dump_current_exception is not None:
         @app.middleware('http')
-        async def _errors_middleware(request, call_next):  # type: ignore[no-untyped-def]
+        async def _errors_middleware(request, call_next):  # type: ignore[no-untyped-def]  # pragma: no cover
             try:
                 return await call_next(request)
             except Exception:
-                try:
-                    _dump_current_exception(where='http', context={'path': str(getattr(request, 'url', '')), 'method': getattr(request, 'method', '')})
-                finally:
-                    pass
+                dump_current_exception(
+                    where="http",
+                    context={"path": str(getattr(request, "url", "")), "method": getattr(request, "method", "")},
+                )
                 raise
-    except Exception:
-        pass
 
     # Settings registry (hardcoded dataclasses/enums via codegen)
     try:

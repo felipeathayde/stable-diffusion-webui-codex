@@ -2,7 +2,7 @@
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
 Owner: Runtime Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-25
 Status: Active
 
 ## Scope
@@ -18,6 +18,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
   - Strip known wrappers iteratively per key before conversion.
   - Always attempt Codex converters (`convert_sdxl_clip_*`, fallback to `convert_sd20_clip`, `convert_sd15_clip`); treat success as “essential tensors present”.
   - Lift `text_model.*` into `transformer.text_model.*`, normalize `text_projection` into `transformer.text_projection.weight`, and forward `final_layer_norm.*` similarly.
+  - Drop HF-only buffers (`*.position_ids`) and canonicalize `logit_scale` into the `IntegratedCLIP` keyspace (no `transformer.*` aliases).
   - Abort with a `RuntimeError` when essential tensors (`token_embedding`, `position_embedding`, first-layer q_proj, `final_layer_norm`) remain missing after normalization — no silent degradation.
 
 ## UNet State‑Dict Normalization
@@ -32,6 +33,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 
 ## Error Handling
 - Missing/Unexpected above thresholds will be escalated by the loader; we do not degrade silently.
+- SDXL: UNet/VAE/CLIP loads are strict — any missing/unexpected keys are fatal.
 - Prefer clear messages naming a few representative keys and the active normalization path.
 
 ## Rationale
@@ -63,3 +65,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-14: Flux expected-family loads now use vendored HF metadata to build the signature (selecting `FLUX.1-dev` vs `FLUX.1-schnell` by guidance key presence), avoiding registry detection failures on prefixed Flux checkpoints.
 - 2026-01-18: `CheckpointRecord` now includes `core_only`, `core_only_reason` (e.g. `gguf_suffix`, `gguf_magic`), and optional `family_hint`; `/api/models` surfaces these so UIs stop guessing core-only status by suffix alone.
 - 2026-01-18: `loader.py` now lazily imports `diffusers`/`transformers` (keeps `create_api_app` import-light for health/models endpoints and torch-stub tests).
+- 2026-01-25: SDXL loads are strict on missing/unexpected keys (fail loud); CLIP normalization now drops `position_ids`, canonicalizes `logit_scale`, and keeps only `transformer.text_projection.weight`.

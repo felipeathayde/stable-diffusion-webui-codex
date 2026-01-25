@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: State dict loading and key-mapping helpers with trace/keymap logging.
 Provides relaxed load helpers that log missing/unexpected keys and write diagnostics to `logs/parser_keymap.log`, plus utilities for
-filtering and renaming keys (including transformer-style conversions) without eagerly materializing tensors.
+filtering and renaming keys (including transformer-style conversions) without eagerly materializing tensors (SafeTensors is only
+materialized up-front on Windows to avoid repeated-open crashes).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_append_key_record` (function): Appends a JSON record to the parser keymap log.
@@ -19,12 +20,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `transformers_convert` (function): Renames legacy transformer keys to HF-style encoder keys (incl. Q/K/V split).
 - `state_dict_key_replace` (function): Applies a direct `{old: new}` key replacement mapping.
 - `state_dict_prefix_replace` (function): Rewrites keys using multiple prefix replacements (optionally into a new dict).
-- `safe_load_state_dict` (function): Conservative loader that copies tensors key-by-key and returns (missing, unexpected).
+- `safe_load_state_dict` (function): Conservative loader that copies tensors key-by-key and returns (missing, unexpected) (Windows: materializes SafeTensors once).
 """
 
 import torch
 import logging
 import json
+import sys
 from pathlib import Path
 
 from apps.backend.runtime import trace as _trace
@@ -173,14 +175,16 @@ def safe_load_state_dict(model, sd, *, log_name=None):
     model_state = model.state_dict()
     model_keys = list(model_state.keys())
 
-    # If sd is a lazy safetensors dict, materialize it once to avoid reopening
-    # the file repeatedly (Windows torch_cpu.dll crash prevention).
-    materializer = getattr(sd, 'materialize', None)
-    if callable(materializer):
-        try:
-            sd = materializer()
-        except Exception:
-            pass  # Fall back to lazy access if materialize fails
+    # If sd is a lazy safetensors dict, materialize it once on Windows to avoid reopening
+    # the file repeatedly (torch_cpu.dll crash prevention). On non-Windows platforms we keep
+    # lazy access so weights stream one tensor at a time.
+    if sys.platform.startswith("win"):
+        materializer = getattr(sd, "materialize", None)
+        if callable(materializer):
+            try:
+                sd = materializer()
+            except Exception:
+                pass  # Fall back to lazy access if materialize fails
 
     sd_keys = list(sd.keys()) if isinstance(sd, Mapping) and hasattr(sd, 'keys') else []
 

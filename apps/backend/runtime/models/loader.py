@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
 This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
-ready for orchestrator/engine execution (with memory-management hooks).
+ready for orchestrator/engine execution (with memory-management hooks). For SDXL families, loads are strict: missing/unexpected keys are treated as fatal errors to
+surface keymap/conversion mismatches early.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -868,9 +869,14 @@ def _load_huggingface_component(
             )
 
         if unexpected:
-            LOGGER.warning(
-                "VAE load: unexpected %d keys (sample=%s)", len(unexpected), unexpected[:10]
-            )
+            sample = unexpected[:10]
+            if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+                raise RuntimeError(
+                    "VAE state_dict has unexpected keys for SDXL. "
+                    "This indicates a keymap/conversion mismatch; refusing to continue. "
+                    f"unexpected_count={len(unexpected)} sample={sample}"
+                )
+            LOGGER.warning("VAE load: unexpected %d keys (sample=%s)", len(unexpected), sample)
         return model
 
     if cls_name in {"CLIPTextModel", "CLIPTextModelWithProjection"}:
@@ -896,6 +902,7 @@ def _load_huggingface_component(
                 parsed, component_name, lib_name, "T5EncoderModel", repo_path, state_dict, weights_path=weights_path
             )
         # Build native Codex CLIP instead of HF; normalise state dict beforehand
+        strict_sdxl = family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER)
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
         te_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
         te_dtype = _maybe_default_dtype_from_weights(role=DeviceRole.TEXT_ENCODER, current=te_dtype, weights_path=weights_path)
@@ -903,77 +910,7 @@ def _load_huggingface_component(
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
         from apps.backend.runtime.common.nn.clip_text_cx import CodexCLIPTextConfig, CodexCLIPTextModel
-        _CLIP_PREFIXES = (
-            "conditioner.embedders.0.transformer.",
-            "conditioner.embedders.0.model.",
-            "conditioner.embedders.0.",
-            "conditioner.embedders.1.transformer.",
-            "conditioner.embedders.1.model.",
-            "conditioner.embedders.1.",
-            "cond_stage_model.model.",
-            "cond_stage_model.",
-            "text_encoders.clip_l.",
-            "text_encoders.clip_g.",
-            "clip_l.",
-            "clip_g.",
-            "clip_h.",
-            "model.text_model.",
-            "model.",
-        )
-
-        def _strip_known_prefixes(sd: Mapping[str, Any]) -> Dict[str, Any]:
-            stripped: Dict[str, Any] = {}
-            for raw_key, value in sd.items():
-                key = str(raw_key)
-                changed = True
-                while changed:
-                    changed = False
-                    for prefix in _CLIP_PREFIXES:
-                        if key.startswith(prefix):
-                            key = key[len(prefix):]
-                            changed = True
-                            break
-                stripped[key] = value
-            return stripped
-
-        def _ensure_position_ids_long(work: Dict[str, Any]) -> None:
-            key = "transformer.text_model.embeddings.position_ids"
-            value = work.get(key)
-            if isinstance(value, torch.Tensor) and value.dtype != torch.long:
-                work[key] = value.round().to(torch.long)
-
-        def _normalize_text_projection(work: Dict[str, Any], *, keep_projection: bool, transpose: bool) -> None:
-            def _assign(tensor: Any) -> None:
-                if not keep_projection:
-                    return
-                if isinstance(tensor, torch.Tensor) and transpose:
-                    tensor = tensor.transpose(0, 1).contiguous()
-                # Provide both aliases expected across Codex/HF CLIP implementations.
-                work["text_projection.weight"] = tensor
-                work["transformer.text_projection.weight"] = tensor
-
-            for key in (
-                "transformer.text_projection.weight",
-                "transformer.text_projection",
-                "text_projection.weight",
-                "text_projection",
-            ):
-                if key in work:
-                    value = work.pop(key)
-                    _assign(value)
-            if not keep_projection:
-                work.pop("text_projection.weight", None)
-                work.pop("transformer.text_projection.weight", None)
-
-        _ESSENTIAL_KEYS = (
-            "transformer.text_model.embeddings.token_embedding.weight",
-            "transformer.text_model.embeddings.position_embedding.weight",
-            "transformer.text_model.encoder.layers.0.self_attn.q_proj.weight",
-            "transformer.text_model.final_layer_norm.weight",
-        )
-
-        def _has_essentials(work: Mapping[str, Any]) -> bool:
-            return all(key in work for key in _ESSENTIAL_KEYS)
+        from apps.backend.runtime.models.clip_key_normalization import normalize_codex_clip_state_dict
 
         # CLIP-ViT-Large-patch14 default config (used by Flux CLIP-L and SD1.x/2.x)
         _CLIP_L_DEFAULT_CONFIG = {
@@ -1000,7 +937,7 @@ def _load_huggingface_component(
             "vocab_size": 49408,
             "projection_dim": 1280,
         }
-        
+
         # Try to infer the correct config from state_dict shapes
         def _infer_clip_config_from_state(sd: Mapping[str, Any]) -> dict | None:
             """Infer CLIP config variant from state_dict tensor shapes."""
@@ -1021,105 +958,56 @@ def _load_huggingface_component(
                             _LOG.info("Detected CLIP-L variant (hidden_size=768)")
                             return _CLIP_L_DEFAULT_CONFIG
             return None
-        
-        # Determine if we should use default CLIP config
-        use_default_config = False
-        inferred_config = None
-        
-        # Case 1: CLIP in T5 slot (text_encoder_2 is normally T5 for Flux)
-        # But for SDXL, text_encoder_2 is OpenCLIP-G, so we need to infer from state_dict
-        if component_name == "text_encoder_2":
-            inferred_config = _infer_clip_config_from_state(state_dict)
-            if inferred_config:
-                _LOG.info("CLIP loading in T5 slot (%s); using inferred config", component_name)
-                use_default_config = True
+
+        if strict_sdxl:
+            if family is ModelFamily.SDXL:
+                if component_name == "text_encoder":
+                    config_json = _CLIP_L_DEFAULT_CONFIG
+                elif component_name == "text_encoder_2":
+                    config_json = _CLIP_G_DEFAULT_CONFIG
+                else:
+                    raise RuntimeError(f"SDXL: unexpected CLIP component name: {component_name!r}")
+            elif family is ModelFamily.SDXL_REFINER:
+                if component_name == "text_encoder":
+                    config_json = _CLIP_G_DEFAULT_CONFIG
+                else:
+                    raise RuntimeError(f"SDXL refiner: unexpected CLIP component name: {component_name!r}")
             else:
-                _LOG.info("CLIP loading in T5 slot (%s); using CLIP-L default config", component_name)
-                inferred_config = _CLIP_L_DEFAULT_CONFIG
-                use_default_config = True
-        
-        if use_default_config:
-            config_json = inferred_config or _CLIP_L_DEFAULT_CONFIG
+                raise RuntimeError(f"Unexpected strict_sdxl family: {family!r}")
         else:
-            try:
-                config_json = read_arbitrary_config(component_path)
-                # Validate it's actually a CLIP config
-                if "hidden_size" not in config_json:
-                    _LOG.warning(
-                        "Config at %s missing 'hidden_size' (got %s); using CLIP-L defaults",
-                        component_path, list(config_json.keys())[:5]
+            # Determine if we should use default CLIP config
+            use_default_config = False
+            inferred_config = None
+
+            # Heuristic: component_name text_encoder_2 is commonly T5 for Flux; if CLIP ends up here,
+            # infer config from the state dict so we don't guess wrong.
+            if component_name == "text_encoder_2":
+                inferred_config = _infer_clip_config_from_state(state_dict)
+                if inferred_config:
+                    _LOG.info("CLIP config inferred for %s", component_name)
+                    use_default_config = True
+
+            if use_default_config:
+                config_json = inferred_config or _CLIP_L_DEFAULT_CONFIG
+            else:
+                try:
+                    config_json = read_arbitrary_config(component_path)
+                    # Validate it's actually a CLIP config
+                    if "hidden_size" not in config_json:
+                        _LOG.warning(
+                            "Config at %s missing 'hidden_size' (got %s); using CLIP-L defaults",
+                            component_path, list(config_json.keys())[:5]
+                        )
+                        config_json = _CLIP_L_DEFAULT_CONFIG
+                except FileNotFoundError:
+                    _LOG.info(
+                        "No config.json found at %s; using default CLIP-L configuration",
+                        component_path
                     )
                     config_json = _CLIP_L_DEFAULT_CONFIG
-            except FileNotFoundError:
-                _LOG.info(
-                    "No config.json found at %s; using default CLIP-L configuration",
-                    component_path
-                )
-                config_json = _CLIP_L_DEFAULT_CONFIG
-        
+
         cfg = CodexCLIPTextConfig.from_dict(config_json)
-
-        def _normalize_clip_state(
-            component: str,
-            sd: Mapping[str, Any],
-            *,
-            num_layers: int,
-            keep_projection: bool,
-            transpose_projection: bool,
-        ) -> Dict[str, Any]:
-            work = _strip_known_prefixes(sd)
-            work = dict(work)
-
-            # Add transformer. prefix to keys that start with text_model.
-            # This handles CLIP files that use text_model.* instead of transformer.text_model.*
-            keys_to_rename = [(k, f"transformer.{k}") for k in list(work.keys()) 
-                              if k.startswith("text_model.") and not k.startswith("transformer.")]
-            for old_key, new_key in keys_to_rename:
-                work[new_key] = work.pop(old_key)
-
-            transformers_convert(work, "transformer.", "transformer.text_model.", num_layers)
-            transformers_convert(work, "", "transformer.text_model.", num_layers)
-
-            _ensure_position_ids_long(work)
-            _normalize_text_projection(work, keep_projection=keep_projection, transpose=transpose_projection)
-            # Keep logit_scale for all CLIPs; inject default if missing.
-            has_logit = any(
-                k in work for k in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale")
-            )
-            if not has_logit:
-                # Match IntegratedCLIP default (ln 100).
-                default_logit = torch.tensor(4.605170185988092)
-                for key in ("logit_scale", "transformer.logit_scale", "transformer.text_model.logit_scale"):
-                    work[key] = default_logit
-            # Ensure text_projection alias for models with projection; if projection absent (CLIP-L), drop both.
-            if keep_projection:
-                if "transformer.text_projection.weight" in work and "text_projection.weight" not in work:
-                    work["text_projection.weight"] = work["transformer.text_projection.weight"]
-                if "text_projection.weight" in work and "transformer.text_projection.weight" not in work:
-                    work["transformer.text_projection.weight"] = work["text_projection.weight"]
-            else:
-                work.pop("text_projection.weight", None)
-                work.pop("transformer.text_projection.weight", None)
-
-            # Check for essential keys with or without transformer prefix
-            _ESSENTIAL_KEYS_ALT = (
-                "text_model.embeddings.token_embedding.weight",
-                "text_model.embeddings.position_embedding.weight",
-            )
-            has_essentials = _has_essentials(work) or all(
-                any(k.endswith(key.split(".")[-1]) for k in work.keys()) for key in _ESSENTIAL_KEYS
-            )
-            if not has_essentials:
-                sample_keys = list(sorted(work.keys()))[:10]
-                raise RuntimeError(
-                    "CLIP state dict normalisation failed for %s; missing essential tensors. Sample keys: %s"
-                    % (component, sample_keys)
-                )
-
-            return work
-
-        state_dict = _normalize_clip_state(
-            component_name,
+        state_dict = normalize_codex_clip_state_dict(
             state_dict,
             num_layers=cfg.num_hidden_layers,
             keep_projection=add_proj,
@@ -1130,10 +1018,17 @@ def _load_huggingface_component(
             model = IntegratedCLIP(CodexCLIPTextModel, cfg, add_text_projection=add_proj).to(**to_args)
 
         missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)
-        if missing:
-            CLIP_LOG.warning("CLIP missing (%s): %s", component_name, missing[:10])
-        if unexpected:
-            CLIP_LOG.debug("CLIP unexpected (%s): %s", component_name, unexpected[:10])
+        if missing or unexpected:
+            if strict_sdxl:
+                raise RuntimeError(
+                    "SDXL CLIP load failed (strict): missing/unexpected keys detected. "
+                    f"component={component_name} class={cls_name} missing={len(missing)} unexpected={len(unexpected)} "
+                    f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+                )
+            if missing:
+                CLIP_LOG.warning("CLIP missing (%s): %s", component_name, missing[:10])
+            if unexpected:
+                CLIP_LOG.debug("CLIP unexpected (%s): %s", component_name, unexpected[:10])
         return model
 
     if cls_name == "T5EncoderModel":
@@ -1455,11 +1350,19 @@ def _load_huggingface_component(
             if unexpected:
                 LOGGER.warning('%s Unexpected: %d keys: %s', core_label, len(unexpected), unexpected[:10])
         else:
-            try:
-                from .state_dict import safe_load_state_dict as _safe_load
-                _safe_load(model, state_dict, log_name=core_label)
-            except Exception:
-                load_state_dict(model, state_dict, log_name=core_label)
+            from .state_dict import safe_load_state_dict as _safe_load
+            if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER):
+                missing, unexpected = _safe_load(model, state_dict, log_name=core_label)
+                if missing or unexpected:
+                    raise RuntimeError(
+                        f"SDXL core load failed (strict): {core_label} missing={len(missing)} unexpected={len(unexpected)} "
+                        f"missing_sample={missing[:10]} unexpected_sample={unexpected[:10]}"
+                    )
+            else:
+                try:
+                    _safe_load(model, state_dict, log_name=core_label)
+                except Exception:
+                    load_state_dict(model, state_dict, log_name=core_label)
 
         # Avoid assigning to model.config (read-only on diffusers models)
         model.storage_dtype = storage_dtype

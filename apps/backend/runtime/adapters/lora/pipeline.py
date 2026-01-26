@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: LoRA pipeline helpers for patch dict building and variant detection.
 Converts parsed LoRA tensors into `ModelPatcher` patch dictionaries and provides a small helper to describe which adapter variants are present in a file.
+Patch dictionary keys may be plain parameter names or `(parameter, offset)` tuples for slice patches.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `VARIANT_LABELS` (constant): Mapping from `PatchKind` to stable string labels for variant reporting.
@@ -22,7 +23,7 @@ from typing import Dict, Mapping, Set
 
 import torch
 
-from apps.backend.runtime.adapters.base import PatchKind
+from apps.backend.runtime.adapters.base import PatchKind, PatchTarget
 from apps.backend.runtime.adapters.lora.loader import parse_lora_tensors
 from apps.backend.runtime.adapters.lora.types import (
     DiffWeights,
@@ -44,8 +45,8 @@ VARIANT_LABELS = {
 }
 
 
-def convert_specs_to_patch_dict(specs) -> Dict[str, tuple]:
-    patch_dict: Dict[str, tuple] = {}
+def convert_specs_to_patch_dict(specs) -> Dict[PatchTarget, tuple]:
+    patch_dict: Dict[PatchTarget, tuple] = {}
     for spec in specs:
         payload = spec.payload
         if spec.kind == PatchKind.LORA:
@@ -115,11 +116,11 @@ def convert_specs_to_patch_dict(specs) -> Dict[str, tuple]:
     return patch_dict
 
 
-def build_patch_dicts(tensors: Mapping[str, torch.Tensor], to_load: Dict[str, str]) -> Dict[str, tuple]:
+def build_patch_dicts(tensors: Mapping[str, torch.Tensor], to_load: Dict[str, PatchTarget]) -> Dict[PatchTarget, tuple]:
     specs, _ = parse_lora_tensors(tensors, to_load)
     return convert_specs_to_patch_dict(specs)
 
 
-def describe_lora_file(tensors: Mapping[str, torch.Tensor], to_load: Dict[str, str]) -> Set[str]:
+def describe_lora_file(tensors: Mapping[str, torch.Tensor], to_load: Dict[str, PatchTarget]) -> Set[str]:
     patches, _ = parse_lora_tensors(tensors, to_load)
     return {VARIANT_LABELS[p.kind] for p in patches if p.kind in VARIANT_LABELS}

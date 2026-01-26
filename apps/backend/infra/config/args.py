@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Backend CLI argument parsing and runtime memory config bootstrap.
 Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smart offload) and turns argv/env into a `RuntimeMemoryConfig`.
+Supports separate text-encoder storage vs compute dtype (`--te-dtype` vs `--te-compute-dtype`) for stability and performance tuning.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
@@ -239,6 +240,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preferred dtype for text encoder (overrides saved WebUI settings).",
     )
     parser.add_argument(
+        "--te-compute-dtype",
+        choices=["auto", "fp16", "bf16", "fp32"],
+        default=None,
+        help=(
+            "Compute dtype for text encoder activations (distinct from --te-dtype storage). "
+            "Default is fp32 for stability."
+        ),
+    )
+    parser.add_argument(
         "--vae-dtype",
         choices=["auto", "fp16", "bf16", "fp32"],
         default=None,
@@ -257,6 +267,7 @@ _DEVICE_DIRECTIVES = (
 _DTYPE_DIRECTIVES = (
     ("core_dtype", "codex_core_dtype"),
     ("te_dtype", "codex_te_dtype"),
+    ("te_compute_dtype", "codex_te_compute_dtype"),
     ("vae_dtype", "codex_vae_dtype"),
 )
 
@@ -521,6 +532,14 @@ def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.
         if forced:
             policy.forced_dtype = forced
 
+        if role == DeviceRole.TEXT_ENCODER:
+            compute_choice = getattr(ns, "codex_te_compute_dtype", None)
+            forced_compute = _torch_dtype_for_choice(compute_choice)
+            if device_choice == "cpu" and forced_compute and forced_compute != "float32":
+                forced_compute = "float32"
+            if forced_compute:
+                policy.forced_compute_dtype = forced_compute
+
 
 def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None:
     def _set_core_dtype(val: str | None) -> None:
@@ -606,6 +625,12 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     _set_te_dtype(te_dtype_choice or te_dtype_raw)
     ns.codex_te_device = te_device_choice
     ns.codex_te_dtype = te_dtype_choice
+
+    te_compute_dtype_raw = getattr(ns, "codex_te_compute_dtype", None)
+    te_compute_dtype_choice = _normalize_dtype_choice(te_compute_dtype_raw, allow_fp8=False)
+    if te_device_choice == "cpu" and te_compute_dtype_choice not in (None, "fp32"):
+        te_compute_dtype_choice = "fp32"
+    ns.codex_te_compute_dtype = te_compute_dtype_choice
 
     if te_device_choice == "cpu" and not getattr(ns, "clip_in_fp32", False):
         ns.clip_in_fp32 = True

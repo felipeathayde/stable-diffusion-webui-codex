@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Classic (legacy-style) text processing engine for prompt parsing and conditioning assembly.
 Implements emphasis parsing, textual inversion embedding injection, and token chunking for CLIP-based text encoders, integrating with
 Codex runtime memory management for device placement and safe execution.
+Matches WebUI `clip_skip` semantics: `clip_skip=1` uses the post-final-layer-norm embedding (`last_hidden_state`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PromptChunkFix` (namedtuple): Single embedding “fix” applied at a specific token offset (used by textual inversion).
@@ -204,12 +205,36 @@ class ClassicTextProcessingEngine:
             # Route via wrapper to let it normalise return types across variants
             outputs = self.text_encoder(tokens_device, **kwargs)
 
-            layer_id = - max(self.clip_skip, self.minimal_clip_skip)
-            z = outputs.hidden_states[layer_id]
+            effective_clip_skip = max(int(self.clip_skip), int(self.minimal_clip_skip))
+            hidden_states = getattr(outputs, "hidden_states", None)
 
-            if self.final_layer_norm:
-                # final_layer_norm lives on the inner text model
-                z = self.text_encoder.transformer.text_model.final_layer_norm(z)
+            # Match WebUI semantics: clip_skip=1 means "no skip" and must use the
+            # *post* final-layer-norm embedding (HF: outputs.last_hidden_state).
+            if effective_clip_skip <= 1:
+                z = getattr(outputs, "last_hidden_state", None)
+                if not isinstance(z, torch.Tensor):
+                    if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
+                        raise RuntimeError("CLIP output is missing both last_hidden_state and hidden_states.")
+                    z = hidden_states[-1]
+                    final_ln = getattr(getattr(self.text_encoder.transformer, "text_model", None), "final_layer_norm", None)
+                    if callable(final_ln):
+                        z = final_ln(z)
+                    else:
+                        raise RuntimeError(
+                            "CLIP output is missing last_hidden_state and the text model lacks final_layer_norm; "
+                            "cannot produce a normalized clip_skip=1 embedding."
+                        )
+            else:
+                if not isinstance(hidden_states, (tuple, list)) or not hidden_states:
+                    raise RuntimeError("CLIP output is missing hidden_states (required for clip_skip > 1).")
+                if effective_clip_skip > len(hidden_states):
+                    raise ValueError(
+                        f"clip_skip={effective_clip_skip} exceeds available hidden_states ({len(hidden_states)})."
+                    )
+                z = hidden_states[-effective_clip_skip]
+                if self.final_layer_norm:
+                    # final_layer_norm lives on the inner text model
+                    z = self.text_encoder.transformer.text_model.final_layer_norm(z)
 
             pooled_output = outputs.pooler_output if self.return_pooled else None
             if pooled_output is not None and self.text_projection and self.embedding_key != 'clip_l':

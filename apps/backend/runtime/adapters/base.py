@@ -11,6 +11,7 @@ Defines patch kinds/specs and provides helpers for tensor casting/shape coercion
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PatchKind` (enum): Patch variant identifiers (LoRA/LoHa/LoKr/GLoRA/Diff/Set).
+- `PatchTarget` (type alias): Patch target key (parameter name or `(parameter, offset)` tuple for slice patches).
 - `PatchSpec` (dataclass): Patch record ready to be consumed by `ModelPatcher` (parameter + kind + payload).
 - `cast_tensor` (function): Casts a tensor to a target device/dtype using runtime memory management.
 - `ensure_same_shape` (function): Reshapes a tensor to match a target shape when needed.
@@ -24,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Iterable
+from typing import Iterable, TypeAlias
 
 import torch
 
@@ -40,11 +41,15 @@ class PatchKind(Enum):
     SET = auto()
 
 
+PatchOffset: TypeAlias = tuple[int, int, int]
+PatchTarget: TypeAlias = str | tuple[str, PatchOffset]
+
+
 @dataclass(frozen=True)
 class PatchSpec:
     """Patch ready to be consumed by ModelPatcher."""
 
-    parameter: str
+    parameter: PatchTarget
     kind: PatchKind
     payload: object
 

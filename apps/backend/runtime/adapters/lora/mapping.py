@@ -7,12 +7,13 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: LoRA key mapping helpers for CLIP and UNet modules.
-Builds stable key maps translating LoRA naming conventions into model parameter names, including architecture-aware UNet mapping using diffusers key conversion.
+Builds stable key maps translating LoRA naming conventions into model patch targets (usually parameter names; sometimes `(parameter, offset)` tuples for slice patches),
+including architecture-aware UNet mapping using diffusers key conversion.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `LORA_CLIP_MAP` (constant): CLIP attention/MLP suffix mapping used for legacy LoRA key compatibility.
 - `_register_generic_weights` (function): Adds generic `{prefix: weight}` mappings for raw state dict keys.
-- `model_lora_keys_clip` (function): Builds the LoRA-key → CLIP/text-encoder parameter map.
+- `model_lora_keys_clip` (function): Builds the LoRA-key → CLIP/text-encoder patch-target map (supports slice targets for fused-QKV encoders).
 - `model_lora_keys_unet` (function): Builds the LoRA-key → UNet parameter map (includes diffusers mapping for UNet architectures).
 """
 
@@ -22,6 +23,7 @@ from typing import Dict
 
 from apps.backend.runtime.misc.diffusers_state_dict import unet_to_diffusers
 from apps.backend.runtime.model_registry.specs import CodexCoreArchitecture
+from apps.backend.runtime.adapters.base import PatchTarget
 
 
 LORA_CLIP_MAP = {
@@ -41,9 +43,11 @@ def _register_generic_weights(state_dict_keys, key_map):
             key_map[key[:-7]] = key
 
 
-def model_lora_keys_clip(model, key_map: Dict[str, str] | None = None) -> Dict[str, str]:
-    state_keys = list(model.state_dict().keys())
-    out = dict(key_map or {})
+def model_lora_keys_clip(model, key_map: Dict[str, PatchTarget] | None = None) -> Dict[str, PatchTarget]:
+    state = model.state_dict()
+    state_keys = list(state.keys())
+    state_key_set = set(state_keys)
+    out: Dict[str, PatchTarget] = dict(key_map or {})
     _register_generic_weights(state_keys, out)
 
     config = getattr(model, "model_config", None)
@@ -74,16 +78,46 @@ def model_lora_keys_clip(model, key_map: Dict[str, str] | None = None) -> Dict[s
         alias_index = alias_indices[alias]
         component_name = _component_for_alias(alias)
 
+        in_proj_probe = f"{alias}.transformer.text_model.encoder.layers.0.self_attn.in_proj.weight"
+        fused_in_proj_chunk: int | None = None
+        if in_proj_probe in state:
+            tensor = state.get(in_proj_probe)
+            shape = getattr(tensor, "shape", None)
+            if shape and len(shape) >= 1:
+                total = int(shape[0])
+                if total % 3 != 0:
+                    raise RuntimeError(
+                        "LoRA mapping: fused CLIP in_proj first dim is not divisible by 3 "
+                        f"(alias={alias!r} shape={shape!r})"
+                    )
+                fused_in_proj_chunk = total // 3
+
+        def _fused_qkv_target(layer: int, proj: str) -> PatchTarget | None:
+            if fused_in_proj_chunk is None:
+                return None
+            index = {"q": 0, "k": 1, "v": 2}.get(proj)
+            if index is None:
+                return None
+            in_proj_key = f"{alias}.transformer.text_model.encoder.layers.{layer}.self_attn.in_proj.weight"
+            if in_proj_key not in state:
+                return None
+            start = index * fused_in_proj_chunk
+            return (in_proj_key, (0, start, fused_in_proj_chunk))
+
         # CLIP-style layers
         for layer in range(32):
             for suffix, mapped in LORA_CLIP_MAP.items():
                 key = f"{alias}.transformer.text_model.encoder.layers.{layer}.{suffix}.weight"
-                if key not in state_keys:
+                target: PatchTarget | None = key if key in state_key_set else None
+                if target is None and suffix.startswith("self_attn.") and suffix.endswith("_proj"):
+                    proj = suffix[len("self_attn.") : -len("_proj")]
+                    target = _fused_qkv_target(layer, proj)
+                if target is None:
                     continue
-                out[f"lora_te{alias_index}_text_model_encoder_layers_{layer}_{mapped}"] = key
-                out[f"lora_te_text_model_encoder_layers_{layer}_{mapped}"] = key
+                out[f"lora_te{alias_index}_text_model_encoder_layers_{layer}_{mapped}"] = target
+                out[f"lora_te_text_model_encoder_layers_{layer}_{mapped}"] = target
                 if component_name:
-                    out[f"{component_name}.text_model.encoder.layers.{layer}.{suffix}"] = key
+                    out[f"{component_name}.text_model.encoder.layers.{layer}.{suffix}"] = target
 
         # T5-style layers
         for key in state_keys:

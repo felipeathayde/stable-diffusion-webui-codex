@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during
 engine orchestration.
+Also exposes per-role compute dtype selection (activation precision) distinct from storage dtype when manual casting is enabled.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -558,6 +559,50 @@ class CodexMemoryManager:
         if state is None:
             return supported[0]
         return state.select(supported)
+
+    def compute_dtype_for_role(
+        self,
+        role: DeviceRole,
+        *,
+        supported: Sequence[torch.dtype] = (torch.float16, torch.bfloat16, torch.float32),
+    ) -> torch.dtype:
+        """Return the preferred compute dtype for a component role.
+
+        This is distinct from `dtype_for_role` (storage dtype). The compute dtype controls
+        activation precision during forward passes when `allow_manual_cast` is enabled.
+
+        Default policy:
+        - TEXT_ENCODER computes in fp32 by default for stability.
+        - Other roles compute in the selected storage dtype unless overridden.
+        """
+
+        storage_dtype = self.dtype_for_role(role, supported=supported)
+        policy = self._config.component_policy(role)
+        device = self.get_device(role)
+
+        raw_forced = getattr(policy, "forced_compute_dtype", None)
+        if raw_forced:
+            try:
+                forced = getattr(torch, raw_forced)
+            except AttributeError as exc:
+                raise MemoryConfigurationError(
+                    f"Unsupported compute dtype '{raw_forced}' for {role.value}."
+                ) from exc
+            if device.type == "cpu" and torch.float32 in supported and forced != torch.float32:
+                return torch.float32
+            if forced not in supported:
+                raise MemoryConfigurationError(
+                    f"Compute dtype '{raw_forced}' for {role.value} is not supported on {device} (supported={supported})."
+                )
+            compute = forced
+        else:
+            compute = torch.float32 if role == DeviceRole.TEXT_ENCODER else storage_dtype
+
+        if compute != storage_dtype and not policy.allow_manual_cast:
+            raise MemoryConfigurationError(
+                f"{role.value} compute dtype={compute} requires allow_manual_cast=True (storage dtype={storage_dtype})."
+            )
+        return compute
 
     def current_precision(self, role: DeviceRole) -> Optional[torch.dtype]:
         state = self._precision_states.get(role)

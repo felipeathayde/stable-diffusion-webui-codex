@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
 This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
 ready for orchestrator/engine execution (with memory-management hooks). SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
+SDXL text encoders support QKV layout selection via `CODEX_SDXL_TE_QKV_IMPL=auto|split|fused` (default: auto).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -769,7 +770,12 @@ def _load_huggingface_component(
         to_args = dict(device=te_device, dtype=te_dtype)
         add_proj = component_name in {"text_encoder_2", "text_encoder_3"}
         from .state_dict import safe_load_state_dict
-        from apps.backend.runtime.common.nn.clip_text_cx import CodexCLIPTextConfig, CodexCLIPTextModel
+        from apps.backend.infra.config.sdxl_te_qkv_impl import SdxlTeQkvImpl, read_sdxl_te_qkv_impl
+        from apps.backend.runtime.common.nn.clip_text_cx import (
+            CodexCLIPTextConfig,
+            CodexCLIPTextModel,
+            CodexCLIPTextModelFusedQKV,
+        )
         from apps.backend.runtime.models.clip_key_normalization import normalize_codex_clip_state_dict
 
         # CLIP-ViT-Large-patch14 default config (used by Flux CLIP-L and SD1.x/2.x)
@@ -829,6 +835,7 @@ def _load_huggingface_component(
                     raise RuntimeError(f"SDXL: unexpected CLIP component name: {component_name!r}")
             elif family is ModelFamily.SDXL_REFINER:
                 if component_name == "text_encoder":
+                    add_proj = True
                     config_json = _CLIP_G_DEFAULT_CONFIG
                 else:
                     raise RuntimeError(f"SDXL refiner: unexpected CLIP component name: {component_name!r}")
@@ -867,16 +874,29 @@ def _load_huggingface_component(
                     config_json = _CLIP_L_DEFAULT_CONFIG
 
         cfg = CodexCLIPTextConfig.from_dict(config_json)
-        if family is ModelFamily.SDXL and component_name in {"text_encoder", "text_encoder_2"}:
+
+        clip_model_cls = CodexCLIPTextModel
+        if family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER) and component_name in {"text_encoder", "text_encoder_2"}:
             from apps.backend.runtime.state_dict.keymap_sdxl_clip import (
                 remap_sdxl_clip_g_state_dict,
                 remap_sdxl_clip_l_state_dict,
             )
 
-            if component_name == "text_encoder":
-                _, state_dict = remap_sdxl_clip_l_state_dict(state_dict)
+            requested_qkv = read_sdxl_te_qkv_impl()
+            requested_impl = requested_qkv.value
+            if family is ModelFamily.SDXL and component_name == "text_encoder":
+                style, state_dict = remap_sdxl_clip_l_state_dict(state_dict, qkv_impl=requested_impl)
             else:
-                _, state_dict = remap_sdxl_clip_g_state_dict(state_dict)
+                style, state_dict = remap_sdxl_clip_g_state_dict(state_dict, qkv_impl=requested_impl)
+
+            resolved_impl = requested_impl
+            if requested_qkv is SdxlTeQkvImpl.AUTO:
+                # auto keeps native layout: OpenCLIP stays fused, HF/Codex stays split.
+                from apps.backend.runtime.state_dict.key_mapping import KeyStyle
+
+                resolved_impl = "fused" if style is KeyStyle.OPENCLIP else "split"
+
+            clip_model_cls = CodexCLIPTextModelFusedQKV if resolved_impl == "fused" else CodexCLIPTextModel
         else:
             state_dict = normalize_codex_clip_state_dict(
                 state_dict,
@@ -886,7 +906,11 @@ def _load_huggingface_component(
             )
 
         with using_codex_operations(**to_args, manual_cast_enabled=True):
-            model = IntegratedCLIP(CodexCLIPTextModel, cfg, add_text_projection=add_proj).to(**to_args)
+            model = IntegratedCLIP(clip_model_cls, cfg, add_text_projection=add_proj).to(**to_args)
+
+        # Compute dtype is distinct from storage dtype. Keep weights in `te_dtype`,
+        # but allow activations to run in higher precision when configured.
+        model.transformer.compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.TEXT_ENCODER)
 
         missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)
         if missing or unexpected:

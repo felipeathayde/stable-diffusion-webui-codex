@@ -7,6 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Typed configuration models for runtime memory management (devices, swap, attention, and budgets).
+Includes per-role dtype settings for both storage dtype and optional compute dtype overrides.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DeviceBackend` (enum): Execution backend selection (auto/cuda/cpu/mps/xpu/directml).
@@ -15,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `SwapMethod` (enum): How tensors are copied during swap operations (blocked vs async).
 - `AttentionBackend` (enum): Preferred attention implementation.
 - `PrecisionFlags` (dataclass): Fine-grained dtype override flags for core/text/VAE/CLIP components.
-- `ComponentPolicy` (dataclass): Device/dtype expectations for a component role.
+- `ComponentPolicy` (dataclass): Device/dtype expectations for a component role (storage dtype + optional compute dtype override).
 - `SwapConfig` (dataclass): Swap strategy controlling offload behavior.
 - `AttentionConfig` (dataclass): Attention backend preferences and fallback flags.
 - `MemoryBudgets` (dataclass): Budget constraints for load/offload heuristics.
@@ -102,6 +103,7 @@ class ComponentPolicy:
 
     preferred_backend: DeviceBackend = DeviceBackend.AUTO
     forced_dtype: Optional[str] = None
+    forced_compute_dtype: Optional[str] = None
     allow_offload: bool = True
     allow_manual_cast: bool = True
 

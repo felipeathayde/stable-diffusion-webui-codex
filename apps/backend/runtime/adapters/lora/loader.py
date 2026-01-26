@@ -9,8 +9,10 @@ Required Notice: see NOTICE
 Purpose: LoRA tensor parsing into runtime patch specs (LoRA/LoHa/LoKr/GLORA/DIFF/SET).
 Parses adapter tensors into typed `PatchSpec` entries for the runtime adapter pipeline, supporting multiple LoRA conventions and optional
 metadata keys (alpha/dora_scale), and logs missing keys for diagnostics.
+Patch targets may be plain parameter names or `(parameter, offset)` tuples for slice patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_bias_target_for` (function): Derives a bias patch target from a weight patch target (preserving offset slices when present).
 - `_tensor_item` (function): Converts scalar tensors (alpha/dora_scale) into Python floats.
 - `_maybe_convert_bfl_control` (function): Normalizes certain BFL/Control-style tensor key patterns into Codex naming.
 - `_select_first_present` (function): Returns the first matching key + tensor from a list of candidate names.
@@ -29,7 +31,7 @@ from typing import Dict, Iterable, List, Mapping, Tuple
 
 import torch
 
-from apps.backend.runtime.adapters.base import PatchKind, PatchSpec, log_missing_keys
+from apps.backend.runtime.adapters.base import PatchKind, PatchSpec, PatchTarget, log_missing_keys
 from apps.backend.runtime.adapters.lora.types import (
     DiffWeights,
     GloraWeights,
@@ -41,6 +43,17 @@ from apps.backend.runtime.adapters.lora.types import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _bias_target_for(target: PatchTarget) -> PatchTarget:
+    base, offset = (target if isinstance(target, tuple) else (target, None))
+    if base.endswith(".weight"):
+        bias_base = base[:-len(".weight")] + ".bias"
+    else:
+        bias_base = f"{base}.bias"
+    if offset is None:
+        return bias_base
+    return (bias_base, offset)
 
 
 def _tensor_item(value: torch.Tensor | None) -> float | None:
@@ -70,7 +83,7 @@ def _select_first_present(tensors: Mapping[str, torch.Tensor], names: Iterable[s
 
 def _extract_lora(
     logical_key: str,
-    target_param: str,
+    target_param: PatchTarget,
     tensors: Mapping[str, torch.Tensor],
     loaded: set[str],
 ) -> PatchSpec | None:
@@ -118,7 +131,7 @@ def _extract_lora(
     return make_spec(target_param, PatchKind.LORA, payload)
 
 
-def _extract_loha(logical_key: str, target_param: str, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> PatchSpec | None:
+def _extract_loha(logical_key: str, target_param: PatchTarget, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> PatchSpec | None:
     base = f"{logical_key}."
     required = ["hada_w1_a", "hada_w1_b", "hada_w2_a", "hada_w2_b"]
     if not all(f"{base}{name}" in tensors for name in required):
@@ -154,7 +167,7 @@ def _extract_loha(logical_key: str, target_param: str, tensors: Mapping[str, tor
     return make_spec(target_param, PatchKind.LOHA, payload)
 
 
-def _extract_lokr(logical_key: str, target_param: str, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> PatchSpec | None:
+def _extract_lokr(logical_key: str, target_param: PatchTarget, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> PatchSpec | None:
     base = f"{logical_key}."
     keys = {
         "w1": tensors.get(f"{base}lokr_w1"),
@@ -190,7 +203,7 @@ def _extract_lokr(logical_key: str, target_param: str, tensors: Mapping[str, tor
     return make_spec(target_param, PatchKind.LOKR, payload)
 
 
-def _extract_glora(logical_key: str, target_param: str, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> PatchSpec | None:
+def _extract_glora(logical_key: str, target_param: PatchTarget, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> PatchSpec | None:
     base = f"{logical_key}."
     required = ["a1.weight", "a2.weight", "b1.weight", "b2.weight"]
     if not all(f"{base}{name}" in tensors for name in required):
@@ -218,7 +231,7 @@ def _extract_glora(logical_key: str, target_param: str, tensors: Mapping[str, to
     return make_spec(target_param, PatchKind.GLORA, payload)
 
 
-def _extract_diff(logical_key: str, target_param: str, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> List[PatchSpec]:
+def _extract_diff(logical_key: str, target_param: PatchTarget, tensors: Mapping[str, torch.Tensor], loaded: set[str]) -> List[PatchSpec]:
     specs: List[PatchSpec] = []
     diff = tensors.get(f"{logical_key}.diff")
     if diff is not None:
@@ -226,10 +239,7 @@ def _extract_diff(logical_key: str, target_param: str, tensors: Mapping[str, tor
         specs.append(make_spec(target_param, PatchKind.DIFF, DiffWeights(weight=diff)))
     bias_key = f"{logical_key}.diff_b"
     if bias_key in tensors:
-        if target_param.endswith(".weight"):
-            bias_target = target_param[:-len(".weight")] + ".bias"
-        else:
-            bias_target = f"{target_param}.bias"
+        bias_target = _bias_target_for(target_param)
         specs.append(make_spec(bias_target, PatchKind.DIFF, DiffWeights(weight=tensors[bias_key])))
         loaded.add(bias_key)
     set_weight_key = f"{logical_key}.set_weight"
@@ -239,7 +249,7 @@ def _extract_diff(logical_key: str, target_param: str, tensors: Mapping[str, tor
     return specs
 
 
-def parse_lora_tensors(tensors: Mapping[str, torch.Tensor], to_load: Dict[str, str]) -> tuple[List[PatchSpec], set[str]]:
+def parse_lora_tensors(tensors: Mapping[str, torch.Tensor], to_load: Dict[str, PatchTarget]) -> tuple[List[PatchSpec], set[str]]:
     tensor_map = _maybe_convert_bfl_control(tensors)
     loaded: set[str] = set()
     specs: List[PatchSpec] = []

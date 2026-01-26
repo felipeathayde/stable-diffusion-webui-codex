@@ -17,7 +17,9 @@ Symbols (top-level; keep in sync; no ghosts):
 Notes: Target keyspace matches `apps/backend/runtime/common/nn/clip.py:IntegratedCLIP` (and related Codex CLIP wrappers).
 Key policies (non-exhaustive): strip known wrapper prefixes; drop HF-only buffers (`*.position_ids`) and refuse other unknown non-weight keys;
 canonicalize `logit_scale` (default `ln(100)`); canonicalize optional projection weights into `transformer.text_projection.weight` (CLIP-G; lazy transpose);
-for OpenCLIP-style fused attention weights (`attn.in_proj_{weight,bias}`), expose Q/K/V projections as lazy slices.
+for OpenCLIP-style fused attention weights (`attn.in_proj_{weight,bias}`), expose either split Q/K/V projections or fused `in_proj` keys.
+The QKV layout can be selected via the `qkv_impl` argument (`"auto"`, `"split"` or `"fused"`).
+`"auto"` keeps the native layout: OpenCLIP-style weights stay fused, HF/Codex weights stay split.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from __future__ import annotations
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from math import log
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from apps.backend.runtime.state_dict.key_mapping import (
     KeyMappingError,
@@ -38,6 +40,7 @@ from apps.backend.runtime.state_dict.key_mapping import (
 )
 
 _T = TypeVar("_T")
+_QKVImpl = Literal["auto", "split", "fused"]
 
 _WRAPPER_PREFIXES: tuple[str, ...] = (
     "conditioner.embedders.0.transformer.",
@@ -100,10 +103,17 @@ _DETECTOR = KeyStyleDetector(
     ),
 )
 
-_ESSENTIAL_KEYS: tuple[str, ...] = (
+_ESSENTIAL_KEYS_SPLIT: tuple[str, ...] = (
     "transformer.text_model.embeddings.token_embedding.weight",
     "transformer.text_model.embeddings.position_embedding.weight",
     "transformer.text_model.encoder.layers.0.self_attn.q_proj.weight",
+    "transformer.text_model.final_layer_norm.weight",
+)
+
+_ESSENTIAL_KEYS_FUSED: tuple[str, ...] = (
+    "transformer.text_model.embeddings.token_embedding.weight",
+    "transformer.text_model.embeddings.position_embedding.weight",
+    "transformer.text_model.encoder.layers.0.self_attn.in_proj.weight",
     "transformer.text_model.final_layer_norm.weight",
 )
 
@@ -120,6 +130,13 @@ class _SliceQKV:
 
 
 @dataclass(frozen=True, slots=True)
+class _ConcatQKV:
+    q_key: str
+    k_key: str
+    v_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class _Transpose:
     key: str
 
@@ -129,7 +146,7 @@ class _DefaultLogitScale:
     value: float
 
 
-_Spec = _Direct | _SliceQKV | _Transpose | _DefaultLogitScale
+_Spec = _Direct | _SliceQKV | _ConcatQKV | _Transpose | _DefaultLogitScale
 
 
 class _SDXLCLIPKeymapView(MutableMapping[str, _T]):
@@ -172,6 +189,26 @@ class _SDXLCLIPKeymapView(MutableMapping[str, _T]):
         except Exception as exc:
             raise KeyMappingError("Failed to transpose projection tensor") from exc
 
+    @staticmethod
+    def _concat_qkv(values: tuple[_T, _T, _T]) -> _T:
+        try:
+            import torch
+
+            q, k, v = values
+            if not isinstance(q, torch.Tensor) or not isinstance(k, torch.Tensor) or not isinstance(v, torch.Tensor):
+                raise TypeError("Expected torch.Tensor values for QKV concatenation")
+            return torch.cat((q, k, v), dim=0)
+        except Exception as exc:
+            raise KeyMappingError("Failed to concatenate Q/K/V tensors into fused in_proj") from exc
+
+    def _get_source(self, key: str) -> _T:
+        cached = self._source_cache.get(key)
+        if cached is not None:
+            return cached
+        v = self._base[key]
+        self._source_cache[key] = v
+        return v
+
     def __getitem__(self, k: str) -> _T:
         spec = self._map[k]
         if isinstance(spec, _Direct):
@@ -180,11 +217,16 @@ class _SDXLCLIPKeymapView(MutableMapping[str, _T]):
             cached = self._derived_cache.get(k)
             if cached is not None:
                 return cached
-            base_tensor = self._source_cache.get(spec.key)
-            if base_tensor is None:
-                base_tensor = self._base[spec.key]
-                self._source_cache[spec.key] = base_tensor
+            base_tensor = self._get_source(spec.key)
             v = self._slice_in_proj(base_tensor, spec.index)
+        elif isinstance(spec, _ConcatQKV):
+            cached = self._derived_cache.get(k)
+            if cached is not None:
+                return cached
+            q = self._get_source(spec.q_key)
+            k_tensor = self._get_source(spec.k_key)
+            v_tensor = self._get_source(spec.v_key)
+            v = self._concat_qkv((q, k_tensor, v_tensor))
         elif isinstance(spec, _Transpose):
             cached = self._derived_cache.get(k)
             if cached is not None:
@@ -200,7 +242,8 @@ class _SDXLCLIPKeymapView(MutableMapping[str, _T]):
         else:  # pragma: no cover - defensive
             raise KeyError(k)
 
-        self._derived_cache[k] = v
+        if not isinstance(spec, _ConcatQKV):
+            self._derived_cache[k] = v
         return v
 
     def __setitem__(self, k: str, v: _T) -> None:
@@ -245,7 +288,13 @@ def _remap_clip_state_dict(
     num_layers: int,
     keep_projection: bool,
     transpose_projection: bool,
+    qkv_impl: _QKVImpl,
 ) -> tuple[KeyStyle, MutableMapping[str, _T]]:
+    if qkv_impl not in ("auto", "split", "fused"):
+        raise KeyMappingError(
+            f"sdxl_clip: invalid qkv_impl={qkv_impl!r} (expected one of: auto, split, fused)"
+        )
+
     if len(state_dict) == 1 and "state_dict" in state_dict:
         inner = state_dict.get("state_dict")
         if isinstance(inner, MutableMapping):
@@ -259,12 +308,49 @@ def _remap_clip_state_dict(
     mapping: dict[str, _Spec] = {}
     seen_logit: str | None = None
     seen_proj: str | None = None
+    if qkv_impl == "auto":
+        wants_fused_qkv = style is KeyStyle.OPENCLIP
+    else:
+        wants_fused_qkv = qkv_impl == "fused"
+
+    qkv_weights_by_layer: dict[int, dict[str, str]] = {}
+    qkv_biases_by_layer: dict[int, dict[str, str]] = {}
 
     def _put(dst: str, spec: _Spec) -> None:
         prev = mapping.get(dst)
         if prev is not None:
             raise KeyMappingError(f"sdxl_clip: duplicate destination key {dst!r} (collision)")
         mapping[dst] = spec
+
+    def _capture_qkv(dst_key: str, raw_key: str) -> bool:
+        # For fused-QKV output, consume split q/k/v projections from HF/Codex input keys
+        # and later synthesize `self_attn.in_proj.{weight,bias}` via concatenation.
+        if not wants_fused_qkv:
+            return False
+        parts = dst_key.split(".")
+        if len(parts) < 8:
+            return False
+        if parts[0] != "transformer" or parts[1] != "text_model":
+            return False
+        if parts[2] != "encoder" or parts[3] != "layers" or not parts[4].isdigit():
+            return False
+        layer = int(parts[4])
+        if layer < 0 or layer >= int(num_layers):
+            return False
+        if parts[5] != "self_attn":
+            return False
+        proj = parts[6]
+        if proj not in {"q_proj", "k_proj", "v_proj"}:
+            return False
+        tail = parts[7:]
+        if len(tail) != 1 or tail[0] not in {"weight", "bias"}:
+            return False
+        proj_letter = proj[0]
+        if tail[0] == "weight":
+            qkv_weights_by_layer.setdefault(layer, {})[proj_letter] = raw_key
+        else:
+            qkv_biases_by_layer.setdefault(layer, {})[proj_letter] = raw_key
+        return True
 
     for raw_key, key in normalized:
         if key.endswith(".position_ids"):
@@ -291,13 +377,18 @@ def _remap_clip_state_dict(
 
         if style is KeyStyle.CODEX:
             if key.startswith("transformer.text_model."):
+                if _capture_qkv(key, raw_key):
+                    continue
                 _put(key, _Direct(raw_key))
                 continue
             raise KeyMappingError(f"sdxl_clip: unsupported CODEX key {key!r}")
 
         if style is KeyStyle.HF:
             if key.startswith("text_model."):
-                _put(f"transformer.{key}", _Direct(raw_key))
+                dst = f"transformer.{key}"
+                if _capture_qkv(dst, raw_key):
+                    continue
+                _put(dst, _Direct(raw_key))
                 continue
             raise KeyMappingError(f"sdxl_clip: unsupported HF key {key!r}")
 
@@ -343,9 +434,12 @@ def _remap_clip_state_dict(
 
             if len(tail) == 2 and tail[0] == "attn" and tail[1] in {"in_proj_weight", "in_proj_bias"}:
                 suffix = "weight" if tail[1].endswith("_weight") else "bias"
-                _put(base + f"self_attn.q_proj.{suffix}", _SliceQKV(raw_key, 0))
-                _put(base + f"self_attn.k_proj.{suffix}", _SliceQKV(raw_key, 1))
-                _put(base + f"self_attn.v_proj.{suffix}", _SliceQKV(raw_key, 2))
+                if wants_fused_qkv:
+                    _put(base + f"self_attn.in_proj.{suffix}", _Direct(raw_key))
+                else:
+                    _put(base + f"self_attn.q_proj.{suffix}", _SliceQKV(raw_key, 0))
+                    _put(base + f"self_attn.k_proj.{suffix}", _SliceQKV(raw_key, 1))
+                    _put(base + f"self_attn.v_proj.{suffix}", _SliceQKV(raw_key, 2))
                 continue
 
             if len(tail) == 3 and tail[0] == "attn" and tail[1] == "out_proj" and tail[2] in {"weight", "bias"}:
@@ -360,12 +454,34 @@ def _remap_clip_state_dict(
         _put("logit_scale", _DefaultLogitScale(log(100.0)))
 
     if keep_projection and "transformer.text_projection.weight" not in mapping:
-        raise KeyMappingError(
-            "sdxl_clip: projection weights are required for this encoder but were not found "
-            "(expected one of: %s)" % (", ".join(_PROJ_KEYS),)
-        )
+            raise KeyMappingError(
+                "sdxl_clip: projection weights are required for this encoder but were not found "
+                "(expected one of: %s)" % (", ".join(_PROJ_KEYS),)
+            )
 
-    missing_essentials = [key for key in _ESSENTIAL_KEYS if key not in mapping]
+    if wants_fused_qkv:
+        for layer, weights in qkv_weights_by_layer.items():
+            if set(weights.keys()) != {"q", "k", "v"}:
+                missing = sorted({"q", "k", "v"} - set(weights.keys()))
+                raise KeyMappingError(
+                    "sdxl_clip: cannot build fused in_proj weights (missing split projections). "
+                    f"layer={layer} missing={missing}"
+                )
+            base = f"transformer.text_model.encoder.layers.{layer}."
+            _put(base + "self_attn.in_proj.weight", _ConcatQKV(weights["q"], weights["k"], weights["v"]))
+
+        for layer, biases in qkv_biases_by_layer.items():
+            if set(biases.keys()) != {"q", "k", "v"}:
+                missing = sorted({"q", "k", "v"} - set(biases.keys()))
+                raise KeyMappingError(
+                    "sdxl_clip: cannot build fused in_proj bias (missing split projections). "
+                    f"layer={layer} missing={missing}"
+                )
+            base = f"transformer.text_model.encoder.layers.{layer}."
+            _put(base + "self_attn.in_proj.bias", _ConcatQKV(biases["q"], biases["k"], biases["v"]))
+
+    essentials = _ESSENTIAL_KEYS_FUSED if wants_fused_qkv else _ESSENTIAL_KEYS_SPLIT
+    missing_essentials = [key for key in essentials if key not in mapping]
     if missing_essentials:
         sample = ", ".join(missing_essentials[:3])
         raise KeyMappingError(
@@ -384,7 +500,11 @@ def _remap_clip_state_dict(
     return style, _SDXLCLIPKeymapView(state_dict, mapping)
 
 
-def remap_sdxl_clip_l_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
+def remap_sdxl_clip_l_state_dict(
+    state_dict: MutableMapping[str, _T],
+    *,
+    qkv_impl: _QKVImpl = "auto",
+) -> tuple[KeyStyle, MutableMapping[str, _T]]:
     """Keymap SDXL base CLIP-L weights (text_encoder) into Codex IntegratedCLIP keys."""
 
     return _remap_clip_state_dict(
@@ -392,10 +512,15 @@ def remap_sdxl_clip_l_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[K
         num_layers=12,
         keep_projection=False,
         transpose_projection=False,
+        qkv_impl=qkv_impl,
     )
 
 
-def remap_sdxl_clip_g_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyStyle, MutableMapping[str, _T]]:
+def remap_sdxl_clip_g_state_dict(
+    state_dict: MutableMapping[str, _T],
+    *,
+    qkv_impl: _QKVImpl = "auto",
+) -> tuple[KeyStyle, MutableMapping[str, _T]]:
     """Keymap SDXL base CLIP-G weights (text_encoder_2) into Codex IntegratedCLIP keys."""
 
     return _remap_clip_state_dict(
@@ -403,6 +528,7 @@ def remap_sdxl_clip_g_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[K
         num_layers=32,
         keep_projection=True,
         transpose_projection=True,
+        qkv_impl=qkv_impl,
     )
 
 

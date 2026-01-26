@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Model-asset inventory scanning and caching.
 Builds a snapshot of local model files (VAEs, text encoders, LoRAs, WAN22 GGUF) and exposes cached helpers used by backend inventory endpoints and asset resolution.
+Text encoder entries also include an optional `slot` field (e.g. `clip_l`, `clip_g`) derived via header-only inspection.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Inventory` (dataclass): Container for scanned model inventories (vaes/text_encoders/loras/wan22/metadata).
@@ -18,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_hash_file_sha256` (function): Computes sha256 by directly reading the file (fallback when the registry cache fails).
 - `_get_file_sha256` (function): Computes/loads SHA256 for a file via the model registry cache.
 - `resolve_asset_by_sha` (function): Resolves a SHA256 hash to a file path using the current inventory snapshot.
+- `resolve_text_encoder_slot_by_sha` (function): Resolves a SHA256 hash to a cached text-encoder slot (when available).
 - `_SHA_TO_PATH` (constant): Lazy cache mapping `sha256 -> path` populated from the current inventory.
 - `scan_all` (function): Scans configured roots and returns an `Inventory` snapshot.
 - `init` (function): Initializes the process-local inventory cache.
@@ -98,6 +100,7 @@ def _get_file_sha256(path: str) -> str:
 
 # SHA256 -> Path resolution cache (populated during scan)
 _SHA_TO_PATH: Dict[str, str] = {}
+_SHA_TO_TEXT_ENCODER_SLOT: Dict[str, str] = {}
 
 
 def resolve_asset_by_sha(sha256: str) -> str | None:
@@ -116,6 +119,20 @@ def resolve_asset_by_sha(sha256: str) -> str | None:
                 _SHA_TO_PATH[sha] = path
     return _SHA_TO_PATH.get(sha256)
 
+def resolve_text_encoder_slot_by_sha(sha256: str) -> str | None:
+    """Resolve a text encoder sha256 to its cached slot label (if known)."""
+    global _SHA_TO_TEXT_ENCODER_SLOT
+    if not _SHA_TO_TEXT_ENCODER_SLOT:
+        inv = get()
+        for item in inv.get("text_encoders", []):
+            if not isinstance(item, dict):
+                continue
+            sha = item.get("sha256")
+            slot = item.get("slot")
+            if isinstance(sha, str) and sha and isinstance(slot, str) and slot:
+                _SHA_TO_TEXT_ENCODER_SLOT[sha] = slot
+    return _SHA_TO_TEXT_ENCODER_SLOT.get(str(sha256 or "").strip())
+
 
 def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inventory:
     mr = models_root or _models_root()
@@ -131,10 +148,27 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
 
     # Text encoders: per-engine roots from apps/paths.json.
     text_encoders: List[Dict[str, str]] = []
+    try:
+        from apps.backend.core.contracts.text_encoder_slots import TextEncoderSlotError, classify_text_encoder_slot
+    except Exception:
+        TextEncoderSlotError = Exception  # type: ignore[assignment,misc]
+        classify_text_encoder_slot = None  # type: ignore[assignment]
     for full in iter_text_encoder_files(models_root=mr):
         name = os.path.basename(full)
         entry: Dict[str, str] = {"name": name, "path": full}
         entry["sha256"] = _get_file_sha256(full)
+        if callable(classify_text_encoder_slot):
+            try:
+                slot = classify_text_encoder_slot(full)
+                entry["slot"] = str(slot)
+            except TextEncoderSlotError:
+                pass
+            except Exception as exc:
+                logging.getLogger("backend.inventory").debug(
+                    "text encoder slot classification failed for %s (%s)",
+                    full,
+                    exc.__class__.__name__,
+                )
         text_encoders.append(entry)
     text_encoders.sort(key=lambda d: (d["name"].lower(), d["path"].lower()))
     loras: List[Dict[str, str]] = []
@@ -177,6 +211,7 @@ def scan_all(models_root: str | None = None, hf_root: str | None = None) -> Inve
 def init(models_root: str | None = None, hf_root: str | None = None) -> None:
     global _CACHE
     _SHA_TO_PATH.clear()
+    _SHA_TO_TEXT_ENCODER_SLOT.clear()
     _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
 
 
@@ -195,5 +230,6 @@ def refresh(models_root: str | None = None, hf_root: str | None = None) -> Dict[
     """
     global _CACHE
     _SHA_TO_PATH.clear()
+    _SHA_TO_TEXT_ENCODER_SLOT.clear()
     _CACHE = scan_all(models_root=models_root, hf_root=hf_root)
     return asdict(_CACHE)

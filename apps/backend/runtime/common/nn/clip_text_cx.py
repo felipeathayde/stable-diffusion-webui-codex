@@ -15,12 +15,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_act` (function): Maps `ClipActivation` values to callable implementations.
 - `CodexCLIPTextConfig` (dataclass): Minimal CLIP text config used to build the model.
 - `_CLIPAttention` (class): Multi-head self-attention block.
+- `_CLIPAttentionFusedQKV` (class): Multi-head self-attention with fused QKV projection (`in_proj`).
 - `_CLIPMLP` (class): MLP block (`fc1`/`fc2` + activation).
 - `_CLIPLayer` (class): Encoder layer (self-attn + MLP) with residuals and layer norms.
 - `_CLIPEncoder` (class): Stack of `_CLIPLayer` blocks (optionally returning hidden states).
 - `_CLIPEmbeddings` (class): Token+position embeddings.
 - `_CLIPOutput` (class): HF-like output container (`last_hidden_state`, `hidden_states`, `pooler_output`).
 - `CodexCLIPTextModel` (class): Top-level text model wrapper exposing `.text_model` for API parity.
+- `CodexCLIPTextModelFusedQKV` (class): `CodexCLIPTextModel` variant using fused QKV attention.
 """
 
 from __future__ import annotations
@@ -90,11 +92,30 @@ class _CLIPAttention(nn.Module):
         q = self.q_proj(x).view(B, T, H, C // H).transpose(1, 2)  # B,H,T,hd
         k = self.k_proj(x).view(B, T, H, C // H).transpose(1, 2)
         v = self.v_proj(x).view(B, T, H, C // H).transpose(1, 2)
-        attn = torch.einsum("bhtd,bhTd->bhtT", q, k) * ((C // H) ** -0.5)
-        if mask is not None:
-            attn = attn + mask  # assume mask pre-shaped
-        w = attn.softmax(dim=-1)
-        o = torch.einsum("bhtT,bhTd->bhtd", w, v).transpose(1, 2).contiguous().view(B, T, C)
+        # SDPA is the canonical attention path in this repo.
+        # `mask` is expected to be additive (0 for keep, -inf for masked) and broadcastable
+        # to (B, H, T, T). We combine causal + padding masks upstream.
+        o = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+        o = o.transpose(1, 2).contiguous().view(B, T, C)
+        return self.out_proj(o)
+
+
+class _CLIPAttentionFusedQKV(nn.Module):
+    """Self-attention with fused QKV projection (OpenCLIP-style `in_proj`)."""
+
+    def __init__(self, embed_dim: int, heads: int):
+        super().__init__()
+        self.heads = heads
+        self.in_proj = nn.Linear(embed_dim, embed_dim * 3, bias=True)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=True)
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        B, T, C = x.shape
+        H = self.heads
+        qkv = self.in_proj(x).view(B, T, 3, H, C // H).permute(2, 0, 3, 1, 4).contiguous()
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        o = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+        o = o.transpose(1, 2).contiguous().view(B, T, C)
         return self.out_proj(o)
 
 
@@ -110,10 +131,19 @@ class _CLIPMLP(nn.Module):
 
 
 class _CLIPLayer(nn.Module):
-    def __init__(self, embed_dim: int, heads: int, intermediate: int, act: ClipActivation, eps: float):
+    def __init__(
+        self,
+        embed_dim: int,
+        heads: int,
+        intermediate: int,
+        act: ClipActivation,
+        eps: float,
+        *,
+        attention_cls: type[nn.Module] = _CLIPAttention,
+    ):
         super().__init__()
         self.layer_norm1 = nn.LayerNorm(embed_dim, eps=eps)
-        self.self_attn = _CLIPAttention(embed_dim, heads)
+        self.self_attn = attention_cls(embed_dim, heads)
         self.layer_norm2 = nn.LayerNorm(embed_dim, eps=eps)
         self.mlp = _CLIPMLP(embed_dim, intermediate, act)
 
@@ -124,10 +154,20 @@ class _CLIPLayer(nn.Module):
 
 
 class _CLIPEncoder(nn.Module):
-    def __init__(self, layers: int, embed_dim: int, heads: int, intermediate: int, act: ClipActivation, eps: float):
+    def __init__(
+        self,
+        layers: int,
+        embed_dim: int,
+        heads: int,
+        intermediate: int,
+        act: ClipActivation,
+        eps: float,
+        *,
+        attention_cls: type[nn.Module] = _CLIPAttention,
+    ):
         super().__init__()
         self.layers = nn.ModuleList([
-            _CLIPLayer(embed_dim, heads, intermediate, act, eps) for _ in range(layers)
+            _CLIPLayer(embed_dim, heads, intermediate, act, eps, attention_cls=attention_cls) for _ in range(layers)
         ])
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, output_hidden_states: bool = False):
@@ -193,15 +233,34 @@ class CodexCLIPTextModel(nn.Module):
         output_hidden_states: bool = True,
     ) -> _CLIPOutput:
         x = self.text_model.embeddings(input_ids)
-        attn_mask = None
+        compute_dtype = getattr(self, "compute_dtype", None)
+        if isinstance(compute_dtype, torch.dtype) and compute_dtype != x.dtype:
+            x = x.to(dtype=compute_dtype)
+        attn_mask: torch.Tensor | None = None
+        seq_len = int(x.shape[1])
+
+        # --- Mask composition -------------------------------------------------
+        # CLIP text attention is causal (tokens must not attend to future positions).
+        # Combine:
+        # - padding mask (B,1,T,T) derived from attention_mask (1 keep / 0 pad)
+        # - causal mask (T,T) upper triangular with -inf above diagonal
         if attention_mask is not None:
-            # Convert (B,S) attention mask to additive mask broadcastable to (B, heads, T, T)
-            # Expect 1 for tokens to keep, 0 for padding.
             try:
-                attn_mask = attention_mask[:, None, None, :].to(dtype=x.dtype)
-                attn_mask = (1.0 - attn_mask) * -1e9
+                mask = 1.0 - attention_mask.to(x.dtype).reshape((attention_mask.shape[0], 1, -1, attention_mask.shape[-1]))
+                attn_mask = mask.expand(attention_mask.shape[0], 1, attention_mask.shape[-1], attention_mask.shape[-1])
+                attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -torch.finfo(x.dtype).max)
             except Exception:
                 attn_mask = None
+        causal = torch.full(
+            (seq_len, seq_len),
+            -torch.finfo(x.dtype).max,
+            dtype=x.dtype,
+            device=x.device,
+        ).triu_(1)
+        if attn_mask is not None:
+            attn_mask = attn_mask + causal
+        else:
+            attn_mask = causal
         x, hidden = self.text_model.encoder(x, attn_mask, output_hidden_states=output_hidden_states)
         x = self.text_model.final_layer_norm(x)
 
@@ -221,8 +280,26 @@ class CodexCLIPTextModel(nn.Module):
         return _CLIPOutput(last_hidden_state=x, hidden_states=hidden if output_hidden_states else None, pooler_output=pooled)
 
 
+class CodexCLIPTextModelFusedQKV(CodexCLIPTextModel):
+    """CLIP text encoder variant with fused QKV attention parameters (`in_proj`)."""
+
+    def __init__(self, config: CodexCLIPTextConfig):
+        super().__init__(config)
+        act = ClipActivation(config.hidden_act)
+        self.text_model.encoder = _CLIPEncoder(
+            layers=config.num_hidden_layers,
+            embed_dim=config.hidden_size,
+            heads=config.num_attention_heads,
+            intermediate=config.intermediate_size,
+            act=act,
+            eps=config.layer_norm_eps,
+            attention_cls=_CLIPAttentionFusedQKV,
+        )
+
+
 __all__ = [
     "CodexCLIPTextModel",
+    "CodexCLIPTextModelFusedQKV",
     "CodexCLIPTextConfig",
     "ClipActivation",
 ]

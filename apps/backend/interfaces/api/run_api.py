@@ -10,6 +10,7 @@ Required Notice: see NOTICE
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
 This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence),
 and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
+Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_cli_arg_value` (function): Reads a CLI flag value from argv (supports `--flag value` and `--flag=value` forms).
@@ -498,7 +499,13 @@ def _bootstrap_runtime(argv: Sequence[str], env: Mapping[str, str], settings: Ma
             _set_bootstrap_env("CODEX_DEBUG_PREVIEW_FACTORS", "1")
         mode = getattr(ns, "lora_apply_mode", None)
         if mode is not None:
-            _set_bootstrap_env("CODEX_LORA_APPLY_MODE", str(mode))
+            # Only publish non-default values. Publishing defaults would pin global state
+            # and prevent per-test env overrides from taking effect.
+            from apps.backend.infra.config.lora_apply_mode import DEFAULT_LORA_APPLY_MODE
+
+            mode_value = str(mode).strip()
+            if mode_value and mode_value != DEFAULT_LORA_APPLY_MODE.value:
+                _set_bootstrap_env("CODEX_LORA_APPLY_MODE", mode_value)
     except Exception:
         pass
     mem_management.reinitialize(runtime_config)

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: LoRA tensor loading and target-key mapping helpers.
 Wraps the Codex runtime LoRA adapter to parse tensors and build patch dictionaries for UNet/CLIP targets.
+Patch targets may be plain parameter names or `(parameter, offset)` tuples for slice patches.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `load_lora` (function): Loads/filters LoRA tensors for a target model mapping and returns normalized segments + tensor table.
@@ -21,6 +22,7 @@ from typing import Dict, Mapping, Tuple
 
 import torch
 
+from apps.backend.runtime.adapters.base import PatchTarget
 from apps.backend.runtime.adapters.lora import (
     convert_specs_to_patch_dict,
     model_lora_keys_clip as mapping_clip,
@@ -29,7 +31,10 @@ from apps.backend.runtime.adapters.lora import (
 from apps.backend.runtime.adapters.lora.loader import parse_lora_tensors
 
 
-def load_lora(lora_tensors: Mapping[str, torch.Tensor], to_load: Dict[str, str]) -> Tuple[Dict[str, tuple], Dict[str, torch.Tensor]]:
+def load_lora(
+    lora_tensors: Mapping[str, torch.Tensor],
+    to_load: Dict[str, PatchTarget],
+) -> Tuple[Dict[PatchTarget, tuple], Dict[str, torch.Tensor]]:
     specs, loaded = parse_lora_tensors(lora_tensors, to_load)
     patch_dict = convert_specs_to_patch_dict(specs)
     remaining = {k: v for k, v in lora_tensors.items() if k not in loaded}
@@ -49,4 +54,3 @@ __all__ = [
     "model_lora_keys_clip",
     "model_lora_keys_unet",
 ]
-

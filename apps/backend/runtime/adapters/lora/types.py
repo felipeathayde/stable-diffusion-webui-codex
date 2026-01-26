@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DiffWeights` (dataclass): Payload for diff-style patches.
 - `SetWeights` (dataclass): Payload for set/overwrite patches.
 - `LORA_VARIANT_ORDER` (constant): Stable ordering of patch kinds for deterministic processing.
-- `make_spec` (function): Builds a `PatchSpec` from a parameter/kind/payload triple.
+- `make_spec` (function): Builds a `PatchSpec` from a patch-target/kind/payload triple (supports slice patch targets).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Optional
 
 import torch
 
-from apps.backend.runtime.adapters.base import PatchKind, PatchSpec
+from apps.backend.runtime.adapters.base import PatchKind, PatchSpec, PatchTarget
 
 
 @dataclass(frozen=True)
@@ -94,5 +94,5 @@ LORA_VARIANT_ORDER = (
 )
 
 
-def make_spec(parameter: str, kind: PatchKind, payload: object) -> PatchSpec:
+def make_spec(parameter: PatchTarget, kind: PatchKind, payload: object) -> PatchSpec:
     return PatchSpec(parameter=parameter, kind=kind, payload=payload)

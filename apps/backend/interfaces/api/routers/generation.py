@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
 Contains request parsing, payload validation, and task orchestration for generation endpoints.
+When resolving sha-selected text encoders (`tenc_sha`), uses cached inventory slot metadata to enforce slot contracts without repeated header reads.
 WAN video tasks enforce `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping and return suggested rounded-up dimensions on invalid requests.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -551,14 +552,32 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if contract.requires_text_encoders and contract.tenc_slots:
                 from apps.backend.core.contracts.text_encoder_slots import (
                     TextEncoderSlotError,
-                    map_text_encoder_paths_to_slots,
+                    classify_text_encoder_slot,
                 )
+                from apps.backend.inventory.cache import resolve_text_encoder_slot_by_sha
 
                 try:
-                    slot_to_path = map_text_encoder_paths_to_slots(
-                        paths=tenc_paths,
-                        expected_slots=contract.tenc_slots,
-                    )
+                    expected = tuple(contract.tenc_slots)
+                    slot_to_path = {}
+                    for sha, path in zip(tenc_shas, tenc_paths):
+                        slot = resolve_text_encoder_slot_by_sha(sha) or ""
+                        if not slot:
+                            slot = classify_text_encoder_slot(path)
+                        if slot not in expected:
+                            raise TextEncoderSlotError(
+                                f"Text encoder slot mismatch: got slot={slot!r} for sha={sha!r}, expected one of {list(expected)}."
+                            )
+                        if slot in slot_to_path:
+                            raise TextEncoderSlotError(
+                                f"Duplicate text encoder slot {slot!r} for slots={list(expected)} (sha={sha!r})."
+                            )
+                        slot_to_path[slot] = path
+
+                    missing = [slot for slot in expected if slot not in slot_to_path]
+                    if missing:
+                        raise TextEncoderSlotError(
+                            f"Missing required text encoder slot(s) {missing} for slots={list(expected)} (classified={sorted(slot_to_path)})."
+                        )
                 except TextEncoderSlotError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
 

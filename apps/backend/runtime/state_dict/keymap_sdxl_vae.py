@@ -7,11 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SDXL VAE key-style detection + remapping (LDM-style → diffusers AutoencoderKL).
-Normalizes the common SDXL/Flow16 VAE LDM layout (`encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`) into the canonical diffusers
-AutoencoderKL keyspace (`encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`) and strips wrapper prefixes
-(`first_stage_model.`, `vae.`, `model.`, `module.`). Also flattens mid-attention 1×1 Conv2d projection weights into Linear weights
-on access so `state_dict` loads into diffusers modules without shape mismatches. Drops known training metadata keys
-`model_ema.decay` / `model_ema.num_updates`.
+Normalizes common LDM layouts into diffusers keyspace, strips wrapper prefixes, and flattens 1×1 Conv projection weights lazily.
+Drops only known training metadata keys (`model_ema.decay` / `model_ema.num_updates`) and fails loud on other unknown keys.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_sdxl_vae_state_dict` (function): Returns (detected_style, remapped_view) for SDXL/Flow16 VAE keys.

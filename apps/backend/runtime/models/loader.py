@@ -1437,9 +1437,37 @@ def codex_loader(
 
     _apply_prediction_type(codex_components, parsed, yaml_prediction)
 
+    prediction_type_override = yaml_prediction
+    forced_prediction = os.environ.get("CODEX_FORCE_PREDICTION_TYPE")
+    if forced_prediction:
+        forced_prediction = forced_prediction.strip().lower()
+        if forced_prediction in {"epsilon", "eps"}:
+            forced_prediction = "epsilon"
+        elif forced_prediction in {"v_prediction", "v"}:
+            forced_prediction = "v_prediction"
+        else:
+            raise ValueError(
+                "CODEX_FORCE_PREDICTION_TYPE must be one of: epsilon, v_prediction (also accepts eps/v). "
+                f"Got: {forced_prediction!r}"
+            )
+
+        scheduler = codex_components.get("scheduler")
+        if not scheduler or not hasattr(scheduler, "config"):
+            raise RuntimeError(
+                "CODEX_FORCE_PREDICTION_TYPE is set, but the loaded pipeline has no scheduler/config to override."
+            )
+        current = getattr(scheduler.config, "prediction_type", None)
+        scheduler.config.prediction_type = forced_prediction
+        _LOG.warning(
+            "prediction_type forced via CODEX_FORCE_PREDICTION_TYPE: %s -> %s",
+            current,
+            forced_prediction,
+        )
+        prediction_type_override = forced_prediction
+
     metadata = {"repo_id": repo_name}
-    if yaml_prediction:
-        metadata["prediction_type"] = yaml_prediction
+    if prediction_type_override:
+        metadata["prediction_type"] = prediction_type_override
     # Note: VAE selection is expressed via engine options (`vae_path` + `vae_source`).
 
     return _build_diffusion_bundle(

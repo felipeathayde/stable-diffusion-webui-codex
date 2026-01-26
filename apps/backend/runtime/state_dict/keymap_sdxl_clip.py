@@ -6,22 +6,18 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: SDXL base text-encoder key mapping (CLIP-L + CLIP-G) into Codex IntegratedCLIP layout.
-Normalizes common CLIP key layouts (HF `text_model.*`, OpenCLIP legacy `transformer.resblocks.*`, and already-canonical Codex
-`transformer.text_model.*`) into the exact keyspace expected by:
-- `apps/backend/runtime/common/nn/clip.py:IntegratedCLIP`
-- `apps/backend/runtime/common/nn/clip_text_cx.py:CodexCLIPTextModel`
-
-Key policies:
-- Strip known wrapper prefixes (e.g., `conditioner.embedders.*`, `clip_l.*`, `clip_g.*`, `model.*`).
-- Drop HF-only buffers (`*.position_ids`) and refuse other unknown non-weight keys.
-- Canonicalize `logit_scale` into the IntegratedCLIP keyspace; if absent, provide the default `ln(100)` tensor.
-- Canonicalize optional projection weights into `transformer.text_projection.weight` (CLIP-G); supports lazy transpose.
-- For OpenCLIP-style fused attention weights (`attn.in_proj_{weight,bias}`), expose Q/K/V projections as lazy slices.
+Purpose: SDXL base CLIP key-style detection + remapping (CLIP-L + CLIP-G) into Codex IntegratedCLIP state_dict layout.
+Supports HF `text_model.*`, OpenCLIP legacy `transformer.resblocks.*`, and Codex-canonical `transformer.text_model.*` keys.
+Strips wrapper prefixes and normalizes known buffers/weights, failing loud on unknown non-weight keys.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_sdxl_clip_l_state_dict` (function): Keymap for SDXL base CLIP-L (`text_encoder`) into Codex IntegratedCLIP keys.
 - `remap_sdxl_clip_g_state_dict` (function): Keymap for SDXL base CLIP-G (`text_encoder_2`) into Codex IntegratedCLIP keys.
+
+Notes: Target keyspace matches `apps/backend/runtime/common/nn/clip.py:IntegratedCLIP` (and related Codex CLIP wrappers).
+Key policies (non-exhaustive): strip known wrapper prefixes; drop HF-only buffers (`*.position_ids`) and refuse other unknown non-weight keys;
+canonicalize `logit_scale` (default `ln(100)`); canonicalize optional projection weights into `transformer.text_projection.weight` (CLIP-G; lazy transpose);
+for OpenCLIP-style fused attention weights (`attn.in_proj_{weight,bias}`), expose Q/K/V projections as lazy slices.
 """
 
 from __future__ import annotations

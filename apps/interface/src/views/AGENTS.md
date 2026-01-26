@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-23
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -35,3 +35,4 @@ Status: Active
 - 2026-01-17: `WANTab.vue` no longer listens to window `codex-wan-mode-change`; WAN mode presets are applied by `QuickSettingsWan.vue` directly via tab param updates.
 - 2026-01-21: WAN stage LoRA selection is sha-based (`loraSha` in params → payload `lora_sha`).
 - 2026-01-23: `WANTab.vue` snaps WAN video width/height to multiples of 16 (rounded up; Diffusers parity) so invalid sizes never reach the backend.
+- 2026-01-25: `ImageModelTab.vue` CLIP Skip now allows `0` as “use default” (sends `clip_skip=0` so clip-skip state does not leak across jobs).

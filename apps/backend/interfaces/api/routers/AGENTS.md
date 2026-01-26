@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-24
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -35,3 +35,4 @@ Status: Active
 - 2026-01-24: `settings.py` serves schema from the generated registry (JSON fallback) with no legacy static fallback; `run_api.py` prunes `apps/settings_values.json` against the registry on startup.
 - 2026-01-24: `options.py` applies `codex_attention_backend` immediately via `memory_management.set_attention_backend(...)` (unloads/reinitializes runtime memory config; no backend restart required).
 - 2026-01-24: `generation.py` applies live preview interval/method via thread-local `LivePreviewTaskConfig.runtime_overrides()` (no process-global `os.environ` mutation; avoids cross-request drift).
+- 2026-01-25: `generation.py` now accepts `clip_skip` in `[0..12]` for txt2img (0 = “use default”), and validates `img2img_clip_skip` in `[0..12]` when provided.

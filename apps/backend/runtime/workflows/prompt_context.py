@@ -33,27 +33,15 @@ def build_prompt_context(processing: Any, prompts: Sequence[str]) -> PromptConte
     if "clip_skip" not in controls:
         meta = getattr(processing, "metadata", None)
         if isinstance(meta, dict) and meta.get("clip_skip") is not None:
+            raw_clip_skip = meta.get("clip_skip")
             try:
-                controls["clip_skip"] = max(1, int(meta.get("clip_skip")))
-            except Exception:
-                pass
+                clip_skip = int(raw_clip_skip)  # type: ignore[arg-type]
+            except Exception as exc:
+                raise ValueError("Invalid clip_skip in metadata: must be an integer") from exc
+            if clip_skip < 0:
+                raise ValueError("Invalid clip_skip in metadata: must be >= 0")
+            controls["clip_skip"] = clip_skip
 
-    # SDXL uses CLIP skip locked to 2; clamp request/prompt tags to avoid
-    # caching or conditioning mismatches when users attempt to set other values.
-    try:
-        sd_model = getattr(processing, "sd_model", None)
-        engine_id = getattr(sd_model, "engine_id", None)
-        if engine_id in ("sdxl", "sdxl_refiner"):
-            raw = controls.get("clip_skip")
-            if raw is not None:
-                try:
-                    requested = int(raw)
-                except Exception:
-                    requested = None
-                if requested != 2:
-                    controls["clip_skip"] = 2
-    except Exception:
-        pass
     negative_prompts = list(
         getattr(processing, "negative_prompts", [getattr(processing, "negative_prompt", "")])
     )
@@ -76,8 +64,8 @@ def apply_prompt_context(processing: Any, context: PromptContext) -> None:
             clip_skip = int(context.controls["clip_skip"])
         except Exception as exc:  # noqa: BLE001
             raise ValueError("Invalid clip_skip: must be an integer") from exc
-        if clip_skip < 1:
-            raise ValueError("Invalid clip_skip: must be >= 1")
+        if clip_skip < 0:
+            raise ValueError("Invalid clip_skip: must be >= 0")
         model = getattr(processing, "sd_model", None)
         if model is not None and hasattr(model, "set_clip_skip"):
             model.set_clip_skip(clip_skip)
@@ -95,4 +83,3 @@ def apply_dimension_overrides(processing: Any, controls: Mapping[str, Any]) -> N
         if height % 8 != 0 or height < 8 or height > 8192:
             raise ValueError("Invalid <height>: must be multiple of 8 and in [8,8192]")
         processing.height = height
-

@@ -2,7 +2,7 @@
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-24
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -31,3 +31,4 @@ Status: Active
 - 2026-01-02: Added standardized file header blocks to `client.ts` and `payloads.ts` (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header block to `types.ts` (doc-only change; part of rollout).
 - 2026-01-04: `payloads.ts` treats Flux.1 family keys as flow engines (`flux1*`) for distilled-CFG handling (legacy engine key aliases are not accepted).
+- 2026-01-25: `payloads.ts` now allows `clip_skip` in `[0..12]` (0 = “use default”) and sends `clip_skip=0` when selected so the backend can reset clip skip per request without a separate UI toggle.

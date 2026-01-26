@@ -1,7 +1,7 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-20
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -23,3 +23,4 @@ Status: Active
 - 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); clients must use canonical keys.
 - 2026-01-06: Flux sampler allow-lists now use canonical `SamplerKind` strings (e.g. `euler a`, `dpm++ 2m`).
 - 2026-01-20: Removed unused `flux_config.py` (no call sites; config lives in `spec.py` / factory assembly).
+- 2026-01-25: `clip_skip=0` is now accepted as a “use default” sentinel for Flux CLIP branches (resets to the canonical default without requiring a separate UI toggle).

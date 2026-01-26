@@ -13,7 +13,7 @@ without ad-hoc string-replace chains or silent fallbacks.
 Symbols (top-level; keep in sync; no ghosts):
 - `KeyMappingError` (exception): Raised when key-style detection or remapping fails (unknown style, ambiguous style, collisions).
 - `KeyStyleDetectionError` (exception): Raised when key-style detection fails (unknown/ambiguous layout).
-- `KeyStyle` (enum): Stable identifiers for common key layouts (Codex, Diffusers, LDM, WAN export, llama.cpp GGUF, HF).
+- `KeyStyle` (enum): Stable identifiers for common key layouts (Codex, Diffusers, LDM, OpenCLIP, WAN export, llama.cpp GGUF, HF).
 - `SentinelKind` (enum): Sentinel matching strategy (exact/prefix/substring/regex).
 - `KeySentinel` (dataclass): A single “style signal” used to detect a key layout.
 - `KeyStyleSpec` (dataclass): A named key-style + its sentinel set and matching threshold.
@@ -47,6 +47,7 @@ class KeyStyle(str, Enum):
     CODEX = "codex"
     DIFFUSERS = "diffusers"
     LDM = "ldm"
+    OPENCLIP = "openclip"
     WAN_EXPORT = "wan_export"
     LLAMA_GGUF = "llama_gguf"
     HF = "hf"

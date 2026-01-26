@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, sdxl -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -23,6 +23,7 @@ Status: Active
 - 2026-01-02: Fixed SDXL refiner embed cache correctness (cache hits no longer crash) and aligned refiner time-id embedding with `_prompt_meta` + `_validate_conditioning_payload` (fail-fast on malformed conditioning).
 - 2026-01-02: Added standardized file header docstrings to SD engine modules (doc-only change; part of rollout).
 - 2026-01-06: SDXL generation info no longer defaults sampler/scheduler to `"Automatic"`; missing values serialize as null to reflect strict canonical inputs.
+- 2026-01-25: `clip_skip=0` is now treated as an explicit “use default” sentinel across SD-family engines, resetting clip skip to the per-branch spec defaults to prevent state leaking across jobs.
 
 ### Event Emission
 - Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.

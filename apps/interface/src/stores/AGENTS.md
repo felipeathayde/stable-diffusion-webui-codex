@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-24
+Last Review: 2026-01-25
 Status: Active
 
 ## Purpose
@@ -37,3 +37,4 @@ Status: Active
 - 2026-01-04: Flux family backend engine keys moved to `flux1*`; `chroma` is a first-class tab type mapped to `flux1_chroma` at request time.
 - 2026-01-18: `engine_capabilities.ts` now also caches backend-provided `asset_contracts` (base + core-only) from `/api/engines/capabilities`; image payload builders use these contracts (plus `models[].core_only`) to enforce required VAE/text encoder selection without duplicating per-engine policy in the UI.
 - 2026-01-06: Image tab defaults now use model_index-aligned canonical sampler/scheduler values (SD15: `pndm` + `ddim`; SDXL: `euler` + `euler_discrete`; flow: `euler` + `simple`) and normalization only fills blank/missing values (no alias/automatic shims).
+- 2026-01-25: `model_tabs.ts` image-tab defaults now set `clipSkip=0` (auto/default sentinel). Payload builders can still send explicit clip skip values; 0 resets to engine defaults.

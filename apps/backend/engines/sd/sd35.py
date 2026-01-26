@@ -86,7 +86,16 @@ class StableDiffusion3(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int):
         runtime = self._require_runtime()
-        runtime.set_clip_skip(clip_skip)
+        try:
+            requested = int(clip_skip)
+        except Exception as exc:  # noqa: BLE001
+            raise TypeError("clip_skip must be an integer") from exc
+        if requested < 0:
+            raise ValueError("clip_skip must be >= 0")
+        if requested == 0:
+            runtime.reset_clip_skip()
+            return
+        runtime.set_clip_skip(requested)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

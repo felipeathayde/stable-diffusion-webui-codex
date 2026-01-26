@@ -166,6 +166,15 @@ class SDEngineRuntime:
                 )
             self.classic_text[identifier].clip_skip = clip_skip
 
+    def reset_clip_skip(self) -> None:
+        """Reset classic branch clip_skip to their spec defaults.
+
+        Used for the `clip_skip=0` "use default" sentinel: callers can always
+        apply a per-job clip skip without leaking state across jobs.
+        """
+        for identifier, spec in self.classic_specs.items():
+            self.classic_text[identifier].clip_skip = spec.default_clip_skip
+
     def primary_classic(self) -> ClassicTextProcessingEngine:
         if not self.classic_order:
             raise RuntimeError("No classic branches available")
@@ -380,7 +389,7 @@ SDXL_SPEC = SDEngineSpec(
             identifier="clip_l",
             clip_attr="clip_l",
             embedding_expected_shape=2048,
-            minimal_clip_skip=2,
+            minimal_clip_skip=1,
             default_clip_skip=2,
             text_projection=False,
             return_pooled=False,
@@ -390,7 +399,7 @@ SDXL_SPEC = SDEngineSpec(
             identifier="clip_g",
             clip_attr="clip_g",
             embedding_expected_shape=2048,
-            minimal_clip_skip=2,
+            minimal_clip_skip=1,
             default_clip_skip=2,
             text_projection=True,
             return_pooled=True,
@@ -408,7 +417,7 @@ SDXL_REFINER_SPEC = SDEngineSpec(
             identifier="clip_g",
             clip_attr="clip_g",
             embedding_expected_shape=2048,
-            minimal_clip_skip=2,
+            minimal_clip_skip=1,
             default_clip_skip=2,
             text_projection=True,
             return_pooled=True,

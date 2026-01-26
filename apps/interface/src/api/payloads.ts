@@ -84,7 +84,7 @@ export const Txt2ImgRequestSchema = z
     sampler: z.string().min(1),
     scheduler: z.string().min(1),
     seed: z.number().int(),
-    clip_skip: z.number().int().min(1).max(12).optional(),
+    clip_skip: z.number().int().min(0).max(12).optional(),
     styles: z.array(z.string().min(1)).optional(),
     metadata: z.record(z.any()).optional(),
     engine: z.string().min(1).optional(),
@@ -194,7 +194,7 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
     seed: state.seed,
   }
 
-  if (Number.isFinite(state.clipSkip) && state.clipSkip >= 1) {
+  if (Number.isFinite(state.clipSkip) && state.clipSkip >= 0) {
     payload.clip_skip = Math.trunc(state.clipSkip)
   }
   

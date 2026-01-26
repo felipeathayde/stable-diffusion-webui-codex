@@ -622,7 +622,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = _require_int_field(payload, 'seed')
-        clip_skip = _require_int_field(payload, 'clip_skip', minimum=1) if 'clip_skip' in payload else None
+        clip_skip = _require_int_field(payload, 'clip_skip', minimum=0, maximum=12) if 'clip_skip' in payload else None
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, highres_cfg = _parse_txt2img_extras(payload)
@@ -991,6 +991,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         seed_val = _p.as_int(payload, 'img2img_seed')
         clip_skip = _p.as_int(payload, 'img2img_clip_skip') if 'img2img_clip_skip' in payload else None
+        if clip_skip is not None:
+            if clip_skip < 0 or clip_skip > 12:
+                raise HTTPException(status_code=400, detail="'img2img_clip_skip' must be in [0, 12]")
         noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
         ensd_raw = payload.get('img2img_eta_noise_seed_delta')
 

@@ -136,10 +136,19 @@ class Flux(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        runtime.set_clip_skip(clip_skip)
+        try:
+            requested = int(clip_skip)
+        except Exception as exc:  # noqa: BLE001
+            raise TypeError("clip_skip must be an integer") from exc
+        if requested < 0:
+            raise ValueError("clip_skip must be >= 0")
+        runtime.set_clip_skip(requested)
         # Cached conditioning depends on clip_skip (pooled CLIP output changes).
         self._cond_cache.clear()
-        logger.debug("Flux clip skip set to %d", clip_skip)
+        if requested == 0:
+            logger.debug("Flux clip skip reset to default.")
+        else:
+            logger.debug("Flux clip skip set to %d", requested)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

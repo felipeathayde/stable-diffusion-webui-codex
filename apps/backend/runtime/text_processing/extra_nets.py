@@ -70,7 +70,7 @@ def parse_prompt_for_extras(prompt: str) -> ParsedExtras:
         try:
             if kind == 'clip_skip':
                 n = int(float(weight_s or name))
-                controls['clip_skip'] = max(1, n)
+                controls['clip_skip'] = max(0, n)
             elif kind == 'sampler':
                 controls['sampler'] = name.lower()
             elif kind == 'scheduler':

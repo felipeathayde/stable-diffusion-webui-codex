@@ -374,7 +374,7 @@ const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' :
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
 const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux1')
-const minClipSkip = computed(() => (props.type === 'sdxl' ? 2 : 1))
+const minClipSkip = computed(() => 0)
 const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
 
 const showHighres = computed(() => {

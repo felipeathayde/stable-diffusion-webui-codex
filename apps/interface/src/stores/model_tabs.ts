@@ -238,7 +238,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     steps: defaults.steps,
     cfgScale: guidance,
     seed: -1,
-    clipSkip: type === 'sdxl' ? 2 : 1,
+    clipSkip: 0,
     batchSize: 1,
     batchCount: 1,
     highres: { ...highresDefaults },

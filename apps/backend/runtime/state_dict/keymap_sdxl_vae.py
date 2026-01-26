@@ -10,7 +10,8 @@ Purpose: SDXL VAE key-style detection + remapping (LDM-style → diffusers Autoe
 Normalizes the common SDXL/Flow16 VAE LDM layout (`encoder.down.*`, `decoder.up.*`, `*.mid.attn_1.*`) into the canonical diffusers
 AutoencoderKL keyspace (`encoder.down_blocks.*`, `decoder.up_blocks.*`, `*.mid_block.*`) and strips wrapper prefixes
 (`first_stage_model.`, `vae.`, `model.`, `module.`). Also flattens mid-attention 1×1 Conv2d projection weights into Linear weights
-on access so `state_dict` loads into diffusers modules without shape mismatches.
+on access so `state_dict` loads into diffusers modules without shape mismatches. Drops known training metadata keys
+`model_ema.decay` / `model_ema.num_updates`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `remap_sdxl_vae_state_dict` (function): Returns (detected_style, remapped_view) for SDXL/Flow16 VAE keys.
@@ -48,10 +49,14 @@ _WEIGHT_PREFIXES = (
     "post_quant_conv.",
 )
 
-# Some VAE weights files include training metadata tensors (e.g., EMA decay).
-# These keys are not part of diffusers `AutoencoderKL.state_dict()` and must not
-# reach the loader as "unexpected" keys.
-_DROPPED_PREFIXES = ("model_ema.",)
+# Some SDXL VAE weights files include training metadata tensors (e.g., EMA decay).
+# These keys are not part of diffusers `AutoencoderKL.state_dict()`.
+#
+# Policy: allow (and drop) only the known metadata keys; anything else is an error.
+_DROPPED_KEYS = (
+    "model_ema.decay",
+    "model_ema.num_updates",
+)
 
 _DETECTOR = KeyStyleDetector(
     name="sdxl_vae_key_style",
@@ -221,7 +226,7 @@ def remap_sdxl_vae_state_dict(state_dict: MutableMapping[str, _T]) -> tuple[KeyS
         if normalized.startswith(_WEIGHT_PREFIXES):
             kept_raw_keys.append(raw_key)
             continue
-        if normalized.startswith(_DROPPED_PREFIXES):
+        if normalized in _DROPPED_KEYS:
             continue
         unknown_non_weight.append(normalized)
 

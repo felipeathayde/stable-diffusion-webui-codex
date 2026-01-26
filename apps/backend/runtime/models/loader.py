@@ -490,7 +490,7 @@ def _maybe_convert_sdxl_vae_state_dict(
     - Detects diffusers vs. LDM-style SDXL layouts and remaps LDM → diffusers keys.
     - Flattens mid-block attention projection weights stored as 1×1 Conv2d
       (`[C_out, C_in, 1, 1]`) into Linear weights (`[C_out, C_in]`) lazily on access.
-    - Drops known non-weight training metadata (`model_ema.*`).
+    - Drops known non-weight training metadata (`model_ema.decay`, `model_ema.num_updates`).
 
     Unknown/ambiguous layouts raise (fail loud). Non-SDXL/Flow16 families are returned
     unchanged.
@@ -867,12 +867,23 @@ def _load_huggingface_component(
                     config_json = _CLIP_L_DEFAULT_CONFIG
 
         cfg = CodexCLIPTextConfig.from_dict(config_json)
-        state_dict = normalize_codex_clip_state_dict(
-            state_dict,
-            num_layers=cfg.num_hidden_layers,
-            keep_projection=add_proj,
-            transpose_projection=component_name in {"text_encoder_2", "text_encoder_3"},
-        )
+        if family is ModelFamily.SDXL and component_name in {"text_encoder", "text_encoder_2"}:
+            from apps.backend.runtime.state_dict.keymap_sdxl_clip import (
+                remap_sdxl_clip_g_state_dict,
+                remap_sdxl_clip_l_state_dict,
+            )
+
+            if component_name == "text_encoder":
+                _, state_dict = remap_sdxl_clip_l_state_dict(state_dict)
+            else:
+                _, state_dict = remap_sdxl_clip_g_state_dict(state_dict)
+        else:
+            state_dict = normalize_codex_clip_state_dict(
+                state_dict,
+                num_layers=cfg.num_hidden_layers,
+                keep_projection=add_proj,
+                transpose_projection=component_name in {"text_encoder_2", "text_encoder_3"},
+            )
 
         with using_codex_operations(**to_args, manual_cast_enabled=True):
             model = IntegratedCLIP(CodexCLIPTextModel, cfg, add_text_projection=add_proj).to(**to_args)

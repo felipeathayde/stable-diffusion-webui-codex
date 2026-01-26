@@ -290,17 +290,22 @@ class StableDiffusionXL(CodexDiffusionEngine):
             requested = int(clip_skip)
         except Exception as exc:  # noqa: BLE001
             raise TypeError("clip_skip must be an integer") from exc
+        if requested < 0:
+            raise ValueError("clip_skip must be >= 0")
 
-        # SDXL is locked to clip_skip=2 (reference pipeline parity).
-        if requested != 2:
-            logger.info("SDXL clip_skip is locked to 2 (requested %s); overriding.", requested)
-        runtime.set_clip_skip(2)
+        if requested == 0:
+            runtime.reset_clip_skip()
+            effective = runtime.classic_engine("clip_l").clip_skip
+            logger.debug("Clip skip reset to default (%d) for SDXL.", effective)
+        else:
+            runtime.set_clip_skip(requested)
         # Any cached text embeddings depend on clip-skip; avoid stale reuse.
         try:
             self._cond_cache.clear()
         except Exception:
             pass
-        logger.debug("Clip skip set to 2 for SDXL.")
+        if requested != 0:
+            logger.debug("Clip skip set to %d for SDXL.", requested)
 
     def _post_job_cleanup(self) -> None:
         """Post-job cleanup when smart offload is enabled.
@@ -750,16 +755,21 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             requested = int(clip_skip)
         except Exception as exc:  # noqa: BLE001
             raise TypeError("clip_skip must be an integer") from exc
+        if requested < 0:
+            raise ValueError("clip_skip must be >= 0")
 
-        # SDXL refiner uses only CLIP-G; keep parity with base and lock to 2.
-        if requested != 2:
-            logger.info("SDXL refiner clip_skip is locked to 2 (requested %s); overriding.", requested)
-        runtime.set_clip_skip(2)
+        if requested == 0:
+            runtime.reset_clip_skip()
+            effective = runtime.classic_engine("clip_g").clip_skip
+            logger.debug("Clip skip reset to default (%d) for SDXL refiner.", effective)
+        else:
+            runtime.set_clip_skip(requested)
         try:
             self._cond_cache.clear()
         except Exception:
             pass
-        logger.debug("Clip skip set to 2 for SDXL refiner.")
+        if requested != 0:
+            logger.debug("Clip skip set to %d for SDXL refiner.", requested)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

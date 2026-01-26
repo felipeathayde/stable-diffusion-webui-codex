@@ -69,8 +69,19 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        runtime.set_clip_skip(clip_skip)
-        self._logger.debug("Clip skip set to %d for %s.", clip_skip, self.engine_id)
+        try:
+            requested = int(clip_skip)
+        except Exception as exc:  # noqa: BLE001
+            raise TypeError("clip_skip must be an integer") from exc
+        if requested < 0:
+            raise ValueError("clip_skip must be >= 0")
+        if requested == 0:
+            runtime.reset_clip_skip()
+            effective = runtime.primary_classic().clip_skip
+            self._logger.debug("Clip skip reset to default (%d) for %s.", effective, self.engine_id)
+            return
+        runtime.set_clip_skip(requested)
+        self._logger.debug("Clip skip set to %d for %s.", requested, self.engine_id)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):

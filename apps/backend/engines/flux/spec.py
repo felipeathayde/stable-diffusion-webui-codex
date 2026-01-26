@@ -66,6 +66,8 @@ class FluxEngineRuntime:
 
     def set_clip_skip(self, clip_skip: int) -> None:
         if self.text.clip_text is not None:
+            if clip_skip == 0:
+                clip_skip = 1
             if clip_skip < 1:
                 raise ValueError("clip_skip must be >= 1 for Flux CLIP branch")
             self.text.clip_text.clip_skip = clip_skip

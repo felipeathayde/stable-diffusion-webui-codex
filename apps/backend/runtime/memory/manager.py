@@ -10,6 +10,7 @@ Purpose: Codex-native runtime memory management service (hardware probe + precis
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during
 engine orchestration.
 Also exposes per-role compute dtype selection (activation precision) distinct from storage dtype when manual casting is enabled.
+Provides `is_model_loaded(...)` for stage-scoped smart offload decisions (avoid premature unload/reload within a single pipeline stage).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -921,6 +922,15 @@ class CodexMemoryManager:
 
     def loaded_models(self) -> Tuple[_LoadedModelRecord, ...]:
         return tuple(self._loaded_models)
+
+    def is_model_loaded(self, model: object) -> bool:
+        """Return True when `model` is currently registered as loaded.
+
+        This is a public wrapper around the internal loaded-model registry and is
+        safe to call from engines/use-cases to implement stage-scoped load/unload
+        logic without poking private methods.
+        """
+        return self._find_loaded_model(model) is not None
 
     def unload_model_clones(self, model: object) -> None:
         if not hasattr(model, "is_clone"):

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Flux.1 Chroma engine (Flux-family variant).
 Assembles a `FluxEngineRuntime` from `CHROMA_SPEC` via the Flux family factory and exposes the `CodexDiffusionEngine` surface used by API/use-cases.
+When smart offload is enabled, text encoder patcher unload is stage-scoped (only unload when this call loaded it).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Chroma` (class): Chroma diffusion engine (txt2img/img2img) wiring the Chroma runtime (Flux toolkit) to the Codex engine interface.
@@ -80,15 +81,17 @@ class Chroma(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
-        unload_clip = self.smart_offload_enabled
+        clip_patcher = self.codex_objects.text_encoders["clip"].patcher
+        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
+        memory_management.manager.load_model(clip_patcher)
+        unload_clip = self.smart_offload_enabled and not already_loaded
         try:
             conditioning = runtime.text.t5_text(prompt)
             logger.debug("Chroma conditioning generated for %d prompts", len(prompt))
             return conditioning
         finally:
             if unload_clip:
-                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: SDXL diffusion engine implementation (base + refiner) for the backend orchestrator.
 Implements SDXL txt2img/img2img execution with smart cache integration, conditioning validation, and event emission for progress/results.
+When smart offload is enabled, CLIP patcher unload is stage-scoped (only unload when this call loaded it) to avoid unload/reload between cond+uncond.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Computes basic tensor statistics for debug logging (shape/dtype/device + min/max/mean/std).
@@ -548,8 +549,10 @@ class StableDiffusionXL(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
-        unload_clip = self.smart_offload_enabled
+        clip_patcher = self.codex_objects.text_encoders["clip"].patcher
+        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
+        memory_management.manager.load_model(clip_patcher)
+        unload_clip = self.smart_offload_enabled and not already_loaded
         try:
             texts = tuple(str(x or "") for x in prompt)
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
@@ -657,7 +660,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
             return cond
         finally:
             if unload_clip:
-                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -774,8 +777,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
-        unload_clip = self.smart_offload_enabled
+        clip_patcher = self.codex_objects.text_encoders["clip"].patcher
+        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
+        memory_management.manager.load_model(clip_patcher)
+        unload_clip = self.smart_offload_enabled and not already_loaded
         try:
             texts = tuple(str(x or "") for x in prompt)
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
@@ -855,7 +860,7 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
             return cond
         finally:
             if unload_clip:
-                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

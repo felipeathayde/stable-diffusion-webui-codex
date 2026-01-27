@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Image-to-image use case orchestration (init image + optional hires pass).
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally
 performs a hires second pass.
+When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
@@ -31,6 +32,9 @@ import logging
 import torch
 
 from apps.backend.core.rng import ImageRNG
+from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -126,24 +130,44 @@ def _compute_conditioning_payload(
     if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
         raise RuntimeError("img2img requires processing.sd_model with get_learned_conditioning")
 
-    if cond is None:
-        texts = list(prompt_context.prompts or [getattr(processing, "prompt", "")])
-        if hasattr(sd_model, "_prepare_prompt_wrappers"):
-            wrapped = sd_model._prepare_prompt_wrappers(texts, processing, is_negative=False)
-            cond = sd_model.get_learned_conditioning(wrapped)
-        else:
-            cond = sd_model.get_learned_conditioning(texts)
-        if cond is None:
-            raise RuntimeError("Failed to build conditioning for img2img; get_learned_conditioning returned None.")
-
     uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
-    if uncond is None and not uses_distilled_cfg:
-        negatives = list(prompt_context.negative_prompts or [getattr(processing, "negative_prompt", "")])
-        if hasattr(sd_model, "_prepare_prompt_wrappers"):
-            wrapped = sd_model._prepare_prompt_wrappers(negatives, processing, is_negative=True)
-            uncond = sd_model.get_learned_conditioning(wrapped)
-        else:
-            uncond = sd_model.get_learned_conditioning(negatives)
+
+    clip_patcher = None
+    clip_loaded_here = False
+    needs_conditioning = cond is None or (uncond is None and not uses_distilled_cfg)
+    if needs_conditioning and smart_offload_enabled():
+        try:
+            clip_patcher = sd_model.codex_objects.text_encoders["clip"].patcher
+        except Exception:
+            clip_patcher = None
+        if clip_patcher is not None:
+            clip_loaded_here = not memory_management.manager.is_model_loaded(clip_patcher)
+            if clip_loaded_here:
+                pipeline_log("[img2img.conditioning] smart_offload: loading CLIP patcher for stage")
+                memory_management.manager.load_model(clip_patcher)
+
+    try:
+        if cond is None:
+            texts = list(prompt_context.prompts or [getattr(processing, "prompt", "")])
+            if hasattr(sd_model, "_prepare_prompt_wrappers"):
+                wrapped = sd_model._prepare_prompt_wrappers(texts, processing, is_negative=False)
+                cond = sd_model.get_learned_conditioning(wrapped)
+            else:
+                cond = sd_model.get_learned_conditioning(texts)
+            if cond is None:
+                raise RuntimeError("Failed to build conditioning for img2img; get_learned_conditioning returned None.")
+
+        if uncond is None and not uses_distilled_cfg:
+            negatives = list(prompt_context.negative_prompts or [getattr(processing, "negative_prompt", "")])
+            if hasattr(sd_model, "_prepare_prompt_wrappers"):
+                wrapped = sd_model._prepare_prompt_wrappers(negatives, processing, is_negative=True)
+                uncond = sd_model.get_learned_conditioning(wrapped)
+            else:
+                uncond = sd_model.get_learned_conditioning(negatives)
+    finally:
+        if clip_patcher is not None and clip_loaded_here:
+            pipeline_log("[img2img.conditioning] smart_offload: unloading CLIP patcher after stage")
+            memory_management.manager.unload_model(clip_patcher)
 
     return ConditioningPayload(conditioning=cond, unconditional=uncond)
 

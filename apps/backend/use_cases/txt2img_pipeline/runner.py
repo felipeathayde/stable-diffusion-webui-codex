@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
 Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata.
+When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
@@ -32,7 +33,8 @@ from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config import args as backend_args
-from apps.backend.runtime.diagnostics.pipeline_debug import pipeline_trace
+from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log, pipeline_trace
+from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -40,6 +42,7 @@ from apps.backend.runtime.processing.conditioners import (
 )
 from apps.backend.runtime.memory.smart_offload import (
     smart_cache_enabled,
+    smart_offload_enabled,
     record_smart_cache_hit,
     record_smart_cache_miss,
 )
@@ -180,36 +183,54 @@ class Txt2ImgPipelineRunner:
                 return cached
             record_smart_cache_miss("sdxl.runner.conditioning")
 
-        # Distilled CFG models (Flux) don't use uncond - skip generating it entirely
-        uses_distilled_cfg = getattr(sd_model, "use_distilled_cfg_scale", False)
-        
-        # Preserve spatial metadata via engine helper when available
-        if hasattr(sd_model, "_prepare_prompt_wrappers"):
-            prompts_wrapped = sd_model._prepare_prompt_wrappers(prompts, processing, is_negative=False)
-            cond = sd_model.get_learned_conditioning(prompts_wrapped)
-            if uses_distilled_cfg:
-                uncond = None
-            else:
-                negative_wrapped = sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
-                uncond = sd_model.get_learned_conditioning(negative_wrapped)
-        else:
-            cond = sd_model.get_learned_conditioning(prompts)
-            if uses_distilled_cfg:
-                uncond = None
-            else:
-                uncond = sd_model.get_learned_conditioning(negative_prompts)
+        clip_patcher = None
+        clip_loaded_here = False
+        if smart_offload_enabled():
+            try:
+                clip_patcher = sd_model.codex_objects.text_encoders["clip"].patcher
+            except Exception:
+                clip_patcher = None
+            if clip_patcher is not None:
+                clip_loaded_here = not memory_management.manager.is_model_loaded(clip_patcher)
+                if clip_loaded_here:
+                    pipeline_log("[conditioning] smart_offload: loading CLIP patcher for stage")
+                    memory_management.manager.load_model(clip_patcher)
 
-        # If uncond comes back zero for a non-empty negative prompt, fail fast instead of sampling with CFG degenerate
-        non_empty_negative = any(str(p or "").strip() for p in negative_prompts)
-        if non_empty_negative:
-            uncond_cross = uncond.get("crossattn") if isinstance(uncond, dict) else None
-            if isinstance(uncond_cross, torch.Tensor):
-                norm_uncond = float(uncond_cross.abs().sum().item())
-                if norm_uncond < 1e-6:
-                    raise RuntimeError(
-                        f"Unconditional embedding returned all zeros for negative prompt(s) {negative_prompts}. "
-                        "Check CLIP encoders or prompt handling before sampling."
-                    )
+        try:
+            # Distilled CFG models (Flux) don't use uncond - skip generating it entirely
+            uses_distilled_cfg = getattr(sd_model, "use_distilled_cfg_scale", False)
+
+            # Preserve spatial metadata via engine helper when available
+            if hasattr(sd_model, "_prepare_prompt_wrappers"):
+                prompts_wrapped = sd_model._prepare_prompt_wrappers(prompts, processing, is_negative=False)
+                cond = sd_model.get_learned_conditioning(prompts_wrapped)
+                if uses_distilled_cfg:
+                    uncond = None
+                else:
+                    negative_wrapped = sd_model._prepare_prompt_wrappers(negative_prompts, processing, is_negative=True)
+                    uncond = sd_model.get_learned_conditioning(negative_wrapped)
+            else:
+                cond = sd_model.get_learned_conditioning(prompts)
+                if uses_distilled_cfg:
+                    uncond = None
+                else:
+                    uncond = sd_model.get_learned_conditioning(negative_prompts)
+
+            # If uncond comes back zero for a non-empty negative prompt, fail fast instead of sampling with CFG degenerate
+            non_empty_negative = any(str(p or "").strip() for p in negative_prompts)
+            if non_empty_negative:
+                uncond_cross = uncond.get("crossattn") if isinstance(uncond, dict) else None
+                if isinstance(uncond_cross, torch.Tensor):
+                    norm_uncond = float(uncond_cross.abs().sum().item())
+                    if norm_uncond < 1e-6:
+                        raise RuntimeError(
+                            f"Unconditional embedding returned all zeros for negative prompt(s) {negative_prompts}. "
+                            "Check CLIP encoders or prompt handling before sampling."
+                        )
+        finally:
+            if clip_patcher is not None and clip_loaded_here:
+                pipeline_log("[conditioning] smart_offload: unloading CLIP patcher after stage")
+                memory_management.manager.unload_model(clip_patcher)
 
         pair = (cond, uncond)
         if cache_enabled and key is not None:

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Codex-native Stable Diffusion 3.5 engine.
 Assembles an `SDEngineRuntime` using `SD35_SPEC`; optional text-encoder behavior is controlled via `CODEX_SD3_ENABLE_T5`.
+When smart offload is enabled, CLIP patcher unload is stage-scoped (only unload when this call loaded it) to avoid unload/reload between cond+uncond.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_opts` (function): Loads SD3/SD35 environment flags (currently `CODEX_SD3_ENABLE_T5`) into a simple namespace.
@@ -100,8 +101,10 @@ class StableDiffusion3(CodexDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.text_encoders["clip"].patcher)
-        unload_clip = self.smart_offload_enabled
+        clip_patcher = self.codex_objects.text_encoders["clip"].patcher
+        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
+        memory_management.manager.load_model(clip_patcher)
+        unload_clip = self.smart_offload_enabled and not already_loaded
         try:
             cond_l, pooled_l = runtime.classic_engine("clip_l")(prompt)
             cond_g, pooled_g = runtime.classic_engine("clip_g")(prompt)
@@ -135,7 +138,7 @@ class StableDiffusion3(CodexDiffusionEngine):
             return cond
         finally:
             if unload_clip:
-                memory_management.manager.unload_model(self.codex_objects.text_encoders["clip"].patcher)
+                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

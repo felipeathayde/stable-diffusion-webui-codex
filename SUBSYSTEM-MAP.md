@@ -252,13 +252,14 @@ Key API families:
   - Owns the loaded-model registry, swap/offload policies, and best-effort cache eviction (`unload_all_models`, `soft_empty_cache`).
 
 ### PYTHON PACKAGE FACADES (stable import surfaces)
-These are the intended “public surfaces” for external callers (`tools/**`, `tests/**`, UI/API wiring, etc.).
+These are the intended “public surfaces” for external callers (UI/API wiring, stable import facades, request schemas, etc.).
+Developer-only regression tests and maintenance scripts live in the companion `.sangoi` repo (`.sangoi/dev/...`).
 They stabilize import paths and enforce import-light boundaries (no surprise `torch`/`diffusers` loads at package import time).
 
 - Policy (rules + change protocol): `.sangoi/policies/python-package-facades.md`
 - Guardrails (tests):
-  - `tests/test_facade_surfaces_import_light.py` (subprocess): surfaces stay import-light (torch/diffusers-free), and selected `from ... import <Export>` imports work.
-  - `tests/test_facade_import_guardrails.py` (AST): internal modules must not import their own surface (anti-cycle/anti-hub).
+  - `.sangoi/dev/tests/test_facade_surfaces_import_light.py` (subprocess): surfaces stay import-light (torch/diffusers-free), and selected `from ... import <Export>` imports work.
+  - `.sangoi/dev/tests/test_facade_import_guardrails.py` (AST): internal modules must not import their own surface (anti-cycle/anti-hub).
 - Inventory (audit): `.sangoi/.tools/inventory_python_package_facades.py` → `.sangoi/reports/tooling/python-package-facades-inventory.md`
 
 Current enforced facade surfaces:

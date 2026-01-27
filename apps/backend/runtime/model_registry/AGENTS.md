@@ -12,7 +12,7 @@ Status: Draft
 - Core dataclasses/enums (now `CodexCoreSignature`/`CodexCoreArchitecture`) in place with manifest-driven metadata harvesting.
 - Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, and Qwen Image.
 - `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/highres/refiner/LoRA/ControlNet) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
-- 2025-12-14: `ModelSignature` gained a legacy `unet` alias for `core`, keeping tests/older call sites working while the new contract stays `signature.core`.
+- 2025-12-14: `ModelSignature` gained a legacy `unet` alias for `core`, keeping tests and older call sites working while the new contract stays `signature.core`.
 - 2025-12-14: Qwen Image detector reintroduced (`detectors/qwen_image.py`) and enums extended (`ModelFamily.QWEN_IMAGE`, `LatentFormat.QWEN_IMAGE`).
 - 2025-12-12: Z Image runtime metadata was corrected (`context_dim=2560`, `flow_shift=3.0`) to match the canonical HF assets for Z-Image Turbo.
 - 2025-12-13: Z Image Turbo default steps adjusted to 9 to match diffusers `ZImagePipeline` recommendation (≈8 effective updates; last `dt=0`).

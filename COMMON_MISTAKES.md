@@ -2,9 +2,9 @@
 **Cause + fix:** `Repo dependencies live in the project venv at .venv/; calling the pyenv/system python will raise ModuleNotFoundError. Use the repo venv interpreter (and set PYTHONPATH when running tests/imports from the repo root).`
 **Correct command:** `PYTHONPATH=$PWD .venv/bin/python -c "import torch, diffusers; print(torch.__version__, diffusers.__version__)"`
 
-**Wrong command:** `cd tools/dev/import-graph-viewer && rm -rf dist`
+**Wrong command:** `cd .sangoi/dev/tools/dev/import-graph-viewer && rm -rf dist`
 **Cause + fix:** `In this environment, destructive shell deletes can be blocked by policy. If you need to remove generated build artifacts, delete specific files via apply_patch (or avoid producing the artifacts in the first place).`
-**Correct command:** `apply_patch` with `*** Delete File:` entries for the generated files under `tools/dev/import-graph-viewer/dist/`.
+**Correct command:** `apply_patch` with `*** Delete File:` entries for the generated files under `.sangoi/dev/tools/dev/import-graph-viewer/dist/`.
 
 **Wrong command:** ``rg -n "Docs: updated `SUBSYSTEM-MAP\.md`|PYTHON PACKAGE FACADES" .sangoi/CHANGELOG.md``
 **Cause + fix:** `Backticks are bash command substitution even inside double quotes, so the shell tries to execute `SUBSYSTEM-MAP.md` before `rg` runs. Use single quotes for patterns containing backticks (or avoid backticks by matching the filename via regex / fixed strings).`
@@ -22,13 +22,13 @@
 **Cause + fix:** `multi_tool_use.parallel` is a Codex tool call, not a shell command. Running it in bash fails with "command not found". Run the underlying shell commands directly (or invoke the tool via the assistant/tool interface, not via the terminal).
 **Correct command:** `nl -ba apps/backend/core/contracts/asset_requirements.py | sed -n '1,40p'; nl -ba apps/backend/core/contracts/text_encoder_slots.py | sed -n '1,40p'`
 
-**Wrong command:** `pytest -q tests/backend/test_orchestrator_purges_vram_on_model_switch.py tests/backend/test_orchestrator_purges_memory_on_failure.py`
+**Wrong command:** `pytest -q .sangoi/dev/tests/backend/test_orchestrator_purges_vram_on_model_switch.py .sangoi/dev/tests/backend/test_orchestrator_purges_memory_on_failure.py`
 **Cause + fix:** `PyTest collection fails because the repo is not installed as a package; tests import via the top-level 'apps' module, so PYTHONPATH must include the repo root. Re-run with PYTHONPATH=$PWD (and CODEX_ROOT=$PWD when tests need repo-root resolution).`
-**Correct command:** `PYTHONPATH=$PWD pytest -q tests/backend/test_orchestrator_purges_vram_on_model_switch.py tests/backend/test_orchestrator_purges_memory_on_failure.py`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD pytest -q .sangoi/dev/tests/backend/test_orchestrator_purges_vram_on_model_switch.py .sangoi/dev/tests/backend/test_orchestrator_purges_memory_on_failure.py`
 
-**Wrong command:** `~/.venv/bin/python -m pytest -q tests/backend/test_wan22_sampler_timestep_multiplier.py tests/backend/test_wan22_gguf_run_config_overrides.py`
+**Wrong command:** `~/.venv/bin/python -m pytest -q .sangoi/dev/tests/backend/test_wan22_sampler_timestep_multiplier.py .sangoi/dev/tests/backend/test_wan22_gguf_run_config_overrides.py`
 **Cause + fix:** `Some backend modules require CODEX_ROOT (and PYTHONPATH) to resolve repo paths; running pytest without these env vars causes collection to fail. Re-run with CODEX_ROOT=$PWD PYTHONPATH=$PWD.`
-**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q tests/backend/test_wan22_sampler_timestep_multiplier.py tests/backend/test_wan22_gguf_run_config_overrides.py`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/backend/test_wan22_sampler_timestep_multiplier.py .sangoi/dev/tests/backend/test_wan22_gguf_run_config_overrides.py`
 
 **Wrong command:** `ls -লা .sangoi/handoffs | head`
 **Cause + fix:** `Non-ASCII characters in the flag (locale/IME slip) made ls parse an invalid option. Re-run with plain ASCII flags.`
@@ -82,13 +82,13 @@
 **Cause + fix:** `In sandboxed environments, $HOME/.local (XDG_DATA_HOME default) may be read-only, causing uv to fail creating ~/.local/share/uv/python. Set XDG_DATA_HOME to a writable path (e.g., under $HOME/.cache) when running uv python/lock commands.`
 **Correct command:** `XDG_DATA_HOME=$HOME/.cache/uv-data ./.uv/bin/uv python install 3.12.10`
 
-**Wrong command:** `~/.venv/binpython -m pytest -q tests/backend/test_codex_quantization_parametergguf_to.py`
+**Wrong command:** `~/.venv/binpython -m pytest -q .sangoi/dev/tests/backend/test_codex_quantization_parametergguf_to.py`
 **Cause + fix:** `Typo in the venv interpreter path (missing /bin/python). Use the correct virtualenv Python path when running tests.`
-**Correct command:** `~/.venv/bin/python -m pytest -q tests/backend/test_codex_quantization_parametergguf_to.py`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/backend/test_codex_quantization_parametergguf_to.py`
 
-**Wrong command:** `CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
+**Wrong command:** `CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python .sangoi/dev/tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850`
 **Cause + fix:** `apps.backend.interfaces.api.run_api expects CODEX_ROOT to be set by the launcher (run-webui/run-tui). When invoking the module directly, export CODEX_ROOT. In CPU-only sandboxes, pass devices via CLI (--core-device/--te-device/--vae-device) instead of using CODEX_* device env vars.`
-**Correct command:** `CODEX_ROOT=/home/lucas/work/stable-diffusion-webui-codex CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850 --core-device cpu --te-device cpu --vae-device cpu`
+**Correct command:** `CODEX_ROOT=/home/lucas/work/stable-diffusion-webui-codex CODEX_ZIMAGE_DEBUG=1 CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1 CODEX_ZIMAGE_DEBUG_TENC_TEXT=1 CODEX_LOG_SIGMAS=1 ~/.venv/bin/python .sangoi/dev/tools/diagnostics/run_backend_diag.py --stdout-only -- --port 7850 --core-device cpu --te-device cpu --vae-device cpu`
 
 **Wrong command:** `sed -n '1,260p' apps/backend/use_cases/txt2img_pipeline.py`
 **Cause + fix:** `Txt2img pipeline is a package directory under apps/backend/use_cases/txt2img_pipeline/; the runner lives at runner.py. List the directory before assuming a flat file path.`
@@ -102,9 +102,9 @@
 **Cause + fix:** `find global options like -maxdepth must appear before the test expressions; placing it after -name triggers warnings and can change behavior.`
 **Correct command:** `find apps/backend -maxdepth 4 -name AGENTS.md`
 
-**Wrong command:** `python -m pytest tests/test_backend_import_lightweight.py`
+**Wrong command:** `python -m pytest .sangoi/dev/tests/test_backend_import_lightweight.py`
 **Cause + fix:** `This repo expects the global venv at ~/.venv; running pyenv/system python may not have pytest installed. Use ~/.venv/bin/python (and set CODEX_ROOT/PYTHONPATH when the test touches repo-root resolution).`
-**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q tests/test_backend_import_lightweight.py`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/test_backend_import_lightweight.py`
 
 **Wrong command:** `sed -n '1,200p' .bottle/handoffs/HANDOFF_GUIDE`
 **Cause + fix:** `This repository keeps the handoff guide under .sangoi/handoffs/HANDOFF_GUIDE.md; the .bottle path does not exist. Check the actual guide location before reading.`
@@ -139,9 +139,9 @@
 **Wrong command:** `rg -ni "unet" apps/backend/runtime/wan || true`
 **Cause + fix:** Model runtimes live under versioned directories like `wan22`; target the specific directory instead of a non-existent `wan`.
 **Correct command:** `rg -ni "unet" apps/backend/runtime/wan22 || true`
-**Wrong command:** `git add apps backend/runtime utils.py tools dev/trace_pipeline_graph.py`
+**Wrong command:** `git add apps backend/runtime utils.py apps backend/interfaces/api run_api.py`
 **Cause + fix:** `Missing directory separators in multi-level paths; Git expects the exact tracked path.`
-**Correct command:** `git add apps/backend/runtime/utils.py tools/dev/trace_pipeline_graph.py`
+**Correct command:** `git add apps/backend/runtime/utils.py apps/backend/interfaces/api/run_api.py`
 
 **Wrong command:** `find . -type f -not -path ./.git/* -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 **Cause + fix:** `Command tried to add ignored caches; rerun with env var to skip errors or filter out ignored paths.`
@@ -235,9 +235,9 @@ ast.parse(path.read_text())
 print('syntax ok')
 PY`
 
-**Wrong command:** `python tools/debug/test_dequant.py`
+**Wrong command:** `python .sangoi/dev/tools/debug/test_dequant.py`
 **Cause + fix:** `System interpreter lacks project dependencies (numpy, torch); use the repository's virtualenv when executing tooling.`
-**Correct command:** `~/.venv/bin/python tools/debug/test_dequant.py`
+**Correct command:** `~/.venv/bin/python .sangoi/dev/tools/debug/test_dequant.py`
 
 **Wrong command:** `find . -type f -not -path './.git/*' -newer .git/codex-stamp -print0 | xargs -0 -- git add --ignore-errors`
 **Cause + fix:** `The blanket find walks into archived submodules under **, so git add aborts on nested .git refs; prune the reference tree (or stage files explicitly).`
@@ -290,9 +290,9 @@ PY`
 **Cause + fix:** `The stdlib ast module CLI accepts at most one input file; passing multiple paths is treated as extra arguments and causes a usage error. Run the syntax check separately for each file instead of batching them in a single call.`
 **Correct command:** `python -m ast apps/backend/use_cases/txt2img_pipeline/runner.py`
 
-**Wrong command:** `python -m pytest tests/backend/model_parser/test_sdxl_validation.py`
+**Wrong command:** `python -m pytest .sangoi/dev/tests/backend/model_parser/test_sdxl_validation.py`
 **Cause + fix:** Neither the system Python (pyenv 3.12) nor the repo venv have `pytest` preinstalled; install it into `~/.venv` and run tests from that interpreter.
-**Correct command:** `~/.venv/bin/pip install -U pytest && ~/.venv/bin/python -m pytest tests/backend/model_parser/test_sdxl_validation.py`
+**Correct command:** `~/.venv/bin/pip install -U pytest && CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/backend/model_parser/test_sdxl_validation.py`
 
 **Wrong command:** `rg -n "^apps/" /tmp/recent_files.txt | cut -d: -f1 | sort -u | xargs -I{} sed -n '1,99999p' {}`
 **Cause + fix:** `The -n flag prints line numbers; piping those into sed as file paths produced 'No such file or directory'. We only needed to filter lines that start with apps/.`
@@ -307,9 +307,9 @@ PY`
 **Wrong command:** `apply_patch << 'PATCH' ... (missing *** End Patch / stray smart quotes in timeout_ms)`
 **Cause + fix:** `Patch here-doc ended without the required terminator and used a curly quote in timeout_ms, making the JSON invalid. Always end with '*** End Patch' and avoid smart quotes.`
 **Correct command:** `apply_patch << 'PATCH'\n*** Begin Patch\n*** Add File: .sangoi/handoffs/2025-11-01-backend-modules-audit.md\n+<content>\n*** End Patch\nPATCH`
-**Wrong command:** `python3 tools/diagnostics/dry_run_pipeline.py`
+**Wrong command:** `python3 .sangoi/dev/tools/diagnostics/dry_run_pipeline.py`
 **Cause + fix:** `The environment lacks torch; importing runtime helpers pulls torch and fails. Use the static dry-run that avoids PyTorch imports.`
-**Correct command:** `python3 tools/diagnostics/dry_run_pipeline_static.py`
+**Correct command:** `python3 .sangoi/dev/tools/diagnostics/dry_run_pipeline_static.py`
 **Wrong command:** `python - <<'PY'
 from apps.backend.runtime.logging import calltrace
 PY`
@@ -441,9 +441,9 @@ PY`
 **Cause + fix:** `Even with --ignore-errors, git stops when xargs feeds ignored paths; prune __pycache__/refs before piping to git add.`
 **Correct command:** `find . -type f -not -path './.git/*' -not -path '*/__pycache__/*' -not -path './*' -newer .git/codex-stamp -print0 | xargs -0 -- git add`
 
-**Wrong command:** `~/.venv/bin/python tools/dev/validate_sdxl_contract.py`
+**Wrong command:** `~/.venv/bin/python .sangoi/dev/tools/dev/validate_sdxl_contract.py`
 **Cause + fix:** Python couldn't import the local `apps.*` packages when invoked from the repo root; the script lacked a `sys.path` entry for the repository root. Prepend the repo root to `sys.path` within the script before importing `apps.*`.
-**Correct command:** `~/.venv/bin/python tools/dev/validate_sdxl_contract.py` (after adding `sys.path.insert(0, <repo_root>)` in the script)
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python .sangoi/dev/tools/dev/validate_sdxl_contract.py` (after adding `sys.path.insert(0, <repo_root>)` in the script)
 
 **Wrong command:** `apply_patch` updating `apps/backend/runtime/k_diffusion/AGENTS.md` with unmatched context
 **Cause + fix:** The patch assumed anchor text that didn’t exist; read the current file and update using an `Update File` hunk that matches real content, or replace the file body coherently.
@@ -484,9 +484,9 @@ from apps.backend.interfaces.api.run_api import app
 print(type(app))
 PY`
 
-**Wrong command:** `python -m pytest tests/backend/model_registry/test_vae_selection.py`
+**Wrong command:** `python -m pytest .sangoi/dev/tests/backend/model_registry/test_vae_selection.py`
 **Cause + fix:** `O Python global não tem pytest instalado; usar o interpretador gerido em ~/.venv (com pytest instalado) para rodar os testes, conforme diretriz anterior.`
-**Correct command:** `~/.venv/bin/python -m pytest tests/backend/model_registry/test_vae_selection.py`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/backend/model_registry/test_vae_selection.py`
 
 **Wrong command:** `sed -n '1,220p' .sangoi/research/wan22-text-encoder-compat.md`
 **Cause + fix:** `O caminho estava errado; o arquivo de pesquisa de compatibilidade do text encoder WAN22 fica sob .sangoi/research/runtime/, não diretamente em .sangoi/research/.`
@@ -569,9 +569,9 @@ print('status', resp.status_code)
 print('body', resp.json())
 PY`
 
-**Wrong command:** `python -m pytest tests/backend/model_registry/test_vae_selection.py`
+**Wrong command:** `python -m pytest .sangoi/dev/tests/backend/model_registry/test_vae_selection.py`
 **Cause and fix:** `Pytest is not installed in the current environment, so the module import fails. Install pytest (or use the project’s test runner) before invoking the test.`
-**Correct command:** `python -m pip install pytest`
+**Correct command:** `~/.venv/bin/pip install -U pytest`
 **Wrong command:** `ls docs/plan`
 **Cause + fix:** The repository has no `docs/` directory; documentation lives under `.sangoi/`, so `docs/plan` errors. List the real doc root first to discover the available subdirectories.
 **Correct command:** `ls .sangoi`
@@ -588,9 +588,9 @@ Wrong command: unzip *.whl -d wheel
 Cause and fix: unzip not available in the shell; inspected wheel metadata via Python zipfile instead.
 Correct command: python - <<'PY'
 
-**Wrong command:** `python -m pytest tests/backend/model_parser/test_sdxl_validation.py tests/backend/test_k_prediction.py`
+**Wrong command:** `python -m pytest .sangoi/dev/tests/backend/model_parser/test_sdxl_validation.py .sangoi/dev/tests/backend/test_k_prediction.py`
 **Cause and fix:** The default pyenv interpreter lacks pytest; run tests with the project venv (or install pytest) before invoking the suite.
-**Correct command:** `PYTHONPATH=$HOME/.netsuite ~/.venv/bin/python -m pytest tests/backend/model_parser/test_sdxl_validation.py tests/backend/test_k_prediction.py`
+**Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$HOME/.netsuite:$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/backend/model_parser/test_sdxl_validation.py .sangoi/dev/tests/backend/test_k_prediction.py`
 
 **Wrong command:** `cd /home/lucas/work/stable-diffusion-webui-codex && ls .legacy-functional && find .legacy-functional -maxdepth 3 -type f -iname '*sdxl*' | head -n 40`
 **Cause and fix:** The `.legacy-functional` directory was assumed to exist at the repo root, but it was not present, so `ls` failed with ENOENT. First locate the directory (or confirm its absence) with a guarded search instead of hard-coding the path.
@@ -619,9 +619,9 @@ Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,6
 Cause and fix: The sampling inner loop lives in `apps/backend/runtime/sampling/__init__.py`; there is no separate `sampling_function_inner.py` module, so sed failed with ENOENT. Point sed at the package file that defines `sampling_function_inner`.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && sed -n '260,620p' apps/backend/runtime/sampling/__init__.py
 
-Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && python .sangoi/dev/tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
 Cause and fix: The trace script imports `apps.backend`, which in turn imports `torch` via the runtime memory module; running it against the system Python without the project venv caused `ModuleNotFoundError: No module named 'torch'`. Use the project virtualenv (and required `PYTHONPATH`) so `torch` and internal modules are available.
-Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && PYTHONPATH=$HOME/.netsuite:. ~/.venv/bin/python tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && CODEX_ROOT=$PWD PYTHONPATH=$HOME/.netsuite:.:$PWD ~/.venv/bin/python .sangoi/dev/tools/dev/trace_pipeline_graph.py --root apps.backend.use_cases.txt2img_pipeline.runner:Txt2ImgPipelineRunner.run --max-depth 6
 **Wrong command:** `ls docs/plan`
 **Cause + fix:** The repository has no `docs/plan/` directory; list the actual docs root before drilling into paths.
 **Correct command:** `ls .sangoi`

@@ -346,7 +346,7 @@ def build_app() -> FastAPI:
 
     # Settings registry (hardcoded dataclasses/enums via codegen)
     try:
-        # Generated from tools/settings/generate_settings_registry.py
+        # Generated from .sangoi/dev/tools/settings/generate_settings_registry.py
         from apps.backend.interfaces.schemas.settings_registry import (  # type: ignore
             schema_to_json as _schema_hardcoded,
             field_index as _field_index,

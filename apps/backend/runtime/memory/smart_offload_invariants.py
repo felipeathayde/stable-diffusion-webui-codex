@@ -24,7 +24,7 @@ from typing import Any, Iterable
 
 import torch
 
-from apps.backend.runtime.memory import memory_management
+from . import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 
 

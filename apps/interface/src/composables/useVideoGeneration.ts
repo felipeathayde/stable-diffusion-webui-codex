@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Unified video generation composable for WAN (txt2vid/img2vid/vid2vid).
-Owns per-tab video generation state (progress/frames/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
-to update UI state and fetch final results.
+	Purpose: Unified video generation composable for WAN (txt2vid/img2vid/vid2vid).
+	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
+	to update UI state and fetch final results.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -375,6 +375,7 @@ export function useVideoGeneration(tabId: string) {
         trimToAudio: v.trimToAudio,
         saveMetadata: v.saveMetadata,
         saveOutput: v.saveOutput,
+        returnFrames: v.returnFrames,
       },
       interpolation: {
         enabled: v.rifeEnabled,

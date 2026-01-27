@@ -2,7 +2,7 @@
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
 Owner: Frontend Maintainers
-Last Review: 2026-01-21
+Last Review: 2026-01-27
 Status: Active
 
 ## Purpose
@@ -17,6 +17,7 @@ Status: Active
 - 2025-12-16: `useVideoGeneration(tabId)` now supports WAN `vid2vid` via `/api/vid2vid` multipart upload (keeps the selected video file in-memory per tab) and exposes `videoUrl` for exported outputs served by `/api/output/{rel_path}`.
 - 2026-01-17: `useVideoGeneration(tabId)` now derives `wan_metadata_repo` for the known WAN2.2 repos from the current input mode + size hint (prevents stale repo ids after switching txt/img/vid modes).
 - 2026-01-21: `useVideoGeneration(tabId)` builds WAN stage payloads with sha-only LoRA inputs (`loraSha` → `lora_sha`).
+- 2026-01-27: `useVideoGeneration(tabId)` propagates the WAN `Return frames` toggle via `video_return_frames` (default off); frames are still returned when `Save output` is off or export fails (backend attaches `info.warnings`). Vid2vid uses the same toggle to control preview frames.
 - 2025-12-25: `usePromptCard` encapsulates shared prompt toolbar state (TI/LoRA/Styles) and negative-prompt visibility defaults.
 - 2025-12-27: Removed Checkpoints state from `usePromptCard` (PromptCard no longer renders the Checkpoints modal/button).
 - 2025-12-25: `useResultsCard` encapsulates shared “Results” helpers (clipboard copy + ephemeral notice/toast + JSON formatting) so views don’t duplicate the same wiring.

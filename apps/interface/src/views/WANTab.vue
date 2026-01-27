@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
-Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
-renders progress/results via task events.
+	Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
+	Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
+	renders progress/results via task events (frames and/or exported video).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
@@ -425,10 +425,17 @@ Symbols (top-level; keep in sync; no ghosts):
         <ResultViewer mode="video" :frames="framesResult" :toDataUrl="toDataUrl" emptyText="No results yet.">
           <template #empty>
             <div class="wan-results-empty">
-              <div class="wan-empty-title">{{ isRunning ? 'Generating…' : 'No results yet' }}</div>
+              <div class="wan-empty-title">
+                <template v-if="isRunning">Generating…</template>
+                <template v-else-if="videoUrl">Frames not returned</template>
+                <template v-else>No results yet</template>
+              </div>
               <div v-if="isRunning" class="caption">
                 Stage: {{ progress.stage }}
                 <template v-if="progress.percent !== null"> · {{ progress.percent.toFixed(1) }}%</template>
+              </div>
+              <div v-else-if="videoUrl" class="caption">
+                Enable “Return frames” in Video Output to include frames in the result payload (or disable Save output to force frames).
               </div>
               <div v-else class="caption">Need help? Press Generate to see what is missing.</div>
             </div>

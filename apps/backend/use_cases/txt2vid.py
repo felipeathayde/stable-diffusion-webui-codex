@@ -10,6 +10,7 @@ Purpose: Txt2vid orchestration for WAN22 (Diffusers pipeline or GGUF runtime).
 Configures sampler settings, applies LoRAs, runs the selected execution path, exports the resulting video, and yields progress/result events.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional frames) and attaches warnings.
 - `_run_pipeline` (function): Runs a Diffusers txt2vid pipeline and returns generated frames.
 - `_yield_wan22_gguf_progress` (function): Maps WAN22 GGUF stream dict events into backend `ProgressEvent`s.
 - `run_txt2vid` (function): Orchestrates txt2vid generation and yields an `InferenceEvent` stream.
@@ -18,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
@@ -31,6 +33,51 @@ from apps.backend.runtime.workflows.video import (
     configure_sampler,
     export_video,
 )
+
+def _build_result_payload(
+    *,
+    engine: Any,
+    result: Any,
+    plan: VideoPlan,
+    request: Txt2VidRequest,
+    video_meta: Any,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = dict(getattr(result, "metadata", {}) or {})
+
+    user_return_frames = bool(plan.extras.get("video_return_frames", False))
+    video_options = getattr(request, "video_options", None)
+    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
+
+    video_saved = bool(isinstance(video_meta, dict) and bool(video_meta.get("saved")))
+    export_failed = bool(save_output and not video_saved)
+
+    effective_return_frames = bool(user_return_frames or (not save_output) or export_failed)
+
+    warnings: list[str] = []
+    if not save_output:
+        warnings.append(
+            "Save output is OFF: no video file was written. "
+            "Frames are returned so you can download them from the Results viewer."
+        )
+    if export_failed:
+        reason = video_meta.get("reason") if isinstance(video_meta, dict) else None
+        warnings.append(
+            f"Video export failed ({reason or 'unknown error'}). "
+            "Frames are returned as a fallback."
+        )
+
+    if warnings:
+        metadata["warnings"] = warnings
+
+    payload: dict[str, Any] = {"info": engine._to_json(metadata)}  # type: ignore[attr-defined]
+    if effective_return_frames:
+        payload["images"] = getattr(result, "frames", [])
+    if video_saved:
+        payload["video"] = {
+            "rel_path": video_meta.get("rel_path"),
+            "mime": video_meta.get("mime"),
+        }
+    return payload
 
 
 def _run_pipeline(pipe: Any, plan: VideoPlan, request: Txt2VidRequest) -> list[Any]:
@@ -104,7 +151,7 @@ def run_txt2vid(
         if not frames:
             raise RuntimeError("WAN22 GGUF: produced no frames")
 
-        video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None))
+        video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="txt2vid")
 
         @dataclass(frozen=True)
         class _SamplerOutcome:
@@ -140,11 +187,15 @@ def run_txt2vid(
             video_meta=video_meta,
         )
 
-        payload = {
-            "images": result.frames,
-            "info": engine._to_json(result.metadata),  # type: ignore[attr-defined]
-        }
-        yield ResultEvent(payload=payload)
+        yield ResultEvent(
+            payload=_build_result_payload(
+                engine=engine,
+                result=result,
+                plan=plan,
+                request=request,
+                video_meta=video_meta,
+            )
+        )
         return
 
     extras = dict(plan.extras)
@@ -162,7 +213,7 @@ def run_txt2vid(
     yield ProgressEvent(stage="run", percent=5.0, message="Running pipeline")
     frames = _run_pipeline(pipe, plan, request)
 
-    video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None))
+    video_meta = export_video(engine, frames, plan, getattr(request, "video_options", None), task="txt2vid")
 
     elapsed = time.perf_counter() - start
     result = build_video_result(
@@ -176,8 +227,12 @@ def run_txt2vid(
         video_meta=video_meta,
     )
 
-    payload = {
-        "images": result.frames,
-        "info": engine._to_json(result.metadata),  # type: ignore[attr-defined]
-    }
-    yield ResultEvent(payload=payload)
+    yield ResultEvent(
+        payload=_build_result_payload(
+            engine=engine,
+            result=result,
+            plan=plan,
+            request=request,
+            video_meta=video_meta,
+        )
+    )

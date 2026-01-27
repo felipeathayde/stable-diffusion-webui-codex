@@ -2,7 +2,7 @@
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
 Owner: Frontend Maintainers
-Last Review: 2026-01-06
+Last Review: 2026-01-27
 Status: Active
 
 ## Purpose
@@ -12,7 +12,7 @@ Status: Active
 - `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional per-stage LoRA when `LightX2V` is enabled).
 - `WanStageLoraField.vue` — Stage-level LoRA select + weight (wan22-loras), used by `WanStagePanel.vue`.
 - `WanSubHeader.vue` — Small section sub-header used by `WANTab.vue` to keep “Video / High / Low” headers consistent.
-- `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/crf/pix_fmt/loop/pingpong/save flags + RIFE).
+- `WanVideoOutputPanel.vue` — Video export + interpolation controls (format/crf/pix_fmt/loop/pingpong/save + return-frames + RIFE).
 
 ## Notes
 - Keep these components dumb: props in, emits out. Do not fetch inventory or call backend APIs here.
@@ -29,3 +29,4 @@ Status: Active
 - 2025-12-29: `WanVideoOutputPanel.vue` renders the RIFE toggle inline with the other output toggles (Ping-pong/Save/Trim) for layout parity.
 - 2026-01-03: Added standardized file header blocks to WAN components (doc-only change; part of rollout).
 - 2026-01-06: `WanStagePanel.vue` now labels empty sampler/scheduler selections as “Inherit” (stage overrides are optional; no automatic token).
+- 2026-01-27: Added a `Return frames` toggle to `WanVideoOutputPanel.vue` (default off) and an inline note when `Save output` is off (frames still returned so users can download them).

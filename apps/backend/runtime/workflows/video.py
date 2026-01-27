@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
-- `export_video` (function): Exports a frame sequence to a video file according to request options.
+- `export_video` (function): Exports a frame sequence to a video file according to request options and a task label (stable output dir).
 - `assemble_video_metadata` (function): Builds a metadata dict describing the generated video.
 - `build_video_result` (function): Returns a `VideoResult` bundle for API/UI consumers.
 - `__all__` (constant): Explicit export list for the module.
@@ -97,10 +97,10 @@ def configure_sampler(component: Any, plan: VideoPlan, logger_: logging.Logger |
     return outcome
 
 
-def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_options: Any) -> Any:
+def export_video(engine: Any, frames: Sequence[Any], plan: VideoPlan, video_options: Any, *, task: str) -> Any:
     if not hasattr(engine, "_maybe_export_video"):
         return None
-    return engine._maybe_export_video(frames, fps=plan.fps, options=video_options)  # type: ignore[attr-defined]
+    return engine._maybe_export_video(frames, fps=plan.fps, options=video_options, task=task)  # type: ignore[attr-defined]
 
 
 def assemble_video_metadata(

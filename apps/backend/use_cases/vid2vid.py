@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_extract_flow_options` (function): Extracts `vid2vid_flow` dict options from request extras.
 - `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
 - `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
+- `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional preview frames) and attaches warnings.
 - `_run_native_pipeline` (function): Runs the native WAN diffusers pipeline path for vid2vid (requires `comp.pipeline`).
 - `_run_wan_animate` (function): Runs the WAN “animate” path (stage planning + prompt/text guidance; includes nested option handling).
 - `_run_flow_chunks` (function): Applies flow-guided warping in chunks using RAFT and per-frame options (nested loop over frames).
@@ -25,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import time
 from pathlib import Path
 import shutil
@@ -90,6 +92,69 @@ def _validate_4n_plus_1(value: int, *, name: str) -> int:
     if v <= 0 or (v - 1) % 4 != 0:
         raise RuntimeError(f"{name} must be 4N+1 (got {v})")
     return v
+
+
+def _build_result_payload(
+    *,
+    engine: Any,
+    info: dict[str, Any],
+    preview_frames: Sequence[Any],
+    request: Vid2VidRequest,
+    video_meta: Any,
+    video_export_error: str | None,
+) -> dict[str, Any]:
+    extras_raw = getattr(request, "extras", {}) or {}
+    extras: dict[str, Any] = dict(extras_raw) if isinstance(extras_raw, Mapping) else {}
+    user_return_frames = bool(extras.get("video_return_frames", False))
+
+    video_options = getattr(request, "video_options", None)
+    save_output = bool(isinstance(video_options, Mapping) and bool(video_options.get("save_output", False)))
+
+    video_saved = bool(video_meta is not None and bool(getattr(video_meta, "saved", False)))
+    export_failed = bool(save_output and not video_saved)
+
+    effective_return_frames = bool(user_return_frames or (not save_output) or export_failed)
+
+    warnings: list[str] = []
+    if not save_output:
+        warnings.append(
+            "Save output is OFF: no video file was written. "
+            "Frames are returned so you can download them from the Results viewer."
+        )
+    if export_failed:
+        reason = str(video_export_error or getattr(video_meta, "reason", "") or "").strip() or "unknown error"
+        warnings.append(
+            f"Video export failed ({reason}). "
+            "Frames are returned as a fallback."
+        )
+
+    if warnings:
+        info["warnings"] = warnings
+
+    if save_output:
+        video_export: dict[str, Any] = {"saved": bool(video_saved)}
+        if video_saved:
+            video_export.update(
+                {
+                    "rel_path": getattr(video_meta, "rel_path", None),
+                    "mime": getattr(video_meta, "mime", None),
+                    "fps": getattr(video_meta, "fps", None),
+                    "frames": getattr(video_meta, "frame_count", None),
+                }
+            )
+        else:
+            video_export["error"] = str(video_export_error or getattr(video_meta, "reason", "") or "").strip() or None
+        info["video_export"] = video_export
+
+    payload: dict[str, Any] = {"info": engine._to_json(info)}  # type: ignore[attr-defined]
+    if effective_return_frames:
+        payload["images"] = list(preview_frames)
+    if video_saved:
+        payload["video"] = {
+            "rel_path": getattr(video_meta, "rel_path", None),
+            "mime": getattr(video_meta, "mime", None),
+        }
+    return payload
 
 
 def _run_native_pipeline(
@@ -552,6 +617,7 @@ def run_vid2vid(
             info["video_interpolation"] = vfi_opts
 
         video_meta = None
+        video_export_error: str | None = None
         try:
             video_meta = export_video(
                 frames_out,
@@ -562,29 +628,19 @@ def run_vid2vid(
                 extra_metadata=info if bool(getattr(request, "video_options", None)) else None,
             )
         except Exception as exc:
-            # Surface exporter failure explicitly; users can disable save_output to keep frames-only.
-            raise RuntimeError(f"vid2vid export failed: {exc}") from exc
-
-        if video_meta and getattr(video_meta, "saved", False):
-            info["video_export"] = {
-                "rel_path": getattr(video_meta, "rel_path", None),
-                "mime": getattr(video_meta, "mime", None),
-                "fps": getattr(video_meta, "fps", None),
-                "frames": getattr(video_meta, "frame_count", None),
-            }
+            video_export_error = str(exc)
 
         preview_n = int(cfg.get("preview_frames") or 48)
         preview = list(frames_out[: max(1, min(preview_n, len(frames_out)))])
 
-        payload: dict[str, Any] = {
-            "images": preview,
-            "info": engine._to_json(info),  # type: ignore[attr-defined]
-        }
-        if video_meta and getattr(video_meta, "saved", False):
-            payload["video"] = {
-                "rel_path": getattr(video_meta, "rel_path", None),
-                "mime": getattr(video_meta, "mime", None),
-            }
+        payload = _build_result_payload(
+            engine=engine,
+            info=info,
+            preview_frames=preview,
+            request=request,
+            video_meta=video_meta,
+            video_export_error=video_export_error,
+        )
 
         yield ResultEvent(payload=payload)
     finally:

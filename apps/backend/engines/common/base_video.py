@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared helpers for video engines (txt2vid/img2vid).
-Provides a small `BaseInferenceEngine` wrapper with common event/serialization helpers for video-oriented engines.
+Provides a small `BaseInferenceEngine` wrapper with common event/serialization helpers and ffmpeg export wiring for video-oriented engines.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseVideoEngine` (class): Base class for video engines with shared JSON serialization and optional export wiring helpers.
@@ -50,13 +50,53 @@ class BaseVideoEngine(BaseInferenceEngine):
             # Best effort; never break response on serialization issues
             return str(obj)
 
-    def _maybe_export_video(self, frames: List[object], *, fps: int, options: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    def _maybe_export_video(
+        self,
+        frames: List[object],
+        *,
+        fps: int,
+        options: Optional[Dict[str, Any]] = None,
+        task: str = "video",
+        extra_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Export frames to disk when requested.
 
-        Minimal implementation: we acknowledge options and return a stub. A
-        dedicated export utility can replace this later.
+        Uses the ffmpeg exporter to write a video file under `CODEX_ROOT/output`
+        when `save_output` is enabled.
         """
-        # Stub: acknowledge request but don't write files here.
-        if options and options.get("save_output"):
-            return {"saved": False, "reason": "exporter-not-wired", "fps": int(fps)}
-        return None
+        from apps.backend.video.export.ffmpeg_exporter import VideoExportError, export_video
+
+        opts: Dict[str, Any] = dict(options or {})
+        if not bool(opts.get("save_output", False)):
+            return None
+
+        frames_list = list(frames or [])
+        if not frames_list:
+            return {"saved": False, "reason": "no-frames", "fps": int(fps), "frames": 0}
+
+        try:
+            result = export_video(
+                frames_list,
+                fps=int(fps),
+                options=opts,
+                task=str(task or "video"),
+                extra_metadata=extra_metadata,
+            )
+        except VideoExportError as exc:
+            self._logger.warning("[video-export] failed: %s", exc)
+            return {"saved": False, "reason": str(exc), "fps": int(fps), "frames": len(frames_list)}
+        except Exception as exc:
+            self._logger.warning("[video-export] failed: %s", exc, exc_info=True)
+            return {"saved": False, "reason": str(exc), "fps": int(fps), "frames": len(frames_list)}
+
+        if result is None:
+            return None
+
+        return {
+            "saved": bool(getattr(result, "saved", False)),
+            "rel_path": getattr(result, "rel_path", None),
+            "mime": getattr(result, "mime", None),
+            "reason": getattr(result, "reason", None),
+            "fps": getattr(result, "fps", int(fps)),
+            "frames": getattr(result, "frame_count", len(frames_list)),
+        }

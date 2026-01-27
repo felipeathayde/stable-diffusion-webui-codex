@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
-Contains request parsing, payload validation, and task orchestration for generation endpoints.
-When resolving sha-selected text encoders (`tenc_sha`), uses cached inventory slot metadata to enforce slot contracts without repeated header reads; WAN video tasks enforce `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping and return suggested rounded-up dimensions on invalid requests.
+Contains request parsing, payload validation (including WAN video export options like `video_return_frames`), and task orchestration for generation endpoints.
+Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for generation endpoints.
@@ -1328,6 +1328,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         cfg_val = float(payload.get('txt2vid_cfg_scale', 7.0))
 
         extras: Dict[str, Any] = {}
+        if "video_return_frames" in payload:
+            raw_return_frames = payload.get("video_return_frames")
+            if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
+                raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
+            if isinstance(raw_return_frames, bool):
+                extras["video_return_frames"] = bool(raw_return_frames)
         # Video export options (structured in request.video_options; also kept in extras.video for debugging)
         video_options = None
         try:
@@ -1504,6 +1510,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         init_image = media.decode_image(init_image_data) if init_image_data else None
 
         extras: Dict[str, Any] = {}
+        if "video_return_frames" in payload:
+            raw_return_frames = payload.get("video_return_frames")
+            if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
+                raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
+            if isinstance(raw_return_frames, bool):
+                extras["video_return_frames"] = bool(raw_return_frames)
         video_options = None
         try:
             from apps.backend.core.params.video import VideoExportOptions
@@ -1829,6 +1841,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 mask_path = _resolve_vid2vid_input_path(mask_raw, field="mask_video")
 
         extras: Dict[str, Any] = {}
+        if "video_return_frames" in payload:
+            raw_return_frames = payload.get("video_return_frames")
+            if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
+                raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
+            if isinstance(raw_return_frames, bool):
+                extras["video_return_frames"] = bool(raw_return_frames)
         video_options = None
         try:
             from apps.backend.core.params.video import VideoExportOptions

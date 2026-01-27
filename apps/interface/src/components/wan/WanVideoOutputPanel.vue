@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN video output options panel.
-Configures export format/CRF/pixel format/loop options and output toggles (pingpong/save/metadata/trim + optional RIFE interpolation) for WAN video tasks.
+Configures export format/CRF/pixel format/loop options and output toggles (pingpong/save/metadata/trim/return-frames + optional RIFE interpolation) for WAN video tasks.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoOutputPanel` (component): Video output settings panel used by WANTab.
@@ -97,6 +97,15 @@ Symbols (top-level; keep in sync; no ghosts):
         Save output
       </button>
       <button
+        :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.returnFrames ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :disabled="disabled"
+        :aria-pressed="video.returnFrames"
+        @click="updateVideo({ returnFrames: !video.returnFrames })"
+      >
+        Return frames
+      </button>
+      <button
         :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', video.saveMetadata ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
         type="button"
         :disabled="disabled"
@@ -123,6 +132,9 @@ Symbols (top-level; keep in sync; no ghosts):
       >
         Interpolation (RIFE)
       </button>
+    </div>
+    <div v-if="!disabled && !video.saveOutput" class="mt-2 text-xs opacity-80">
+      Save output is OFF: no video file will be written. Frames will still be returned so you can download them from the Results viewer.
     </div>
     <div v-if="video.rifeEnabled" class="gc-row">
       <div class="gc-col">

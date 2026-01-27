@@ -67,6 +67,7 @@ describe('WAN video payload builders', () => {
         trimToAudio: false,
         saveMetadata: true,
         saveOutput: true,
+        returnFrames: true,
       },
       interpolation: {
         enabled: true,
@@ -86,6 +87,7 @@ describe('WAN video payload builders', () => {
     expect(payload.wan_tenc_sha).toBe(tencSha)
     expect(payload.wan_vae_sha).toBe(vaeSha)
     expect(payload.wan_metadata_repo).toBe(metaRepo)
+    expect(payload.video_return_frames).toBe(true)
   })
 
   it('builds an img2vid payload with sha-selected assets', () => {

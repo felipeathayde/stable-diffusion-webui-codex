@@ -10,13 +10,16 @@ Purpose: Zod-validated payload schemas + builders for WAN video endpoints (txt2v
 Defines the strict API payload schemas and provides helpers that normalize UI inputs (device, stage params, assets, output settings),
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests.
 
-Symbols (top-level; keep in sync; no ghosts):
-- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
-- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
-- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
-- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
-- `WanVideoOutputInput` (interface): Output options (filename prefix, output folder, format) mapped into payload.
-- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
+	Symbols (top-level; keep in sync; no ghosts):
+	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
+	- `WanImg2VidPayloadSchema` (const): Zod schema for WAN `/api/img2vid` payload.
+	- `WanVid2VidPayloadSchema` (const): Zod schema for WAN `/api/vid2vid` payload.
+	- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
+	- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
+	- `WanVid2VidPayload` (type): Zod-inferred payload type for WAN `/api/vid2vid`.
+	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
+	- `WanVideoOutputInput` (interface): Output options (filename prefix, output folder, format) mapped into payload.
+	- `WanInterpolationInput` (interface): Optional interpolation config mapped into payload.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
 - `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (prompt, dims, steps, seed, stage params, assets).
 - `WanVid2VidInput` (interface): Vid2vid-specific input (includes init video path + strength/options) extending common input.
@@ -83,6 +86,7 @@ const CommonWanVideoPayloadSchema = z
   .object({
     codex_device: DeviceEnum,
 
+    video_return_frames: z.boolean().optional(),
     video_filename_prefix: z.string().min(1).optional(),
     video_format: z.string().min(1).optional(),
     video_pix_fmt: z.string().min(1).optional(),
@@ -192,6 +196,7 @@ export interface WanVideoOutputInput {
   trimToAudio: boolean
   saveMetadata: boolean
   saveOutput: boolean
+  returnFrames?: boolean
 }
 
 export interface WanInterpolationInput {
@@ -329,6 +334,7 @@ function addWanOutput(payload: Record<string, unknown>, out: WanVideoOutputInput
   payload.video_save_metadata = Boolean(out.saveMetadata)
   payload.video_save_output = Boolean(out.saveOutput)
   payload.video_trim_to_audio = Boolean(out.trimToAudio)
+  if (out.returnFrames) payload.video_return_frames = true
 }
 
 function addWanInterpolation(payload: Record<string, unknown>, interpolation: WanInterpolationInput): void {

@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Viewer for generated images/videos with zoom overlay.
-Displays generated outputs and provides an overlay viewer for zoom/pan actions and per-item controls.
+	Purpose: Viewer for generated images/videos with zoom overlay.
+	Displays generated outputs and provides an overlay viewer for zoom/pan actions and per-item controls (including per-frame downloads when available).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ResultViewer` (component): Viewer component for generated outputs and overlay interactions.
@@ -49,8 +49,16 @@ Symbols (top-level; keep in sync; no ghosts):
     <template v-else>
       <template v-if="frames && frames.length">
         <div class="grid gap-3 md:grid-cols-2">
-          <figure v-for="(frame, index) in frames" :key="index" class="space-y-1">
+          <figure v-for="(frame, index) in frames" :key="index" class="group relative space-y-1">
             <img class="w-full rounded" :src="frameUrl(frame)" :alt="`Frame ${index + 1}`" />
+            <div v-if="canDownloadFrame(frame)" class="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100">
+              <a
+                class="btn btn-sm btn-outline"
+                :href="frameUrl(frame)"
+                :download="frameDownloadName(index, frame)"
+                @click.stop
+              >Download</a>
+            </div>
           </figure>
         </div>
       </template>
@@ -113,6 +121,29 @@ function imageUrl(img: GeneratedImage): string {
 function frameUrl(frame: unknown): string {
   if (typeof props.toDataUrl === 'function') return props.toDataUrl(frame)
   return String(frame ?? '')
+}
+
+function canDownloadFrame(frame: unknown): boolean {
+  if (typeof props.toDataUrl !== 'function') return false
+  return isGeneratedImage(frame)
+}
+
+function isGeneratedImage(value: unknown): value is GeneratedImage {
+  if (!value || typeof value !== 'object') return false
+  const v = value as any
+  return typeof v.format === 'string' && typeof v.data === 'string'
+}
+
+function frameDownloadName(index: number, frame: unknown): string {
+  const ext = (() => {
+    if (isGeneratedImage(frame)) {
+      const raw = String(frame.format || '').trim().toLowerCase()
+      if (raw) return raw
+    }
+    return 'png'
+  })()
+  const num = String(index + 1).padStart(4, '0')
+  return `frame_${num}.${ext}`
 }
 
 function openZoom(img: GeneratedImage): void {

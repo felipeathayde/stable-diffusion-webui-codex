@@ -10,18 +10,19 @@ Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the 
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
 default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas.
 
-Symbols (top-level; keep in sync; no ghosts):
-- `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
-- `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
-- `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
-- `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
-- `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
-- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage.
-- `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
-- `uuid` (function): Generates a random tab id (client-side).
-- `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
-- `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
-- `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
+	Symbols (top-level; keep in sync; no ghosts):
+	- `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
+	- `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
+	- `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
+	- `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
+	- `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
+	- `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage.
+	- `MODEL_TABS_STORAGE_KEY` (const): LocalStorage key used for persisted tabs state (bump when schema changes).
+	- `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
+	- `uuid` (function): Generates a random tab id (client-side).
+	- `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
+	- `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
+	- `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
 - `useModelTabsStore` (store): Pinia store for tabs; loads/syncs with backend, provides CRUD/reorder actions, and exposes computed helpers.
 */
@@ -88,6 +89,7 @@ export interface WanVideoParams {
   trimToAudio: boolean
   saveMetadata: boolean
   saveOutput: boolean
+  returnFrames: boolean
   // Interpolation (RIFE)
   rifeEnabled: boolean
   rifeModel: string
@@ -184,6 +186,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       trimToAudio: false,
       saveMetadata: true,
       saveOutput: true,
+      returnFrames: false,
       rifeEnabled: true,
       rifeModel: 'rife47.pth',
       rifeTimes: 2,

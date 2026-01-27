@@ -55,15 +55,12 @@ apps/interface/.pnpm-debug.log
 apps/interface/tabs.json
 apps/interface/workflows.json
 apps/settings_values.json
-/.sangoi/launcher/
+
+# Sangoi project docs / dev tooling (lives in separate repo; keep local checkout here)
+/.sangoi/
 
 # No binary office docs
 *.docx
-
-# Tooling outputs
-.sangoi/reports/tooling/pyright/
-.sangoi/backups/webui_reasoning.jsonl
-.sangoi/backups/webui_reasoning_report.md
 
 # Model weights / large artifacts (never commit)
 /models/

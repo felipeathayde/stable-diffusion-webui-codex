@@ -14,6 +14,12 @@ TORCH_BACKEND="${CODEX_TORCH_BACKEND:-}" # cpu|cu126|cu128|cu130|rocm64 (optiona
 CUDA_VARIANT="${CODEX_CUDA_VARIANT:-}" # 12.6|12.8|13|cu126|cu128|cu130 (optional override)
 TRACE="${CODEX_INSTALL_TRACE:-0}"
 
+NODE_VERSION="${CODEX_NODE_VERSION:-24.13.0}"
+NODEENV_DIR="${ROOT_DIR}/.nodeenv"
+NODEENV_BIN_DIR="${NODEENV_DIR}/bin"
+NODEENV_NODE="${NODEENV_BIN_DIR}/node"
+NODEENV_NPM="${NODEENV_BIN_DIR}/npm"
+
 log() { echo "[install] $*"; }
 warn() { echo "[install] Warning: $*" >&2; }
 die() { echo "[install] Error: $*" >&2; exit 1; }
@@ -25,15 +31,21 @@ fi
 
 UV_CACHE_DIR="${UV_CACHE_DIR:-${ROOT_DIR}/.uv/cache}"
 NPM_CACHE_DIR="${NPM_CONFIG_CACHE:-${ROOT_DIR}/.npm-cache}"
+XDG_DATA_HOME="${XDG_DATA_HOME:-${ROOT_DIR}/.uv/xdg-data}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${ROOT_DIR}/.uv/xdg-cache}"
 export UV_CACHE_DIR
 export NPM_CONFIG_CACHE="${NPM_CACHE_DIR}"
-mkdir -p "${UV_CACHE_DIR}" "${NPM_CACHE_DIR}"
+export XDG_DATA_HOME XDG_CACHE_HOME
+mkdir -p "${UV_CACHE_DIR}" "${NPM_CACHE_DIR}" "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
 
 log "Repo: ${ROOT_DIR}"
 log "uv: ${UV_BIN} (version pin: ${UV_VERSION})"
 log "uv cache: ${UV_CACHE_DIR}"
 log "Python: ${PYTHON_VERSION} (managed by uv)"
 log "Venv: ${VENV_DIR} (created by uv; uses the managed Python)"
+log "Node.js: ${NODE_VERSION} (managed by nodeenv; installed into ${NODEENV_DIR})"
+log "XDG data: ${XDG_DATA_HOME}"
+log "XDG cache: ${XDG_CACHE_HOME}"
 log "Torch mode: ${TORCH_MODE} (override via CODEX_TORCH_MODE=auto|cpu|cuda|rocm|skip)"
 if [[ -n "${TORCH_BACKEND}" ]]; then
   log "Torch backend override: ${TORCH_BACKEND} (CODEX_TORCH_BACKEND)"
@@ -221,21 +233,46 @@ sync_python_deps() {
   "${UV_BIN}" sync --locked --extra "${extra}"
 }
 
+ensure_nodeenv() {
+  if [[ -e "${NODEENV_DIR}" && ! -d "${NODEENV_DIR}" ]]; then
+    die "expected '${NODEENV_DIR}' to be a directory (nodeenv), but found a non-directory path."
+  fi
+
+  if [[ -x "${NODEENV_NODE}" && -x "${NODEENV_NPM}" ]]; then
+    local existing
+    existing="$("${NODEENV_NODE}" -v | tr -d '\r\n')"
+    existing="${existing#v}"
+    if [[ "${existing}" != "${NODE_VERSION}" ]]; then
+      die "'${NODEENV_DIR}' already contains Node.js ${existing}, but CODEX_NODE_VERSION=${NODE_VERSION}. Delete '${NODEENV_DIR}' or set CODEX_NODE_VERSION=${existing}."
+    fi
+    return 0
+  fi
+
+  if [[ -e "${NODEENV_DIR}" ]]; then
+    die "found '${NODEENV_DIR}', but it does not contain an executable node/npm. Delete it and re-run the installer."
+  fi
+
+  log "Installing Node.js ${NODE_VERSION} into ${NODEENV_DIR} ..."
+  "${UV_BIN}" tool run --from nodeenv nodeenv -n "${NODE_VERSION}" "${NODEENV_DIR}"
+
+  if [[ ! -x "${NODEENV_NODE}" ]]; then
+    die "nodeenv completed, but '${NODEENV_NODE}' is missing or not executable."
+  fi
+  if [[ ! -x "${NODEENV_NPM}" ]]; then
+    die "nodeenv completed, but '${NODEENV_NPM}' is missing or not executable."
+  fi
+}
+
 bootstrap_uv
 install_python
 sync_python_deps
 
 log "Installing frontend dependencies (npm) ..."
-if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-  warn "missing 'node' and/or 'npm' on PATH; skipping frontend install."
-  warn "Install Node.js (>=18), then run: (cd apps/interface && npm install)"
-  exit 0
-fi
-
-log "node: $(node -v)  npm: $(npm -v)"
-(cd "${ROOT_DIR}/apps/interface" && npm install --cache "${NPM_CACHE_DIR}")
+ensure_nodeenv
+log "node: $("${NODEENV_NODE}" -v)  npm: $("${NODEENV_NPM}" -v)"
+(cd "${ROOT_DIR}/apps/interface" && "${NODEENV_NPM}" install --cache "${NPM_CACHE_DIR}")
 if [[ ! -f "${ROOT_DIR}/apps/interface/node_modules/vite/package.json" ]]; then
-  die "npm install completed, but apps/interface/node_modules/vite/package.json is missing. Run: (cd apps/interface && npm install)"
+  die "npm install completed, but apps/interface/node_modules/vite/package.json is missing. Run: (cd apps/interface && \"${NODEENV_NPM}\" install)"
 fi
 
 echo ""

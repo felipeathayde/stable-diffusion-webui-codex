@@ -1,7 +1,7 @@
 # gitignore Policy — Stable Diffusion WebUI Codex
 Date: 2025-12-04
 Owner: Repository Maintainers
-Last Review: 2026-01-20
+Last Review: 2026-01-27
 Status: Active
 
 ## Purpose
@@ -27,6 +27,7 @@ Status: Active
 
 ## Local dev caches (tracked? no)
 - `.uv/` — repo-local `uv` installer state + managed CPython installs.
+- `.nodeenv/` — repo-local Node.js (node + npm) installed by `nodeenv` for the frontend.
 - `.npm-cache/` — repo-local npm cache (installer sets `NPM_CONFIG_CACHE`).
 - `.ts-out/` — TypeScript output folder (root `tsconfig.json` `outDir`).
 - `artifacts/` — repo-local build/script artifacts (generated; do not commit).

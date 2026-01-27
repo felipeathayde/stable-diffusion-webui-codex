@@ -14,6 +14,9 @@ __pycache__/
 # uv (repo-local installer + managed CPython installs)
 /.uv/
 
+# nodeenv (repo-local Node.js install for the frontend)
+/.nodeenv/
+
 # Local dev caches (do not commit)
 /.tmp/
 /tmp/

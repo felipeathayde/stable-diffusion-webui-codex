@@ -6,8 +6,7 @@ This repo ships:
 
 ## Prerequisites
 - Git
-- Node.js 18+ (for the Vue UI)
-- Internet access (first install: downloads `uv`, CPython 3.12.10, and wheels)
+- Internet access (first install: downloads `uv`, CPython 3.12.10, Node.js (via nodeenv), and wheels)
 
 Optional:
 - `ffmpeg` + `ffprobe` on `PATH` (video export / vid2vid workflows)
@@ -15,7 +14,7 @@ Optional:
 ## Quick install (recommended)
 
 ### Windows (PowerShell or CMD)
-1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bat
 install-webui.bat
 ```
@@ -29,7 +28,7 @@ run-webui.bat
 ```
 
 ### Linux / WSL
-1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
+1) Run the installer (downloads `uv`, installs managed CPython **3.12.10** into `.uv/python`, syncs deps from `uv.lock` into `.venv`, installs Node.js into `.nodeenv` (via nodeenv), runs `npm install`; keeps `uv`/`npm` caches repo-local under `.uv/cache` and `.npm-cache`):
 ```bash
 bash install-webui.sh
 ```
@@ -40,6 +39,12 @@ bash install-webui.sh
 # Advanced (forwarded to backend):
 ./run-webui.sh --gguf-exec=dequant_upfront
 ```
+
+## Node.js (frontend)
+The installers provision a repo-local Node.js into `.nodeenv` via `nodeenv` (no system Node required).
+
+Override:
+- `CODEX_NODE_VERSION` (Node.js version pin for nodeenv; default: 24.13.0)
 
 ## PyTorch
 This repo uses `uv.lock` to pin and lock dependency versions (including PyTorch variants). The installers choose **one** PyTorch backend via `uv` extras.

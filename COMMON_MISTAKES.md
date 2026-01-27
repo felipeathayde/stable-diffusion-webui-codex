@@ -78,6 +78,10 @@
 **Cause + fix:** `This repo vendors tokenizer vocab files that include tokens like "========" and ">>>>>>>>", producing huge false-positive output that looks like merge conflicts. Exclude the Hugging Face vocab/tokenizer JSON trees (or search only source globs) when checking for real conflict markers.`
 **Correct command:** `rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!apps/interface/dist/**' .`
 
+**Wrong command:** `rg -n "npm|node_modules|vite|nodeenv|\\.nodeenv" -S apps/codex_launcher.py apps/launcher apps/backend || true`
+**Cause + fix:** `Searching "apps/backend" without excludes can match vendored Hugging Face tokenizer/vocab JSON trees, producing massive output. Restrict the search to the relevant paths, or exclude the vendor trees via --glob before running broad patterns.`
+**Correct command:** `rg -n "npm|node_modules|vite|nodeenv|\\.nodeenv" -S apps run-webui.* install-webui.* INSTALL.md --glob '!apps/backend/huggingface/**'`
+
 **Wrong command:** `./.uv/bin/uv python install 3.12.10`
 **Cause + fix:** `In sandboxed environments, $HOME/.local (XDG_DATA_HOME default) may be read-only, causing uv to fail creating ~/.local/share/uv/python. Set XDG_DATA_HOME to a writable path (e.g., under $HOME/.cache) when running uv python/lock commands.`
 **Correct command:** `XDG_DATA_HOME=$HOME/.cache/uv-data ./.uv/bin/uv python install 3.12.10`

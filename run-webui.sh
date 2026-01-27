@@ -9,6 +9,11 @@ PY_BIN="${PYTHON:-${VENV_DIR}/bin/python}"
 API_ENTRYPOINT="${ROOT_DIR}/apps/backend/interfaces/api/run_api.py"
 UI_DIR="${ROOT_DIR}/apps/interface"
 
+NODEENV_DIR="${ROOT_DIR}/.nodeenv"
+NODEENV_BIN_DIR="${NODEENV_DIR}/bin"
+NODEENV_NODE="${NODEENV_BIN_DIR}/node"
+NODEENV_NPM="${NODEENV_BIN_DIR}/npm"
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<EOF
 Usage: ./run-webui.sh
@@ -18,10 +23,10 @@ Starts:
   - Frontend UI (Vite) from ${UI_DIR}
 
 Backend args:
-  - Any extra args are forwarded to the backend entrypoint (e.g. `--gguf-exec=dequant_upfront`, `--lora-apply-mode online`).
+  - Any extra args are forwarded to the backend entrypoint (e.g. '--gguf-exec=dequant_upfront', '--lora-apply-mode online').
 
 Launcher args:
-  - `--pytorch-cuda-alloc-conf <value>`: sets `PYTORCH_CUDA_ALLOC_CONF` for the backend process (requires restart).
+  - '--pytorch-cuda-alloc-conf <value>': sets 'PYTORCH_CUDA_ALLOC_CONF' for the backend process (requires restart).
 
 Environment overrides:
   - CODEX_VENV_DIR   (default: \$CODEX_ROOT/.venv)
@@ -57,14 +62,33 @@ if [[ ! -d "${UI_DIR}" ]]; then
   exit 1
 fi
 
+NPM_BIN="npm"
+if [[ -e "${NODEENV_DIR}" && ! -d "${NODEENV_DIR}" ]]; then
+  echo "Error: expected '${NODEENV_DIR}' to be a directory (nodeenv), but found a non-directory path." >&2
+  exit 1
+fi
+
+if [[ -d "${NODEENV_DIR}" ]]; then
+  if [[ ! -x "${NODEENV_NODE}" || ! -x "${NODEENV_NPM}" ]]; then
+    echo "Error: '${NODEENV_DIR}' exists, but nodeenv is incomplete (missing node and/or npm)." >&2
+    echo "Delete '${NODEENV_DIR}' and re-run: ./install-webui.sh" >&2
+    exit 1
+  fi
+  export PATH="${NODEENV_BIN_DIR}:${PATH}"
+  NPM_BIN="${NODEENV_NPM}"
+fi
+
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-  echo "Error: missing 'node' and/or 'npm'. Install Node.js (>=18) and npm." >&2
+  echo "Error: missing Node.js ('node') and/or npm ('npm')." >&2
+  echo "Run: ./install-webui.sh" >&2
+  echo "Expected: '${NODEENV_DIR}' (repo-local Node.js via nodeenv)." >&2
   exit 1
 fi
 
 if [[ ! -d "${UI_DIR}/node_modules" ]]; then
   echo "Error: '${UI_DIR}/node_modules' missing." >&2
-  echo "Run: (cd '${UI_DIR}' && npm install)" >&2
+  echo "Run: ./install-webui.sh" >&2
+  echo "Or: (cd '${UI_DIR}' && ${NPM_BIN} install)" >&2
   exit 1
 fi
 
@@ -492,7 +516,7 @@ wait_for_api "${api_pid}" "${API_PORT_OVERRIDE}"
 
 (
   cd "${UI_DIR}"
-  npm run dev -- --host
+  "${NPM_BIN}" run dev -- --host
 ) &
 ui_pid="$!"
 

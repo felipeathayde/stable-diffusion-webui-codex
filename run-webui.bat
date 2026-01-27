@@ -2,6 +2,9 @@
 setlocal
 
 set "ROOT=%~dp0"
+set "NODEENV=%ROOT%.nodeenv"
+if exist "%NODEENV%\Scripts\node.exe" set "PATH=%NODEENV%\Scripts;%PATH%"
+if exist "%NODEENV%\bin\node.exe" set "PATH=%NODEENV%\bin;%PATH%"
 set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
 if defined PYTHON (
     set "PY_BIN=%PYTHON%"

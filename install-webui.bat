@@ -61,6 +61,10 @@ set "UV_BIN=%UV_DIR%\uv.exe"
 set "PYTHON_VERSION=%CODEX_PYTHON_VERSION%"
 if "%PYTHON_VERSION%"=="" set "PYTHON_VERSION=3.12.10"
 
+set "NODE_VERSION=%CODEX_NODE_VERSION%"
+if "%NODE_VERSION%"=="" set "NODE_VERSION=24.13.0"
+set "NODEENV=%ROOT%.nodeenv"
+
 set "VENV=%ROOT%.venv"
 
 set "UV_CACHE_DIR=%ROOT%.uv\cache"
@@ -78,6 +82,7 @@ echo [install] uv: %UV_BIN%  version pin: %UV_VERSION%
 echo [install] uv cache: %UV_CACHE_DIR%
 echo [install] Python: %PYTHON_VERSION%  managed by uv
 echo [install] Venv: %VENV%  created by uv; uses the managed Python
+echo [install] Node.js: %NODE_VERSION%  managed by nodeenv  (installs into %NODEENV%)
 echo [install] Torch mode: %TORCH_MODE%  CODEX_TORCH_MODE=auto^|cpu^|cuda^|rocm^|skip
 if not "%TORCH_BACKEND%"=="" echo [install] Torch backend override: %TORCH_BACKEND%  CODEX_TORCH_BACKEND
 if not "%CUDA_VARIANT%"=="" echo [install] CUDA variant override: %CUDA_VARIANT%  CODEX_CUDA_VARIANT
@@ -238,10 +243,8 @@ exit /b 1
 :uv_sync_ok
 
 echo [install] Installing frontend dependencies ...
-where node >nul 2>&1
-if errorlevel 1 goto :frontend_missing_node
-where npm >nul 2>&1
-if errorlevel 1 goto :frontend_missing_npm
+call :ensure_nodeenv
+if errorlevel 1 exit /b 1
 
 echo [install] node: 
 node -v
@@ -264,25 +267,11 @@ echo Error: npm install completed, but frontend deps are missing.>&2
 echo [install] Expected: apps\\interface\\node_modules\\vite\\package.json.>&2
 echo [install] Try running:>&2
 echo [install]   cd apps\\interface>&2
-echo [install]   npm install>&2
+echo [install]   "%NODEENV_NPM%" install>&2
 exit /b 1
 
 :frontend_install_ok
 popd
-goto :done
-
-:frontend_missing_node
-echo [install] Warning: missing 'node' on PATH; skipping frontend install. 1>&2
-echo [install] Install Node.js 18+ then execute:
-echo [install]   cd apps\\interface
-echo [install]   npm install
-goto :done
-
-:frontend_missing_npm
-echo [install] Warning: missing 'npm' on PATH; skipping frontend install. 1>&2
-echo [install] Install Node.js 18+ then execute:
-echo [install]   cd apps\\interface
-echo [install]   npm install
 goto :done
 
 :done
@@ -296,6 +285,80 @@ if defined CODEX_MENU_USED (
 )
 
 exit /b 0
+
+:prepend_nodeenv_path
+if defined CODEX_NODEENV_PATH_APPLIED exit /b 0
+if exist "%NODEENV%\Scripts\node.exe" goto :prepend_nodeenv_path_apply_scripts
+if exist "%NODEENV%\bin\node.exe" goto :prepend_nodeenv_path_apply_bin
+exit /b 0
+
+:prepend_nodeenv_path_apply_scripts
+set "CODEX_NODEENV_PATH_APPLIED=1"
+set "PATH=%NODEENV%\Scripts;%PATH%"
+if exist "%NODEENV%\bin\node.exe" set "PATH=%NODEENV%\bin;%PATH%"
+exit /b 0
+
+:prepend_nodeenv_path_apply_bin
+set "CODEX_NODEENV_PATH_APPLIED=1"
+set "PATH=%NODEENV%\bin;%PATH%"
+exit /b 0
+
+:ensure_nodeenv
+set "NODEENV_NODE="
+set "NODEENV_NPM="
+if exist "%NODEENV%\Scripts\node.exe" set "NODEENV_NODE=%NODEENV%\Scripts\node.exe"
+if exist "%NODEENV%\Scripts\npm.cmd" set "NODEENV_NPM=%NODEENV%\Scripts\npm.cmd"
+if "%NODEENV_NODE%"=="" if exist "%NODEENV%\bin\node.exe" set "NODEENV_NODE=%NODEENV%\bin\node.exe"
+if "%NODEENV_NPM%"=="" if exist "%NODEENV%\bin\npm.cmd" set "NODEENV_NPM=%NODEENV%\bin\npm.cmd"
+
+if "%NODEENV_NODE%"=="" goto :ensure_nodeenv_install
+if "%NODEENV_NPM%"=="" goto :ensure_nodeenv_corrupt
+
+call :prepend_nodeenv_path
+
+set "NODE_EXISTING="
+for /f "delims=" %%i in ('"%NODEENV_NODE%" -v 2^>nul') do if not defined NODE_EXISTING set "NODE_EXISTING=%%i"
+if "%NODE_EXISTING%"=="" goto :ensure_nodeenv_corrupt
+set "NODE_EXISTING=%NODE_EXISTING:v=%"
+if "%NODE_EXISTING%"=="%NODE_VERSION%" exit /b 0
+
+echo Error: '%NODEENV%' already contains Node.js %NODE_EXISTING%, but CODEX_NODE_VERSION=%NODE_VERSION%.>&2
+echo [install] Delete '%NODEENV%' or set CODEX_NODE_VERSION=%NODE_EXISTING%.>&2
+exit /b 1
+
+:ensure_nodeenv_install
+echo [install] Installing Node.js %NODE_VERSION% into %NODEENV% ...
+"%UV_BIN%" tool run --from nodeenv nodeenv -n "%NODE_VERSION%" "%NODEENV%"
+if errorlevel 1 goto :ensure_nodeenv_failed
+
+call :prepend_nodeenv_path
+set "NODEENV_NODE="
+set "NODEENV_NPM="
+if exist "%NODEENV%\Scripts\node.exe" set "NODEENV_NODE=%NODEENV%\Scripts\node.exe"
+if exist "%NODEENV%\Scripts\npm.cmd" set "NODEENV_NPM=%NODEENV%\Scripts\npm.cmd"
+if "%NODEENV_NODE%"=="" if exist "%NODEENV%\bin\node.exe" set "NODEENV_NODE=%NODEENV%\bin\node.exe"
+if "%NODEENV_NPM%"=="" if exist "%NODEENV%\bin\npm.cmd" set "NODEENV_NPM=%NODEENV%\bin\npm.cmd"
+
+if "%NODEENV_NODE%"=="" goto :ensure_nodeenv_missing_node
+if "%NODEENV_NPM%"=="" goto :ensure_nodeenv_missing_npm
+exit /b 0
+
+:ensure_nodeenv_failed
+echo Error: nodeenv install failed.>&2
+exit /b 1
+
+:ensure_nodeenv_corrupt
+echo Error: found '%NODEENV%', but it does not contain an executable node/npm.>&2
+echo [install] Delete '%NODEENV%' then re-run install-webui.bat.>&2
+exit /b 1
+
+:ensure_nodeenv_missing_node
+echo Error: nodeenv completed, but node is missing under '%NODEENV%'.>&2
+exit /b 1
+
+:ensure_nodeenv_missing_npm
+echo Error: nodeenv completed, but npm is missing under '%NODEENV%'.>&2
+exit /b 1
 
 :ui_menu
 set "CODEX_MENU_USED=1"

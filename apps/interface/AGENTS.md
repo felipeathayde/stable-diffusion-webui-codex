@@ -2,7 +2,7 @@
 # apps/interface Overview
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-23
+Last Review: 2026-01-27
 Status: Active
 
 ## Purpose
@@ -32,3 +32,4 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to WebUI entrypoints/config (`vite.config.ts`, `src/{App,main,router}.ts/.vue`, `src/api/types.ts`) (doc-only change; part of rollout).
 - 2026-01-21: Updated `blocks.json` WAN22 stage fields to sha-only (`model_sha`/`lora_sha`) to match backend enforcement.
 - 2026-01-23: WAN video dimensions now snap to multiples of 16 (rounded up; Diffusers parity) in the UI and payload builders to avoid backend 400s and silent patch-grid cropping.
+- 2026-01-27: `package-lock.json` updated to match npm 11 (used by the repo-local `.nodeenv` installer) to avoid lockfile churn on fresh installs.

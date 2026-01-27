@@ -8,8 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
 Contains request parsing, payload validation, and task orchestration for generation endpoints.
-When resolving sha-selected text encoders (`tenc_sha`), uses cached inventory slot metadata to enforce slot contracts without repeated header reads.
-WAN video tasks enforce `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping and return suggested rounded-up dimensions on invalid requests.
+When resolving sha-selected text encoders (`tenc_sha`), uses cached inventory slot metadata to enforce slot contracts without repeated header reads; WAN video tasks enforce `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping and return suggested rounded-up dimensions on invalid requests.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for generation endpoints.

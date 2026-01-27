@@ -7,8 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Flux diffusion engine (txt2img/img2img) using the Codex Flux runtime.
-Assembles the runtime via `CodexFluxFamilyFactory`, manages conditioning caching, and exposes the hooks required by shared txt2img/img2img
-workflows (encode/decode/conditioning + optional core streaming controller).
+Assembles the runtime via `CodexFluxFamilyFactory`, manages conditioning caching, and exposes the hooks required by shared txt2img/img2img workflows (encode/decode/conditioning + optional core streaming controller).
 When smart offload is enabled, CLIP patcher unload is stage-scoped (only unload when this call loaded it) to avoid unload/reload within the conditioning stage.
 
 Symbols (top-level; keep in sync; no ghosts):

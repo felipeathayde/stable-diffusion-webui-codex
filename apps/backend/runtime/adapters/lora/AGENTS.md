@@ -1,7 +1,7 @@
 # apps/backend/runtime/adapters/lora Overview
 Date: 2025-10-28
 Owner: Runtime Adapter Maintainers
-Last Review: 2026-01-20
+Last Review: 2026-01-26
 Status: Active
 
 ## Purpose

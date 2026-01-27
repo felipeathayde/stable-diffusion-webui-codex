@@ -1,7 +1,7 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2026-01-24
+Last Review: 2026-01-26
 Status: Active
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Active
 - 2025-12-05: `CodexMemoryManager` expõe `memory_snapshot()` e `hardware_probe` para diagnósticos — use `apps.backend.runtime.memory.memory_management.memory_snapshot()` quando precisar inspecionar VRAM/CPU sem tocar em campos internos ou forçar `empty_cache`; o endpoint `/api/memory` é o consumidor público recomendado.
 - 2025-12-30: GGUF-packed weights detection for state dicts lives in `apps.backend.runtime.model_parser.quantization.detect_state_dict_dtype` (returns `"gguf"` when `CodexParameter` markers are present).
 - 2026-01-02: Added standardized file header docstrings to `__init__.py`, `config.py`, `exceptions.py`, `smart_offload.py`, and `stream.py` (doc-only change; part of rollout).
+- 2026-01-26: Added smart-offload stage invariants (`smart_offload_invariants.py`) used by use-cases and the sampling driver to auto-unload forbidden accelerator residents (TE must be off before sampling; denoiser/VAE cleared before conditioning).

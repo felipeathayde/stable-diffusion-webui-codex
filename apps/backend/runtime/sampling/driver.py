@@ -41,6 +41,7 @@ from ...core.state import state as backend_state
 from apps.backend.engines.util.schedulers import SamplerKind
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
+from apps.backend.runtime.memory.smart_offload_invariants import enforce_smart_offload_pre_sampling_residency
 from apps.backend.runtime.diagnostics.timeline import timeline
 
 
@@ -285,6 +286,7 @@ class CodexSampler:
     ) -> torch.Tensor:
         base_noise = noise.detach().clone()
         base_context = context
+        warned_full_preview = False
 
         spec = get_sampler_spec(self.algorithm)
 
@@ -328,6 +330,40 @@ class CodexSampler:
             active_context = base_context
 
             try:
+                allow_vae_resident = False
+                preview_interval = 0
+                try:
+                    if base_context is not None:
+                        preview_interval = max(0, int(getattr(base_context, "preview_interval", 0) or 0))
+                    else:
+                        from apps.backend.runtime.live_preview import preview_interval_steps
+
+                        preview_interval = preview_interval_steps(default=0)
+                except Exception:
+                    preview_interval = 0
+
+                if preview_callback is not None and preview_interval > 0:
+                    try:
+                        from apps.backend.runtime.live_preview import LivePreviewMethod, live_preview_method
+
+                        method = live_preview_method(default=LivePreviewMethod.FULL)
+                        allow_vae_resident = method == LivePreviewMethod.FULL
+                        if allow_vae_resident and not warned_full_preview:
+                            self._logger.warning(
+                                "Live preview FULL uses VAE decode during sampling. "
+                                "This increases VRAM usage and can reduce generation performance; "
+                                "prefer 'Approx cheap' when possible."
+                            )
+                            warned_full_preview = True
+                    except Exception:
+                        allow_vae_resident = False
+
+                enforce_smart_offload_pre_sampling_residency(
+                    self.sd_model,
+                    stage="sampling.prepare",
+                    allow_vae_resident=allow_vae_resident,
+                )
+
                 sampling_prepare(denoiser, noise)
                 prepared = True
 

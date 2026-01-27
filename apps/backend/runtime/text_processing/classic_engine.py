@@ -7,8 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Classic (legacy-style) text processing engine for prompt parsing and conditioning assembly.
-Implements emphasis parsing, textual inversion embedding injection, and token chunking for CLIP-based text encoders, integrating with
-Codex runtime memory management for device placement and safe execution.
+Implements emphasis parsing, textual inversion embedding injection, and token chunking for CLIP-based text encoders, integrating with Codex runtime memory management for device placement and safe execution.
 Matches WebUI `clip_skip` semantics: `clip_skip=1` uses the post-final-layer-norm embedding (`last_hidden_state`).
 
 Symbols (top-level; keep in sync; no ghosts):

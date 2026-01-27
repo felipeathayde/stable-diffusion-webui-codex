@@ -7,8 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Image-to-image use case orchestration (init image + optional hires pass).
-Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally
-performs a hires second pass.
+Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass.
 When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -35,6 +34,9 @@ from apps.backend.core.rng import ImageRNG
 from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
+from apps.backend.runtime.memory.smart_offload_invariants import (
+    enforce_smart_offload_pre_conditioning_residency,
+)
 from apps.backend.runtime.processing.conditioners import (
     decode_latent_batch,
     img2img_conditioning,
@@ -129,6 +131,8 @@ def _compute_conditioning_payload(
     sd_model = getattr(processing, "sd_model", None)
     if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
         raise RuntimeError("img2img requires processing.sd_model with get_learned_conditioning")
+
+    enforce_smart_offload_pre_conditioning_residency(sd_model, stage="img2img.conditioning")
 
     uses_distilled_cfg = bool(getattr(sd_model, "use_distilled_cfg_scale", False))
 

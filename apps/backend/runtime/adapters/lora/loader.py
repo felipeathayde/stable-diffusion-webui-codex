@@ -7,8 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: LoRA tensor parsing into runtime patch specs (LoRA/LoHa/LoKr/GLORA/DIFF/SET).
-Parses adapter tensors into typed `PatchSpec` entries for the runtime adapter pipeline, supporting multiple LoRA conventions and optional
-metadata keys (alpha/dora_scale), and logs missing keys for diagnostics.
+Parses adapter tensors into typed `PatchSpec` entries for the runtime adapter pipeline, supporting multiple LoRA conventions and optional metadata keys (alpha/dora_scale), and logs missing keys for diagnostics.
 Patch targets may be plain parameter names or `(parameter, offset)` tuples for slice patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):

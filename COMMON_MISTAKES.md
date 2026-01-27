@@ -658,9 +658,9 @@ Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -لا diff
 Cause and fix: The `-l` flag was typed with a non-ASCII character (likely a locale/encoding artifact), so `ls` interpreted it as an invalid option. Use plain ASCII flags (`-la`) or run `ls --help` to confirm supported options.
 Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && ls -la diffusers | sed -n '1,120p'
 
-Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "<<<<<<</|=======|>>>>>>>" apps .sangoi || true
-Cause and fix: The pattern was not anchored, so tokenizer/vocab JSONs matched `========`/`>>>>>>>>` and produced huge false positives/output. Use anchored conflict-marker patterns and exclude vendored Hugging Face assets.
-Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "^<<<<<<< |^=======$|^>>>>>>> " --glob '!apps/backend/huggingface/**' --glob '!apps/interface/dist/**' .
+Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "<<<<<<<|=======|>>>>>>>" .sangoi apps tests || true
+Cause and fix: The pattern was not anchored, so normal `====` separators (docs/tokenizers) produced huge false positives/output. Use anchored conflict-marker patterns so only real merge markers match.
+Correct command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n "^<<<<<<< |^=======$|^>>>>>>> " .sangoi apps tests
 
 Wrong command: cd /home/lucas/work/stable-diffusion-webui-codex && rg -n -- "open\\(.*paths\\.json|with open\\(.*paths\\.json" apps/backend --glob '!apps/backend/infra/config/paths.py'
 Cause and fix: `rg` options like `--glob` must appear before the search paths; placing `apps/backend` before `--glob` made ripgrep treat `--glob` (and the negated glob) as a literal file path and fail. Move `--glob` before the search path argument.

@@ -46,6 +46,10 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
     record_smart_cache_miss,
 )
+from apps.backend.runtime.memory.smart_offload_invariants import (
+    enforce_smart_offload_pre_conditioning_residency,
+    enforce_smart_offload_text_encoders_off,
+)
 from apps.backend.runtime.processing.datatypes import (
     ConditioningPayload,
     HiResPlan,
@@ -146,6 +150,8 @@ class Txt2ImgPipelineRunner:
         if sd_model is None or not hasattr(sd_model, "get_learned_conditioning"):
             return None, None
 
+        enforce_smart_offload_pre_conditioning_residency(sd_model, stage="txt2img.conditioning")
+
         prompts = list(context.prompts or [getattr(processing, "prompt", "")])
         negative_prompts = list(context.negative_prompts or [getattr(processing, "negative_prompt", "")])
         smart_flag = getattr(processing, "smart_cache", None)
@@ -180,6 +186,7 @@ class Txt2ImgPipelineRunner:
             cached = self._conditioning_cache.get(key)
             if cached is not None:
                 record_smart_cache_hit("sdxl.runner.conditioning")
+                enforce_smart_offload_text_encoders_off(sd_model, stage="txt2img.conditioning(cache-hit)")
                 return cached
             record_smart_cache_miss("sdxl.runner.conditioning")
 

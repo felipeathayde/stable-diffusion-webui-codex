@@ -7,10 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
-Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during
-engine orchestration.
-Also exposes per-role compute dtype selection (activation precision) distinct from storage dtype when manual casting is enabled.
-Provides `is_model_loaded(...)` for stage-scoped smart offload decisions (avoid premature unload/reload within a single pipeline stage).
+Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
+Also exposes per-role compute dtype selection (activation precision) distinct from storage dtype when manual casting is enabled, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions (avoid premature unload/reload within a single pipeline stage).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.

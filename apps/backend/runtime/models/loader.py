@@ -7,10 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
-This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle`
-ready for orchestrator/engine execution (with memory-management hooks). SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
-SDXL text encoders support QKV layout selection via `CODEX_SDXL_TE_QKV_IMPL=auto|split|fused` (default: auto).
-When smart offload is enabled, text encoders are constructed on CPU initially to avoid redundant GPU→CPU hops during warm-up.
+This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle` ready for orchestrator/engine execution (with memory-management hooks). SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
+Supports SDXL TE QKV layout selection via `CODEX_SDXL_TE_QKV_IMPL=auto|split|fused` and constructs text encoders on CPU initially when smart offload is enabled (avoids redundant GPU→CPU hops during warm-up).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).

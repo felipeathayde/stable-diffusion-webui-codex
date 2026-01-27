@@ -1,7 +1,7 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
 Owner: Backend Use-Case Maintainers
-Last Review: 2026-01-22
+Last Review: 2026-01-26
 Status: Active
 
 ## Purpose
@@ -20,3 +20,4 @@ Status: Active
 - 2025-12-16: `vid2vid.py` implements WAN22 video-to-video orchestration (decode input video via ffmpeg, flow-guided chunking, optional VFI, export + metadata), plus a `vid2vid_method="wan_animate"` path that runs Diffusers `WanAnimatePipeline` from preprocessed pose/face videos + reference image.
 - 2026-01-02: Added standardized file header docstrings to use case modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining use case modules (`__init__.py`, `img2vid.py`, `txt2img.py`, `txt2vid.py`) (doc-only change; part of rollout).
+- 2026-01-26: Smart offload pre-conditioning cleanup now ensures denoiser/VAE are not left resident when conditioning starts (txt2img runner + img2img).

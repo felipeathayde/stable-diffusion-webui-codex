@@ -7,8 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Native LoRA application pipeline (no legacy modules).
-Converts LoRA files into patch dictionaries and applies them to the engine's UNet and CLIP via the `ModelPatcher` system, then materializes
-LoRA application by refreshing LoRAs on the patchers (merge default; optional on-the-fly via `CODEX_LORA_APPLY_MODE=online`).
+Converts LoRA files into patch dictionaries and applies them to the engine's UNet and CLIP via the `ModelPatcher` system, then materializes LoRA application by refreshing LoRAs on the patchers (merge default; optional on-the-fly via `CODEX_LORA_APPLY_MODE=online`).
 Patch dictionary keys may be plain parameter names or `(parameter, offset)` tuples for slice patches (e.g. fused-QKV text encoders).
 
 Symbols (top-level; keep in sync; no ghosts):

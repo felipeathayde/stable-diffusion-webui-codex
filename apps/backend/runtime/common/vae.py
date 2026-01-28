@@ -30,7 +30,7 @@ logger = logging.getLogger("backend.runtime.common.vae")
 # Configuration for 16-channel flow-based VAE (used by Flux, Z Image)
 # NOTE: Flow16 VAE config mirrors the canonical diffusers configs shipped for:
 # - `apps/backend/huggingface/black-forest-labs/FLUX.1-dev/vae/config.json`
-# - `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/vae/config.json`
+# - `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/vae/config.json`
 #
 # In particular: these VAEs disable quant/post-quant convs (`use_quant_conv=false`)
 # so the weight files may legitimately omit `quant_conv.*` and `post_quant_conv.*`.

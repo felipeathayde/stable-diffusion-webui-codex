@@ -17,7 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_prediction_type_value` (function): Converts a `PredictionKind` into the string value expected by configs/pipelines.
 - `_load_state_dict` (function): Loads a state dict from disk (handles supported formats) for downstream parsing.
 - `_read_json` (function): Reads a required JSON metadata file with explicit errors (used by vendored-HF signature builders).
-- `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (no state-dict detector).
+- `_zimage_signature_from_vendored_hf` (function): Builds a Z-Image `ModelSignature` from vendored HF metadata (`Tongyi-MAI/Z-Image-Turbo` layout; no state-dict detector).
 - `_flux_signature_from_vendored_hf` (function): Builds a Flux `ModelSignature` from vendored HF metadata (no state-dict detector).
 - `_parse_checkpoint` (function): Parses one checkpoint (plus optional addons) into `ParsedCheckpoint` for bundle assembly.
 - `_build_diffusion_bundle` (function): Assembles a `DiffusionModelBundle` from a parsed checkpoint and loader options.
@@ -200,7 +200,7 @@ def _read_json(path: Path) -> Dict[str, Any]:
 def _zimage_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
     """Build a Z-Image `ModelSignature` from vendored HF metadata (no state-dict detection)."""
 
-    vendor_root = _BACKEND_ROOT / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo"
+    vendor_root = _BACKEND_ROOT / "huggingface" / "Tongyi-MAI" / "Z-Image-Turbo"
     transformer_cfg = _read_json(vendor_root / "transformer" / "config.json")
     text_encoder_cfg = _read_json(vendor_root / "text_encoder" / "config.json")
 
@@ -268,7 +268,7 @@ def _zimage_signature_from_vendored_hf(*, model_path: str) -> ModelSignature:
 
     return ModelSignature(
         family=ModelFamily.ZIMAGE,
-        repo_hint="Alibaba-TongYi/Z-Image-Turbo",
+        repo_hint="Tongyi-MAI/Z-Image-Turbo",
         prediction=PredictionKind.FLOW,
         latent_format=LatentFormat.ZIMAGE,
         quantization=quantization,

@@ -15,8 +15,8 @@ Status: Active
 - `apps/backend/runtime/families/zimage/debug.py` — Opt-in debug helpers (env flags, tensor stats, token summaries).
 
 ## References (vendored assets)
-- `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/transformer/config.json` — canonical `rope_theta`, `axes_dims`, `t_scale`, dims.
-- `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/text_encoder/config.json` — canonical `hidden_size` (context dim).
+- `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/transformer/config.json` — canonical `rope_theta`, `axes_dims`, `t_scale`, dims.
+- `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/text_encoder/config.json` — canonical `hidden_size` (context dim).
   - Base mirror: `apps/backend/huggingface/Tongyi-MAI/Z-Image/**` (same component layout; scheduler shift differs).
 
 ## Notes / Decisions
@@ -34,7 +34,7 @@ Status: Active
   Avoid applying `attention_norm2(attention_norm1(x))` as attention input (double-norm) or feeding `ffn_norm2(...)` into the MLP.
 - **VAE normalization:** Flow16 (Flux/Z-Image) scaling/shift is applied outside the runtime core via `vae.first_stage_model.process_in/out`.
 - **Tokenizer source of truth:** prefer the vendored HF tokenizer (no hub fetch):
-  - Turbo: `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/tokenizer`
+  - Turbo: `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/tokenizer`
   - Base: `apps/backend/huggingface/Tongyi-MAI/Z-Image/tokenizer`
   The engine sets a per-run tokenizer hint based on `extras.zimage_variant`; override with `CODEX_ZIMAGE_TOKENIZER_PATH` when needed.
 - 2025-12-29: ZImage tokenizer fallback paths are now anchored to `CODEX_ROOT` (required) so tokenizers resolve correctly when the process CWD is not the repo root.

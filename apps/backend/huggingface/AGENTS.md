@@ -17,3 +17,4 @@ Status: Active
 - 2025-12-16: `ensure_repo_minimal_files()` now includes Wan-Animate metadata folders (`image_encoder/`, `image_processor/`) and common processors (`feature_extractor/`) in its allowlist, and treats model-index component configs as required for “config present” checks.
 - 2026-01-18: `huggingface/__init__.py` is now a package marker (no re-exports); import helpers directly from their owning modules (e.g. `assets.py`).
 - 2026-01-28: Added a lightweight mirror for **Z-Image Base** under `apps/backend/huggingface/Tongyi-MAI/Z-Image/**` (configs + indices + tokenizer; no weights) to support offline/strict runs and variant-specific scheduler semantics.
+- 2026-01-28: Aligned **Z-Image Turbo** vendored assets to `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/**` (the `Alibaba-TongYi/Z-Image-Turbo` repo id is now gated upstream; use `Tongyi-MAI/Z-Image-Turbo`).

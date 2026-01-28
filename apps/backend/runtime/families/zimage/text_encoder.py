@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Qwen3-4B text encoder wrapper for Z Image (GGUF or safetensors).
-Wraps the Qwen3 model used by Z Image (Turbo/Base variants) for text encoding, including tokenizer handling and the chat-template prompt format.
+Wraps the Qwen3 model used by Z Image (Turbo/Base variants) for text encoding, preferring vendored HF tokenizers under `apps/backend/huggingface/Tongyi-MAI/**`.
 This module follows the “Flux pattern” by providing a small text-processing engine wrapper for consistent interfaces.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -233,7 +233,7 @@ class ZImageTextEncoder(nn.Module):
             candidates.append(hint)
 
         hf_tokenizer_turbo = (
-            repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo" / "tokenizer"
+            repo_root / "apps" / "backend" / "huggingface" / "Tongyi-MAI" / "Z-Image-Turbo" / "tokenizer"
         )
         candidates.append(str(hf_tokenizer_turbo))
         hf_tokenizer_base = repo_root / "apps" / "backend" / "huggingface" / "Tongyi-MAI" / "Z-Image" / "tokenizer"

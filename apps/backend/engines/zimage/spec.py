@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Z Image engine specification and runtime assembly (analogous to Flux `spec.py`).
-Builds a `ZImageEngineRuntime` from parsed components, loading external VAE/text-encoder assets when required (core-only checkpoints) and supporting
-optional external overrides for full checkpoints.
+Builds a `ZImageEngineRuntime` from parsed components, loading external VAE/text-encoder assets when required (core-only checkpoints).
+Uses vendored diffusers scheduler metadata under `apps/backend/huggingface/Tongyi-MAI/**` for flow-shift parity when not overridden.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
@@ -110,14 +110,14 @@ class ZImageEngineSpec:
         """Flow-match shift (mu) for Z Image Turbo.
 
         Source of truth is the vendored diffusers scheduler config:
-        `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/scheduler/scheduler_config.json`.
+        `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/scheduler/scheduler_config.json`.
         """
         if self._flow_shift_override is not None:
             return self._flow_shift_override
         from apps.backend.infra.config.repo_root import get_repo_root
 
         repo_root = get_repo_root()
-        vendor_dir = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo"
+        vendor_dir = repo_root / "apps" / "backend" / "huggingface" / "Tongyi-MAI" / "Z-Image-Turbo"
         spec = flow_shift_spec_from_repo_dir(vendor_dir)
         return spec.resolve_effective_shift()
     

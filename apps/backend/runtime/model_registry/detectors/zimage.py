@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Z Image Turbo model detector for the Codex model registry.
+Purpose: Z Image model detector for the Codex model registry.
 Identifies Z Image core transformer checkpoints (GGUF or prefixed SafeTensors exports), infers key architecture dimensions, and builds a
 `ModelSignature` describing the core-only transformer plus external text encoder/VAE expectations.
 
@@ -139,7 +139,7 @@ class ZImageDetector(ModelDetector):
 
         return ModelSignature(
             family=ModelFamily.ZIMAGE,
-            repo_hint="Alibaba-TongYi/Z-Image-Turbo",
+            repo_hint="Tongyi-MAI/Z-Image-Turbo",
             prediction=PredictionKind.FLOW,
             latent_format=LatentFormat.ZIMAGE,
             quantization=quantization,

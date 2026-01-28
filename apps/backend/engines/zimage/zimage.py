@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Z Image engine (Turbo/Base variants) for txt2img/img2img.
-Implements prompt formatting, conditioning, and execution for Z Image by assembling a runtime from a core transformer checkpoint
-and external assets (text encoder + Flow16 VAE), with strict asset selection and smart-cache/timeline integration.
+Implements prompt formatting, conditioning, and execution for Z Image by assembling a runtime from a core transformer checkpoint and external assets
+(text encoder + Flow16 VAE). Uses vendored HF metadata under `apps/backend/huggingface/Tongyi-MAI/**` for variant-specific shift/tokenizer hints.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ZImagePromptList` (class): List-like prompt wrapper that carries per-run metadata (CFG scale, smart-cache policy, negative marker).
@@ -142,7 +142,7 @@ class ZImageEngine(CodexDiffusionEngine):
 
             repo_root = get_repo_root()
             hf_root = repo_root / "apps" / "backend" / "huggingface"
-            repo_id = "Alibaba-TongYi/Z-Image-Turbo" if variant == "turbo" else "Tongyi-MAI/Z-Image"
+            repo_id = "Tongyi-MAI/Z-Image-Turbo" if variant == "turbo" else "Tongyi-MAI/Z-Image"
             vendor_dir = hf_root / repo_id.replace("/", "/")
             if not vendor_dir.is_dir():
                 raise RuntimeError(

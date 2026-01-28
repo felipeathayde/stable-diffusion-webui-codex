@@ -14,9 +14,9 @@ Status: Active
 - `apps/backend/engines/zimage/__init__.py` — Package marker (no re-exports); import from `spec.py` / `zimage.py`.
 
 ## References (vendored assets)
-- `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/scheduler/scheduler_config.json` — Turbo canonical `shift` + `num_train_timesteps` (`shift=3.0`).
+- `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/scheduler/scheduler_config.json` — Turbo canonical `shift` + `num_train_timesteps` (`shift=3.0`).
 - `apps/backend/huggingface/Tongyi-MAI/Z-Image/scheduler/scheduler_config.json` — Base canonical `shift` + `num_train_timesteps` (`shift=6.0`).
-- `apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/vae/config.json` — canonical `scaling_factor` + `shift_factor`.
+- `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/vae/config.json` — canonical `scaling_factor` + `shift_factor`.
 
 ## Notes / Decisions
 - **Variant contract:** UI sends `extras.zimage_variant="turbo"|"base"`; the backend forwards it to `engine_options["zimage_variant"]` so the orchestrator reloads the engine when the variant changes.

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Resolve flow-match `flow_shift` for sampling from canonical scheduler_config.json sources.
-Used by the sampling context builder for predictors with `prediction_type='const'` (flow-match), including Z-Image Turbo/Base variant resolution.
+Used by the sampling context builder for predictors with `prediction_type='const'` (flow-match), including Z-Image Turbo/Base variant resolution from vendored `Tongyi-MAI/Z-Image(-Turbo)` scheduler configs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FlowShiftResolution` (dataclass): Flow-shift resolution result (effective shift + spec + source metadata).
@@ -80,7 +80,7 @@ def resolve_flow_shift_for_sampling(
             if variant in {"turbo", "base"}:
                 repo_root = get_repo_root()
                 hf_root = repo_root / "apps" / "backend" / "huggingface"
-                rid = "Alibaba-TongYi/Z-Image-Turbo" if variant == "turbo" else "Tongyi-MAI/Z-Image"
+                rid = "Tongyi-MAI/Z-Image-Turbo" if variant == "turbo" else "Tongyi-MAI/Z-Image"
                 vendor = hf_root / rid.replace("/", "/")
                 if not vendor.is_dir():
                     raise RuntimeError(

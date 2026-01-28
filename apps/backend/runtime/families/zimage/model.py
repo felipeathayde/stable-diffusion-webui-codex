@@ -74,7 +74,7 @@ class ZImageConfig:
     t_dim: int = 256  # Timestep embedding dimension
     mlp_hidden: int = 10240
     eps: float = 1e-5
-    # HF config: apps/backend/huggingface/Alibaba-TongYi/Z-Image-Turbo/transformer/config.json
+    # HF config: apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/transformer/config.json
     rope_theta: float = 256.0
     axes_dims: tuple[int, int, int] = (32, 48, 48)  # Must sum to head_dim
     axes_lens: tuple[int, int, int] = (1536, 512, 512)  # Max positions per axis

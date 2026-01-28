@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
-Contains request parsing, payload validation (including WAN video export options like `video_return_frames`), and task orchestration for generation endpoints.
+Contains request parsing, payload validation (including Z-Image Turbo/Base `extras.zimage_variant` and WAN video export options like `video_return_frames`), and task orchestration for generation endpoints.
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -254,6 +254,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             extras['batch_size'] = int(raw['batch_size'])
         if 'batch_count' in raw:
             extras['batch_count'] = int(raw['batch_count'])
+        # Z-Image variant selection (Turbo/Base). This is used by the engine to pick
+        # variant-specific scheduler semantics (flow_shift) and CFG behavior.
+        if 'zimage_variant' in raw:
+            val = raw.get('zimage_variant')
+            if val is None:
+                pass
+            elif not isinstance(val, str):
+                raise HTTPException(status_code=400, detail="'extras.zimage_variant' must be a string")
+            else:
+                variant = val.strip().lower()
+                if variant not in {"turbo", "base"}:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'extras.zimage_variant' must be one of: turbo, base",
+                    )
+                extras['zimage_variant'] = variant
         # Highres options
         highres = raw.get('highres')
         highres_cfg: Optional[Dict[str, Any]] = None
@@ -600,24 +616,40 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
     def prepare_txt2img(payload: Dict[str, Any]) -> Tuple["Txt2ImgRequest", str, Optional[str]]:
         _reject_unknown_keys(payload, _TXT2IMG_ALLOWED_KEYS, "txt2img")
+        engine_override = payload.get('engine')
+        model_override = payload.get('model')
+        engine_key = _canonical_engine_key(engine_override)
+        if not engine_key:
+            raise HTTPException(status_code=400, detail="Missing engine key (engine)")
+        engine_id = engine_key
+
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
         negative_prompt = str(payload.get('negative_prompt') or '')
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
-        # Flow models (Flux, Z Image, Chroma) use distilled_cfg, diffusion models (SD, SDXL) use cfg
-        # At least one of cfg or distilled_cfg must be present
-        if 'cfg' in payload:
-            cfg_scale = _require_float_field(payload, 'cfg')
-        elif 'distilled_cfg' in payload:
-            # Flow model: use distilled_cfg as the guidance, set cfg to a sensible default
-            cfg_scale = 1.0  # Neutral CFG for flow models
-        else:
-            raise HTTPException(status_code=400, detail="Missing 'cfg' or 'distilled_cfg'")
-        
-        if 'distilled_cfg' in payload:
+        distilled_guidance_engines = {"flux1", "flux1_kontext", "flux1_chroma"}
+        if engine_id in distilled_guidance_engines:
+            if 'cfg' in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Engine '{engine_id}' does not accept 'cfg'; use 'distilled_cfg'.",
+                )
+            if 'distilled_cfg' not in payload:
+                raise HTTPException(status_code=400, detail=f"Engine '{engine_id}' requires 'distilled_cfg'.")
+            # Flow models (Flux/Chroma) use distilled guidance (no classic CFG); keep cfg neutral.
+            cfg_scale = 1.0
             distilled_cfg_scale = _require_float_field(payload, 'distilled_cfg')
         else:
+            if 'distilled_cfg' in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'distilled_cfg' is only supported for engines: {sorted(distilled_guidance_engines)}",
+                )
+            if 'cfg' not in payload:
+                raise HTTPException(status_code=400, detail="Missing 'cfg'")
+            # Z-Image uses classic CFG semantics (diffusers parity).
+            cfg_scale = _require_float_field(payload, 'cfg')
             distilled_cfg_scale = 3.5
         sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
         scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
@@ -671,16 +703,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         else:
             smart_cache = bool(getattr(snap, "codex_smart_cache", False))
 
-        engine_override = payload.get('engine')
-        model_override = payload.get('model')
-
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
-        engine_key = _canonical_engine_key(engine_override)
-        if not engine_key:
-            raise HTTPException(status_code=400, detail="Missing engine key (engine)")
-        engine_id = engine_key
         model_sha = extras.get("model_sha")
         vae_sha = extras.get("vae_sha")
         tenc_sha = extras.get("tenc_sha")
@@ -857,6 +882,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     if ("tenc_path" in engine_options or "text_encoder_override" in engine_options)
                     else "built_in"
                 )
+
+                zimage_variant = extras.get("zimage_variant")
+                if isinstance(zimage_variant, str) and zimage_variant.strip():
+                    engine_options["zimage_variant"] = zimage_variant.strip()
 
                 # Pass streaming option from settings to engine (no model-part fallbacks).
                 snap = _opts_snapshot()
@@ -1070,6 +1099,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raw_extras["text_encoder_override"] = te_cfg
 
             extras.update(raw_extras)
+        # Z-Image variant selection (Turbo/Base) for img2img runs.
+        if "zimage_variant" in extras:
+            val = extras.get("zimage_variant")
+            if val is None:
+                extras.pop("zimage_variant", None)
+            elif not isinstance(val, str):
+                raise HTTPException(status_code=400, detail="'img2img_extras.zimage_variant' must be a string")
+            else:
+                variant = val.strip().lower()
+                if not variant:
+                    extras.pop("zimage_variant", None)
+                elif variant not in {"turbo", "base"}:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="'img2img_extras.zimage_variant' must be one of: turbo, base",
+                    )
+                else:
+                    extras["zimage_variant"] = variant
         if noise_source:
             extras['randn_source'] = str(noise_source)
         if ensd_raw is not None:
@@ -1217,6 +1264,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     if ("tenc_path" in engine_options or "text_encoder_override" in engine_options)
                     else "built_in"
                 )
+
+                zimage_variant = extras.get("zimage_variant")
+                if isinstance(zimage_variant, str) and zimage_variant.strip():
+                    engine_options["zimage_variant"] = zimage_variant.strip()
 
                 # Pass streaming option from settings to engine (no model-part fallbacks).
                 snap = _opts_snapshot()

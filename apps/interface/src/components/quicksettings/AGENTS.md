@@ -2,7 +2,7 @@
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-18
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -20,6 +20,7 @@ Status: Active
 - `QuickSettingsPerf` uses toggle buttons (`.qs-toggle-btn`) for Smart Offload/Fallback/Cache/Core Streaming (no legacy switches).
 - Text encoder dropdowns display a compact label (`family/basename`) even when `/api/paths` or the inventory return long absolute paths; the full value is still posted back in the `<option value>`.
 - For FLUX.1, `QuickSettingsBar` hides the base text encoder field and exposes a FLUX.1-only pair of text encoder selectors based on individual files under `flux1_tenc`; wiring to backend overrides is intentionally deferred to a dedicated handoff.
+- 2026-01-28: `QuickSettingsZImage.vue` now includes a `Turbo` toggle (per-tab, persisted in `tab.params.zimageTurbo`) and `QuickSettingsBar.vue` can lock the toggle when the selected checkpoint carries trusted `codex.zimage.variant` metadata (Codex-produced GGUFs).
 - 2025-12-27: Removed the `hideCheckpoint` toggle/prop; checkpoint selection is always rendered, and on `/models/:tabId` it is tab-scoped (`tab.params.checkpoint`, auto-seeded) while still filtering choices by engine-specific `*_ckpt` roots from `apps/paths.json` (plus user-added paths).
 - 2025-12-14: WAN text encoder selector now lists explicit `.safetensors` / `.gguf` files under `wan22_tenc` and stores values as `wan22/<abs_path>` for consistent labeling; payload builders must normalize before sending to backend.
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.

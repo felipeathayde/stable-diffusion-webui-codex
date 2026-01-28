@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Per-model-family runtime specification (capabilities + latent/normalization defaults).
 Defines UI-facing capability flags and runtime defaults per `ModelFamily` (latent channels, prediction kind, normalization hints),
-acting as the single source of truth for both backend assembly and frontend conditional UI.
+acting as the single source of truth for both backend assembly and frontend conditional UI (flow-shift is left unset when variant-specific).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FamilyCapabilities` (dataclass): UI-facing capability flags (what controls should be shown/hidden; supported/excluded samplers/schedulers).
@@ -33,7 +33,7 @@ class FamilyCapabilities:
     """
     # Conditioning support
     supports_negative_prompt: bool = True   # False for Flux/Chroma
-    supports_cfg: bool = True               # False for distilled/turbo models
+    supports_cfg: bool = True               # False for distilled-guidance models
     
     # UI elements visibility
     shows_clip_skip: bool = True            # False for T5-only models
@@ -403,15 +403,17 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         context_dim=2560,
         uses_pooled_output=False,
         uses_guidance_embed=False,
-        default_cfg=0.0,  # Turbo models use guidance_scale=0 (no CFG)
+        default_cfg=5.0,  # Diffusers ZImagePipeline default guidance_scale=5.0 (classic CFG).
         prediction=PredictionKind.FLOW,
         # New fields
         default_steps=9,  # Diffusers ZImagePipeline recommends 9 (≈8 effective; last dt=0)
-        flow_shift=3.0,   # HF scheduler_config.json for Z-Image-Turbo uses shift=3.0
+        # NOTE: Z-Image flow_shift is variant-specific (Turbo shift=3.0, Base shift=6.0).
+        # Source of truth is the diffusers scheduler_config.json; do not hard-code here.
+        flow_shift=None,
         scheduler_default="simple",
         is_xl_variant=True,
         patch_size=2,
-        capabilities=CAPABILITIES_TURBO,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
     ),
 }
 

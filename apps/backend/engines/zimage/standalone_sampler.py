@@ -10,7 +10,8 @@ Purpose: Standalone Z Image sampler using Diffusers scheduler math.
 Runs the Z-Image transformer directly while following `FlowMatchEulerDiscreteScheduler` semantics (including `shift` and terminal sigma handling) without the k-diffusion stack.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `sample_zimage_diffusers_math` (function): Samples Z Image latents using Diffusers math/scheduler steps (no double-negation of the model output).
+- `sample_zimage_diffusers_math` (function): Samples Z Image latents using Diffusers math/scheduler steps with optional classic CFG
+  (positive/negative embeddings) and explicit `shift` selection (no double-negation of the model output).
 """
 
 from __future__ import annotations
@@ -27,11 +28,13 @@ logger = logging.getLogger("backend.zimage.standalone")
 def sample_zimage_diffusers_math(
     transformer: torch.nn.Module,
     text_embeddings: torch.Tensor,
+    negative_text_embeddings: Optional[torch.Tensor] = None,
     *,
     height: int = 1024,
     width: int = 1024,
     num_inference_steps: int = 9,
     guidance_scale: float = 0.0,
+    shift: float = 3.0,
     generator: Optional[torch.Generator] = None,
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
@@ -49,10 +52,12 @@ def sample_zimage_diffusers_math(
     Args:
         transformer: Our ZImageTransformer2DModel
         text_embeddings: Pre-encoded text embeddings from our encoder [B, seq, hidden]
+        negative_text_embeddings: Negative prompt embeddings for CFG [B, seq, hidden] (required when guidance_scale > 1)
         height: Image height
         width: Image width
-        num_inference_steps: Sampling steps (9 for Turbo)
-        guidance_scale: CFG scale (0.0 for Turbo)
+        num_inference_steps: Sampling steps (diffusers ZImagePipeline recommends 9 by default)
+        guidance_scale: CFG scale (classic CFG; enabled when > 1)
+        shift: Flow-match schedule shift (Turbo=3.0, Base=6.0)
         generator: Optional RNG generator
         device: Target device
         dtype: Computation dtype
@@ -63,16 +68,25 @@ def sample_zimage_diffusers_math(
         latents: Final denoised latents [B, C, H//8, W//8]
     """
     batch_size = text_embeddings.shape[0]
+    apply_cfg = guidance_scale > 1.0
+    if apply_cfg:
+        if negative_text_embeddings is None:
+            raise ValueError("negative_text_embeddings is required when guidance_scale > 1")
+        if tuple(negative_text_embeddings.shape) != tuple(text_embeddings.shape):
+            raise ValueError(
+                f"negative_text_embeddings shape {tuple(negative_text_embeddings.shape)} does not match "
+                f"text_embeddings shape {tuple(text_embeddings.shape)}"
+            )
     
     # Calculate latent dimensions (VAE downscale = 8)
     vae_scale = 8
     latent_height = height // vae_scale
     latent_width = width // vae_scale
     
-    # Create scheduler (HF scheduler_config.json: shift=3.0, use_dynamic_shifting=false)
+    # Create scheduler (HF scheduler_config.json: use_dynamic_shifting=false, shift depends on model variant).
     scheduler = FlowMatchEulerDiscreteScheduler(
         num_train_timesteps=1000,
-        shift=3.0,
+        shift=float(shift),
     )
     # Match diffusers ZImagePipeline: force a terminal sigma of 0.0 (double-zero tail after set_timesteps).
     scheduler.sigma_min = 0.0
@@ -110,17 +124,28 @@ def sample_zimage_diffusers_math(
             #
             # Scheduler returns timesteps t = sigma * 1000 (1000=start → 0=end), so sigma = t/1000.
             sigma = float(t) / 1000.0
-            sigma_tensor = torch.full((batch_size,), sigma, device=device, dtype=dtype)
-            
-            model_output = transformer(
-                latent_model_input,
-                sigma_tensor,
-                context=text_embeddings.to(dtype),
-            )
-            
-            # Our Z-Image core returns the negated velocity (noise_pred) already.
-            # Diffusers does the negation in the pipeline; do NOT double-negate here.
-            noise_pred = model_output.float()
+            if apply_cfg:
+                sigma_tensor = torch.full((batch_size * 2,), sigma, device=device, dtype=dtype)
+                latent_model_input = latent_model_input.repeat(2, 1, 1, 1)
+                context = torch.cat([negative_text_embeddings, text_embeddings], dim=0).to(dtype)
+                model_output = transformer(
+                    latent_model_input,
+                    sigma_tensor,
+                    context=context,
+                )
+                # Our Z-Image core returns the negated velocity (noise_pred) already.
+                noise_pred = model_output.float()
+                neg, pos = noise_pred.chunk(2, dim=0)
+                noise_pred = pos + float(guidance_scale) * (pos - neg)
+            else:
+                sigma_tensor = torch.full((batch_size,), sigma, device=device, dtype=dtype)
+                model_output = transformer(
+                    latent_model_input,
+                    sigma_tensor,
+                    context=text_embeddings.to(dtype),
+                )
+                # Our Z-Image core returns the negated velocity (noise_pred) already.
+                noise_pred = model_output.float()
             
             # Compute previous sample using scheduler
             latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]

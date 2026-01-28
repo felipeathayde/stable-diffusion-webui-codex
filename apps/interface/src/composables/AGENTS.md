@@ -2,7 +2,7 @@
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
 Owner: Frontend Maintainers
-Last Review: 2026-01-27
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -26,4 +26,5 @@ Status: Active
 - 2026-01-02: `useGeneration(tabId)` now resolves the selected checkpoint to its short hash (when available) before sending requests.
 - 2026-01-18: `useGeneration(tabId)` now derives required VAE/text encoder count from backend-provided `asset_contracts` and uses `models[].core_only` (via `quicksettings.isModelCoreOnly(...)`) to enforce core-only requirements (no duplicated per-engine lists in the UI).
 - 2026-01-18: `useGeneration(tabId)` maps the `chroma` tab type to backend engine id `flux1_chroma` (keeps tab taxonomy explicit while requests use canonical engine keys).
+- 2026-01-28: `useGeneration(tabId)` emits `extras.zimage_variant="turbo"|"base"` for Z-Image requests; both variants use classic CFG (negative prompts supported) and the toggle exists to drive scheduler shift + recommended defaults.
 - 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).

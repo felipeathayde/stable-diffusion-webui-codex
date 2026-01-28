@@ -12,6 +12,7 @@ Loads safetensors/GGUF/pickle checkpoints and reads lightweight model configs fr
 Symbols (top-level; keep in sync; no ghosts):
 - `read_arbitrary_config` (function): Reads a best-effort config from a directory (supports JSON/YAML-like inputs where present).
 - `load_torch_file` (function): Loads a torch checkpoint with safe-load options (prefers safe loaders, falls back to pickle loader when allowed).
+- `read_gguf_metadata` (function): Reads GGUF key/value metadata from a `.gguf` file header (scoped here to keep quantization imports out of engines).
 - `_load_gguf_state_dict` (function): Loads a GGUF state dict from a `.gguf` file path (used by runtime helpers without importing heavy ops).
 - `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags (e.g. `--gguf-exec=dequant_upfront`).
 - `_load_pickled_checkpoint` (function): Loads a pickled checkpoint using the restricted/guarded unpickler (`checkpoint_pickle`).
@@ -22,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
 import torch
 
@@ -107,6 +109,14 @@ def load_gguf_state_dict(
     return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype)
 
 
+def read_gguf_metadata(path: str) -> dict[str, Any]:
+    """Read GGUF metadata (key/value table) from the file header."""
+
+    from apps.backend.quantization.gguf_loader import get_gguf_metadata as _get
+
+    return dict(_get(path))
+
+
 def _load_gguf_state_dict(path: str):
     # Back-compat internal alias; prefer calling `load_gguf_state_dict(...)` directly.
     return load_gguf_state_dict(path)
@@ -126,6 +136,7 @@ def _load_pickled_checkpoint(path, device, safe_load):
 __all__ = [
     "_load_gguf_state_dict",
     "load_gguf_state_dict",
+    "read_gguf_metadata",
     "load_torch_file",
     "read_arbitrary_config",
 ]

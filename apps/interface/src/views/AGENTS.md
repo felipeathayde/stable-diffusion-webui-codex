@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-27
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -37,3 +37,4 @@ Status: Active
 - 2026-01-23: `WANTab.vue` snaps WAN video width/height to multiples of 16 (rounded up; Diffusers parity) so invalid sizes never reach the backend.
 - 2026-01-25: `ImageModelTab.vue` CLIP Skip now allows `0` as “use default” (sends `clip_skip=0` so clip-skip state does not leak across jobs).
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.
+- 2026-01-28: `ImageModelTab.vue` treats Z-Image as Turbo/Base variant-dependent: toolbar/CFG labels and negative-prompt support follow the per-tab Turbo toggle.

@@ -12,7 +12,7 @@ Defines frozen key groups for SHA selection, txt2img, and extras payloads and ex
 Symbols (top-level; keep in sync; no ghosts):
 - `ShaKeys` (dataclass): Frozen key groups for SHA256-based asset selection payload fields.
 - `Txt2ImgKeys` (dataclass): Frozen key groups for txt2img payload fields (CORE/DIFFUSION/FLOW/HIRES/etc.).
-- `ExtrasKeys` (dataclass): Frozen key groups for `payload.extras` fields.
+- `ExtrasKeys` (dataclass): Frozen key groups for `payload.extras` fields (includes Z-Image Turbo/Base `zimage_variant`).
 - `SHA_KEYS` (constant): Singleton instance of `ShaKeys`.
 - `TXT2IMG_KEYS` (constant): Singleton instance of `Txt2ImgKeys`.
 - `EXTRAS_KEYS` (constant): Singleton instance of `ExtrasKeys`.
@@ -110,6 +110,7 @@ class ExtrasKeys:
         "batch_count",
         "randn_source",
         "eta_noise_seed_delta",
+        "zimage_variant",
     })
     
     @property

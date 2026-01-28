@@ -281,19 +281,28 @@ export function useGeneration(tabId: string) {
       extras.vae_sha = resolvedVaeSha
     }
     
+    // Z-Image variant selection lives in request extras so the backend can pick flow_shift (shift=3.0 turbo / shift=6.0 base).
+    const zimageTurbo = engineOverrideForRequest === 'zimage'
+      ? Boolean((p as any)?.zimageTurbo ?? true)
+      : false
+    if (engineOverrideForRequest === 'zimage') {
+      extras.zimage_variant = zimageTurbo ? 'turbo' : 'base'
+    }
+
     const device = (quicksettings.currentDevice || 'cpu') as any
 
     try {
       let taskId = ''
       if (p.useInitImage) {
         const isFlowModel = Boolean(config.capabilities.usesDistilledCfg) && !config.capabilities.usesCfg
+        const supportsNegative = Boolean(config.capabilities.usesNegativePrompt)
         const img2imgExtras: Record<string, unknown> = { ...extras }
 
         const payload: any = {
           img2img_init_image: p.initImageData,
           img2img_mask: '',
           img2img_prompt: p.prompt,
-          img2img_neg_prompt: config.capabilities.usesNegativePrompt ? p.negativePrompt : '',
+          img2img_neg_prompt: supportsNegative ? p.negativePrompt : '',
           img2img_styles: [],
           img2img_batch_count: batchCount,
           img2img_batch_size: batchSize,
@@ -320,9 +329,10 @@ export function useGeneration(tabId: string) {
       } else {
         let payload: Txt2ImgRequest
         try {
+          const supportsNegative = Boolean(config.capabilities.usesNegativePrompt)
           payload = buildTxt2ImgPayload({
             prompt: p.prompt,
-            negativePrompt: config.capabilities.usesNegativePrompt ? p.negativePrompt : '',
+            negativePrompt: supportsNegative ? p.negativePrompt : '',
             width: p.width,
             height: p.height,
             steps: p.steps,

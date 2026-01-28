@@ -3,7 +3,7 @@
 # apps/backend/types Overview
 Date: 2026-01-03
 Owner: Backend Maintainers
-Last Review: 2026-01-19
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - 2026-01-06: `samplers.py` parsing is strict (no alias/case normalization); empty values are invalid.
 - 2026-01-18: Removed `types/__init__.py` re-export facade to avoid another public surface; call sites should import from `payloads.py` / `samplers.py` / `exports.py`.
 - 2026-01-19: `exports.py` now keeps patcher/service export sets intentionally empty (patchers/services are not re-exported from `apps.backend`).
+- 2026-01-28: `payloads.ExtrasKeys` now includes `zimage_variant` for Z-Image Turbo/Base variant selection in request extras.

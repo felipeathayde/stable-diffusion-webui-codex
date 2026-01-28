@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Qwen3-4B text encoder wrapper for Z Image (GGUF or safetensors).
-Wraps the Qwen3 model used by Z Image Turbo for text encoding, including tokenizer handling and the chat-template prompt format.
+Wraps the Qwen3 model used by Z Image (Turbo/Base variants) for text encoding, including tokenizer handling and the chat-template prompt format.
 This module follows the “Flux pattern” by providing a small text-processing engine wrapper for consistent interfaces.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -65,6 +65,12 @@ class ZImageTextEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.layer_idx = layer_idx
         self._tokenizer = None
+        self._tokenizer_path_hint: str | None = None
+
+    def set_tokenizer_path_hint(self, tokenizer_path: str | None) -> None:
+        """Set a preferred tokenizer directory for lazy loading."""
+        value = str(tokenizer_path).strip() if tokenizer_path is not None else ""
+        self._tokenizer_path_hint = value or None
     
     @classmethod
     def from_gguf(cls, gguf_path: str, torch_dtype: torch.dtype = torch.bfloat16) -> "ZImageTextEncoder":
@@ -222,8 +228,16 @@ class ZImageTextEncoder(nn.Module):
         if tokenizer_path:
             candidates.insert(0, tokenizer_path)
 
-        hf_tokenizer = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo" / "tokenizer"
-        candidates.append(str(hf_tokenizer))
+        hint = getattr(self, "_tokenizer_path_hint", None)
+        if hint:
+            candidates.append(hint)
+
+        hf_tokenizer_turbo = (
+            repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo" / "tokenizer"
+        )
+        candidates.append(str(hf_tokenizer_turbo))
+        hf_tokenizer_base = repo_root / "apps" / "backend" / "huggingface" / "Tongyi-MAI" / "Z-Image" / "tokenizer"
+        candidates.append(str(hf_tokenizer_base))
 
         bundled_tokenizer = runtime_root / "text_processing" / "tokenizers" / "qwen25_tokenizer"
         candidates.append(str(bundled_tokenizer))

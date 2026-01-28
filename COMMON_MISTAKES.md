@@ -110,6 +110,10 @@
 **Cause + fix:** `This repo expects the global venv at ~/.venv; running pyenv/system python may not have pytest installed. Use ~/.venv/bin/python (and set CODEX_ROOT/PYTHONPATH when the test touches repo-root resolution).`
 **Correct command:** `CODEX_ROOT=$PWD PYTHONPATH=$PWD ~/.venv/bin/python -m pytest -q .sangoi/dev/tests/test_backend_import_lightweight.py`
 
+**Wrong command:** `git add -- .sangoi/CHANGELOG.md .sangoi/handoffs/HANDOFF_LOG.md ...`
+**Cause + fix:** `.sangoi/` is a separate git repo (docs) and is ignored by the main repo’s `.gitignore`, so staging it from the repo root fails. Commit `.sangoi` changes from inside the `.sangoi` repo, and commit app code from the main repo separately.
+**Correct command:** `cd .sangoi && git add -- <paths> && git commit -m "docs: ..." && git push -u origin HEAD`
+
 **Wrong command:** `sed -n '1,200p' .bottle/handoffs/HANDOFF_GUIDE`
 **Cause + fix:** `This repository keeps the handoff guide under .sangoi/handoffs/HANDOFF_GUIDE.md; the .bottle path does not exist. Check the actual guide location before reading.`
 **Correct command:** `sed -n '1,200p' .sangoi/handoffs/HANDOFF_GUIDE.md`

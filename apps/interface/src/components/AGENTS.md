@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-27
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -22,6 +22,7 @@ Status: Active
 - 2025-12-29: `QuickSettingsBar.vue` no longer writes `--sticky-offset` directly; the header offset is tracked by `App.vue` via a `ResizeObserver`.
 - 2025-12-29: `QuickSettingsBar.vue` keeps the active model tab in sync with the current route (`/models/:tabId`) to avoid falling back to the global engine during Vite HMR reloads.
 - 2025-12-27: `QuickSettingsBar.vue` binds checkpoint selection to the active model tab (`tab.params.checkpoint`, auto-seeded from the engine’s `*_ckpt` roots in `apps/paths.json`), and FLUX.1/ZImage model tabs also keep per-tab text encoders (`tab.params.textEncoders`) used by `useGeneration` for `tenc_sha` (Flux.1 does not send `text_encoder_override`).
+- 2026-01-28: `QuickSettingsBar.vue` supports a per-tab Z-Image Turbo toggle and can lock it when the selected checkpoint carries trusted `codex.zimage.variant` metadata (Codex-produced GGUFs).
 - 2026-01-01: `QuickSettingsBar.vue` “Refresh” now triggers a checkpoint rescan (`/api/models?refresh=1`) so newly copied weights under `*_ckpt` roots show up without restarting the backend.
 - 2025-12-26: QuickSettings header buttons now use `qs-btn-secondary`/`qs-btn-outline` (fill the `qs-row` height, with consistent borders; no fixed `2rem` height).
 - `ResultViewer.vue` exibe um overlay full-screen para zoom de imagens (sem modal encaixotado): o preview da galeria continua grande no card, enquanto o overlay usa o viewport inteiro com ferramenta lateral para pan/zoom (drag para pan, botões de Fit/1:1/+/−/Close na barra à direita).

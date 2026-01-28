@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Shared QuickSettings top bar for Model Tabs (SD/Flux/Chroma/ZImage/WAN).
 Loads `/api/options`, `/api/models`, `/api/models/inventory`, and `/api/paths`, then filters/presents per-family selectors (models/TE/VAE)
-and commits overrides (device + runtime flags) used by generation payload builders.
+and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used by generation payload builders.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -39,6 +39,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onCoreStreamingChange` (function): Updates core streaming toggle (runtime streaming behavior).
 - `onWanModeChange` (function): Updates WAN mode selection and derived controls.
 - `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
+- `zimageTurbo` (computed): Returns the current Z-Image Turbo toggle state for the active tab.
+- `zimageTurboLocked` (ref): When true, the Z-Image Turbo toggle is fixed by trusted checkpoint metadata.
+- `_trustedZImageVariantFromCheckpointMeta` (function): Extracts `codex.zimage.variant` when metadata is trusted (Codex provenance).
+- `onZImageTurboChange` (function): Applies Turbo toggle updates to the active Z-Image tab (with default migration).
 - `enginePrefixForFamily` (function): Maps a `TabFamily` to the engine prefix used in options/labels.
 - `dedupePaths` (function): Deduplicates path lists for selector options.
 - `promptForPath` (function): Prompts the user for a path update when needed (path config UX).
@@ -135,11 +139,14 @@ Symbols (top-level; keep in sync; no ghosts):
         <QuickSettingsZImage
           :checkpoint="effectiveCheckpoint"
           :checkpoints="filteredModelTitles"
+          :turbo="zimageTurbo"
+          :turbo-locked="zimageTurboLocked"
           :vae="store.currentVae"
           :vae-choices="filteredVaeChoices"
           :text-encoder="primaryTextEncoder"
           :text-encoder-choices="filteredTextEncoderChoices"
           @update:checkpoint="onModelChange"
+          @update:turbo="onZImageTurboChange"
           @update:vae="onVaeChange"
           @update:textEncoder="onPrimaryTextEncoderChange"
           @addCheckpointPath="onAddCheckpointPath"
@@ -208,6 +215,8 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
     </div>
 
+    <div v-if="qsNotice" class="caption">{{ qsNotice }}</div>
+
     <div ref="advancedRowEl" class="quicksettings-advanced-collapse" :data-state="advancedOpen ? 'open' : 'closed'">
       <div ref="advancedRowInnerEl" class="quicksettings-row quicksettings-row--advanced-inner">
         <div class="quicksettings-group qs-group-attention">
@@ -256,6 +265,7 @@ import { useUiBlocksStore } from '../stores/ui_blocks'
 import { MODEL_TABS_STORAGE_KEY, useModelTabsStore } from '../stores/model_tabs'
 import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import { useResultsCard } from '../composables/useResultsCard'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
@@ -283,6 +293,7 @@ const showMetadataModal = ref(false)
 const metadataModalTitle = ref('Metadata')
 const metadataModalSubtitle = ref('')
 const metadataModalPayload = ref<unknown>(null)
+const { notice: qsNotice, toast: qsToast } = useResultsCard({ noticeDurationMs: 4000 })
 const isLoadingQuicksettings = ref(false)
 const advancedOpen = ref(true)
 const advancedRowEl = ref<HTMLElement | null>(null)
@@ -821,6 +832,63 @@ const effectiveCheckpoint = computed(() => {
   return filteredModelTitles.value[0] ?? ''
 })
 
+const CODEX_REPO_URL = 'https://github.com/sangoi-exe/stable-diffusion-webui-codex'
+
+const zimageTurbo = computed<boolean>(() => {
+  const tab = activeImageTab.value
+  if (!tab || tab.type !== 'zimage') return true
+  const raw = (tab.params as any)?.zimageTurbo
+  return typeof raw === 'boolean' ? raw : true
+})
+
+const zimageTurboLocked = ref(false)
+let zimageVariantDetectToken = 0
+
+function _trustedZImageVariantFromCheckpointMeta(payload: unknown): 'turbo' | 'base' | null {
+  const raw = (payload as any)?.metadata?.raw
+  if (!raw || typeof raw !== 'object') return null
+
+  const codexRepo = String((raw as any)['codex.repository'] ?? '').trim()
+  const codexBy = String((raw as any)['codex.quantized_by'] ?? '').trim()
+  if (!codexRepo || !codexBy) return null
+  if (codexRepo !== CODEX_REPO_URL) return null
+
+  const variant = String((raw as any)['codex.zimage.variant'] ?? '').trim().toLowerCase()
+  if (variant === 'turbo' || variant === 'base') return variant
+  return null
+}
+
+watch(
+  () => [activeFamily.value, activeImageTab.value?.id ?? '', effectiveCheckpoint.value] as const,
+  async ([family, tabId, checkpoint]) => {
+    zimageTurboLocked.value = false
+    if (family !== 'zimage') return
+    if (!tabId) return
+    if (!checkpoint) return
+
+    const token = ++zimageVariantDetectToken
+    try {
+      const meta = await fetchCheckpointMetadata(checkpoint)
+      if (token !== zimageVariantDetectToken) return
+      const variant = _trustedZImageVariantFromCheckpointMeta(meta)
+      if (!variant) return
+      zimageTurboLocked.value = true
+
+      const turbo = variant === 'turbo'
+      const tab = activeImageTab.value
+      if (!tab || tab.type !== 'zimage') return
+      const current = typeof (tab.params as any)?.zimageTurbo === 'boolean' ? Boolean((tab.params as any).zimageTurbo) : true
+      if (current !== turbo) {
+        await tabsStore.updateParams(tab.id, { zimageTurbo: turbo } as any)
+        qsToast(`Z-Image: Turbo is ${turbo ? 'ON' : 'OFF'} (from model metadata).`)
+      }
+    } catch {
+      // Non-fatal: if metadata can't be read, keep the toggle user-controlled.
+    }
+  },
+  { immediate: true },
+)
+
 watch(
   () => [activeImageTab.value?.id ?? '', filteredModelTitles.value] as const,
   ([tabId, models]) => {
@@ -1098,6 +1166,34 @@ async function onWanLightx2vChange(value: boolean): Promise<void> {
   const tab = activeModelTab.value
   if (!tab || tab.type !== 'wan') return
   await tabsStore.updateParams(tab.id, { lightx2v: Boolean(value) } as any)
+}
+
+async function onZImageTurboChange(value: boolean): Promise<void> {
+  const tab = activeModelTab.value
+  if (!tab || tab.type !== 'zimage') return
+  if (zimageTurboLocked.value) {
+    qsToast('Z-Image: Turbo variant is fixed by model metadata.')
+    return
+  }
+
+  const current = tab.params as any
+  const currentSteps = Number(current?.steps)
+  const currentCfg = Number(current?.cfgScale)
+
+  const turbo = Boolean(value)
+  const patch: Record<string, unknown> = { zimageTurbo: turbo }
+
+  // Apply variant-recommended defaults only when the user is still on the previous variant's defaults.
+  // Turbo defaults: steps≈9, distilled guidance≈1.0. Base defaults: steps≈30, CFG≈4.0.
+  if (turbo) {
+    if (Number.isFinite(currentSteps) && (currentSteps === 30)) patch.steps = 9
+    if (Number.isFinite(currentCfg) && Math.abs(currentCfg - 4.0) < 1e-6) patch.cfgScale = 1.0
+  } else {
+    if (Number.isFinite(currentSteps) && (currentSteps === 8 || currentSteps === 9)) patch.steps = 30
+    if (Number.isFinite(currentCfg) && Math.abs(currentCfg - 1.0) < 1e-6) patch.cfgScale = 4.0
+  }
+
+  await tabsStore.updateParams(tab.id, patch as any)
 }
 
 async function onWanHighModelChange(value: string): Promise<void> {

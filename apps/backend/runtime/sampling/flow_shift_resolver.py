@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Resolve flow-match `flow_shift` for sampling from canonical scheduler_config.json sources.
-Used by the sampling context builder for predictors with `prediction_type='const'` (flow-match).
+Used by the sampling context builder for predictors with `prediction_type='const'` (flow-match), including Z-Image Turbo/Base variant resolution.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FlowShiftResolution` (dataclass): Flow-shift resolution result (effective shift + spec + source metadata).
@@ -70,6 +70,34 @@ def resolve_flow_shift_for_sampling(
                 repo_dir = str(repo_path)
 
     if spec_obj is None:
+        # Z-Image core-only checkpoints typically do not ship scheduler configs with the weights file.
+        # Resolve flow_shift from the vendored HF mirror based on the requested/loaded variant.
+        bundle = getattr(sd_model, "_current_bundle", None)
+        family = getattr(bundle, "family", None)
+        if family is ModelFamily.ZIMAGE:
+            variant_raw = getattr(sd_model, "zimage_variant", None) or getattr(sd_model, "_zimage_variant", None)
+            variant = str(variant_raw or "").strip().lower()
+            if variant in {"turbo", "base"}:
+                repo_root = get_repo_root()
+                hf_root = repo_root / "apps" / "backend" / "huggingface"
+                rid = "Alibaba-TongYi/Z-Image-Turbo" if variant == "turbo" else "Tongyi-MAI/Z-Image"
+                vendor = hf_root / rid.replace("/", "/")
+                if not vendor.is_dir():
+                    raise RuntimeError(
+                        f"Z-Image variant={variant!r} requires vendored HF assets at {vendor}. "
+                        "Ensure the directory exists under apps/backend/huggingface/."
+                    )
+                spec_obj = flow_shift_spec_from_repo_dir(vendor)
+                source = f"vendored_zimage_variant:{variant}"
+                repo_dir = str(vendor)
+            else:
+                raise RuntimeError(
+                    "Z-Image requires an explicit variant to resolve flow_shift. "
+                    "Provide engine option zimage_variant='turbo'|'base' (UI: Turbo toggle), "
+                    "or load a diffusers repo directory that includes scheduler/scheduler_config.json."
+                )
+
+    if spec_obj is None:
         # If the model isn't a diffusers directory, try resolving the canonical
         # scheduler config from the vendored Hugging Face mirror using the
         # detected repo_hint.
@@ -88,17 +116,6 @@ def resolve_flow_shift_for_sampling(
                 spec_obj = flow_shift_spec_from_repo_dir(vendor)
                 source = "vendored_repo_hint"
                 repo_dir = str(vendor)
-
-    if spec_obj is None:
-        # Z-Image GGUF checkpoints are core-only; shift is defined by the vendored diffusers scheduler config.
-        bundle = getattr(sd_model, "_current_bundle", None)
-        family = getattr(bundle, "family", None)
-        if family is ModelFamily.ZIMAGE:
-            repo_root = get_repo_root()
-            zimage_repo = repo_root / "apps" / "backend" / "huggingface" / "Alibaba-TongYi" / "Z-Image-Turbo"
-            spec_obj = flow_shift_spec_from_repo_dir(zimage_repo)
-            source = "vendored_zimage"
-            repo_dir = str(zimage_repo)
 
     if spec_obj is None:
         raise RuntimeError(

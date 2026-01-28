@@ -1,3 +1,19 @@
+/*
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Vitest coverage for image payload builders (txt2img).
+Ensures engine-specific guidance fields (`cfg` vs `distilled_cfg`) and extras mapping (including Z-Image variant selection)
+are emitted as expected.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `payloads.test` (module): Image payload builder tests.
+*/
+
 import { describe, expect, it } from 'vitest'
 
 import { buildTxt2ImgPayload } from './payloads'
@@ -49,5 +65,29 @@ describe('buildTxt2ImgPayload', () => {
     expect(payload.extras?.highres?.refiner).toBeDefined()
     expect(payload.extras?.highres?.refiner).toMatchObject({ steps: 4, cfg: 5 })
   })
-})
 
+  it('uses cfg (not distilled_cfg) for zimage', () => {
+    const payload = buildTxt2ImgPayload({
+      prompt: 'test prompt',
+      negativePrompt: 'neg',
+      width: 1024,
+      height: 1024,
+      steps: 9,
+      guidanceScale: 2.5,
+      sampler: 'euler',
+      scheduler: 'simple',
+      seed: 42,
+      batchSize: 1,
+      batchCount: 1,
+      device: 'cuda',
+      engine: 'zimage',
+      model: 'dummy.safetensors',
+      extras: { zimage_variant: 'turbo' },
+    })
+
+    expect(payload.cfg).toBe(2.5)
+    expect((payload as any).distilled_cfg).toBeUndefined()
+    expect(payload.negative_prompt).toBe('neg')
+    expect(payload.extras?.zimage_variant).toBe('turbo')
+  })
+})

@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-27
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -37,3 +37,4 @@ Status: Active
 - 2026-01-24: `generation.py` applies live preview interval/method via thread-local `LivePreviewTaskConfig.runtime_overrides()` (no process-global `os.environ` mutation; avoids cross-request drift).
 - 2026-01-25: `generation.py` now accepts `clip_skip` in `[0..12]` for txt2img (0 = “use default”), and validates `img2img_clip_skip` in `[0..12]` when provided.
 - 2026-01-27: Video endpoints accept optional `video_return_frames` and pass it through request extras; WAN txt2vid/img2vid/vid2vid results can include `video {rel_path,mime}` for the UI player and omit frames by default.
+- 2026-01-28: `generation.py` accepts `extras.zimage_variant="turbo"|"base"` (and `img2img_extras.zimage_variant`) and forwards it into `engine_options["zimage_variant"]` so the orchestrator can reload Z-Image when the variant changes.

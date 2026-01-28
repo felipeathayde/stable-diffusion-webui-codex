@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
-Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections are expected to be used for each engine.
+Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
@@ -110,10 +110,10 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         default_sampler="euler",
         default_scheduler="simple",
     ),
-    # Z-Image Turbo (flow-based; tuned for simple predictor schedule).
+    # Z-Image (Turbo/Base variants; flow-based; tuned for simple predictor schedule).
     SemanticEngine.ZIMAGE: EngineParamSurface(
         supports_txt2img=True,
-        supports_img2img=False,
+        supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_highres=False,

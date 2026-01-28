@@ -11,7 +11,7 @@ Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers t
 apply engine-agnostic request normalization/validation.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `FLOW_ENGINES` (const): Engine ids treated as flow models (distilled CFG; negative prompt omitted).
+- `DISTILLED_CFG_ENGINES` (const): Engine ids treated as distilled-guidance engines (use `distilled_cfg`; CFG/negative prompt omitted).
 - `DEVICE_VALUES` (const): Allowed device tokens for requests.
 - `DeviceEnum` (const): Zod enum built from `DEVICE_VALUES`.
 - `RefinerOptionsSchema` (const): Zod schema for refiner options.
@@ -29,8 +29,8 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { z, ZodError } from 'zod'
 
-// Flow models use distilled_cfg, no negative prompt
-const FLOW_ENGINES = ['flux1', 'flux1_kontext', 'flux1_chroma', 'zimage'] as const
+// Engines that use distilled guidance (single-branch conditioning) and therefore use distilled_cfg.
+const DISTILLED_CFG_ENGINES = ['flux1', 'flux1_kontext', 'flux1_chroma'] as const
 const DEVICE_VALUES = ['cuda', 'cpu', 'mps', 'xpu', 'directml'] as const
 const DeviceEnum = z.enum(DEVICE_VALUES)
 
@@ -80,7 +80,7 @@ export const Txt2ImgRequestSchema = z
     height: z.number().int().min(8).max(8192),
     steps: z.number().int().min(1),
     cfg: z.number().optional(),  // Diffusion models (SD, SDXL)
-    distilled_cfg: z.number().optional(),  // Flow models (Flux, Z Image, Chroma)
+    distilled_cfg: z.number().optional(),  // Distilled-guidance engines (Flux, Chroma)
     sampler: z.string().min(1),
     scheduler: z.string().min(1),
     seed: z.number().int(),
@@ -111,6 +111,8 @@ export const Txt2ImgRequestSchema = z
         vae_sha: z.string().optional(),
         lora_sha: z.string().optional(),
         model_sha: z.string().optional(),
+        // Z-Image variant selection
+        zimage_variant: z.enum(['turbo', 'base']).optional(),
       })
       .passthrough()  // Allow additional dynamic keys for engine-specific extras
       .optional(),
@@ -181,7 +183,7 @@ function normalizeDevice(device: string): Txt2ImgRequest['device'] {
 }
 
 export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
-  const isFlowModel = FLOW_ENGINES.includes(state.engine as typeof FLOW_ENGINES[number])
+  const isDistilledCfgModel = DISTILLED_CFG_ENGINES.includes(state.engine as typeof DISTILLED_CFG_ENGINES[number])
   
   const payload: Record<string, unknown> = {
     device: normalizeDevice(state.device),
@@ -198,9 +200,9 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
     payload.clip_skip = Math.trunc(state.clipSkip)
   }
   
-  // Flow models: use distilled_cfg, no negative prompt
-  // Diffusion models: use cfg with negative prompt
-  if (isFlowModel) {
+  // Distilled-guidance engines: use distilled_cfg, no CFG/negative prompt (single-branch conditioning)
+  // CFG engines: use cfg with negative prompt
+  if (isDistilledCfgModel) {
     payload.distilled_cfg = state.guidanceScale
   } else {
     payload.cfg = state.guidanceScale

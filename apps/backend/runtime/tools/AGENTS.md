@@ -1,7 +1,7 @@
 # apps/backend/runtime/tools Overview
 Date: 2025-12-31
 Owner: Runtime Maintainers
-Last Review: 2026-01-16
+Last Review: 2026-01-28
 Status: Active
 
 ## Purpose
@@ -45,4 +45,5 @@ Status: Active
 - 2026-01-16: WAN22 converter presets now expose float dtype groups so the Mixed AUTO/FP16/FP32 knob can force sensitive weights to FP16/FP32.
 - 2026-01-16: GGUF converter verification reuses the conversion safetensors handle (avoids re-opening huge WAN22 weights twice; improves Windows stability).
 - 2026-01-24: Added GGUF converter support for LTX-2 denoiser weights (`LTX2VideoTransformer3DModel`) via profiles `ltx2_transformer_{comfy,native}` and for the LTX-2 Gemma3 text encoder via `gemma3_tenc_{comfy,native}` (wrapper stripping + stable key layout).
+- 2026-01-28: Z-Image conversions now record `codex.zimage.variant=turbo|base` when the source includes a diffusers `scheduler/scheduler_config.json` (shift=3.0/6.0), and the Z-Image metadata normalizer no longer defaults `_name_or_path` to Turbo when the input config is missing it.
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

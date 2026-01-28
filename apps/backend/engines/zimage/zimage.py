@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Z Image Turbo txt2img engine (Flux-like “core-only” checkpoint + external VAE/Qwen3 TE).
-Implements prompt formatting, conditioning, and execution for Z Image Turbo by assembling a runtime from a core transformer checkpoint
+Purpose: Z Image engine (Turbo/Base variants) for txt2img/img2img.
+Implements prompt formatting, conditioning, and execution for Z Image by assembling a runtime from a core transformer checkpoint
 and external assets (text encoder + Flow16 VAE), with strict asset selection and smart-cache/timeline integration.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -37,11 +37,9 @@ from apps.backend.runtime.diagnostics.timeline import timeline_node
 from apps.backend.runtime.families.zimage.debug import env_flag, env_int, truncate_text
 
 from .factory import CodexZImageFactory
-from .spec import ZIMAGE_SPEC, ZImageEngineRuntime
+from .spec import ZImageEngineRuntime
 
 logger = logging.getLogger("backend.engines.zimage.zimage")
-
-_ZIMAGE_FACTORY = CodexZImageFactory(spec=ZIMAGE_SPEC)
 
 
 class _ZImagePromptList(list[str]):
@@ -51,18 +49,18 @@ class _ZImagePromptList(list[str]):
         self,
         items: list[str],
         *,
-        distilled_cfg_scale: float,
+        cfg_scale: float,
         is_negative_prompt: bool,
         smart_cache: bool | None,
     ) -> None:
         super().__init__(items)
-        self.distilled_cfg_scale = float(distilled_cfg_scale)
+        self.cfg_scale = float(cfg_scale)
         self.is_negative_prompt = bool(is_negative_prompt)
         self.smart_cache = smart_cache
 
 
 class ZImageEngine(CodexDiffusionEngine):
-    """Z Image Turbo txt2img engine."""
+    """Z Image engine (Turbo/Base variants)."""
 
     engine_id = "zimage"
 
@@ -71,15 +69,20 @@ class ZImageEngine(CodexDiffusionEngine):
         self._runtime: Optional[ZImageEngineRuntime] = None
         self._device = "cuda"
         self._dtype = "bf16"
+        self._zimage_variant: str = "turbo"
 
     def capabilities(self) -> EngineCapabilities:
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG,),
+            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
             model_types=("zimage", "zimage-turbo"),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
         )
+
+    @property
+    def zimage_variant(self) -> str:
+        return self._zimage_variant
 
     def _build_components(
         self,
@@ -88,21 +91,93 @@ class ZImageEngine(CodexDiffusionEngine):
         options: Mapping[str, Any],
     ) -> CodexObjects:
         """Build engine components."""
-        assembly = _ZIMAGE_FACTORY.assemble(bundle, options=options)
-        runtime = assembly.runtime
+        raw_variant = options.get("zimage_variant")
+        variant = str(raw_variant or "").strip().lower()
+
+        inferred: str | None = None
+        try:
+            # Prefer trusted Codex provenance when available. This is primarily
+            # intended for GGUF files produced by our converter.
+            ref = str(getattr(bundle, "model_ref", "") or "").strip()
+            if ref.lower().endswith(".gguf"):
+                from apps.backend.runtime.checkpoint.io import read_gguf_metadata
+                from apps.backend.infra.config.provenance import CODEX_GENERATED_BY, CODEX_REPO_URL
+
+                meta = read_gguf_metadata(ref)
+                codex_repo = str(meta.get("codex.repository") or "").strip()
+                codex_by = str(meta.get("codex.quantized_by") or "").strip()
+                if codex_repo == CODEX_REPO_URL and codex_by == CODEX_GENERATED_BY:
+                    v = str(meta.get("codex.zimage.variant") or "").strip().lower()
+                    if v in {"turbo", "base"}:
+                        inferred = v
+        except Exception:
+            inferred = None
+
+        if inferred is not None:
+            if variant and variant != inferred:
+                logger.warning(
+                    "Z-Image: requested zimage_variant=%r conflicts with trusted GGUF metadata variant=%r; using metadata.",
+                    variant,
+                    inferred,
+                )
+            variant = inferred
+
+        if variant not in {"turbo", "base"}:
+            raise RuntimeError(
+                "Z-Image requires an explicit variant. Provide request extras.zimage_variant='turbo'|'base' "
+                "(UI: Turbo toggle), or use a Codex-produced GGUF that declares codex.zimage.variant."
+            )
+
+        self._zimage_variant = variant
+
+        # Z-Image uses classic CFG semantics (diffusers parity): unconditional conditioning is used when guidance_scale > 1.
+        # Do not mark this engine as "distilled guidance" (single-branch conditioning).
+        self.use_distilled_cfg_scale = False
+
+        flow_shift_override: float | None = None
+        vendor_dir = None
+        try:
+            from apps.backend.infra.config.repo_root import get_repo_root
+            from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
+
+            repo_root = get_repo_root()
+            hf_root = repo_root / "apps" / "backend" / "huggingface"
+            repo_id = "Alibaba-TongYi/Z-Image-Turbo" if variant == "turbo" else "Tongyi-MAI/Z-Image"
+            vendor_dir = hf_root / repo_id.replace("/", "/")
+            if not vendor_dir.is_dir():
+                raise RuntimeError(
+                    f"Missing vendored HF assets for Z-Image variant={variant!r}: {vendor_dir}. "
+                    "Populate the directory under apps/backend/huggingface/ and retry."
+                )
+            flow_shift_override = float(flow_shift_spec_from_repo_dir(vendor_dir).resolve_effective_shift())
+        except Exception as exc:
+            raise RuntimeError(f"Failed to resolve flow_shift for Z-Image variant={variant!r}: {exc}") from exc
+
         logger.info(
-            "Z Image build: vae_path=%s tenc_path=%s all_options=%s",
+            "Z Image build: variant=%s flow_shift=%.3f vae_path=%s tenc_path=%s all_options=%s",
+            variant,
+            float(flow_shift_override),
             options.get("vae_path"),
             options.get("tenc_path"),
             list(options.keys()),
         )
+
+        # Assemble runtime with a variant-specific spec (flow-shift affects schedule parity).
+        from apps.backend.engines.zimage.spec import ZImageEngineSpec
+
+        assembly = CodexZImageFactory(spec=ZImageEngineSpec(_flow_shift_override=flow_shift_override)).assemble(
+            bundle,
+            options=options,
+        )
+        runtime = assembly.runtime
         self._runtime = runtime
         self._device = str(getattr(runtime, "device", "cuda"))
         self._dtype = str(getattr(runtime, "dtype", "bf16"))
-        logger.info("Z Image runtime assembled")
 
-        # Turbo models use distilled guidance; disable CFG/uncond conditioning.
-        self.use_distilled_cfg_scale = True
+        if vendor_dir is not None:
+            tokenizer_dir = vendor_dir / "tokenizer"
+            runtime.text.qwen3_text.text_encoder.set_tokenizer_path_hint(str(tokenizer_dir))
+        logger.info("Z Image runtime assembled")
 
         return assembly.codex_objects
 
@@ -130,18 +205,17 @@ class ZImageEngine(CodexDiffusionEngine):
         *,
         is_negative: bool,
     ) -> _ZImagePromptList:
-        distilled = getattr(proc, "distilled_guidance_scale", None)
-        if distilled is None:
-            distilled = getattr(proc, "distilled_cfg", None)
+        raw_cfg = getattr(proc, "guidance_scale", None)
+        default_scale = 1.0
         try:
-            distilled_value = float(distilled) if distilled is not None else float(ZIMAGE_SPEC.default_cfg_scale)
+            cfg_scale = float(raw_cfg) if raw_cfg is not None else default_scale
         except Exception:
-            distilled_value = float(ZIMAGE_SPEC.default_cfg_scale)
+            cfg_scale = default_scale
         smart_flag = getattr(proc, "smart_cache", None)
         smart_value = None if smart_flag is None else bool(smart_flag)
         return _ZImagePromptList(
             [str(t or "") for t in texts],
-            distilled_cfg_scale=distilled_value,
+            cfg_scale=cfg_scale,
             is_negative_prompt=is_negative,
             smart_cache=smart_value,
         )
@@ -190,10 +264,14 @@ class ZImageEngine(CodexDiffusionEngine):
             if unload_clip:
                 memory_management.manager.unload_model(runtime.clip.patcher)
 
-        raw_cfg = getattr(prompts, "distilled_cfg_scale", None)
-        distilled_cfg = float(raw_cfg) if raw_cfg is not None else float(ZIMAGE_SPEC.default_cfg_scale)
+        raw_cfg = getattr(prompts, "cfg_scale", None)
+        default_scale = 1.0
+        try:
+            scale_value = float(raw_cfg) if raw_cfg is not None else default_scale
+        except Exception:
+            scale_value = default_scale
         if env_flag("CODEX_ZIMAGE_DEBUG_PROMPT", False):
-            logger.info("[zimage-debug] distilled_cfg_scale=%.3f", distilled_cfg)
+            logger.info("[zimage-debug] cfg_scale=%.3f", scale_value)
 
         return cond
 
@@ -245,7 +323,7 @@ class ZImageEngine(CodexDiffusionEngine):
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = 9,
-        guidance_scale: float = 0.0,
+        guidance_scale: float = 5.0,
         seed: Optional[int] = None,
     ) -> list:
         """Run generation using Diffusers ZImagePipeline directly.
@@ -255,11 +333,11 @@ class ZImageEngine(CodexDiffusionEngine):
         
         Args:
             prompt: Text prompt
-            negative_prompt: Negative prompt for CFG (typically None for Turbo)
+            negative_prompt: Negative prompt for CFG (required when guidance_scale > 1)
             height: Image height
             width: Image width  
-            num_inference_steps: Sampling steps (9 for Turbo)
-            guidance_scale: CFG scale (0.0 for Turbo)
+            num_inference_steps: Sampling steps
+            guidance_scale: CFG scale (classic CFG; enabled when > 1)
             seed: Random seed
         
         Returns:
@@ -273,11 +351,25 @@ class ZImageEngine(CodexDiffusionEngine):
         
         logger.info("[zimage] Running standalone Diffusers-math sampler")
         
-        # Step 1: Encode prompt using OUR working text encoder
-        # This already works correctly and handles all the Qwen3 specifics
-        prompts_list = [prompt] if isinstance(prompt, str) else list(prompt)
+        # Step 1: Encode prompt(s) using OUR working text encoder.
+        prompts_list = _ZImagePromptList(
+            [prompt] if isinstance(prompt, str) else list(prompt),
+            cfg_scale=float(guidance_scale),
+            is_negative_prompt=False,
+            smart_cache=None,
+        )
         cond = self.get_learned_conditioning(prompts_list)
         text_embeddings = cond["crossattn"] if isinstance(cond, dict) else cond  # [B, seq, hidden]
+        negative_text_embeddings = None
+        if float(guidance_scale) > 1.0:
+            neg_list = _ZImagePromptList(
+                [str(negative_prompt or "")],
+                cfg_scale=float(guidance_scale),
+                is_negative_prompt=True,
+                smart_cache=None,
+            )
+            uncond = self.get_learned_conditioning(neg_list)
+            negative_text_embeddings = uncond["crossattn"] if isinstance(uncond, dict) else uncond
         
         logger.info("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
         
@@ -290,6 +382,7 @@ class ZImageEngine(CodexDiffusionEngine):
         try:
             # Step 3: Sample using Diffusers scheduler + negation
             computation_dtype = torch.bfloat16 if self._dtype == "bf16" else torch.float16
+            shift = 3.0 if self._zimage_variant == "turbo" else 6.0
             
             if seed is not None:
                 generator = torch.Generator(device=self._device).manual_seed(seed)
@@ -299,10 +392,12 @@ class ZImageEngine(CodexDiffusionEngine):
             latents = sample_zimage_diffusers_math(
                 transformer=transformer_model,
                 text_embeddings=text_embeddings,
+                negative_text_embeddings=negative_text_embeddings,
                 height=height,
                 width=width,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
+                shift=shift,
                 generator=generator,
                 device=self._device,
                 dtype=computation_dtype,

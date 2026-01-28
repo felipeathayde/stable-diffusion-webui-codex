@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: GGUF metadata injection helpers for the converter.
-Adds provenance/source metadata and minimal architecture keys required by loader tooling.
+Adds provenance/source metadata and minimal architecture keys required by loader tooling (including `codex.zimage.variant` when detectable from scheduler configs).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_is_hf_repo_id` (function): Returns True when a string looks like a Hugging Face repo id (`org/repo`).
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import json
 from pathlib import Path
 
 from apps.backend.quantization.gguf import GGUFWriter
@@ -78,6 +79,39 @@ def add_basic_metadata(
 
     writer.add_string("gguf.quantized_at_utc", _dt.datetime.now(tz=_dt.timezone.utc).isoformat())
     writer.add_string("gguf.quantization", str(quant.value))
+
+    # Z-Image Turbo/Base disambiguation: when converting from a diffusers-style directory
+    # layout, the scheduler_config.json contains the canonical `shift` (3.0 turbo / 6.0 base).
+    #
+    # This metadata is trusted by the WebUI only when Codex provenance keys are present,
+    # so leaving it unset when we cannot prove the source is fine.
+    try:
+        is_zimage = str(arch).strip().lower() == "zimage" or str(config.get("model_type") or "").strip().lower() == "zimage"
+        if is_zimage:
+            cfg_dir = Path(config_path).resolve().parent
+            candidates = [
+                cfg_dir / "scheduler" / "scheduler_config.json",
+                cfg_dir.parent / "scheduler" / "scheduler_config.json",
+            ]
+            for cand in candidates:
+                if not cand.is_file():
+                    continue
+                data = json.loads(cand.read_text(encoding="utf-8"))
+                raw_shift = data.get("shift")
+                if raw_shift is None:
+                    continue
+                try:
+                    shift = float(raw_shift)
+                except Exception:
+                    continue
+                if abs(shift - 3.0) < 1e-3:
+                    writer.add_string("codex.zimage.variant", "turbo")
+                    break
+                if abs(shift - 6.0) < 1e-3:
+                    writer.add_string("codex.zimage.variant", "base")
+                    break
+    except Exception:
+        pass
 
 
 __all__ = [

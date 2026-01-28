@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_map_wan22_key_to_comfy` (function): Maps WAN22 Diffusers key layout to Comfy/WAN export keys used by Codex runtimes.
 - `_extract_block_indices` (function): Extracts stable block indices from keys (used by planners for deterministic ordering).
 - `is_zimage_transformer_config` (function): Returns True when a config.json represents a Z-Image transformer export.
-- `normalize_zimage_transformer_metadata_config` (function): Adapts Z-Image transformer config fields to metadata helper inputs.
+- `normalize_zimage_transformer_metadata_config` (function): Adapts Z-Image transformer config fields to metadata helper inputs (variant-neutral; no Turbo defaulting).
 - `plan_zimage_transformer_tensors` (function): Plan tensor conversion for Diffusers-style Z-Image transformer weights (includes QKV packing).
 - `is_flux_transformer_config` (function): Returns True when a config.json represents a Flux transformer export.
 - `normalize_flux_transformer_metadata_config` (function): Adapts Flux transformer config fields to metadata helper inputs.
@@ -355,7 +355,7 @@ def normalize_zimage_transformer_metadata_config(config: Mapping[str, Any]) -> d
         "max_position_embeddings": max_pos * max(1, patch),
         "rope_theta": _as_float(config.get("rope_theta"), 256.0),
         "rms_norm_eps": _as_float(config.get("norm_eps"), 1e-5),
-        "_name_or_path": str(config.get("_name_or_path") or config.get("name") or "Alibaba-TongYi/Z-Image-Turbo"),
+        "_name_or_path": str(config.get("_name_or_path") or config.get("name") or "zimage"),
     }
 
 

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Static engine configs (defaults + capability flags) for the WebUI.
 Defines engine types and per-engine defaults/capabilities used by dynamic tabs and composables to pick UI defaults and gate fields.
+Variant-dependent engines (e.g. Z-Image Turbo/Base) must be gated by per-tab params in views/payload builders, not by these static flags.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineType` (type): Known engine identifiers used by the UI config.
@@ -126,18 +127,17 @@ const ENGINE_CONFIGS: Record<EngineType, EngineConfig> = {
     id: 'zimage',
     label: 'Z Image',
     capabilities: {
-      tasks: ['txt2img'],
-      usesCfg: false,
-      usesDistilledCfg: true,
-      usesNegativePrompt: false,
+      tasks: ['txt2img', 'img2img'],
+      usesCfg: true,
+      usesDistilledCfg: false,
+      usesNegativePrompt: true,
       isVideoEngine: false,
     },
     defaults: {
       width: 1024,
       height: 1024,
-      steps: 8,
+      steps: 9,
       cfg: 1,
-      distilledCfg: 1.0,
     },
   },
   

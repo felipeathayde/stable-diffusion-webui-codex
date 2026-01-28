@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Z-Image quicksettings selectors (model + assets).
-Renders Z-Image model, VAE, and Qwen3 text encoder selectors for Z-Image model tabs.
+Purpose: Z-Image quicksettings selectors (model + variant + assets).
+Renders Z-Image model, Turbo/Base toggle, VAE, and Qwen3 text encoder selectors for Z-Image model tabs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsZImage` (component): Z-Image quicksettings row used by the main quicksettings bar.
@@ -37,6 +37,21 @@ Symbols (top-level; keep in sync; no ghosts):
         </button>
         <button class="btn qs-btn-outline qs-inline-btn" type="button" @click="$emit('addCheckpointPath')">+</button>
       </div>
+    </div>
+  </div>
+
+  <div class="quicksettings-group qs-group-zimage-turbo">
+    <div class="qs-row">
+      <button
+        :class="['btn', 'qs-toggle-btn', turbo ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+        type="button"
+        :aria-pressed="turbo"
+        :disabled="turboLocked"
+        :title="turboLocked ? 'Turbo variant is fixed by model metadata' : 'Toggle Turbo variant'"
+        @click="$emit('update:turbo', !turbo)"
+      >
+        Turbo
+      </button>
     </div>
   </div>
 
@@ -91,6 +106,8 @@ Symbols (top-level; keep in sync; no ghosts):
 defineProps<{
   checkpoint: string
   checkpoints: string[]
+  turbo: boolean
+  turboLocked: boolean
   vae: string
   vaeChoices: string[]
   textEncoder: string
@@ -99,6 +116,7 @@ defineProps<{
 
 defineEmits<{
   (e: 'update:checkpoint', value: string): void
+  (e: 'update:turbo', value: boolean): void
   (e: 'update:vae', value: string): void
   (e: 'update:textEncoder', value: string): void
   (e: 'addCheckpointPath'): void

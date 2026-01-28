@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Image model tab view (txt2img/img2img) UI for SD/Flux/ZImage-family engines.
 Owns prompt + parameter controls, init-image handling for img2img, per-tab history, and integrates with the generation composable to
-submit `/api/txt2img`/`/api/img2img` tasks and render progress/results.
+submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
@@ -361,6 +361,7 @@ const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as Ima
 const engineConfig = computed(() => getEngineConfig(props.type))
 const engineSurface = computed(() => engineCaps.get(props.type))
 
+const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean((params.value as any)?.zimageTurbo ?? true) : false)
 const supportsNegative = computed(() => engineConfig.value.capabilities.usesNegativePrompt)
 const supportsImg2Img = computed(() => {
   const surf = engineSurface.value
@@ -370,7 +371,10 @@ const supportsImg2Img = computed(() => {
 
 const enableAssets = computed(() => true)
 const enableStyles = computed(() => true)
-const toolbarLabel = computed(() => (props.type === 'zimage' ? 'Z Image Turbo' : ''))
+const toolbarLabel = computed(() => {
+  if (props.type !== 'zimage') return ''
+  return zimageTurbo.value ? 'Z Image Turbo' : 'Z Image Base'
+})
 
 const cfgLabel = computed(() => (engineConfig.value.capabilities.usesDistilledCfg ? 'Distilled CFG' : 'CFG'))
 const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdxl' || props.type === 'flux1')

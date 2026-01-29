@@ -26,9 +26,7 @@ TORCH_LIBRARY_IMPL(codexpack, CPU, m) {
          });
 }
 
-#ifdef WITH_CUDA
 TORCH_LIBRARY_IMPL(codexpack, CUDA, m) { m.impl("q4k_tilepack_linear", q4k_tilepack_linear_cuda); }
-#endif
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("q4k_tilepack_linear",

@@ -9,6 +9,7 @@ Status: Active
 
 ## Subdirectories
 - `wan_t5/` — Build scripts and sources for WAN T5 CUDA kernels.
+- `codexpack/` — Build scripts and sources for CodexPack packed GGUF kernels (`torch.ops.codexpack.*`).
 
 ## Notes
 - Document build requirements for each kernel and keep them in sync with runtime loaders.

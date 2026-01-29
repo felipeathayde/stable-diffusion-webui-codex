@@ -11,6 +11,7 @@ Provides `dequantize_tensor(...)` and an optional CPU LRU cache for dequantized 
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexParameter` (class): Packed GGUF tensor wrapper (imported from `apps.backend.quantization.tensor`).
+- `CodexPackLinearQ4KTilepackV1Parameter` (class): Packed CodexPack linear-weight wrapper (imported from `apps.backend.quantization.codexpack_tensor`).
 - `set_cache_policy` (function): Configure optional CPU LRU dequant cache (`none` or `cpu_lru`) and size limit.
 - `clear_cache` (function): Clear cached dequantized tensors.
 - `dequantize_tensor` (function): Dequantize a `CodexParameter` to a float tensor (pass-through for non-GGUF tensors).
@@ -25,9 +26,11 @@ import threading
 import torch
 
 from apps.backend.quantization.api import dequantize as codex_dequantize
+from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
 from apps.backend.quantization.tensor import CodexParameter
 
 __all__ = [
+    "CodexPackLinearQ4KTilepackV1Parameter",
     "CodexParameter",
     "dequantize_tensor",
     "set_cache_policy",

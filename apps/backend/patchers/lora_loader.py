@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Deterministic LoRA loader/applier with transactional backups.
 Applies patch dictionaries onto model parameters with device/dtype management, supporting GGUF and optional bitsandbytes paths.
+Fails loud when CodexPack packed weights are present (v1 packed-kernel execution does not support LoRA/DoRA yet).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `get_parameter_devices` (function): Captures current parameter device mapping for later restoration.
@@ -23,6 +24,7 @@ from typing import Dict, List, Mapping, MutableMapping, Sequence, Tuple
 import torch
 from tqdm.auto import tqdm
 
+from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
 from apps.backend.quantization.api import quantize_numpy
 from apps.backend.quantization.tensor import CodexParameter
 from apps.backend.runtime import utils
@@ -64,6 +66,14 @@ class CodexLoraLoader:
         offload_device=torch.device("cpu"),
         force_refresh: bool = False,
     ) -> None:
+        if lora_patches and any(
+            isinstance(param, CodexPackLinearQ4KTilepackV1Parameter) for _key, param in self.model.named_parameters()
+        ):
+            raise RuntimeError(
+                "LoRA is not supported for CodexPack packed-kernel execution in v1. "
+                "Load the base GGUF (non-codexpack) or disable LoRA."
+            )
+
         signature = self._signature(lora_patches)
         if signature == self.loaded_signature and not force_refresh:
             logger.debug("LoRA loader refresh skipped (no changes).")
@@ -97,6 +107,11 @@ class CodexLoraLoader:
                 parent_layer, child_key, parameter = utils.get_attr_with_parent(self.model, param_key)
                 if not isinstance(parameter, torch.nn.Parameter):
                     raise TypeError(f"LoRA target {param_key} is not a torch.nn.Parameter.")
+                if isinstance(parameter, CodexPackLinearQ4KTilepackV1Parameter):
+                    raise RuntimeError(
+                        "LoRA is not supported for CodexPack packed linear weights in v1. "
+                        f"target={param_key!r}."
+                    )
 
                 if param_key not in self.backup:
                     if isinstance(parameter, CodexParameter) and parameter.qtype is not None:
@@ -252,4 +267,3 @@ __all__ = [
     "get_parameter_devices",
     "set_parameter_devices",
 ]
-

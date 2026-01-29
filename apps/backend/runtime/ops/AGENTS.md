@@ -14,3 +14,4 @@ Status: Active
 - 2025-12-13: `CodexOperationsGGUF` now supports GGUF-style state dict loading for `Linear`/`Embedding` plus Conv/Norm variants (`Conv{1,2,3}d`, `ConvTranspose{1,2,3}d`, `GroupNorm`, `LayerNorm`) so nn.Module runtimes (ex.: WAN22) can load GGUF weights without model-specific runners.
 - 2026-01-01: GGUF CPU LRU cache is guarded to CPU-resident weights only (prevents unintended CPU->GPU transfers when running on CUDA).
 - 2026-01-02: Added standardized file header docstrings to ops facades and GGUF runtime helpers (doc-only change; part of rollout).
+- 2026-01-29: Added `ops/codexpack_cuda.py` to best-effort load the `codexpack_cuda` extension (prebuilt or in-place build) for CodexPack packed GGUF execution.

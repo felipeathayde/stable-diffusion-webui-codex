@@ -323,6 +323,21 @@ Correct command:
 rg -n --fixed-strings "Symbols (top-level; keep in sync; no ghosts):" .sangoi
 ```
 
+### Searching for patterns that start with `--` (flag parsing)
+
+Wrong command:
+```bash
+rg -n "--gguf-exec" -S apps .sangoi
+```
+
+Cause and fix:
+`rg` interprets tokens starting with `--` as flags. Use `--` to stop option parsing (and optionally `--fixed-strings` when you want a literal match).
+
+Correct command:
+```bash
+rg -n -- "--gguf-exec" -S apps .sangoi
+```
+
 ---
 
 ## Codex CLI tooling (patch hygiene)

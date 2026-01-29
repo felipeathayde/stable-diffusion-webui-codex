@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `load_torch_file` (function): Loads a torch checkpoint with safe-load options (prefers safe loaders, falls back to pickle loader when allowed).
 - `read_gguf_metadata` (function): Reads GGUF key/value metadata from a `.gguf` file header (scoped here to keep quantization imports out of engines).
 - `_load_gguf_state_dict` (function): Loads a GGUF state dict from a `.gguf` file path (used by runtime helpers without importing heavy ops).
-- `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags (e.g. `--gguf-exec=dequant_upfront`).
+- `load_gguf_state_dict` (function): Public GGUF state-dict loader that honors runtime flags for normal GGUFs and auto-detects CodexPack artifacts.
 - `_load_pickled_checkpoint` (function): Loads a pickled checkpoint using the restricted/guarded unpickler (`checkpoint_pickle`).
 """
 
@@ -94,7 +94,8 @@ def load_gguf_state_dict(
 ):
     """Load a GGUF state dict, with optional explicit dequantization policy.
 
-    - When `dequantize` is None, honors the global runtime flag `--gguf-exec=dequant_upfront`.
+    - When `dequantize` is None, honors the global runtime flag `--gguf-exec=dequant_upfront` for normal GGUFs.
+      CodexPack `*.codexpack.gguf` files are auto-detected by metadata and never use load-time dequantization.
     - Callers with an explicit policy (e.g. "VAE GGUFs always dequantize") should pass
       `dequantize=True` to make the intent unambiguous and avoid drift.
     """
@@ -105,7 +106,18 @@ def load_gguf_state_dict(
 
     if dequantize is None:
         exec_mode = str(getattr(runtime_args, "gguf_exec", "dequant_forward"))
-        dequantize = exec_mode == GgufExecMode.DEQUANT_UPFRONT.value
+        if exec_mode != GgufExecMode.DEQUANT_UPFRONT.value:
+            dequantize = False
+        else:
+            # CodexPack files are auto-detected by metadata and never support "dequant upfront".
+            # If we blindly pass `dequantize=True` based on the global exec flag, we'd block CodexPack
+            # even though the packed path is the intended execution.
+            try:
+                meta = read_gguf_metadata(path)
+                is_codexpack = str(meta.get("codex.pack.schema") or "").strip() == "codexpack.gguf"
+            except Exception:
+                is_codexpack = False
+            dequantize = not is_codexpack
     return _load(path, dequantize=bool(dequantize), computation_dtype=computation_dtype)
 
 

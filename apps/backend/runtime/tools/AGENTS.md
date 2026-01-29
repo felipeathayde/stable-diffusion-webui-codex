@@ -9,6 +9,7 @@ Status: Active
 
 ## Key Files
 - `apps/backend/runtime/tools/gguf_converter.py` — Converts SafeTensors (including sharded `*.safetensors.index.json`) to GGUF with quantization + verification.
+- `apps/backend/runtime/tools/codexpack_packer.py` — Packs a base GGUF into `*.codexpack.gguf` (CodexPack v1; tilepack Q4_K) for future SM86 CUDA packed-kernel execution.
 - `apps/backend/runtime/tools/gguf_converter_specs.py` — Typed converter specs (profiles/layouts + quantization policy rule types).
 - `apps/backend/runtime/tools/gguf_converter_profiles.py` — Profile registry: resolves layout/planner/key mapping + per-model dtype policies.
 - `apps/backend/runtime/tools/gguf_converter_model_metadata.py` — Lists vendored model metadata (org/repo + supported components/config dirs) for the GGUF converter UI.
@@ -24,6 +25,7 @@ Status: Active
 ## Notes
 - Tools should be deterministic, auditable, and fail loud (no silent fallbacks).
 - When adding metadata to GGUF outputs, prefer stable keys and avoid leaking absolute local filesystem paths.
+- CodexPack `*.codexpack.gguf` is a Codex-only GGUF contract for packed execution; it is auto-detected via `codex.pack.*` metadata and must fail loud if prerequisites are missing (no silent fallback to per-forward dequant).
 - 2026-01-13: GGUF converter metadata uses a Codex UI schema (`model.*`, `codex.*`, `gguf.*`) and avoids verbose conversion input keys (`codex.source_*`).
 - 2026-01-13: GGUF converter supports cooperative cancellation (Tools API cancel flag) and the tools API defaults to no-overwrite when the output file already exists.
 - 2026-01-13: GGUF converter supports Flux transformer planning: maps Diffusers `FluxTransformer2DModel` keys (`transformer_blocks.*`, `single_transformer_blocks.*`) into the Comfy/Codex Flux runtime layout (`double_blocks.*`, `single_blocks.*`, `img_in`, `txt_in`, `time_in`, `vector_in`, `guidance_in`, `final_layer`).

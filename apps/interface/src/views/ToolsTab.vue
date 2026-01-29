@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tools view (GGUF converter + optional CodexPack v1 packing + file browser modal).
-Starts GGUF conversion jobs via `/api/tools/convert-gguf`, polls job status, and provides a modal file browser to pick config/weights/output paths
-without manual typing (weights/output; config comes from vendored model metadata).
+Purpose: Tools view (GGUF converter + CodexPack v1 packer + file browser modal).
+Starts GGUF conversion jobs (`/api/tools/convert-gguf`) and CodexPack packing jobs (`/api/tools/codexpack/pack-v1`), polls job status, and
+provides a modal file browser to pick config/weights/output paths without manual typing.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ToolsTab` (component): Tools page SFC; owns GGUF converter form state and the file browser modal.
@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + profile hints).
 - `GGUFConverterModelMetadata` (interface): Vendored model metadata entry returned by `/api/tools/gguf-converter/presets`.
 - `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + overwrite + Comfy Layout + CodexPack).
+- `CodexPackForm` (interface): CodexPack v1 packer form state (base GGUF path + output folder + overwrite).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
@@ -24,8 +25,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `startConversion` (function): Starts a conversion job and begins polling.
 - `cancelConversion` (function): Requests cancellation of the current conversion job (cooperative).
 - `pollStatus` (function): Polls job status and stops polling when complete/error/cancelled.
+- `startCodexpackPack` (function): Starts a CodexPack v1 packing job and begins polling.
+- `pollCodexpackPackStatus` (function): Polls CodexPack v1 packing job status.
 - `browseForSafetensors` (function): Opens the file browser in safetensors selection mode.
 - `browseForOutputDir` (function): Opens the file browser in output-folder selection mode.
+- `browseForBaseGguf` (function): Opens the file browser in base GGUF selection mode.
+- `browseForCodexpackOutputDir` (function): Opens the file browser in CodexPack output-folder selection mode.
 - `openFileBrowser` (function): Opens the modal and loads the current path listing.
 - `closeFileBrowser` (function): Closes the modal.
 - `loadBrowserPath` (function): Fetches the directory listing for the current browser path.
@@ -36,8 +41,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `formatSize` (function): Formats byte sizes for display.
 - `mixedSupported` (computed): Whether the selected quantization supports mixed variants.
 - `effectiveQuantization` (computed): Derived quantization name sent to the API (base type + Mixed toggle).
-- `outputFileName` (computed): Generated output filename `{base}-{quant}-Codex.gguf` derived from the safetensors path.
+- `outputFileName` (computed): Generated output filename derived from the safetensors path (base `.gguf` or `.codexpack.gguf` for CodexPack v1).
 - `outputFullPath` (computed): Output full path (folder + generated filename).
+- `codexpackPackFileName` (computed): Generated CodexPack output filename derived from the selected base GGUF filename.
+- `codexpackPackFullPath` (computed): CodexPack output full path (folder + generated filename).
 -->
 
 <template>
@@ -151,9 +158,9 @@ Symbols (top-level; keep in sync; no ghosts):
               />
               <button class="btn-icon" type="button" @click="browseForOutputDir" :disabled="isConverting" aria-label="Browse for output folder">…</button>
             </div>
-	            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
+	            <p class="caption">Output file name is generated automatically: <code>{{ outputFileName }}</code></p>
               <p v-if="ggufForm.codexpackV1" class="caption">
-                CodexPack v1: will also write <code>{{ codexpackOutputFileName }}</code>
+                CodexPack v1 output: base GGUF is temp-only and deleted on success.
               </p>
 	            <div class="row-inline cdx-tools-actions">
                     <button
@@ -171,7 +178,7 @@ Symbols (top-level; keep in sync; no ghosts):
                       type="button"
                       :aria-pressed="ggufForm.codexpackV1"
                       :disabled="isConverting"
-                      title="Also generate a CodexPack v1 sidecar (*.codexpack.gguf) for packed CUDA execution (Z-Image Base; Q4_K; Comfy Layout)."
+                      title="Generate a CodexPack v1 output (*.codexpack.gguf) for packed CUDA execution (Z-Image Base; Q4_K; Comfy Layout). The intermediate base GGUF is temp-only."
                       @click="toggleCodexpackV1"
                     >
                       CodexPack v1
@@ -193,7 +200,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 	          <div class="row-inline cdx-tools-actions">
 	            <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">
-	              <span v-if="!isConverting">{{ ggufForm.codexpackV1 ? 'Convert to GGUF + CodexPack' : 'Convert to GGUF' }}</span>
+	              <span v-if="!isConverting">{{ ggufForm.codexpackV1 ? 'Convert to CodexPack' : 'Convert to GGUF' }}</span>
 	              <span v-else>Converting…</span>
 	            </button>
             <button
@@ -217,6 +224,96 @@ Symbols (top-level; keep in sync; no ghosts):
             <div v-if="conversionStatus.error" class="cdx-tools-error">{{ conversionStatus.error }}</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="gen-card cdx-tools-card">
+      <div>
+        <div class="h3">CodexPack v1 Packer</div>
+        <p class="caption">Pack an existing base GGUF into a CodexPack GGUF</p>
+      </div>
+
+      <div class="field">
+        <label class="label-muted">Base GGUF File</label>
+        <div class="row-inline">
+          <input
+            class="ui-input cdx-tools-grow"
+            type="text"
+            v-model="codexpackForm.srcGgufPath"
+            placeholder="Path to base .gguf file"
+            :disabled="isPackingCodexpack || isConverting"
+          />
+          <button
+            class="btn-icon"
+            type="button"
+            @click="browseForBaseGguf"
+            :disabled="isPackingCodexpack || isConverting"
+            aria-label="Browse for base GGUF file"
+          >
+            …
+          </button>
+        </div>
+        <p class="caption">
+          Requires a Codex base GGUF with metadata: <code>codex.converter.comfy_layout=true</code>,
+          <code>codex.zimage.variant=base</code>, <code>gguf.quantization=Q4_K</code>.
+        </p>
+      </div>
+
+      <div class="field">
+        <label class="label-muted">Output Folder</label>
+        <div class="row-inline">
+          <input
+            class="ui-input cdx-tools-grow"
+            type="text"
+            v-model="codexpackForm.outputDir"
+            placeholder="Output folder path"
+            :disabled="isPackingCodexpack || isConverting"
+          />
+          <button
+            class="btn-icon"
+            type="button"
+            @click="browseForCodexpackOutputDir"
+            :disabled="isPackingCodexpack || isConverting"
+            aria-label="Browse for CodexPack output folder"
+          >
+            …
+          </button>
+        </div>
+        <p class="caption">Output file name is generated automatically: <code>{{ codexpackPackFileName }}</code></p>
+      </div>
+
+      <div class="row-inline cdx-tools-actions">
+        <button
+          :class="['btn', 'qs-toggle-btn', codexpackForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+          type="button"
+          :aria-pressed="codexpackForm.overwrite"
+          :disabled="isPackingCodexpack || isConverting"
+          title="Allow overwriting the output file if it already exists"
+          @click="codexpackForm.overwrite = !codexpackForm.overwrite"
+        >
+          Overwrite
+        </button>
+      </div>
+
+      <div class="row-inline cdx-tools-actions">
+        <button
+          class="btn btn-md btn-primary"
+          type="button"
+          @click="startCodexpackPack"
+          :disabled="!canPackCodexpack || isPackingCodexpack || isConverting"
+        >
+          <span v-if="!isPackingCodexpack">Pack GGUF → CodexPack</span>
+          <span v-else>Packing…</span>
+        </button>
+      </div>
+
+      <div v-if="codexpackPackStatus" class="panel-progress">
+        <div class="cdx-tools-progress-head">
+          <span class="cdx-tools-status" :data-status="codexpackPackStatus.status">{{ codexpackPackStatus.status }}</span>
+        </div>
+        <progress class="cdx-tools-progress" :value="codexpackPackStatus.progress" max="100"></progress>
+        <div class="caption">{{ Math.round(codexpackPackStatus.progress) }}%</div>
+        <div v-if="codexpackPackStatus.error" class="cdx-tools-error">{{ codexpackPackStatus.error }}</div>
       </div>
     </div>
 
@@ -244,7 +341,12 @@ Symbols (top-level; keep in sync; no ghosts):
 
       <template #footer>
         <button class="btn btn-md btn-secondary" type="button" @click="closeFileBrowser">Cancel</button>
-        <button class="btn btn-md btn-primary" type="button" @click="confirmSelection" :disabled="browserMode !== 'output_dir' && !selectedItem">
+        <button
+          class="btn btn-md btn-primary"
+          type="button"
+          @click="confirmSelection"
+          :disabled="browserMode !== 'output_dir' && browserMode !== 'codexpack_output_dir' && !selectedItem"
+        >
           Select
         </button>
       </template>
@@ -293,6 +395,12 @@ interface GGUFForm {
   codexpackV1: boolean
 }
 
+interface CodexPackForm {
+  srcGgufPath: string
+  outputDir: string
+  overwrite: boolean
+}
+
 interface ConversionStatus {
   status: string
   progress: number
@@ -335,11 +443,20 @@ const conversionStatus = ref<ConversionStatus | null>(null)
 const currentJobId = ref<string | null>(null)
 const pollInterval = ref<number | null>(null)
 
+const codexpackForm = ref<CodexPackForm>({
+  srcGgufPath: '',
+  outputDir: '',
+  overwrite: false,
+})
+const codexpackPackStatus = ref<ConversionStatus | null>(null)
+const codexpackJobId = ref<string | null>(null)
+const codexpackPollInterval = ref<number | null>(null)
+
 // File browser
 const showFileBrowser = ref(false)
 const browserPath = ref('')
 const browserData = ref<BrowserData>({ path: '', exists: false, parent: '', items: [] })
-const browserMode = ref<'safetensors' | 'output_dir'>('safetensors')
+const browserMode = ref<'safetensors' | 'output_dir' | 'codexpack_output_dir' | 'base_gguf'>('safetensors')
 const selectedItem = ref<BrowserItem | null>(null)
 
 const selectedModel = computed(() => modelMetadata.value.find((m) => m.id === ggufForm.value.modelId) ?? null)
@@ -382,8 +499,19 @@ const isConverting = computed(() => {
   return !['complete', 'error', 'cancelled'].includes(status)
 })
 
+const isPackingCodexpack = computed(() => {
+  if (!codexpackJobId.value) return false
+  const status = codexpackPackStatus.value?.status
+  if (!status) return true
+  return !['complete', 'error', 'cancelled'].includes(status)
+})
+
 const canConvert = computed(() => {
   return Boolean(selectedComponent.value && ggufForm.value.safetensorsPath && ggufForm.value.outputDir)
+})
+
+const canPackCodexpack = computed(() => {
+  return Boolean(codexpackForm.value.srcGgufPath && codexpackForm.value.outputDir)
 })
 
 const mixedSupported = computed(() => {
@@ -442,12 +570,13 @@ function cycleMixedFloatDtype() {
 
 const browserTitle = computed(() => {
   if (browserMode.value === 'safetensors') return 'Choose Weights'
-  if (browserMode.value === 'output_dir') return 'Choose Output Folder'
+  if (browserMode.value === 'base_gguf') return 'Choose GGUF'
+  if (browserMode.value === 'output_dir' || browserMode.value === 'codexpack_output_dir') return 'Choose Output Folder'
   return 'Browse Files'
 })
 
 const browserItems = computed(() => {
-  if (browserMode.value === 'output_dir') {
+  if (browserMode.value === 'output_dir' || browserMode.value === 'codexpack_output_dir') {
     return browserData.value.items.filter((it) => it.type === 'directory')
   }
   return browserData.value.items
@@ -465,6 +594,15 @@ function _basename(path: string): string {
   const p = String(path || '').replace(/[\\/]+$/, '').replace(/\\/g, '/')
   const parts = p.split('/')
   return parts[parts.length - 1] || ''
+}
+
+function _dirname(path: string): string {
+  const raw = String(path || '').trim()
+  if (!raw) return ''
+  const p = raw.replace(/[\\/]+$/, '')
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (idx <= 0) return ''
+  return p.slice(0, idx)
 }
 
 function _joinPath(dir: string, file: string): string {
@@ -502,21 +640,24 @@ const effectiveQuantization = computed(() => {
 const outputFileName = computed(() => {
   const stem = _sanitizeOutputStem(_deriveOutputStem())
   const quant = String(effectiveQuantization.value || 'F16').trim() || 'F16'
-  return `${stem}-${quant}-Codex.gguf`
-})
-
-const codexpackOutputFileName = computed(() => {
-  if (!ggufForm.value.codexpackV1) return ''
-  const base = String(outputFileName.value || '').trim()
-  if (!base) return ''
-  const suffix = '.gguf'
-  if (base.toLowerCase().endsWith(suffix)) {
-    return base.slice(0, -suffix.length) + '.codexpack.gguf'
-  }
-  return base + '.codexpack.gguf'
+  const base = `${stem}-${quant}-Codex`
+  return ggufForm.value.codexpackV1 ? `${base}.codexpack.gguf` : `${base}.gguf`
 })
 
 const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, outputFileName.value))
+
+const codexpackPackFileName = computed(() => {
+  const src = String(codexpackForm.value.srcGgufPath || '').trim()
+  if (!src) return ''
+  const name = _basename(src)
+  if (!name) return ''
+  const lower = name.toLowerCase()
+  if (lower.endsWith('.codexpack.gguf')) return name
+  if (lower.endsWith('.gguf')) return name.slice(0, -'.gguf'.length) + '.codexpack.gguf'
+  return name + '.codexpack.gguf'
+})
+
+const codexpackPackFullPath = computed(() => _joinPath(codexpackForm.value.outputDir, codexpackPackFileName.value))
 
 async function loadModelMetadata() {
   metadataLoading.value = true
@@ -675,6 +816,82 @@ async function pollStatus() {
   }
 }
 
+async function startCodexpackPack() {
+  try {
+    const src = String(codexpackForm.value.srcGgufPath || '').trim()
+    const outDir = String(codexpackForm.value.outputDir || '').trim()
+    if (!src) {
+      throw new Error('Select a base GGUF file first.')
+    }
+    if (!outDir) {
+      throw new Error('Select an output folder first.')
+    }
+    if (!codexpackPackFileName.value) {
+      throw new Error('Could not derive output filename from the selected GGUF path.')
+    }
+
+    const payload: Record<string, any> = {
+      src_gguf_path: src,
+      output_path: codexpackPackFullPath.value,
+      overwrite: codexpackForm.value.overwrite,
+    }
+
+    const response = await fetch('/api/tools/codexpack/pack-v1', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    const data = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      codexpackPackStatus.value = {
+        status: 'error',
+        progress: 0,
+        current_tensor: '',
+        error: (data as any)?.detail || 'Unknown error',
+      }
+      return
+    }
+
+    codexpackJobId.value = (data as any).job_id
+    codexpackPackStatus.value = { status: 'pending', progress: 0, current_tensor: '', error: null }
+
+    if (codexpackPollInterval.value) {
+      clearInterval(codexpackPollInterval.value)
+      codexpackPollInterval.value = null
+    }
+    codexpackPollInterval.value = window.setInterval(pollCodexpackPackStatus, 500)
+  } catch (e: any) {
+    codexpackPackStatus.value = {
+      status: 'error',
+      progress: 0,
+      current_tensor: '',
+      error: String(e?.message || e),
+    }
+  }
+}
+
+async function pollCodexpackPackStatus() {
+  if (!codexpackJobId.value) return
+
+  try {
+    const response = await fetch(`/api/tools/codexpack/pack-v1/${codexpackJobId.value}`)
+    const data = await response.json()
+
+    codexpackPackStatus.value = data
+
+    if (data.status === 'complete' || data.status === 'error' || data.status === 'cancelled') {
+      if (codexpackPollInterval.value) {
+        clearInterval(codexpackPollInterval.value)
+        codexpackPollInterval.value = null
+      }
+    }
+  } catch (e) {
+    // Ignore polling errors
+  }
+}
+
 // File browser functions
 function browseForSafetensors() {
   browserMode.value = 'safetensors'
@@ -685,6 +902,18 @@ function browseForSafetensors() {
 function browseForOutputDir() {
   browserMode.value = 'output_dir'
   browserPath.value = ggufForm.value.outputDir || ''
+  openFileBrowser()
+}
+
+function browseForBaseGguf() {
+  browserMode.value = 'base_gguf'
+  browserPath.value = _dirname(codexpackForm.value.srcGgufPath) || ''
+  openFileBrowser()
+}
+
+function browseForCodexpackOutputDir() {
+  browserMode.value = 'codexpack_output_dir'
+  browserPath.value = codexpackForm.value.outputDir || ''
   openFileBrowser()
 }
 
@@ -700,7 +929,12 @@ function closeFileBrowser() {
 
 async function loadBrowserPath() {
   try {
-    const ext = browserMode.value === 'safetensors' ? '.safetensors,.safetensors.index.json,.index.json' : ''
+    let ext = ''
+    if (browserMode.value === 'safetensors') {
+      ext = '.safetensors,.safetensors.index.json,.index.json'
+    } else if (browserMode.value === 'base_gguf') {
+      ext = '.gguf'
+    }
 
     const response = await fetch(
       `/api/tools/browse-files?path=${encodeURIComponent(browserPath.value)}&extensions=${encodeURIComponent(ext)}`,
@@ -734,18 +968,30 @@ function openItem(item: BrowserItem) {
 }
 
 function confirmSelection() {
-  if (!selectedItem.value && browserMode.value !== 'output_dir') return
+  if (!selectedItem.value && browserMode.value !== 'output_dir' && browserMode.value !== 'codexpack_output_dir') return
 
   if (browserMode.value === 'safetensors') {
     if (!selectedItem.value) return
     const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
     ggufForm.value.safetensorsPath = fullPath
+  } else if (browserMode.value === 'base_gguf') {
+    if (!selectedItem.value) return
+    if (selectedItem.value.type !== 'file') return
+    const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+    codexpackForm.value.srcGgufPath = fullPath
   } else if (browserMode.value === 'output_dir') {
     if (!selectedItem.value) {
       ggufForm.value.outputDir = browserPath.value
     } else if (selectedItem.value.type === 'directory') {
       const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
       ggufForm.value.outputDir = fullPath
+    }
+  } else if (browserMode.value === 'codexpack_output_dir') {
+    if (!selectedItem.value) {
+      codexpackForm.value.outputDir = browserPath.value
+    } else if (selectedItem.value.type === 'directory') {
+      const fullPath = browserPath.value.replace(/[/\\]$/, '') + '/' + selectedItem.value.name
+      codexpackForm.value.outputDir = fullPath
     }
   }
 
@@ -766,6 +1012,11 @@ onMounted(() => {
 onUnmounted(() => {
   if (pollInterval.value) {
     clearInterval(pollInterval.value)
+    pollInterval.value = null
+  }
+  if (codexpackPollInterval.value) {
+    clearInterval(codexpackPollInterval.value)
+    codexpackPollInterval.value = null
   }
 })
-</script>
+	</script>

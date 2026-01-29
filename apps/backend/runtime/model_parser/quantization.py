@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Quantization detection and dtype validation for model-parser components.
-Detects GGUF quantization via `CodexParameter` markers and NF4/FP4 via bitsandbytes key markers / fp8 dtypes, and provides a strict
-validation helper to catch mis-detections where a component contains no floating-point tensors.
+Detects GGUF quantization via `CodexParameter` / CodexPack markers and NF4/FP4 via bitsandbytes key markers / fp8 dtypes, and provides a
+strict validation helper to catch mis-detections where a component contains no floating-point tensors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/NF4/FP4/none).
@@ -25,6 +25,7 @@ from typing import Iterable
 
 import torch
 
+from apps.backend.quantization.codexpack_tensor import CodexPackLinearQ4KTilepackV1Parameter
 from apps.backend.quantization.tensor import CodexParameter
 from apps.backend.runtime.model_registry.specs import QuantizationHint, QuantizationKind
 from .errors import ValidationError
@@ -35,6 +36,8 @@ def detect_quantization_from_tensors(tensors: Iterable[object]) -> QuantizationH
     for value in tensors:
         if isinstance(value, CodexParameter) and value.qtype is not None:
             return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf")
+        if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
+            return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_codexpack")
         if isinstance(value, torch.Tensor):
             if value.dtype == torch.float8_e4m3fn:
                 has_fp4 = True
@@ -66,6 +69,8 @@ def detect_state_dict_dtype(state_dict: Mapping[str, object]) -> torch.dtype | s
     first_dtype: torch.dtype | None = None
     for idx, value in enumerate(state_dict.values()):
         if isinstance(value, CodexParameter) and value.qtype is not None:
+            return "gguf"
+        if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
             return "gguf"
         if first_dtype is None and isinstance(value, torch.Tensor):
             first_dtype = value.dtype
@@ -119,6 +124,9 @@ def validate_component_dtypes(context) -> None:
         has_floating = False
         for value in component.tensors.values():
             if isinstance(value, CodexParameter) and value.qtype is not None:
+                has_floating = True
+                break
+            if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
                 has_floating = True
                 break
             if isinstance(value, torch.Tensor) and torch.is_floating_point(value):

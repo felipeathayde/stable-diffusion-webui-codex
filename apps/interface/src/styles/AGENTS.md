@@ -2,7 +2,7 @@
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
 Owner: Codex WebUI Frontend  
-Last Review: 2026-01-14  
+Last Review: 2026-01-29  
 Status: Active
 
 ## Purpose
@@ -90,3 +90,4 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2025-12-29: Sticky header offset (`--sticky-offset`) is derived from the `.main-header` height and used by `RunCard` (`.panel-header.results-sticky`).
 - 2026-01-01: History cards now render as a single-row horizontal strip (with horizontal scroll); per-item action buttons appear on hover as a compact overlay (with horizontal scroll when needed) and stay visible for the selected item via `styles/components/views-shared.css` (image tabs + WAN).
 - 2026-01-14: Tools view now right-aligns GGUF action buttons (Overwrite/Comfy Layout + Convert) via `styles/views/tools.css`.
+- 2026-01-29: Added `styles/components/cdx-dropzone.css` and `styles/views/pnginfo.css` for the revamped PNG Info view/dropzone.

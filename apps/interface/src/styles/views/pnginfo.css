@@ -1,0 +1,140 @@
+.pnginfo-dropzone-slot {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pnginfo-preview {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 0.0625rem solid hsla(0, 0%, 100%, 0.12);
+  background: hsla(0, 0%, 100%, 0.02);
+}
+
+.pnginfo-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pnginfo-dropzone-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.pnginfo-dropzone-title {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.pnginfo-notice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.pnginfo-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.pnginfo-warnings {
+  background: hsla(45, 100%, 50%, 0.08);
+  border: 0.0625rem solid hsla(45, 100%, 50%, 0.22);
+  border-radius: 0.625rem;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.pnginfo-warnings-title {
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.pnginfo-warnings-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pnginfo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pnginfo-section-title {
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.pnginfo-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-md);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .pnginfo-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pnginfo-card {
+  border: 0.0625rem solid hsla(0, 0%, 100%, 0.08);
+  border-radius: 0.75rem;
+  background: hsla(0, 0%, 100%, 0.02);
+  padding: var(--space-md);
+  min-width: 0;
+}
+
+.pnginfo-card-title {
+  font-weight: 700;
+  margin-bottom: var(--space-sm);
+}
+
+.pnginfo-kv {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.pnginfo-kv dt {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.pnginfo-kv dd {
+  margin: 0;
+}
+
+.pnginfo-kv-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pnginfo-metadata {
+  border: 0.0625rem solid hsla(0, 0%, 100%, 0.08);
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  max-height: 24rem;
+  overflow: auto;
+  background: hsla(0, 0%, 0%, 0.12);
+}
+
+.pnginfo-select {
+  min-width: 10rem;
+}
+

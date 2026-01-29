@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `refreshModelInventory` (function): Forces an inventory rescan (`/models/inventory/refresh`).
 - `fetchSamplers` (function): Fetches supported samplers (`/samplers`) and filters out unsupported entries.
 - `fetchSchedulers` (function): Fetches supported schedulers (`/schedulers`) and filters out unsupported entries.
+- `analyzePngInfo` (function): Extracts PNG text metadata for the PNG Info view (`POST /tools/pnginfo/analyze` multipart).
 - `fetchOptions` (function): Fetches runtime options (`/options`).
 - `updateOptions` (function): Updates runtime options (`POST /options`).
 - `startTxt2Img` (function): Starts a txt2img task (`POST /txt2img`).
@@ -77,6 +78,7 @@ import type {
   EngineCapabilitiesResponse,
   FileMetadataResponse,
   CheckpointMetadataResponse,
+  PngInfoAnalyzeResponse,
 } from './types'
 import type { Txt2ImgRequest } from './payloads'
 
@@ -202,6 +204,12 @@ export async function fetchSchedulers(): Promise<SchedulersResponse> {
   const res = await requestJsonCached<SchedulersResponse>('/schedulers')
   const supported = res.schedulers.filter((scheduler) => scheduler.supported !== false)
   return { schedulers: supported }
+}
+
+export function analyzePngInfo(file: File): Promise<PngInfoAnalyzeResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  return requestForm<PngInfoAnalyzeResponse>('/tools/pnginfo/analyze', form)
 }
 
 export function fetchOptions(): Promise<OptionsResponse> {

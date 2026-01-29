@@ -1,0 +1,54 @@
+.cdx-dropzone {
+  display: grid;
+  place-items: center;
+  min-height: 12rem;
+  padding: var(--space-md);
+  border: 0.0625rem dashed hsla(0, 0%, 100%, 0.22);
+  border-radius: 0.75rem;
+  background: hsla(0, 0%, 100%, 0.03);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.cdx-dropzone:hover {
+  background: hsla(0, 0%, 100%, 0.05);
+}
+
+.cdx-dropzone:focus {
+  outline: none;
+  border-color: hsl(var(--accent));
+  box-shadow: 0 0 0 0.125rem hsla(210, 70%, 65%, 0.35);
+}
+
+.cdx-dropzone.is-dragover {
+  border-color: hsl(var(--accent));
+  background: hsla(0, 0%, 100%, 0.06);
+  box-shadow: 0 0 0 0.125rem hsla(210, 70%, 65%, 0.35);
+}
+
+.cdx-dropzone.is-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cdx-dropzone__input {
+  display: none;
+}
+
+.cdx-dropzone__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: center;
+}
+
+.cdx-dropzone__title {
+  font-weight: 600;
+}
+
+.cdx-dropzone__hint {
+  opacity: 0.85;
+  font-size: 0.85rem;
+}
+

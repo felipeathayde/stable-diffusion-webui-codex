@@ -2,7 +2,7 @@
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-28
+Last Review: 2026-01-29
 Status: Active
 
 ## Purpose
@@ -38,3 +38,4 @@ Status: Active
 - 2026-01-25: `ImageModelTab.vue` CLIP Skip now allows `0` as “use default” (sends `clip_skip=0` so clip-skip state does not leak across jobs).
 - 2026-01-27: `WANTab.vue` supports video-first WAN results (exported video shown even when frames are omitted); when `Return frames` is disabled and a video exists, the frames viewer empty state shows “Frames not returned” with a hint.
 - 2026-01-28: `ImageModelTab.vue` treats Z-Image as Turbo/Base variant-dependent: toolbar/CFG labels and negative-prompt support follow the per-tab Turbo toggle.
+- 2026-01-29: `PngInfo.vue` now uses a Codex-native dropzone, extracts PNG text metadata, parses infotext, and supports “Save snapshot” (Workflows) + “Send to” (tab + mode).

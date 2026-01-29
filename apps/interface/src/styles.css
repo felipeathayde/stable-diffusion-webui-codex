@@ -285,6 +285,7 @@
   @import "./styles/components/views-shared.css";
   @import "./styles/components/cdx-stepper-input.css";
   @import "./styles/components/cdx-slider-field.css";
+  @import "./styles/components/cdx-dropzone.css";
   @import "./styles/components/guided-gen.css";
   @import "./styles/components/prompt-box.css";
   @import "./styles/components/prompt-chip.css";
@@ -296,6 +297,7 @@
   @import "./styles/views/tools.css";
   @import "./styles/views/xyz.css";
   @import "./styles/views/wan.css";
+  @import "./styles/views/pnginfo.css";
   @import "./styles/components/wan22-settings.css";
 
   .app-footer { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 var(--content-px); height: var(--app-footer-h); border-top: 1px solid hsla(0,0%,100%,0.08); background: hsla(0,0%,100%,0.02); font-size: 0.75rem; opacity: 0.9; backdrop-filter: blur(1rem); }

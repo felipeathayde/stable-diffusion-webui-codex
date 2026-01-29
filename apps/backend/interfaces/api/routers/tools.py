@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tools API routes (GGUF conversion + file browser).
-Provides long-running conversion job tracking and filesystem browsing for file picker dialogs.
+Purpose: Tools API routes (GGUF conversion + file browser + PNG metadata inspection).
+Provides long-running conversion job tracking, filesystem browsing for file picker dialogs, and small utility endpoints used by the UI.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for tools endpoints.
@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+from io import BytesIO
 import os
 import tempfile
 import threading
@@ -22,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 
 
 def build_router(*, codex_root: Path) -> APIRouter:
@@ -337,6 +338,57 @@ def build_router(*, codex_root: Path) -> APIRouter:
             "is_file": False,
             "parent": str(Path(path).parent),
             "items": items,
+        }
+
+    @router.post("/api/tools/pnginfo/analyze")
+    async def analyze_pnginfo(file: UploadFile = File(...)) -> Dict[str, Any]:
+        """Extract PNG text metadata for the PNG Info UI."""
+        try:
+            raw = await file.read()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to read upload: {exc}") from exc
+
+        if not raw:
+            raise HTTPException(status_code=400, detail="Empty upload")
+
+        max_bytes = 50 * 1024 * 1024
+        if len(raw) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"File too large (max {max_bytes} bytes)")
+
+        try:
+            from PIL import Image  # type: ignore
+
+            img = Image.open(BytesIO(raw))
+            img.load()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid image: {exc}") from exc
+
+        fmt = str(getattr(img, "format", "") or "").upper()
+        if fmt != "PNG":
+            raise HTTPException(status_code=415, detail="Only PNG is supported")
+
+        metadata: dict[str, str] = {}
+        info = getattr(img, "info", None)
+        if isinstance(info, dict):
+            for k, v in info.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    text = v.strip()
+                    if text:
+                        metadata[k] = text
+
+        # Some PIL versions expose textual chunks on `.text` as well.
+        text_map = getattr(img, "text", None)
+        if isinstance(text_map, dict):
+            for k, v in text_map.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    text = v.strip()
+                    if text:
+                        metadata.setdefault(k, text)
+
+        return {
+            "width": int(getattr(img, "width", 0) or 0),
+            "height": int(getattr(img, "height", 0) or 0),
+            "metadata": metadata,
         }
 
     return router

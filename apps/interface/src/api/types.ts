@@ -51,6 +51,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `TabsResponse` (interface): `/api/ui/tabs` response shape.
 - `WorkflowsResponse` (interface): `/api/ui/workflows` response shape.
 - `InventoryResponse` (interface): `/api/models/inventory` response shape.
+- `PngInfoAnalyzeResponse` (interface): `/api/tools/pnginfo/analyze` response shape.
 */
 
 export interface ModelInfo {
@@ -90,6 +91,12 @@ export interface FileMetadataResponse {
   flat: Record<string, unknown>
   nested: Record<string, unknown>
   summary: Record<string, unknown>
+}
+
+export interface PngInfoAnalyzeResponse {
+  width: number
+  height: number
+  metadata: Record<string, string>
 }
 
 export interface CheckpointMetadataResponse {

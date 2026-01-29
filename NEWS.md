@@ -1,3 +1,3 @@
 # News
 
-This repo’s maintained changelog lives at `.sangoi/CHANGELOG.md`.
+Release notes (when available) are published via GitHub Releases.

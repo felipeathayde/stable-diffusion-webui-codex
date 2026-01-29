@@ -78,7 +78,10 @@ Fix:
 - Re-run `install-webui.bat`
 
 If it still happens, see the deep dive runbook:
-- `.sangoi/runbooks/windows-cmd-bat-unexpected-at-this-time.md`
+- Open an issue with the full console output, plus:
+  - your Windows version
+  - whether you cloned via Git or downloaded a ZIP
+  - whether the repo path contains non-ASCII characters
 
 ### `ImportError: cannot import name 'EncoderDecoderCache' from 'transformers'`
 Your `peft` and `transformers` are out of sync (common when extra packages pull older pins).

@@ -59,7 +59,10 @@ ext_modules = [
         sources=sources,
         extra_compile_args={
             "cxx": ["-O3"],
-            "nvcc": ["-O3", "--use_fast_math"],
+            # NOTE: `-DUSE_CUDA` is required for PyTorch's Windows headers to take
+            # the CUDA-only fallback paths for torch.compile internals
+            # (prevents MSVC errors like C2872 'std' ambiguous when compiling .cu).
+            "nvcc": ["-O3", "--use_fast_math", "-DUSE_CUDA"],
         },
     )
 ]

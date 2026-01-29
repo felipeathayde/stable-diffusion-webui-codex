@@ -48,4 +48,5 @@ Status: Active
 - 2026-01-16: GGUF converter verification reuses the conversion safetensors handle (avoids re-opening huge WAN22 weights twice; improves Windows stability).
 - 2026-01-24: Added GGUF converter support for LTX-2 denoiser weights (`LTX2VideoTransformer3DModel`) via profiles `ltx2_transformer_{comfy,native}` and for the LTX-2 Gemma3 text encoder via `gemma3_tenc_{comfy,native}` (wrapper stripping + stable key layout).
 - 2026-01-28: Z-Image conversions now record `codex.zimage.variant=turbo|base` when the source includes a diffusers `scheduler/scheduler_config.json` (shift=3.0/6.0), and the Z-Image metadata normalizer no longer defaults `_name_or_path` to Turbo when the input config is missing it.
+- 2026-01-29: Tools API `POST /api/tools/convert-gguf` can optionally run CodexPack v1 packing (`codexpack_v1=true`) after conversion to produce a `*.codexpack.gguf` sidecar (Z-Image Base only; requires `quantization=Q4_K` + Comfy Layout).
 - 2026-01-02: Added standardized file header docstrings to the tools facade (`__init__.py`) (doc-only change; part of rollout).

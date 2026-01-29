@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tools view (GGUF converter + file browser modal).
+Purpose: Tools view (GGUF converter + optional CodexPack v1 packing + file browser modal).
 Starts GGUF conversion jobs via `/api/tools/convert-gguf`, polls job status, and provides a modal file browser to pick config/weights/output paths
 without manual typing (weights/output; config comes from vendored model metadata).
 
@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FloatDtypeGroup` (interface): Float dtype override group returned by `/api/tools/gguf-converter/presets`.
 - `GGUFConverterModelComponent` (interface): Convertible component entry (config dir + profile hints).
 - `GGUFConverterModelMetadata` (interface): Vendored model metadata entry returned by `/api/tools/gguf-converter/presets`.
-- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + overwrite + Comfy Layout).
+- `GGUFForm` (interface): GGUF converter form state (model metadata + denoiser + quant/mixed + overwrite + Comfy Layout + CodexPack).
 - `ConversionStatus` (interface): Polled conversion job status payload (progress + current tensor + error).
 - `BrowserItem` (interface): Single file browser entry (file/directory + optional size).
 - `BrowserData` (interface): File browser listing payload (current path + items).
@@ -86,7 +86,7 @@ Symbols (top-level; keep in sync; no ghosts):
 	          <div class="field">
 	            <label class="label-muted">Quantization</label>
               <div class="row-inline">
-	              <select class="select-md cdx-tools-grow" v-model="ggufForm.quantization" :disabled="isConverting">
+	              <select class="select-md cdx-tools-grow" v-model="ggufForm.quantization" :disabled="isConverting || ggufForm.codexpackV1">
 	                <optgroup label="Float (no quant)">
 	                  <option value="F16">F16 — float16</option>
 	                  <option value="F32">F32 — float32</option>
@@ -113,7 +113,7 @@ Symbols (top-level; keep in sync; no ghosts):
 		              :class="['btn', 'qs-toggle-btn', ggufForm.mixed ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
 		              type="button"
 		              :aria-pressed="ggufForm.mixed"
-		              :disabled="isConverting || !mixedSupported"
+		              :disabled="isConverting || ggufForm.codexpackV1 || !mixedSupported"
 		              title="Enable mixed policy when available (e.g., Q5_K → Q5_K_M, Q4_K → Q4_K_M)"
 		              @click="ggufForm.mixed = !ggufForm.mixed"
 		            >
@@ -152,6 +152,9 @@ Symbols (top-level; keep in sync; no ghosts):
               <button class="btn-icon" type="button" @click="browseForOutputDir" :disabled="isConverting" aria-label="Browse for output folder">…</button>
             </div>
 	            <p class="caption">File name is generated automatically: <code>{{ outputFileName }}</code></p>
+              <p v-if="ggufForm.codexpackV1" class="caption">
+                CodexPack v1: will also write <code>{{ codexpackOutputFileName }}</code>
+              </p>
 	            <div class="row-inline cdx-tools-actions">
                     <button
                       :class="['btn', 'qs-toggle-btn', ggufForm.overwrite ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
@@ -164,10 +167,20 @@ Symbols (top-level; keep in sync; no ghosts):
                       Overwrite
                     </button>
                     <button
+                      :class="['btn', 'qs-toggle-btn', ggufForm.codexpackV1 ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                      type="button"
+                      :aria-pressed="ggufForm.codexpackV1"
+                      :disabled="isConverting"
+                      title="Also generate a CodexPack v1 sidecar (*.codexpack.gguf) for packed CUDA execution (Z-Image Base; Q4_K; Comfy Layout)."
+                      @click="toggleCodexpackV1"
+                    >
+                      CodexPack v1
+                    </button>
+                    <button
                       :class="['btn', 'qs-toggle-btn', ggufForm.comfyLayout ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
                       type="button"
                       :aria-pressed="ggufForm.comfyLayout"
-                      :disabled="isConverting"
+                      :disabled="isConverting || ggufForm.codexpackV1"
                       title="When on, denoiser exports are mapped to the Comfy/Codex key layout."
                       @click="ggufForm.comfyLayout = !ggufForm.comfyLayout"
                     >
@@ -180,7 +193,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 	          <div class="row-inline cdx-tools-actions">
 	            <button class="btn btn-md btn-primary" type="button" @click="startConversion" :disabled="!canConvert || isConverting">
-	              <span v-if="!isConverting">Convert to GGUF</span>
+	              <span v-if="!isConverting">{{ ggufForm.codexpackV1 ? 'Convert to GGUF + CodexPack' : 'Convert to GGUF' }}</span>
 	              <span v-else>Converting…</span>
 	            </button>
             <button
@@ -277,6 +290,7 @@ interface GGUFForm {
   outputDir: string
   overwrite: boolean
   comfyLayout: boolean
+  codexpackV1: boolean
 }
 
 interface ConversionStatus {
@@ -314,6 +328,7 @@ const ggufForm = ref<GGUFForm>({
   outputDir: '',
   overwrite: false,
   comfyLayout: true,
+  codexpackV1: false,
 })
 
 const conversionStatus = ref<ConversionStatus | null>(null)
@@ -375,6 +390,40 @@ const mixedSupported = computed(() => {
   const q = String(ggufForm.value.quantization || '').trim()
   return q === 'Q5_K' || q === 'Q4_K'
 })
+
+const _savedBeforeCodexpack = ref<{
+  quantization: string
+  mixed: boolean
+  mixedFloatDtype: 'auto' | 'F16' | 'F32'
+  comfyLayout: boolean
+} | null>(null)
+
+function toggleCodexpackV1() {
+  if (ggufForm.value.codexpackV1) {
+    ggufForm.value.codexpackV1 = false
+    const saved = _savedBeforeCodexpack.value
+    if (saved) {
+      ggufForm.value.quantization = saved.quantization
+      ggufForm.value.mixed = saved.mixed
+      ggufForm.value.mixedFloatDtype = saved.mixedFloatDtype
+      ggufForm.value.comfyLayout = saved.comfyLayout
+    }
+    _savedBeforeCodexpack.value = null
+    return
+  }
+
+  _savedBeforeCodexpack.value = {
+    quantization: ggufForm.value.quantization,
+    mixed: ggufForm.value.mixed,
+    mixedFloatDtype: ggufForm.value.mixedFloatDtype,
+    comfyLayout: ggufForm.value.comfyLayout,
+  }
+  ggufForm.value.quantization = 'Q4_K'
+  ggufForm.value.mixed = false
+  ggufForm.value.mixedFloatDtype = 'auto'
+  ggufForm.value.comfyLayout = true
+  ggufForm.value.codexpackV1 = true
+}
 
 const mixedFloatDtypeLabel = computed(() => {
   const v = ggufForm.value.mixedFloatDtype
@@ -456,6 +505,17 @@ const outputFileName = computed(() => {
   return `${stem}-${quant}-Codex.gguf`
 })
 
+const codexpackOutputFileName = computed(() => {
+  if (!ggufForm.value.codexpackV1) return ''
+  const base = String(outputFileName.value || '').trim()
+  if (!base) return ''
+  const suffix = '.gguf'
+  if (base.toLowerCase().endsWith(suffix)) {
+    return base.slice(0, -suffix.length) + '.codexpack.gguf'
+  }
+  return base + '.codexpack.gguf'
+})
+
 const outputFullPath = computed(() => _joinPath(ggufForm.value.outputDir, outputFileName.value))
 
 async function loadModelMetadata() {
@@ -518,14 +578,15 @@ async function startConversion() {
     if (!component) {
       throw new Error('Select a vendored model + denoiser config first.')
     }
-    const payload: Record<string, any> = {
-      config_path: component.config_dir,
-      safetensors_path: ggufForm.value.safetensorsPath,
-      output_path: outputFullPath.value,
-      overwrite: ggufForm.value.overwrite,
-      comfy_layout: ggufForm.value.comfyLayout,
-      quantization: effectiveQuantization.value,
-    }
+	    const payload: Record<string, any> = {
+	      config_path: component.config_dir,
+	      safetensors_path: ggufForm.value.safetensorsPath,
+	      output_path: outputFullPath.value,
+	      overwrite: ggufForm.value.overwrite,
+	      comfy_layout: ggufForm.value.comfyLayout,
+	      quantization: effectiveQuantization.value,
+	      codexpack_v1: ggufForm.value.codexpackV1,
+	    }
 
     const profileId = effectiveProfileId.value
     if (profileId) {

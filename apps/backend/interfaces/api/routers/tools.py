@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tools API routes (GGUF conversion + file browser + PNG metadata inspection).
+Purpose: Tools API routes (GGUF conversion + optional CodexPack v1 packing + file browser + PNG metadata inspection).
 Provides long-running conversion job tracking, filesystem browsing for file picker dialogs, and small utility endpoints used by the UI.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from io import BytesIO
+import json
 import os
 import tempfile
 import threading
@@ -94,6 +95,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
         output_path = payload.get("output_path", "")
         overwrite = bool(payload.get("overwrite", False))
         comfy_layout_raw = payload.get("comfy_layout", True)
+        codexpack_v1_raw = payload.get("codexpack_v1", False)
         quant_str = payload.get("quantization", "F16")
         overrides_raw = payload.get("tensor_type_overrides", [])
         profile_id_raw = payload.get("profile_id", None)
@@ -118,10 +120,108 @@ def build_router(*, codex_root: Path) -> APIRouter:
             raise HTTPException(status_code=400, detail="comfy_layout must be a boolean when provided")
         comfy_layout = bool(comfy_layout_raw)
 
+        if not isinstance(codexpack_v1_raw, bool):
+            raise HTTPException(status_code=400, detail="codexpack_v1 must be a boolean when provided")
+        codexpack_v1 = bool(codexpack_v1_raw)
+
         try:
             quant = QuantizationType(quant_str)
         except ValueError:
+            if codexpack_v1:
+                raise HTTPException(status_code=400, detail=f"Invalid quantization: {quant_str!r}")
             quant = QuantizationType.F16
+
+        codexpack_path: Path | None = None
+        if codexpack_v1:
+            if quant is not QuantizationType.Q4_K:
+                raise HTTPException(
+                    status_code=400,
+                    detail="CodexPack v1 requires quantization=Q4_K (mixed presets are not supported).",
+                )
+            if not comfy_layout:
+                raise HTTPException(
+                    status_code=400,
+                    detail="CodexPack v1 requires Comfy Layout on (Comfy/Codex key layout).",
+                )
+
+            out_name = final_path.name
+            if out_name.lower().endswith(".codexpack.gguf"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "When codexpack_v1 is enabled, output_path must point to the base GGUF (not *.codexpack.gguf). "
+                        "The CodexPack output path is derived automatically."
+                    ),
+                )
+            if not out_name.lower().endswith(".gguf"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="When codexpack_v1 is enabled, output_path must end with `.gguf`.",
+                )
+            codexpack_path = final_path.with_name(out_name[:-5] + ".codexpack.gguf")
+            if codexpack_path.exists() and not overwrite:
+                raise HTTPException(status_code=409, detail=f"CodexPack output file already exists: {codexpack_path}")
+            if codexpack_path.exists() and codexpack_path.is_dir():
+                raise HTTPException(status_code=400, detail=f"CodexPack output path is a directory: {codexpack_path}")
+
+            cfg_dir = Path(os.path.expanduser(str(config_path))).resolve()
+            cfg_json_path = cfg_dir
+            if cfg_dir.is_dir():
+                cfg_json_path = cfg_dir / "config.json"
+            if not cfg_json_path.is_file():
+                raise HTTPException(status_code=400, detail=f"config.json not found for CodexPack: {cfg_json_path}")
+
+            try:
+                cfg = json.loads(cfg_json_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Failed to read config.json for CodexPack: {exc}") from exc
+
+            class_name = str(cfg.get("_class_name") or "").strip()
+            if class_name != "ZImageTransformer2DModel":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "CodexPack v1 is only supported for Z-Image denoisers "
+                        f"(expected _class_name='ZImageTransformer2DModel', got {class_name!r})."
+                    ),
+                )
+
+            # v1 keymap id is locked to Z-Image Base (Turbo uses a different id).
+            shift: float | None = None
+            cfg_root = cfg_json_path.parent
+            for cand in (
+                cfg_root / "scheduler" / "scheduler_config.json",
+                cfg_root.parent / "scheduler" / "scheduler_config.json",
+            ):
+                if not cand.is_file():
+                    continue
+                try:
+                    data = json.loads(cand.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                raw_shift = data.get("shift")
+                if raw_shift is None:
+                    continue
+                try:
+                    shift = float(raw_shift)
+                except Exception:
+                    continue
+                break
+
+            if shift is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "CodexPack v1 requires Z-Image Base. Could not detect `shift` from scheduler_config.json "
+                        f"near {cfg_root}. Ensure the source includes `scheduler/scheduler_config.json`."
+                    ),
+                )
+            if abs(shift - 6.0) >= 1e-3:
+                variant = "turbo" if abs(shift - 3.0) < 1e-3 else f"shift={shift:g}"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"CodexPack v1 keymap id is Base-only (expected shift=6.0). Detected: {variant}.",
+                )
 
         profile_id: str | None = None
         if profile_id_raw is not None:
@@ -198,13 +298,17 @@ def build_router(*, codex_root: Path) -> APIRouter:
             "progress": 0,
             "current_tensor": "",
             "error": None,
+            "output_path": str(final_path),
         }
+        if codexpack_path is not None:
+            _gguf_conversion_jobs[job_id]["codexpack_output_path"] = str(codexpack_path)
 
         cancel_event = threading.Event()
         _gguf_conversion_controls[job_id] = {
             "cancel_event": cancel_event,
             "tmp_path": tmp_path,
             "final_path": final_path,
+            "codexpack_path": codexpack_path,
         }
 
         def run_conversion() -> None:
@@ -248,6 +352,37 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 job["status"] = "finalizing"
                 job["progress"] = 99.9
                 os.replace(str(ctrl["tmp_path"]), str(ctrl["final_path"]))
+
+                if ctrl.get("codexpack_path") is not None:
+                    from apps.backend.quantization.codexpack_keymaps import ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
+                    from apps.backend.runtime.tools.codexpack_packer import pack_gguf_to_codexpack_v1
+
+                    codexpack_final_path = Path(ctrl["codexpack_path"])
+                    job["status"] = "packing_codexpack"
+                    job["progress"] = 99.95
+
+                    pack_tmp_handle = tempfile.NamedTemporaryFile(
+                        prefix=f"{codexpack_final_path.stem}.",
+                        suffix=f".part-{job_id}{codexpack_final_path.suffix or '.gguf'}",
+                        dir=str(codexpack_final_path.parent),
+                        delete=False,
+                    )
+                    pack_tmp_path = Path(pack_tmp_handle.name)
+                    pack_tmp_handle.close()
+                    try:
+                        pack_gguf_to_codexpack_v1(
+                            str(ctrl["final_path"]),
+                            str(pack_tmp_path),
+                            keymap_id=ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
+                        )
+                        os.replace(str(pack_tmp_path), str(codexpack_final_path))
+                    finally:
+                        try:
+                            if pack_tmp_path.exists():
+                                pack_tmp_path.unlink()
+                        except Exception:
+                            pass
+
                 job["status"] = "complete"
                 job["progress"] = 100
 

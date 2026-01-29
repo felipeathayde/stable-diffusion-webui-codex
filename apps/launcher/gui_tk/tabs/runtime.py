@@ -111,7 +111,7 @@ class RuntimeTab:
             row,
             label="GGUF exec mode (requires API restart):",
             var=self._var_gguf_exec,
-            choices=["dequant_forward", "dequant_upfront", "cuda_pack"],
+            choices=["dequant_forward", "dequant_upfront"],
             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
             width=18,
         )
@@ -120,14 +120,14 @@ class RuntimeTab:
             row,
             "dequant_forward: current default (GGUF weights dequantize on-demand during forward).\n"
             "dequant_upfront: dequantize GGUF weights at load time (uses more RAM/VRAM).\n"
-            "cuda_pack: reserved for future packed GGUF CUDA kernels (will fail until implemented).",
+            "CodexPack packed GGUFs are auto-detected via `*.codexpack.gguf` (no exec-mode toggle).",
         )
         row = self._add_choice_combo(
             body,
             row,
             label="LoRA online math (requires API restart):",
             var=self._var_lora_online_math,
-            choices=["weight_merge", "activation"],
+            choices=["weight_merge"],
             on_change=lambda: self._sync_runtime_deps(mark_changed=True),
             width=16,
             out_combo="_lora_math_combo",
@@ -136,7 +136,7 @@ class RuntimeTab:
             body,
             row,
             "weight_merge: current online behavior (materializes patched weights per-forward).\n"
-            "activation: reserved for packed GGUF kernels (activation-side delta; supports LoRA/DoRA only).",
+            "activation math is reserved for future packed-kernel LoRA support (not exposed in this build).",
         )
 
         row = self._add_entry(
@@ -262,4 +262,3 @@ class RuntimeTab:
 
         if mark_changed:
             self._mark_changed()
-

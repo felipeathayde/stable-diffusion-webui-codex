@@ -33,9 +33,9 @@ class SettingValidationError(ValueError):
 
 
 DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directml")
-GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront", "cuda_pack")
+GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")
-LORA_ONLINE_MATH_CHOICES: tuple[str, ...] = ("weight_merge", "activation")
+LORA_ONLINE_MATH_CHOICES: tuple[str, ...] = ("weight_merge",)
 
 
 def _normalize_lower(value: str) -> str:
@@ -132,19 +132,15 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     Returns (gguf_exec, lora_apply_mode, lora_online_math) as normalized values.
     """
 
+    # Migration: older launchers persisted reserved/removed options.
+    if str(env.get("CODEX_GGUF_EXEC", "") or "").strip().lower() == "cuda_pack":
+        env["CODEX_GGUF_EXEC"] = "dequant_forward"
+    if str(env.get("CODEX_LORA_ONLINE_MATH", "") or "").strip().lower() == "activation":
+        env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
+
     gguf = ChoiceSetting("CODEX_GGUF_EXEC", default="dequant_forward", choices=GGUF_EXEC_CHOICES).get(env)
     lora_apply = ChoiceSetting("CODEX_LORA_APPLY_MODE", default="merge", choices=LORA_APPLY_CHOICES).get(env)
     lora_math = ChoiceSetting("CODEX_LORA_ONLINE_MATH", default="weight_merge", choices=LORA_ONLINE_MATH_CHOICES).get(env)
-
-    # activation math requires cuda_pack + online mode
-    if lora_math == "activation":
-        gguf = "cuda_pack"
-        lora_apply = "online"
-
-    # cuda_pack implies online + activation
-    if gguf == "cuda_pack":
-        lora_apply = "online"
-        lora_math = "activation"
 
     # math only valid on online mode
     if lora_apply != "online":

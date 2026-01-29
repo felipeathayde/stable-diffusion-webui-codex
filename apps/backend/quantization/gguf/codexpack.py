@@ -246,6 +246,11 @@ def validate_codexpack_manifest_v1(manifest: Mapping[str, Any]) -> None:
         if not isinstance(float_keys, list) or not all(isinstance(k, str) and k.strip() for k in float_keys):
             raise CodexPackError(f"manifest.float_keys must be an array of strings; got: {float_keys!r}")
 
+    fallback_fp16_keys = manifest.get("fallback_fp16_keys", [])
+    if fallback_fp16_keys is not None:
+        if not isinstance(fallback_fp16_keys, list) or not all(isinstance(k, str) and k.strip() for k in fallback_fp16_keys):
+            raise CodexPackError(f"manifest.fallback_fp16_keys must be an array of strings; got: {fallback_fp16_keys!r}")
+
 
 def load_codexpack_manifest_v1(reader: GGUFReader) -> CodexPackManifestV1:
     read_codexpack_schema_version(reader)

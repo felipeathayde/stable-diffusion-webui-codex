@@ -8,12 +8,13 @@ Required Notice: see NOTICE
 
 Purpose: Offline CodexPack generator (GGUF → `*.codexpack.gguf`) for packed CUDA execution.
 Repacks GGML `Q4_K` 2D weights into the CodexPack `cuda.ggml_q4_k.linear.tilepack_v1` layout and emits a CodexPack GGUF that can be
-auto-detected by the runtime loader. This avoids per-forward dequantization and avoids dequant-upfront VRAM blowups.
+auto-detected by the runtime loader. Non tile-aligned `Q4_K` 2D weights are dequantized offline and stored as normal `F16` tensors.
+This avoids per-forward dequantization and avoids dequant-upfront VRAM blowups.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexPackPackError` (class): Raised when packing fails (unsupported tensor types/shapes, invalid inputs, IO issues).
 - `Q4K_BLOCK_BYTES` (constant): GGML Q4_K block byte size (derived from `GGML_QUANT_SIZES`).
-- `pack_gguf_to_codexpack_v1` (function): Converts a base GGUF into a CodexPack GGUF (packed Q4_K linears + copied float tensors).
+- `pack_gguf_to_codexpack_v1` (function): Converts a base GGUF into a CodexPack GGUF (packed tile-aligned Q4_K linears + copied float tensors + FP16 fallback).
 - `__all__` (constant): Explicit export list.
 """
 
@@ -84,6 +85,43 @@ def _copy_scalar_metadata(*, src: GGUFReader, dst: GGUFWriter) -> None:
                 f"key={key!r}. Convert the source with Codex GGUF converter tooling or add explicit support."
             )
         dst.add_key_value(key, _read_scalar_metadata_value(field), vtype)
+
+
+def _dequantize_q4k_matrix_to_fp16(raw_bytes: np.ndarray, *, out_features: int, in_features: int) -> np.ndarray:
+    if raw_bytes.dtype != np.uint8:
+        raw_bytes = raw_bytes.view(np.uint8)
+
+    tile_k = TILE_K_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1
+    if in_features % tile_k != 0:
+        raise CodexPackPackError(f"in_features must be multiple of {tile_k}; got {in_features}")
+
+    k_tiles = in_features // tile_k
+    bytes_per_row = k_tiles * Q4K_BLOCK_BYTES
+    if raw_bytes.shape != (out_features, bytes_per_row):
+        raise CodexPackPackError(
+            "Q4_K byte tensor has unexpected shape. "
+            f"expected {(out_features, bytes_per_row)}, got {tuple(int(v) for v in raw_bytes.shape)}"
+        )
+
+    blocks_np = raw_bytes.reshape((out_features * k_tiles, Q4K_BLOCK_BYTES))
+    if not blocks_np.flags.writeable:
+        blocks_np = np.array(blocks_np, copy=True)
+
+    blocks = torch.from_numpy(blocks_np).to(dtype=torch.uint8)
+    out = torch.empty((blocks.shape[0], tile_k), dtype=torch.float16)
+
+    chunk_blocks = 8192
+    for start in range(0, blocks.shape[0], chunk_blocks):
+        end = min(start + chunk_blocks, blocks.shape[0])
+        out[start:end] = dequantize_blocks_Q4_K(
+            blocks[start:end],
+            TILE_K_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1,
+            Q4K_BLOCK_BYTES,
+            dtype=torch.float16,
+        )
+
+    mat = out.reshape((out_features, k_tiles, tile_k)).reshape((out_features, in_features))
+    return np.ascontiguousarray(mat.cpu().numpy())
 
 
 def _pack_q4k_tilepack_v1(raw_bytes: np.ndarray, *, out_features: int, in_features: int) -> np.ndarray:
@@ -172,7 +210,8 @@ def pack_gguf_to_codexpack_v1(
     """Create a CodexPack GGUF from a base GGUF (offline).
 
     v1 policy:
-    - Packs every 2D `Q4_K` tensor (assumed Linear weight) and drops the raw quant tensor from the output.
+    - Packs every 2D tile-aligned `Q4_K` tensor (assumed Linear weight) and drops the raw quant tensor from the output.
+    - For non tile-aligned 2D `Q4_K` tensors, dequantizes offline to `F16` and stores them as normal float tensors.
     - Copies float-like tensors unchanged.
     - Fails loud on any non-`Q4_K` quant tensors or unsupported metadata types.
     """
@@ -197,6 +236,7 @@ def pack_gguf_to_codexpack_v1(
 
     manifest_entries: list[dict[str, Any]] = []
     float_keys: list[str] = []
+    fallback_fp16_keys: list[str] = []
 
     w = GGUFWriter(str(out_path), arch="codexpack")
     # `GGUFWriter` writes `general.architecture` eagerly. Codex outputs use a custom metadata schema,
@@ -233,13 +273,15 @@ def pack_gguf_to_codexpack_v1(
             raise CodexPackPackError(f"CodexPack v1 only supports 2D Q4_K tensors; got {name!r} shape={real_shape}")
         out_features, in_features = int(real_shape[0]), int(real_shape[1])
 
-        if out_features % TILE_M_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1 != 0 or in_features % TILE_K_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1 != 0:
-            raise CodexPackPackError(
-                "Q4_K tensor is not tile-aligned for tilepack_v1. "
-                f"name={name!r} shape={real_shape} (requires out%{TILE_M_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1}==0 and in%{TILE_K_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1}==0)."
-            )
-
         raw_bytes = t.data.view(np.uint8)
+
+        if out_features % TILE_M_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1 != 0 or in_features % TILE_K_CUDA_GGML_Q4K_LINEAR_TILEPACK_V1 != 0:
+            # Fallback: keep the tensor, but store as FP16 (the packed kernel requires tile alignment).
+            fallback_fp16_keys.append(name)
+            float_keys.append(name)
+            w.add_tensor(name, _dequantize_q4k_matrix_to_fp16(raw_bytes, out_features=out_features, in_features=in_features))
+            continue
+
         packed = _pack_q4k_tilepack_v1(raw_bytes, out_features=out_features, in_features=in_features)
         dora_norm_out = _compute_dora_norm_out_q4k(raw_bytes, out_features=out_features, in_features=in_features)
 
@@ -266,6 +308,7 @@ def pack_gguf_to_codexpack_v1(
         "targets": {"backend": "cuda", "cuda_sm_min": int(cuda_sm_min)},
         "entries": manifest_entries,
         "float_keys": float_keys,
+        "fallback_fp16_keys": fallback_fp16_keys,
     }
 
     w.add_key_value("codex.pack.schema", CODEXPACK_SCHEMA, GGUFValueType.STRING)

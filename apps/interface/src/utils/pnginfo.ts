@@ -11,9 +11,13 @@ Parses common A1111/Forge-style `parameters` infotext into structured fields and
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedInfotext` (interface): Structured subset of parsed infotext fields.
+- `ModelLike` (interface): Minimal model entry used to resolve checkpoints from infotext.
+- `ComfyParseResult` (interface): Parsed ComfyUI prompt JSON result (extracted fields + graph + warnings).
 - `SamplerLike` (interface): Minimal sampler entry used for name + allowlist mapping.
 - `SchedulerLike` (interface): Minimal scheduler entry used for name matching.
 - `parseInfotext` (function): Parses infotext into structured fields + raw kv map.
+- `parseComfyPromptJson` (function): Parses ComfyUI prompt JSON and extracts common generation fields when unambiguous.
+- `mapCheckpointTitle` (function): Resolves a checkpoint title from parsed infotext against a models list.
 - `mapSamplerScheduler` (function): Maps raw sampler/scheduler strings to canonical names with allowlist validation.
 */
 
@@ -21,6 +25,9 @@ export interface ParsedInfotext {
   prompt: string
   negativePrompt: string
   hasNegativePrompt: boolean
+  model?: string
+  modelHash?: string
+  vae?: string
   steps?: number
   sampler?: string
   scheduler?: string
@@ -33,6 +40,14 @@ export interface ParsedInfotext {
   rawKv: Record<string, string>
 }
 
+export interface ModelLike {
+  title: string
+  hash?: string | null
+  filename?: string
+  model_name?: string
+  name?: string
+}
+
 export interface SamplerLike {
   name: string
   allowed_schedulers?: string[]
@@ -40,6 +55,12 @@ export interface SamplerLike {
 
 export interface SchedulerLike {
   name: string
+}
+
+export interface ComfyParseResult {
+  graph: Record<string, unknown> | null
+  extracted: Partial<ParsedInfotext>
+  warnings: string[]
 }
 
 function normalizeComparable(value: string): string {
@@ -76,6 +97,23 @@ function parseSize(raw: string): { width: number; height: number } | null {
   if (w === null || h === null) return null
   if (w <= 0 || h <= 0) return null
   return { width: w, height: h }
+}
+
+function parseHex(raw: string): string | null {
+  const text = String(raw || '').trim().toLowerCase()
+  if (!text) return null
+  if (!/^[0-9a-f]+$/.test(text)) return null
+  return text
+}
+
+function tryParseJson(raw: string): unknown | null {
+  const text = String(raw || '').trim()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
 }
 
 export function parseInfotext(infotext: string): { parsed: ParsedInfotext; warnings: string[] } {
@@ -185,7 +223,164 @@ export function parseInfotext(infotext: string): { parsed: ParsedInfotext; warni
     else parsed.denoiseStrength = n
   }
 
+  const model = get('Model')
+  if (model !== undefined && model.trim()) parsed.model = model.trim()
+  const modelHash = get('Model hash') ?? get('Model Hash')
+  if (modelHash !== undefined && modelHash.trim()) parsed.modelHash = modelHash.trim()
+  const vae = get('VAE')
+  if (vae !== undefined && vae.trim()) parsed.vae = vae.trim()
+
   return { parsed, warnings }
+}
+
+function comfyNodeInputs(node: unknown): Record<string, unknown> | null {
+  if (!node || typeof node !== 'object') return null
+  const inputs = (node as any).inputs
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return null
+  return inputs as Record<string, unknown>
+}
+
+function comfyNodeType(node: unknown): string {
+  const raw = (node as any)?.class_type
+  return typeof raw === 'string' ? raw : ''
+}
+
+function comfyLinkNodeId(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length < 1) return null
+  const nodeId = value[0]
+  if (typeof nodeId === 'string' && nodeId.trim()) return nodeId.trim()
+  if (typeof nodeId === 'number' && Number.isFinite(nodeId)) return String(nodeId)
+  return null
+}
+
+export function parseComfyPromptJson(rawJson: string): ComfyParseResult {
+  const parsed = tryParseJson(rawJson)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { graph: null, extracted: {}, warnings: ["ComfyUI: 'prompt' JSON is missing or invalid."] }
+  }
+
+  const graph = parsed as Record<string, unknown>
+  const nodes = Object.entries(graph)
+    .map(([id, node]) => ({ id, node }))
+    .filter(({ id, node }) => typeof id === 'string' && id.trim() && node && typeof node === 'object')
+
+  const samplers = nodes.filter(({ node }) => {
+    const t = comfyNodeType(node).trim()
+    return t === 'KSampler' || t === 'KSamplerAdvanced'
+  })
+  if (samplers.length === 0) {
+    return { graph, extracted: {}, warnings: ["ComfyUI: no 'KSampler' node found; cannot extract fields."] }
+  }
+  if (samplers.length !== 1) {
+    return { graph, extracted: {}, warnings: [`ComfyUI: multiple KSampler nodes found (${samplers.length}); not extracting fields.`] }
+  }
+
+  const samplerNode = samplers[0].node
+  const inputs = comfyNodeInputs(samplerNode)
+  if (!inputs) {
+    return { graph, extracted: {}, warnings: ["ComfyUI: KSampler node has no inputs; cannot extract fields."] }
+  }
+
+  const extracted: Partial<ParsedInfotext> = {}
+  const warnings: string[] = []
+
+  const seed = inputs.seed
+  if (typeof seed === 'number' && Number.isFinite(seed)) extracted.seed = Math.trunc(seed)
+  const steps = inputs.steps
+  if (typeof steps === 'number' && Number.isFinite(steps)) extracted.steps = Math.trunc(steps)
+  const cfg = inputs.cfg
+  if (typeof cfg === 'number' && Number.isFinite(cfg)) extracted.cfgScale = cfg
+  const samplerName = inputs.sampler_name ?? inputs.sampler
+  if (typeof samplerName === 'string' && samplerName.trim()) extracted.sampler = samplerName.trim()
+  const scheduler = inputs.scheduler
+  if (typeof scheduler === 'string' && scheduler.trim()) extracted.scheduler = scheduler.trim()
+  const denoise = inputs.denoise
+  if (typeof denoise === 'number' && Number.isFinite(denoise)) extracted.denoiseStrength = denoise
+
+  const resolveText = (nodeIdValue: unknown): string | null => {
+    const nodeId = comfyLinkNodeId(nodeIdValue)
+    if (!nodeId) return null
+    const target = graph[nodeId]
+    if (!target || typeof target !== 'object') return null
+    if (comfyNodeType(target) !== 'CLIPTextEncode') return null
+    const i = comfyNodeInputs(target)
+    const text = i?.text
+    return typeof text === 'string' ? text : null
+  }
+
+  const positiveText = resolveText(inputs.positive)
+  if (positiveText && positiveText.trim()) extracted.prompt = positiveText
+  const negativeText = resolveText(inputs.negative)
+  if (negativeText && negativeText.trim()) {
+    extracted.negativePrompt = negativeText
+    extracted.hasNegativePrompt = true
+  }
+
+  const latentNodeId = comfyLinkNodeId(inputs.latent_image)
+  if (latentNodeId) {
+    const latentNode = graph[latentNodeId]
+    if (latentNode && typeof latentNode === 'object' && comfyNodeType(latentNode) === 'EmptyLatentImage') {
+      const li = comfyNodeInputs(latentNode)
+      const w = li?.width
+      const h = li?.height
+      if (typeof w === 'number' && Number.isFinite(w) && typeof h === 'number' && Number.isFinite(h)) {
+        extracted.width = Math.trunc(w)
+        extracted.height = Math.trunc(h)
+      }
+    }
+  }
+
+  if (!extracted.prompt?.trim()) {
+    warnings.push("ComfyUI: couldn't resolve a single positive prompt; prompt will stay unchanged.")
+  }
+
+  return { graph, extracted, warnings }
+}
+
+export function mapCheckpointTitle(
+  parsed: Pick<ParsedInfotext, 'model' | 'modelHash'>,
+  models: ModelLike[],
+): { checkpoint?: string; warnings: string[] } {
+  const warnings: string[] = []
+  const list = Array.isArray(models) ? models : []
+  if (list.length === 0) return { warnings: [] }
+
+  const hashRaw = parsed.modelHash ? parseHex(parsed.modelHash) : null
+  if (hashRaw) {
+    const matches = list.filter(m => {
+      const h = typeof m.hash === 'string' ? m.hash.toLowerCase() : ''
+      if (!h) return false
+      return h === hashRaw || h.startsWith(hashRaw) || hashRaw.startsWith(h)
+    })
+    if (matches.length === 1) return { checkpoint: matches[0].title, warnings }
+    if (matches.length > 1) {
+      warnings.push(`Model hash '${parsed.modelHash}' is ambiguous (${matches.length} matches); leaving checkpoint unchanged.`)
+      return { warnings }
+    }
+    warnings.push(`Model hash '${parsed.modelHash}' not found; leaving checkpoint unchanged.`)
+  }
+
+  const modelRaw = String(parsed.model || '').trim()
+  if (!modelRaw) return { warnings }
+
+  const needle = normalizeComparable(modelRaw.replace(/\\+/g, '/'))
+  const candidates = list.filter(m => {
+    const title = normalizeComparable(String(m.title || ''))
+    const name = normalizeComparable(String(m.name || ''))
+    const modelName = normalizeComparable(String(m.model_name || ''))
+    const filename = normalizeComparable(String(m.filename || '').replace(/\\+/g, '/'))
+    const tail = filename ? filename.split('/').pop() || '' : ''
+    return title === needle || name === needle || modelName === needle || filename === needle || tail === needle
+  })
+
+  if (candidates.length === 1) return { checkpoint: candidates[0].title, warnings }
+  if (candidates.length > 1) {
+    warnings.push(`Model '${modelRaw}' is ambiguous (${candidates.length} matches); leaving checkpoint unchanged.`)
+    return { warnings }
+  }
+
+  warnings.push(`Model '${modelRaw}' not recognized; leaving checkpoint unchanged.`)
+  return { warnings }
 }
 
 export function mapSamplerScheduler(
@@ -216,13 +411,16 @@ export function mapSamplerScheduler(
   schedulerLabels.sort((a, b) => b.length - a.length)
 
   const resolveSampler = (value: string): string | null => {
-    const key = normalizeComparable(value)
+    let key = normalizeComparable(value)
+    if (key === 'euler ancestral') key = 'euler a'
+    if (key.startsWith('dpmpp ')) key = `dpm++ ${key.slice('dpmpp '.length)}`
     const found = samplerMap.get(key)
     return found ?? null
   }
 
   const resolveScheduler = (value: string): string | null => {
-    const key = normalizeComparable(value)
+    let key = normalizeComparable(value)
+    if (key === 'normal') key = 'simple'
     const found = schedulerMap.get(key)
     return found ?? null
   }
@@ -273,4 +471,3 @@ export function mapSamplerScheduler(
 
   return { sampler, scheduler, warnings }
 }
-

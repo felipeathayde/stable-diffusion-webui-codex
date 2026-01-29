@@ -81,7 +81,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div v-else class="pnginfo-body">
-          <div v-if="parseWarnings.length || mappingWarnings.length" class="pnginfo-warnings">
+          <div v-if="allWarnings.length" class="pnginfo-warnings">
             <div class="pnginfo-warnings-title">Warnings</div>
             <ul class="pnginfo-warnings-list">
               <li v-for="(w, idx) in allWarnings" :key="idx">{{ w }}</li>
@@ -130,6 +130,22 @@ Symbols (top-level; keep in sync; no ghosts):
                   <dt>Seed</dt>
                   <dd>{{ parsed.seed }}</dd>
                 </template>
+                <template v-if="mappedCheckpoint">
+                  <dt>Checkpoint</dt>
+                  <dd>{{ mappedCheckpoint }}</dd>
+                </template>
+                <template v-else-if="parsed.model || parsed.modelHash">
+                  <dt>Checkpoint</dt>
+                  <dd class="caption">Not applied (unknown or ambiguous).</dd>
+                </template>
+                <template v-if="resolvedVaeLabel">
+                  <dt>VAE</dt>
+                  <dd>{{ resolvedVaeLabel }}</dd>
+                </template>
+                <template v-else-if="parsed.vae">
+                  <dt>VAE</dt>
+                  <dd class="caption">Not applied (unknown or ambiguous).</dd>
+                </template>
                 <template v-if="mappedSampler && mappedScheduler">
                   <dt>Sampler / Scheduler</dt>
                   <dd>{{ mappedSampler }} / {{ mappedScheduler }}</dd>
@@ -151,10 +167,29 @@ Symbols (top-level; keep in sync; no ghosts):
 
             <div class="pnginfo-card">
               <div class="pnginfo-card-title">Raw metadata</div>
-              <div v-if="analysis && Object.keys(analysis.metadata || {}).length" class="pnginfo-metadata">
-                <JsonTreeView :value="analysis.metadata" :default-open-depth="1" :max-depth="8" />
-              </div>
-              <div v-else class="caption">No text chunks found.</div>
+              <details class="accordion" :open="true">
+                <summary>Text chunks</summary>
+                <div class="accordion-body">
+                  <div v-if="analysis && Object.keys(analysis.metadata || {}).length" class="pnginfo-metadata">
+                    <JsonTreeView :value="analysis.metadata" :default-open-depth="1" :max-depth="8" />
+                  </div>
+                  <div v-else class="caption">No text chunks found.</div>
+                </div>
+              </details>
+
+              <details v-if="comfyPromptGraph" class="accordion">
+                <summary>ComfyUI prompt</summary>
+                <div class="accordion-body">
+                  <JsonTreeView :value="comfyPromptGraph" :default-open-depth="1" :max-depth="12" />
+                </div>
+              </details>
+
+              <details v-if="comfyWorkflowGraph" class="accordion">
+                <summary>ComfyUI workflow</summary>
+                <div class="accordion-body">
+                  <JsonTreeView :value="comfyWorkflowGraph" :default-open-depth="1" :max-depth="12" />
+                </div>
+              </details>
             </div>
           </div>
         </div>
@@ -165,12 +200,13 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { analyzePngInfo, fetchSamplers, fetchSchedulers } from '../api/client'
-import type { PngInfoAnalyzeResponse, SamplerInfo, SchedulerInfo } from '../api/types'
+import { analyzePngInfo, fetchModelInventory, fetchSamplers, fetchSchedulers } from '../api/client'
+import type { InventoryResponse, PngInfoAnalyzeResponse, SamplerInfo, SchedulerInfo } from '../api/types'
 import { useResultsCard } from '../composables/useResultsCard'
 import { useModelTabsStore } from '../stores/model_tabs'
+import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useWorkflowsStore } from '../stores/workflows'
-import { mapSamplerScheduler, parseInfotext, type ParsedInfotext } from '../utils/pnginfo'
+import { mapCheckpointTitle, mapSamplerScheduler, parseComfyPromptJson, parseInfotext, type ParsedInfotext } from '../utils/pnginfo'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import Dropzone from '../components/ui/Dropzone.vue'
 import JsonTreeView from '../components/ui/JsonTreeView.vue'
@@ -179,6 +215,7 @@ type TargetMode = 'txt2img' | 'img2img'
 
 const tabs = useModelTabsStore()
 const workflows = useWorkflowsStore()
+const quicksettings = useQuicksettingsStore()
 const { notice, toast } = useResultsCard()
 
 const selectedFile = ref<File | null>(null)
@@ -189,6 +226,7 @@ const error = ref('')
 
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
+const inventory = ref<InventoryResponse | null>(null)
 
 const workflowBusy = ref(false)
 const sendBusy = ref(false)
@@ -203,19 +241,62 @@ const parsedResult = computed(() => parseInfotext(infotext.value))
 const parsed = computed<ParsedInfotext>(() => parsedResult.value.parsed)
 const parseWarnings = computed(() => parsedResult.value.warnings)
 
+const checkpointResult = computed(() => mapCheckpointTitle(parsed.value, quicksettings.models))
+const mappedCheckpoint = computed(() => checkpointResult.value.checkpoint || '')
+const checkpointWarnings = computed(() => checkpointResult.value.warnings)
+
+type VaeResolution = { label?: string; warnings: string[] }
+const resolvedVae = computed<VaeResolution>(() => {
+  const raw = String(parsed.value.vae || '').trim()
+  if (!raw) return { warnings: [] }
+  const tab = targetTab.value
+  if (!tab) return { warnings: [`VAE '${raw}' found, but no target tab selected; leaving unchanged.`] }
+
+  const sha = quicksettings.resolveVaeSha(raw)
+  if (!sha) return { warnings: [`VAE '${raw}' not recognized; leaving unchanged.`] }
+
+  const matches = (inventory.value?.vaes || []).filter((v) => String(v.sha256 || '').trim().toLowerCase() === sha.toLowerCase())
+  if (matches.length === 0) return { warnings: [`VAE '${raw}' resolved but not present in inventory; leaving unchanged.`] }
+  if (matches.length > 1) return { warnings: [`VAE '${raw}' is ambiguous (${matches.length} matches); leaving unchanged.`] }
+
+  const entry = matches[0]
+  const wantsPath = tab.type === 'flux1' || tab.type === 'chroma' || tab.type === 'zimage'
+  const label = wantsPath ? String(entry.path || '').replace(/\\+/g, '/') : String(entry.name || '').trim()
+  if (!label) return { warnings: [`VAE '${raw}' resolved, but label is empty; leaving unchanged.`] }
+  return { label, warnings: [] }
+})
+const resolvedVaeLabel = computed(() => resolvedVae.value.label || '')
+const vaeWarnings = computed(() => resolvedVae.value.warnings)
+
 const mappingResult = computed(() =>
   mapSamplerScheduler(parsed.value.sampler, parsed.value.scheduler, samplers.value, schedulers.value),
 )
 const mappedSampler = computed(() => mappingResult.value.sampler || '')
 const mappedScheduler = computed(() => mappingResult.value.scheduler || '')
 const mappingWarnings = computed(() => mappingResult.value.warnings)
-const allWarnings = computed(() => [...parseWarnings.value, ...mappingWarnings.value])
+
+const comfyPromptGraph = ref<Record<string, unknown> | null>(null)
+const comfyWorkflowGraph = ref<Record<string, unknown> | null>(null)
+const comfyWarnings = ref<string[]>([])
+const initWarnings = ref<string[]>([])
+
+const allWarnings = computed(() => [
+  ...initWarnings.value,
+  ...parseWarnings.value,
+  ...checkpointWarnings.value,
+  ...vaeWarnings.value,
+  ...mappingWarnings.value,
+  ...comfyWarnings.value,
+])
 
 const hasAnyParsedField = computed(() => {
   const p = parsed.value
   return Boolean(
     p.prompt.trim()
       || p.hasNegativePrompt
+      || p.model
+      || p.modelHash
+      || p.vae
       || p.steps !== undefined
       || p.cfgScale !== undefined
       || p.seed !== undefined
@@ -262,6 +343,9 @@ async function analyzeSelectedFile(): Promise<void> {
   error.value = ''
   analysis.value = null
   lastSentTabId.value = ''
+  comfyPromptGraph.value = null
+  comfyWorkflowGraph.value = null
+  comfyWarnings.value = []
 
   try {
     const res = await analyzePngInfo(selectedFile.value)
@@ -269,8 +353,49 @@ async function analyzeSelectedFile(): Promise<void> {
     const params = metadataValue(res.metadata, 'parameters')
     if (params) {
       infotext.value = params
-    } else if (!infotext.value.trim()) {
-      infotext.value = ''
+    } else {
+      // ComfyUI often stores structured JSON under `prompt` and `workflow`.
+      const rawPrompt = metadataValue(res.metadata, 'prompt')
+      if (rawPrompt) {
+        const out = parseComfyPromptJson(rawPrompt)
+        comfyPromptGraph.value = out.graph
+        if (out.warnings.length) comfyWarnings.value.push(...out.warnings)
+        if (!infotext.value.trim() && out.extracted && Object.keys(out.extracted).length > 0) {
+          const ex = out.extracted
+          const lines: string[] = []
+          const prompt = String(ex.prompt || '').trim()
+          const neg = String(ex.negativePrompt || '').trim()
+          if (prompt) lines.push(prompt)
+          if (neg) lines.push(`Negative prompt: ${neg}`)
+          const kv: string[] = []
+          if (typeof ex.steps === 'number') kv.push(`Steps: ${ex.steps}`)
+          if (typeof ex.sampler === 'string' && ex.sampler.trim()) kv.push(`Sampler: ${ex.sampler.trim()}`)
+          if (typeof ex.scheduler === 'string' && ex.scheduler.trim()) kv.push(`Schedule type: ${ex.scheduler.trim()}`)
+          if (typeof ex.cfgScale === 'number') kv.push(`CFG scale: ${ex.cfgScale}`)
+          if (typeof ex.seed === 'number') kv.push(`Seed: ${ex.seed}`)
+          if (typeof ex.width === 'number' && typeof ex.height === 'number') kv.push(`Size: ${ex.width}x${ex.height}`)
+          if (typeof ex.denoiseStrength === 'number') kv.push(`Denoising strength: ${ex.denoiseStrength}`)
+          if (kv.length) lines.push(kv.join(', '))
+          if (lines.length) {
+            infotext.value = lines.join('\n')
+            comfyWarnings.value.push('Infotext was populated from ComfyUI prompt JSON; verify before sending.')
+          }
+        }
+      }
+      const rawWorkflow = metadataValue(res.metadata, 'workflow')
+      if (rawWorkflow) {
+        try {
+          const value = JSON.parse(rawWorkflow) as unknown
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            comfyWorkflowGraph.value = value as Record<string, unknown>
+          } else {
+            comfyWarnings.value.push("ComfyUI: 'workflow' JSON is not an object; skipping.")
+          }
+        } catch {
+          comfyWarnings.value.push("ComfyUI: failed to parse 'workflow' JSON; skipping.")
+        }
+      }
+      if (!infotext.value.trim()) infotext.value = ''
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -305,6 +430,7 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
   const p = parsed.value
   const patch: Record<string, unknown> = {}
 
+  if (mappedCheckpoint.value) patch.checkpoint = mappedCheckpoint.value
   if (p.prompt.trim()) patch.prompt = p.prompt
   if (p.hasNegativePrompt) patch.negativePrompt = p.negativePrompt
 
@@ -343,6 +469,17 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
   return { patch, warnings: allWarnings.value }
 }
 
+async function maybeApplyVae(): Promise<{ appliedLabel?: string; error?: string }> {
+  const label = resolvedVaeLabel.value
+  if (!label) return {}
+  try {
+    await quicksettings.setVae(label)
+    return { appliedLabel: label }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 async function saveSnapshot(): Promise<void> {
   if (!targetTab.value) return
   if (!selectedFile.value) return
@@ -357,7 +494,14 @@ async function saveSnapshot(): Promise<void> {
       engine_semantics: targetTab.value.type === 'wan' ? 'wan22' : targetTab.value.type,
       params_snapshot: patch,
     })
-    toast('Snapshot saved to Workflows.')
+    const vae = await maybeApplyVae()
+    if (vae.error) {
+      toast(`Snapshot saved. VAE not applied: ${vae.error}`)
+    } else if (vae.appliedLabel) {
+      toast(`Snapshot saved. VAE: ${vae.appliedLabel}`)
+    } else {
+      toast('Snapshot saved to Workflows.')
+    }
   } catch (err) {
     toast(err instanceof Error ? err.message : String(err))
   } finally {
@@ -375,7 +519,14 @@ async function sendTo(): Promise<void> {
     const { patch } = buildImageParamsPatch({ mode: targetMode.value, includeInitImage: true })
     await tabs.updateParams(targetTab.value.id, patch)
     lastSentTabId.value = targetTab.value.id
-    toast(`Sent to ${targetTab.value.title}.`)
+    const vae = await maybeApplyVae()
+    if (vae.error) {
+      toast(`Sent to ${targetTab.value.title}. VAE not applied: ${vae.error}`)
+    } else if (vae.appliedLabel) {
+      toast(`Sent to ${targetTab.value.title}. VAE: ${vae.appliedLabel}`)
+    } else {
+      toast(`Sent to ${targetTab.value.title}.`)
+    }
   } catch (err) {
     toast(err instanceof Error ? err.message : String(err))
   } finally {
@@ -384,10 +535,14 @@ async function sendTo(): Promise<void> {
 }
 
 onMounted(async () => {
-  try {
-    await tabs.load()
-  } catch {
-    // tabs store may bootstrap from localStorage; ignore here.
+  initWarnings.value = []
+
+  try { await tabs.load() } catch {}
+  try { await quicksettings.init() } catch (err) {
+    initWarnings.value.push(`QuickSettings: failed to initialize (${err instanceof Error ? err.message : String(err)}).`)
+  }
+  try { inventory.value = await fetchModelInventory() } catch (err) {
+    initWarnings.value.push(`Inventory: failed to load (${err instanceof Error ? err.message : String(err)}).`)
   }
 
   try {
@@ -395,7 +550,7 @@ onMounted(async () => {
     samplers.value = samp.samplers
     schedulers.value = sched.schedulers
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    initWarnings.value.push(`Sampling: failed to load (${err instanceof Error ? err.message : String(err)}).`)
   }
 })
 

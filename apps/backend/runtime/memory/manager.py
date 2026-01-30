@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Codex-native runtime memory management service (hardware probe + precision/budget policies + loaded model registry).
 Provides a single manager that decides device/precision defaults, tracks loaded components, and applies swap/offload policies during engine orchestration.
-Also exposes per-role compute dtype selection (activation precision) distinct from storage dtype when manual casting is enabled, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions (avoid premature unload/reload within a single pipeline stage).
+Exposes per-role storage vs compute dtype selection (compute defaults to fp32 for core/TE/VAE unless overridden), supports “native weights dtype” selection via `dtype_for_role(..., native_dtype=...)`, and provides `is_model_loaded(...)` for stage-scoped smart offload decisions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_PrecisionState` (dataclass): Internal precision selection state (derived from hardware + configured flags) used to choose dtypes.
@@ -533,6 +533,7 @@ class CodexMemoryManager:
         role: DeviceRole,
         *,
         supported: Sequence[torch.dtype] = (torch.float16, torch.bfloat16, torch.float32),
+        native_dtype: torch.dtype | None = None,
     ) -> torch.dtype:
         if not supported:
             raise MemoryConfigurationError(f"No supported dtypes passed for {role.value}.")
@@ -550,6 +551,19 @@ class CodexMemoryManager:
                 return forced_dtype
             return supported[-1]
 
+        if native_dtype is not None:
+            if device.type == "cpu" and torch.float32 in supported and native_dtype != torch.float32:
+                raise MemoryConfigurationError(
+                    f"{role.value} weights are {native_dtype} but CPU execution requires float32. "
+                    f"Set an explicit {role.value} storage dtype override (fp32)."
+                )
+            if native_dtype in supported:
+                return native_dtype
+            raise MemoryConfigurationError(
+                f"{role.value} weights are {native_dtype} but this dtype is not supported on {device} "
+                f"(supported={supported}). Set an explicit {role.value} storage dtype override."
+            )
+
         if device.type == "cpu":
             if torch.float32 in supported:
                 return torch.float32
@@ -564,6 +578,7 @@ class CodexMemoryManager:
         role: DeviceRole,
         *,
         supported: Sequence[torch.dtype] = (torch.float16, torch.bfloat16, torch.float32),
+        storage_dtype: torch.dtype | None = None,
     ) -> torch.dtype:
         """Return the preferred compute dtype for a component role.
 
@@ -571,11 +586,11 @@ class CodexMemoryManager:
         activation precision during forward passes when `allow_manual_cast` is enabled.
 
         Default policy:
-        - TEXT_ENCODER computes in fp32 by default for stability.
+        - CORE/TEXT_ENCODER/VAE compute in fp32 by default for stability.
         - Other roles compute in the selected storage dtype unless overridden.
         """
 
-        storage_dtype = self.dtype_for_role(role, supported=supported)
+        storage_dtype = storage_dtype or self.dtype_for_role(role, supported=supported)
         policy = self._config.component_policy(role)
         device = self.get_device(role)
 
@@ -595,7 +610,7 @@ class CodexMemoryManager:
                 )
             compute = forced
         else:
-            compute = torch.float32 if role == DeviceRole.TEXT_ENCODER else storage_dtype
+            compute = torch.float32 if role in (DeviceRole.CORE, DeviceRole.TEXT_ENCODER, DeviceRole.VAE) else storage_dtype
 
         if compute != storage_dtype and not policy.allow_manual_cast:
             raise MemoryConfigurationError(

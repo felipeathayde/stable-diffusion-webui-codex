@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Minimal T5 encoder implementation used by Codex text encoders.
 Defines a small T5 encoder stack (attention + FF blocks + relative position bias) used by Flux/WAN-style runtimes without relying on the full
-transformers model class at runtime.
+transformers model class at runtime, and supports an optional `compute_dtype` attribute for stable fp32 compute with separate storage dtype.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `activations` (constant): Mapping from activation names to callables used by FF blocks.
@@ -229,6 +229,9 @@ class T5(torch.nn.Module):
 
     def forward(self, input_ids, *args, **kwargs):
         x = self.shared(input_ids)
+        compute_dtype = getattr(self, "compute_dtype", None)
+        if isinstance(compute_dtype, torch.dtype) and compute_dtype != x.dtype:
+            x = x.to(dtype=compute_dtype)
         x = torch.nan_to_num(x)
         return self.encoder(x, *args, **kwargs)
 

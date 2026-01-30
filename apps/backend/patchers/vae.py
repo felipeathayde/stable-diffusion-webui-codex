@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: VAE patcher + tiling helpers for encode/decode (diffusers + WAN-aware).
 Provides a VAE wrapper that normalizes diffusers outputs, supports tiled decode/encode paths, and integrates memory-management
-and smart-fallback behavior.
+and smart-fallback behavior. Supports separate storage vs compute dtype selection (compute defaults to fp32 unless overridden).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
@@ -282,9 +282,17 @@ class VAE:
         offload_device = memory_management.manager.get_offload_device(DeviceRole.VAE)
 
         if dtype is None:
-            dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
+            native_storage = None
+            try:
+                native_storage = next(model.parameters()).dtype
+            except Exception:  # noqa: BLE001
+                native_storage = None
+            if native_storage is None:
+                native_storage = torch.float32
+            dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE, native_dtype=native_storage)
 
         self.vae_dtype: torch.dtype | None = None
+        self.vae_compute_dtype: torch.dtype | None = None
         self._pending_dtype = dtype  # Will be applied lazily when VAE is first used
         self.offload_device = offload_device
         self.output_device = memory_management.manager.get_device(DeviceRole.INTERMEDIATE)
@@ -305,8 +313,15 @@ class VAE:
         n.first_stage_model = self.first_stage_model
         n.device = self.device
         n.vae_dtype = self.vae_dtype
+        n.vae_compute_dtype = self.vae_compute_dtype
         n.output_device = self.output_device
         return n
+
+    def _resolve_dtypes(self) -> tuple[torch.dtype, torch.dtype]:
+        native_storage = self.vae_dtype or self._pending_dtype or torch.float32
+        storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE, native_dtype=native_storage)
+        compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.VAE, storage_dtype=storage_dtype)
+        return storage_dtype, compute_dtype
 
     def _apply_precision(self, dtype: torch.dtype, device: torch.device | str | None = None) -> None:
         if dtype == self.vae_dtype:
@@ -329,7 +344,8 @@ class VAE:
         steps += samples.shape[0] * get_tiled_scale_steps(samples.shape[3], samples.shape[2], tile_x * 2, tile_y // 2, overlap)
 
         def decode_fn(a: torch.Tensor) -> torch.Tensor:
-            decoded = self.first_stage_model.decode(a.to(self.vae_dtype).to(self.device))
+            compute_dtype = self.vae_compute_dtype or self.vae_dtype or torch.float32
+            decoded = self.first_stage_model.decode(a.to(compute_dtype).to(self.device))
             return (_unwrap_decode_output(decoded) + 1.0).float()
 
         output = torch.clamp(((tiled_scale(samples, decode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=self.downscale_ratio, output_device=self.output_device) +
@@ -344,7 +360,8 @@ class VAE:
         steps += pixel_samples.shape[0] * get_tiled_scale_steps(pixel_samples.shape[3], pixel_samples.shape[2], tile_x * 2, tile_y // 2, overlap)
 
         def encode_fn(a: torch.Tensor) -> torch.Tensor:
-            encoded = self.first_stage_model.encode((2.0 * a - 1.0).to(self.vae_dtype).to(self.device))
+            compute_dtype = self.vae_compute_dtype or self.vae_dtype or torch.float32
+            encoded = self.first_stage_model.encode((2.0 * a - 1.0).to(compute_dtype).to(self.device))
             return _unwrap_encode_output(encoded).float()
 
         samples = tiled_scale(pixel_samples, encode_fn, tile_x, tile_y, overlap, upscale_amount=(1 / self.downscale_ratio), out_channels=self.latent_channels, output_device=self.output_device)
@@ -444,11 +461,12 @@ class VAE:
             return self.decode_tiled(samples_in).to(self.output_device)
 
         while True:
-            desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
-            self._apply_precision(desired_dtype)
+            desired_storage, desired_compute = self._resolve_dtypes()
+            self._apply_precision(desired_storage)
+            self.vae_compute_dtype = desired_compute
 
             try:
-                memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)
+                memory_used = self.memory_used_decode(samples_in.shape, desired_compute)
                 memory_management.manager.load_models([self.patcher], memory_required=memory_used)
                 free_memory = memory_management.manager.get_free_memory(self.device)
                 batch_number = max(1, int(free_memory / memory_used))
@@ -463,7 +481,7 @@ class VAE:
                     device=self.output_device,
                 )
                 for x in range(0, samples_in.shape[0], batch_number):
-                    samples = samples_in[x:x + batch_number].to(self.vae_dtype).to(self.device)
+                    samples = samples_in[x:x + batch_number].to(desired_compute).to(self.device)
                     decoded_raw = self.first_stage_model.decode(samples)
                     decoded = _unwrap_decode_output(decoded_raw).to(self.output_device).float()
                     pixel_samples[x:x + batch_number] = torch.clamp((decoded + 1.0) / 2.0, min=0.0, max=1.0)
@@ -518,6 +536,9 @@ class VAE:
 
     def decode_tiled(self, samples, tile_x=64, tile_y=64, overlap=16):
         memory_management.manager.load_model(self.patcher)
+        desired_storage, desired_compute = self._resolve_dtypes()
+        self._apply_precision(desired_storage)
+        self.vae_compute_dtype = desired_compute
         output = self.decode_tiled_(samples, tile_x, tile_y, overlap)
         # Return BCHW format in [-1, 1] range like decode_inner
         return output * 2.0 - 1.0
@@ -531,11 +552,12 @@ class VAE:
         pixel_samples = pixel_samples.movedim(-1, 1)
 
         while True:
-            desired_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
-            self._apply_precision(desired_dtype)
+            desired_storage, desired_compute = self._resolve_dtypes()
+            self._apply_precision(desired_storage)
+            self.vae_compute_dtype = desired_compute
 
             try:
-                memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)
+                memory_used = self.memory_used_encode(pixel_samples.shape, desired_compute)
                 memory_management.manager.load_models([self.patcher], memory_required=memory_used)
                 free_memory = memory_management.manager.get_free_memory(self.device)
                 batch_number = max(1, int(free_memory / memory_used))
@@ -549,7 +571,7 @@ class VAE:
                     device=self.output_device,
                 )
                 for x in range(0, pixel_samples.shape[0], batch_number):
-                    pixels_in = (2.0 * pixel_samples[x:x + batch_number] - 1.0).to(self.vae_dtype).to(self.device)
+                    pixels_in = (2.0 * pixel_samples[x:x + batch_number] - 1.0).to(desired_compute).to(self.device)
                     base = getattr(self.first_stage_model, "_base", self.first_stage_model)
 
                     if DiffusersAutoencoderKL is not None and isinstance(base, DiffusersAutoencoderKL):
@@ -611,5 +633,8 @@ class VAE:
     def encode_tiled(self, pixel_samples, tile_x=512, tile_y=512, overlap=64):
         memory_management.manager.load_model(self.patcher)
         pixel_samples = pixel_samples.movedim(-1, 1)
+        desired_storage, desired_compute = self._resolve_dtypes()
+        self._apply_precision(desired_storage)
+        self.vae_compute_dtype = desired_compute
         samples = self.encode_tiled_(pixel_samples, tile_x=tile_x, tile_y=tile_y, overlap=overlap)
         return samples

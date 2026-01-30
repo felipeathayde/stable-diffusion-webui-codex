@@ -13,8 +13,10 @@ Uses vendored diffusers scheduler metadata under `apps/backend/huggingface/Tongy
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
 - `_torch_dtype_label` (function): Converts a `torch.dtype` into a supported dtype label (`fp16|bf16|fp32`) for logs/metadata.
+- `_storage_dtype_label` (function): Converts a storage dtype (torch dtype or string label) into a runtime label.
+- `_native_weights_dtype_for_path` (function): Best-effort native dtype inference for a weights file/directory (SafeTensors header).
 - `ZImageTextPipelines` (dataclass): Text processing pipeline bundle for the Z Image engine (currently Qwen3 text).
-- `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/denoiser/text pipelines/clip wrapper/device/dtype).
+- `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components, including explicit storage vs compute dtypes per role.
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
 - `_k_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
 - `_load_external_vae` (function): Loads an external Flow16 VAE from a path (required for core-only; optional override for full checkpoints).
@@ -53,6 +55,62 @@ def _torch_dtype_label(dtype):
         return "fp32"
     raise ValueError(f"Unsupported Z Image torch dtype: {dtype!r}")
 
+
+def _storage_dtype_label(dtype) -> str:
+    import torch
+
+    if isinstance(dtype, torch.dtype):
+        return _torch_dtype_label(dtype)
+    return str(dtype)
+
+
+def _native_weights_dtype_for_path(path: str | None):
+    """Best-effort native dtype inference for a weights file/directory.
+
+    Uses SafeTensors header hints when possible; returns None when unknown (e.g., GGUF).
+    """
+
+    if not path:
+        return None
+    import torch
+    from pathlib import Path
+
+    p = Path(str(path)).expanduser()
+    try:
+        p = p.resolve()
+    except Exception:
+        p = p.absolute()
+
+    candidates: list[Path] = []
+    if p.is_file():
+        candidates = [p]
+    elif p.is_dir():
+        # Prefer diffusers-style filename when present.
+        preferred = p / "diffusion_pytorch_model.safetensors"
+        if preferred.is_file():
+            candidates = [preferred]
+        else:
+            candidates = sorted(p.glob("*.safetensors"))
+
+    if not candidates:
+        return None
+
+    from apps.backend.runtime.checkpoint.safetensors_header import detect_safetensors_primary_dtype
+
+    hint = detect_safetensors_primary_dtype(candidates[0])
+    mapping = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+        "fp64": torch.float64,
+    }
+    fp8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
+    fp8_e5m2 = getattr(torch, "float8_e5m2", None)
+    if isinstance(fp8_e4m3fn, torch.dtype):
+        mapping["fp8_e4m3fn"] = fp8_e4m3fn
+    if isinstance(fp8_e5m2, torch.dtype):
+        mapping["fp8_e5m2"] = fp8_e5m2
+    return mapping.get(hint)
 
 class ZImageCLIP:
     """CLIP-like wrapper for Z Image text encoder with memory management support.
@@ -95,7 +153,12 @@ class ZImageEngineRuntime:
     text: ZImageTextPipelines
     clip: ZImageCLIP  # wrapper with ModelPatcher for memory management
     device: str = "cuda"
-    dtype: str = "bf16"
+    core_storage_dtype: str = "bf16"
+    core_compute_dtype: str = "fp32"
+    te_storage_dtype: str = "bf16"
+    te_compute_dtype: str = "fp32"
+    vae_storage_dtype: str = "bf16"
+    vae_compute_dtype: str = "fp32"
 
 
 @dataclass(frozen=True)
@@ -223,11 +286,6 @@ def assemble_zimage_runtime(
     """
     import torch
 
-    core_compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.CORE)
-    runtime_dtype = _torch_dtype_label(core_compute_dtype)
-    vae_torch_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
-    tenc_torch_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
-    
     def _log_vram(label: str) -> None:
         if torch.cuda.is_available():
             free, total = torch.cuda.mem_get_info()
@@ -241,6 +299,26 @@ def assemble_zimage_runtime(
     transformer = codex_components.get("transformer")
     if transformer is None:
         raise ValueError("Z Image requires 'transformer' component")
+
+    core_storage_raw = getattr(transformer, "storage_dtype", None)
+    if core_storage_raw is None:
+        try:
+            core_storage_raw = next(transformer.parameters()).dtype
+        except Exception:  # noqa: BLE001
+            core_storage_raw = torch.float32
+    core_compute_raw = getattr(transformer, "computation_dtype", None)
+    if not isinstance(core_compute_raw, torch.dtype):
+        core_compute_raw = memory_management.manager.compute_dtype_for_role(DeviceRole.CORE)
+
+    from apps.backend.runtime.model_parser.quantization import detect_quantization_from_tensors
+
+    quant_hint = detect_quantization_from_tensors(transformer.parameters())
+    if getattr(quant_hint, "detail", None) == "parameter_codexpack" and core_compute_raw != torch.float16:
+        raise RuntimeError(
+            "CodexPack packed-kernel execution v1 requires fp16 activations. "
+            f"Set codex_core_compute_dtype=fp16 (QuickSettings → Overrides) or use a non-CodexPack GGUF. "
+            f"got core_compute_dtype={core_compute_raw}."
+        )
     
     _log_vram("AFTER get transformer")
     
@@ -259,20 +337,27 @@ def assemble_zimage_runtime(
     # checkpoints (GGUF / transformer-only exports).
     if external_vae is not None:
         logger.debug("Z Image: loading external VAE (vae_path=%s)", external_vae)
-        vae_model = _load_external_vae(external_vae, torch_dtype=vae_torch_dtype)
+        vae_native_dtype = _native_weights_dtype_for_path(external_vae)
+        vae_storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE, native_dtype=vae_native_dtype) if vae_native_dtype is not None else memory_management.manager.dtype_for_role(DeviceRole.VAE)
+        vae_model = _load_external_vae(external_vae, torch_dtype=vae_storage_dtype)
         _log_vram("AFTER load external VAE")
     if vae_model is None:
         if is_core_only:
-            _load_external_vae(None, torch_dtype=vae_torch_dtype)  # raises with an actionable message
+            _load_external_vae(None, torch_dtype=torch.float32)  # raises with an actionable message
         raise ValueError("Z Image checkpoint did not include a VAE; provide an external VAE via 'vae_sha'.")
 
     if external_tenc is not None:
         logger.debug("Z Image: loading external text encoder (tenc_path=%s)", external_tenc)
-        text_encoder = _load_external_text_encoder(external_tenc, torch_dtype=tenc_torch_dtype)
+        tenc_native_dtype = _native_weights_dtype_for_path(external_tenc)
+        tenc_storage_dtype = memory_management.manager.dtype_for_role(
+            DeviceRole.TEXT_ENCODER,
+            native_dtype=tenc_native_dtype,
+        ) if tenc_native_dtype is not None else memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        text_encoder = _load_external_text_encoder(external_tenc, torch_dtype=tenc_storage_dtype)
         _log_vram("AFTER load external TEnc")
     if text_encoder is None:
         if is_core_only:
-            _load_external_text_encoder(None, torch_dtype=tenc_torch_dtype)  # raises with an actionable message
+            _load_external_text_encoder(None, torch_dtype=torch.float32)  # raises with an actionable message
         raise ValueError("Z Image checkpoint did not include a text encoder; provide one via 'tenc_sha'.")
     
     # Wrap VAE
@@ -296,9 +381,36 @@ def assemble_zimage_runtime(
     # Create text processing engine
     from apps.backend.runtime.families.zimage.text_encoder import ZImageTextProcessingEngine
     text_engine = ZImageTextProcessingEngine(text_encoder)
-    
+
     _log_vram("FINAL")
-    logger.debug("Z Image runtime assembled: device=%s dtype=%s core_only=%s", device, runtime_dtype, is_core_only)
+    te_storage = torch.float32
+    try:
+        te_storage = next(text_encoder.model.parameters()).dtype
+    except Exception:  # noqa: BLE001
+        te_storage = torch.float32
+    te_storage = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER, native_dtype=te_storage)
+    te_compute = memory_management.manager.compute_dtype_for_role(DeviceRole.TEXT_ENCODER, storage_dtype=te_storage)
+    setattr(text_encoder.model, "compute_dtype", te_compute)
+
+    vae_storage = torch.float32
+    try:
+        vae_storage = next(vae_model.parameters()).dtype
+    except Exception:  # noqa: BLE001
+        vae_storage = torch.float32
+    vae_storage = memory_management.manager.dtype_for_role(DeviceRole.VAE, native_dtype=vae_storage)
+    vae_compute = memory_management.manager.compute_dtype_for_role(DeviceRole.VAE, storage_dtype=vae_storage)
+
+    logger.debug(
+        "Z Image runtime assembled: device=%s core_storage=%s core_compute=%s te_storage=%s te_compute=%s vae_storage=%s vae_compute=%s core_only=%s",
+        device,
+        _storage_dtype_label(core_storage_raw),
+        _torch_dtype_label(core_compute_raw),
+        _torch_dtype_label(te_storage),
+        _torch_dtype_label(te_compute),
+        _torch_dtype_label(vae_storage),
+        _torch_dtype_label(vae_compute),
+        is_core_only,
+    )
     
     return ZImageEngineRuntime(
         vae=vae,
@@ -306,7 +418,12 @@ def assemble_zimage_runtime(
         text=ZImageTextPipelines(qwen3_text=text_engine),
         clip=clip,
         device=device,
-        dtype=runtime_dtype,
+        core_storage_dtype=_storage_dtype_label(core_storage_raw),
+        core_compute_dtype=_torch_dtype_label(core_compute_raw),
+        te_storage_dtype=_torch_dtype_label(te_storage),
+        te_compute_dtype=_torch_dtype_label(te_compute),
+        vae_storage_dtype=_torch_dtype_label(vae_storage),
+        vae_compute_dtype=_torch_dtype_label(vae_compute),
     )
 
 

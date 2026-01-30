@@ -18,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `set_attention_backend` (function): Sets the global attention backend (pytorch/xformers/split/quad) at runtime (returns success bool).
 - `set_component_backend` (function): Sets preferred backend for a role (core/vae/tenc/vision/intermediate) at runtime (returns success bool).
 - `set_component_dtype` (function): Sets forced dtype for a role (core/vae/tenc/vision/intermediate) at runtime (returns success bool).
+- `set_component_compute_dtype` (function): Sets forced compute dtype for a role (core/vae/tenc/vision/intermediate) at runtime (returns success bool).
 """
 
 from __future__ import annotations
@@ -256,6 +257,45 @@ def set_component_dtype(role: str, dtype: str) -> bool:
     return True
 
 
+def set_component_compute_dtype(role: str, dtype: str) -> bool:
+    """Force compute dtype for a component role. Use 'auto' to clear overrides."""
+
+    role_norm = str(role).strip().lower()
+    mapping_role = {
+        "core": DeviceRole.CORE,
+        "text_encoder": DeviceRole.TEXT_ENCODER,
+        "te": DeviceRole.TEXT_ENCODER,
+        "vae": DeviceRole.VAE,
+        "clip_vision": DeviceRole.CLIP_VISION,
+        "vision": DeviceRole.CLIP_VISION,
+        "intermediate": DeviceRole.INTERMEDIATE,
+    }
+    if role_norm not in mapping_role:
+        raise ValueError(f"Invalid role '{role}'")
+    role_enum = mapping_role[role_norm]
+
+    dtype_norm = (dtype or "").strip().lower()
+    if dtype_norm not in {"auto", "fp16", "bf16", "fp32"}:
+        raise ValueError("dtype must be one of auto|fp16|bf16|fp32")
+
+    current_cfg = manager.config
+    new_cfg = deepcopy(current_cfg)
+    policy = new_cfg.component_policy(role_enum)
+    policy.forced_compute_dtype = None
+
+    if dtype_norm != "auto":
+        torch_name = {
+            "fp16": "float16",
+            "bf16": "bfloat16",
+            "fp32": "float32",
+        }[dtype_norm]
+        policy.forced_compute_dtype = torch_name
+
+    reinitialize(new_cfg)
+    logger.info("[memory] compute dtype for %s set to %s", role_enum.value, dtype_norm)
+    return True
+
+
 __all__ = [
     "manager",
     "reinitialize",
@@ -264,4 +304,5 @@ __all__ = [
     "set_attention_backend",
     "set_component_backend",
     "set_component_dtype",
+    "set_component_compute_dtype",
 ]

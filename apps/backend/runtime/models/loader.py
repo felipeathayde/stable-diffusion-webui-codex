@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
-This module resolves TE/VAE overrides (including `tenc_path` shorthand), normalizes state_dict layouts, chooses compatible dtypes, and returns a `DiffusionModelBundle` ready for orchestrator/engine execution (with memory-management hooks). SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
-Supports SDXL TE QKV layout selection via `CODEX_SDXL_TE_QKV_IMPL=auto|split|fused` and constructs text encoders on CPU initially when smart offload is enabled (avoids redundant GPU→CPU hops during warm-up).
+Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts, and selects storage/compute dtypes (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
+SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -561,6 +561,52 @@ def _log_weights_dtype_hint(*, role: DeviceRole, selected: torch.dtype, hint: st
     _pipeline_debug.log(f"[dtype] role={role.value} selected={selected} weights_primary={hint}")
 
 
+def _torch_dtype_from_weights_primary_hint(hint: str | None) -> torch.dtype | None:
+    if not hint:
+        return None
+    hint_map: dict[str, torch.dtype] = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+        "fp64": torch.float64,
+    }
+    # Float8 dtypes may not exist on all torch builds.
+    fp8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
+    fp8_e5m2 = getattr(torch, "float8_e5m2", None)
+    if isinstance(fp8_e4m3fn, torch.dtype):
+        hint_map["fp8_e4m3fn"] = fp8_e4m3fn
+    if isinstance(fp8_e5m2, torch.dtype):
+        hint_map["fp8_e5m2"] = fp8_e5m2
+    return hint_map.get(hint)
+
+
+def _native_weights_storage_dtype(weights_path: str | None, state_dict: Mapping[str, object] | None) -> torch.dtype | None:
+    """Resolve the native (dominant) dtype for the weights source.
+
+    - For SafeTensors: uses the header-only primary dtype hint (majority bytes).
+    - For other formats: best-effort scan of state_dict values (first floating tensor dtype).
+    """
+
+    native = _torch_dtype_from_weights_primary_hint(_safetensors_primary_dtype_hint(weights_path))
+    if native is not None:
+        return native
+    if not state_dict:
+        return None
+
+    materialize = getattr(state_dict, "materialize", None)
+    if callable(materialize):
+        for value in state_dict.values():
+            if isinstance(value, torch.Tensor) and torch.is_floating_point(value):
+                return value.dtype
+        return None
+
+    for idx, value in enumerate(state_dict.values()):
+        if isinstance(value, torch.Tensor) and torch.is_floating_point(value):
+            return value.dtype
+        if idx >= 4096:
+            break
+    return None
+
 def _load_huggingface_component(
     parsed: ParsedCheckpoint,
     component_name: str,
@@ -685,7 +731,10 @@ def _load_huggingface_component(
         except Exception:
             config_json = _load_component_config(component_path)
         vae_device = memory_management.manager.get_device(DeviceRole.VAE)
-        vae_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
+        vae_dtype = memory_management.manager.dtype_for_role(
+            DeviceRole.VAE,
+            native_dtype=_native_weights_storage_dtype(weights_path, state_dict),
+        )
         _log_weights_dtype_hint(
             role=DeviceRole.VAE,
             selected=vae_dtype,
@@ -760,7 +809,10 @@ def _load_huggingface_component(
         # Build native Codex CLIP instead of HF; normalise state dict beforehand
         strict_sdxl = family in (ModelFamily.SDXL, ModelFamily.SDXL_REFINER)
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-        te_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        te_dtype = memory_management.manager.dtype_for_role(
+            DeviceRole.TEXT_ENCODER,
+            native_dtype=_native_weights_storage_dtype(weights_path, state_dict),
+        )
         _log_weights_dtype_hint(
             role=DeviceRole.TEXT_ENCODER,
             selected=te_dtype,
@@ -917,7 +969,10 @@ def _load_huggingface_component(
 
         # Compute dtype is distinct from storage dtype. Keep weights in `te_dtype`,
         # but allow activations to run in higher precision when configured.
-        model.transformer.compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.TEXT_ENCODER)
+        model.transformer.compute_dtype = memory_management.manager.compute_dtype_for_role(
+            DeviceRole.TEXT_ENCODER,
+            storage_dtype=te_dtype,
+        )
 
         missing, unexpected = safe_load_state_dict(model, state_dict, log_name=cls_name)
         if missing or unexpected:
@@ -998,7 +1053,10 @@ def _load_huggingface_component(
                 )
                 t5_config = _T5_XXL_DEFAULT_CONFIG
         te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-        storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
+        storage_dtype = memory_management.manager.dtype_for_role(
+            DeviceRole.TEXT_ENCODER,
+            native_dtype=_native_weights_storage_dtype(weights_path, state_dict),
+        )
         _log_weights_dtype_hint(
             role=DeviceRole.TEXT_ENCODER,
             selected=storage_dtype,
@@ -1022,37 +1080,43 @@ def _load_huggingface_component(
             te_load_device = torch.device("cpu")
             LOGGER.info("[loader] Smart offload: loading %s on CPU (initial)", component_name)
 
-        from transformers import modeling_utils
+            from transformers import modeling_utils
 
-        if storage_dtype in ["nf4", "fp4", "gguf"]:
-            with modeling_utils.no_init_weights():
-                with using_codex_operations(
-                    device=te_load_device,
-                    dtype=memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER),
-                    manual_cast_enabled=False,
-                    bnb_dtype=storage_dtype,
-                ):
-                    model = IntegratedT5(t5_config)
-        else:
-            with modeling_utils.no_init_weights():
-                with using_codex_operations(device=te_load_device, dtype=storage_dtype, manual_cast_enabled=True):
-                    model = IntegratedT5(t5_config)
+            if storage_dtype in ["nf4", "fp4", "gguf"]:
+                with modeling_utils.no_init_weights():
+                    with using_codex_operations(
+                        device=te_load_device,
+                        dtype=memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER),
+                        manual_cast_enabled=False,
+                        bnb_dtype=storage_dtype,
+                    ):
+                        model = IntegratedT5(t5_config)
+            else:
+                with modeling_utils.no_init_weights():
+                    with using_codex_operations(device=te_load_device, dtype=storage_dtype, manual_cast_enabled=True):
+                        model = IntegratedT5(t5_config)
+            model.transformer.compute_dtype = memory_management.manager.compute_dtype_for_role(
+                DeviceRole.TEXT_ENCODER,
+                storage_dtype=storage_dtype if isinstance(storage_dtype, torch.dtype) else None,
+            )
 
-        # Normalize T5 state dict keys: add transformer. prefix if missing
-        # T5 files often have keys like encoder.block.* but model expects transformer.encoder.block.*
-        if hasattr(state_dict, 'keys'):
-            keys_to_check = list(state_dict.keys())
-            needs_prefix = any(k.startswith("encoder.") or k == "shared.weight" for k in keys_to_check[:50])
-            if needs_prefix:
-                # Create a new dict with normalized keys
-                normalized_sd = {}
-                for k, v in (state_dict.items() if hasattr(state_dict, 'items') else [(k, state_dict[k]) for k in keys_to_check]):
-                    if k.startswith("encoder.") or k == "shared.weight" or k.startswith("embed_tokens"):
-                        new_key = f"transformer.{k}"
-                        normalized_sd[new_key] = v
-                    else:
-                        normalized_sd[k] = v
-                state_dict = normalized_sd
+            # Normalize T5 state dict keys: add transformer. prefix if missing
+            # T5 files often have keys like encoder.block.* but model expects transformer.encoder.block.*
+            if hasattr(state_dict, "keys"):
+                keys_to_check = list(state_dict.keys())
+                needs_prefix = any(k.startswith("encoder.") or k == "shared.weight" for k in keys_to_check[:50])
+                if needs_prefix:
+                    # Create a new dict with normalized keys
+                    normalized_sd = {}
+                    for k, v in (
+                        state_dict.items() if hasattr(state_dict, "items") else [(k, state_dict[k]) for k in keys_to_check]
+                    ):
+                        if k.startswith("encoder.") or k == "shared.weight" or k.startswith("embed_tokens"):
+                            new_key = f"transformer.{k}"
+                            normalized_sd[new_key] = v
+                        else:
+                            normalized_sd[k] = v
+                    state_dict = normalized_sd
 
         load_state_dict(
             model,
@@ -1138,7 +1202,11 @@ def _load_huggingface_component(
 
         supported_dtypes = _supported_inference_dtypes(family)
         quant_kind = config.quantization.kind
-        storage_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
+        storage_dtype = memory_management.manager.dtype_for_role(
+            DeviceRole.CORE,
+            supported=supported_dtypes,
+            native_dtype=_native_weights_storage_dtype(weights_path, state_dict),
+        )
         _log_weights_dtype_hint(
             role=DeviceRole.CORE,
             selected=storage_dtype,
@@ -1157,9 +1225,10 @@ def _load_huggingface_component(
         mem_config = memory_management.manager.config
 
         if storage_dtype in ["nf4", "fp4", "gguf"]:
-            # For quantized models, compute computation_dtype based on the actual load device
-            # This will be the GPU device where computations happen
-            computation_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
+            computation_dtype = memory_management.manager.compute_dtype_for_role(
+                DeviceRole.CORE,
+                supported=supported_dtypes,
+            )
             
             initial_device = memory_management.manager.get_offload_device(DeviceRole.CORE)
             # Smart offload: load transformers to CPU to prevent OOM
@@ -1182,16 +1251,17 @@ def _load_huggingface_component(
             with using_codex_operations(device=initial_device, dtype=construct_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
                 model = model_ctor(config_json)
         else:
-            # Non-quantized models: compute computation_dtype for non-quantized path
-            computation_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE, supported=supported_dtypes)
-            if isinstance(storage_dtype, torch.dtype):
-                computation_dtype = storage_dtype
+            computation_dtype = memory_management.manager.compute_dtype_for_role(
+                DeviceRole.CORE,
+                supported=supported_dtypes,
+                storage_dtype=storage_dtype if isinstance(storage_dtype, torch.dtype) else None,
+            )
             
             prefer_gpu = bool(getattr(mem_config, "gpu_prefer_construct", False))
             construct_device = load_device if prefer_gpu else memory_management.manager.get_offload_device(DeviceRole.CORE)
             initial_device = construct_device
             construct_dtype = storage_dtype
-            if construct_device.type == "cpu" and construct_dtype in (torch.bfloat16, torch.float16):
+            if load_device.type == "cpu" and construct_device.type == "cpu" and construct_dtype in (torch.bfloat16, torch.float16):
                 _trace.event(
                     "construct_cpu_cast_override",
                     dtype=str(construct_dtype),

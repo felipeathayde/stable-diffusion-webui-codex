@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Z Image engine (Turbo/Base variants) for txt2img/img2img.
-Implements prompt formatting, conditioning, and execution for Z Image by assembling a runtime from a core transformer checkpoint and external assets
-(text encoder + Flow16 VAE). Uses vendored HF metadata under `apps/backend/huggingface/Tongyi-MAI/**` for variant-specific shift/tokenizer hints.
+Implements prompt formatting, conditioning, and execution for Z Image using a runtime assembled from a core transformer checkpoint + external assets
+(text encoder + Flow16 VAE) with memory-manager storage/compute dtypes and vendored HF metadata under `apps/backend/huggingface/Tongyi-MAI/**`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ZImagePromptList` (class): List-like prompt wrapper that carries per-run metadata (CFG scale, smart-cache policy, negative marker).
@@ -68,7 +68,7 @@ class ZImageEngine(CodexDiffusionEngine):
         super().__init__()
         self._runtime: Optional[ZImageEngineRuntime] = None
         self._device = "cuda"
-        self._dtype = "bf16"
+        self._dtype = "fp32"
         self._zimage_variant: str = "turbo"
 
     def capabilities(self) -> EngineCapabilities:
@@ -171,7 +171,7 @@ class ZImageEngine(CodexDiffusionEngine):
         runtime = assembly.runtime
         self._runtime = runtime
         self._device = str(getattr(runtime, "device", "cuda"))
-        self._dtype = str(getattr(runtime, "dtype", "bf16"))
+        self._dtype = str(getattr(runtime, "core_compute_dtype", "fp32"))
 
         if vendor_dir is not None:
             tokenizer_dir = vendor_dir / "tokenizer"

@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Options API routes for reading, updating, and validating settings.
-Exposes the JSON-backed options store and registry-driven validation helpers.
+Exposes the JSON-backed options store and registry-driven validation helpers, and applies supported runtime memory overrides immediately
+(device backend + storage/compute dtype) via the memory manager.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for options endpoints.
@@ -136,6 +137,9 @@ def build_router(
             "codex_core_dtype": ("core", "dtype"),
             "codex_te_dtype": ("text_encoder", "dtype"),
             "codex_vae_dtype": ("vae", "dtype"),
+            "codex_core_compute_dtype": ("core", "compute_dtype"),
+            "codex_te_compute_dtype": ("text_encoder", "compute_dtype"),
+            "codex_vae_compute_dtype": ("vae", "compute_dtype"),
         }
         for key, value in updates.items():
             if key == "codex_attention_backend":
@@ -150,8 +154,10 @@ def build_router(
             try:
                 if kind == "backend":
                     mem_management.set_component_backend(role, str(value))
-                else:
+                elif kind == "dtype":
                     mem_management.set_component_dtype(role, str(value))
+                else:
+                    mem_management.set_component_compute_dtype(role, str(value))
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Invalid memory setting for {key}: {exc}")
 

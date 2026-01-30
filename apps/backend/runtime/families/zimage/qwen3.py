@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Native Qwen3-4B text encoder implementation used by the ZImage runtime.
-This is a standalone implementation that avoids `transformers`, enabling GGUF support through the quantization system.
+This is a standalone implementation that avoids `transformers`, enabling GGUF support through the quantization system. Supports an optional
+`compute_dtype` attribute to cast embeddings for stable fp32 compute while keeping storage dtype separate.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Qwen3Config` (dataclass): Configuration defaults for Qwen3-4B (dims/layers/heads/RoPE/norm eps).
@@ -411,6 +412,9 @@ class Qwen3_4B(nn.Module):
             raise ValueError("Either input_ids or inputs_embeds must be provided")
 
         hidden_states = inputs_embeds
+        compute_dtype = getattr(self, "compute_dtype", None)
+        if isinstance(compute_dtype, torch.dtype) and compute_dtype != hidden_states.dtype:
+            hidden_states = hidden_states.to(dtype=compute_dtype)
         intermediate = None
 
         batch_size = int(hidden_states.shape[0])

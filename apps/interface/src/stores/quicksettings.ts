@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: QuickSettings global store (models/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
-resolve to backend SHA-based assets (no raw-path inputs). Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`.
+resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options.
+Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
@@ -53,8 +54,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const vaeDevice = ref<string>('auto')
   const dtypeChoices = ref<string[]>(['auto', 'fp16', 'bf16', 'fp32'])
   const coreDtype = ref<string>('auto')
+  const coreComputeDtype = ref<string>('auto')
   const teDtype = ref<string>('auto')
+  const teComputeDtype = ref<string>('auto')
   const vaeDtype = ref<string>('auto')
+  const vaeComputeDtype = ref<string>('auto')
   const smartOffload = ref<boolean>(false)
   const smartFallback = ref<boolean>(false)
   const smartCache = ref<boolean>(true)
@@ -171,8 +175,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       vaeDevice.value = (opts as any).codex_vae_device
     }
     if (typeof (opts as any).codex_core_dtype === 'string') coreDtype.value = (opts as any).codex_core_dtype
+    if (typeof (opts as any).codex_core_compute_dtype === 'string') coreComputeDtype.value = (opts as any).codex_core_compute_dtype
     if (typeof (opts as any).codex_te_dtype === 'string') teDtype.value = (opts as any).codex_te_dtype
+    if (typeof (opts as any).codex_te_compute_dtype === 'string') teComputeDtype.value = (opts as any).codex_te_compute_dtype
     if (typeof (opts as any).codex_vae_dtype === 'string') vaeDtype.value = (opts as any).codex_vae_dtype
+    if (typeof (opts as any).codex_vae_compute_dtype === 'string') vaeComputeDtype.value = (opts as any).codex_vae_compute_dtype
     if (typeof (opts as any).codex_smart_offload === 'boolean') {
       smartOffload.value = (opts as any).codex_smart_offload
     }
@@ -465,14 +472,29 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     await updateOptions({ codex_core_dtype: value })
   }
 
+  async function setCoreComputeDtype(value: string): Promise<void> {
+    coreComputeDtype.value = value
+    await updateOptions({ codex_core_compute_dtype: value })
+  }
+
   async function setTeDtype(value: string): Promise<void> {
     teDtype.value = value
     await updateOptions({ codex_te_dtype: value })
   }
 
+  async function setTeComputeDtype(value: string): Promise<void> {
+    teComputeDtype.value = value
+    await updateOptions({ codex_te_compute_dtype: value })
+  }
+
   async function setVaeDtype(value: string): Promise<void> {
     vaeDtype.value = value
     await updateOptions({ codex_vae_dtype: value })
+  }
+
+  async function setVaeComputeDtype(value: string): Promise<void> {
+    vaeComputeDtype.value = value
+    await updateOptions({ codex_vae_compute_dtype: value })
   }
 
   async function setSmartOffload(value: boolean): Promise<void> {
@@ -517,15 +539,21 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     teDevice,
     vaeDevice,
     coreDtype,
+    coreComputeDtype,
     teDtype,
+    teComputeDtype,
     vaeDtype,
+    vaeComputeDtype,
     dtypeChoices,
     setCoreDevice,
     setTeDevice,
     setVaeDevice,
     setCoreDtype,
+    setCoreComputeDtype,
     setTeDtype,
+    setTeComputeDtype,
     setVaeDtype,
+    setVaeComputeDtype,
     smartOffload,
     smartFallback,
     smartCache,

@@ -85,6 +85,21 @@ rg -n "some_keyword" .sangoi
 rg -n "some_keyword" apps
 ```
 
+### Searching for a literal that starts with `--` (ripgrep treats it as a flag)
+
+Wrong command:
+```bash
+rg -n "--core-dtype" apps/backend/infra/config/args.py
+```
+
+Cause and fix:
+Arguments that look like flags (starting with `--`) are parsed as ripgrep options. Use `--` to terminate option parsing before your pattern.
+
+Correct command:
+```bash
+rg -n -- "--core-dtype" apps/backend/infra/config/args.py
+```
+
 ---
 
 ## Python & virtualenv

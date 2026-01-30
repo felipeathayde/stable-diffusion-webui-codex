@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Backend CLI argument parsing and runtime memory config bootstrap.
 Builds the argparse schema for runtime flags (devices/dtypes/attention/swap/smart offload) and turns argv/env into a `RuntimeMemoryConfig`.
-Supports separate text-encoder storage vs compute dtype (`--te-dtype` vs `--te-compute-dtype`) for stability and performance tuning.
+Supports separate storage vs compute dtype overrides for core/text encoder/VAE (e.g., `--core-dtype` vs `--core-compute-dtype`) for stability and tuning.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_parser` (function): Defines the argparse schema for backend runtime flags (devices/dtypes/attention/swap/etc).
@@ -234,6 +234,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preferred dtype for diffusion core (overrides saved WebUI settings).",
     )
     parser.add_argument(
+        "--core-compute-dtype",
+        choices=["auto", "fp16", "bf16", "fp32"],
+        default=None,
+        help=(
+            "Compute dtype for diffusion core activations (distinct from --core-dtype storage). "
+            "Default is fp32 for stability."
+        ),
+    )
+    parser.add_argument(
         "--te-dtype",
         choices=dtype_choices,
         default=None,
@@ -254,6 +263,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Preferred dtype for VAE (overrides saved WebUI settings).",
     )
+    parser.add_argument(
+        "--vae-compute-dtype",
+        choices=["auto", "fp16", "bf16", "fp32"],
+        default=None,
+        help=(
+            "Compute dtype for VAE activations (distinct from --vae-dtype storage). "
+            "Default is fp32 for stability."
+        ),
+    )
 
     return parser
 
@@ -266,9 +284,11 @@ _DEVICE_DIRECTIVES = (
 
 _DTYPE_DIRECTIVES = (
     ("core_dtype", "codex_core_dtype"),
+    ("core_compute_dtype", "codex_core_compute_dtype"),
     ("te_dtype", "codex_te_dtype"),
     ("te_compute_dtype", "codex_te_compute_dtype"),
     ("vae_dtype", "codex_vae_dtype"),
+    ("vae_compute_dtype", "codex_vae_compute_dtype"),
 )
 
 
@@ -532,8 +552,13 @@ def _apply_component_device_overrides(config: RuntimeMemoryConfig, ns: argparse.
         if forced:
             policy.forced_dtype = forced
 
-        if role == DeviceRole.TEXT_ENCODER:
-            compute_choice = getattr(ns, "codex_te_compute_dtype", None)
+        compute_key = {
+            DeviceRole.CORE: "codex_core_compute_dtype",
+            DeviceRole.TEXT_ENCODER: "codex_te_compute_dtype",
+            DeviceRole.VAE: "codex_vae_compute_dtype",
+        }.get(role)
+        if compute_key:
+            compute_choice = getattr(ns, compute_key, None)
             forced_compute = _torch_dtype_for_choice(compute_choice)
             if device_choice == "cpu" and forced_compute and forced_compute != "float32":
                 forced_compute = "float32"
@@ -606,6 +631,12 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     ns.codex_core_device = core_device_choice
     ns.codex_core_dtype = core_dtype_choice
 
+    core_compute_dtype_raw = getattr(ns, "codex_core_compute_dtype", None)
+    core_compute_dtype_choice = _normalize_dtype_choice(core_compute_dtype_raw, allow_fp8=False)
+    if core_device_choice == "cpu" and core_compute_dtype_choice not in (None, "fp32"):
+        core_compute_dtype_choice = "fp32"
+    ns.codex_core_compute_dtype = core_compute_dtype_choice
+
     vae_device_choice = _normalize_device_choice(getattr(ns, "codex_vae_device", None))
     vae_dtype_raw = getattr(ns, "codex_vae_dtype", None)
     vae_dtype_choice = _normalize_dtype_choice(vae_dtype_raw, allow_fp8=False)
@@ -616,6 +647,12 @@ def _apply_env_overrides(ns: argparse.Namespace, env: Mapping[str, str]) -> None
     _set_vae_dtype(vae_dtype_choice or vae_dtype_raw)
     ns.codex_vae_device = vae_device_choice
     ns.codex_vae_dtype = vae_dtype_choice
+
+    vae_compute_dtype_raw = getattr(ns, "codex_vae_compute_dtype", None)
+    vae_compute_dtype_choice = _normalize_dtype_choice(vae_compute_dtype_raw, allow_fp8=False)
+    if vae_device_choice == "cpu" and vae_compute_dtype_choice not in (None, "fp32"):
+        vae_compute_dtype_choice = "fp32"
+    ns.codex_vae_compute_dtype = vae_compute_dtype_choice
 
     te_device_choice = _normalize_device_choice(getattr(ns, "codex_te_device", None))
     te_dtype_raw = getattr(ns, "codex_te_dtype", None)

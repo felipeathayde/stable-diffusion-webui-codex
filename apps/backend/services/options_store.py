@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: JSON-backed options store for backend and launchers.
 Provides a small, typed facade over `apps/settings_values.json` so the API, runtime helpers, and launcher profile defaults can share a single
-source of truth without importing legacy/compat shims.
+source of truth without importing legacy/compat shims. Includes per-component storage/compute dtype override keys (core/TE/VAE).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SETTINGS_PATH` (constant): Absolute path to `apps/settings_values.json` under the repo root.
@@ -72,10 +72,13 @@ class OptionsSnapshot:
     codex_export_video: bool = False
     codex_core_device: str = "auto"
     codex_core_dtype: str = "auto"
+    codex_core_compute_dtype: str = "auto"
     codex_te_device: str = "auto"
     codex_te_dtype: str = "auto"
+    codex_te_compute_dtype: str = "auto"
     codex_vae_device: str = "auto"
     codex_vae_dtype: str = "auto"
+    codex_vae_compute_dtype: str = "auto"
     codex_smart_offload: bool = False
     codex_smart_fallback: bool = False
     codex_smart_cache: bool = True
@@ -86,10 +89,13 @@ class OptionsSnapshot:
             "codex_export_video": self.codex_export_video,
             "codex_core_device": self.codex_core_device,
             "codex_core_dtype": self.codex_core_dtype,
+            "codex_core_compute_dtype": self.codex_core_compute_dtype,
             "codex_te_device": self.codex_te_device,
             "codex_te_dtype": self.codex_te_dtype,
+            "codex_te_compute_dtype": self.codex_te_compute_dtype,
             "codex_vae_device": self.codex_vae_device,
             "codex_vae_dtype": self.codex_vae_dtype,
+            "codex_vae_compute_dtype": self.codex_vae_compute_dtype,
             "codex_smart_offload": self.codex_smart_offload,
             "codex_smart_fallback": self.codex_smart_fallback,
             "codex_smart_cache": self.codex_smart_cache,
@@ -111,10 +117,13 @@ def get_snapshot() -> OptionsSnapshot:
         codex_export_video=bool(v.get("codex_export_video", False)),
         codex_core_device=_str_value("codex_core_device", "auto"),
         codex_core_dtype=_str_value("codex_core_dtype", "auto"),
+        codex_core_compute_dtype=_str_value("codex_core_compute_dtype", "auto"),
         codex_te_device=_str_value("codex_te_device", "auto"),
         codex_te_dtype=_str_value("codex_te_dtype", "auto"),
+        codex_te_compute_dtype=_str_value("codex_te_compute_dtype", "auto"),
         codex_vae_device=_str_value("codex_vae_device", "auto"),
         codex_vae_dtype=_str_value("codex_vae_dtype", "auto"),
+        codex_vae_compute_dtype=_str_value("codex_vae_compute_dtype", "auto"),
         codex_smart_offload=bool(v.get("codex_smart_offload", False)),
         codex_smart_fallback=bool(v.get("codex_smart_fallback", False)),
         codex_smart_cache=bool(v.get("codex_smart_cache", True)),

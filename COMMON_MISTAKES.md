@@ -407,3 +407,22 @@ cd "$CODEX_ROOT"
 # Or, if nodeenv is already installed and you only need frontend deps:
 (cd apps/interface && npm install)
 ```
+
+---
+
+## Shell / CLI
+
+### Grepping text that contains backticks (bash command substitution)
+
+Wrong command:
+```bash
+rg -n "Validate `dtype` strings" .sangoi/task-logs/2026-01-30-zimage-cleanup.md
+```
+
+Cause and fix:
+In bash, backticks inside double quotes still perform command substitution. The shell tries to execute `dtype` and replaces it with the output (or errors). Use single quotes around the pattern, or escape the backticks.
+
+Correct command:
+```bash
+rg -n 'Validate `dtype` strings' .sangoi/task-logs/2026-01-30-zimage-cleanup.md
+```

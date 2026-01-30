@@ -99,6 +99,8 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.weight.dtype != x.dtype:
+            self.weight = nn.Parameter(self.weight.to(dtype=x.dtype), requires_grad=self.weight.requires_grad)
         norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
         return norm * self.weight
 

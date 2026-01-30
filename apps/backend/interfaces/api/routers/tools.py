@@ -188,6 +188,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
             quant = QuantizationType.F16
 
         codexpack_path: Path | None = None
+        codexpack_keymap_id: str | None = None
         if codexpack_v1:
             if quant is not QuantizationType.Q4_K:
                 raise HTTPException(
@@ -224,7 +225,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     ),
                 )
 
-            # v1 keymap id is locked to Z-Image Base (Turbo uses a different id).
+            # CodexPack v1 supports Z-Image Base (shift=6.0) and Turbo (shift=3.0).
             shift: float | None = None
             cfg_root = cfg_json_path.parent
             for cand in (
@@ -250,16 +251,31 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "CodexPack v1 requires Z-Image Base. Could not detect `shift` from scheduler_config.json "
+                        "CodexPack v1 requires Z-Image Base or Turbo. Could not detect `shift` from scheduler_config.json "
                         f"near {cfg_root}. Ensure the source includes `scheduler/scheduler_config.json`."
                     ),
                 )
-            if abs(shift - 6.0) >= 1e-3:
-                variant = "turbo" if abs(shift - 3.0) < 1e-3 else f"shift={shift:g}"
+            if abs(shift - 3.0) < 1e-3:
+                variant = "turbo"
+            elif abs(shift - 6.0) < 1e-3:
+                variant = "base"
+            else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"CodexPack v1 keymap id is Base-only (expected shift=6.0). Detected: {variant}.",
+                    detail=(
+                        "CodexPack v1 requires Z-Image Base or Turbo. "
+                        f"Expected shift=6.0 (base) or shift=3.0 (turbo). Got shift={shift:g}."
+                    ),
                 )
+
+            from apps.backend.quantization.codexpack_keymaps import (
+                ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
+                ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1,
+            )
+
+            codexpack_keymap_id = (
+                ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1 if variant == "turbo" else ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
+            )
 
         profile_id: str | None = None
         if profile_id_raw is not None:
@@ -360,6 +376,8 @@ def build_router(*, codex_root: Path) -> APIRouter:
             "codexpack_path": codexpack_path,
             "base_tmp_path": base_tmp_path,
         }
+        if codexpack_keymap_id is not None:
+            _gguf_conversion_controls[job_id]["codexpack_keymap_id"] = codexpack_keymap_id
 
         def run_conversion() -> None:
             try:
@@ -407,7 +425,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     os.replace(str(ctrl["tmp_path"]), str(ctrl["final_path"]))
 
                 if ctrl.get("codexpack_path") is not None:
-                    from apps.backend.quantization.codexpack_keymaps import ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
                     from apps.backend.runtime.tools.codexpack_packer import pack_gguf_to_codexpack_v1
 
                     codexpack_final_path = Path(ctrl["codexpack_path"])
@@ -421,10 +438,15 @@ def build_router(*, codex_root: Path) -> APIRouter:
                         suffix=codexpack_final_path.suffix or ".gguf",
                     )
                     try:
+                        keymap_id = ctrl.get("codexpack_keymap_id")
+                        if not isinstance(keymap_id, str) or not keymap_id.strip():
+                            raise RuntimeError(
+                                "codexpack_keymap_id is missing from conversion job controls (internal invariant)."
+                            )
                         pack_gguf_to_codexpack_v1(
                             str(base_tmp),
                             str(pack_tmp_path),
-                            keymap_id=ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
+                            keymap_id=keymap_id,
                         )
                         os.replace(str(pack_tmp_path), str(codexpack_final_path))
                     finally:
@@ -505,7 +527,10 @@ def build_router(*, codex_root: Path) -> APIRouter:
     @router.post("/api/tools/codexpack/pack-v1")
     async def pack_codexpack_v1(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         """Start a CodexPack v1 packing job from an existing base GGUF."""
-        from apps.backend.quantization.codexpack_keymaps import ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
+        from apps.backend.quantization.codexpack_keymaps import (
+            ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
+            ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1,
+        )
         from apps.backend.runtime.checkpoint.io import read_gguf_metadata
 
         src_gguf_path = str(payload.get("src_gguf_path") or "").strip()
@@ -546,13 +571,18 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 status_code=400,
                 detail="CodexPack v1 requires a base GGUF created with Comfy Layout on (`codex.converter.comfy_layout=true`).",
             )
-        if variant != "base":
+        if variant not in {"base", "turbo"}:
             raise HTTPException(
                 status_code=400,
-                detail=f"CodexPack v1 keymap id is Base-only; expected codex.zimage.variant='base', got {variant!r}.",
+                detail=(
+                    "CodexPack v1 requires codex.zimage.variant='base' or 'turbo' "
+                    f"(from GGUF metadata). Got {variant!r}."
+                ),
             )
         if quant != "Q4_K":
             raise HTTPException(status_code=400, detail=f"CodexPack v1 requires gguf.quantization='Q4_K'; got {quant!r}.")
+
+        keymap_id = ZIMAGE_TURBO_CORE_GGUF_IDENTITY_V1 if variant == "turbo" else ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1
 
         job_id = str(uuid.uuid4())[:8]
         final_path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,7 +613,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     pack_gguf_to_codexpack_v1(
                         str(ctrl["src_path"]),
                         str(out_tmp),
-                        keymap_id=ZIMAGE_BASE_CORE_GGUF_IDENTITY_V1,
+                        keymap_id=keymap_id,
                     )
                     os.replace(str(out_tmp), str(out_final))
                 finally:

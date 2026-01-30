@@ -12,9 +12,7 @@ Uses vendored diffusers scheduler metadata under `apps/backend/huggingface/Tongy
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageCLIP` (class): CLIP-like wrapper that exposes a `ModelPatcher` for memory management integration around the Z-Image text encoder.
-- `_ALLOWED_DTYPES` (constant): Allowed engine dtype strings for Z Image (`bf16|fp16|fp32`).
-- `_normalize_dtype` (function): Normalizes and validates a dtype string (fails loud on unknown values).
-- `_resolve_torch_dtype` (function): Maps a validated dtype string to a `torch.dtype`.
+- `_torch_dtype_label` (function): Converts a `torch.dtype` into a supported dtype label (`fp16|bf16|fp32`) for logs/metadata.
 - `ZImageTextPipelines` (dataclass): Text processing pipeline bundle for the Z Image engine (currently Qwen3 text).
 - `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components (VAE/denoiser/text pipelines/clip wrapper/device/dtype).
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
@@ -44,27 +42,16 @@ from apps.backend.runtime.memory.config import DeviceRole
 
 logger = logging.getLogger("backend.engines.zimage.spec")
 
-
-_ALLOWED_DTYPES = frozenset({"bf16", "fp16", "fp32"})
-
-
-def _normalize_dtype(dtype: str | None) -> str:
-    normalized = str(dtype or "").strip().lower()
-    normalized = normalized or "bf16"
-    if normalized not in _ALLOWED_DTYPES:
-        raise ValueError(f"Invalid dtype {dtype!r} for Z Image (allowed: bf16, fp16, fp32)")
-    return normalized
-
-
-def _resolve_torch_dtype(dtype: str | None):
+def _torch_dtype_label(dtype):
     import torch
 
-    normalized = _normalize_dtype(dtype)
-    return {
-        "bf16": torch.bfloat16,
-        "fp16": torch.float16,
-        "fp32": torch.float32,
-    }[normalized]
+    if dtype == torch.float16:
+        return "fp16"
+    if dtype == torch.bfloat16:
+        return "bf16"
+    if dtype == torch.float32:
+        return "fp32"
+    raise ValueError(f"Unsupported Z Image torch dtype: {dtype!r}")
 
 
 class ZImageCLIP:
@@ -168,15 +155,13 @@ def _k_predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
     return FlowMatchEulerPrediction(pseudo_timestep_range=1000, mu=spec.flow_shift)
 
 
-def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
+def _load_external_vae(vae_path: str | None, *, torch_dtype) -> object:
     """Load VAE from external path for core-only checkpoints.
     
     Uses the shared Flow16 VAE loader since Z Image uses the same
     16-channel latent space as Flux.
     """
     from apps.backend.runtime.common.vae import load_flow16_vae
-    
-    torch_dtype = _resolve_torch_dtype(dtype)
     
     if vae_path is None or not str(vae_path).strip():
         raise ValueError(
@@ -187,7 +172,7 @@ def _load_external_vae(vae_path: str | None, dtype: str = "bf16") -> object:
     return load_flow16_vae(vae_path, dtype=torch_dtype)
 
 
-def _load_external_text_encoder(tenc_path: str | None, dtype: str = "bf16") -> object:
+def _load_external_text_encoder(tenc_path: str | None, *, torch_dtype) -> object:
     """Load Qwen3 text encoder from external path for core-only checkpoints."""
     
     # Text encoder path is required - no automatic fallback
@@ -198,7 +183,6 @@ def _load_external_text_encoder(tenc_path: str | None, dtype: str = "bf16") -> o
         )
     
     logger.debug("Loading external text encoder from: %s", tenc_path)
-    torch_dtype = _resolve_torch_dtype(dtype)
     
     # Detect if GGUF or safetensors
     if tenc_path.lower().endswith(".gguf"):
@@ -221,7 +205,6 @@ def assemble_zimage_runtime(
     codex_components: Mapping[str, object],
     estimated_config: Any,
     device: str = "cuda",
-    dtype: str = "bf16",
     vae_path: str | None = None,
     tenc_path: str | None = None,
 ) -> ZImageEngineRuntime:
@@ -232,7 +215,6 @@ def assemble_zimage_runtime(
         codex_components: Dict with 'transformer', optionally 'vae', 'text_encoder'.
         estimated_config: Model config.
         device: Target device.
-        dtype: Target dtype.
         vae_path: Optional external VAE path (required when the checkpoint is core-only).
         tenc_path: Optional external text encoder path (required when the checkpoint is core-only).
     
@@ -240,8 +222,11 @@ def assemble_zimage_runtime(
         Assembled ZImageEngineRuntime.
     """
     import torch
-    
-    dtype = _normalize_dtype(dtype)
+
+    core_compute_dtype = memory_management.manager.compute_dtype_for_role(DeviceRole.CORE)
+    runtime_dtype = _torch_dtype_label(core_compute_dtype)
+    vae_torch_dtype = memory_management.manager.dtype_for_role(DeviceRole.VAE)
+    tenc_torch_dtype = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
     
     def _log_vram(label: str) -> None:
         if torch.cuda.is_available():
@@ -274,20 +259,20 @@ def assemble_zimage_runtime(
     # checkpoints (GGUF / transformer-only exports).
     if external_vae is not None:
         logger.debug("Z Image: loading external VAE (vae_path=%s)", external_vae)
-        vae_model = _load_external_vae(external_vae, dtype=dtype)
+        vae_model = _load_external_vae(external_vae, torch_dtype=vae_torch_dtype)
         _log_vram("AFTER load external VAE")
     if vae_model is None:
         if is_core_only:
-            _load_external_vae(None, dtype=dtype)  # raises with an actionable message
+            _load_external_vae(None, torch_dtype=vae_torch_dtype)  # raises with an actionable message
         raise ValueError("Z Image checkpoint did not include a VAE; provide an external VAE via 'vae_sha'.")
 
     if external_tenc is not None:
         logger.debug("Z Image: loading external text encoder (tenc_path=%s)", external_tenc)
-        text_encoder = _load_external_text_encoder(external_tenc, dtype=dtype)
+        text_encoder = _load_external_text_encoder(external_tenc, torch_dtype=tenc_torch_dtype)
         _log_vram("AFTER load external TEnc")
     if text_encoder is None:
         if is_core_only:
-            _load_external_text_encoder(None, dtype=dtype)  # raises with an actionable message
+            _load_external_text_encoder(None, torch_dtype=tenc_torch_dtype)  # raises with an actionable message
         raise ValueError("Z Image checkpoint did not include a text encoder; provide one via 'tenc_sha'.")
     
     # Wrap VAE
@@ -313,7 +298,7 @@ def assemble_zimage_runtime(
     text_engine = ZImageTextProcessingEngine(text_encoder)
     
     _log_vram("FINAL")
-    logger.debug("Z Image runtime assembled: device=%s dtype=%s core_only=%s", device, dtype, is_core_only)
+    logger.debug("Z Image runtime assembled: device=%s dtype=%s core_only=%s", device, runtime_dtype, is_core_only)
     
     return ZImageEngineRuntime(
         vae=vae,
@@ -321,7 +306,7 @@ def assemble_zimage_runtime(
         text=ZImageTextPipelines(qwen3_text=text_engine),
         clip=clip,
         device=device,
-        dtype=dtype,
+        dtype=runtime_dtype,
     )
 
 

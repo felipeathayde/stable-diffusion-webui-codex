@@ -22,6 +22,8 @@ from typing import Any, Mapping
 from apps.backend.engines.common.base import CodexObjects
 from apps.backend.engines.zimage.spec import ZImageEngineRuntime, ZImageEngineSpec, assemble_zimage_runtime
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,14 +44,13 @@ class CodexZImageFactory:
         *,
         options: Mapping[str, Any],
     ) -> CodexZImageAssembly:
-        device = str(options.get("device", "cuda"))
-        dtype = str(options.get("dtype", "bf16"))
+        core_device = memory_management.manager.get_device(DeviceRole.CORE)
+        device = str(getattr(core_device, "type", core_device))
         runtime = assemble_zimage_runtime(
             spec=self._spec,
             codex_components=bundle.components,
             estimated_config=bundle.estimated_config,
             device=device,
-            dtype=dtype,
             vae_path=options.get("vae_path"),
             tenc_path=options.get("tenc_path"),
         )

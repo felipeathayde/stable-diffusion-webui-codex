@@ -20,7 +20,7 @@ import datetime as _dt
 import logging
 import os
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import torch
 
@@ -100,6 +100,8 @@ def execute_sampling(
     image_conditioning: torch.Tensor | None = None,
     init_latent: torch.Tensor | None = None,
     start_at_step: int | None = None,
+    post_step_hook: Callable[[torch.Tensor, int, int], None] | None = None,
+    post_sample_hook: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """Execute the sampler using the provided configuration."""
     if noise is None:
@@ -183,6 +185,8 @@ def execute_sampling(
         init_latent=init_latent,
         start_at_step=start_at_step,
         preview_callback=_preview_cb,
+        post_step_hook=post_step_hook,
+        post_sample_hook=post_sample_hook,
         context=context,
     )
 

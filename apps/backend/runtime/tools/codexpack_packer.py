@@ -7,9 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Offline CodexPack generator (GGUF → `*.codexpack.gguf`) for packed CUDA execution.
-Repacks GGML `Q4_K` 2D weights into the CodexPack `cuda.ggml_q4_k.linear.tilepack_v1` layout and emits a CodexPack GGUF that can be
-auto-detected by the runtime loader. Non tile-aligned `Q4_K` 2D weights are dequantized offline and stored as normal `F16` tensors.
-This avoids per-forward dequantization and avoids dequant-upfront VRAM blowups.
+Repacks GGML `Q4_K` 2D weights into the CodexPack `cuda.ggml_q4_k.linear.tilepack_v1` layout and emits an auto-detectable GGUF.
+Non tile-aligned `Q4_K` weights are dequantized offline to `F16` (avoids per-forward dequantization and dequant-upfront VRAM blowups).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexPackPackError` (class): Raised when packing fails (unsupported tensor types/shapes, invalid inputs, IO issues).

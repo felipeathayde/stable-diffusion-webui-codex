@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img).
+Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
 starts `/api/txt2img` and `/api/img2img`, and consumes task SSE events to update UI state.
 
@@ -226,6 +226,18 @@ export function useGeneration(tabId: string) {
         state.value.errorMessage = 'Select an initial image for img2img.'
         return
       }
+      if (p.useMask) {
+        if (engineOverrideForRequest === 'flux1_kontext') {
+          state.value.status = 'error'
+          state.value.errorMessage = 'Masking is not supported for Flux.1 img2img (Kontext) yet.'
+          return
+        }
+        if (!p.maskImageData) {
+          state.value.status = 'error'
+          state.value.errorMessage = 'Select a mask image for inpaint.'
+          return
+        }
+      }
     }
 
     const textEncoders = Array.isArray((p as any).textEncoders)
@@ -300,7 +312,7 @@ export function useGeneration(tabId: string) {
 
         const payload: any = {
           img2img_init_image: p.initImageData,
-          img2img_mask: '',
+          img2img_mask: p.useMask ? p.maskImageData : '',
           img2img_prompt: p.prompt,
           img2img_neg_prompt: supportsNegative ? p.negativePrompt : '',
           img2img_styles: [],
@@ -323,6 +335,15 @@ export function useGeneration(tabId: string) {
           smart_fallback: quicksettings.smartFallback,
           smart_cache: quicksettings.smartCache,
           img2img_extras: img2imgExtras,
+        }
+        if (p.useMask) {
+          payload.img2img_mask_enforcement = p.maskEnforcement
+          payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(p.inpaintingFill))))
+          payload.img2img_inpaint_full_res = Boolean(p.inpaintFullRes)
+          payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(p.inpaintFullResPadding)))
+          payload.img2img_inpainting_mask_invert = p.maskInvert ? 1 : 0
+          payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(p.maskBlur)))
+          payload.img2img_mask_round = Boolean(p.maskRound)
         }
         const { task_id } = await startImg2Img(payload)
         taskId = task_id

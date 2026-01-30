@@ -892,9 +892,11 @@ class ZImageTransformer2DModel(nn.Module):
             cap_pad_mask[:, cap_ori_len:] = True
             cap_feats[cap_pad_mask] = self.cap_pad_token.type_as(cap_feats)
         
-        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_STEPS", 3)
         debug_verbose = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False)
         debug_layers = env_flag("CODEX_ZIMAGE_DEBUG_LAYERS", False)
+        debug_config = env_flag("CODEX_ZIMAGE_DEBUG_CONFIG", False)
+        debug_enabled = debug_verbose or debug_layers or debug_config
+        debug_limit = env_int("CODEX_ZIMAGE_DEBUG_STEPS", 3) if debug_enabled else 0
         debug_step = int(self.cnt)
 
         # DEBUG LOGS

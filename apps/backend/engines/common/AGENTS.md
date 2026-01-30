@@ -26,3 +26,4 @@ Status: Active
 - 2026-01-08: `base.py` now imports `TextEncoderOverrideConfig` from `runtime.models.text_encoder_overrides` after the loader seam carve (no behavior change).
 - 2026-01-14: Flux engines now pass `expected_family` into `resolve_diffusion_bundle(...)` so prefixed Flux checkpoints can use metadata-driven signatures instead of state-dict detector guesses.
 - 2026-01-27: `BaseVideoEngine` now wires `_maybe_export_video(...)` to the ffmpeg exporter (mp4/webm/gif) so WAN txt2vid/img2vid can return `video {rel_path,mime}` (served under `/api/output/{rel_path}`).
+- 2026-01-29: `CodexDiffusionEngine.img2img` now accepts `GenerationResult` from the canonical use-case, allowing masked img2img full-res paste-back to return decoded/composited PIL images without re-decoding in the engine wrapper.

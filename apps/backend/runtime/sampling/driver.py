@@ -282,6 +282,8 @@ class CodexSampler:
         init_latent: Optional[torch.Tensor] = None,
         start_at_step: int | None = None,
         preview_callback: Optional[Callable[[torch.Tensor, int, int], None]] = None,
+        post_step_hook: Optional[Callable[[torch.Tensor, int, int], None]] = None,
+        post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         context: SamplingContext | None = None,
     ) -> torch.Tensor:
         base_noise = noise.detach().clone()
@@ -310,14 +312,6 @@ class CodexSampler:
                 raise ValueError(f"noise must be BCHW; got shape={tuple(noise.shape)}")
 
             target_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
-            # Diffusers flow pipelines (Flux/Z-Image) keep latents in fp32 for the
-            # scheduler integration even when the core runs in bf16/fp16. Keeping
-            # x/eps in low precision can destabilize the tail and produce "noise soup".
-            pred_type = getattr(getattr(model, "predictor", None), "prediction_type", None)
-            if isinstance(pred_type, str) and pred_type.lower() == "const":
-                if target_dtype in (torch.float16, torch.bfloat16):
-                    self._logger.info("[flow] Forcing sampling latents to float32 (was %s)", str(target_dtype))
-                target_dtype = torch.float32
             noise = base_noise.to(dtype=target_dtype)
 
             if init_latent is not None and init_latent.dtype != noise.dtype:
@@ -490,6 +484,11 @@ class CodexSampler:
                 # Default to native sampler; enable k-diffusion only when explicitly requested.
                 use_kd = False
                 if use_kd and sampler_kind in _KD_MAPPING and _KD_SAMPLING is not None:
+                    if post_step_hook is not None:
+                        raise NotImplementedError(
+                            "mask enforcement per-step is not supported for k-diffusion samplers yet; "
+                            "use a native sampler or post_blend enforcement"
+                        )
                     kd_name = _KD_MAPPING[sampler_kind]
 
                     compiled_cond = compile_conditions(cond)
@@ -553,6 +552,8 @@ class CodexSampler:
                         tick=lambda step: (_raise_if_cancelled() or backend_state.tick(sampling_step=step)),
                         preview_interval=active_context.preview_interval,
                     )
+                    if post_sample_hook is not None:
+                        x = post_sample_hook(x)
 
                     sampling_cleanup(denoiser)
                     prepared = False
@@ -773,6 +774,9 @@ class CodexSampler:
                     else:
                         raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
 
+                    if post_step_hook is not None:
+                        post_step_hook(x, i + 1, steps)
+
                     if preview_callback is not None and (preview_interval > 0 and ((i + 1) % preview_interval == 0) or (i + 1) == steps):
                         try:
                             preview_callback(denoised.detach(), i + 1, steps)
@@ -809,6 +813,9 @@ class CodexSampler:
 
                 backend_state.end()
                 state_started = False
+
+                if post_sample_hook is not None:
+                    x = post_sample_hook(x)
 
                 return x
             except _PrecisionFallbackRequest:

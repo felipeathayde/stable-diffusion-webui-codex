@@ -110,18 +110,18 @@ class ZImageTextEncoder(nn.Module):
                 config = Qwen3Config()
                 model = Qwen3_4B(config, dtype=torch_dtype)
                 
-                # DEBUG: Verify patch application
-                logger.info("DEBUG: Model embed_tokens type: %s", type(model.model.embed_tokens))
-                logger.info("DEBUG: Model q_proj type: %s", type(model.model.layers[0].self_attn.q_proj))
-                
-                # DEBUG: Inspect state dict entry for embedding
-                emb_key = "model.embed_tokens.weight"
-                if emb_key in state_dict:
-                    emb_tensor = state_dict[emb_key]
-                    logger.info("DEBUG: State dict %s type: %s", emb_key, type(emb_tensor))
-                    logger.info("DEBUG: State dict %s shape: %s", emb_key, emb_tensor.shape)
-                    if hasattr(emb_tensor, 'real_shape'):
-                        logger.info("DEBUG: State dict %s real_shape: %s", emb_key, emb_tensor.real_shape)
+                debug_run = env_flag("CODEX_ZIMAGE_DEBUG_TENC_RUN", False)
+                if debug_run:
+                    logger.info("[zimage-debug] tenc.gguf embed_tokens=%s", type(model.model.embed_tokens))
+                    logger.info("[zimage-debug] tenc.gguf q_proj=%s", type(model.model.layers[0].self_attn.q_proj))
+
+                    emb_key = "model.embed_tokens.weight"
+                    if emb_key in state_dict:
+                        emb_tensor = state_dict[emb_key]
+                        logger.info("[zimage-debug] tenc.gguf %s type=%s", emb_key, type(emb_tensor))
+                        logger.info("[zimage-debug] tenc.gguf %s shape=%s", emb_key, emb_tensor.shape)
+                        if hasattr(emb_tensor, "real_shape"):
+                            logger.info("[zimage-debug] tenc.gguf %s real_shape=%s", emb_key, emb_tensor.real_shape)
 
                 # Load state dict - patched layers will handle GGUF tensors correctly
                 try:
@@ -131,9 +131,9 @@ class ZImageTextEncoder(nn.Module):
                     if unexpected:
                         logger.debug("Unexpected keys: %s", unexpected[:10])
                 except RuntimeError as e:
-                    logger.error("DEBUG: RuntimeError during load_sd: %s", e)
+                    logger.error("RuntimeError during load_sd: %s", e)
                     # Dump model shape for comparison
-                    logger.error("DEBUG: Model embedding weight shape: %s", model.model.embed_tokens.weight.shape)
+                    logger.error("Model embedding weight shape: %s", model.model.embed_tokens.weight.shape)
                     raise
                 
                 model = model.to(dtype=torch_dtype)

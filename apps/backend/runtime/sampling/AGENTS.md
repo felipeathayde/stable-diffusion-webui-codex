@@ -1,7 +1,7 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
 Owner: Runtime Maintainers
-Last Review: 2026-01-28
+Last Review: 2026-01-30
 Status: Active
 
 ## Purpose
@@ -21,6 +21,7 @@ Status: Active
   - `get_sampler_spec(name)`: resolves sampler name and validates scheduler compatibility before sampling context creation.
 - `driver.py`
   - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default runs the **native** sampler loop (no k-diffusion dependency).
+  - Supports optional latent hooks (`post_step_hook`, `post_sample_hook`) for use-case-controlled postprocessing (e.g. masked img2img enforcement).
   - K-diffusion integration is not exposed via env vars (settings are Web UI / payload-driven). If k-diffusion routing is needed, port it behind an explicit Web UI setting instead of env toggles.
   - Restart sampler / UniPC helpers under `k_diffusion_extra` remain optional/experimental and must not be enabled via env flags.
 - `__init__.py` — import-light public surface re-exporting the sampler/scheduler catalog (no torch-bound exports).
@@ -43,7 +44,7 @@ Status: Active
 - 2026-01-18: `sampling/__init__.py` re-exports only the import-light sampler/scheduler catalog; torch-bound sampling internals remain in `inner_loop.py` / `driver.py`.
 - 2026-01-01: Native `DPM++ 2M` now uses the log-sigma-time DPM-Solver++(2M) update (k-diffusion parity); `DPM++ 2M SDE` uses the midpoint log-sigma form with independent noise in the native path (no BrownianTree noise sampler).
 - Distilled/turbo CFG: when unconditional conditioning is omitted (`uncond=None`), `sampling_function_inner` bypasses CFG interpolation and returns the conditional prediction directly. This allows Turbo models to run with `guidance_scale=0` without collapsing denoised to zeros.
-- Flow precision: for flow-match predictors (`prediction_type='const'`, e.g. Flux/Z-Image), `driver.py` forces sampling latents to fp32 (matching diffusers schedulers) even if the core runs in bf16/fp16.
+- Flow precision: for flow-match predictors (`prediction_type='const'`, e.g. Flux/Z-Image), the sigma ladder remains **fp32** (schedule stability), but sampling latents now follow the core role dtype (same policy as SD/SDXL). If quality regresses, force core precision to fp32 explicitly instead of relying on implicit overrides.
 
 ## Updates
 - 2026-01-02: Added standardized file header docstrings to sampling facade helpers (`__init__.py`, `condition.py`, `registry.py`) (doc-only change; part of rollout).
@@ -55,6 +56,7 @@ Status: Active
 - 2026-01-14: Flow-match runs now log which `scheduler_config.json` path is used to resolve `flow_shift` (diffusers repo dir vs vendored HF mirror) before building sigmas; sigma schedule logs now print `predict_min/max` correctly when the bound is 0.
 - 2026-01-24: Live preview interval is now resolved via thread-local overrides first (no per-task `os.environ` mutation); env `CODEX_PREVIEW_INTERVAL` remains as a fallback/debug input.
 - 2026-01-26: Sampling driver enforces smart-offload pre-sampling residency (TE must be off; VAE allowed only for live preview `FULL` with a warning about VRAM/perf).
+- 2026-01-30: Flow-match sampling no longer forces latents to fp32; latents now follow the core role dtype (SDXL parity). Sigma ladders remain fp32.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

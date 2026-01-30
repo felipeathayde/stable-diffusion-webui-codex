@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `SamplingOutput` (dataclass): Sampling result container (latents/images + metadata) passed between pipeline stages.
 - `Txt2ImgPipelineRunner` (class): Main orchestrator; owns the stage pipeline (conditioning/sampling/hires/refiner) and calls the runtime helpers
   (contains nested stage methods and integrates smart cache + pipeline tracing).
+- `GenerationResult` (dataclass): Standardized output container for the runner (`samples` + optional `decoded`).
 """
 # // tags: txt2img, pipeline, sdxl, hires, refiner
 
@@ -31,7 +32,6 @@ from PIL import Image
 
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
-from apps.backend.infra.config.env_flags import env_flag
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log, pipeline_trace
 from apps.backend.runtime.memory import memory_management
@@ -52,6 +52,7 @@ from apps.backend.runtime.memory.smart_offload_invariants import (
 )
 from apps.backend.runtime.processing.datatypes import (
     ConditioningPayload,
+    GenerationResult,
     HiResPlan,
     PromptContext,
     SamplingPlan,
@@ -356,7 +357,7 @@ class Txt2ImgPipelineRunner:
         subseeds: Sequence[int],
         subseed_strength: float,
         prompts: Sequence[str],
-    ) -> torch.Tensor:
+    ) -> GenerationResult:
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "StableDiffusionXL exige CUDA ativo (torch.cuda.is_available() retornou False). "
@@ -367,38 +368,7 @@ class Txt2ImgPipelineRunner:
         t_base_end: float | None = None
         t_hires_end: float | None = None
         t_refiner_end: float | None = None
-        
-        # Z Image Diffusers bypass: route to Diffusers pipeline when flag is enabled
-        if env_flag("CODEX_ZIMAGE_DIFFUSERS_BYPASS", default=False):
-            sd_model = getattr(processing, "sd_model", None)
-            engine_id = getattr(sd_model, "engine_id", "") if sd_model else ""
-            if engine_id == "zimage" and hasattr(sd_model, "sample_with_diffusers"):
-                self._logger.info("[zimage] Diffusers bypass enabled - routing to ZImagePipeline")
-                prompt = prompts[0] if prompts else getattr(processing, "prompt", "")
-                width = int(getattr(processing, "width", 1024) or 1024)
-                height = int(getattr(processing, "height", 1024) or 1024)
-                steps = int(getattr(processing, "steps", 9) or 9)
-                cfg = float(getattr(processing, "cfg_scale", 0.0) or 0.0)
-                seed = seeds[0] if seeds else None
-                
-                images = sd_model.sample_with_diffusers(
-                    prompt=prompt,
-                    height=height,
-                    width=width,
-                    num_inference_steps=steps,
-                    guidance_scale=cfg,
-                    seed=seed,
-                )
-                # Convert PIL images to tensor format expected by pipeline
-                from apps.backend.runtime.workflows.image_io import pil_to_tensor
-                if images:
-                    # pil_to_tensor returns decoded RGB tensor
-                    decoded_tensor = pil_to_tensor(images)
-                    # Mark as already decoded so base.py skips decode_latent_batch
-                    decoded_tensor._already_decoded = True
-                    return decoded_tensor
-                return torch.zeros(1, 3, height, width)
-        
+
         model_device, model_dtype = self._sd_model_device_info(processing)
         if model_device is not None:
             self._logger.info("SDXL sd_model device=%s dtype=%s", model_device, model_dtype)
@@ -458,7 +428,7 @@ class Txt2ImgPipelineRunner:
         except Exception:
             pass  # Timeline should never break generation
 
-        return final_samples
+        return GenerationResult(samples=final_samples, decoded=None)
 
     # ------------------------------------------------------------------ stages
     @pipeline_trace

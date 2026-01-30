@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-29
+Last Review: 2026-01-30
 Status: Active
 
 ## Purpose
@@ -38,5 +38,7 @@ Status: Active
 - 2026-01-25: `generation.py` now accepts `clip_skip` in `[0..12]` for txt2img (0 = “use default”), and validates `img2img_clip_skip` in `[0..12]` when provided.
 - 2026-01-27: Video endpoints accept optional `video_return_frames` and pass it through request extras; WAN txt2vid/img2vid/vid2vid results can include `video {rel_path,mime}` for the UI player and omit frames by default.
 - 2026-01-28: `generation.py` accepts `extras.zimage_variant="turbo"|"base"` (and `img2img_extras.zimage_variant`) and forwards it into `engine_options["zimage_variant"]` so the orchestrator can reload Z-Image when the variant changes.
+- 2026-01-29: `generation.py` `img2img_*` now accepts explicit mask/inpaint controls when `img2img_mask` is provided (`img2img_mask_enforcement`, `img2img_inpaint_full_res[_padding]`, `img2img_inpainting_fill`, `img2img_inpainting_mask_invert`, `img2img_mask_blur[_x/_y]`, `img2img_mask_round`).
 - 2026-01-29: `tools.py` adds `POST /api/tools/pnginfo/analyze` to extract PNG text metadata for the `/pnginfo` UI (no file persistence).
 - 2026-01-29: `tools.py` CodexPack v1 output can be produced either as the primary output of `POST /api/tools/convert-gguf` (`codexpack_v1=true`; `output_path=*.codexpack.gguf`; base GGUF is temp-only and deleted on success) or from an existing base GGUF via `POST /api/tools/codexpack/pack-v1` (Z-Image Base only; `Q4_K`; Comfy Layout metadata required).
+- 2026-01-30: `tools.py` GGUF conversion jobs now set `job["error"]` before flipping `job["status"]="error"` to avoid clients observing an error state with a missing error message.

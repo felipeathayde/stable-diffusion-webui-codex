@@ -455,7 +455,6 @@ def build_router(*, codex_root: Path) -> APIRouter:
                     pass
             except Exception as exc:
                 job = _gguf_conversion_jobs[job_id]
-                job["status"] = "error"
                 msg = str(exc)
                 try:
                     ctrl = _gguf_conversion_controls[job_id]
@@ -476,6 +475,7 @@ def build_router(*, codex_root: Path) -> APIRouter:
                 except Exception:
                     pass
                 job["error"] = msg
+                job["status"] = "error"
 
         thread = threading.Thread(target=run_conversion, daemon=True)
         thread.start()

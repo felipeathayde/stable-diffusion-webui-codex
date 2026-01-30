@@ -12,8 +12,8 @@ Delegates latent generation to `Txt2ImgPipelineRunner` and provides a canonical 
 Symbols (top-level; keep in sync; no ghosts):
 - `_logger` (constant): Module logger for the txt2img use case.
 - `_RUNNER` (constant): Singleton `Txt2ImgPipelineRunner` instance.
-- `generate_txt2img` (function): Runs the txt2img pipeline runner for the provided processing context and prompts.
-- `run_txt2img` (function): Canonical txt2img mode wrapper (progress + result events).
+- `generate_txt2img` (function): Runs the txt2img pipeline runner and returns a `GenerationResult` (samples + optional decoded output).
+- `run_txt2img` (function): Canonical txt2img mode wrapper (progress polling + decode + result events).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterator, Sequence
 
+from apps.backend.runtime.processing.datatypes import GenerationResult
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img
 from apps.backend.runtime.diagnostics.pipeline_debug import pipeline_trace
 from .txt2img_pipeline.runner import Txt2ImgPipelineRunner
@@ -39,7 +40,7 @@ def generate_txt2img(
     subseeds: Sequence[int],
     subseed_strength: float,
     prompts: Sequence[str],
-):
+) -> GenerationResult:
     if not isinstance(processing, CodexProcessingTxt2Img):
         raise TypeError("generate_txt2img expects CodexProcessingTxt2Img")
 
@@ -97,7 +98,7 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     subseeds = [-1]
     subseed_strength = 0.0
 
-    result: dict[str, Any] = {"latents": None, "error": None}
+    result: dict[str, Any] = {"output": None, "error": None}
     sampling_times: dict[str, float | None] = {"start": None, "end": None}
     done = threading.Event()
 
@@ -106,15 +107,15 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
             sampling_times["start"] = time.perf_counter()
             with smart_runtime_overrides(
                 smart_offload=bool(getattr(proc, "smart_offload", False)),
-                smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-                smart_cache=bool(getattr(proc, "smart_cache", False)),
-            ):
-                result["latents"] = generate_txt2img(
-                    processing=proc,
-                    conditioning=None,
-                    unconditional_conditioning=None,
-                    seeds=seeds,
-                    subseeds=subseeds,
+                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
+                    smart_cache=bool(getattr(proc, "smart_cache", False)),
+                ):
+                    result["output"] = generate_txt2img(
+                        processing=proc,
+                        conditioning=None,
+                        unconditional_conditioning=None,
+                        seeds=seeds,
+                        subseeds=subseeds,
                     subseed_strength=subseed_strength,
                     prompts=prompts,
                 )
@@ -147,16 +148,41 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     if result["error"] is not None:
         raise result["error"]
 
-    latents = result["latents"]
-    if not isinstance(latents, torch.Tensor):
-        raise RuntimeError(f"txt2img returned {type(latents).__name__}; expected torch.Tensor (latents)")
+    output = result["output"]
+    if not isinstance(output, GenerationResult):
+        raise RuntimeError(
+            f"txt2img pipeline returned {type(output).__name__}; expected GenerationResult (samples+decoded)"
+        )
+
+    latents = output.samples
+    decoded_images = output.decoded
 
     decode_start = time.perf_counter()
-    if getattr(latents, "_already_decoded", False):
-        decoded = latents
+    if decoded_images is not None:
+        if isinstance(decoded_images, torch.Tensor):
+            images = latents_to_pil(decoded_images)
+        elif isinstance(decoded_images, list):
+            try:
+                from PIL import Image as _PILImage
+
+                if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
+                    raise TypeError("decoded images are not PIL.Image.Image")
+            except Exception as exc:
+                raise RuntimeError(
+                    "txt2img pipeline returned decoded images, but they are not a PIL image list"
+                ) from exc
+            images = decoded_images
+        else:
+            raise RuntimeError(
+                "txt2img pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
+            )
     else:
+        if not isinstance(latents, torch.Tensor):
+            raise RuntimeError(
+                f"txt2img returned {type(latents).__name__}; expected torch.Tensor (latents)"
+            )
         decoded = decode_latent_batch(engine, latents)
-    images = latents_to_pil(decoded)
+        images = latents_to_pil(decoded)
     decode_end = time.perf_counter()
 
     extra_params: dict[str, object] = {}

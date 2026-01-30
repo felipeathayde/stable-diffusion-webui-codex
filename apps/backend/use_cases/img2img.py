@@ -52,6 +52,12 @@ from apps.backend.runtime.processing.models import CodexProcessingImg2Img
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
 from apps.backend.runtime.workflows.image_init import prepare_init_bundle
 from apps.backend.runtime.workflows.image_io import latents_to_pil, pil_to_tensor
+from apps.backend.runtime.workflows.masked_img2img import (
+    MASK_ENFORCEMENT_PER_STEP_CLAMP,
+    MASK_ENFORCEMENT_POST_BLEND,
+    apply_inpaint_full_res_composite,
+    prepare_masked_img2img_bundle,
+)
 from apps.backend.runtime.workflows.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
@@ -437,12 +443,14 @@ def generate_img2img(
     seeds: Sequence[int] | None = None,
     subseeds: Sequence[int] | None = None,
     subseed_strength: float | None = None,
-) -> torch.Tensor:
+) -> GenerationResult:
     if not isinstance(processing, CodexProcessingImg2Img):
         raise TypeError("generate_img2img expects CodexProcessingImg2Img")
 
     if _resolve_img2img_variant(processing) == "kontext":
-        return _generate_kontext_img2img(
+        if processing.has_mask():
+            raise NotImplementedError("masking is not supported for flux1_kontext img2img yet")
+        samples = _generate_kontext_img2img(
             processing,
             conditioning,
             unconditional_conditioning,
@@ -451,6 +459,7 @@ def generate_img2img(
             subseeds=subseeds,
             subseed_strength=subseed_strength,
         )
+        return GenerationResult(samples=samples, decoded=None)
 
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
@@ -489,19 +498,48 @@ def generate_img2img(
         unconditional_conditioning,
     )
 
-    bundle = prepare_init_bundle(processing)
-    processing.init_latent = bundle.latents
+    post_step_hook = None
+    post_sample_hook = None
+    full_res_plan = None
+    if processing.has_mask():
+        if bool(getattr(getattr(processing, "hires", None), "enabled", False)):
+            raise NotImplementedError("HiRes is not supported for masked img2img yet")
+        enforcement = getattr(processing, "mask_enforcement", None)
+        masked_bundle, enforcer = prepare_masked_img2img_bundle(
+            processing,
+            plan,
+            enforce_mode=enforcement,
+        )
+        processing.init_latent = masked_bundle.init_latent
+        processing.image_conditioning = masked_bundle.image_conditioning
+        full_res_plan = masked_bundle.full_res
+        enforcement_value = str(enforcement).strip()
+        if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
+            post_step_hook = enforcer.post_step
+            post_sample_hook = enforcer.post_sample
+        elif enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
+            post_sample_hook = enforcer.post_sample
+        else:
+            raise ValueError(
+                f"Unknown mask enforcement '{enforcement_value}' (internal validation bug)"
+            )
+        init_latent = masked_bundle.init_latent
+        image_conditioning = masked_bundle.image_conditioning
+    else:
+        bundle = prepare_init_bundle(processing)
+        processing.init_latent = bundle.latents
 
-    image_conditioning = img2img_conditioning(
-        processing.sd_model,
-        bundle.tensor,
-        bundle.latents,
-        image_mask=bundle.mask,
-        round_mask=getattr(processing, "round_image_mask", True),
-    )
-    processing.image_conditioning = image_conditioning
+        image_conditioning = img2img_conditioning(
+            processing.sd_model,
+            bundle.tensor,
+            bundle.latents,
+            image_mask=bundle.mask,
+            round_mask=getattr(processing, "round_image_mask", True),
+        )
+        processing.image_conditioning = image_conditioning
+        init_latent = bundle.latents
 
-    noise = rng.next().to(bundle.latents)
+    noise = rng.next().to(init_latent)
     start_step = max(
         0,
         min(
@@ -522,16 +560,23 @@ def generate_img2img(
             rng=rng,
             noise=noise,
             image_conditioning=image_conditioning,
-            init_latent=bundle.latents,
+            init_latent=init_latent,
             start_at_step=start_step,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
         )
     finally:
         finalize_tiling(tiling_applied, old_tiled)
 
+    if full_res_plan is not None:
+        decoded = decode_latent_batch(processing.sd_model, samples)
+        images = latents_to_pil(decoded)
+        composited = apply_inpaint_full_res_composite(images, plan=full_res_plan)
+        return GenerationResult(samples=samples, decoded=composited)
+
     hires_plan = _build_hires_plan(processing)
     if hires_plan is None:
-        result = GenerationResult(samples=samples, decoded=None)
-        return result.samples
+        return GenerationResult(samples=samples, decoded=None)
 
     hires_samples = _run_hires_pass(
         processing,
@@ -541,8 +586,7 @@ def generate_img2img(
         prompt_context,
     )
 
-    result = GenerationResult(samples=hires_samples, decoded=None)
-    return result.samples
+    return GenerationResult(samples=hires_samples, decoded=None)
 
 
 def run_img2img(

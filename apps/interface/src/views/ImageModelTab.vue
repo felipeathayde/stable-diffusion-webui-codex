@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Image model tab view (txt2img/img2img) UI for SD/Flux/ZImage-family engines.
-Owns prompt + parameter controls, init-image handling for img2img, per-tab history, and integrates with the generation composable to
+Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-family engines.
+Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -26,9 +26,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setRefiner` (function): Applies partial updates to the refiner config object.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
-- `onInitToggle` (function): Toggles init-image usage (img2img) and triggers dimension sync when enabled.
+- `toggleInitImage` (function): Toggles init-image usage (img2img).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
 - `clearInit` (function): Clears init image fields.
+- `toggleMask` (function): Toggles mask usage (inpaint) for masked img2img.
+- `onMaskFileSet` (function): Reads a mask file into a data URL and stores it after validating dimensions (async).
+- `clearMask` (function): Clears mask fields.
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
 - `randomizeSeed` (function): Randomizes the seed field for the current tab params.
 - `reuseSeed` (function): Reuses the last seed from history/current run as the next seed.
@@ -69,10 +72,15 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
 
         <div v-if="supportsImg2Img" class="panel-section">
-          <label class="switch-label">
-            <input type="checkbox" :checked="params.useInitImage" :disabled="isRunning" @change="onInitToggle" />
-            <span>Use Initial Image (img2img)</span>
-          </label>
+          <button
+            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+            type="button"
+            :aria-pressed="params.useInitImage"
+            :disabled="isRunning"
+            @click="toggleInitImage"
+          >
+            Use Initial Image (img2img)
+          </button>
 
           <div v-if="params.useInitImage">
             <InitialImageCard
@@ -99,6 +107,124 @@ Symbols (top-level; keep in sync; no ghosts):
               :disabled="isRunning"
               @update:modelValue="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             />
+
+            <button
+              :class="[
+                'btn',
+                'qs-toggle-btn',
+                'qs-toggle-btn--sm',
+                params.useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
+              ]"
+              type="button"
+              :aria-pressed="params.useMask"
+              :disabled="isRunning || props.type === 'flux1'"
+              @click="toggleMask"
+            >
+              Use Mask (inpaint)
+            </button>
+            <p v-if="props.type === 'flux1'" class="caption">
+              Masking is not supported for Flux.1 img2img (Kontext) yet.
+            </p>
+
+            <div v-if="params.useMask">
+              <InitialImageCard
+                label="Mask"
+                accept="image/*"
+                :src="params.maskImageData"
+                :has-image="Boolean(params.maskImageData)"
+                :disabled="isRunning"
+                placeholder="Select a mask image (RGBA/alpha supported)."
+                @set="onMaskFileSet"
+                @clear="clearMask"
+              >
+                <template #footer>
+                  <p v-if="params.maskImageName" class="caption">{{ params.maskImageName }}</p>
+                </template>
+              </InitialImageCard>
+
+              <div class="panel-section">
+                <label class="label-muted">Enforcement</label>
+                <select
+                  class="select-md"
+                  :disabled="isRunning"
+                  :value="params.maskEnforcement"
+                  @change="setParams({ maskEnforcement: ($event.target as HTMLSelectElement).value as any })"
+                >
+                  <option value="post_blend">Forge-style (post-sample blend)</option>
+                  <option value="per_step_clamp">Clamp per step</option>
+                </select>
+              </div>
+
+              <div class="panel-section">
+                <label class="label-muted">Masked content</label>
+                <select
+                  class="select-md"
+                  :disabled="isRunning"
+                  :value="params.inpaintingFill"
+                  @change="setParams({ inpaintingFill: Math.max(0, Math.min(3, Math.trunc(Number(($event.target as HTMLSelectElement).value)))) })"
+                >
+                  <option :value="1">Original</option>
+                  <option :value="0">Fill</option>
+                  <option :value="2">Latent noise</option>
+                  <option :value="3">Latent nothing</option>
+                </select>
+              </div>
+
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.inpaintFullRes ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="params.inpaintFullRes"
+                :disabled="isRunning"
+                @click="setParams({ inpaintFullRes: !params.inpaintFullRes })"
+              >
+                Inpaint area: Only masked (full-res)
+              </button>
+
+              <SliderField
+                v-if="params.inpaintFullRes"
+                label="Only masked padding"
+                :modelValue="params.inpaintFullResPadding"
+                :min="0"
+                :max="256"
+                :step="1"
+                :inputStep="1"
+                inputClass="cdx-input-w-xs"
+                :disabled="isRunning"
+                @update:modelValue="(v) => setParams({ inpaintFullResPadding: Math.max(0, Math.trunc(v)) })"
+              />
+
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.maskInvert ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="params.maskInvert"
+                :disabled="isRunning"
+                @click="setParams({ maskInvert: !params.maskInvert })"
+              >
+                Invert mask
+              </button>
+
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', params.maskRound ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="params.maskRound"
+                :disabled="isRunning"
+                @click="setParams({ maskRound: !params.maskRound })"
+              >
+                Round mask
+              </button>
+
+              <SliderField
+                label="Mask blur"
+                :modelValue="params.maskBlur"
+                :min="0"
+                :max="64"
+                :step="1"
+                :inputStep="1"
+                inputClass="cdx-input-w-xs"
+                :disabled="isRunning"
+                @update:modelValue="(v) => setParams({ maskBlur: Math.max(0, Math.trunc(v)) })"
+              />
+            </div>
           </div>
         </div>
       </PromptCard>
@@ -450,7 +576,14 @@ const negativeText = computed({
 watch(supportsImg2Img, (supported) => {
   if (supported) return
   if (!params.value.useInitImage) return
-  setParams({ useInitImage: false, initImageData: '', initImageName: '' })
+  setParams({
+    useInitImage: false,
+    initImageData: '',
+    initImageName: '',
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+  })
 }, { immediate: true })
 
 watch(showHighres, (show) => {
@@ -547,6 +680,9 @@ function applyHistory(item: ImageRunHistoryItem): void {
     useInitImage: false,
     initImageData: '',
     initImageName: '',
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
   })
   toast('Applied history params.')
 }
@@ -669,12 +805,18 @@ function snapInitImageDim(value: number): number {
   return Math.max(_INIT_IMAGE_DIM_MIN, Math.min(_INIT_IMAGE_DIM_MAX, snapped))
 }
 
-function onInitToggle(e: Event): void {
-  const checked = (e.target as HTMLInputElement).checked
+function toggleInitImage(): void {
+  const checked = !Boolean(params.value.useInitImage)
   const wasEnabled = Boolean(params.value.useInitImage)
   setParams({ useInitImage: checked })
   if (!checked) {
-    setParams({ initImageData: '', initImageName: '' })
+    setParams({
+      initImageData: '',
+      initImageName: '',
+      useMask: false,
+      maskImageData: '',
+      maskImageName: '',
+    })
     return
   }
   if (!wasEnabled) maybeApplyKontextDefaults()
@@ -683,7 +825,14 @@ function onInitToggle(e: Event): void {
 async function onInitFileSet(file: File): Promise<void> {
   const wasEnabled = Boolean(params.value.useInitImage)
   const dataUrl = await readFileAsDataURL(file)
-  const patch: Partial<ImageBaseParams> = { initImageData: dataUrl, initImageName: file.name, useInitImage: true }
+  const patch: Partial<ImageBaseParams> = {
+    initImageData: dataUrl,
+    initImageName: file.name,
+    useInitImage: true,
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+  }
   try {
     const { width, height } = await readImageDimensions(dataUrl)
     patch.width = snapInitImageDim(width)
@@ -695,7 +844,49 @@ async function onInitFileSet(file: File): Promise<void> {
   if (!wasEnabled) maybeApplyKontextDefaults()
 }
 
-function clearInit(): void { setParams({ initImageData: '', initImageName: '' }) }
+function clearInit(): void {
+  setParams({
+    initImageData: '',
+    initImageName: '',
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+  })
+}
+
+function toggleMask(): void {
+  if (props.type === 'flux1') return
+  const next = !Boolean(params.value.useMask)
+  const patch: Partial<ImageBaseParams> = { useMask: next }
+  if (!next) {
+    patch.maskImageData = ''
+    patch.maskImageName = ''
+  }
+  setParams(patch)
+}
+
+async function onMaskFileSet(file: File): Promise<void> {
+  if (!params.value.initImageData) {
+    toast('Select an initial image before setting a mask.')
+    return
+  }
+  const dataUrl = await readFileAsDataURL(file)
+  try {
+    const { width, height } = await readImageDimensions(dataUrl)
+    if (width !== params.value.width || height !== params.value.height) {
+      toast(`Mask size must match init image size: expected ${params.value.width}×${params.value.height}, got ${width}×${height}.`)
+      return
+    }
+  } catch {
+    toast('Failed to load mask image.')
+    return
+  }
+  setParams({ useMask: true, maskImageData: dataUrl, maskImageName: file.name })
+}
+
+function clearMask(): void {
+  setParams({ maskImageData: '', maskImageName: '' })
+}
 
 function toDataUrl(image: GeneratedImage): string { return `data:image/${image.format};base64,${image.data}` }
 
@@ -718,7 +909,14 @@ async function sendToImg2Img(image: GeneratedImage): Promise<void> {
   if (!supportsImg2Img.value) return
   const wasEnabled = Boolean(params.value.useInitImage)
   const dataUrl = toDataUrl(image)
-  const patch: Partial<ImageBaseParams> = { useInitImage: true, initImageData: dataUrl, initImageName: `from_${props.type}.png` }
+  const patch: Partial<ImageBaseParams> = {
+    useInitImage: true,
+    initImageData: dataUrl,
+    initImageName: `from_${props.type}.png`,
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+  }
   try {
     const { width, height } = await readImageDimensions(dataUrl)
     patch.width = snapInitImageDim(width)

@@ -1,7 +1,7 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
 Owner: Backend Use-Case Maintainers
-Last Review: 2026-01-27
+Last Review: 2026-01-30
 Status: Active
 
 ## Purpose
@@ -21,4 +21,6 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to use case modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining use case modules (`__init__.py`, `img2vid.py`, `txt2img.py`, `txt2vid.py`) (doc-only change; part of rollout).
 - 2026-01-26: Smart offload pre-conditioning cleanup now ensures denoiser/VAE are not left resident when conditioning starts (txt2img runner + img2img).
+- 2026-01-29: `img2img.py` now supports Codex-native masked img2img (“inpaint”) for SD-family engines (Forge-style full-res crop/paste-back + selectable enforcement: post-blend vs per-step clamp). Flux Kontext explicitly fails loud when a mask is provided (not yet supported).
+- 2026-01-30: `txt2img` now consumes `GenerationResult` from the staged runner; removed the global `_already_decoded` decode sentinel.
 - 2026-01-27: WAN video results now support video-first payloads: txt2vid/img2vid export via ffmpeg and return `result.video { rel_path, mime }`; a per-tab `Return frames` knob controls whether frames are included (fallback returns frames when `saveOutput` is off or export fails). Vid2vid now honors the same knob for preview frames.

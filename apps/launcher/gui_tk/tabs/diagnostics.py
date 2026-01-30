@@ -87,7 +87,6 @@ class DiagnosticsTab:
             ("CODEX_PIPELINE_DEBUG", "Pipeline Debug"),
             ("CODEX_DUMP_LATENTS", "Dump Latents"),
             ("CODEX_TIMELINE", "Timeline Tracer (TVA-style execution timeline)"),
-            ("CODEX_ZIMAGE_DIFFUSERS_BYPASS", "Z Image: Use Diffusers Pipeline (bypasses Codex sampler)"),
         ]
         r = 1
         for key, label in debug_flags:
@@ -284,4 +283,3 @@ class DiagnosticsTab:
             IntSetting("CODEX_TRACE_DEBUG_MAX_PER_FUNC", default=50, minimum=1).get(env)
         except SettingValidationError as exc:
             raise RuntimeError(str(exc)) from exc
-

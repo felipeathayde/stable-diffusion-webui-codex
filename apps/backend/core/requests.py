@@ -94,6 +94,15 @@ class Txt2ImgRequest(BaseRequest):
 class Img2ImgRequest(BaseRequest):
     init_image: Any = None
     mask: Any = None
+    mask_enforcement: Optional[str] = None
+    inpainting_fill: int = 0
+    inpaint_full_res: bool = True
+    inpaint_full_res_padding: int = 0
+    inpainting_mask_invert: int = 0
+    mask_blur: int = 4
+    mask_blur_x: int = 4
+    mask_blur_y: int = 4
+    mask_round: bool = True
     denoise_strength: float = 0.5
     width: int = 512
     height: int = 512

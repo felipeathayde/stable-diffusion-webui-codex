@@ -40,3 +40,4 @@ Status: Active
 - 2026-01-25: `model_tabs.ts` image-tab defaults now set `clipSkip=0` (auto/default sentinel). Payload builders can still send explicit clip skip values; 0 resets to engine defaults.
 - 2026-01-27: `model_tabs.ts` WAN video params now include `returnFrames` (default false) to control whether frames are included in the final result payload (txt2vid/img2vid full frames; vid2vid preview frames).
 - 2026-01-28: `model_tabs.ts` Z-Image params now include `zimageTurbo` (default true) to persist the Turbo/Base variant selection per tab.
+- 2026-01-29: `model_tabs.ts` image-tab params now include masked img2img (“inpaint”) fields (`useMask`, `maskImageData`, and inpaint controls like enforcement/full-res/padding/invert/round/blur/fill mode) so the model tab can drive Codex-native masking end-to-end.

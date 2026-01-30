@@ -16,6 +16,7 @@ Status: Active
 - `image_io.py` — PIL/tensor conversions + optional hires decode helper.
 - `tiling.py` — VAE tiling apply/restore toggles.
 - `image_init.py` — Utilities for encoding img2img/img2vid init images into tensor+latent bundles.
+- `masked_img2img.py` — Masked img2img (“inpaint”) helpers: mask normalize/invert/blur + full-res crop plan + latent mask enforcement inputs.
 - `video.py` — Video plan builder, LoRA application, sampler configuration, and metadata assembly.
 - `__init__.py` — Package marker (intentionally no re-export facade; callers import modules directly).
 

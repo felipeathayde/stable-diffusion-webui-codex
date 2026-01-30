@@ -128,6 +128,16 @@ export interface ImageBaseParams {
   initImageData: string
   initImageName: string
   denoiseStrength: number
+  useMask: boolean
+  maskImageData: string
+  maskImageName: string
+  maskEnforcement: 'post_blend' | 'per_step_clamp'
+  inpaintFullRes: boolean
+  inpaintFullResPadding: number
+  inpaintingFill: number
+  maskInvert: boolean
+  maskBlur: number
+  maskRound: boolean
   zimageTurbo?: boolean
 }
 
@@ -254,6 +264,16 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     initImageData: '',
     initImageName: '',
     denoiseStrength: 0.75,
+    useMask: false,
+    maskImageData: '',
+    maskImageName: '',
+    maskEnforcement: 'post_blend',
+    inpaintFullRes: true,
+    inpaintFullResPadding: 0,
+    inpaintingFill: 1,
+    maskInvert: false,
+    maskBlur: 4,
+    maskRound: true,
   }
   if (type === 'zimage') {
     imageDefaults.zimageTurbo = true

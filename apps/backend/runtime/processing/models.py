@@ -368,6 +368,7 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     inpaint_full_res: bool = True
     inpaint_full_res_padding: int = 0
     inpainting_mask_invert: int = 0
+    mask_enforcement: Optional[str] = None
     initial_noise_multiplier: Optional[float] = None
     latent_mask: Any = None
     resize_mode: int = 0

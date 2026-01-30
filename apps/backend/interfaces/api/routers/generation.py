@@ -972,6 +972,65 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         mask_data = payload.get('img2img_mask')
         mask_image = media.decode_image(mask_data) if mask_data else None
 
+        mask_enforcement = None
+        inpainting_fill = 0
+        inpaint_full_res = True
+        inpaint_full_res_padding = 0
+        inpainting_mask_invert = 0
+        mask_blur = 4
+        mask_blur_x = 4
+        mask_blur_y = 4
+        mask_round = True
+
+        if mask_image is not None:
+            raw_enforcement = payload.get("img2img_mask_enforcement")
+            if not isinstance(raw_enforcement, str) or not raw_enforcement.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_mask_enforcement' is required when 'img2img_mask' is provided",
+                )
+            mask_enforcement = raw_enforcement.strip()
+            if mask_enforcement not in ("post_blend", "per_step_clamp"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid 'img2img_mask_enforcement' (allowed: post_blend, per_step_clamp)",
+                )
+
+            if "img2img_inpainting_fill" in payload:
+                inpainting_fill = _p.as_int(payload, "img2img_inpainting_fill")
+            if inpainting_fill not in (0, 1, 2, 3):
+                raise HTTPException(status_code=400, detail="'img2img_inpainting_fill' must be 0,1,2,3")
+
+            if "img2img_inpaint_full_res" in payload:
+                inpaint_full_res = _p.as_bool(payload, "img2img_inpaint_full_res")
+            if "img2img_inpaint_full_res_padding" in payload:
+                inpaint_full_res_padding = _p.as_int(payload, "img2img_inpaint_full_res_padding")
+            if inpaint_full_res_padding < 0:
+                raise HTTPException(status_code=400, detail="'img2img_inpaint_full_res_padding' must be >= 0")
+
+            if "img2img_inpainting_mask_invert" in payload:
+                inpainting_mask_invert = _p.as_int(payload, "img2img_inpainting_mask_invert")
+            if inpainting_mask_invert not in (0, 1):
+                raise HTTPException(status_code=400, detail="'img2img_inpainting_mask_invert' must be 0 or 1")
+
+            if "img2img_mask_blur" in payload:
+                mask_blur = _p.as_int(payload, "img2img_mask_blur")
+                mask_blur_x = mask_blur
+                mask_blur_y = mask_blur
+            if "img2img_mask_blur_x" in payload:
+                mask_blur_x = _p.as_int(payload, "img2img_mask_blur_x")
+            if "img2img_mask_blur_y" in payload:
+                mask_blur_y = _p.as_int(payload, "img2img_mask_blur_y")
+            if mask_blur_x < 0 or mask_blur_y < 0:
+                raise HTTPException(status_code=400, detail="'img2img_mask_blur' must be >= 0")
+
+            if "img2img_mask_round" in payload:
+                mask_round = _p.as_bool(payload, "img2img_mask_round")
+        else:
+            raw_enforcement = payload.get("img2img_mask_enforcement")
+            if isinstance(raw_enforcement, str) and raw_enforcement.strip():
+                raise HTTPException(status_code=400, detail="'img2img_mask_enforcement' requires 'img2img_mask'")
+
         engine_override = payload.get('engine')
         model_override = payload.get('model')
         engine_key = _canonical_engine_key(engine_override)
@@ -1192,6 +1251,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             metadata=metadata,
             init_image=init_image,
             mask=mask_image,
+            mask_enforcement=mask_enforcement,
+            inpainting_fill=inpainting_fill,
+            inpaint_full_res=inpaint_full_res,
+            inpaint_full_res_padding=inpaint_full_res_padding,
+            inpainting_mask_invert=inpainting_mask_invert,
+            mask_blur=mask_blur,
+            mask_blur_x=mask_blur_x,
+            mask_blur_y=mask_blur_y,
+            mask_round=mask_round,
             denoise_strength=denoise,
             width=width_val,
             height=height_val,

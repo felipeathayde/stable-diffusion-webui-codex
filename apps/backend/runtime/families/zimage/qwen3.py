@@ -189,16 +189,6 @@ class Attention(nn.Module):
         k = self.k_proj(hidden_states)
         v = self.v_proj(hidden_states)
         
-        # DEBUG: Check Q/K/V projections
-        if not hasattr(self, '_attn_debug_logged'):
-            q_nan = torch.isnan(q).any().item()
-            k_nan = torch.isnan(k).any().item()
-            v_nan = torch.isnan(v).any().item()
-            if q_nan or k_nan or v_nan:
-                self._attn_debug_logged = True
-                logger.error("[attn-debug] NaN after projections! q_nan=%s k_nan=%s v_nan=%s", q_nan, k_nan, v_nan)
-                logger.error("[attn-debug] q stats: mean=%.4f std=%.4f", q.float().mean().item(), q.float().std().item())
-        
         # Reshape to [batch, num_heads, seq_len, head_dim]
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
@@ -210,50 +200,16 @@ class Attention(nn.Module):
         if self.k_norm is not None:
             k = self.k_norm(k)
         
-        # DEBUG: Check after Q/K norm
-        q_nan = torch.isnan(q).any().item()
-        k_nan = torch.isnan(k).any().item()
-        if q_nan or k_nan:
-            logger.error("[attn-debug] NaN after Q/K norm! q_nan=%s k_nan=%s", q_nan, k_nan)
-        
         # Apply RoPE
         cos, sin = self.rotary_emb(v, seq_len)
         cos = cos.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, head_dim]
         sin = sin.unsqueeze(0).unsqueeze(0)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
         
-        # DEBUG: Check after RoPE
-        q_nan = torch.isnan(q).any().item()
-        k_nan = torch.isnan(k).any().item()
-        if q_nan or k_nan:
-            logger.error("[attn-debug] NaN after RoPE! q_nan=%s k_nan=%s", q_nan, k_nan)
-        
         # Repeat K, V for GQA
         if self.num_key_value_groups > 1:
             k = k.repeat_interleave(self.num_key_value_groups, dim=1)
             v = v.repeat_interleave(self.num_key_value_groups, dim=1)
-        
-        # DEBUG: Log shapes and stats before SDPA
-        if not hasattr(self, '_sdpa_debug_logged'):
-            self._sdpa_debug_logged = True
-            logger.info("[sdpa-debug] Q shape=%s K shape=%s V shape=%s", q.shape, k.shape, v.shape)
-            logger.info("[sdpa-debug] Q dtype=%s min=%.4f max=%.4f", q.dtype, q.float().min().item(), q.float().max().item())
-            logger.info("[sdpa-debug] K dtype=%s min=%.4f max=%.4f", k.dtype, k.float().min().item(), k.float().max().item())
-            logger.info("[sdpa-debug] attention_mask shape=%s dtype=%s", 
-                       attention_mask.shape if attention_mask is not None else None,
-                       attention_mask.dtype if attention_mask is not None else None)
-            if attention_mask is not None:
-                # Check mask values
-                mask_finite = torch.isfinite(attention_mask)
-                # Get the diagonal of the mask (positions [i,i] where token can attend to itself)
-                # For 4D mask [batch, 1, seq, seq], we need attention_mask[0, 0].diagonal()
-                if len(attention_mask.shape) == 4:
-                    mask_diag = attention_mask[0, 0].diagonal()
-                else:
-                    mask_diag = attention_mask.diagonal()
-                logger.info("[sdpa-debug] mask finite=%d/%d diag[:5]=%s",
-                           mask_finite.sum().item(), attention_mask.numel(),
-                           mask_diag[:5].tolist())
         
         # Scaled dot-product attention
         # IMPORTANT: Always use is_causal=False! The causal mask is already in attention_mask.
@@ -263,10 +219,6 @@ class Attention(nn.Module):
             attn_mask=attention_mask,
             is_causal=False,  # Causal mask is in attention_mask, not is_causal flag
         )
-        
-        # DEBUG: Check after SDPA
-        if torch.isnan(attn_output).any():
-            logger.error("[attn-debug] NaN after SDPA! output_shape=%s", attn_output.shape)
         
         # Reshape and project output
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -308,19 +260,7 @@ class TransformerBlock(nn.Module):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         
-        # DEBUG: Check after input_layernorm (only first time NaN appears)
-        if torch.isnan(hidden_states).any() and not hasattr(self, '_debug_logged'):
-            self._debug_logged = True
-            logger.error("[block-debug] NaN after input_layernorm! residual_nan=%s", torch.isnan(residual).any())
-            return residual + hidden_states  # Return early to pinpoint
-        
         hidden_states = self.self_attn(hidden_states, attention_mask, position_ids)
-        
-        # DEBUG: Check after attention
-        if torch.isnan(hidden_states).any() and not hasattr(self, '_debug_logged'):
-            self._debug_logged = True
-            logger.error("[block-debug] NaN after self_attn!")
-            return residual + hidden_states
         
         hidden_states = residual + hidden_states
         
@@ -328,18 +268,7 @@ class TransformerBlock(nn.Module):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         
-        # DEBUG: Check after post_attention_layernorm
-        if torch.isnan(hidden_states).any() and not hasattr(self, '_debug_logged'):
-            self._debug_logged = True
-            logger.error("[block-debug] NaN after post_attention_layernorm!")
-            return residual + hidden_states
-        
         hidden_states = self.mlp(hidden_states)
-        
-        # DEBUG: Check after MLP
-        if torch.isnan(hidden_states).any() and not hasattr(self, '_debug_logged'):
-            self._debug_logged = True
-            logger.error("[block-debug] NaN after mlp!")
         
         hidden_states = residual + hidden_states
         
@@ -372,6 +301,27 @@ class Qwen3Model(nn.Module):
     
     def set_input_embeddings(self, value: nn.Embedding):
         self.embed_tokens = value
+
+    def _build_attention_mask(
+        self,
+        *,
+        batch_size: int,
+        seq_len: int,
+        dtype: torch.dtype,
+        device: torch.device,
+        attention_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        causal_mask = torch.zeros((1, 1, seq_len, seq_len), dtype=dtype, device=device)
+        causal_mask = causal_mask.masked_fill(
+            torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1),
+            float("-inf"),
+        )
+        if attention_mask is None:
+            return causal_mask
+        if attention_mask.ndim != 2 or tuple(attention_mask.shape) != (batch_size, seq_len):
+            raise ValueError(f"attention_mask must be [B, L]; got shape={tuple(attention_mask.shape)}")
+        is_padding = attention_mask.to(device=device).view(batch_size, 1, 1, seq_len) == 0
+        return causal_mask.expand(batch_size, 1, seq_len, seq_len).masked_fill(is_padding, float("-inf"))
     
     def forward(
         self,
@@ -390,18 +340,15 @@ class Qwen3Model(nn.Module):
         hidden_states = inputs_embeds
         all_hidden_states = [] if output_hidden_states else None
         
-        # Create causal mask if attention_mask provided
-        causal_mask = None
-        if attention_mask is not None:
-            # Convert attention_mask to causal format
-            batch_size, seq_len = attention_mask.shape
-            causal_mask = torch.triu(
-                torch.ones(seq_len, seq_len, dtype=hidden_states.dtype, device=hidden_states.device) * float("-inf"),
-                diagonal=1
-            )
-            # Combine with padding mask
-            padding_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2).to(hidden_states.dtype)) * float("-inf")
-            causal_mask = causal_mask.unsqueeze(0) + padding_mask
+        batch_size = int(hidden_states.shape[0])
+        seq_len = int(hidden_states.shape[1])
+        causal_mask = self._build_attention_mask(
+            batch_size=batch_size,
+            seq_len=seq_len,
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+            attention_mask=attention_mask,
+        )
         
         for layer in self.layers:
             if output_hidden_states:
@@ -420,7 +367,6 @@ class Qwen3_4B(nn.Module):
     """Qwen3-4B for text encoding.
     
     This is a wrapper that provides the same interface as transformers models
-    this is a wrapper that provides the same interface as transformers models
     but uses our native implementation.
     """
     
@@ -459,86 +405,35 @@ class Qwen3_4B(nn.Module):
         Returns:
             Tuple of (final_hidden_states, intermediate_hidden_states)
         """
-        # Get embeddings
         if inputs_embeds is None and input_ids is not None:
             inputs_embeds = self.model.embed_tokens(input_ids)
-        
+        if inputs_embeds is None:
+            raise ValueError("Either input_ids or inputs_embeds must be provided")
+
         hidden_states = inputs_embeds
         intermediate = None
-        
-        # DEBUG: Check embedding output
-        if torch.isnan(hidden_states).any():
-            logger.error("[qwen3-debug] NaN detected AFTER embedding! input_ids=%s hidden_states=%s", 
-                        input_ids.shape if input_ids is not None else None, 
-                        hidden_states.shape)
-            # Check embedding weights
-            emb_weight = self.model.embed_tokens.weight
-            if hasattr(emb_weight, 'data'):
-                emb_data = emb_weight.data
-                logger.error("[qwen3-debug] Embedding weight type: %s, has_nan: %s", 
-                            type(emb_weight), torch.isnan(emb_data).any() if hasattr(emb_data, 'isnan') else 'unknown')
-        else:
-            logger.info("[qwen3-debug] Embedding output OK: shape=%s mean=%.4f", 
-                       hidden_states.shape, hidden_states.float().mean().item())
-        
-        # Create causal mask - ALWAYS create it
-        # The mask is added to attention scores before softmax
-        batch_size = hidden_states.shape[0]
-        seq_len = hidden_states.shape[1]
-        
-        # Create causal mask: 0 for positions that CAN attend, -inf for positions that CANNOT
-        # Position (i, j) = 0 if i >= j (can attend to self and past)
-        # Position (i, j) = -inf if i < j (cannot attend to future)
-        causal_mask = torch.zeros(seq_len, seq_len, dtype=hidden_states.dtype, device=hidden_states.device)
-        causal_mask = causal_mask.masked_fill(
-            torch.triu(torch.ones(seq_len, seq_len, device=hidden_states.device, dtype=torch.bool), diagonal=1),
-            float("-inf")
+
+        batch_size = int(hidden_states.shape[0])
+        seq_len = int(hidden_states.shape[1])
+        causal_mask = self.model._build_attention_mask(
+            batch_size=batch_size,
+            seq_len=seq_len,
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+            attention_mask=attention_mask,
         )
-        
-        # Reshape to 4D for SDPA: [1, 1, seq_len, seq_len]
-        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
-        
-        # Combine with padding mask if provided
-        if attention_mask is not None:
-            # attention_mask is [batch, seq_len] with 1 for valid, 0 for padding
-            # We want to fill padding positions (where mask is 0) with -inf
-            # Expand to [batch, 1, 1, seq_len]
-            expanded_mask = attention_mask.view(batch_size, 1, 1, seq_len)
-            # Use masked_fill: where mask is 0 (False in bool conversion? No, need explicit check)
-            # CAREFUL: (attention_mask == 0) creates boolean mask of PADDING positions
-            is_padding = (expanded_mask == 0)
-            causal_mask = causal_mask.masked_fill(is_padding, float("-inf"))
-        
-        # Handle negative layer index
+
         if intermediate_output is not None and intermediate_output < 0:
-            intermediate_output = len(self.model.layers) + intermediate_output
-        
-        # Forward through layers
-        nan_detected_at = None
+            intermediate_output = len(self.model.layers) + int(intermediate_output)
+
         for i, layer in enumerate(self.model.layers):
             hidden_states = layer(hidden_states, causal_mask)
-            
-            # DEBUG: Check for NaN after each layer (only first few and when NaN appears)
-            if nan_detected_at is None and torch.isnan(hidden_states).any():
-                nan_detected_at = i
-                logger.error("[qwen3-debug] NaN FIRST detected at layer %d", i)
-            
             if intermediate_output is not None and i == intermediate_output:
                 intermediate = hidden_states.clone()
-        
-        # Apply final norm
+
         hidden_states = self.model.norm(hidden_states)
-        
         if intermediate is not None and final_layer_norm_intermediate:
             intermediate = self.model.norm(intermediate)
-        
-        # DEBUG: Final output check
-        if torch.isnan(hidden_states).any():
-            logger.error("[qwen3-debug] NaN in FINAL output! first_nan_layer=%s", nan_detected_at)
-        else:
-            logger.info("[qwen3-debug] Final output OK: shape=%s mean=%.4f", 
-                       hidden_states.shape, hidden_states.float().mean().item())
-        
         return hidden_states, intermediate
     
     def load_sd(self, state_dict: dict) -> Tuple[List[str], List[str]]:

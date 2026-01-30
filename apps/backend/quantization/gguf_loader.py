@@ -7,9 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: GGUF → state_dict loader with optional dequantization and CodexPack auto-detection.
-Loads GGUF tensor blobs and metadata using `GGUFReader`, returning either raw float tensors, `CodexParameter` entries for deferred/on-demand
-dequantization, or CodexPack packed-weight containers when a `*.codexpack.gguf` file is detected.
-CodexPack files must not contain raw quant tensors outside `__codexpack__.*`; the loader fails loud to prevent silent per-forward dequant fallback.
+Loads tensors+metadata via `GGUFReader`, returning float tensors, deferred `CodexParameter` tensors, or CodexPack packed-weight containers.
+Fails loud if CodexPack files contain raw quant tensors outside `__codexpack__.*` (prevents silent per-forward dequant fallback).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_numpy_to_frozen_parameter` (function): Converts a NumPy tensor blob into a read-only `nn.Parameter` (copies when non-writable).

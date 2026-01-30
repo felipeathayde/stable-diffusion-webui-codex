@@ -153,13 +153,12 @@ class ZImageEngine(CodexDiffusionEngine):
         except Exception as exc:
             raise RuntimeError(f"Failed to resolve flow_shift for Z-Image variant={variant!r}: {exc}") from exc
 
-        logger.info(
-            "Z Image build: variant=%s flow_shift=%.3f vae_path=%s tenc_path=%s all_options=%s",
+        logger.debug(
+            "Z Image build: variant=%s flow_shift=%.3f vae_path=%s tenc_path=%s",
             variant,
             float(flow_shift_override),
             options.get("vae_path"),
             options.get("tenc_path"),
-            list(options.keys()),
         )
 
         # Assemble runtime with a variant-specific spec (flow-shift affects schedule parity).
@@ -177,7 +176,7 @@ class ZImageEngine(CodexDiffusionEngine):
         if vendor_dir is not None:
             tokenizer_dir = vendor_dir / "tokenizer"
             runtime.text.qwen3_text.text_encoder.set_tokenizer_path_hint(str(tokenizer_dir))
-        logger.info("Z Image runtime assembled")
+        logger.debug("Z Image runtime assembled")
 
         return assembly.codex_objects
 
@@ -349,7 +348,7 @@ class ZImageEngine(CodexDiffusionEngine):
         
         runtime = self._require_runtime()
         
-        logger.info("[zimage] Running standalone Diffusers-math sampler")
+        logger.debug("[zimage] Running standalone Diffusers-math sampler")
         
         # Step 1: Encode prompt(s) using OUR working text encoder.
         prompts_list = _ZImagePromptList(
@@ -371,7 +370,7 @@ class ZImageEngine(CodexDiffusionEngine):
             uncond = self.get_learned_conditioning(neg_list)
             negative_text_embeddings = uncond["crossattn"] if isinstance(uncond, dict) else uncond
         
-        logger.info("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
+        logger.debug("[zimage] text_embeddings: shape=%s dtype=%s", text_embeddings.shape, text_embeddings.dtype)
         
         # Step 2: Get transformer (raw model, not wrapped)
         transformer_model = runtime.denoiser.model.diffusion_model
@@ -381,7 +380,14 @@ class ZImageEngine(CodexDiffusionEngine):
         
         try:
             # Step 3: Sample using Diffusers scheduler + negation
-            computation_dtype = torch.bfloat16 if self._dtype == "bf16" else torch.float16
+            if self._dtype == "bf16":
+                computation_dtype = torch.bfloat16
+            elif self._dtype == "fp16":
+                computation_dtype = torch.float16
+            elif self._dtype == "fp32":
+                computation_dtype = torch.float32
+            else:
+                raise ValueError(f"Invalid Z Image dtype {self._dtype!r} (allowed: bf16, fp16, fp32)")
             shift = 3.0 if self._zimage_variant == "turbo" else 6.0
             
             if seed is not None:
@@ -403,7 +409,7 @@ class ZImageEngine(CodexDiffusionEngine):
                 dtype=computation_dtype,
             )
             
-            logger.info("[zimage] sampling done, latents: shape=%s dtype=%s", latents.shape, latents.dtype)
+            logger.debug("[zimage] sampling done, latents: shape=%s dtype=%s", latents.shape, latents.dtype)
             
         finally:
             if self.smart_offload_enabled:
@@ -421,7 +427,7 @@ class ZImageEngine(CodexDiffusionEngine):
                 img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
                 images.append(Image.fromarray(img_np))
             
-            logger.info("[zimage] decoded %d images", len(images))
+            logger.debug("[zimage] decoded %d images", len(images))
             return images
             
         finally:

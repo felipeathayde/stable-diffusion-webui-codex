@@ -23,7 +23,9 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import json
 import logging
+import secrets
 from types import SimpleNamespace
 import threading
 import time
@@ -31,11 +33,14 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
+from apps.backend.core.requests import ProgressEvent, ResultEvent
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime
 from apps.backend.engines.util.adapters import build_txt2img_processing
+from apps.backend.core.state import state as backend_state
+from apps.backend.runtime.processing.conditioners import decode_latent_batch
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import (
@@ -43,17 +48,12 @@ from apps.backend.runtime.memory.smart_offload import (
     record_smart_cache_hit,
     record_smart_cache_miss,
 )
-from apps.backend.core.state import state as backend_state
 from apps.backend.runtime.common.nn.unet.layers import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
-import json
-from apps.backend.core.requests import ProgressEvent, ResultEvent
-import secrets
-from apps.backend.runtime.processing.conditioners import decode_latent_batch
-from apps.backend.runtime.workflows.image_io import latents_to_pil
 from apps.backend.runtime.text_processing import last_extra_generation_params
+from apps.backend.runtime.workflows.image_io import latents_to_pil
+from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
 
 
 # note: no extra device assertions here; diagnostics should be captured upstream
@@ -360,7 +360,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
         uncond = None
 
         # Run pipeline on a worker thread while streaming progress from backend_state
-        result: dict[str, Any] = {"latents": None, "error": None}
+        result: dict[str, Any] = {"output": None, "error": None}
         sampling_times: dict[str, float | None] = {"start": None, "end": None}
         done = threading.Event()
 
@@ -374,7 +374,7 @@ class StableDiffusionXL(CodexDiffusionEngine):
                     smart_fallback=bool(getattr(proc, "smart_fallback", False)),
                     smart_cache=bool(getattr(proc, "smart_cache", False)),
                 ):
-                    result["latents"] = _generate_txt2img(
+                    result["output"] = _generate_txt2img(
                         processing=proc,
                         conditioning=cond,
                         unconditional_conditioning=uncond,
@@ -409,17 +409,44 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
         if result["error"] is not None:
             raise result["error"]
-        latents = result["latents"]
+        output = result["output"]
 
-        if not isinstance(latents, torch.Tensor):
+        from apps.backend.runtime.processing.datatypes import GenerationResult
+
+        if not isinstance(output, GenerationResult):
             raise RuntimeError(
-                f"txt2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
+                f"txt2img pipeline returned {type(output).__name__}, expected GenerationResult (samples+decoded)"
             )
 
-        # Decode to RGB and package result
+        latents = output.samples
+        decoded_images: Any | None = output.decoded
+
         decode_start = time.perf_counter()
-        decoded = decode_latent_batch(self, latents)
-        images = latents_to_pil(decoded)
+        if decoded_images is not None:
+            if isinstance(decoded_images, torch.Tensor):
+                images = latents_to_pil(decoded_images)
+            elif isinstance(decoded_images, list):
+                try:
+                    from PIL import Image as _PILImage
+
+                    if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
+                        raise TypeError("decoded images are not PIL.Image.Image")
+                except Exception as exc:
+                    raise RuntimeError(
+                        "txt2img pipeline returned decoded images, but they are not a PIL image list"
+                    ) from exc
+                images = decoded_images
+            else:
+                raise RuntimeError(
+                    "txt2img pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
+                )
+        else:
+            if not isinstance(latents, torch.Tensor):
+                raise RuntimeError(
+                    f"txt2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
+                )
+            decoded = decode_latent_batch(self, latents)
+            images = latents_to_pil(decoded)
         decode_end = time.perf_counter()
         # Surface prompt/seed metadata so the frontend can show the real
         # generation inputs instead of guessing from request/store state.

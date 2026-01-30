@@ -93,7 +93,7 @@ def sample_zimage_diffusers_math(
     scheduler.set_timesteps(num_inference_steps, device=device)
     timesteps = scheduler.timesteps
     
-    logger.info(
+    logger.debug(
         "[diffusers-sampler] steps=%d, timesteps=%s",
         num_inference_steps, 
         [round(float(t), 3) for t in timesteps[:4].tolist()]
@@ -110,7 +110,7 @@ def sample_zimage_diffusers_math(
     
     # Flow-matching starts with pure noise (sigma=1), no scaling needed
     
-    logger.info("[diffusers-sampler] latents shape=%s", latents.shape)
+    logger.debug("[diffusers-sampler] latents shape=%s", latents.shape)
     
     # Sampling loop
     with torch.no_grad():
@@ -154,7 +154,7 @@ def sample_zimage_diffusers_math(
             if i < 3 or i == len(timesteps) - 1:
                 norm_x = float(latents.norm())
                 norm_pred = float(noise_pred.norm())
-                logger.info(
+                logger.debug(
                     "[diffusers-sampler] step=%d/%d t=%.3f norm(x)=%.2f norm(pred)=%.2f",
                     i + 1, len(timesteps), float(t), norm_x, norm_pred
                 )

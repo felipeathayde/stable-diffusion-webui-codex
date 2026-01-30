@@ -2,7 +2,7 @@
 <!-- tags: backend, use-case, txt2img, pipeline, refiner -->
 Date: 2025-10-31
 Owner: Backend Use-Case Maintainers
-Last Review: 2026-01-26
+Last Review: 2026-01-30
 Status: Active
 
 ## Purpose
@@ -18,3 +18,4 @@ Status: Active
 - 2025-12-12: `_log_conditioning` agora lida com vetores curtos (ex.: Z Image placeholder `vector` de 768) sem produzir `NaN`, e inclui `guidance` quando presente para depurar modelos flow/distilled.
 - 2026-01-18: `__init__.py` is now a package marker (no re-exports); import `Txt2ImgPipelineRunner` directly from `apps/backend/use_cases/txt2img_pipeline/runner.py`.
 - 2026-01-26: Under smart offload, the runner now clears any resident denoiser/VAE before conditioning, and unloads resident TEs on Smart Cache hits (embeddings already available).
+- 2026-01-30: `Txt2ImgPipelineRunner.run(...)` now returns `GenerationResult(samples, decoded)` (canonical output container; removes the need for `_already_decoded` sentinels).

@@ -787,7 +787,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
         prompts = prompt_texts
 
-        result: dict[str, Any] = {"latents": None, "error": None}
+        result: dict[str, Any] = {"output": None, "error": None}
         sampling_times: dict[str, float | None] = {"start": None, "end": None}
         done = threading.Event()
 
@@ -801,7 +801,7 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                     smart_fallback=bool(getattr(proc, "smart_fallback", False)),
                     smart_cache=bool(getattr(proc, "smart_cache", False)),
                 ):
-                    result["latents"] = _generate_img2img(
+                    result["output"] = _generate_img2img(
                         processing=proc,
                         conditioning=None,
                         unconditional_conditioning=None,
@@ -833,17 +833,50 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
 
         if result["error"] is not None:
             raise result["error"]
-        latents = result["latents"]
+        output = result["output"]
 
-        if not isinstance(latents, torch.Tensor):
-            raise RuntimeError(
-                f"img2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
-            )
+        from apps.backend.runtime.processing.datatypes import GenerationResult
 
-        decode_start = time.perf_counter()
-        decoded = decode_latent_batch(self, latents)
-        images = latents_to_pil(decoded)
-        decode_end = time.perf_counter()
+        decoded_images: Any | None = None
+        latents: Any = None
+        if isinstance(output, GenerationResult):
+            latents = output.samples
+            decoded_images = output.decoded
+        else:
+            latents = output
+            decoded_images = None
+
+        if decoded_images is not None:
+            # Use-case provided decoded/composited images (e.g. inpaint full-res paste-back).
+            decode_start = time.perf_counter()
+            if isinstance(decoded_images, torch.Tensor):
+                images = latents_to_pil(decoded_images)
+            elif isinstance(decoded_images, list):
+                try:
+                    from PIL import Image as _PILImage
+
+                    if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
+                        raise TypeError("decoded images are not PIL.Image.Image")
+                except Exception as exc:
+                    raise RuntimeError(
+                        "img2img pipeline returned decoded images, but they are not a PIL image list"
+                    ) from exc
+                images = decoded_images
+            else:
+                raise RuntimeError(
+                    "img2img pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
+                )
+            decode_end = time.perf_counter()
+        else:
+            if not isinstance(latents, torch.Tensor):
+                raise RuntimeError(
+                    f"img2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
+                )
+
+            decode_start = time.perf_counter()
+            decoded = decode_latent_batch(self, latents)
+            images = latents_to_pil(decoded)
+            decode_end = time.perf_counter()
 
         extra_params: dict[str, object] = {}
         try:

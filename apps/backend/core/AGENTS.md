@@ -33,3 +33,4 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings across `apps/backend/core/**` modules (doc-only change; part of rollout).
 - 2026-01-03: `apps/backend/core/__init__.py` no longer re-exports star-import facades; callers must import from specific modules (e.g. `core.requests`, `core.registry`).
 - 2026-01-06: Refreshed the `orchestrator.py` module header block to reflect the current engine-options fingerprint fields (`vae_source`/`tenc_source`) (doc-only change).
+- 2026-01-29: `Img2ImgRequest` now carries explicit mask/inpaint controls (enforcement mode + blur/invert/full-res/filled-content knobs) for Codex-native masked img2img.

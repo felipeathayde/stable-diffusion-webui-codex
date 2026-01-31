@@ -224,6 +224,7 @@ class ZImageEngine(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
         runtime = self._require_runtime()
+        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_DTYPE", False) and logger.isEnabledFor(logging.DEBUG)
 
         texts = tuple(str(x or "") for x in prompts)
         is_negative = bool(getattr(prompts, "is_negative_prompt", False))
@@ -238,6 +239,14 @@ class ZImageEngine(CodexDiffusionEngine):
                 record_smart_cache_hit("zimage.conditioning")
                 target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
                 core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
+                if debug_dtype:
+                    logger.debug(
+                        "[zimage-dtype] conditioning cache hit: cached.dtype=%s cached.device=%s -> device=%s dtype=%s",
+                        str(cached.dtype),
+                        str(cached.device),
+                        str(target_device),
+                        str(core_dtype),
+                    )
                 return cached.to(device=target_device, dtype=core_dtype)
             record_smart_cache_miss("zimage.conditioning")
 
@@ -258,6 +267,12 @@ class ZImageEngine(CodexDiffusionEngine):
             cond = runtime.text.qwen3_text(prompts)
             core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
             if cond.dtype != core_dtype:
+                if debug_dtype:
+                    logger.debug(
+                        "[zimage-dtype] conditioning cast: cond.dtype=%s -> %s",
+                        str(cond.dtype),
+                        str(core_dtype),
+                    )
                 cond = cond.to(dtype=core_dtype)
             if use_cache:
                 # Keep cache bounded: store only the most recent entry (tensors on CPU).

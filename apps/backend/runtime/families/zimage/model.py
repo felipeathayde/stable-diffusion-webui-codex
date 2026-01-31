@@ -325,6 +325,28 @@ class Attention(nn.Module):
         freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, N, _ = x.shape
+
+        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_DTYPE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_stack = debug_dtype and env_flag("CODEX_ZIMAGE_DEBUG_DTYPE_STACK", False)
+        if debug_dtype:
+            try:
+                w = getattr(self.qkv, "weight", None)
+                if isinstance(w, torch.Tensor) and x.dtype != w.dtype:
+                    stack = ""
+                    if debug_stack:
+                        import traceback as _traceback
+
+                        stack = "\n" + "".join(_traceback.format_stack(limit=10))
+                    logger.debug(
+                        "[zimage-dtype] Attention.qkv matmul will mismatch: mat1=x dtype=%s shape=%s; mat2=qkv.weight dtype=%s shape=%s%s",
+                        str(x.dtype),
+                        tuple(x.shape),
+                        str(w.dtype),
+                        tuple(w.shape),
+                        stack,
+                    )
+            except Exception:  # pragma: no cover - diagnostics only
+                logger.debug("[zimage-dtype] Attention.qkv dtype debug failed", exc_info=True)
         
         # QKV projection and reshape to [B, N, 3, H, D]
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
@@ -351,6 +373,25 @@ class Attention(nn.Module):
 
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
         out = out.transpose(1, 2).reshape(B, N, self.inner_dim)
+        if debug_dtype:
+            try:
+                w_out = getattr(self.out, "weight", None)
+                if isinstance(w_out, torch.Tensor) and out.dtype != w_out.dtype:
+                    stack = ""
+                    if debug_stack:
+                        import traceback as _traceback
+
+                        stack = "\n" + "".join(_traceback.format_stack(limit=10))
+                    logger.debug(
+                        "[zimage-dtype] Attention.out matmul will mismatch: mat1=sdpa_out dtype=%s shape=%s; mat2=out.weight dtype=%s shape=%s%s",
+                        str(out.dtype),
+                        tuple(out.shape),
+                        str(w_out.dtype),
+                        tuple(w_out.shape),
+                        stack,
+                    )
+            except Exception:  # pragma: no cover - diagnostics only
+                logger.debug("[zimage-dtype] Attention.out dtype debug failed", exc_info=True)
         return self.out(out)
 
 
@@ -848,6 +889,9 @@ class ZImageTransformer2DModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
+        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_DTYPE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_stack = debug_dtype and env_flag("CODEX_ZIMAGE_DEBUG_DTYPE_STACK", False)
+
         # Handle 5D input
         if x.dim() == 5:
             x = x.squeeze(2)
@@ -865,6 +909,25 @@ class ZImageTransformer2DModel(nn.Module):
                 [img_patches, img_patches[:, -1:, :].repeat(1, int(image_padding_len), 1)],
                 dim=1,
             )
+        if debug_dtype:
+            try:
+                w = getattr(self.x_embedder, "weight", None)
+                if isinstance(w, torch.Tensor) and img_patches.dtype != w.dtype:
+                    stack = ""
+                    if debug_stack:
+                        import traceback as _traceback
+
+                        stack = "\n" + "".join(_traceback.format_stack(limit=10))
+                    logger.debug(
+                        "[zimage-dtype] x_embedder matmul will mismatch: mat1=img_patches dtype=%s shape=%s; mat2=x_embedder.weight dtype=%s shape=%s%s",
+                        str(img_patches.dtype),
+                        tuple(img_patches.shape),
+                        str(w.dtype),
+                        tuple(w.shape),
+                        stack,
+                    )
+            except Exception:  # pragma: no cover - diagnostics only
+                logger.debug("[zimage-dtype] x_embedder dtype debug failed", exc_info=True)
         img_patches = self.x_embedder(img_patches)
         if image_padding_len:
             image_pad_mask = torch.zeros((int(img_patches.shape[0]), image_total_len), device=x.device, dtype=torch.bool)
@@ -888,7 +951,27 @@ class ZImageTransformer2DModel(nn.Module):
                 [context, context[:, -1:, :].repeat(1, int(cap_padding_len), 1)],
                 dim=1,
             )
-        cap_feats = self.cap_embedder(context)
+        cap_norm = self.cap_embedder[0](context)
+        if debug_dtype:
+            try:
+                w = getattr(self.cap_embedder[1], "weight", None)
+                if isinstance(w, torch.Tensor) and cap_norm.dtype != w.dtype:
+                    stack = ""
+                    if debug_stack:
+                        import traceback as _traceback
+
+                        stack = "\n" + "".join(_traceback.format_stack(limit=10))
+                    logger.debug(
+                        "[zimage-dtype] cap_embedder matmul will mismatch: mat1=cap_norm dtype=%s shape=%s; mat2=cap_linear.weight dtype=%s shape=%s%s",
+                        str(cap_norm.dtype),
+                        tuple(cap_norm.shape),
+                        str(w.dtype),
+                        tuple(w.shape),
+                        stack,
+                    )
+            except Exception:  # pragma: no cover - diagnostics only
+                logger.debug("[zimage-dtype] cap_embedder dtype debug failed", exc_info=True)
+        cap_feats = self.cap_embedder[1](cap_norm)
         if cap_padding_len:
             cap_pad_mask = torch.zeros((int(cap_feats.shape[0]), cap_total_len), device=x.device, dtype=torch.bool)
             cap_pad_mask[:, cap_ori_len:] = True

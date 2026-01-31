@@ -205,9 +205,9 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         "sdxl": "is_sdxl",
     }
 
-    def __init__(self) -> None:  # noqa: D401
+    def __init__(self, *, logger: logging.Logger | None = None) -> None:  # noqa: D401
         super().__init__()
-        self._logger = logging.getLogger(self.__class__.__name__)
+        self._logger = logger or logging.getLogger(self.__class__.__name__)
         self.model_config: Any | None = None
         self.is_inpaint: bool = False
         self.current_lora_hash = "[]"
@@ -219,10 +219,10 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._current_bundle: DiffusionModelBundle | None = None
         self._current_model_ref: str | None = None
         self._load_options: dict[str, Any] = {}
-        # Conditioning cache: keyed by (prompt_tuple, is_negative) -> dict of tensors
-        # Subclasses can use this for caching CLIP/T5/etc outputs.
-        # Tensors are stored on CPU to avoid pinning VRAM between jobs.
-        self._cond_cache: dict[tuple, dict[str, Any]] = {}
+        # Conditioning cache: keyed by a tuple -> arbitrary cache payload (typically tensors stored on CPU).
+        # Subclasses can use this for caching conditioning outputs (CLIP/T5/Qwen3/etc).
+        # Keep payload tensors on CPU to avoid pinning VRAM between jobs.
+        self._cond_cache: dict[tuple, Any] = {}
 
     # ------------------------------------------------------------------ Components
     @property
@@ -285,9 +285,16 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         return smart_cache_enabled()
 
     # ------------------------------------------------------------------ Conditioning Cache
-    def _get_cached_cond(self, cache_key: tuple, bucket_name: str) -> Optional[dict[str, Any]]:
-        """Retrieve cached conditioning if smart cache is enabled and key exists."""
-        if not self.smart_cache_enabled:
+    def _get_cached_cond(
+        self,
+        cache_key: tuple,
+        *,
+        bucket_name: str,
+        enabled: bool | None = None,
+    ) -> Any | None:
+        """Retrieve cached conditioning if enabled and key exists (records cache hit/miss metrics)."""
+        enabled = self.smart_cache_enabled if enabled is None else bool(enabled)
+        if not enabled:
             return None
         cached = self._cond_cache.get(cache_key)
         if cached is not None:
@@ -296,13 +303,14 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         record_smart_cache_miss(bucket_name)
         return None
 
-    def _set_cached_cond(self, cache_key: tuple, cond_dict: dict[str, Any]) -> None:
-        """Store conditioning in cache (tensors should be on CPU to avoid pinning VRAM)."""
-        if not self.smart_cache_enabled:
+    def _set_cached_cond(self, cache_key: tuple, value: Any, *, enabled: bool | None = None) -> None:
+        """Store conditioning in cache (payload tensors should be on CPU to avoid pinning VRAM)."""
+        enabled = self.smart_cache_enabled if enabled is None else bool(enabled)
+        if not enabled:
             return
         # Clear old entries to keep cache bounded
         self._cond_cache.clear()
-        self._cond_cache[cache_key] = cond_dict
+        self._cond_cache[cache_key] = value
 
     def _clear_cond_cache(self) -> None:
         """Clear conditioning cache (called on model reload)."""
@@ -722,8 +730,30 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         self._use_distilled_cfg_scale = bool(enabled)
         self._logger.debug("Distilled CFG scale toggled to %s", self._use_distilled_cfg_scale)
 
-    # ------------------------------------------------------------------ Abstract hooks
+    # ------------------------------------------------------------------ Engine hooks
     def set_clip_skip(self, clip_skip: int) -> None:
+        """Set CLIP skip layers for engines that use CLIP.
+
+        Default behavior:
+        - Engines that do *not* include `"clip"` in `required_text_encoders` treat this as a no-op.
+        - Engines that *do* use CLIP must override and implement clip-skip (fail loud by default).
+        """
+        try:
+            requested = int(clip_skip)
+        except Exception as exc:  # noqa: BLE001
+            raise TypeError("clip_skip must be an integer") from exc
+        if requested < 0:
+            raise ValueError("clip_skip must be >= 0")
+
+        if "clip" not in self.required_text_encoders:
+            if requested != 0:
+                self._logger.debug(
+                    "Ignoring clip_skip=%d for engine_id=%s (no CLIP text encoder).",
+                    requested,
+                    self.engine_id,
+                )
+            return
+
         raise NotImplementedError(f"{self.__class__.__name__}.set_clip_skip must be implemented.")
 
     def get_first_stage_encoding(self, x: torch.Tensor) -> torch.Tensor:

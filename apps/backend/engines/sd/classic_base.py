@@ -21,6 +21,7 @@ from typing import Any, List, Mapping, Optional
 import torch
 
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SDEngineRuntime
@@ -36,13 +37,9 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
     _model_family: str
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(logger=logging.getLogger(f"backend.engines.sd.{self.engine_id}"))
         self._runtime: Optional[SDEngineRuntime] = None
         self._primary_branch: Optional[str] = None
-
-    @property
-    def _logger(self) -> logging.Logger:
-        return logging.getLogger(f"backend.engines.sd.{self.engine_id}")
 
     def _build_components(
         self,
@@ -64,9 +61,7 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
         self._primary_branch = None
 
     def _require_runtime(self) -> SDEngineRuntime:
-        if self._runtime is None:
-            raise RuntimeError(f"{self.engine_id} runtime is not initialised; call load() first.")
-        return self._runtime
+        return require_runtime(self._runtime, label=self.engine_id)
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()

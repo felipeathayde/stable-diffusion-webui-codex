@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, sdxl -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-30
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -26,6 +26,7 @@ Status: Active
 - 2026-01-25: `clip_skip=0` is now treated as an explicit “use default” sentinel across SD-family engines, resetting clip skip to the per-branch spec defaults to prevent state leaking across jobs.
 - 2026-01-30: SD-family txt2img now consumes `GenerationResult` from the canonical staged runner (removed `_already_decoded` decode sentinels).
 - 2026-01-31: SD-family clip-skip handling is centralized in `apps/backend/engines/sd/_clip_skip.py` (validation + reset semantics + cache invalidation). SDXL no longer overrides `txt2img`; mode streaming lives in `apps/backend/use_cases/` (Option A).
+- 2026-01-31: SD engines now use the shared `require_runtime(...)` helper for consistent runtime guards; SDXL `_on_unload` clears embed caches to avoid stale state across unload/reload.
 
 ### Event Emission
 - Mode streaming wrappers live in `apps/backend/use_cases/{txt2img,img2img}.py` and are invoked via `CodexDiffusionEngine.txt2img/img2img` (Option A).

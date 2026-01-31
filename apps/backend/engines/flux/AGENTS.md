@@ -1,7 +1,7 @@
 # apps/backend/engines/flux Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-26
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Active
 - 2026-01-20: Removed unused `flux_config.py` (no call sites; config lives in `spec.py` / factory assembly).
 - 2026-01-25: `clip_skip=0` is now accepted as a “use default” sentinel for Flux CLIP branches (resets to the canonical default without requiring a separate UI toggle).
 - 2026-01-31: Flux/Chroma engines now rely on the default `CodexDiffusionEngine.encode_first_stage/decode_first_stage` implementation for the common image-VAE semantics (no behavior change; reduces duplication).
+- 2026-01-31: Kontext no longer duplicates `_build_components`; it inherits Flux runtime assembly (factory-driven) to reduce drift. Flux conditioning caching now uses shared cache helpers (CPU storage + device restore) and `_on_unload` clears the streaming controller reference.

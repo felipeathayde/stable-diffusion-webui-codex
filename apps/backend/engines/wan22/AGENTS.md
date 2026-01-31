@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-01-22
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -34,6 +34,7 @@ Status: Active
 - 2026-01-08: Flow-match `flow_shift` is sourced from diffusers `scheduler_config.json` (vendored HF mirror); WAN22 GGUF stages require an explicit `flow_shift` value (auto-resolved from the vendor config when not provided in `extras.wan_high/wan_low`).
 - 2026-01-21: Stage LoRA selection is sha-only via `extras.wan_high/wan_low.lora_sha` (sha → `.safetensors`) + optional `lora_weight`; stage `lora_path` is rejected.
 - 2026-01-22: `wan22_14b` no longer advertises `TaskType.IMG2VID`; `img2vid` raises `NotImplementedError` to avoid “success with empty frames”. The practical A14B I2V path remains the WAN22 GGUF runtime (invoked via the `wan22_5b` engine wrapper).
+- 2026-01-31: WAN22 14B core streaming enablement now fails loud when explicitly requested (`core_streaming_enabled=True`) and setup fails (no silent fallback to non-streaming).
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

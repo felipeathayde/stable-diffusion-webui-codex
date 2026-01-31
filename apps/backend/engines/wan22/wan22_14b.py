@@ -25,6 +25,7 @@ import torch
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 
@@ -71,27 +72,36 @@ class Wan2214BEngine(CodexDiffusionEngine):
         self._dtype = str(getattr(runtime, "dtype", "bf16"))
         logger.info("WAN runtime assembled for %s", WAN_14B_SPEC.name)
 
-        # Streaming configuration
-        streaming_enabled = options.get("core_streaming_enabled", False)
+        # Streaming configuration (fail loud when explicitly requested).
+        streaming_enabled = bool(options.get("core_streaming_enabled", False))
+        self._streaming_controller = None
         if streaming_enabled:
-            streaming_policy = options.get("core_streaming_policy", "naive")
-            blocks_per_segment = options.get("core_streaming_blocks_per_segment", 4)
+            streaming_policy = str(options.get("core_streaming_policy", "naive"))
+            blocks_raw = options.get("core_streaming_blocks_per_segment", 4)
+            try:
+                blocks_per_segment = int(blocks_raw)
+            except Exception as exc:  # noqa: BLE001
+                raise TypeError("core_streaming_blocks_per_segment must be an integer") from exc
+            if blocks_per_segment < 1:
+                raise ValueError("core_streaming_blocks_per_segment must be >= 1")
             logger.info(
                 "WAN core streaming enabled: policy=%s, blocks_per_segment=%d",
                 streaming_policy,
                 blocks_per_segment,
             )
+
+            from apps.backend.runtime.families.wan22.streaming import (
+                StreamedWanTransformer,
+                WanCoreController,
+                WanStreamingPolicy,
+                build_execution_plan,
+            )
+
+            core_model = getattr(runtime.denoiser.model, "diffusion_model", None)
+            if core_model is None:
+                raise RuntimeError("WAN denoiser wrapper does not expose diffusion_model; cannot enable streaming.")
+
             try:
-                from apps.backend.runtime.families.wan22.streaming import (
-                    build_execution_plan,
-                    WanCoreController,
-                    WanStreamingPolicy,
-                    StreamedWanTransformer,
-                )
-                # Get transformer core from KModel wrapper
-                core_model = getattr(runtime.denoiser.model, "diffusion_model", None)
-                if core_model is None:
-                    raise RuntimeError("WAN denoiser wrapper does not expose diffusion_model; cannot enable streaming.")
                 plan = build_execution_plan(core_model, blocks_per_segment=blocks_per_segment)
                 controller = WanCoreController(
                     storage_device="cpu",
@@ -99,18 +109,16 @@ class Wan2214BEngine(CodexDiffusionEngine):
                     policy=WanStreamingPolicy(streaming_policy),
                 )
                 streamed_core = StreamedWanTransformer(core_model, plan, controller)
-                runtime.denoiser.model.diffusion_model = streamed_core
-                self._streaming_controller = controller
-                logger.info(
-                    "WAN streaming active: %d segments, %.2f MB total",
-                    len(plan),
-                    plan.total_bytes / (1024 * 1024),
-                )
-            except Exception as e:
-                logger.warning("Failed to enable WAN streaming: %s", e)
-                self._streaming_controller = None
-        else:
-            self._streaming_controller = None
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(f"WAN core streaming requested but failed to enable: {exc}") from exc
+
+            runtime.denoiser.model.diffusion_model = streamed_core
+            self._streaming_controller = controller
+            logger.info(
+                "WAN streaming active: %d segments, %.2f MB total",
+                len(plan),
+                plan.total_bytes / (1024 * 1024),
+            )
 
         return assembly.codex_objects
 
@@ -124,13 +132,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         self._streaming_controller = None
 
     def _require_runtime(self) -> WanEngineRuntime:
-        if self._runtime is None:
-            raise RuntimeError("WAN runtime not initialized; call load() first.")
-        return self._runtime
-
-    def set_clip_skip(self, clip_skip: int) -> None:
-        # WAN doesn't use CLIP, this is a no-op
-        pass
+        return require_runtime(self._runtime, label=self.engine_id)
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):

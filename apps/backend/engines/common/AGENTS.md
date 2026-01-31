@@ -1,7 +1,7 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-27
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -28,3 +28,11 @@ Status: Active
 - 2026-01-27: `BaseVideoEngine` now wires `_maybe_export_video(...)` to the ffmpeg exporter (mp4/webm/gif) so WAN txt2vid/img2vid can return `video {rel_path,mime}` (served under `/api/output/{rel_path}`).
 - 2026-01-29: `CodexDiffusionEngine.img2img` now accepts `GenerationResult` from the canonical use-case, allowing masked img2img full-res paste-back to return decoded/composited PIL images without re-decoding in the engine wrapper.
 - 2026-01-31: `CodexDiffusionEngine.img2img` now delegates to `apps/backend/use_cases/img2img.py:run_img2img` (Option A ownership); the base engine also provides default first-stage VAE `encode_first_stage/decode_first_stage` for image engines with optional decode-stats hooks.
+- 2026-01-31: Added shared helper modules:
+  - `runtime_lifecycle.py` (`require_runtime`) for consistent fail-fast runtime guards across engines.
+  - `tensor_tree.py` (`detach_to_cpu` / `move_to_device`) for caching payload CPU↔device moves.
+  - `prompt_wrappers.py` (`PromptListBase`) for common prompt metadata flags (negative + smart-cache override).
+- 2026-01-31: `CodexDiffusionEngine` improvements:
+  - `__init__` accepts an optional `logger=` to avoid subclass logger collisions and keep per-engine log namespaces consistent.
+  - Conditioning cache helpers (`_get_cached_cond/_set_cached_cond`) accept per-call enable overrides and store arbitrary payloads (tensors/dicts/tuples), with hit/miss metrics.
+  - Default `set_clip_skip` is a no-op for engines without `"clip"` in `required_text_encoders` (engines with CLIP must still implement clip-skip; fail loud otherwise).

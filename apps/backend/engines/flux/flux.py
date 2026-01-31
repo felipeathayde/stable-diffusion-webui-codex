@@ -24,15 +24,13 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.prompt_wrappers import PromptListBase
+from apps.backend.engines.common.runtime_lifecycle import require_runtime
+from apps.backend.engines.common.tensor_tree import detach_to_cpu, move_to_device
 from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
-from apps.backend.runtime.memory.smart_offload import (
-    record_smart_cache_hit,
-    record_smart_cache_miss,
-    smart_cache_enabled,
-)
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.model_registry.specs import ModelFamily
 
@@ -41,7 +39,7 @@ logger = logging.getLogger("backend.engines.flux")
 _FLUX_FACTORY = CodexFluxFamilyFactory(spec=FLUX_SPEC)
 
 
-class _FluxPromptList(list[str]):
+class _FluxPromptList(PromptListBase):
     def __init__(
         self,
         items: Iterable[str],
@@ -50,10 +48,8 @@ class _FluxPromptList(list[str]):
         is_negative_prompt: bool,
         smart_cache: bool | None,
     ) -> None:
-        super().__init__(items)
         self.distilled_cfg_scale = float(distilled_cfg_scale)
-        self.is_negative_prompt = bool(is_negative_prompt)
-        self.smart_cache = smart_cache
+        super().__init__(items, is_negative_prompt=is_negative_prompt, smart_cache=smart_cache)
 
 
 class Flux(CodexDiffusionEngine):
@@ -61,6 +57,7 @@ class Flux(CodexDiffusionEngine):
 
     engine_id = "flux1"
     expected_family = ModelFamily.FLUX
+    _factory = _FLUX_FACTORY
 
     def __init__(self) -> None:
         super().__init__()
@@ -86,7 +83,7 @@ class Flux(CodexDiffusionEngine):
         *,
         options: Mapping[str, Any],
     ) -> CodexObjects:
-        assembly = _FLUX_FACTORY.assemble(bundle, options=options)
+        assembly = self._factory.assemble(bundle, options=options)
         runtime = assembly.runtime
         self._runtime = runtime
         self.use_distilled_cfg_scale = runtime.use_distilled_cfg
@@ -105,11 +102,10 @@ class Flux(CodexDiffusionEngine):
 
     def _on_unload(self) -> None:
         self._runtime = None
+        self._streaming_controller = None
 
     def _require_runtime(self) -> FluxEngineRuntime:
-        if self._runtime is None:
-            raise RuntimeError("Flux runtime is not initialised; call load() first.")
-        return self._runtime
+        return require_runtime(self._runtime, label=self.engine_id)
 
     def _prepare_prompt_wrappers(
         self,
@@ -161,7 +157,7 @@ class Flux(CodexDiffusionEngine):
             texts = tuple(str(x or "") for x in prompt)
             is_negative = bool(getattr(prompt, "is_negative_prompt", False))
             smart_flag = getattr(prompt, "smart_cache", None)
-            use_cache = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
+            use_cache = bool(smart_flag) if smart_flag is not None else self.smart_cache_enabled
             distilled_cfg_scale = getattr(prompt, "distilled_cfg_scale", self._guidance_default)
             try:
                 distilled_cfg_scale = float(distilled_cfg_scale)
@@ -169,23 +165,13 @@ class Flux(CodexDiffusionEngine):
                 distilled_cfg_scale = float(self._guidance_default)
             cache_key = (texts, is_negative, distilled_cfg_scale)
 
-            cached = None
-            if use_cache:
-                cached = self._cond_cache.get(cache_key)
-                if cached is not None:
-                    record_smart_cache_hit("flux.conditioning")
-                    # Restore cached tensors to device
-                    target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-                    cond = {}
-                    for k, v in cached.items():
-                        if isinstance(v, torch.Tensor):
-                            cond[k] = v.to(target_device)
-                        else:
-                            cond[k] = v
-                    logger.debug("[flux] conditioning cache hit for %d prompts", len(prompt))
-                    return cond
-                record_smart_cache_miss("flux.conditioning")
-            
+            cached = self._get_cached_cond(cache_key, bucket_name="flux.conditioning", enabled=use_cache)
+            if isinstance(cached, dict):
+                target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+                cond = move_to_device(cached, device=target_device)
+                logger.debug("[flux] conditioning cache hit for %d prompts", len(prompt))
+                return cond
+	            
             # Cache miss - compute conditioning
             clip_branch = runtime.text.clip_text
             cond_l, pooled_l = (clip_branch(prompt) if clip_branch is not None else (None, None))
@@ -205,17 +191,8 @@ class Flux(CodexDiffusionEngine):
             cond_info = {k: tuple(v.shape) if hasattr(v, 'shape') else type(v).__name__ for k, v in cond.items()}
             logger.info("[flux] conditioning dict: %s", cond_info)
 
-            # Store in cache (tensors on CPU to avoid pinning VRAM)
             if use_cache:
-                cache_entry = {}
-                for k, v in cond.items():
-                    if isinstance(v, torch.Tensor):
-                        cache_entry[k] = v.detach().to("cpu")
-                    else:
-                        cache_entry[k] = v
-                # Keep cache bounded: store only the most recent entry
-                self._cond_cache.clear()
-                self._cond_cache[cache_key] = cache_entry
+                self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
 
             return cond
         finally:

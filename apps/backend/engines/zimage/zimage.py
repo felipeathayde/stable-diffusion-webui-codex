@@ -25,13 +25,11 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.prompt_wrappers import PromptListBase
+from apps.backend.engines.common.runtime_lifecycle import require_runtime
+from apps.backend.engines.common.tensor_tree import detach_to_cpu, move_to_device
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
-from apps.backend.runtime.memory.smart_offload import (
-    record_smart_cache_hit,
-    record_smart_cache_miss,
-    smart_cache_enabled,
-)
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.diagnostics.timeline import timeline_node
 from apps.backend.runtime.families.zimage.debug import env_flag, env_int, truncate_text
@@ -42,7 +40,7 @@ from .spec import ZImageEngineRuntime
 logger = logging.getLogger("backend.engines.zimage.zimage")
 
 
-class _ZImagePromptList(list[str]):
+class _ZImagePromptList(PromptListBase):
     """List-like prompt wrapper used to carry per-run metadata."""
 
     def __init__(
@@ -53,10 +51,8 @@ class _ZImagePromptList(list[str]):
         is_negative_prompt: bool,
         smart_cache: bool | None,
     ) -> None:
-        super().__init__(items)
         self.cfg_scale = float(cfg_scale)
-        self.is_negative_prompt = bool(is_negative_prompt)
-        self.smart_cache = smart_cache
+        super().__init__(items, is_negative_prompt=is_negative_prompt, smart_cache=smart_cache)
 
 
 class ZImageEngine(CodexDiffusionEngine):
@@ -189,13 +185,7 @@ class ZImageEngine(CodexDiffusionEngine):
         self._runtime = None
 
     def _require_runtime(self) -> ZImageEngineRuntime:
-        if self._runtime is None:
-            raise RuntimeError("Z Image runtime not initialized")
-        return self._runtime
-
-    def set_clip_skip(self, clip_skip: int) -> None:
-        # Z Image doesn't use CLIP
-        pass
+        return require_runtime(self._runtime, label=self.engine_id)
 
     def _prepare_prompt_wrappers(
         self,
@@ -229,26 +219,23 @@ class ZImageEngine(CodexDiffusionEngine):
         texts = tuple(str(x or "") for x in prompts)
         is_negative = bool(getattr(prompts, "is_negative_prompt", False))
         smart_flag = getattr(prompts, "smart_cache", None)
-        use_cache = bool(smart_flag) if smart_flag is not None else smart_cache_enabled()
+        use_cache = bool(smart_flag) if smart_flag is not None else self.smart_cache_enabled
         max_length = getattr(runtime.text.qwen3_text, "max_length", None)
         cache_key = (texts, is_negative, max_length)
 
-        if use_cache:
-            cached = self._cond_cache.get(cache_key)
-            if isinstance(cached, torch.Tensor):
-                record_smart_cache_hit("zimage.conditioning")
-                target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-                core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
-                if debug_dtype:
-                    logger.debug(
-                        "[zimage-dtype] conditioning cache hit: cached.dtype=%s cached.device=%s -> device=%s dtype=%s",
-                        str(cached.dtype),
-                        str(cached.device),
-                        str(target_device),
-                        str(core_dtype),
-                    )
-                return cached.to(device=target_device, dtype=core_dtype)
-            record_smart_cache_miss("zimage.conditioning")
+        cached = self._get_cached_cond(cache_key, bucket_name="zimage.conditioning", enabled=use_cache)
+        if isinstance(cached, torch.Tensor):
+            target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+            core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
+            if debug_dtype:
+                logger.debug(
+                    "[zimage-dtype] conditioning cache hit: cached.dtype=%s cached.device=%s -> device=%s dtype=%s",
+                    str(cached.dtype),
+                    str(cached.device),
+                    str(target_device),
+                    str(core_dtype),
+                )
+            return move_to_device(cached, device=target_device, dtype=core_dtype)
 
         # Load text encoder to GPU using memory management (same pattern as Flux)
         memory_management.manager.load_model(runtime.clip.patcher)
@@ -275,9 +262,7 @@ class ZImageEngine(CodexDiffusionEngine):
                     )
                 cond = cond.to(dtype=core_dtype)
             if use_cache:
-                # Keep cache bounded: store only the most recent entry (tensors on CPU).
-                self._cond_cache.clear()
-                self._cond_cache[cache_key] = cond.detach().to("cpu")
+                self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
         finally:
             if unload_clip:
                 memory_management.manager.unload_model(runtime.clip.patcher)

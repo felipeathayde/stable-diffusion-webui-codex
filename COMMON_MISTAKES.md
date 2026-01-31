@@ -441,3 +441,18 @@ Correct command:
 ```bash
 rg -n 'Validate `dtype` strings' .sangoi/task-logs/2026-01-30-zimage-cleanup.md
 ```
+
+### `ls` with accidental non-ASCII option flags (IME / keyboard layout)
+
+Wrong command:
+```bash
+ls -<CTRL>Q>a .sangoi/plans | sed -n "1,120p"
+```
+
+Cause and fix:
+Accidental non-ASCII/control flag characters (e.g., from an IME/keyboard layout) can turn `ls` options into invalid flags. Use plain ASCII `-la`.
+
+Correct command:
+```bash
+ls -la .sangoi/plans | sed -n "1,120p"
+```

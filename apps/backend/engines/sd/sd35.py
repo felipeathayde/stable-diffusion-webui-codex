@@ -25,6 +25,7 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime
@@ -82,9 +83,7 @@ class StableDiffusion3(CodexDiffusionEngine):
         self._runtime = None
 
     def _require_runtime(self) -> SDEngineRuntime:
-        if self._runtime is None:
-            raise RuntimeError("StableDiffusion3 runtime is not initialised; call load() first.")
-        return self._runtime
+        return require_runtime(self._runtime, label=self.engine_id)
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()

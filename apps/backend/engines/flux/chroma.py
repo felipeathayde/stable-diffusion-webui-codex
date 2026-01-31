@@ -23,6 +23,7 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
@@ -71,9 +72,7 @@ class Chroma(CodexDiffusionEngine):
         self._runtime = None
 
     def _require_runtime(self) -> FluxEngineRuntime:
-        if self._runtime is None:
-            raise RuntimeError("Chroma runtime is not initialised; call load() first.")
-        return self._runtime
+        return require_runtime(self._runtime, label=self.engine_id)
 
     def set_clip_skip(self, clip_skip: int):
         logger.debug("Chroma ignores clip_skip (no CLIP branch)")

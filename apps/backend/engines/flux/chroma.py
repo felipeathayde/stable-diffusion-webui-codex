@@ -98,27 +98,3 @@ class Chroma(CodexDiffusionEngine):
         runtime = self._require_runtime()
         token_count = len(runtime.text.t5_text.tokenize([prompt])[0])
         return token_count, max(255, token_count)
-
-    @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
-
-    @torch.inference_mode()
-    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            sample = self.codex_objects.vae.decode(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)

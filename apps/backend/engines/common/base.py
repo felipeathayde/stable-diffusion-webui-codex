@@ -8,14 +8,14 @@ Required Notice: see NOTICE
 
 Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
 Defines `CodexObjects` and the shared engine load/unload path, including fail-fast `.gguf` core-only validation and explicit `vae_source`/`tenc_source`
-selection. Also provides canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
+selection. Also provides default first-stage VAE encode/decode for image engines and canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
 - `_ComponentTracker` (class): Internal tracker for loaded components/paths (used to decide reload/unload behavior).
 - `CodexDiffusionEngine` (class): Abstract base class for diffusion engines; provides shared load/unload orchestration, canonical task wrappers
   (e.g. `txt2img` delegates to `apps/backend/use_cases/txt2img.py`), and runtime helpers including explicit asset-source selection
-  (`vae_source`/`tenc_source`) and fail-fast validation for core-only `.gguf` checkpoints (subclasses implement required component sets).
+  (`vae_source`/`tenc_source`), default image VAE stage helpers (`encode_first_stage`/`decode_first_stage`), and fail-fast validation for core-only `.gguf` checkpoints (subclasses implement required component sets).
 """
 
 from __future__ import annotations
@@ -732,11 +732,46 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
     def get_learned_conditioning(self, prompt: Iterable[str]) -> Any:
         raise NotImplementedError(f"{self.__class__.__name__}.get_learned_conditioning must be implemented.")
 
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError(f"{self.__class__.__name__}.encode_first_stage must be implemented.")
+    def _decode_debug_stats_enabled(self) -> bool:
+        return False
 
+    def _log_decode_stats(self, stage: str, tensor: torch.Tensor) -> None:
+        return None
+
+    @torch.inference_mode()
+    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
+        from apps.backend.runtime.memory import memory_management
+
+        memory_management.manager.load_model(self.codex_objects.vae)
+        unload_vae = self.smart_offload_enabled
+        try:
+            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
+            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
+            return sample.to(x)
+        finally:
+            if unload_vae:
+                memory_management.manager.unload_model(self.codex_objects.vae)
+
+    @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError(f"{self.__class__.__name__}.decode_first_stage must be implemented.")
+        from apps.backend.runtime.memory import memory_management
+
+        memory_management.manager.load_model(self.codex_objects.vae)
+        unload_vae = self.smart_offload_enabled
+        debug_stats = self._decode_debug_stats_enabled()
+        try:
+            if debug_stats:
+                self._log_decode_stats("latents", x)
+            sample = self.codex_objects.vae.first_stage_model.process_out(x)
+            if debug_stats:
+                self._log_decode_stats("after_process_out", sample)
+            sample = self.codex_objects.vae.decode(sample)
+            if debug_stats:
+                self._log_decode_stats("decoded", sample)
+            return sample.to(x)
+        finally:
+            if unload_vae:
+                memory_management.manager.unload_model(self.codex_objects.vae)
 
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
         raise NotImplementedError(f"{self.__class__.__name__}.get_prompt_lengths_on_ui must be implemented.")
@@ -750,172 +785,11 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         yield from _run_txt2img(engine=self, request=request)
 
     def img2img(self, request: Any, **kwargs: Any) -> Iterable[Any]:
-        """Generic img2img implementation over the native workflow helpers.
+        """Canonical img2img wrapper (delegates to the use-case)."""
 
-        Keep mode orchestration in the canonical use-case (`apps/backend/use_cases/img2img.py`).
-        Engines should stay adapter-level and avoid owning per-mode pipelines.
-        """
-        import json
-        import secrets
-        import threading
-        import time
+        from apps.backend.use_cases.img2img import run_img2img as _run_img2img
 
-        from apps.backend.core.requests import Img2ImgRequest, ProgressEvent, ResultEvent
-        from apps.backend.core.state import state as backend_state
-        from apps.backend.engines.util.adapters import build_img2img_processing
-        from apps.backend.use_cases.img2img import generate_img2img as _generate_img2img
-        from apps.backend.runtime.processing.conditioners import decode_latent_batch
-        from apps.backend.runtime.workflows.image_io import latents_to_pil
-        from apps.backend.runtime.text_processing import last_extra_generation_params
-
-        self.ensure_loaded()
-
-        if not isinstance(request, Img2ImgRequest):
-            raise TypeError(f"{self.__class__.__name__}.img2img expects Img2ImgRequest")
-
-        raw_seed = int(getattr(request, "seed", -1) or -1)
-        if raw_seed < 0:
-            raw_seed = secrets.randbits(32) & 0x7FFFFFFF
-
-        proc = build_img2img_processing(request)
-        proc.sd_model = self
-        proc.seed = raw_seed
-        proc.seeds = [raw_seed]
-        proc.subseed = -1
-        proc.subseeds = [-1]
-
-        prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
-        prompts = prompt_texts
-
-        result: dict[str, Any] = {"output": None, "error": None}
-        sampling_times: dict[str, float | None] = {"start": None, "end": None}
-        done = threading.Event()
-
-        def _worker() -> None:
-            try:
-                sampling_times["start"] = time.perf_counter()
-                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
-
-                with smart_runtime_overrides(
-                    smart_offload=bool(getattr(proc, "smart_offload", False)),
-                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-                    smart_cache=bool(getattr(proc, "smart_cache", False)),
-                ):
-                    result["output"] = _generate_img2img(
-                        processing=proc,
-                        conditioning=None,
-                        unconditional_conditioning=None,
-                        prompts=prompts,
-                    )
-            except Exception as _exc:
-                result["error"] = _exc
-            finally:
-                sampling_times["end"] = time.perf_counter()
-                done.set()
-
-        threading.Thread(target=_worker, name=f"{self.engine_id}-img2img-worker", daemon=True).start()
-
-        t0 = time.perf_counter()
-        last_step = -1
-        while not done.is_set():
-            try:
-                step = int(getattr(backend_state, "sampling_step", 0) or 0)
-                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
-            except Exception:
-                step, total = 0, 0
-            if total > 0 and step != last_step:
-                elapsed = time.perf_counter() - t0
-                eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
-                pct = max(5.0, min(99.0, (step / total) * 100.0))
-                yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
-                last_step = step
-            time.sleep(0.12)
-
-        if result["error"] is not None:
-            raise result["error"]
-        output = result["output"]
-
-        from apps.backend.runtime.processing.datatypes import GenerationResult
-
-        decoded_images: Any | None = None
-        latents: Any = None
-        if isinstance(output, GenerationResult):
-            latents = output.samples
-            decoded_images = output.decoded
-        else:
-            latents = output
-            decoded_images = None
-
-        if decoded_images is not None:
-            # Use-case provided decoded/composited images (e.g. inpaint full-res paste-back).
-            decode_start = time.perf_counter()
-            if isinstance(decoded_images, torch.Tensor):
-                images = latents_to_pil(decoded_images)
-            elif isinstance(decoded_images, list):
-                try:
-                    from PIL import Image as _PILImage
-
-                    if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
-                        raise TypeError("decoded images are not PIL.Image.Image")
-                except Exception as exc:
-                    raise RuntimeError(
-                        "img2img pipeline returned decoded images, but they are not a PIL image list"
-                    ) from exc
-                images = decoded_images
-            else:
-                raise RuntimeError(
-                    "img2img pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
-                )
-            decode_end = time.perf_counter()
-        else:
-            if not isinstance(latents, torch.Tensor):
-                raise RuntimeError(
-                    f"img2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
-                )
-
-            decode_start = time.perf_counter()
-            decoded = decode_latent_batch(self, latents)
-            images = latents_to_pil(decoded)
-            decode_end = time.perf_counter()
-
-        extra_params: dict[str, object] = {}
-        try:
-            extra_params.update(last_extra_generation_params)
-            extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
-        except Exception:
-            extra_params = getattr(proc, "extra_generation_params", {}) or {}
-
-        info: dict[str, object] = {
-            "engine": self.engine_id,
-            "task": "img2img",
-            "width": int(proc.width),
-            "height": int(proc.height),
-            "steps": int(proc.steps),
-            "guidance_scale": float(proc.guidance_scale),
-            "denoise_strength": float(getattr(proc, "denoising_strength", 0.0) or 0.0),
-            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
-            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
-        }
-        if getattr(proc, "prompt", None):
-            info["prompt"] = str(getattr(proc, "prompt", ""))
-        if getattr(proc, "negative_prompt", None):
-            info["negative_prompt"] = str(getattr(proc, "negative_prompt", ""))
-        info["seed"] = int(raw_seed)
-        if extra_params:
-            info["extra"] = extra_params
-
-        timings: dict[str, float] = {}
-        try:
-            if sampling_times["start"] is not None and sampling_times["end"] is not None:
-                timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
-            timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
-            info["timings_ms"] = timings
-        except Exception:
-            pass
-
-        self._post_txt2img_cleanup()
-
-        yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
+        yield from _run_img2img(engine=self, request=request)
 
     def _post_txt2img_cleanup(self) -> None:
         """Post-job cleanup when smart offload is enabled.

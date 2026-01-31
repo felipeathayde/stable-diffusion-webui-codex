@@ -7,10 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Shared SD1/SD2 engine implementation (classic CLIP text encoder + UNet denoiser + VAE).
-Centralizes the duplicated conditioning/encode/decode logic so SD15 and SD20 engines only specify spec + capabilities.
+Centralizes SD-classic runtime wiring, clip-skip, and conditioning so SD15 and SD20 engines only specify spec + capabilities.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `CodexSDClassicEngineBase` (class): Shared implementation for SD1/SD2 engines (build/runtime lifecycle + TE/VAE helpers).
+- `CodexSDClassicEngineBase` (class): Shared implementation for SD1/SD2 engines (build/runtime lifecycle + clip-skip + conditioning).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Any, List, Mapping, Optional
 import torch
 
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SDEngineRuntime
 from apps.backend.runtime.memory import memory_management
@@ -69,19 +70,13 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        try:
-            requested = int(clip_skip)
-        except Exception as exc:  # noqa: BLE001
-            raise TypeError("clip_skip must be an integer") from exc
-        if requested < 0:
-            raise ValueError("clip_skip must be >= 0")
-        if requested == 0:
-            runtime.reset_clip_skip()
-            effective = runtime.primary_classic().clip_skip
-            self._logger.debug("Clip skip reset to default (%d) for %s.", effective, self.engine_id)
-            return
-        runtime.set_clip_skip(requested)
-        self._logger.debug("Clip skip set to %d for %s.", requested, self.engine_id)
+        apply_sd_clip_skip(
+            engine=self,
+            runtime=runtime,
+            clip_skip=clip_skip,
+            logger=self._logger,
+            label=self.engine_id,
+        )
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
@@ -103,27 +98,3 @@ class CodexSDClassicEngineBase(CodexDiffusionEngine):
         _, token_count = engine.process_texts([prompt])
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target
-
-    @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
-
-    @torch.inference_mode()
-    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            sample = self.codex_objects.vae.decode(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)

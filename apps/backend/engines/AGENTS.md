@@ -29,3 +29,4 @@ Status: Active
 - 2026-01-04: Flux family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases) to make room for a future Flux.2.
 - 2026-01-06: `common.base` VAE overrides (`vae_path`) now unwrap wrapper VAEs via `first_stage_model` before applying state dicts.
 - 2026-01-18: `register_default_engines(...)` now registers `flux1_chroma` alongside `flux1`/`flux1_kontext` so the canonical Chroma engine key is available to API callers without manual registration.
+- 2026-01-31: Image-mode wrappers are now fully owned by `apps/backend/use_cases/` (txt2img + img2img); engines delegate via `CodexDiffusionEngine`. The common base also provides default first-stage VAE encode/decode for image engines (WAN/video keep explicit overrides).

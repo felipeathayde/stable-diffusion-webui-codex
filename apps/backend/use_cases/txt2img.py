@@ -63,127 +63,68 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     """
 
     import json
-    import secrets
-    import threading
-    import time
-
-    import torch
 
     from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2ImgRequest
-    from apps.backend.core.state import state as backend_state
     from apps.backend.engines.util.adapters import build_txt2img_processing
     from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
-    from apps.backend.runtime.processing.conditioners import decode_latent_batch
-    from apps.backend.runtime.workflows.image_io import latents_to_pil
     from apps.backend.runtime.text_processing import last_extra_generation_params
+
+    from ._image_streaming import (
+        _build_common_info,
+        _decode_generation_output,
+        _iter_sampling_progress,
+        _resolve_seed_plan,
+        _run_inference_worker,
+    )
 
     if not isinstance(request, Txt2ImgRequest):
         raise TypeError("run_txt2img expects Txt2ImgRequest")
 
     engine.ensure_loaded()
 
-    raw_seed = int(getattr(request, "seed", -1) or -1)
-    if raw_seed < 0:
-        raw_seed = secrets.randbits(32) & 0x7FFFFFFF
-
     proc = build_txt2img_processing(request)
     proc.sd_model = engine
-    proc.seed = raw_seed
-    proc.seeds = [raw_seed]
+
+    base_seed, seeds, subseeds, subseed_strength = _resolve_seed_plan(
+        seed=getattr(request, "seed", None),
+        batch_total=proc.batch_total,
+    )
+    proc.seed = base_seed
+    proc.seeds = list(seeds)
     proc.subseed = -1
-    proc.subseeds = [-1]
+    proc.subseeds = list(subseeds)
 
     prompts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
-    seeds = [raw_seed]
-    subseeds = [-1]
-    subseed_strength = 0.0
 
-    result: dict[str, Any] = {"output": None, "error": None}
-    sampling_times: dict[str, float | None] = {"start": None, "end": None}
-    done = threading.Event()
-
-    def _worker() -> None:
-        try:
-            sampling_times["start"] = time.perf_counter()
-            with smart_runtime_overrides(
-                smart_offload=bool(getattr(proc, "smart_offload", False)),
-                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-                    smart_cache=bool(getattr(proc, "smart_cache", False)),
-                ):
-                    result["output"] = generate_txt2img(
-                        processing=proc,
-                        conditioning=None,
-                        unconditional_conditioning=None,
-                        seeds=seeds,
-                        subseeds=subseeds,
-                    subseed_strength=subseed_strength,
-                    prompts=prompts,
-                )
-        except Exception as exc:  # noqa: BLE001
-            result["error"] = exc
-        finally:
-            sampling_times["end"] = time.perf_counter()
-            done.set()
-
-    threading.Thread(target=_worker, name=f"{engine.engine_id}-txt2img-worker", daemon=True).start()
-
-    t0 = time.perf_counter()
-    last_step = -1
-    while not done.is_set():
-        try:
-            step = int(getattr(backend_state, "sampling_step", 0) or 0)
-            total = int(getattr(backend_state, "sampling_steps", 0) or 0)
-        except Exception:  # noqa: BLE001
-            step, total = 0, 0
-
-        if total > 0 and step != last_step:
-            elapsed = time.perf_counter() - t0
-            eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
-            pct = max(5.0, min(99.0, (step / total) * 100.0))
-            yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
-            last_step = step
-
-        time.sleep(0.12)
-
-    if result["error"] is not None:
-        raise result["error"]
-
-    output = result["output"]
-    if not isinstance(output, GenerationResult):
-        raise RuntimeError(
-            f"txt2img pipeline returned {type(output).__name__}; expected GenerationResult (samples+decoded)"
-        )
-
-    latents = output.samples
-    decoded_images = output.decoded
-
-    decode_start = time.perf_counter()
-    if decoded_images is not None:
-        if isinstance(decoded_images, torch.Tensor):
-            images = latents_to_pil(decoded_images)
-        elif isinstance(decoded_images, list):
-            try:
-                from PIL import Image as _PILImage
-
-                if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
-                    raise TypeError("decoded images are not PIL.Image.Image")
-            except Exception as exc:
-                raise RuntimeError(
-                    "txt2img pipeline returned decoded images, but they are not a PIL image list"
-                ) from exc
-            images = decoded_images
-        else:
-            raise RuntimeError(
-                "txt2img pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
+    def _generate() -> GenerationResult:
+        with smart_runtime_overrides(
+            smart_offload=bool(getattr(proc, "smart_offload", False)),
+            smart_fallback=bool(getattr(proc, "smart_fallback", False)),
+            smart_cache=bool(getattr(proc, "smart_cache", False)),
+        ):
+            return generate_txt2img(
+                processing=proc,
+                conditioning=None,
+                unconditional_conditioning=None,
+                seeds=seeds,
+                subseeds=subseeds,
+                subseed_strength=subseed_strength,
+                prompts=prompts,
             )
-    else:
-        if not isinstance(latents, torch.Tensor):
-            raise RuntimeError(
-                f"txt2img returned {type(latents).__name__}; expected torch.Tensor (latents)"
-            )
-        decoded = decode_latent_batch(engine, latents)
-        images = latents_to_pil(decoded)
-    decode_end = time.perf_counter()
+
+    done, outcome = _run_inference_worker(name=f"{engine.engine_id}-txt2img-worker", fn=_generate)
+
+    for step, total, eta in _iter_sampling_progress(done=done):
+        pct = max(5.0, min(99.0, (step / total) * 100.0))
+        yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+
+    if outcome.error is not None:
+        raise outcome.error
+
+    images, decode_ms = _decode_generation_output(engine=engine, output=outcome.output, task_label="txt2img")
+
+    all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
+    seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
 
     extra_params: dict[str, object] = {}
     try:
@@ -192,32 +133,30 @@ def run_txt2img(*, engine, request) -> Iterator["InferenceEvent"]:
     except Exception:  # noqa: BLE001
         extra_params = getattr(proc, "extra_generation_params", {}) or {}
 
-    info: dict[str, object] = {
-        "engine": engine.engine_id,
-        "task": "txt2img",
-        "width": int(proc.width),
-        "height": int(proc.height),
-        "steps": int(proc.steps),
-        "guidance_scale": float(getattr(proc, "guidance_scale", 0.0) or 0.0),
-        "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
-        "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
-    }
-    if getattr(proc, "prompt", None):
-        info["prompt"] = str(getattr(proc, "prompt", ""))
-    if getattr(proc, "negative_prompt", None):
-        info["negative_prompt"] = str(getattr(proc, "negative_prompt", ""))
-    info["seed"] = int(raw_seed)
-    if extra_params:
-        info["extra"] = extra_params
-
-    timings: dict[str, float] = {}
+    timings: dict[str, float] = {"decode_ms": float(decode_ms)}
     try:
-        if sampling_times["start"] is not None and sampling_times["end"] is not None:
-            timings["sampling_ms"] = max(0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0)
-        timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
-        info["timings_ms"] = timings
+        if outcome.sampling_start is not None and outcome.sampling_end is not None:
+            timings["sampling_ms"] = max(0.0, (outcome.sampling_end - outcome.sampling_start) * 1000.0)
     except Exception:  # noqa: BLE001
         pass
+
+    mode_info: dict[str, object] = {}
+    if bool(getattr(proc, "enable_hr", False)):
+        try:
+            mode_info["hires"] = getattr(proc, "hires", None).as_dict()
+        except Exception:  # noqa: BLE001
+            pass
+
+    info = _build_common_info(
+        engine_id=engine.engine_id,
+        task="txt2img",
+        proc=proc,
+        seed=seed_value,
+        all_seeds=all_seeds,
+        extra_params=extra_params,
+        timings_ms=timings,
+        mode_info=mode_info,
+    )
 
     post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
     if callable(post_cleanup):

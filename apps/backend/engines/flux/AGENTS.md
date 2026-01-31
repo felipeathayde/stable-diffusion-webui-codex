@@ -24,3 +24,4 @@ Status: Active
 - 2026-01-06: Flux sampler allow-lists now use canonical `SamplerKind` strings (e.g. `euler a`, `dpm++ 2m`).
 - 2026-01-20: Removed unused `flux_config.py` (no call sites; config lives in `spec.py` / factory assembly).
 - 2026-01-25: `clip_skip=0` is now accepted as a “use default” sentinel for Flux CLIP branches (resets to the canonical default without requiring a separate UI toggle).
+- 2026-01-31: Flux/Chroma engines now rely on the default `CodexDiffusionEngine.encode_first_stage/decode_first_stage` implementation for the common image-VAE semantics (no behavior change; reduces duplication).

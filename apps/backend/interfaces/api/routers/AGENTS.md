@@ -42,3 +42,4 @@ Status: Active
 - 2026-01-29: `tools.py` adds `POST /api/tools/pnginfo/analyze` to extract PNG text metadata for the `/pnginfo` UI (no file persistence).
 - 2026-01-29: `tools.py` CodexPack v1 output can be produced either as the primary output of `POST /api/tools/convert-gguf` (`codexpack_v1=true`; `output_path=*.codexpack.gguf`; base GGUF is temp-only and deleted on success) or from an existing base GGUF via `POST /api/tools/codexpack/pack-v1` (Z-Image Base/Turbo; `Q4_K`; Comfy Layout metadata required).
 - 2026-01-30: `tools.py` GGUF conversion jobs now set `job["error"]` before flipping `job["status"]="error"` to avoid clients observing an error state with a missing error message.
+- 2026-01-31: `generation.py` now delegates the txt2img/img2img task worker boilerplate (status/progress/result/end, engine options build, PNG encoding) to `apps/backend/interfaces/api/tasks/generation_tasks.py` to reduce drift and keep routers thin.

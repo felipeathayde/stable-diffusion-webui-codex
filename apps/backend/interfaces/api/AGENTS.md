@@ -23,6 +23,7 @@ Status: Active
 - `apps/backend/interfaces/api/path_utils.py` — repo-relative path normalization helpers.
 - `apps/backend/interfaces/api/json_store.py` — JSON load/save helpers for persistence files.
 - `apps/backend/interfaces/api/task_registry.py` — in-process task registry (SSE queue + cancel flags).
+- `apps/backend/interfaces/api/tasks/generation_tasks.py` — shared generation task worker helpers (image task runners + engine options + PNG encoding).
 - `apps/backend/interfaces/api/serializers.py` — checkpoint serialization helper.
 
 ## Notes
@@ -35,3 +36,4 @@ Status: Active
 - 2026-01-21: WAN stage LoRA inputs are sha-only (`lora_sha`); raw-path stage `lora_path` is rejected during payload normalization/validation.
 - 2026-01-24: Settings schema/values are now strict: schema is served from the generated registry (JSON fallback), and persisted values are pruned against the registry on startup (unknown keys dropped; invalid values clamped).
 - 2026-01-25: `run_api.py` migrated the deprecated `@app.on_event("startup")` hook to FastAPI lifespan handlers (removes DeprecationWarning).
+- 2026-01-31: Added `interfaces/api/tasks/` to keep routers thin by centralizing shared generation task worker boilerplate (status/progress/result/end + engine options build for image modes).

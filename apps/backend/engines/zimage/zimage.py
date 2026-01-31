@@ -284,34 +284,18 @@ class ZImageEngine(CodexDiffusionEngine):
     @timeline_node("vae", "encode_first_stage")
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.vae)
-        try:
-            # Match Flux/Z-Image Flow16 VAE semantics:
-            # - VAE wrapper expects pixel samples as BHWC in [0, 1]
-            # - Latents used by the flow core must be normalized via process_in()
-            sample = runtime.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-            sample = runtime.vae.first_stage_model.process_in(sample)
-            return sample.to(x)
-        finally:
-            if self.smart_offload_enabled:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+        # Match Flux/Z-Image Flow16 VAE semantics:
+        # - VAE wrapper expects pixel samples as BHWC in [0, 1]
+        # - Latents used by the flow core must be normalized via process_in()
+        return super().encode_first_stage(x)
 
     @timeline_node("vae", "decode_first_stage")
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        runtime = self._require_runtime()
-        memory_management.manager.load_model(self.codex_objects.vae)
-        try:
-            # Match Flux/Z-Image Flow16 VAE semantics:
-            # - Model operates in normalized latent space
-            # - VAE decode expects denormalized latents via process_out()
-            sample = runtime.vae.first_stage_model.process_out(x)
-            sample = runtime.vae.decode(sample)
-            return sample.to(x)
-        finally:
-            if self.smart_offload_enabled:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+        # Match Flux/Z-Image Flow16 VAE semantics:
+        # - Model operates in normalized latent space
+        # - VAE decode expects denormalized latents via process_out()
+        return super().decode_first_stage(x)
 
     @torch.inference_mode()
     def sample_with_diffusers(

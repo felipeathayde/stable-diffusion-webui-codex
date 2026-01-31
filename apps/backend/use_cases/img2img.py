@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Image-to-image use case orchestration (init image + optional hires pass).
+Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass.
 When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
 
@@ -19,13 +19,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_generate_kontext_img2img` (function): Flux Kontext img2img implementation (init image as `image_latents`, no denoise schedule).
 - `_derive_seeds` (function): Normalizes seed/subseed inputs from processing config.
 - `generate_img2img` (function): Canonical img2img implementation; selects the variant and executes sampling.
-- `run_img2img` (function): Thin wrapper used by orchestrators to run img2img with an engine + prepared processing object.
+- `run_img2img` (function): Canonical img2img mode wrapper (progress polling + decode + result events) used by engines/orchestrator.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 import logging
 import torch
@@ -591,15 +591,115 @@ def generate_img2img(
 
 def run_img2img(
     *,
-    engine,
-    processing: CodexProcessingImg2Img,
-    conditioning: Any,
-    unconditional_conditioning: Any,
-    prompts: Sequence[str],
-) -> Any:
-    return generate_img2img(
-        processing,
-        conditioning,
-        unconditional_conditioning,
-        prompts,
+    engine: Any,
+    request: Any,
+) -> Iterator["InferenceEvent"]:
+    """Run img2img as a canonical event stream.
+
+    This wrapper owns the mode-level concerns (seed defaults, progress polling, decode + result packaging).
+    Engines should delegate here rather than implementing per-mode pipelines.
+    """
+
+    import json
+
+    from apps.backend.core.requests import Img2ImgRequest, ProgressEvent, ResultEvent
+    from apps.backend.engines.util.adapters import build_img2img_processing
+    from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+    from apps.backend.runtime.text_processing import last_extra_generation_params
+
+    from ._image_streaming import (
+        _build_common_info,
+        _decode_generation_output,
+        _iter_sampling_progress,
+        _resolve_seed_plan,
+        _run_inference_worker,
     )
+
+    if not isinstance(request, Img2ImgRequest):
+        raise TypeError("run_img2img expects Img2ImgRequest")
+
+    engine.ensure_loaded()
+
+    proc = build_img2img_processing(request)
+    proc.sd_model = engine
+
+    base_seed, seeds, subseeds, subseed_strength = _resolve_seed_plan(
+        seed=getattr(request, "seed", None),
+        batch_total=proc.batch_total,
+    )
+    proc.seed = base_seed
+    proc.seeds = list(seeds)
+    proc.subseed = -1
+    proc.subseeds = list(subseeds)
+
+    prompts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
+
+    def _generate() -> GenerationResult:
+        with smart_runtime_overrides(
+            smart_offload=bool(getattr(proc, "smart_offload", False)),
+            smart_fallback=bool(getattr(proc, "smart_fallback", False)),
+            smart_cache=bool(getattr(proc, "smart_cache", False)),
+        ):
+            return generate_img2img(
+                proc,
+                conditioning=None,
+                unconditional_conditioning=None,
+                prompts=prompts,
+                seeds=seeds,
+                subseeds=subseeds,
+                subseed_strength=subseed_strength,
+            )
+
+    done, outcome = _run_inference_worker(name=f"{engine.engine_id}-img2img-worker", fn=_generate)
+
+    for step, total, eta in _iter_sampling_progress(done=done):
+        pct = max(5.0, min(99.0, (step / total) * 100.0))
+        yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
+
+    if outcome.error is not None:
+        raise outcome.error
+
+    images, decode_ms = _decode_generation_output(engine=engine, output=outcome.output, task_label="img2img")
+
+    all_seeds = list(getattr(proc, "all_seeds", []) or []) or list(seeds)
+    seed_value = int(all_seeds[0]) if all_seeds else int(base_seed)
+
+    extra_params: dict[str, object] = {}
+    try:
+        extra_params.update(last_extra_generation_params)
+        extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
+    except Exception:  # noqa: BLE001
+        extra_params = getattr(proc, "extra_generation_params", {}) or {}
+
+    timings: dict[str, float] = {"decode_ms": float(decode_ms)}
+    try:
+        if outcome.sampling_start is not None and outcome.sampling_end is not None:
+            timings["sampling_ms"] = max(0.0, (outcome.sampling_end - outcome.sampling_start) * 1000.0)
+    except Exception:  # noqa: BLE001
+        pass
+
+    mode_info: dict[str, object] = {
+        "denoise_strength": float(getattr(proc, "denoising_strength", 0.0) or 0.0),
+    }
+    if bool(getattr(getattr(proc, "hires", None), "enabled", False)):
+        try:
+            mode_info["hires"] = getattr(proc, "hires", None).as_dict()
+        except Exception:  # noqa: BLE001
+            pass
+
+    info = _build_common_info(
+        engine_id=engine.engine_id,
+        task="img2img",
+        proc=proc,
+        seed=seed_value,
+        all_seeds=all_seeds,
+        extra_params=extra_params,
+        timings_ms=timings,
+        mode_info=mode_info,
+    )
+
+    post_cleanup = getattr(engine, "_post_txt2img_cleanup", None)
+    if callable(post_cleanup):
+        post_cleanup()
+
+    yield ResultEvent(payload={"images": images, "info": json.dumps(info)})

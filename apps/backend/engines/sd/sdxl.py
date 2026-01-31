@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: SDXL diffusion engine implementation (base + refiner) for the backend orchestrator.
-Implements SDXL txt2img/img2img execution with smart cache integration, conditioning validation, and event emission for progress/results.
+Implements SDXL runtime assembly, conditioning, and smart-cache integration; mode wrappers are inherited from `CodexDiffusionEngine` (Option A) and delegate to `apps/backend/use_cases/`.
 When smart offload is enabled, CLIP patcher unload is stage-scoped (only unload when this call loaded it) to avoid unload/reload between cond+uncond.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -17,30 +17,23 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_SDXLPrompt` (class): Prompt marker type used for internal prompt/meta handling.
 - `_prompt_meta` (function): Computes metadata for a prompt batch (length/count flags) used in caching and diagnostics.
 - `_smart_cache_from_prompts` (function): Determines smart-cache behavior hints from prompt content and runtime settings.
-- `StableDiffusionXL` (class): Main SDXL engine (loads bundles, assembles runtime, runs inference, and emits `InferenceEvent` stream).
+- `StableDiffusionXL` (class): Main SDXL engine (loads bundles, assembles runtime, encodes conditioning; mode wrappers delegate to use-cases).
 - `StableDiffusionXLRefiner` (class): SDXL refiner engine (second-stage refinement runtime; similar lifecycle to the base engine).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import secrets
 from types import SimpleNamespace
-import threading
-import time
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
-from apps.backend.core.requests import ProgressEvent, ResultEvent
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime
-from apps.backend.engines.util.adapters import build_txt2img_processing
-from apps.backend.core.state import state as backend_state
-from apps.backend.runtime.processing.conditioners import decode_latent_batch
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import (
@@ -51,9 +44,6 @@ from apps.backend.runtime.memory.smart_offload import (
 from apps.backend.runtime.common.nn.unet.layers import Timestep
 from apps.backend.runtime.models.loader import DiffusionModelBundle
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.text_processing import last_extra_generation_params
-from apps.backend.runtime.workflows.image_io import latents_to_pil
-from apps.backend.use_cases.txt2img import generate_txt2img as _generate_txt2img
 
 
 # note: no extra device assertions here; diagnostics should be captured upstream
@@ -287,251 +277,13 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        try:
-            requested = int(clip_skip)
-        except Exception as exc:  # noqa: BLE001
-            raise TypeError("clip_skip must be an integer") from exc
-        if requested < 0:
-            raise ValueError("clip_skip must be >= 0")
-
-        if requested == 0:
-            runtime.reset_clip_skip()
-            effective = runtime.classic_engine("clip_l").clip_skip
-            logger.debug("Clip skip reset to default (%d) for SDXL.", effective)
-        else:
-            runtime.set_clip_skip(requested)
-        # Any cached text embeddings depend on clip-skip; avoid stale reuse.
-        try:
-            self._cond_cache.clear()
-        except Exception:
-            pass
-        if requested != 0:
-            logger.debug("Clip skip set to %d for SDXL.", requested)
-
-    def _post_job_cleanup(self) -> None:
-        """Post-job cleanup when smart offload is enabled.
-
-        Keeps UNet resident but nudges CUDA to release unused cached memory so the
-        next job starts from a clean allocator state without paying reload cost.
-        """
-        if not self.smart_offload_enabled:
-            return
-        try:
-            memory_management.manager.soft_empty_cache(force=True)
-        except Exception:  # pragma: no cover - diagnostics only
-            logger.debug("SDXL post-job cleanup failed", exc_info=True)
-
-    # ------------------------------------------------------------------ Tasks
-    def txt2img(self, request, **kwargs: Any):  # type: ignore[override]
-        """Run txt2img using the staged pipeline runner.
-
-        Uses the staged txt2img pipeline runner backed by CodexProcessingTxt2Img,
-        deriving hires/refiner overrides from the request payload.
-        """
-        from apps.backend.core.requests import Txt2ImgRequest
-
-        self.ensure_loaded()
-        _ = self._require_runtime()
-
-        if not isinstance(request, Txt2ImgRequest):
-            raise TypeError("StableDiffusionXL.txt2img expects Txt2ImgRequest")
-
-        # Build processing descriptor from request
-        raw_seed = int(getattr(request, "seed", -1) or -1)
-        if raw_seed < 0:
-            raw_seed = secrets.randbits(32) & 0x7FFFFFFF
-
-        proc = build_txt2img_processing(request)
-        proc.sd_model = self
-        proc.seed = raw_seed
-        proc.seeds = [raw_seed]
-        proc.subseed = -1
-        proc.subseeds = [-1]
-
-        # Bind current model
-
-        # Defer conditioning to the pipeline runner (after prompt parsing / hires overrides)
-        prompt_texts = list(getattr(proc, "prompts", []) or []) or [proc.prompt]
-        prompts = prompt_texts
-        seeds = [raw_seed]
-        subseeds = [-1]
-        subseed_strength = 0.0
-        cond = None
-        uncond = None
-
-        # Run pipeline on a worker thread while streaming progress from backend_state
-        result: dict[str, Any] = {"output": None, "error": None}
-        sampling_times: dict[str, float | None] = {"start": None, "end": None}
-        done = threading.Event()
-
-        def _worker() -> None:
-            try:
-                sampling_times["start"] = time.perf_counter()
-                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
-
-                with smart_runtime_overrides(
-                    smart_offload=bool(getattr(proc, "smart_offload", False)),
-                    smart_fallback=bool(getattr(proc, "smart_fallback", False)),
-                    smart_cache=bool(getattr(proc, "smart_cache", False)),
-                ):
-                    result["output"] = _generate_txt2img(
-                        processing=proc,
-                        conditioning=cond,
-                        unconditional_conditioning=uncond,
-                        seeds=seeds,
-                        subseeds=subseeds,
-                        subseed_strength=subseed_strength,
-                        prompts=prompts,
-                    )
-            except Exception as _exc:  # noqa: BLE001
-                result["error"] = _exc
-            finally:
-                sampling_times["end"] = time.perf_counter()
-                done.set()
-
-        threading.Thread(target=_worker, name="sdxl-txt2img-worker", daemon=True).start()
-
-        t0 = time.perf_counter()
-        last_step = -1
-        while not done.is_set():
-            try:
-                step = int(getattr(backend_state, "sampling_step", 0) or 0)
-                total = int(getattr(backend_state, "sampling_steps", 0) or 0)
-            except Exception:
-                step, total = 0, 0
-            if total > 0 and step != last_step:
-                elapsed = time.perf_counter() - t0
-                eta = (elapsed * (total - step) / max(step, 1)) if step > 0 else None
-                pct = max(5.0, min(99.0, (step / total) * 100.0))
-                yield ProgressEvent(stage="sampling", percent=pct, step=step, total_steps=total, eta_seconds=eta)
-                last_step = step
-            time.sleep(0.12)
-
-        if result["error"] is not None:
-            raise result["error"]
-        output = result["output"]
-
-        from apps.backend.runtime.processing.datatypes import GenerationResult
-
-        if not isinstance(output, GenerationResult):
-            raise RuntimeError(
-                f"txt2img pipeline returned {type(output).__name__}, expected GenerationResult (samples+decoded)"
-            )
-
-        latents = output.samples
-        decoded_images: Any | None = output.decoded
-
-        decode_start = time.perf_counter()
-        if decoded_images is not None:
-            if isinstance(decoded_images, torch.Tensor):
-                images = latents_to_pil(decoded_images)
-            elif isinstance(decoded_images, list):
-                try:
-                    from PIL import Image as _PILImage
-
-                    if not all(isinstance(img, _PILImage.Image) for img in decoded_images):
-                        raise TypeError("decoded images are not PIL.Image.Image")
-                except Exception as exc:
-                    raise RuntimeError(
-                        "txt2img pipeline returned decoded images, but they are not a PIL image list"
-                    ) from exc
-                images = decoded_images
-            else:
-                raise RuntimeError(
-                    "txt2img pipeline returned decoded images, expected torch.Tensor or list[PIL.Image.Image]"
-                )
-        else:
-            if not isinstance(latents, torch.Tensor):
-                raise RuntimeError(
-                    f"txt2img pipeline returned {type(latents).__name__}, expected torch.Tensor (latents)"
-                )
-            decoded = decode_latent_batch(self, latents)
-            images = latents_to_pil(decoded)
-        decode_end = time.perf_counter()
-        # Surface prompt/seed metadata so the frontend can show the real
-        # generation inputs instead of guessing from request/store state.
-        try:
-            primary_prompt = getattr(proc, "primary_prompt", proc.prompt)
-        except Exception:  # pragma: no cover - defensive only
-            primary_prompt = str(getattr(proc, "prompt", ""))
-
-        try:
-            primary_negative = getattr(proc, "primary_negative_prompt", proc.negative_prompt)
-        except Exception:  # pragma: no cover - defensive only
-            primary_negative = str(getattr(proc, "negative_prompt", ""))
-
-        all_seeds = list(getattr(proc, "all_seeds", []) or [])
-        seed_value = None
-        if all_seeds:
-            try:
-                seed_value = int(all_seeds[0])
-            except Exception:  # pragma: no cover - defensive only
-                seed_value = None
-        else:
-            raw_seed = getattr(proc, "seed", None)
-            if raw_seed is not None:
-                try:
-                    seed_value = int(raw_seed)
-                except Exception:  # pragma: no cover - defensive only
-                    seed_value = None
-
-        # Merge core runtime metadata with extra-generation parameters collected
-        # during text processing (e.g., TI names, emphasis mode, LoRA hashes).
-        extra_params: dict[str, object] = {}
-        try:
-            extra_params.update(last_extra_generation_params)
-            extra_params.update(getattr(proc, "extra_generation_params", {}) or {})
-        except Exception:  # pragma: no cover - defensive only
-            extra_params = getattr(proc, "extra_generation_params", {}) or {}
-
-        info: dict[str, object] = {
-            "engine": self.engine_id,
-            "task": "txt2img",
-            "width": int(proc.width),
-            "height": int(proc.height),
-            "steps": int(proc.steps),
-            "guidance_scale": float(proc.guidance_scale),
-            "sampler": (str(getattr(proc, "sampler_name", "")).strip() or None),
-            "scheduler": (str(getattr(proc, "scheduler", "")).strip() or None),
-        }
-        if primary_prompt:
-            info["prompt"] = str(primary_prompt)
-        if primary_negative:
-            info["negative_prompt"] = str(primary_negative)
-        if seed_value is not None:
-            info["seed"] = int(seed_value)
-        if all_seeds:
-            info["all_seeds"] = [int(s) for s in all_seeds]
-        if getattr(proc, "enable_hr", False):
-            info["hires"] = {
-                "enabled": True,
-                "width": int(getattr(proc, "hr_upscale_to_x", 0) or proc.width),
-                "height": int(getattr(proc, "hr_upscale_to_y", 0) or proc.height),
-                "steps": int(getattr(proc, "hr_second_pass_steps", 0) or proc.steps),
-                "denoise": float(getattr(getattr(proc, "hires", None) or proc, "hr_distilled_cfg", 0.0) or 0.0),
-                "sampler": str(getattr(proc, "hr_sampler_name", "Use same sampler") or "Use same sampler"),
-                "scheduler": str(getattr(proc, "hr_scheduler", "Use same scheduler") or "Use same scheduler"),
-                "checkpoint": str(getattr(proc, "hr_checkpoint_name", "Use same checkpoint") or "Use same checkpoint"),
-                "modules": list(getattr(proc, "hr_additional_modules", []) or []),
-            }
-        if extra_params:
-            info["extra"] = extra_params
-        timings: dict[str, float] = {}
-        try:
-            if sampling_times["start"] is not None and sampling_times["end"] is not None:
-                timings["sampling_ms"] = max(
-                    0.0, (sampling_times["end"] - sampling_times["start"]) * 1000.0
-                )
-            timings["decode_ms"] = max(0.0, (decode_end - decode_start) * 1000.0)
-            info["timings_ms"] = timings
-        except Exception:
-            # Timing metadata must never break result emission.
-            pass
-
-        # Leave UNet resident but clean up allocator / transient caches when smart offload is enabled.
-        self._post_job_cleanup()
-
-        yield ResultEvent(payload={"images": images, "info": json.dumps(info)})
+        apply_sd_clip_skip(
+            engine=self,
+            runtime=runtime,
+            clip_skip=clip_skip,
+            logger=logger,
+            label="SDXL",
+        )
 
     def _prepare_prompt_wrappers(
         self,
@@ -697,32 +449,16 @@ class StableDiffusionXL(CodexDiffusionEngine):
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target
 
-    @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+    def _decode_debug_stats_enabled(self) -> bool:
+        from apps.backend.infra.config.env_flags import env_flag
 
-    @torch.inference_mode()
-    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
+        return env_flag("CODEX_SDXL_DEBUG_DECODE_STATS", False) and logger.isEnabledFor(logging.DEBUG)
+
+    def _log_decode_stats(self, stage: str, tensor: torch.Tensor) -> None:
         try:
-            logger.info("[decode] latents stats=%s", _tensor_stats(x))
-            sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            logger.info("[decode] after_process_out=%s", _tensor_stats(sample))
-            sample = self.codex_objects.vae.decode(sample)
-            logger.info("[decode] decoded_tensor=%s", _tensor_stats(sample))
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+            logger.debug("[sdxl.decode] %s stats=%s", stage, _tensor_stats(tensor))
+        except Exception:  # pragma: no cover - diagnostics only
+            logger.debug("[sdxl.decode] failed to compute stats for stage=%s", stage, exc_info=True)
 
 
 
@@ -781,25 +517,13 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        try:
-            requested = int(clip_skip)
-        except Exception as exc:  # noqa: BLE001
-            raise TypeError("clip_skip must be an integer") from exc
-        if requested < 0:
-            raise ValueError("clip_skip must be >= 0")
-
-        if requested == 0:
-            runtime.reset_clip_skip()
-            effective = runtime.classic_engine("clip_g").clip_skip
-            logger.debug("Clip skip reset to default (%d) for SDXL refiner.", effective)
-        else:
-            runtime.set_clip_skip(requested)
-        try:
-            self._cond_cache.clear()
-        except Exception:
-            pass
-        if requested != 0:
-            logger.debug("Clip skip set to %d for SDXL refiner.", requested)
+        apply_sd_clip_skip(
+            engine=self,
+            runtime=runtime,
+            clip_skip=clip_skip,
+            logger=logger,
+            label="SDXL refiner",
+        )
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
@@ -897,26 +621,13 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
         target = engine.get_target_prompt_token_count(token_count)
         return token_count, target
 
-    @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+    def _decode_debug_stats_enabled(self) -> bool:
+        from apps.backend.infra.config.env_flags import env_flag
 
-    @torch.inference_mode()
-    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
+        return env_flag("CODEX_SDXL_DEBUG_DECODE_STATS", False) and logger.isEnabledFor(logging.DEBUG)
+
+    def _log_decode_stats(self, stage: str, tensor: torch.Tensor) -> None:
         try:
-            sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            sample = self.codex_objects.vae.decode(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
+            logger.debug("[sdxl_refiner.decode] %s stats=%s", stage, _tensor_stats(tensor))
+        except Exception:  # pragma: no cover - diagnostics only
+            logger.debug("[sdxl_refiner.decode] failed to compute stats for stage=%s", stage, exc_info=True)

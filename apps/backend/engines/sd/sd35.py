@@ -25,6 +25,7 @@ import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SD35_SPEC, SDEngineRuntime
 from apps.backend.infra.config.env_flags import env_flag
@@ -85,18 +86,15 @@ class StableDiffusion3(CodexDiffusionEngine):
             raise RuntimeError("StableDiffusion3 runtime is not initialised; call load() first.")
         return self._runtime
 
-    def set_clip_skip(self, clip_skip: int):
+    def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        try:
-            requested = int(clip_skip)
-        except Exception as exc:  # noqa: BLE001
-            raise TypeError("clip_skip must be an integer") from exc
-        if requested < 0:
-            raise ValueError("clip_skip must be >= 0")
-        if requested == 0:
-            runtime.reset_clip_skip()
-            return
-        runtime.set_clip_skip(requested)
+        apply_sd_clip_skip(
+            engine=self,
+            runtime=runtime,
+            clip_skip=clip_skip,
+            logger=logger,
+            label=self.engine_id,
+        )
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
@@ -146,27 +144,3 @@ class StableDiffusion3(CodexDiffusionEngine):
         engine = runtime.t5_engine("t5xxl")
         token_count = len(engine.tokenize([prompt])[0])
         return token_count, max(255, token_count)
-
-    @torch.inference_mode()
-    def encode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.encode(x.movedim(1, -1) * 0.5 + 0.5)
-            sample = self.codex_objects.vae.first_stage_model.process_in(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)
-
-    @torch.inference_mode()
-    def decode_first_stage(self, x: torch.Tensor) -> torch.Tensor:
-        memory_management.manager.load_model(self.codex_objects.vae)
-        unload_vae = self.smart_offload_enabled
-        try:
-            sample = self.codex_objects.vae.first_stage_model.process_out(x)
-            sample = self.codex_objects.vae.decode(sample)
-            return sample.to(x)
-        finally:
-            if unload_vae:
-                memory_management.manager.unload_model(self.codex_objects.vae)

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
-Contains request parsing, payload validation (including Z-Image Turbo/Base `extras.zimage_variant` and WAN video export options like `video_return_frames`), and task orchestration for generation endpoints.
+Contains request parsing, payload validation (including Z-Image Turbo/Base `extras.zimage_variant` and WAN video export options like `video_return_frames`), and delegates image task workers to `apps/backend/interfaces/api/tasks/generation_tasks.py`.
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -17,8 +17,6 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import json
 import logging
 import os
@@ -384,6 +382,45 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return extras, highres_cfg
 
 
+    def _resolve_model_ref_from_sha_or_name(
+        *,
+        model_override: Any,
+        extras: Dict[str, Any],
+        field_prefix: str,
+        models_api: Any,
+    ) -> str:
+        """Resolve the checkpoint reference for a request.
+
+        - Prefer `<field_prefix>.model_sha` when present.
+        - Back-compat: accept `model` when it looks like a sha (10 or 64 hex).
+        - On match, update `extras["model_path"]` so downstream stages can surface the resolved filename.
+        """
+
+        model_sha = extras.get("model_sha")
+        sha_candidate = None
+        if isinstance(model_sha, str) and model_sha.strip():
+            sha_candidate = model_sha.strip()
+        elif isinstance(model_override, str):
+            maybe = model_override.strip()
+            if len(maybe) in (10, 64) and all(c in "0123456789abcdef" for c in maybe.lower()):
+                sha_candidate = maybe
+
+        resolved = model_override
+        if sha_candidate:
+            record = models_api.find_checkpoint_by_sha(sha_candidate)
+            if record is None:
+                raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
+            resolved = record.filename
+            extras["model_path"] = record.filename
+
+        if not isinstance(resolved, str) or not resolved.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing model selection: provide 'model' or '{field_prefix}.model_sha'",
+            )
+
+        return resolved.strip()
+
     def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
         if cfg is None:
             return {
@@ -706,28 +743,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         # Resolve model assets from SHA (if provided in extras)
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
-        model_sha = extras.get("model_sha")
-        vae_sha = extras.get("vae_sha")
-        tenc_sha = extras.get("tenc_sha")
-
-        sha_candidate = None
-        if isinstance(model_sha, str) and model_sha.strip():
-            sha_candidate = model_sha.strip()
-        elif isinstance(model_override, str):
-            maybe = model_override.strip()
-            if len(maybe) in (10, 64) and all(c in "0123456789abcdef" for c in maybe.lower()):
-                sha_candidate = maybe
-
-        if sha_candidate:
-            record = _models_api.find_checkpoint_by_sha(sha_candidate)
-            if record is None:
-                raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
-            model_override = record.filename
-            extras["model_path"] = record.filename
-
-        if not isinstance(model_override, str) or not model_override.strip():
-            raise HTTPException(status_code=400, detail="Missing model selection: provide 'model' or 'extras.model_sha'")
-        model_override = model_override.strip()
+        model_override = _resolve_model_ref_from_sha_or_name(
+            model_override=model_override,
+            extras=extras,
+            field_prefix="extras",
+            models_api=_models_api,
+        )
         model_ref_for_contract = model_override
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
@@ -761,47 +782,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return req, engine_key, model_override
 
-    def encode_images(images: Any, *, metadata: Optional[Mapping[str, str]] = None) -> list[Dict[str, str]]:  # type: ignore[no-untyped-def]
-        encoded: list[Dict[str, str]] = []
-        for img in images or []:
-            if img is None:
-                continue
-            buf = io.BytesIO()
-            pnginfo = None
-            use_metadata = False
-            try:
-                from PIL import PngImagePlugin  # type: ignore
-
-                def _add_text(key: object, value: object) -> None:
-                    nonlocal pnginfo, use_metadata
-                    if not isinstance(key, str) or not isinstance(value, str):
-                        return
-                    if not value:
-                        return
-                    if pnginfo is None:
-                        pnginfo = PngImagePlugin.PngInfo()
-                    pnginfo.add_text(key, value)
-                    use_metadata = True
-
-                info_items = getattr(img, "info", None)
-                if isinstance(info_items, dict):
-                    for key, value in info_items.items():
-                        _add_text(key, value)
-                if metadata:
-                    for key, value in metadata.items():
-                        _add_text(key, value)
-            except Exception:
-                pnginfo = None
-                use_metadata = False
-
-            img.save(buf, format="PNG", pnginfo=(pnginfo if use_metadata else None))
-            encoded.append({
-                "format": "png",
-                "data": base64.b64encode(buf.getvalue()).decode('ascii'),
-            })
-        return encoded
-
-
     def _require_explicit_device(payload: Dict[str, Any]) -> str:
         # Accept explicit aliases from payload only (no options fallback)
         raw = (
@@ -823,143 +803,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
 
     def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-        loop = entry.loop
+        from apps.backend.interfaces.api.tasks.generation_tasks import run_image_task as _run_image_task
 
-        def push(event: Dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-        def mark_done(success: bool) -> None:
-            def _set() -> None:
-                if not entry.done.done():
-                    entry.done.set_result(success)
-
-            loop.call_soon_threadsafe(_set)
-
-        push({"type": "status", "stage": "queued"})
-        try:
-            # Enforce explicit device selection without fallback
-            _require_explicit_device(payload)
-            req, engine_key, model_ref = prepare_txt2img(payload)
-        except Exception as err:
-            entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
-            entry.schedule_cleanup(task_id, delay=0.0)
-            with tasks_lock:
-                tasks.pop(task_id, None)
-            raise
-
-        def worker() -> None:
-            try:
-                push({"type": "status", "stage": "running"})
-                preview_cfg = live_preview.build_task_config(_opts_get)
-                entry.last_preview_id_sent = 0
-
-                engine_options: Dict[str, object] = {}
-                extras = getattr(req, "extras", {}) or {}
-                te_override = extras.get("text_encoder_override")
-                if isinstance(te_override, dict):
-                    engine_options["text_encoder_override"] = dict(te_override)
-
-                vae_path_from_extras = extras.get("vae_path")
-                if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
-                    engine_options["vae_path"] = vae_path_from_extras.strip()
-                engine_options["vae_source"] = "external" if "vae_path" in engine_options else "built_in"
-
-                tenc_path_from_extras = extras.get("tenc_path")
-                if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
-                    engine_options["tenc_path"] = tenc_path_from_extras.strip()
-                elif isinstance(tenc_path_from_extras, list):
-                    resolved: list[str] = []
-                    for item in tenc_path_from_extras:
-                        if isinstance(item, str) and item.strip():
-                            resolved.append(item.strip())
-                    if resolved:
-                        engine_options["tenc_path"] = resolved
-                engine_options["tenc_source"] = (
-                    "external"
-                    if ("tenc_path" in engine_options or "text_encoder_override" in engine_options)
-                    else "built_in"
-                )
-
-                zimage_variant = extras.get("zimage_variant")
-                if isinstance(zimage_variant, str) and zimage_variant.strip():
-                    engine_options["zimage_variant"] = zimage_variant.strip()
-
-                # Pass streaming option from settings to engine (no model-part fallbacks).
-                snap = _opts_snapshot()
-                if getattr(snap, "codex_core_streaming", False):
-                    engine_options["codex_core_streaming"] = True
-                with tasks_lock:
-                    with preview_cfg.runtime_overrides():
-                        for ev in _ORCH.run(
-                            TaskType.TXT2IMG,
-                            engine_key,
-                            req,
-                            model_ref=model_ref,
-                            engine_options=engine_options,
-                        ):
-                            if entry.cancel_requested and entry.cancel_mode == "immediate":
-                                entry.error = "cancelled"
-                                push({"type": "error", "message": "cancelled"})
-                                push({"type": "end"})
-                                mark_done(False)
-                                return
-                            if isinstance(ev, ProgressEvent):
-                                evt: Dict[str, Any] = {
-                                    "type": "progress",
-                                    "stage": ev.stage,
-                                    "percent": ev.percent,
-                                    "step": ev.step,
-                                    "total_steps": ev.total_steps,
-                                    "eta_seconds": ev.eta_seconds,
-                                }
-                                live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
-                                push(evt)
-                            elif isinstance(ev, ResultEvent):
-                                payload_obj = ev.payload or {}
-                                info_raw = payload_obj.get("info", "{}")
-                                try:
-                                    info_obj = json.loads(info_raw)
-                                except Exception:
-                                    info_obj = info_raw
-                                info_dict = info_obj if isinstance(info_obj, dict) else None
-                                if isinstance(info_obj, dict):
-                                    for key, value in _GENERATION_PROVENANCE.items():
-                                        info_obj.setdefault(key, value)
-                                if bool(_opts_get("samples_save", True)):
-                                    _save_generated_images(
-                                        payload_obj.get("images", []),
-                                        task=TaskType.TXT2IMG,
-                                        info=info_dict,
-                                        metadata=_GENERATION_PROVENANCE,
-                                    )
-                                encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
-                                result = {
-                                    "images": encoded,
-                                    "info": info_obj,
-                                }
-                                entry.result = {
-                                    "status": "completed",
-                                    "result": result,
-                                }
-                                push({"type": "result", **result})
-                push({"type": "end"})
-                mark_done(True)
-            except Exception as err:  # pragma: no cover - surfaces runtime errors
-                try:
-                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
-                    _dump_exc(type(err), err, err.__traceback__, where='txt2img_worker', context={'task_id': task_id})
-                except Exception:
-                    pass
-                entry.error = str(err)
-                push({"type": "error", "message": entry.error})
-                push({"type": "end"})
-                mark_done(False)
-
-        thread = threading.Thread(target=worker, name=f"txt2img-task-{task_id}", daemon=True)
-        thread.start()
+        _run_image_task(
+            task_id=task_id,
+            payload=payload,
+            entry=entry,
+            task_type=TaskType.TXT2IMG,
+            prepare=prepare_txt2img,
+            orch=_ORCH,
+            require_explicit_device=_require_explicit_device,
+            ensure_default_engines_registered=_ensure_default_engines_registered,
+            live_preview=live_preview,
+            opts_get=_opts_get,
+            opts_snapshot=_opts_snapshot,
+            generation_provenance=_GENERATION_PROVENANCE,
+            save_generated_images=_save_generated_images,
+        )
 
     def prepare_img2img(payload: Dict[str, Any]) -> Tuple[Img2ImgRequest, str, Optional[str]]:
         init_image_data = _p.require(payload, 'img2img_init_image')
@@ -1188,35 +1048,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         from apps.backend.inventory.cache import resolve_asset_by_sha
         from apps.backend.runtime.models import api as _models_api
         engine_id = engine_key
-        model_sha = extras.get("model_sha")
-        vae_sha = extras.get("vae_sha")
-        tenc_sha = extras.get("tenc_sha")
 
         if "vae_path" in extras or "tenc_path" in extras:
             raise HTTPException(status_code=400, detail="img2img_extras must not include raw '*_path' fields; use sha256 via '*_sha'")
 
-        sha_candidate = None
-        if isinstance(model_sha, str) and model_sha.strip():
-            sha_candidate = model_sha.strip()
-        elif isinstance(model_override, str):
-            maybe = model_override.strip()
-            if len(maybe) in (10, 64) and all(c in "0123456789abcdef" for c in maybe.lower()):
-                sha_candidate = maybe
-
-        if sha_candidate:
-            record = _models_api.find_checkpoint_by_sha(sha_candidate)
-            if record is None:
-                raise HTTPException(status_code=409, detail=f"Checkpoint not found for sha: {sha_candidate}")
-            model_override = record.filename
-            model_ref = record.filename
-            extras["model_path"] = record.filename
-
-        if not isinstance(model_ref, str) or not model_ref.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Missing model selection: provide 'model' or 'img2img_extras.model_sha'",
-            )
-        model_ref = model_ref.strip()
+        model_ref = _resolve_model_ref_from_sha_or_name(
+            model_override=model_ref,
+            extras=extras,
+            field_prefix="img2img_extras",
+            models_api=_models_api,
+        )
 
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
@@ -1274,136 +1115,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return req, engine_key, model_ref
 
     def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
-        loop = entry.loop
+        from apps.backend.interfaces.api.tasks.generation_tasks import run_image_task as _run_image_task
 
-        def push(event: Dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-        def mark_done(success: bool) -> None:
-            def _set() -> None:
-                if not entry.done.done():
-                    entry.done.set_result(success)
-
-            loop.call_soon_threadsafe(_set)
-
-        push({"type": "status", "stage": "queued"})
-        try:
-            _require_explicit_device(payload)
-            req, engine_key, model_ref = prepare_img2img(payload)
-        except Exception as err:
-            entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
-            entry.schedule_cleanup(task_id, delay=0.0)
-            with tasks_lock:
-                tasks.pop(task_id, None)
-            raise
-
-        def worker() -> None:
-            try:
-                push({"type": "status", "stage": "running"})
-                preview_cfg = live_preview.build_task_config(_opts_get)
-                entry.last_preview_id_sent = 0
-
-                engine_options: Dict[str, object] = {}
-                extras = getattr(req, "extras", {}) or {}
-                te_override = extras.get("text_encoder_override")
-                if isinstance(te_override, dict):
-                    engine_options["text_encoder_override"] = dict(te_override)
-
-                vae_path_from_extras = extras.get("vae_path")
-                if isinstance(vae_path_from_extras, str) and vae_path_from_extras.strip():
-                    engine_options["vae_path"] = vae_path_from_extras.strip()
-                engine_options["vae_source"] = "external" if "vae_path" in engine_options else "built_in"
-
-                tenc_path_from_extras = extras.get("tenc_path")
-                if isinstance(tenc_path_from_extras, str) and tenc_path_from_extras.strip():
-                    engine_options["tenc_path"] = tenc_path_from_extras.strip()
-                elif isinstance(tenc_path_from_extras, list):
-                    resolved: list[str] = []
-                    for item in tenc_path_from_extras:
-                        if isinstance(item, str) and item.strip():
-                            resolved.append(item.strip())
-                    if resolved:
-                        engine_options["tenc_path"] = resolved
-                engine_options["tenc_source"] = (
-                    "external"
-                    if ("tenc_path" in engine_options or "text_encoder_override" in engine_options)
-                    else "built_in"
-                )
-
-                zimage_variant = extras.get("zimage_variant")
-                if isinstance(zimage_variant, str) and zimage_variant.strip():
-                    engine_options["zimage_variant"] = zimage_variant.strip()
-
-                # Pass streaming option from settings to engine (no model-part fallbacks).
-                snap = _opts_snapshot()
-                if getattr(snap, "codex_core_streaming", False):
-                    engine_options["codex_core_streaming"] = True
-                with tasks_lock:
-                    with preview_cfg.runtime_overrides():
-                        for ev in _ORCH.run(
-                            TaskType.IMG2IMG,
-                            engine_key,
-                            req,
-                            model_ref=model_ref,
-                            engine_options=engine_options,
-                        ):
-                            if entry.cancel_requested and entry.cancel_mode == "immediate":
-                                entry.error = "cancelled"
-                                push({"type": "error", "message": "cancelled"})
-                                push({"type": "end"})
-                                mark_done(False)
-                                return
-                            if isinstance(ev, ProgressEvent):
-                                evt: Dict[str, Any] = {
-                                    "type": "progress",
-                                    "stage": ev.stage,
-                                    "percent": ev.percent,
-                                    "step": ev.step,
-                                    "total_steps": ev.total_steps,
-                                    "eta_seconds": ev.eta_seconds,
-                                }
-                                live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
-                                push(evt)
-                            elif isinstance(ev, ResultEvent):
-                                payload_obj = ev.payload or {}
-                                info_raw = payload_obj.get("info", "{}")
-                                try:
-                                    info_obj = json.loads(info_raw)
-                                except Exception:
-                                    info_obj = info_raw
-                                info_dict = info_obj if isinstance(info_obj, dict) else None
-                                if isinstance(info_obj, dict):
-                                    for key, value in _GENERATION_PROVENANCE.items():
-                                        info_obj.setdefault(key, value)
-                                if bool(_opts_get("samples_save", True)):
-                                    _save_generated_images(
-                                        payload_obj.get("images", []),
-                                        task=TaskType.IMG2IMG,
-                                        info=info_dict,
-                                        metadata=_GENERATION_PROVENANCE,
-                                    )
-                                encoded = encode_images(payload_obj.get("images", []), metadata=_GENERATION_PROVENANCE)
-                                result = {"images": encoded, "info": info_obj}
-                                entry.result = {"status": "completed", "result": result}
-                                push({"type": "result", **result})
-                push({"type": "end"})
-                mark_done(True)
-            except Exception as err:
-                try:
-                    from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
-                    _dump_exc(type(err), err, err.__traceback__, where='img2img_worker', context={'task_id': task_id})
-                except Exception:
-                    pass
-                entry.error = str(err)
-                push({"type": "error", "message": entry.error})
-                push({"type": "end"})
-                mark_done(False)
-
-        thread = threading.Thread(target=worker, name=f"img2img-task-{task_id}", daemon=True)
-        thread.start()
+        _run_image_task(
+            task_id=task_id,
+            payload=payload,
+            entry=entry,
+            task_type=TaskType.IMG2IMG,
+            prepare=prepare_img2img,
+            orch=_ORCH,
+            require_explicit_device=_require_explicit_device,
+            ensure_default_engines_registered=_ensure_default_engines_registered,
+            live_preview=live_preview,
+            opts_get=_opts_get,
+            opts_snapshot=_opts_snapshot,
+            generation_provenance=_GENERATION_PROVENANCE,
+            save_generated_images=_save_generated_images,
+        )
 
     def _wan_require_dims_multiple_of_16(*, task: str, width: int, height: int) -> None:
         """WAN video geometry guard (Diffusers parity).
@@ -2197,6 +1925,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 push({"type": "status", "stage": "running"})
                 with tasks_lock:
                     engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
+                    from apps.backend.interfaces.api.tasks.generation_tasks import encode_images as _encode_images
                     from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
 
                     with smart_runtime_overrides(
@@ -2227,7 +1956,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                                     info_obj = json.loads(info_raw)
                                 except Exception:
                                     info_obj = info_raw
-                                encoded = encode_images(payload_obj.get("images", []))
+                                encoded = _encode_images(payload_obj.get("images", []))
                                 result = {"images": encoded, "info": info_obj}
                                 if isinstance(payload_obj.get("video"), dict):
                                     result["video"] = payload_obj.get("video")

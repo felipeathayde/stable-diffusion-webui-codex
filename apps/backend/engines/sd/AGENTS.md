@@ -25,11 +25,12 @@ Status: Active
 - 2026-01-06: SDXL generation info no longer defaults sampler/scheduler to `"Automatic"`; missing values serialize as null to reflect strict canonical inputs.
 - 2026-01-25: `clip_skip=0` is now treated as an explicit “use default” sentinel across SD-family engines, resetting clip skip to the per-branch spec defaults to prevent state leaking across jobs.
 - 2026-01-30: SD-family txt2img now consumes `GenerationResult` from the canonical staged runner (removed `_already_decoded` decode sentinels).
+- 2026-01-31: SD-family clip-skip handling is centralized in `apps/backend/engines/sd/_clip_skip.py` (validation + reset semantics + cache invalidation). SDXL no longer overrides `txt2img`; mode streaming lives in `apps/backend/use_cases/` (Option A).
 
 ### Event Emission
-- Engines must emit `ProgressEvent` and a final `ResultEvent` for UI/services to render progress and images.
-- SDXL `txt2img` decodes latents to RGB and emits a `ResultEvent` with `images` and a JSON `info` string.
-- Progress streaming can be added by polling `apps.backend.core.state.state` while sampling or by converting the sampler into an event-yielding generator; keep the approach explicit per engine.
+- Mode streaming wrappers live in `apps/backend/use_cases/{txt2img,img2img}.py` and are invoked via `CodexDiffusionEngine.txt2img/img2img` (Option A).
+- Engines must not own wrapper pipelines; they provide hooks (conditioning, clip-skip, prompt lengths, runtime wiring).
+- SDXL decode stats can be enabled via `CODEX_SDXL_DEBUG_DECODE_STATS=1` (debug-level logs; stats computation is gated).
 
 ### Assembly Invariants (spec.py)
 - Ao montar o runtime (`assemble_engine_runtime`, via `CodexSDFamilyFactory`):

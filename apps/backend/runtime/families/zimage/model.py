@@ -99,8 +99,10 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        return norm * self.weight
+        dtype = x.dtype
+        x_float = x.float()
+        norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+        return (norm * self.weight.float()).to(dtype)
 
 
 class TimestepEmbedder(nn.Module):

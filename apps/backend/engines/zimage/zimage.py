@@ -237,7 +237,8 @@ class ZImageEngine(CodexDiffusionEngine):
             if isinstance(cached, torch.Tensor):
                 record_smart_cache_hit("zimage.conditioning")
                 target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-                return cached.to(target_device)
+                core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
+                return cached.to(device=target_device, dtype=core_dtype)
             record_smart_cache_miss("zimage.conditioning")
 
         # Load text encoder to GPU using memory management (same pattern as Flux)
@@ -255,6 +256,9 @@ class ZImageEngine(CodexDiffusionEngine):
         
         try:
             cond = runtime.text.qwen3_text(prompts)
+            core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
+            if cond.dtype != core_dtype:
+                cond = cond.to(dtype=core_dtype)
             if use_cache:
                 # Keep cache bounded: store only the most recent entry (tensors on CPU).
                 self._cond_cache.clear()

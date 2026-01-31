@@ -326,8 +326,8 @@ class Attention(nn.Module):
     ) -> torch.Tensor:
         B, N, _ = x.shape
 
-        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_DTYPE", False) and logger.isEnabledFor(logging.DEBUG)
-        debug_stack = debug_dtype and env_flag("CODEX_ZIMAGE_DEBUG_DTYPE_STACK", False)
+        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_stack = debug_dtype
         if debug_dtype:
             try:
                 w = getattr(self.qkv, "weight", None)
@@ -889,8 +889,8 @@ class ZImageTransformer2DModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
-        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_DTYPE", False) and logger.isEnabledFor(logging.DEBUG)
-        debug_stack = debug_dtype and env_flag("CODEX_ZIMAGE_DEBUG_DTYPE_STACK", False)
+        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_stack = debug_dtype
 
         # Handle 5D input
         if x.dim() == 5:

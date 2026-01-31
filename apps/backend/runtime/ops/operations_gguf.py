@@ -66,6 +66,8 @@ class _ForwardDequantCache:
     level: str = "off"
     limit_bytes: int = 0
     used_bytes: int = 0
+    used_bytes_moved: int = 0
+    used_bytes_dequant: int = 0
     moved_params: dict[tuple[int, str], CodexParameter] = field(default_factory=dict)
     dequant_tensors: dict[tuple[int, str, torch.dtype], torch.Tensor] = field(default_factory=dict)
     calls: int = 0
@@ -81,6 +83,8 @@ class _ForwardDequantCache:
         self.moved_params.clear()
         self.dequant_tensors.clear()
         self.used_bytes = 0
+        self.used_bytes_moved = 0
+        self.used_bytes_dequant = 0
         self.calls = 0
         self.passthrough = 0
         self.moved_hits = 0
@@ -111,21 +115,40 @@ def enable_dequant_forward_cache(*, level: str, limit_mb: int) -> None:
     cache = _ForwardDequantCache(level=lvl, limit_bytes=max(lim, 0) * 1024 * 1024)
     setattr(_FORWARD_CACHE_LOCAL, "cache", cache)
     _LOG.info("GGUF dequant_forward cache enabled (level=%s limit_mb=%d)", lvl, lim)
+    if _LOG.isEnabledFor(logging.DEBUG):
+        cuda_mem = _cuda_mem_mb()
+        if cuda_mem is not None:
+            free_mb, total_mb, allocated_mb, reserved_mb, device_id = cuda_mem
+            _LOG.debug(
+                "GGUF dequant_forward cache cuda mem (enable): device=%s free_mb=%d total_mb=%d "
+                "allocated_mb=%d reserved_mb=%d",
+                device_id,
+                free_mb,
+                total_mb,
+                allocated_mb,
+                reserved_mb,
+            )
 
 
 def disable_dequant_forward_cache() -> None:
     cache: _ForwardDequantCache | None = getattr(_FORWARD_CACHE_LOCAL, "cache", None)
     if cache is not None:
         if _LOG.isEnabledFor(logging.DEBUG):
-            used_mb = int(max(0, cache.used_bytes) // (1024 * 1024))
+            accounted_mb = int(max(0, cache.used_bytes) // (1024 * 1024))
+            accounted_moved_mb = int(max(0, cache.used_bytes_moved) // (1024 * 1024))
+            accounted_dequant_mb = int(max(0, cache.used_bytes_dequant) // (1024 * 1024))
             limit_mb = int(max(0, cache.limit_bytes) // (1024 * 1024))
+            cuda_mem_before = _cuda_mem_mb()
             _LOG.debug(
-                "GGUF dequant_forward cache stats: level=%s used_mb=%d/%d moved_params=%d dequant_tensors=%d "
+                "GGUF dequant_forward cache stats: level=%s accounted_mb=%d/%d accounted_moved_mb=%d "
+                "accounted_dequant_mb=%d moved_params=%d dequant_tensors=%d "
                 "calls=%d passthrough=%d moved_hits=%d moved_stores=%d moved_skips=%d "
                 "dequant_hits=%d dequant_stores=%d dequant_skips=%d",
                 cache.level,
-                used_mb,
+                accounted_mb,
                 limit_mb,
+                accounted_moved_mb,
+                accounted_dequant_mb,
                 len(cache.moved_params),
                 len(cache.dequant_tensors),
                 cache.calls,
@@ -137,7 +160,31 @@ def disable_dequant_forward_cache() -> None:
                 cache.dequant_stores,
                 cache.dequant_skips,
             )
+            if cuda_mem_before is not None:
+                free_mb, total_mb, allocated_mb, reserved_mb, device_id = cuda_mem_before
+                _LOG.debug(
+                    "GGUF dequant_forward cache cuda mem (before clear): device=%s free_mb=%d total_mb=%d "
+                    "allocated_mb=%d reserved_mb=%d",
+                    device_id,
+                    free_mb,
+                    total_mb,
+                    allocated_mb,
+                    reserved_mb,
+                )
         cache.clear()
+        if _LOG.isEnabledFor(logging.DEBUG):
+            cuda_mem_after = _cuda_mem_mb()
+            if cuda_mem_after is not None:
+                free_mb, total_mb, allocated_mb, reserved_mb, device_id = cuda_mem_after
+                _LOG.debug(
+                    "GGUF dequant_forward cache cuda mem (after clear): device=%s free_mb=%d total_mb=%d "
+                    "allocated_mb=%d reserved_mb=%d",
+                    device_id,
+                    free_mb,
+                    total_mb,
+                    allocated_mb,
+                    reserved_mb,
+                )
     setattr(_FORWARD_CACHE_LOCAL, "cache", None)
     _LOG.info("GGUF dequant_forward cache disabled")
 
@@ -161,6 +208,32 @@ def _tensor_nbytes(t: torch.Tensor) -> int:
         return 0
 
 
+def _cuda_mem_mb() -> tuple[int, int, int, int, str] | None:
+    """Best-effort CUDA memory snapshot in MB.
+
+    Returns:
+        (free_mb, total_mb, allocated_mb, reserved_mb, device_id)
+    """
+
+    if not torch.cuda.is_available():
+        return None
+    try:
+        free_b, total_b = torch.cuda.mem_get_info()
+        allocated_b = int(torch.cuda.memory_allocated())
+        reserved_b = int(torch.cuda.memory_reserved())
+        mb = 1024 * 1024
+        device_id = f"cuda:{torch.cuda.current_device()}"
+        return (
+            int(free_b // mb),
+            int(total_b // mb),
+            int(allocated_b // mb),
+            int(reserved_b // mb),
+            device_id,
+        )
+    except Exception:
+        return None
+
+
 def _forward_cache_can_store(cache: _ForwardDequantCache, *, nbytes: int) -> bool:
     if nbytes <= 0:
         return False
@@ -171,8 +244,15 @@ def _forward_cache_can_store(cache: _ForwardDequantCache, *, nbytes: int) -> boo
     return True
 
 
-def _forward_cache_account(cache: _ForwardDequantCache, *, nbytes: int) -> None:
-    cache.used_bytes += max(0, int(nbytes))
+def _forward_cache_account(cache: _ForwardDequantCache, *, nbytes: int, bucket: str) -> None:
+    n = max(0, int(nbytes))
+    cache.used_bytes += n
+    if bucket == "moved":
+        cache.used_bytes_moved += n
+    elif bucket == "dequant":
+        cache.used_bytes_dequant += n
+    else:
+        raise ValueError(f"Unknown forward cache accounting bucket: {bucket!r}")
 
 
 def set_cache_policy(policy: str = "none", limit_mb: int = 0) -> None:
@@ -305,10 +385,14 @@ def dequantize_tensor_for_forward(
     moved = cache.moved_params.get(moved_key)
     if moved is None:
         moved_candidate = tensor.to(device=target_device, dtype=target_dtype, non_blocking=non_blocking)
-        moved_bytes = _tensor_nbytes(moved_candidate.data)
-        if _forward_cache_can_store(cache, nbytes=moved_bytes):
+        moved_bytes = 0 if moved_candidate is tensor else _tensor_nbytes(moved_candidate.data)
+        if moved_bytes == 0:
             cache.moved_params[moved_key] = moved_candidate
-            _forward_cache_account(cache, nbytes=moved_bytes)
+            cache.moved_stores += 1
+            moved = moved_candidate
+        elif _forward_cache_can_store(cache, nbytes=moved_bytes):
+            cache.moved_params[moved_key] = moved_candidate
+            _forward_cache_account(cache, nbytes=moved_bytes, bucket="moved")
             cache.moved_stores += 1
             moved = moved_candidate
         else:
@@ -333,7 +417,7 @@ def dequantize_tensor_for_forward(
     out_bytes = _tensor_nbytes(out)
     if _forward_cache_can_store(cache, nbytes=out_bytes):
         cache.dequant_tensors[out_key] = out
-        _forward_cache_account(cache, nbytes=out_bytes)
+        _forward_cache_account(cache, nbytes=out_bytes, bucket="dequant")
         cache.dequant_stores += 1
     else:
         cache.dequant_skips += 1

@@ -331,7 +331,23 @@ class Attention(nn.Module):
         if debug_dtype:
             try:
                 w = getattr(self.qkv, "weight", None)
-                if isinstance(w, torch.Tensor) and x.dtype != w.dtype:
+                if isinstance(w, torch.Tensor) and getattr(w, "qtype", None) is not None:
+                    if not getattr(self, "_zimage_dtype_logged_attn_qkv_gguf", False):
+                        qtype = getattr(w, "qtype", None)
+                        qtype_name = getattr(qtype, "name", str(qtype))
+                        real_shape = getattr(w, "real_shape", None)
+                        logger.debug(
+                            "[zimage-dtype] Attention.qkv weight is GGUF packed: mat1=x dtype=%s; "
+                            "mat2=qkv.weight storage_dtype=%s computation_dtype=%s qtype=%s storage_shape=%s real_shape=%s",
+                            str(x.dtype),
+                            str(w.dtype),
+                            str(getattr(w, "computation_dtype", None)),
+                            qtype_name,
+                            tuple(w.shape),
+                            tuple(real_shape) if real_shape is not None else None,
+                        )
+                        setattr(self, "_zimage_dtype_logged_attn_qkv_gguf", True)
+                elif isinstance(w, torch.Tensor) and x.dtype != w.dtype:
                     stack = ""
                     if debug_stack:
                         import traceback as _traceback
@@ -376,7 +392,23 @@ class Attention(nn.Module):
         if debug_dtype:
             try:
                 w_out = getattr(self.out, "weight", None)
-                if isinstance(w_out, torch.Tensor) and out.dtype != w_out.dtype:
+                if isinstance(w_out, torch.Tensor) and getattr(w_out, "qtype", None) is not None:
+                    if not getattr(self, "_zimage_dtype_logged_attn_out_gguf", False):
+                        qtype = getattr(w_out, "qtype", None)
+                        qtype_name = getattr(qtype, "name", str(qtype))
+                        real_shape = getattr(w_out, "real_shape", None)
+                        logger.debug(
+                            "[zimage-dtype] Attention.out weight is GGUF packed: mat1=sdpa_out dtype=%s; "
+                            "mat2=out.weight storage_dtype=%s computation_dtype=%s qtype=%s storage_shape=%s real_shape=%s",
+                            str(out.dtype),
+                            str(w_out.dtype),
+                            str(getattr(w_out, "computation_dtype", None)),
+                            qtype_name,
+                            tuple(w_out.shape),
+                            tuple(real_shape) if real_shape is not None else None,
+                        )
+                        setattr(self, "_zimage_dtype_logged_attn_out_gguf", True)
+                elif isinstance(w_out, torch.Tensor) and out.dtype != w_out.dtype:
                     stack = ""
                     if debug_stack:
                         import traceback as _traceback
@@ -912,7 +944,24 @@ class ZImageTransformer2DModel(nn.Module):
         if debug_dtype:
             try:
                 w = getattr(self.x_embedder, "weight", None)
-                if isinstance(w, torch.Tensor) and img_patches.dtype != w.dtype:
+                if isinstance(w, torch.Tensor) and getattr(w, "qtype", None) is not None:
+                    if not getattr(self, "_zimage_dtype_logged_x_embedder_gguf", False):
+                        qtype = getattr(w, "qtype", None)
+                        qtype_name = getattr(qtype, "name", str(qtype))
+                        real_shape = getattr(w, "real_shape", None)
+                        logger.debug(
+                            "[zimage-dtype] x_embedder weight is GGUF packed: mat1=img_patches dtype=%s; "
+                            "mat2=x_embedder.weight storage_dtype=%s computation_dtype=%s qtype=%s storage_shape=%s "
+                            "real_shape=%s",
+                            str(img_patches.dtype),
+                            str(w.dtype),
+                            str(getattr(w, "computation_dtype", None)),
+                            qtype_name,
+                            tuple(w.shape),
+                            tuple(real_shape) if real_shape is not None else None,
+                        )
+                        setattr(self, "_zimage_dtype_logged_x_embedder_gguf", True)
+                elif isinstance(w, torch.Tensor) and img_patches.dtype != w.dtype:
                     stack = ""
                     if debug_stack:
                         import traceback as _traceback
@@ -955,7 +1004,24 @@ class ZImageTransformer2DModel(nn.Module):
         if debug_dtype:
             try:
                 w = getattr(self.cap_embedder[1], "weight", None)
-                if isinstance(w, torch.Tensor) and cap_norm.dtype != w.dtype:
+                if isinstance(w, torch.Tensor) and getattr(w, "qtype", None) is not None:
+                    if not getattr(self, "_zimage_dtype_logged_cap_embedder_gguf", False):
+                        qtype = getattr(w, "qtype", None)
+                        qtype_name = getattr(qtype, "name", str(qtype))
+                        real_shape = getattr(w, "real_shape", None)
+                        logger.debug(
+                            "[zimage-dtype] cap_embedder weight is GGUF packed: mat1=cap_norm dtype=%s; "
+                            "mat2=cap_linear.weight storage_dtype=%s computation_dtype=%s qtype=%s "
+                            "storage_shape=%s real_shape=%s",
+                            str(cap_norm.dtype),
+                            str(w.dtype),
+                            str(getattr(w, "computation_dtype", None)),
+                            qtype_name,
+                            tuple(w.shape),
+                            tuple(real_shape) if real_shape is not None else None,
+                        )
+                        setattr(self, "_zimage_dtype_logged_cap_embedder_gguf", True)
+                elif isinstance(w, torch.Tensor) and cap_norm.dtype != w.dtype:
                     stack = ""
                     if debug_stack:
                         import traceback as _traceback

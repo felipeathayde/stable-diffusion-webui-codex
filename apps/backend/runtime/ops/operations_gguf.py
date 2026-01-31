@@ -68,11 +68,27 @@ class _ForwardDequantCache:
     used_bytes: int = 0
     moved_params: dict[tuple[int, str], CodexParameter] = field(default_factory=dict)
     dequant_tensors: dict[tuple[int, str, torch.dtype], torch.Tensor] = field(default_factory=dict)
+    calls: int = 0
+    passthrough: int = 0
+    moved_hits: int = 0
+    moved_stores: int = 0
+    moved_skips: int = 0
+    dequant_hits: int = 0
+    dequant_stores: int = 0
+    dequant_skips: int = 0
 
     def clear(self) -> None:
         self.moved_params.clear()
         self.dequant_tensors.clear()
         self.used_bytes = 0
+        self.calls = 0
+        self.passthrough = 0
+        self.moved_hits = 0
+        self.moved_stores = 0
+        self.moved_skips = 0
+        self.dequant_hits = 0
+        self.dequant_stores = 0
+        self.dequant_skips = 0
 
 
 def enable_dequant_forward_cache(*, level: str, limit_mb: int) -> None:
@@ -100,6 +116,27 @@ def enable_dequant_forward_cache(*, level: str, limit_mb: int) -> None:
 def disable_dequant_forward_cache() -> None:
     cache: _ForwardDequantCache | None = getattr(_FORWARD_CACHE_LOCAL, "cache", None)
     if cache is not None:
+        if _LOG.isEnabledFor(logging.DEBUG):
+            used_mb = int(max(0, cache.used_bytes) // (1024 * 1024))
+            limit_mb = int(max(0, cache.limit_bytes) // (1024 * 1024))
+            _LOG.debug(
+                "GGUF dequant_forward cache stats: level=%s used_mb=%d/%d moved_params=%d dequant_tensors=%d "
+                "calls=%d passthrough=%d moved_hits=%d moved_stores=%d moved_skips=%d "
+                "dequant_hits=%d dequant_stores=%d dequant_skips=%d",
+                cache.level,
+                used_mb,
+                limit_mb,
+                len(cache.moved_params),
+                len(cache.dequant_tensors),
+                cache.calls,
+                cache.passthrough,
+                cache.moved_hits,
+                cache.moved_stores,
+                cache.moved_skips,
+                cache.dequant_hits,
+                cache.dequant_stores,
+                cache.dequant_skips,
+            )
         cache.clear()
     setattr(_FORWARD_CACHE_LOCAL, "cache", None)
     _LOG.info("GGUF dequant_forward cache disabled")
@@ -246,15 +283,21 @@ def dequantize_tensor_for_forward(
     This is designed to be used by `operations.get_weight_and_bias(...)` when the cache scope is enabled.
     """
 
+    cache = _forward_cache_get()
+    if cache is None:
+        if tensor is None:
+            return None
+        if not isinstance(tensor, CodexParameter) or tensor.qtype is None:
+            return tensor
+        moved = tensor.to(device=target_device, dtype=target_dtype, non_blocking=non_blocking)
+        return codex_dequantize(moved)
+
+    cache.calls += 1
     if tensor is None:
         return None
     if not isinstance(tensor, CodexParameter) or tensor.qtype is None:
+        cache.passthrough += 1
         return tensor
-
-    cache = _forward_cache_get()
-    if cache is None:
-        moved = tensor.to(device=target_device, dtype=target_dtype, non_blocking=non_blocking)
-        return codex_dequantize(moved)
 
     source_id = id(tensor)
     device_key = str(target_device)
@@ -266,10 +309,13 @@ def dequantize_tensor_for_forward(
         if _forward_cache_can_store(cache, nbytes=moved_bytes):
             cache.moved_params[moved_key] = moved_candidate
             _forward_cache_account(cache, nbytes=moved_bytes)
+            cache.moved_stores += 1
             moved = moved_candidate
         else:
+            cache.moved_skips += 1
             moved = moved_candidate
     else:
+        cache.moved_hits += 1
         if target_dtype is not None:
             moved = moved.to(dtype=target_dtype)
 
@@ -280,6 +326,7 @@ def dequantize_tensor_for_forward(
     out_key = (source_id, device_key, dtype_key)
     cached = cache.dequant_tensors.get(out_key)
     if cached is not None:
+        cache.dequant_hits += 1
         return cached
 
     out = codex_dequantize(moved)
@@ -287,4 +334,7 @@ def dequantize_tensor_for_forward(
     if _forward_cache_can_store(cache, nbytes=out_bytes):
         cache.dequant_tensors[out_key] = out
         _forward_cache_account(cache, nbytes=out_bytes)
+        cache.dequant_stores += 1
+    else:
+        cache.dequant_skips += 1
     return out

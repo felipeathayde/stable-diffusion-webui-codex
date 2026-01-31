@@ -540,7 +540,13 @@ def _try_enable_gguf_dequant_forward_cache(x) -> None:  # type: ignore[no-untype
     if limit_mb is None:
         free_bytes = memory_management.manager.get_free_memory(device=x.device)
         free_mb = int(max(0, int(free_bytes)) // (1024 * 1024))
-        ratio = 0.20 if level == "lvl1" else 0.10
+        ratio_override = getattr(config_args.args, "gguf_dequant_cache_ratio", None)
+        if ratio_override is None:
+            ratio = 0.20 if level == "lvl1" else 0.10
+        else:
+            ratio = float(ratio_override)
+            if ratio <= 0.0 or ratio > 1.0:
+                raise RuntimeError("--gguf-dequant-cache-ratio must be > 0 and <= 1 when provided.")
         limit_mb = int(free_mb * ratio)
         logger.info(
             "[gguf] dequant_forward cache enabled (heuristic): level=%s device=%s free_mb=%d limit_mb=%d ratio=%.2f",

@@ -47,6 +47,7 @@ class RuntimeTab:
         self._var_lora_apply_mode = tk.StringVar()
         self._var_gguf_exec = tk.StringVar()
         self._var_gguf_dequant_cache = tk.StringVar()
+        self._var_gguf_dequant_cache_ratio = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
         self._var_pytorch_alloc_conf = tk.StringVar()
 
@@ -142,6 +143,21 @@ class RuntimeTab:
             "lvl2: also cache dequantized float weights per sampling run (more speed, more memory).\n"
             "Only applies to GGUF exec mode 'dequant_forward' and is capped by a heuristic VRAM/RAM budget.",
         )
+        row = self._add_entry(
+            body,
+            row,
+            label="GGUF dequant cache ratio (optional):",
+            var=self._var_gguf_dequant_cache_ratio,
+            width=12,
+            on_change=self._on_gguf_dequant_cache_ratio_changed,
+        )
+        row = add_help(
+            body,
+            row,
+            "Env var: CODEX_GGUF_DEQUANT_CACHE_RATIO (float, >0 and <=1).\n"
+            "Used only when GGUF dequant cache is enabled and no explicit LIMIT_MB is set.\n"
+            "Example: 0.30 reserves ~30% of free VRAM/RAM at sampling start.",
+        )
         row = self._add_choice_combo(
             body,
             row,
@@ -193,6 +209,7 @@ class RuntimeTab:
         self._var_lora_apply_mode.set(_get("CODEX_LORA_APPLY_MODE", "merge"))
         self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
         self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
+        self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
 
         alloc = str(self._controller.store.build_env().get("PYTORCH_CUDA_ALLOC_CONF") or DEFAULT_PYTORCH_CUDA_ALLOC_CONF).strip()
@@ -260,6 +277,15 @@ class RuntimeTab:
             self._controller.store.env[key] = value
         self._mark_changed()
 
+    def _on_gguf_dequant_cache_ratio_changed(self) -> None:
+        key = "CODEX_GGUF_DEQUANT_CACHE_RATIO"
+        value = str(self._var_gguf_dequant_cache_ratio.get() or "").strip()
+        if not value:
+            self._controller.store.env.pop(key, None)
+        else:
+            self._controller.store.env[key] = value
+        self._mark_changed()
+
     # ------------------------------------------------------------------ dependency logic
 
     def _sync_runtime_deps(self, *, mark_changed: bool) -> None:
@@ -273,6 +299,7 @@ class RuntimeTab:
         except SettingValidationError as exc:
             env["CODEX_GGUF_EXEC"] = "dequant_forward"
             env["CODEX_GGUF_DEQUANT_CACHE"] = "off"
+            env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
             env["CODEX_LORA_APPLY_MODE"] = "merge"
             env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
             gguf, gguf_cache, lora_apply, lora_math = normalize_gguf_lora_env(env)
@@ -282,6 +309,7 @@ class RuntimeTab:
         self._var_gguf_exec.set(gguf)
         self._var_gguf_dequant_cache.set(gguf_cache)
         self._var_lora_apply_mode.set(lora_apply)
+        self._var_gguf_dequant_cache_ratio.set(str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip())
         self._var_lora_online_math.set(lora_math)
 
         if self._gguf_dequant_cache_combo is not None:

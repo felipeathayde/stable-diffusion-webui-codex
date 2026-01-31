@@ -162,6 +162,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "Ignored when '--gguf-dequant-cache=off'."
         ),
     )
+    parser.add_argument(
+        "--gguf-dequant-cache-ratio",
+        type=float,
+        default=None,
+        metavar="RATIO",
+        help=(
+            "Optional ratio used to compute the heuristic GGUF dequant cache budget from free VRAM/RAM at sampling start when "
+            "'--gguf-dequant-cache-limit-mb' is unset. Must be >0 and <=1. Applies to both lvl1 and lvl2. "
+            "Ignored when '--gguf-dequant-cache=off' or when an explicit limit is provided."
+        ),
+    )
 
     parser.add_argument(
         "--lora-apply-mode",
@@ -388,6 +399,7 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
     gguf_exec = str(getattr(ns, "gguf_exec", DEFAULT_GGUF_EXEC_MODE.value))
     gguf_dequant_cache = str(getattr(ns, "gguf_dequant_cache", "off") or "off").strip().lower()
     gguf_dequant_cache_limit_mb = getattr(ns, "gguf_dequant_cache_limit_mb", None)
+    gguf_dequant_cache_ratio = getattr(ns, "gguf_dequant_cache_ratio", None)
     lora_apply_mode = str(getattr(ns, "lora_apply_mode", DEFAULT_LORA_APPLY_MODE.value))
     lora_online_math = str(getattr(ns, "lora_online_math", DEFAULT_LORA_ONLINE_MATH.value))
 
@@ -414,6 +426,13 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
             raise RuntimeError("--gguf-dequant-cache must be one of: off, lvl1, lvl2.")
         if gguf_dequant_cache_limit_mb is not None and int(gguf_dequant_cache_limit_mb) <= 0:
             raise RuntimeError("--gguf-dequant-cache-limit-mb must be > 0 when provided.")
+    if gguf_dequant_cache_ratio is not None:
+        try:
+            ratio = float(gguf_dequant_cache_ratio)
+        except Exception as exc:
+            raise RuntimeError("--gguf-dequant-cache-ratio must be a float when provided.") from exc
+        if ratio <= 0.0 or ratio > 1.0:
+            raise RuntimeError("--gguf-dequant-cache-ratio must be > 0 and <= 1 when provided.")
 
     attn_backend = _resolve_attention_backend(ns)
     if attn_backend == AttentionBackend.XFORMERS:

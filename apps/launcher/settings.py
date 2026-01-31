@@ -140,6 +140,20 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     if str(env.get("CODEX_LORA_ONLINE_MATH", "") or "").strip().lower() == "activation":
         env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
 
+    raw_ratio = str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip()
+    if raw_ratio:
+        try:
+            ratio = float(raw_ratio)
+        except Exception as exc:
+            raise SettingValidationError(
+                f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be a float (got {raw_ratio!r})."
+            ) from exc
+        if ratio <= 0.0 or ratio > 1.0:
+            raise SettingValidationError(f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be > 0 and <= 1 (got {ratio}).")
+        env["CODEX_GGUF_DEQUANT_CACHE_RATIO"] = str(ratio)
+    else:
+        env.pop("CODEX_GGUF_DEQUANT_CACHE_RATIO", None)
+
     gguf = ChoiceSetting("CODEX_GGUF_EXEC", default="dequant_forward", choices=GGUF_EXEC_CHOICES).get(env)
     gguf_dequant_cache = ChoiceSetting(
         "CODEX_GGUF_DEQUANT_CACHE",

@@ -410,6 +410,16 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
             raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB must be > 0 (got {limit_mb}).")
         args.append(f"--gguf-dequant-cache-limit-mb={limit_mb}")
 
+    raw_dequant_cache_ratio = str(env.get("CODEX_GGUF_DEQUANT_CACHE_RATIO", "") or "").strip()
+    if raw_dequant_cache_ratio:
+        try:
+            ratio = float(raw_dequant_cache_ratio)
+        except Exception as exc:
+            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be a float (got {raw_dequant_cache_ratio!r}).") from exc
+        if ratio <= 0.0 or ratio > 1.0:
+            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_RATIO must be > 0 and <= 1 (got {ratio}).")
+        args.append(f"--gguf-dequant-cache-ratio={ratio}")
+
     raw_lora_mode = str(env.get("CODEX_LORA_APPLY_MODE", "") or "").strip().lower()
     if raw_lora_mode:
         args.append(f"--lora-apply-mode={raw_lora_mode}")

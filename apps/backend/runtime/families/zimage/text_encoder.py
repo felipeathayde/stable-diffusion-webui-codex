@@ -167,19 +167,21 @@ class ZImageTextEncoder(nn.Module):
         try:
             # Use native Qwen3_4B implementation (compatible with the exported format)
             from .qwen3 import Qwen3_4B, Qwen3Config
+            from apps.backend.runtime.ops.operations import using_codex_operations
             
-            config = Qwen3Config()
-            model = Qwen3_4B(config, dtype=torch_dtype)
-            
-            # Load weights - native implementation has compatible key format
-            missing, unexpected = model.load_sd(state_dict)
-            if missing:
-                logger.warning("Missing keys: %s", missing[:10])
-            if unexpected:
-                logger.debug("Unexpected keys: %s", unexpected[:10])
-            
-            # Move to target dtype
-            model.to(dtype=torch_dtype)
+            with using_codex_operations(manual_cast_enabled=True, device=None, dtype=torch_dtype):
+                config = Qwen3Config()
+                model = Qwen3_4B(config, dtype=torch_dtype)
+                
+                # Load weights - native implementation has compatible key format
+                missing, unexpected = model.load_sd(state_dict)
+                if missing:
+                    logger.warning("Missing keys: %s", missing[:10])
+                if unexpected:
+                    logger.debug("Unexpected keys: %s", unexpected[:10])
+                
+                # Move to target dtype
+                model.to(dtype=torch_dtype)
             
             encoder = cls(model, hidden_size=2560, layer_idx=-2)
             logger.info("Safetensors text encoder loaded successfully")

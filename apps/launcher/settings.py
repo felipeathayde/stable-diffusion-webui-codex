@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `IntSetting` (dataclass): Typed view over an integer setting serialized as a string.
 - `DEVICE_CHOICES` (constant): Allowed values for `CODEX_*_DEVICE`.
 - `GGUF_EXEC_CHOICES` (constant): Allowed values for `CODEX_GGUF_EXEC`.
+- `GGUF_DEQUANT_CACHE_CHOICES` (constant): Allowed values for `CODEX_GGUF_DEQUANT_CACHE`.
 - `LORA_APPLY_CHOICES` (constant): Allowed values for `CODEX_LORA_APPLY_MODE`.
 - `LORA_ONLINE_MATH_CHOICES` (constant): Allowed values for `CODEX_LORA_ONLINE_MATH`.
 - `normalize_gguf_lora_env` (function): Normalizes GGUF/LoRA env keys enforcing cross-setting invariants.
@@ -34,6 +35,7 @@ class SettingValidationError(ValueError):
 
 DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directml")
 GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
+GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off", "lvl1", "lvl2")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")
 LORA_ONLINE_MATH_CHOICES: tuple[str, ...] = ("weight_merge",)
 
@@ -126,10 +128,10 @@ class IntSetting:
         env[self.key] = str(value)
 
 
-def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, str]:
+def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, str, str]:
     """Normalize GGUF/LoRA env keys enforcing cross-setting invariants.
 
-    Returns (gguf_exec, lora_apply_mode, lora_online_math) as normalized values.
+    Returns (gguf_exec, gguf_dequant_cache, lora_apply_mode, lora_online_math) as normalized values.
     """
 
     # Migration: older launchers persisted reserved/removed options.
@@ -139,15 +141,26 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
         env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
 
     gguf = ChoiceSetting("CODEX_GGUF_EXEC", default="dequant_forward", choices=GGUF_EXEC_CHOICES).get(env)
+    gguf_dequant_cache = ChoiceSetting(
+        "CODEX_GGUF_DEQUANT_CACHE",
+        default="off",
+        choices=GGUF_DEQUANT_CACHE_CHOICES,
+    ).get(env)
     lora_apply = ChoiceSetting("CODEX_LORA_APPLY_MODE", default="merge", choices=LORA_APPLY_CHOICES).get(env)
     lora_math = ChoiceSetting("CODEX_LORA_ONLINE_MATH", default="weight_merge", choices=LORA_ONLINE_MATH_CHOICES).get(env)
+
+    if gguf != "dequant_forward":
+        if gguf_dequant_cache != "off":
+            raise SettingValidationError("CODEX_GGUF_DEQUANT_CACHE requires CODEX_GGUF_EXEC=dequant_forward.")
+        gguf_dequant_cache = "off"
 
     # math only valid on online mode
     if lora_apply != "online":
         lora_math = "weight_merge"
 
     env["CODEX_GGUF_EXEC"] = gguf
+    env["CODEX_GGUF_DEQUANT_CACHE"] = gguf_dequant_cache
     env["CODEX_LORA_APPLY_MODE"] = lora_apply
     env["CODEX_LORA_ONLINE_MATH"] = lora_math
 
-    return gguf, lora_apply, lora_math
+    return gguf, gguf_dequant_cache, lora_apply, lora_math

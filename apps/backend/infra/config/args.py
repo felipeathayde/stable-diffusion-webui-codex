@@ -141,6 +141,29 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--gguf-dequant-cache",
+        choices=["off", "lvl1", "lvl2"],
+        default=None,
+        help=(
+            "Enable run-scoped caching for GGUF dequant_forward execution: "
+            "'off' disables caching (default). "
+            "'lvl1' caches moved+baked GGUF parameters per sampling run (reduces repeated bake/move overhead). "
+            "'lvl2' also caches dequantized float weights per sampling run (more speed, more memory). "
+            "Only valid with '--gguf-exec=dequant_forward'."
+        ),
+    )
+    parser.add_argument(
+        "--gguf-dequant-cache-limit-mb",
+        type=int,
+        default=None,
+        metavar="MB",
+        help=(
+            "Optional memory cap (MB) for GGUF dequant cache. When unset, a heuristic cap is chosen from free VRAM/RAM at sampling start. "
+            "Ignored when '--gguf-dequant-cache=off'."
+        ),
+    )
+
+    parser.add_argument(
         "--lora-apply-mode",
         choices=[m.value for m in LoraApplyMode],
         default=None,
@@ -363,6 +386,8 @@ def _apply_source_overrides(
 
 def _validate_runtime_flags(ns: argparse.Namespace) -> None:
     gguf_exec = str(getattr(ns, "gguf_exec", DEFAULT_GGUF_EXEC_MODE.value))
+    gguf_dequant_cache = str(getattr(ns, "gguf_dequant_cache", "off") or "off").strip().lower()
+    gguf_dequant_cache_limit_mb = getattr(ns, "gguf_dequant_cache_limit_mb", None)
     lora_apply_mode = str(getattr(ns, "lora_apply_mode", DEFAULT_LORA_APPLY_MODE.value))
     lora_online_math = str(getattr(ns, "lora_online_math", DEFAULT_LORA_ONLINE_MATH.value))
 
@@ -381,6 +406,14 @@ def _validate_runtime_flags(ns: argparse.Namespace) -> None:
             "--gguf-exec=cuda_pack is reserved and not implemented yet in this build. "
             "Use 'dequant_forward' or 'dequant_upfront' for now.",
         )
+
+    if gguf_dequant_cache != "off":
+        if gguf_exec != GgufExecMode.DEQUANT_FORWARD.value:
+            raise RuntimeError("--gguf-dequant-cache requires '--gguf-exec=dequant_forward'.")
+        if gguf_dequant_cache not in {"lvl1", "lvl2"}:
+            raise RuntimeError("--gguf-dequant-cache must be one of: off, lvl1, lvl2.")
+        if gguf_dequant_cache_limit_mb is not None and int(gguf_dequant_cache_limit_mb) <= 0:
+            raise RuntimeError("--gguf-dequant-cache-limit-mb must be > 0 when provided.")
 
     attn_backend = _resolve_attention_backend(ns)
     if attn_backend == AttentionBackend.XFORMERS:
@@ -846,6 +879,8 @@ def initialize(
         namespace.lora_apply_mode = DEFAULT_LORA_APPLY_MODE.value
     if getattr(namespace, "gguf_exec", None) is None:
         namespace.gguf_exec = DEFAULT_GGUF_EXEC_MODE.value
+    if getattr(namespace, "gguf_dequant_cache", None) is None:
+        namespace.gguf_dequant_cache = "off"
     if getattr(namespace, "lora_online_math", None) is None:
         namespace.lora_online_math = DEFAULT_LORA_ONLINE_MATH.value
 

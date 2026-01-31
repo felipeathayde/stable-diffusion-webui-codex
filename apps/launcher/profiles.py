@@ -57,6 +57,7 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
         "CODEX_TE_DEVICE": "auto",
         "CODEX_VAE_DEVICE": "auto",
         "CODEX_GGUF_EXEC": "dequant_forward",
+        "CODEX_GGUF_DEQUANT_CACHE": "off",
         "CODEX_LORA_APPLY_MODE": "merge",
         "CODEX_LORA_ONLINE_MATH": "weight_merge",
     }

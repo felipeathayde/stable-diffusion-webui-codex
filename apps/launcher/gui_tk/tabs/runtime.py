@@ -46,10 +46,12 @@ class RuntimeTab:
 
         self._var_lora_apply_mode = tk.StringVar()
         self._var_gguf_exec = tk.StringVar()
+        self._var_gguf_dequant_cache = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
         self._var_pytorch_alloc_conf = tk.StringVar()
 
         self._lora_math_combo: ttk.Combobox | None = None
+        self._gguf_dequant_cache_combo: ttk.Combobox | None = None
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
@@ -125,6 +127,24 @@ class RuntimeTab:
         row = self._add_choice_combo(
             body,
             row,
+            label="GGUF dequant cache (requires API restart):",
+            var=self._var_gguf_dequant_cache,
+            choices=["off", "lvl1", "lvl2"],
+            on_change=lambda: self._sync_runtime_deps(mark_changed=True),
+            width=10,
+            out_combo="_gguf_dequant_cache_combo",
+        )
+        row = add_help(
+            body,
+            row,
+            "off: no cache.\n"
+            "lvl1: cache moved+baked GGUF parameters per sampling run (reuses step-1 bake across steps).\n"
+            "lvl2: also cache dequantized float weights per sampling run (more speed, more memory).\n"
+            "Only applies to GGUF exec mode 'dequant_forward' and is capped by a heuristic VRAM/RAM budget.",
+        )
+        row = self._add_choice_combo(
+            body,
+            row,
             label="LoRA online math (requires API restart):",
             var=self._var_lora_online_math,
             choices=["weight_merge"],
@@ -172,6 +192,7 @@ class RuntimeTab:
 
         self._var_lora_apply_mode.set(_get("CODEX_LORA_APPLY_MODE", "merge"))
         self._var_gguf_exec.set(_get("CODEX_GGUF_EXEC", "dequant_forward"))
+        self._var_gguf_dequant_cache.set(_get("CODEX_GGUF_DEQUANT_CACHE", "off"))
         self._var_lora_online_math.set(_get("CODEX_LORA_ONLINE_MATH", "weight_merge"))
 
         alloc = str(self._controller.store.build_env().get("PYTORCH_CUDA_ALLOC_CONF") or DEFAULT_PYTORCH_CUDA_ALLOC_CONF).strip()
@@ -199,7 +220,10 @@ class RuntimeTab:
         combo.bind("<<ComboboxSelected>>", lambda _e: on_change())
         if out_combo:
             setattr(self, out_combo, combo)
-            self._lora_math_combo = combo
+            if out_combo == "_lora_math_combo":
+                self._lora_math_combo = combo
+            elif out_combo == "_gguf_dequant_cache_combo":
+                self._gguf_dequant_cache_combo = combo
         return row + 1
 
     def _add_entry(
@@ -241,21 +265,27 @@ class RuntimeTab:
     def _sync_runtime_deps(self, *, mark_changed: bool) -> None:
         env = self._controller.store.env
         env["CODEX_GGUF_EXEC"] = str(self._var_gguf_exec.get() or "").strip().lower() or "dequant_forward"
+        env["CODEX_GGUF_DEQUANT_CACHE"] = str(self._var_gguf_dequant_cache.get() or "").strip().lower() or "off"
         env["CODEX_LORA_APPLY_MODE"] = str(self._var_lora_apply_mode.get() or "").strip().lower() or "merge"
         env["CODEX_LORA_ONLINE_MATH"] = str(self._var_lora_online_math.get() or "").strip().lower() or "weight_merge"
         try:
-            gguf, lora_apply, lora_math = normalize_gguf_lora_env(env)
+            gguf, gguf_cache, lora_apply, lora_math = normalize_gguf_lora_env(env)
         except SettingValidationError as exc:
             env["CODEX_GGUF_EXEC"] = "dequant_forward"
+            env["CODEX_GGUF_DEQUANT_CACHE"] = "off"
             env["CODEX_LORA_APPLY_MODE"] = "merge"
             env["CODEX_LORA_ONLINE_MATH"] = "weight_merge"
-            gguf, lora_apply, lora_math = normalize_gguf_lora_env(env)
+            gguf, gguf_cache, lora_apply, lora_math = normalize_gguf_lora_env(env)
             messagebox.showerror("Invalid runtime setting", str(exc))
             mark_changed = True
 
         self._var_gguf_exec.set(gguf)
+        self._var_gguf_dequant_cache.set(gguf_cache)
         self._var_lora_apply_mode.set(lora_apply)
         self._var_lora_online_math.set(lora_math)
+
+        if self._gguf_dequant_cache_combo is not None:
+            self._gguf_dequant_cache_combo.configure(state="readonly" if gguf == "dequant_forward" else "disabled")
 
         if self._lora_math_combo is not None:
             self._lora_math_combo.configure(state="readonly" if lora_apply == "online" else "disabled")

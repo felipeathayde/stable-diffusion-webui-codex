@@ -47,7 +47,13 @@ from typing import Dict, Optional, Tuple
 import torch
 from apps.backend.runtime import utils
 from apps.backend.runtime.memory import memory_management, stream
-from .operations_gguf import CodexPackLinearQ4KTilepackV1Parameter, CodexParameter, dequantize_tensor
+from .operations_gguf import (
+    CodexPackLinearQ4KTilepackV1Parameter,
+    CodexParameter,
+    dequantize_tensor,
+    dequantize_tensor_for_forward,
+    is_dequant_forward_cache_enabled,
+)
 
 logger = logging.getLogger("backend.runtime.ops.operations")
 
@@ -225,9 +231,22 @@ def get_weight_and_bias(
     if layer.weight is not None:
         weight = layer.weight
         if weight_fn is not None:
-            if weight_args is not None and (device := weight_args.get("device")) is not None:
-                weight = weight.to(device=device)
-            weight = weight_fn(weight)
+            if (
+                weight_fn is dequantize_tensor
+                and is_dequant_forward_cache_enabled()
+                and weight_args is not None
+                and (device := weight_args.get("device")) is not None
+            ):
+                weight = dequantize_tensor_for_forward(
+                    weight,
+                    target_device=device,
+                    target_dtype=weight_args.get("dtype") if isinstance(weight_args.get("dtype"), torch.dtype) else None,
+                    non_blocking=bool(weight_args.get("non_blocking", False)),
+                )
+            else:
+                if weight_args is not None and (device := weight_args.get("device")) is not None:
+                    weight = weight.to(device=device)
+                weight = weight_fn(weight)
         if weight_args is not None:
             weight = weight.to(**weight_args)
         if scale_weight is not None:
@@ -246,9 +265,22 @@ def get_weight_and_bias(
     if layer.bias is not None:
         bias = layer.bias
         if bias_fn is not None:
-            if bias_args is not None and (device := bias_args.get("device")) is not None:
-                bias = bias.to(device=device)
-            bias = bias_fn(bias)
+            if (
+                bias_fn is dequantize_tensor
+                and is_dequant_forward_cache_enabled()
+                and bias_args is not None
+                and (device := bias_args.get("device")) is not None
+            ):
+                bias = dequantize_tensor_for_forward(
+                    bias,
+                    target_device=device,
+                    target_dtype=bias_args.get("dtype") if isinstance(bias_args.get("dtype"), torch.dtype) else None,
+                    non_blocking=bool(bias_args.get("non_blocking", False)),
+                )
+            else:
+                if bias_args is not None and (device := bias_args.get("device")) is not None:
+                    bias = bias.to(device=device)
+                bias = bias_fn(bias)
         if bias_args is not None:
             bias = bias.to(**bias_args)
         if bias_patches is not None:

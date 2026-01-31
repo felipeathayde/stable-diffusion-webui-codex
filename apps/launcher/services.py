@@ -396,6 +396,20 @@ def _api_backend_args_from_env(env: Mapping[str, str]) -> List[str]:
     if raw_exec:
         args.append(f"--gguf-exec={raw_exec}")
 
+    raw_dequant_cache = str(env.get("CODEX_GGUF_DEQUANT_CACHE", "") or "").strip().lower()
+    if raw_dequant_cache:
+        args.append(f"--gguf-dequant-cache={raw_dequant_cache}")
+
+    raw_dequant_cache_limit = str(env.get("CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB", "") or "").strip()
+    if raw_dequant_cache_limit:
+        try:
+            limit_mb = int(raw_dequant_cache_limit)
+        except Exception as exc:
+            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB must be an integer (got {raw_dequant_cache_limit!r}).") from exc
+        if limit_mb <= 0:
+            raise ValueError(f"CODEX_GGUF_DEQUANT_CACHE_LIMIT_MB must be > 0 (got {limit_mb}).")
+        args.append(f"--gguf-dequant-cache-limit-mb={limit_mb}")
+
     raw_lora_mode = str(env.get("CODEX_LORA_APPLY_MODE", "") or "").strip().lower()
     if raw_lora_mode:
         args.append(f"--lora-apply-mode={raw_lora_mode}")

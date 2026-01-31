@@ -326,7 +326,7 @@ class Attention(nn.Module):
     ) -> torch.Tensor:
         B, N, _ = x.shape
 
-        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_dtype = env_flag("CODEX_PIPELINE_DEBUG", False) and logger.isEnabledFor(logging.DEBUG)
         debug_stack = debug_dtype
         if debug_dtype:
             try:
@@ -889,7 +889,7 @@ class ZImageTransformer2DModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
-        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_dtype = env_flag("CODEX_PIPELINE_DEBUG", False) and logger.isEnabledFor(logging.DEBUG)
         debug_stack = debug_dtype
 
         # Handle 5D input

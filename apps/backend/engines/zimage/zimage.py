@@ -224,7 +224,7 @@ class ZImageEngine(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompts: list[str]):
         """Encode prompts using Qwen3."""
         runtime = self._require_runtime()
-        debug_dtype = env_flag("CODEX_ZIMAGE_DEBUG_VERBOSE", False) and logger.isEnabledFor(logging.DEBUG)
+        debug_dtype = env_flag("CODEX_PIPELINE_DEBUG", False) and logger.isEnabledFor(logging.DEBUG)
 
         texts = tuple(str(x or "") for x in prompts)
         is_negative = bool(getattr(prompts, "is_negative_prompt", False))

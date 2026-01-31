@@ -45,6 +45,7 @@ Status: Active
 - 2025-12-30: GGUF converter now supports sharded SafeTensors inputs via `*.safetensors.index.json` (or by pointing at a directory containing the index); no manual shard merge required.
 - 2025-12-29: Sampling and utils now avoid importing heavy runtime ops/quantization at module import time (keeps API startup and `/api/models`/QuickSettings paths scans lightweight).
 - 2025-12-29: Runtime exception logging now prefers `CODEX_ROOT/logs` when `CODEX_ROOT` is set (prevents CWD-dependent log placement).
+- 2026-01-31: `CODEX_LOG_FILE` now attaches a file handler to the `backend` logger hierarchy as well as the root logger, since `backend.propagate=False` would otherwise yield an empty log file for backend logs (launcher “Write to log file”).
 - 2026-01-01: GGUF checkpoint loader supports opt-in load-time dequantization via `--gguf-exec=dequant_upfront` (otherwise weights dequantize on the fly via `dequant_forward`).
 - 2026-01-23: Started gating future GGUF packed-kernel execution via `--gguf-exec=cuda_pack` (reserved; fail loud until implemented) and introduced `--lora-online-math` to make online LoRA semantics explicit.
 - 2026-01-04: Added `runtime.checkpoint.io.load_gguf_state_dict(...)` as the canonical GGUF load wrapper so runtime codepaths honor global GGUF flags consistently (no direct loader calls).

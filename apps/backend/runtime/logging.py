@@ -206,19 +206,33 @@ def setup_logging(level: Optional[str] = None, *, install_tqdm_bridge: bool = Tr
     codex.propagate = False
 
     log_file = os.environ.get("CODEX_LOG_FILE")
-    if log_file and not any(
-        isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == os.path.abspath(log_file)
-        for h in root.handlers
+    file_handler: logging.FileHandler | None = None
+    if log_file:
+        abs_log_file = os.path.abspath(log_file)
+        for h in root.handlers:
+            if isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == abs_log_file:
+                file_handler = h
+                break
+
+        if file_handler is None:
+            try:
+                fh = logging.FileHandler(abs_log_file, encoding="utf-8")
+                fh.setLevel(resolved_level)
+                fh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
+                fh.addFilter(LevelFilter())
+                root.addHandler(fh)
+                file_handler = fh
+            except Exception:
+                # If file handler fails, keep stderr logging only; do not crash startup
+                logging.getLogger(__name__).exception("Failed to attach file handler: %s", log_file)
+
+    # `backend` logger has `propagate=False`, so it won't reach root's file handler.
+    # Attach the file handler explicitly so launcher users actually get backend logs.
+    if file_handler is not None and not any(
+        isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == getattr(file_handler, "baseFilename", None)
+        for h in codex.handlers
     ):
-        try:
-            fh = logging.FileHandler(log_file, encoding="utf-8")
-            fh.setLevel(resolved_level)
-            fh.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
-            fh.addFilter(LevelFilter())
-            root.addHandler(fh)
-        except Exception:
-            # If file handler fails, keep stderr logging only; do not crash startup
-            logging.getLogger(__name__).exception("Failed to attach file handler: %s", log_file)
+        codex.addHandler(file_handler)
 
     logging.getLogger(__name__).debug(
         "logging configured level=%s file=%s handlers=%d",

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Diagnostics tab for the Tk launcher.
 Shows environment preflight checks and exposes debug/logging/profiling env flags used by the backend.
+Includes advanced performance toggles (e.g. CFG batch mode) intended for profiling and troubleshooting.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DiagnosticsTab` (class): Diagnostics tab (checks + debug flags + log levels).
@@ -21,7 +22,7 @@ from tkinter import ttk
 from typing import Callable, Dict, Iterable
 
 from apps.launcher.checks import CodexLaunchCheck
-from apps.launcher.settings import BoolSetting, IntSetting, SettingValidationError
+from apps.launcher.settings import BoolSetting, ChoiceSetting, CFG_BATCH_MODE_CHOICES, IntSetting, SettingValidationError
 
 from ..controller import LauncherController
 
@@ -46,6 +47,7 @@ class DiagnosticsTab:
         self._log_levels: Dict[str, tk.BooleanVar] = {}
 
         self._var_cfg_delta_n = tk.StringVar()
+        self._var_cfg_batch_mode = tk.StringVar()
         self._var_trace_max = tk.StringVar()
         self._var_dump_path = tk.StringVar()
         self._var_profile_top_n = tk.StringVar()
@@ -106,6 +108,9 @@ class DiagnosticsTab:
 
         # Debug numeric/text
         self._var_cfg_delta_n.set(str(self._controller.store.env.get("CODEX_LOG_CFG_DELTA_N", "2") or "2"))
+        self._var_cfg_batch_mode.set(
+            ChoiceSetting("CODEX_CFG_BATCH_MODE", default="fused", choices=CFG_BATCH_MODE_CHOICES).get(self._controller.store.env)
+        )
         self._var_trace_max.set(str(self._controller.store.env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "50") or "50"))
         self._var_dump_path.set(str(self._controller.store.env.get("CODEX_DUMP_LATENTS_PATH", "") or ""))
         self._var_profile_top_n.set(str(self._controller.store.env.get("CODEX_PROFILE_TOP_N", "25") or "25"))
@@ -118,6 +123,14 @@ class DiagnosticsTab:
             var=self._var_cfg_delta_n,
             width=10,
             on_change=lambda: self._set_text("CODEX_LOG_CFG_DELTA_N", self._var_cfg_delta_n.get()),
+        )
+        r = self._add_choice(
+            dbg_col,
+            r,
+            label="CFG Cond+Uncond Batch Mode:",
+            var=self._var_cfg_batch_mode,
+            choices=CFG_BATCH_MODE_CHOICES,
+            on_change=lambda: self._set_text("CODEX_CFG_BATCH_MODE", self._var_cfg_batch_mode.get()),
         )
         r = self._add_entry(
             dbg_col,
@@ -202,6 +215,7 @@ class DiagnosticsTab:
             var.set(BoolSetting(key, default=bool(log_defaults.get(key, True))).get(env))
 
         self._var_cfg_delta_n.set(str(env.get("CODEX_LOG_CFG_DELTA_N", "2") or "2"))
+        self._var_cfg_batch_mode.set(ChoiceSetting("CODEX_CFG_BATCH_MODE", default="fused", choices=CFG_BATCH_MODE_CHOICES).get(env))
         self._var_trace_max.set(str(env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "50") or "50"))
         self._var_dump_path.set(str(env.get("CODEX_DUMP_LATENTS_PATH", "") or ""))
         self._var_profile_top_n.set(str(env.get("CODEX_PROFILE_TOP_N", "25") or "25"))
@@ -243,6 +257,23 @@ class DiagnosticsTab:
         entry = ttk.Entry(parent, textvariable=var, width=width)
         entry.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=8)
         entry.bind("<KeyRelease>", lambda _e: on_change())
+        return row + 1
+
+    def _add_choice(
+        self,
+        parent: ttk.Frame,
+        row: int,
+        *,
+        label: str,
+        var: tk.StringVar,
+        choices: tuple[str, ...],
+        on_change: Callable[[], None],
+    ) -> int:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=8)
+        combo = ttk.Combobox(parent, textvariable=var, width=18, state="readonly")
+        combo["values"] = list(choices)
+        combo.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=8)
+        combo.bind("<<ComboboxSelected>>", lambda _e: on_change())
         return row + 1
 
     # ------------------------------------------------------------------ dependency guards

@@ -15,6 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_FALSE` (constant): Falsy token set for env flags.
 - `env_flag` (function): Reads a boolean env var with consistent truthiness and default fallback.
 - `env_int` (function): Reads an integer env var with default fallback and optional clamping.
+- `env_str` (function): Reads a string env var with default fallback and optional allowed-set validation.
 - `__all__` (constant): Explicit export list for env flag helpers.
 """
 
@@ -81,4 +82,33 @@ def env_int(name: str, default: int, *, min_value: Optional[int] = None, max_val
     return value
 
 
-__all__ = ["env_flag", "env_int"]
+def env_str(name: str, default: str = "", *, allowed: Optional[set[str]] = None) -> str:
+    """Return a normalized string env var.
+
+    Semantics:
+    - missing/empty → default
+    - if allowed is provided: unknown → default
+    - normalization: strip + lowercase
+    """
+
+    raw = get_bootstrap_env(name)
+    if raw is None:
+        raw = os.getenv(name)
+    if raw is None:
+        value = str(default)
+    else:
+        value = str(raw).strip()
+        if not value:
+            value = str(default)
+
+    normalized = value.strip().lower()
+    if allowed is None:
+        return normalized
+
+    allowed_normalized = {str(v).strip().lower() for v in allowed}
+    if normalized in allowed_normalized:
+        return normalized
+    return str(default).strip().lower()
+
+
+__all__ = ["env_flag", "env_int", "env_str"]

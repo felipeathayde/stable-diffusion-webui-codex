@@ -9,6 +9,8 @@ Required Notice: see NOTICE
 Purpose: Torch-bound sampling inner loop (kept separate so `apps.backend.runtime.sampling` stays import-light for API/UI imports).
 Implements conditioning batching, CFG routing, and sampling lifecycle hooks (prepare/cleanup) for native samplers.
 Emits optional profiling sections (torch-profiler `record_function`) at key seams when `CODEX_PROFILE` is enabled.
+Supports an opt-in CFG cond+uncond fused batch mode (`CODEX_CFG_BATCH_MODE=fused|split`) that can reduce `apply_model` calls when memory allows,
+with a best-effort fallback to split on CUDA OOM.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `get_area_and_mult` (function): Computes per-conditioning spatial area crop + mask multiplier (supports `area`, `mask`, `strength`,
@@ -38,7 +40,7 @@ import logging
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime import utils
-from apps.backend.infra.config.env_flags import env_flag, env_int
+from apps.backend.infra.config.env_flags import env_flag, env_int, env_str
 from apps.backend.runtime.diagnostics.profiler import profiler
 from .condition import Condition, compile_conditions, compile_weighted_conditions
 
@@ -190,6 +192,14 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
     COND = 0
     UNCOND = 1
 
+    cfg_batch_mode = env_str(
+        "CODEX_CFG_BATCH_MODE",
+        default="fused",
+        allowed={"fused", "split"},
+    )
+    fused_enabled = cfg_batch_mode == "fused"
+    fused_disabled_logged = False
+
     to_run = []
     for x in cond:
         p = get_area_and_mult(x, x_in, timestep)
@@ -205,60 +215,53 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
 
             to_run += [(p, UNCOND)]
 
-    while len(to_run) > 0:
-        first = to_run[0]
-        first_shape = first[0][0].shape
-        to_batch_temp = []
-        for x in range(len(to_run)):
-            if can_concat_cond(to_run[x][0], first[0]):
-                to_batch_temp += [x]
+    def _is_cuda_oom(exc: Exception) -> bool:
+        oom_types = []
+        for name in ("OutOfMemoryError", "CUDAOutOfMemoryError"):
+            t = getattr(torch, name, None)
+            if isinstance(t, type):
+                oom_types.append(t)
+        cuda_oom_type = getattr(torch.cuda, "OutOfMemoryError", None)
+        if isinstance(cuda_oom_type, type):
+            oom_types.append(cuda_oom_type)
+        if oom_types and isinstance(exc, tuple(oom_types)):  # type: ignore[arg-type]
+            return True
+        msg = str(exc).lower()
+        return ("out of memory" in msg) and ("cuda" in msg or "cudnn" in msg)
 
-        to_batch_temp.reverse()
-        to_batch = to_batch_temp[:1]
+    def _run_batch(batch_indices: list[int]) -> None:
+        # Materialize the batch from to_run without mutating it until the forward succeeds.
+        items = [to_run[idx] for idx in batch_indices]
 
-        if memory_management.manager.signal_empty_cache:
-            memory_management.manager.soft_empty_cache()
-
-        free_memory = memory_management.manager.get_free_memory(x_in.device)
-
-        for i in range(1, len(to_batch_temp) + 1):
-            batch_amount = to_batch_temp[:len(to_batch_temp) // i]
-            input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]
-            if model.memory_required(input_shape) < free_memory:
-                to_batch = batch_amount
-                break
-
-        input_x = []
-        mult = []
-        c = []
-        cond_or_uncond = []
-        area = []
+        input_x: list[torch.Tensor] = []
+        mult: list[torch.Tensor] = []
+        c: list[dict] = []
+        cond_or_uncond: list[int] = []
+        area: list[tuple[int, int, int, int]] = []
         control = None
         patches = None
-        for x in to_batch:
-            o = to_run.pop(x)
-            p = o[0]
+        for p, flag in items:
             input_x.append(p.input_x)
             mult.append(p.mult)
             c.append(p.conditioning)
             area.append(p.area)
-            cond_or_uncond.append(o[1])
+            cond_or_uncond.append(flag)
             control = p.control
             patches = p.patches
 
         batch_chunks = len(cond_or_uncond)
-        input_x = torch.cat(input_x)
-        c = cond_cat(c)
+        input_x_cat = torch.cat(input_x)
+        c_dict = cond_cat(c)
 
         # Validate assembled conditioning before UNet call (no fallbacks)
-        if 'c_crossattn' not in c or not isinstance(c['c_crossattn'], torch.Tensor) or c['c_crossattn'].ndim != 3:
+        if 'c_crossattn' not in c_dict or not isinstance(c_dict['c_crossattn'], torch.Tensor) or c_dict['c_crossattn'].ndim != 3:
             raise ValueError(
-                f"Missing or invalid 'c_crossattn' for UNet: got type={type(c.get('c_crossattn'))} "
-                f"shape={getattr(c.get('c_crossattn'), 'shape', None)} (expected 3D tensor BxSxC)."
+                f"Missing or invalid 'c_crossattn' for UNet: got type={type(c_dict.get('c_crossattn'))} "
+                f"shape={getattr(c_dict.get('c_crossattn'), 'shape', None)} (expected 3D tensor BxSxC)."
             )
         needs_y = getattr(model, 'diffusion_model', None) is not None and getattr(model.diffusion_model, 'num_classes', None) is not None
         if needs_y:
-            if 'y' not in c or not isinstance(c['y'], torch.Tensor) or c['y'].ndim != 2:
+            if 'y' not in c_dict or not isinstance(c_dict['y'], torch.Tensor) or c_dict['y'].ndim != 2:
                 raise ValueError(
                     "UNet requires ADM 'y' vector (2D tensor BxV) but it is missing or invalid. "
                     "Ensure SDXL pooled embedding is wired as 'vector' and compiled to 'y'."
@@ -266,13 +269,13 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
 
         # Align dtype/device for conditioning tensors (often triggers device transfers).
         with profiler.section("sampling.cond_align"):
-            target_dtype = getattr(model, 'computation_dtype', None) or input_x.dtype
-            dev = input_x.device
-            c['c_crossattn'] = c['c_crossattn'].to(dtype=target_dtype, device=dev)
-            if 'y' in c and isinstance(c['y'], torch.Tensor):
-                c['y'] = c['y'].to(device=dev)
-            if 'c_concat' in c and isinstance(c['c_concat'], torch.Tensor):
-                c['c_concat'] = c['c_concat'].to(device=dev)
+            target_dtype = getattr(model, 'computation_dtype', None) or input_x_cat.dtype
+            dev = input_x_cat.device
+            c_dict['c_crossattn'] = c_dict['c_crossattn'].to(dtype=target_dtype, device=dev)
+            if 'y' in c_dict and isinstance(c_dict['y'], torch.Tensor):
+                c_dict['y'] = c_dict['y'].to(device=dev)
+            if 'c_concat' in c_dict and isinstance(c_dict['c_concat'], torch.Tensor):
+                c_dict['c_concat'] = c_dict['c_concat'].to(device=dev)
             timestep_ = torch.cat([timestep] * batch_chunks)
 
         transformer_options = {}
@@ -305,28 +308,27 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                 tuple(timestep.shape),
             )
 
-        c['transformer_options'] = transformer_options
+        c_dict['transformer_options'] = transformer_options
 
         if control:
             control.set_transformer_options(transformer_options)
-            control_cond = c.copy()  # get_control may change items in this dict, so we need to copy it
+            control_cond = c_dict.copy()  # get_control may change items in this dict, so we need to copy it
             with profiler.section("sampling.controlnet.get_control"):
                 try:
-                    c['control'] = control.get_control(input_x, timestep_, control_cond, len(cond_or_uncond))
+                    c_dict['control'] = control.get_control(input_x_cat, timestep_, control_cond, len(cond_or_uncond))
                 except Exception as err:
                     logger.error("ControlNet get_control failed: %s", err, exc_info=True)
                     raise
-            c['control_model'] = control
+            c_dict['control_model'] = control
 
         with profiler.section("sampling.apply_model"):
             if 'model_function_wrapper' in model_options:
                 output = model_options['model_function_wrapper'](
                     model.apply_model,
-                    {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond},
+                    {"input": input_x_cat, "timestep": timestep_, "c": c_dict, "cond_or_uncond": cond_or_uncond},
                 ).chunk(batch_chunks)
             else:
-                output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
-        del input_x
+                output = model.apply_model(input_x_cat, timestep_, **c_dict).chunk(batch_chunks)
 
         for o in range(batch_chunks):
             if cond_or_uncond[o] == COND:
@@ -335,7 +337,59 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             else:
                 out_uncond[:, :, area[o][2]:area[o][0] + area[o][2], area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
                 out_uncond_count[:, :, area[o][2]:area[o][0] + area[o][2], area[o][3]:area[o][1] + area[o][3]] += mult[o]
-        del mult
+
+        # Remove processed items only after success.
+        for idx in sorted(batch_indices, reverse=True):
+            to_run.pop(idx)
+
+    while len(to_run) > 0:
+        first = to_run[0]
+        first_shape = first[0][0].shape
+        to_batch_temp = []
+        for x in range(len(to_run)):
+            if can_concat_cond(to_run[x][0], first[0]):
+                to_batch_temp += [x]
+
+        to_batch_temp.reverse()
+        to_batch = to_batch_temp[:1]
+
+        if memory_management.manager.signal_empty_cache:
+            memory_management.manager.soft_empty_cache()
+
+        free_memory = memory_management.manager.get_free_memory(x_in.device)
+
+        for i in range(1, len(to_batch_temp) + 1):
+            batch_amount = to_batch_temp[:len(to_batch_temp) // i]
+            input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]
+            if model.memory_required(input_shape) < free_memory:
+                to_batch = batch_amount
+                break
+
+        if fused_enabled and len(to_batch_temp) == 2 and len(to_batch) < 2:
+            # Best-effort fused CFG batch: try cond+uncond in one forward even when memory heuristics say "no".
+            # If it OOMs, fall back to the existing split path for this run.
+            flags = {int(to_run[idx][1]) for idx in to_batch_temp}
+            if flags == {COND, UNCOND}:
+                try:
+                    _run_batch(to_batch_temp)
+                    continue
+                except Exception as exc:
+                    if not _is_cuda_oom(exc):
+                        raise
+                    if not fused_disabled_logged:
+                        logger.warning(
+                            "[cfg-batch] fused attempt OOM; falling back to split (mode=%s). "
+                            "Try disabling GGUF dequant cache or reducing resolution/CFG.",
+                            cfg_batch_mode,
+                        )
+                        fused_disabled_logged = True
+                    fused_enabled = False
+                    try:
+                        memory_management.manager.soft_empty_cache()
+                    except Exception:
+                        pass
+
+        _run_batch(to_batch)
 
     out_cond /= out_count
     del out_count

@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BoolSetting` (dataclass): Typed view over a boolean setting serialized as "1"/"0".
 - `IntSetting` (dataclass): Typed view over an integer setting serialized as a string.
 - `DEVICE_CHOICES` (constant): Allowed values for `CODEX_*_DEVICE`.
+- `CFG_BATCH_MODE_CHOICES` (constant): Allowed values for `CODEX_CFG_BATCH_MODE`.
 - `GGUF_EXEC_CHOICES` (constant): Allowed values for `CODEX_GGUF_EXEC`.
 - `GGUF_DEQUANT_CACHE_CHOICES` (constant): Allowed values for `CODEX_GGUF_DEQUANT_CACHE`.
 - `LORA_APPLY_CHOICES` (constant): Allowed values for `CODEX_LORA_APPLY_MODE`.
@@ -34,6 +35,7 @@ class SettingValidationError(ValueError):
 
 
 DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directml")
+CFG_BATCH_MODE_CHOICES: tuple[str, ...] = ("fused", "split")
 GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
 GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off", "lvl1", "lvl2")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")

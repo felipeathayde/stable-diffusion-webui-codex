@@ -815,7 +815,7 @@ class SD3Transformer2DModel(nn.Module):
         # self.out_channels = (
             # out_channels if out_channels is not None else default_out_channels
         # )
-        self.out_channels = 16      # hard coded - detected value can be vastly wrong if nf4
+        self.out_channels = 16      # hard coded - detected value can be wrong for quantized weights
                                     # but always 16 for sd3 and sd3.5 (learn_sigma always False)
         patch_size = int(patch_size)
         self.patch_size = patch_size

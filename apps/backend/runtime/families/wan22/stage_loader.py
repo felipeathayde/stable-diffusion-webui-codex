@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WAN22 GGUF stage selection and model loading.
-Validates stage GGUF paths and loads stage weights into `WanTransformer2DModel` via Codex GGUF operations and WAN key remapping.
+Validates stage GGUF paths and loads stage weights into `WanTransformer2DModel` via Codex GGUF operations (`using_codex_operations(weight_format="gguf")`) and WAN key remapping.
 Optionally applies a per-stage LoRA file (merge/online) for LightX2V-style stage patches.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -59,7 +59,7 @@ def load_stage_model_from_gguf(
     log = get_logger(logger)
     state = load_gguf_state_dict(gguf_path)
     state = remap_wan22_gguf_state_dict(state)
-    with using_codex_operations(device=device, dtype=dtype, bnb_dtype="gguf"):
+    with using_codex_operations(device=device, dtype=dtype, weight_format="gguf"):
         model = load_wan_transformer_from_state_dict(state, config=None)
     model.eval()
     apply_wan22_stage_lora(

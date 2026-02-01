@@ -11,7 +11,7 @@ Provides prefix-based parameter counting, post-quant state dict snapshots, and G
 
 Symbols (top-level; keep in sync; no ghosts):
 - `calculate_parameters` (function): Computes parameter count for a state dict subtree (by prefix).
-- `get_state_dict_after_quant` (function): Extracts a post-quant state dict view for a model (prefix-aware).
+- `get_state_dict_after_quant` (function): Extracts a post-quant state dict view for a model (prefix-aware; fails loud on NF4/FP4 weights).
 - `beautiful_print_gguf_state_dict_statics` (function): Prints/returns a compact summary of GGUF state-dict “static” tensor entries.
 """
 
@@ -33,12 +33,13 @@ def calculate_parameters(sd, prefix=""):
 
 
 def get_state_dict_after_quant(model, prefix=""):
-    for m in model.modules():
-        if hasattr(m, "weight") and hasattr(m.weight, "bnb_quantized"):
-            if not m.weight.bnb_quantized:
-                original_device = m.weight.device
-                m.cuda()
-                m.to(original_device)
+    for module in model.modules():
+        weight = getattr(module, "weight", None)
+        if hasattr(weight, "bnb_quantized"):
+            raise NotImplementedError(
+                "NF4/FP4 is not supported. "
+                "Convert the model to GGUF or use a safetensors fp16/bf16/fp32 checkpoint."
+            )
 
     sd = model.state_dict()
     sd = {(prefix + k): v.clone() for k, v in sd.items()}

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: ControlNet LoRA module that materialises a ControlNet model from LoRA weights.
-Constructs a CLDM-style ControlNet module at runtime and patches weights before delegating execution to the SD `ControlNet`.
+Constructs a CLDM-style ControlNet module at runtime, normalizes storage dtype hints (GGUF → fp16 for construction), and patches weights before delegating execution to the SD `ControlNet`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ControlLora` (class): LoRA-backed ControlNet module that materialises an inner ControlNet model during `pre_run`.
@@ -47,7 +47,7 @@ class ControlLora(ControlModuleBase):
         controlnet_config["hint_channels"] = self.control_weights["input_hint_block.0.weight"].shape[1]
 
         dtype = model.storage_dtype
-        if dtype in {"nf4", "fp4", "gguf"}:
+        if dtype == "gguf":
             dtype = torch.float16
 
         controlnet_config["dtype"] = dtype

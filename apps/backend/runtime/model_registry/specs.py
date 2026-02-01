@@ -13,7 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelFamily` (enum): Checkpoint family tags (SD/SDXL/Flux.1/WAN22/etc).
 - `PredictionKind` (enum): Prediction parameterization tags (`eps`, `v_prediction`, `flow`, etc).
 - `LatentFormat` (enum): Latent space format tags used by runtimes.
-- `QuantizationKind` (enum): Quantization scheme identifiers (`none`, `nf4`, `fp4`, `gguf`).
+- `QuantizationKind` (enum): Quantization scheme identifiers (`none`, `gguf`, plus detected-but-unsupported `nf4`/`fp4`).
 - `QuantizationHint` (dataclass): Structured quantization hint (kind + optional detail).
 - `TextEncoderSignature` (dataclass): Text encoder metadata (name/prefix/expected dim/tokenizer hint).
 - `VAESignature` (dataclass): VAE metadata (key prefix + latent channels).

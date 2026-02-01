@@ -6,16 +6,15 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Optional sampler extras (UniPC, Restart, DDPM) for the k-diffusion-enabled path.
-Provides lightweight noise-schedule utilities and step samplers used by the runtime sampling driver when k-diffusion-backed samplers are
-explicitly enabled and available.
+Purpose: Optional sampler extras (UniPC, Restart, DDPM).
+Provides lightweight noise-schedule utilities and step samplers used by optional/experimental sampling paths (native-only).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `NoiseScheduleVP` (class): VP noise schedule helper (discrete/linear/cosine) providing alpha/sigma/lambda accessors for samplers.
 - `model_wrapper` (function): Wraps a model into a VP-space epsilon predictor with optional guidance modes.
 - `sample_unipc` (function): Minimal UniPC sampler implementation operating over a sigma schedule.
 - `sample_unipc_bh2` (function): UniPC BH2 placeholder (currently forwards to `sample_unipc`).
-- `restart_sampler` (function): Restart sampling wrapper (requires k-diffusion; supports restart segments + noise injection).
+- `restart_sampler` (function): Restart sampling wrapper (supports restart segments + noise injection).
 - `default_noise_sampler` (function): Returns a default noise sampler closure for stochastic samplers.
 - `generic_step_sampler` (function): Generic sampler driver that iterates sigmas and calls a provided step function.
 - `DDPMSampler_step` (function): Single-step DDPM update function used by the generic step sampler.
@@ -27,11 +26,36 @@ import math
 import torch
 from tqdm import trange
 
-try:
-  # Optional: k-diffusion-backed helpers; when missing, these samplers stay unavailable.
-  import k_diffusion.sampling as _KD_SAMPLING  # type: ignore[import-not-found]
-except Exception:  # pragma: no cover - absence is expected on minimal installs
-  _KD_SAMPLING = None
+def get_sigmas_karras(
+    steps: int,
+    sigma_min: float,
+    sigma_max: float,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float = 7.0,
+) -> torch.Tensor:
+    """Karras schedule helper (returns sigmas with a terminal 0)."""
+    if steps <= 0:
+        raise ValueError("steps must be >= 1")
+    ramp = torch.linspace(0, 1, steps, device=device, dtype=dtype)
+    min_inv = sigma_min ** (1.0 / rho)
+    max_inv = sigma_max ** (1.0 / rho)
+    sigmas = (max_inv + (min_inv - max_inv) * ramp) ** rho
+    terminal = torch.zeros(1, device=device, dtype=dtype)
+    return torch.cat([sigmas, terminal])
+
+
+def to_d(x: torch.Tensor, sigma: torch.Tensor | float, denoised: torch.Tensor) -> torch.Tensor:
+    """ODE derivative helper used by sigma-space samplers."""
+    if isinstance(sigma, torch.Tensor):
+        if torch.any(sigma == 0):
+            return torch.zeros_like(x)
+        return (x - denoised) / sigma
+    sigma_f = float(sigma)
+    if sigma_f == 0.0:
+        return torch.zeros_like(x)
+    return (x - denoised) / sigma_f
 
 
 class NoiseScheduleVP:
@@ -153,23 +177,17 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
 
     Optionally inserts restart segments built with Karras sigmas, applies Heun/Euler steps, and injects
     noise between segments. Parameter semantics match the runtime config surface while using the native
-    k-diffusion utilities already imported in this module.
+    sigma helpers in this module.
     """
 
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
     step_id = 0
 
-    def _require_kd():
-        if _KD_SAMPLING is None:
-            raise RuntimeError("k-diffusion is required for restart sampler but is not installed")
-        return _KD_SAMPLING
-
     def _heun_step(x_in: torch.Tensor, sigma_cur: torch.Tensor, sigma_next: torch.Tensor, *, second_order: bool = True):
         nonlocal step_id
         denoised = model(x_in, sigma_cur * s_in, **extra_args)
-        kd_sampling = _require_kd()
-        d = kd_sampling.to_d(x_in, sigma_cur, denoised)
+        d = to_d(x_in, sigma_cur, denoised)
         if callback is not None:
             callback({"x": x_in, "i": step_id, "sigma": sigma_next, "sigma_hat": sigma_cur, "denoised": denoised})
         dt = sigma_next - sigma_cur
@@ -178,7 +196,7 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
         else:
             x_euler = x_in + d * dt
             denoised_2 = model(x_euler, sigma_next * s_in, **extra_args)
-            d_2 = kd_sampling.to_d(x_euler, sigma_next, denoised_2)
+            d_2 = to_d(x_euler, sigma_next, denoised_2)
             x_out = x_in + 0.5 * (d + d_2) * dt
         step_id += 1
         return x_out
@@ -192,9 +210,12 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
             if steps >= 36:
                 restart_steps = steps // 4
                 restart_times = 2
-            kd_sampling = _require_kd()
-            base = kd_sampling.get_sigmas_karras(
-                steps - restart_steps * restart_times, sigmas[-2].item(), sigmas[0].item(), device=sigmas.device
+            base = get_sigmas_karras(
+                steps - restart_steps * restart_times,
+                float(sigmas[-2].item()),
+                float(sigmas[0].item()),
+                device=sigmas.device,
+                dtype=sigmas.dtype,
             )
             restart_list = {0.1: [restart_steps + 1, restart_times, 2]}
             sigmas = base
@@ -211,9 +232,12 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
             min_idx = i + 1
             max_idx = int(torch.argmin(abs(sigmas - restart_max), dim=0))
             if max_idx < min_idx:
-                kd_sampling = _require_kd()
-                sigma_restart = kd_sampling.get_sigmas_karras(
-                    restart_steps, sigmas[min_idx].item(), sigmas[max_idx].item(), device=sigmas.device
+                sigma_restart = get_sigmas_karras(
+                    restart_steps,
+                    float(sigmas[min_idx].item()),
+                    float(sigmas[max_idx].item()),
+                    device=sigmas.device,
+                    dtype=sigmas.dtype,
                 )[:-1]
                 while restart_times > 0:
                     restart_times -= 1

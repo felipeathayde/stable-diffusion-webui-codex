@@ -985,7 +985,7 @@ class ZImageTransformer2DModel(nn.Module):
         
         # Timestep embedding
         # Diffusers ZImagePipeline passes `t_norm = (1000 - timestep) / 1000`.
-        # Our runtime uses k-diffusion-style `sigma` in [1→0]. For parity we invert:
+        # Our runtime uses a sigma-style timestep in [1→0]. For parity we invert:
         #   t_inv = 1 - sigma  (0 at start, 1 at end), then apply `t_scale` (default 1000.0).
         t_inv = 1.0 - timestep
         t_scaled = t_inv * self.time_scale
@@ -1122,12 +1122,12 @@ class ZImageTransformer2DModel(nn.Module):
 
         self.cnt = debug_step + 1
         
-        # CRITICAL: Negate output for k-diffusion sampler compatibility.
+        # CRITICAL: Negate output for sigma-space sampler compatibility.
         # 
         # Flow-matching model predicts velocity v = dx/dt = noise - x_0
         # For denoising to move toward x_0, the sampler needs to step in direction of -v.
         #
-        # k-diffusion Euler update rule:
+        # Euler update rule (sigma-space, "const" prediction):
         #   denoised = x - model_output * sigma  (from 'const' prediction type)
         #   eps = (x - denoised) / sigma = model_output
         #   x_new = x - (sigma - sigma_next) * eps = x - dt * model_output

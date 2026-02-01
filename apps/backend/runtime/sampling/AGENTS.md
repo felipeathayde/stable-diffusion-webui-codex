@@ -1,7 +1,7 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
 Owner: Runtime Maintainers
-Last Review: 2026-01-30
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -20,10 +20,9 @@ Status: Active
   - `SamplerSpec` dataclass: canonical sampler name/kind, default scheduler, and allowed schedulers per sampler (UI surface).
   - `get_sampler_spec(name)`: resolves sampler name and validates scheduler compatibility before sampling context creation.
 - `driver.py`
-  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and by default runs the **native** sampler loop (no k-diffusion dependency).
+  - `CodexSampler` builds the sampling context, validates scheduler compatibility, and runs the **native** sampler loop (no external sampler deps).
   - Supports optional latent hooks (`post_step_hook`, `post_sample_hook`) for use-case-controlled postprocessing (e.g. masked img2img enforcement).
-  - K-diffusion integration is not exposed via env vars (settings are Web UI / payload-driven). If k-diffusion routing is needed, port it behind an explicit Web UI setting instead of env toggles.
-  - Restart sampler / UniPC helpers under `k_diffusion_extra` remain optional/experimental and must not be enabled via env flags.
+  - Restart sampler / UniPC helpers under `sampling_adapters/extra.py` are optional/experimental and are not wired into the default driver.
 - `__init__.py` — import-light public surface re-exporting the sampler/scheduler catalog (no torch-bound exports).
 - Sampling inner loop no longer emits legacy low-VRAM print warnings; memory pressure handling remains via `memory_management.manager.get_free_memory` without stdout noise.
 
@@ -40,9 +39,10 @@ Status: Active
     When the predictor is `FlowMatchEulerPrediction(pseudo_timestep_range=1000)` we mirror diffusers `ZImagePipeline`: force `sigma_min=0.0`, use base `linspace(1→0)` and append terminal 0 (double-zero tail). Default `steps=9` yields ~8 effective updates (last `dt=0`).
 - Precision guardrails: `driver.py` observes denoiser outputs for NaNs and escalates precision via `memory_management.manager.report_precision_failure` (bf16→fp16). Exhaustion raises with guidance to force fp32 manually.
 - Diagnostics: set `CODEX_LOG_SAMPLER=1` to log sampler setup and per-step norms; set `CODEX_LOG_SIGMAS=1` to dump the sigma ladder (first/last and a compact summary) for schedule comparisons.
+- Profiling (debug): set `CODEX_PROFILE=1` to enable the global torch-profiler wrapper (sampling driver emits per-step `record_function` ranges and exports a Perfetto trace + summary under `logs/profiler/`).
 - 2025-12-12: Added opt-in deep logs for flow debugging: `CODEX_ZIMAGE_DEBUG=1` / `CODEX_ZIMAGE_DEBUG_SAMPLING_INNER=1` prints CFG routing + cond/uncond norms for the first few inner-loop calls.
 - 2026-01-18: `sampling/__init__.py` re-exports only the import-light sampler/scheduler catalog; torch-bound sampling internals remain in `inner_loop.py` / `driver.py`.
-- 2026-01-01: Native `DPM++ 2M` now uses the log-sigma-time DPM-Solver++(2M) update (k-diffusion parity); `DPM++ 2M SDE` uses the midpoint log-sigma form with independent noise in the native path (no BrownianTree noise sampler).
+- 2026-01-01: Native `DPM++ 2M` uses the log-sigma-time DPM-Solver++(2M) update; `DPM++ 2M SDE` uses the midpoint log-sigma form with independent noise in the native path (no BrownianTree noise sampler).
 - Distilled/turbo CFG: when unconditional conditioning is omitted (`uncond=None`), `sampling_function_inner` bypasses CFG interpolation and returns the conditional prediction directly. This allows Turbo models to run with `guidance_scale=0` without collapsing denoised to zeros.
 - Flow precision: for flow-match predictors (`prediction_type='const'`, e.g. Flux/Z-Image), the sigma ladder remains **fp32** (schedule stability), but sampling latents now follow the core role dtype (same policy as SD/SDXL). If quality regresses, force core precision to fp32 explicitly instead of relying on implicit overrides.
 
@@ -57,6 +57,7 @@ Status: Active
 - 2026-01-24: Live preview interval is now resolved via thread-local overrides first (no per-task `os.environ` mutation); env `CODEX_PREVIEW_INTERVAL` remains as a fallback/debug input.
 - 2026-01-26: Sampling driver enforces smart-offload pre-sampling residency (TE must be off; VAE allowed only for live preview `FULL` with a warning about VRAM/perf).
 - 2026-01-30: Flow-match sampling no longer forces latents to fp32; latents now follow the core role dtype (SDXL parity). Sigma ladders remain fp32.
+- 2026-01-31: Added opt-in global profiling (`CODEX_PROFILE`) at sampling seams to attribute time to per-step regions, model calls, and CPU↔GPU transfers.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-24
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -26,7 +26,7 @@ Status: Active
 - `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
-- `k_diffusion/` — K-diffusion-style wrappers used by samplers/patchers.
+- `sampling_adapters/` — Sampling adapter wrappers used by samplers/patchers.
 - `kernels/` — Custom CUDA/C++ kernels where required.
 
 ## Notes

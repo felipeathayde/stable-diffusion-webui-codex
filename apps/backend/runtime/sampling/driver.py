@@ -6,19 +6,16 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Sampling driver (native + optional k-diffusion) for diffusion runtimes.
+Purpose: Sampling driver (native-only) for diffusion runtimes.
 Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
-while emitting timeline/diagnostic hooks.
+while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
 - `_raise_if_cancelled` (function): Checks cancellation state and raises `_SamplingCancelled` when requested.
 - `_PrecisionFallbackRequest` (exception): Signals the caller to retry sampling with a different precision policy.
-- `_kd_sampler_callable` (function): Wraps a k-diffusion sampler call with the compiled cond/uncond and CFG scale plumbing.
-- `_KDiffusionModel` (class): Adapter that exposes the model interface expected by k-diffusion samplers.
-- `_run_kdiffusion_sampler` (function): Runs the selected k-diffusion sampler with the current sampling context and hooks.
-- `CodexSampler` (class): Main sampler driver; builds `SamplingContext`, resolves sampler specs (native vs k-diffusion), runs the inner loop,
-  and integrates memory-management/timeline diagnostics.
+- `CodexSampler` (class): Main sampler driver; builds `SamplingContext`, resolves sampler specs, runs the native sampler loop, and integrates
+  memory-management/timeline diagnostics.
 """
 
 from __future__ import annotations
@@ -43,63 +40,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload_invariants import enforce_smart_offload_pre_sampling_residency
 from apps.backend.runtime.diagnostics.timeline import timeline
-
-
-try:
-    # Optional dependency; when missing, k-diffusion-backed samplers stay disabled
-    import k_diffusion.sampling as _KD_SAMPLING  # type: ignore[import-not-found]
-except Exception:  # pragma: no cover - absence is expected on minimal installs
-    _KD_SAMPLING = None
-
-
-_KD_MAPPING = {
-    SamplerKind.EULER: "sample_euler",
-    SamplerKind.EULER_A: "sample_euler_ancestral",
-    SamplerKind.EULER_CFG_PP: "sample_euler_cfg_pp",
-    SamplerKind.EULER_A_CFG_PP: "sample_euler_ancestral_cfg_pp",
-    SamplerKind.HEUN: "sample_heun",
-    SamplerKind.HEUNPP2: "sample_heunpp2",
-    SamplerKind.LMS: "sample_lms",
-    SamplerKind.DDIM: "sample_ddim",
-    SamplerKind.DDIM_CFG_PP: "sample_ddim_cfgpp",
-    SamplerKind.PLMS: "sample_plms",
-    SamplerKind.PNDM: "sample_pndm",
-    SamplerKind.DPM2: "sample_dpm_2",
-    SamplerKind.DPM2_ANCESTRAL: "sample_dpm_2_ancestral",
-    SamplerKind.DPM_FAST: "sample_dpm_fast",
-    SamplerKind.DPM_ADAPTIVE: "sample_dpm_adaptive",
-    SamplerKind.DPM2S_ANCESTRAL: "sample_dpmpp_2s_ancestral",
-    SamplerKind.DPM2S_ANCESTRAL_CFG_PP: "sample_dpmpp_2s_ancestral_cfg_pp",
-    SamplerKind.DPM2M: "sample_dpmpp_2m",
-    SamplerKind.DPM2M_CFG_PP: "sample_dpmpp_2m_cfg_pp",
-    SamplerKind.DPM2M_SDE: "sample_dpmpp_2m_sde",
-    SamplerKind.DPM2M_SDE_HEUN: "sample_dpmpp_2m_sde_heun",
-    SamplerKind.DPM2M_SDE_GPU: "sample_dpmpp_2m_sde_gpu",
-    SamplerKind.DPM2M_SDE_HEUN_GPU: "sample_dpmpp_2m_sde_heun_gpu",
-    SamplerKind.DPM_SDE: "sample_dpmpp_sde",
-    SamplerKind.DPM3M_SDE: "sample_dpmpp_3m_sde",
-    SamplerKind.DPM3M_SDE_GPU: "sample_dpmpp_3m_sde_gpu",
-    SamplerKind.DDPM: "extra:sample_ddpm",
-    SamplerKind.LCM: "sample_lcm",
-    SamplerKind.IPNDM: "sample_ipndm",
-    SamplerKind.IPNDM_V: "sample_ipndm_v",
-    SamplerKind.DEIS: "sample_deis",
-    SamplerKind.UNI_PC: "extra:sample_unipc",
-    SamplerKind.UNI_PC_BH2: "extra:sample_unipc_bh2",
-    SamplerKind.RES_MULTISTEP: "sample_res_multistep",
-    SamplerKind.RES_MULTISTEP_CFG_PP: "sample_res_multistep_cfg_pp",
-    SamplerKind.RES_MULTISTEP_ANCESTRAL: "sample_res_multistep_ancestral",
-    SamplerKind.RES_MULTISTEP_ANCESTRAL_CFG_PP: "sample_res_multistep_ancestral_cfg_pp",
-    SamplerKind.GRADIENT_ESTIMATION: "sample_gradient_estimation",
-    SamplerKind.GRADIENT_ESTIMATION_CFG_PP: "sample_gradient_estimation_cfg_pp",
-    SamplerKind.ER_SDE: "sample_er_sde",
-    SamplerKind.SEEDS_2: "sample_seeds_2",
-    SamplerKind.SEEDS_3: "sample_seeds_3",
-    SamplerKind.SA_SOLVER: "sample_sa_solver",
-    SamplerKind.SA_SOLVER_PECE: "sample_sa_solver_pece",
-    SamplerKind.RESTART: "extra:restart_sampler",
-}
-
+from apps.backend.runtime.diagnostics.profiler import profiler
 
 class _SamplingCancelled(Exception):
     """Signal that sampling was cancelled externally."""
@@ -121,110 +62,6 @@ _LMS_COEFFS = {
 
 class _PrecisionFallbackRequest(Exception):
     """Internal control flow exception used to trigger a sampling retry."""
-
-
-def _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale):
-    def _fn(x: torch.Tensor, sigma_hat: torch.Tensor, **extra_args):
-        sigma_batch = sigma_hat if sigma_hat.ndim == 1 else sigma_hat.view(-1)
-        return sampling_function_inner(
-            model,
-            x,
-            sigma_batch,
-            compiled_uncond,
-            compiled_cond,
-            cfg_scale,
-            getattr(model, "model_options", {}),
-            seed=None,
-            return_full=False,
-        )
-    return _fn
-
-
-class _KDiffusionModel:
-    """Adapter exposing .inner_model for k-diffusion samplers."""
-
-    def __init__(self, inner_model, fn):
-        self.inner_model = inner_model
-        self._fn = fn
-
-    def __call__(self, x, sigma, **extra_args):
-        return self._fn(x, sigma, **extra_args)
-
-
-def _run_kdiffusion_sampler(
-    sampler_kind: SamplerKind,
-    sampler_fn_name: str,
-    *,
-    model,
-    x: torch.Tensor,
-    sigmas: torch.Tensor,
-    compiled_cond,
-    compiled_uncond,
-    cfg_scale: float,
-    progress_bar,
-    logger: logging.Logger,
-    log_enabled: bool,
-    preview_callback: Optional[Callable[[torch.Tensor, int, int], None]],
-    total_steps: int,
-    tick: Optional[Callable[[int], None]] = None,
-    preview_interval: int = 0,
-) -> torch.Tensor:
-    sampler_fn = None
-    if sampler_fn_name.startswith("extra:"):
-        from apps.backend.runtime.k_diffusion import k_diffusion_extra as kd_extra
-
-        extra_name = sampler_fn_name.split(":", 1)[1]
-        sampler_fn = getattr(kd_extra, extra_name, None)
-    else:
-        if _KD_SAMPLING is None:
-            raise RuntimeError("k-diffusion is required for sampler execution but is unavailable")
-        sampler_fn = getattr(_KD_SAMPLING, sampler_fn_name, None)
-
-    if sampler_fn is None:
-        raise NotImplementedError(f"Sampler '{sampler_kind.value}' not yet ported (missing {sampler_fn_name})")
-    kd_model = _KDiffusionModel(model, _kd_sampler_callable(model, compiled_cond, compiled_uncond, cfg_scale))
-
-    step_counter = {"i": 0}
-
-    def _callback(payload):
-        idx = int(payload.get("i", step_counter["i"]))
-        step_counter["i"] = idx
-        timeline.exit("sampling", f"step[{idx}]")
-        timeline.enter("sampling", f"step[{idx+1}]")
-        if tick is not None:
-            tick(idx + 1)
-        if preview_callback is not None and preview_interval > 0:
-            try:
-                if ((idx + 1) % preview_interval == 0) or (idx + 1) == total_steps:
-                    preview_callback(payload.get("denoised"), idx + 1, total_steps)
-            except Exception:
-                pass
-        if progress_bar is not None:
-            progress_bar.update(1)
-
-    # Timeline: mark first step entry
-    timeline.enter("sampling", "step[0]")
-    
-    out = sampler_fn(
-        kd_model,
-        x,
-        sigmas,
-        extra_args={"model_options": getattr(model, "model_options", {})},
-        callback=_callback,
-        disable=not log_enabled,
-    )
-    
-    # Timeline: close final step
-    timeline.exit("sampling", f"step[{step_counter['i']}]")
-
-    if progress_bar is not None:
-        progress_bar.close()
-
-    if log_enabled:
-        logger.info("k-diffusion sampler=%s finished steps=%d", sampler_kind.value, total_steps)
-    return out
-
-
 
 class CodexSampler:
     """Minimal native sampler for txt2img using an Euler ODE loop.
@@ -480,86 +317,18 @@ class CodexSampler:
                     progress_bar = tqdm(total=steps - start_idx, desc="sampling", leave=False)
 
                 sampler_kind = active_context.sampler_kind
-
-                # Default to native sampler; enable k-diffusion only when explicitly requested.
-                use_kd = False
-                if use_kd and sampler_kind in _KD_MAPPING and _KD_SAMPLING is not None:
-                    if post_step_hook is not None:
-                        raise NotImplementedError(
-                            "mask enforcement per-step is not supported for k-diffusion samplers yet; "
-                            "use a native sampler or post_blend enforcement"
-                        )
-                    kd_name = _KD_MAPPING[sampler_kind]
-
-                    compiled_cond = compile_conditions(cond)
-                    compiled_uncond = compile_conditions(uncond) if uncond is not None else None
-
-                    backend_state.start(job_count=1, sampling_steps=len(sigmas_run) - 1)
-                    state_started = True
-
-                    if self._log_sigmas or self._log_enabled:
-                        schedule_first = float(sigmas_run[0]) if len(sigmas_run) > 0 else float("nan")
-                        schedule_last = float(sigmas_run[-1]) if len(sigmas_run) > 0 else float("nan")
-                        schedule_summary = self._summarize_sigmas(sigmas_run)
-                        sigma_min_val = float("nan") if active_context.sigma_min is None else float(active_context.sigma_min)
-                        sigma_max_val = float("nan") if active_context.sigma_max is None else float(active_context.sigma_max)
-                        self._logger.info(
-                            "sigma schedule len=%d predict_min=%.6g predict_max=%.6g first=%.6g last=%.6g ladder=%s",
-                            len(sigmas_run) - 1,
-                            sigma_min_val,
-                            sigma_max_val,
-                            schedule_first,
-                            schedule_last,
-                            schedule_summary,
-                        )
-
-                    if self._log_enabled:
-                        head = []
-                        try:
-                            head = [float(v) for v in sigmas_run[: min(4, len(sigmas_run))].detach().cpu().tolist()]
-                        except Exception:
-                            head = []
-                        self._logger.info(
-                            "sampler algorithm=%s scheduler=%s steps=%d cfg_scale=%.4g head=%s",
-                            sampler_kind.value,
-                            active_context.scheduler_name,
-                            len(sigmas_run) - 1,
-                            float(cfg_scale),
-                            head,
-                        )
-
-                    progress_bar = None
-                    use_progress = active_context.enable_progress
-                    if use_progress:
-                        from tqdm.auto import tqdm
-
-                        progress_bar = tqdm(total=len(sigmas_run) - 1, desc="sampling", leave=False)
-
-                    x = _run_kdiffusion_sampler(
-                        sampler_kind,
-                        kd_name,
-                        model=model,
-                        x=x,
-                        sigmas=sigmas_run,
-                        compiled_cond=compiled_cond,
-                        compiled_uncond=compiled_uncond,
-                        cfg_scale=cfg_scale,
-                        progress_bar=progress_bar,
-                        logger=self._logger,
-                        log_enabled=self._log_enabled,
-                        preview_callback=preview_callback,
-                        total_steps=len(sigmas_run) - 1,
-                        tick=lambda step: (_raise_if_cancelled() or backend_state.tick(sampling_step=step)),
-                        preview_interval=active_context.preview_interval,
-                    )
-                    if post_sample_hook is not None:
-                        x = post_sample_hook(x)
-
-                    sampling_cleanup(denoiser)
-                    prepared = False
-                    backend_state.end()
-                    state_started = False
-                    return x
+                profile_meta = {
+                    "algorithm": self.algorithm,
+                    "sampler_kind": sampler_kind.value,
+                    "scheduler": active_context.scheduler_name,
+                    "steps": steps - start_idx,
+                    "cfg_scale": float(cfg_scale),
+                    "device": str(noise.device),
+                    "noise_dtype": str(noise.dtype),
+                    "x_dtype": str(x.dtype),
+                    "model_compute_dtype": str(getattr(model, "computation_dtype", None)),
+                }
+                profile_name = f"sampling-{sampler_kind.value}-{active_context.scheduler_name}"
 
                 if self._log_enabled:
                     head = []
@@ -581,228 +350,234 @@ class CodexSampler:
                 h_prev: float | None = None
                 eps_history: List[torch.Tensor] = []
 
-                for i in range(start_idx, steps):
-                    if backend_state.should_stop:
-                        raise _SamplingCancelled("cancelled")
-                    sigma = sigmas[i]
-                    sigma_next = sigmas[i + 1]
-                    sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=torch.float32)
+                with profiler.profile_run(profile_name, meta=profile_meta):
+                    for i in range(start_idx, steps):
+                        if backend_state.should_stop:
+                            raise _SamplingCancelled("cancelled")
+                        step_index = i - start_idx
+                        with profiler.section(f"sampling.step/{step_index + 1}"):
+                            sigma = sigmas[i]
+                            sigma_next = sigmas[i + 1]
+                            sigma_batch = torch.full((x.shape[0],), float(sigma), device=x.device, dtype=torch.float32)
 
-                    if log_cfg_delta and (i - start_idx) < cfg_delta_steps:
-                        denoised, cond_pred, uncond_pred = sampling_function_inner(
-                            model,
-                            x,
-                            sigma_batch,
-                            compiled_uncond,
-                            compiled_cond,
-                            cfg_scale,
-                            denoiser.model_options,
-                            seed=None,
-                            return_full=True,
-                        )
-                        cfg1_optimization = math.isclose(cfg_scale, 1.0) and not denoiser.model_options.get(
-                            "disable_cfg1_optimization", False
-                        )
-                        if compiled_uncond is None or cfg1_optimization:
-                            self._logger.info(
-                                "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g uncond_used=%s",
-                                i + 1,
-                                steps,
-                                float(sigma),
-                                float(cfg_scale),
-                                False,
-                            )
-                        else:
-                            try:
-                                delta_abs_mean = float((cond_pred - uncond_pred).detach().float().abs().mean().item())
-                            except Exception:
-                                delta_abs_mean = float("nan")
-                            self._logger.info(
-                                "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g delta_abs_mean=%.6g",
-                                i + 1,
-                                steps,
-                                float(sigma),
-                                float(cfg_scale),
-                                delta_abs_mean,
-                            )
-                    else:
-                        denoised = sampling_function_inner(
-                            model,
-                            x,
-                            sigma_batch,
-                            compiled_uncond,
-                            compiled_cond,
-                            cfg_scale,
-                            denoiser.model_options,
-                            seed=None,
-                            return_full=False,
-                        )
-
-                    eps = (x - denoised) / max(float(sigma), 1e-8)
-                    if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
-                        reason = f"NaN detected at sampling step {i + 1}"
-                        self._logger.warning(
-                            "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
-                            i + 1,
-                            str(getattr(model, "computation_dtype", x.dtype)),
-                        )
-                        next_dtype = memory_management.manager.report_precision_failure(
-                            DeviceRole.CORE,
-                            location=f"sampler.step_{i + 1}",
-                            reason=reason,
-                        )
-                        if next_dtype is None:
-                            hint = memory_management.manager.precision_hint(DeviceRole.CORE)
-                            raise RuntimeError(
-                                f"Diffusion core produced NaNs at step {i + 1} on {noise.device} with dtype {getattr(model, 'computation_dtype', x.dtype)}. {hint}"
-                            )
-                        self._rebind_unet_precision(next_dtype)
-                        retry = True
-                        raise _PrecisionFallbackRequest
-
-                    eps_history.append(eps.detach())
-                    if len(eps_history) > 4:
-                        eps_history.pop(0)
-
-                    if sampler_kind is SamplerKind.EULER:
-                        x = x - (float(sigma) - float(sigma_next)) * eps
-                    elif sampler_kind is SamplerKind.EULER_A:
-                        sigma = float(sigma)
-                        sigma_next = float(sigma_next)
-                        if sigma_next <= 0.0:
-                            x = denoised
-                        else:
-                            sigma_up_sq = max(sigma_next**2 * (sigma**2 - sigma_next**2) / max(sigma**2, 1e-8), 0.0)
-                            sigma_up = sigma_up_sq ** 0.5
-                            sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
-                            x = denoised + sigma_down * eps
-                            noise = torch.randn_like(x)
-                            x = x + sigma_up * noise
-                    elif sampler_kind is SamplerKind.DPM2M:
-                        # DPM-Solver++(2M) in log-sigma time (matches k-diffusion sample_dpmpp_2m).
-                        sigma_f = float(sigma)
-                        sigma_next_f = float(sigma_next)
-                        if sigma_next_f <= 0.0:
-                            x = denoised
-                            old_denoised = denoised.detach()
-                            t_prev = None
-                        else:
-                            t = -math.log(max(sigma_f, 1e-12))
-                            t_next = -math.log(max(sigma_next_f, 1e-12))
-                            h = t_next - t
-                            if old_denoised is None or t_prev is None:
-                                x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised
+                            if log_cfg_delta and (i - start_idx) < cfg_delta_steps:
+                                denoised, cond_pred, uncond_pred = sampling_function_inner(
+                                    model,
+                                    x,
+                                    sigma_batch,
+                                    compiled_uncond,
+                                    compiled_cond,
+                                    cfg_scale,
+                                    denoiser.model_options,
+                                    seed=None,
+                                    return_full=True,
+                                )
+                                cfg1_optimization = math.isclose(cfg_scale, 1.0) and not denoiser.model_options.get(
+                                    "disable_cfg1_optimization", False
+                                )
+                                if compiled_uncond is None or cfg1_optimization:
+                                    self._logger.info(
+                                        "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g uncond_used=%s",
+                                        i + 1,
+                                        steps,
+                                        float(sigma),
+                                        float(cfg_scale),
+                                        False,
+                                    )
+                                else:
+                                    try:
+                                        delta_abs_mean = float((cond_pred - uncond_pred).detach().float().abs().mean().item())
+                                    except Exception:
+                                        delta_abs_mean = float("nan")
+                                    self._logger.info(
+                                        "cfg-delta step=%d/%d sigma=%.6g cfg_scale=%.4g delta_abs_mean=%.6g",
+                                        i + 1,
+                                        steps,
+                                        float(sigma),
+                                        float(cfg_scale),
+                                        delta_abs_mean,
+                                    )
                             else:
-                                h_last = t - t_prev
-                                r = h_last / h if abs(h) > 1e-12 else 1.0
-                                denoised_d = (1.0 + 1.0 / (2.0 * r)) * denoised - (1.0 / (2.0 * r)) * old_denoised
-                                x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised_d
-                            old_denoised = denoised.detach()
-                            t_prev = t
-                    elif sampler_kind is SamplerKind.DPM2M_SDE:
-                        # DPM-Solver++(2M) SDE (midpoint) in log-sigma time.
-                        # This is a conservative native approximation (no BrownianTree),
-                        # but matches the core update form used by k-diffusion.
-                        sigma_f = float(sigma)
-                        sigma_next_f = float(sigma_next)
-                        if sigma_next_f <= 0.0:
-                            x = denoised
-                            old_denoised = denoised.detach()
-                            h_prev = None
-                        else:
-                            t = -math.log(max(sigma_f, 1e-12))
-                            s = -math.log(max(sigma_next_f, 1e-12))
-                            h = s - t
-                            eta = 1.0
-                            s_noise = 1.0
-                            eta_h = eta * h
-                            phi = -math.expm1(-h - eta_h)  # 1 - exp(-h-eta*h)
-                            x = (sigma_next_f / sigma_f) * math.exp(-eta_h) * x + phi * denoised
-                            if old_denoised is not None and h_prev is not None:
-                                r = h_prev / h if abs(h) > 1e-12 else 1.0
-                                x = x + 0.5 * phi * (1.0 / r) * (denoised - old_denoised)
-                            if eta != 0.0:
-                                noise_scale = sigma_next_f * math.sqrt(max(-math.expm1(-2.0 * eta_h), 0.0)) * s_noise
-                                x = x + torch.randn_like(x) * noise_scale
-                            old_denoised = denoised.detach()
-                            h_prev = h
-                    elif sampler_kind is SamplerKind.DDIM:
-                        x = denoised + float(sigma_next) * eps
-                    elif sampler_kind in (SamplerKind.PLMS, SamplerKind.PNDM):
-                        order = min(len(eps_history), 4)
-                        coeffs = _LMS_COEFFS[order]
-                        derivative = torch.zeros_like(x)
-                        for idx_coeff, coeff in enumerate(coeffs):
-                            derivative = derivative + coeff * eps_history[-(idx_coeff + 1)]
-                        delta = float(sigma) - float(sigma_next)
-                        x = x - delta * derivative
-                    elif sampler_kind is SamplerKind.UNI_PC:
-                        delta = float(sigma) - float(sigma_next)
-                        x_pred = x - delta * eps
-                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
-                        denoised_next = sampling_function_inner(
-                            model,
-                            x_pred,
-                            sigma_next_batch,
-                            compiled_uncond,
-                            compiled_cond,
-                            cfg_scale,
-                            denoiser.model_options,
-                            seed=None,
-                            return_full=False,
-                        )
-                        eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
-                        x = x - delta * 0.5 * (eps + eps_next)
-                    elif sampler_kind is SamplerKind.UNI_PC_BH2:
-                        # Reuse the UniPC two-stage update as a BH2 variant placeholder.
-                        delta = float(sigma) - float(sigma_next)
-                        x_pred = x - delta * eps
-                        sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
-                        denoised_next = sampling_function_inner(
-                            model,
-                            x_pred,
-                            sigma_next_batch,
-                            compiled_uncond,
-                            compiled_cond,
-                            cfg_scale,
-                            denoiser.model_options,
-                            seed=None,
-                            return_full=False,
-                        )
-                        eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
-                        x = x - delta * 0.5 * (eps + eps_next)
-                    else:
-                        raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
+                                denoised = sampling_function_inner(
+                                    model,
+                                    x,
+                                    sigma_batch,
+                                    compiled_uncond,
+                                    compiled_cond,
+                                    cfg_scale,
+                                    denoiser.model_options,
+                                    seed=None,
+                                    return_full=False,
+                                )
 
-                    if post_step_hook is not None:
-                        post_step_hook(x, i + 1, steps)
+                            eps = (x - denoised) / max(float(sigma), 1e-8)
+                            if strict and (torch.isnan(eps).any() or torch.isnan(denoised).any()):
+                                reason = f"NaN detected at sampling step {i + 1}"
+                                self._logger.warning(
+                                    "NaN encountered at step %d with dtype=%s; attempting precision fallback.",
+                                    i + 1,
+                                    str(getattr(model, "computation_dtype", x.dtype)),
+                                )
+                                next_dtype = memory_management.manager.report_precision_failure(
+                                    DeviceRole.CORE,
+                                    location=f"sampler.step_{i + 1}",
+                                    reason=reason,
+                                )
+                                if next_dtype is None:
+                                    hint = memory_management.manager.precision_hint(DeviceRole.CORE)
+                                    raise RuntimeError(
+                                        f"Diffusion core produced NaNs at step {i + 1} on {noise.device} with dtype {getattr(model, 'computation_dtype', x.dtype)}. {hint}"
+                                    )
+                                self._rebind_unet_precision(next_dtype)
+                                retry = True
+                                raise _PrecisionFallbackRequest
 
-                    if preview_callback is not None and (preview_interval > 0 and ((i + 1) % preview_interval == 0) or (i + 1) == steps):
-                        try:
-                            preview_callback(denoised.detach(), i + 1, steps)
-                        except Exception:
-                            pass
+                            eps_history.append(eps.detach())
+                            if len(eps_history) > 4:
+                                eps_history.pop(0)
 
-                    if self._log_enabled and (i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0):
-                        eps_norm = float(eps.norm().item()) if hasattr(eps, "norm") else float("nan")
-                        den_norm = float(denoised.norm().item()) if hasattr(denoised, "norm") else float("nan")
-                        self._logger.info(
-                            "step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f norm(eps)=%.4f norm(den)=%.4f dt=%.2fms",
-                            i + 1,
-                            steps,
-                            float(sigma),
-                            float(sigma_next),
-                            float(x.norm().item()),
-                            eps_norm,
-                            den_norm,
-                            (_time.perf_counter() - t0) * 1000.0,
-                        )
-                        t0 = _time.perf_counter()
+                            if sampler_kind is SamplerKind.EULER:
+                                x = x - (float(sigma) - float(sigma_next)) * eps
+                            elif sampler_kind is SamplerKind.EULER_A:
+                                sigma = float(sigma)
+                                sigma_next = float(sigma_next)
+                                if sigma_next <= 0.0:
+                                    x = denoised
+                                else:
+                                    sigma_up_sq = max(sigma_next**2 * (sigma**2 - sigma_next**2) / max(sigma**2, 1e-8), 0.0)
+                                    sigma_up = sigma_up_sq ** 0.5
+                                    sigma_down = (max(sigma_next**2 - sigma_up_sq, 0.0)) ** 0.5
+                                    x = denoised + sigma_down * eps
+                                    noise = torch.randn_like(x)
+                                    x = x + sigma_up * noise
+                            elif sampler_kind is SamplerKind.DPM2M:
+                                # DPM-Solver++(2M) in log-sigma time (reference update form).
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                    old_denoised = denoised.detach()
+                                    t_prev = None
+                                else:
+                                    t = -math.log(max(sigma_f, 1e-12))
+                                    t_next = -math.log(max(sigma_next_f, 1e-12))
+                                    h = t_next - t
+                                    if old_denoised is None or t_prev is None:
+                                        x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised
+                                    else:
+                                        h_last = t - t_prev
+                                        r = h_last / h if abs(h) > 1e-12 else 1.0
+                                        denoised_d = (1.0 + 1.0 / (2.0 * r)) * denoised - (1.0 / (2.0 * r)) * old_denoised
+                                        x = (sigma_next_f / sigma_f) * x - math.expm1(-h) * denoised_d
+                                    old_denoised = denoised.detach()
+                                    t_prev = t
+                            elif sampler_kind is SamplerKind.DPM2M_SDE:
+                                # DPM-Solver++(2M) SDE (midpoint) in log-sigma time.
+                                # This is a conservative native approximation (no BrownianTree),
+                                # but matches the core update form.
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                    old_denoised = denoised.detach()
+                                    h_prev = None
+                                else:
+                                    t = -math.log(max(sigma_f, 1e-12))
+                                    s = -math.log(max(sigma_next_f, 1e-12))
+                                    h = s - t
+                                    eta = 1.0
+                                    s_noise = 1.0
+                                    eta_h = eta * h
+                                    phi = -math.expm1(-h - eta_h)  # 1 - exp(-h-eta*h)
+                                    x = (sigma_next_f / sigma_f) * math.exp(-eta_h) * x + phi * denoised
+                                    if old_denoised is not None and h_prev is not None:
+                                        r = h_prev / h if abs(h) > 1e-12 else 1.0
+                                        x = x + 0.5 * phi * (1.0 / r) * (denoised - old_denoised)
+                                    if eta != 0.0:
+                                        noise_scale = sigma_next_f * math.sqrt(max(-math.expm1(-2.0 * eta_h), 0.0)) * s_noise
+                                        x = x + torch.randn_like(x) * noise_scale
+                                    old_denoised = denoised.detach()
+                                    h_prev = h
+                            elif sampler_kind is SamplerKind.DDIM:
+                                x = denoised + float(sigma_next) * eps
+                            elif sampler_kind in (SamplerKind.PLMS, SamplerKind.PNDM):
+                                order = min(len(eps_history), 4)
+                                coeffs = _LMS_COEFFS[order]
+                                derivative = torch.zeros_like(x)
+                                for idx_coeff, coeff in enumerate(coeffs):
+                                    derivative = derivative + coeff * eps_history[-(idx_coeff + 1)]
+                                delta = float(sigma) - float(sigma_next)
+                                x = x - delta * derivative
+                            elif sampler_kind is SamplerKind.UNI_PC:
+                                delta = float(sigma) - float(sigma_next)
+                                x_pred = x - delta * eps
+                                sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
+                                denoised_next = sampling_function_inner(
+                                    model,
+                                    x_pred,
+                                    sigma_next_batch,
+                                    compiled_uncond,
+                                    compiled_cond,
+                                    cfg_scale,
+                                    denoiser.model_options,
+                                    seed=None,
+                                    return_full=False,
+                                )
+                                eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
+                                x = x - delta * 0.5 * (eps + eps_next)
+                            elif sampler_kind is SamplerKind.UNI_PC_BH2:
+                                # Reuse the UniPC two-stage update as a BH2 variant placeholder.
+                                delta = float(sigma) - float(sigma_next)
+                                x_pred = x - delta * eps
+                                sigma_next_batch = torch.full((x.shape[0],), float(sigma_next), device=x.device, dtype=torch.float32)
+                                denoised_next = sampling_function_inner(
+                                    model,
+                                    x_pred,
+                                    sigma_next_batch,
+                                    compiled_uncond,
+                                    compiled_cond,
+                                    cfg_scale,
+                                    denoiser.model_options,
+                                    seed=None,
+                                    return_full=False,
+                                )
+                                eps_next = (x_pred - denoised_next) / max(float(sigma_next), 1e-8)
+                                x = x - delta * 0.5 * (eps + eps_next)
+                            else:
+                                raise NotImplementedError(f"Sampler '{sampler_kind.value}' is not implemented natively yet")
 
-                    if progress_bar is not None:
-                        progress_bar.update(1)
+                            if post_step_hook is not None:
+                                post_step_hook(x, i + 1, steps)
 
-                    backend_state.tick(sampling_step=i + 1)
+                            if preview_callback is not None and (
+                                preview_interval > 0 and ((i + 1) % preview_interval == 0) or (i + 1) == steps
+                            ):
+                                try:
+                                    preview_callback(denoised.detach(), i + 1, steps)
+                                except Exception:
+                                    pass
+
+                            if self._log_enabled and (i == 0 or (i + 1) == steps or (i + 1) % max(1, steps // 5) == 0):
+                                eps_norm = float(eps.norm().item()) if hasattr(eps, "norm") else float("nan")
+                                den_norm = float(denoised.norm().item()) if hasattr(denoised, "norm") else float("nan")
+                                self._logger.info(
+                                    "step=%d/%d sigma=%.6g->%.6g norm(x)=%.4f norm(eps)=%.4f norm(den)=%.4f dt=%.2fms",
+                                    i + 1,
+                                    steps,
+                                    float(sigma),
+                                    float(sigma_next),
+                                    float(x.norm().item()),
+                                    eps_norm,
+                                    den_norm,
+                                    (_time.perf_counter() - t0) * 1000.0,
+                                )
+                                t0 = _time.perf_counter()
+
+                            if progress_bar is not None:
+                                progress_bar.update(1)
+
+                            backend_state.tick(sampling_step=i + 1)
+                        profiler.step()
 
                 if progress_bar is not None:
                     progress_bar.close()

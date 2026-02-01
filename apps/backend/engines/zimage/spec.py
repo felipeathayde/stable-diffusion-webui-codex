@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ZImageTextPipelines` (dataclass): Text processing pipeline bundle for the Z Image engine (currently Qwen3 text).
 - `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components, including explicit storage vs compute dtypes per role.
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
-- `_k_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
+- `_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
 - `_load_external_vae` (function): Loads an external Flow16 VAE from a path (required for core-only; optional override for full checkpoints).
 - `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder from a path (required for core-only; optional override for full checkpoints).
 - `assemble_zimage_runtime` (function): Assembles the runtime (including external assets when required) and returns a `ZImageEngineRuntime`.
@@ -38,7 +38,7 @@ from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
 from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
-from apps.backend.runtime.k_diffusion.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.sampling_adapters.prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 
@@ -211,7 +211,7 @@ class ZImageEngineSpec:
         return self._get_family_spec().default_cfg
 
 
-def _k_predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
+def _predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
     """Create flow-match predictor for Z Image."""
     logger.debug("Using FlowMatch predictor for Z Image (shift=%.2f)", spec.flow_shift)
     # Turbo uses linear schedule (shift=1.0); standard models use shift=3.0
@@ -365,11 +365,11 @@ def assemble_zimage_runtime(
     _log_vram("AFTER VAE wrapper")
     
     # Wrap transformer in DenoiserPatcher
-    k_predictor = _k_predictor(spec)
+    predictor = _predictor(spec)
     denoiser = DenoiserPatcher.from_model(
         model=transformer,
         diffusers_scheduler=None,
-        k_predictor=k_predictor,
+        predictor=predictor,
         config=estimated_config,
     )
     _log_vram("AFTER DenoiserPatcher.from_model")

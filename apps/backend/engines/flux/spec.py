@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FluxTextPipelines` (dataclass): Holds the text processing engines used by Flux (optional CLIP classic + required T5).
 - `FluxEngineRuntime` (dataclass): Fully assembled runtime components for Flux (CLIP, VAE, denoiser patcher, text pipelines, distilled CFG flag).
 - `FluxEngineSpec` (dataclass): Spec/config holder for a Flux runtime build (repo/model selection + streaming policy/config).
-- `_k_predictor` (function): Builds the FlowMatchEuler predictor for the selected Flux variant (Schnell vs dev).
+- `_predictor` (function): Builds the FlowMatchEuler predictor for the selected Flux variant (Schnell vs dev).
 - `_maybe_enable_streaming_core` (function): Wraps a core transformer with streaming support based on policy/config and runtime flags.
 - `_is_clip_encoder` (function): Type guard for identifying CLIP text encoder models in a mixed component set.
 - `_is_t5_encoder` (function): Type guard for identifying T5 text encoder models in a mixed component set.
@@ -40,7 +40,7 @@ from apps.backend.patchers.clip import CLIP
 from apps.backend.patchers.denoiser import DenoiserPatcher
 from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.specs import ModelFamily
-from apps.backend.runtime.k_diffusion.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.sampling_adapters.prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.classic_engine import ClassicTextProcessingEngine
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 from apps.backend.runtime.memory import memory_management
@@ -86,7 +86,7 @@ class FluxEngineSpec:
         return self.schnell_threshold(repo)
 
 
-def _k_predictor(repo: str, is_schnell: bool) -> FlowMatchEulerPrediction:
+def _predictor(repo: str, is_schnell: bool) -> FlowMatchEulerPrediction:
     if is_schnell:
         logger.debug("Using FlowMatch predictor for schnell repo=%s", repo)
         return FlowMatchEulerPrediction(mu=1.0)
@@ -177,7 +177,7 @@ def _maybe_enable_streaming_core(
 
         streamed = StreamedFluxCore(base_core, plan, controller)
 
-        # Preserve loader metadata expected by KModel / patchers.
+        # Preserve loader metadata expected by SamplerModel / patchers.
         for attr in (
             "storage_dtype",
             "computation_dtype",
@@ -329,7 +329,7 @@ def assemble_flux_runtime(
 
     repo = getattr(estimated_config, "huggingface_repo", "" ) or ""
     schnell = spec.is_schnell(repo)
-    k_predictor = _k_predictor(repo, schnell)
+    predictor = _predictor(repo, schnell)
     if not schnell:
         logger.debug("Distilled CFG scale enabled for %s", spec.name)
     use_distilled_cfg = not schnell
@@ -340,7 +340,7 @@ def assemble_flux_runtime(
     denoiser = DenoiserPatcher.from_model(
         model=transformer,
         diffusers_scheduler=None,
-        k_predictor=k_predictor,
+        predictor=predictor,
         config=estimated_config,
     )
 

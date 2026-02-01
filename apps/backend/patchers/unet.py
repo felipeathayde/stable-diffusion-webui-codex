@@ -12,7 +12,7 @@ building a composite runtime on activation (no fallbacks; invalid payloads raise
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SamplingReservation` (dataclass): Tracks reserved memory and auxiliary patchers required during sampling (clone/add_memory/add_patcher).
-- `UnetPatcher` (class): Main UNet patcher; wraps `KModel`, tracks `ControlNode` graph, builds/activates composite control runtime, and
+- `UnetPatcher` (class): Main UNet patcher; wraps `SamplerModel`, tracks `ControlNode` graph, builds/activates composite control runtime, and
   exposes validated helpers for cloning, patch registration, and sampling-time reservations (contains nested helper methods for node cloning,
   composite rebuild, and property accessors).
 """
@@ -29,7 +29,7 @@ import torch
 from apps.backend.runtime.common.nn.unet.layers import SpatialTransformer
 from apps.backend.runtime.controlnet.config import ControlNode, ControlNodeConfig, ControlRequest, ControlWeightSchedule
 from apps.backend.runtime.controlnet.runtime import build_composite
-from apps.backend.runtime.k_diffusion.k_model import KModel
+from apps.backend.runtime.sampling_adapters.sampler_model import SamplerModel
 from .base import ModelPatcher
 
 logger = logging.getLogger("backend.patchers.unet")
@@ -67,8 +67,8 @@ class UnetPatcher(ModelPatcher):
     MAX_PATCH_SLOTS = 16
 
     @classmethod
-    def from_model(cls, model, diffusers_scheduler, config, k_predictor=None):
-        model = KModel(model=model, diffusers_scheduler=diffusers_scheduler, k_predictor=k_predictor, config=config)
+    def from_model(cls, model, diffusers_scheduler, config, predictor=None):
+        model = SamplerModel(model=model, diffusers_scheduler=diffusers_scheduler, predictor=predictor, config=config)
         return cls(
             model,
             load_device=model.diffusion_model.load_device,
@@ -378,7 +378,7 @@ class UnetPatcher(ModelPatcher):
     def _iter_transformer_coordinates(self) -> Iterable[tuple[str, int, int]]:
         diffusion_model = getattr(self.model, "diffusion_model", None)
         if diffusion_model is None:
-            raise AttributeError("KModel is missing diffusion_model reference")
+            raise AttributeError("SamplerModel is missing diffusion_model reference")
 
         def block_transformer_indices(block: torch.nn.Module) -> range:
             count = sum(1 for module in block.modules() if isinstance(module, SpatialTransformer))

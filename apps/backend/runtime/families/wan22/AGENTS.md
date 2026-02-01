@@ -3,7 +3,7 @@
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
-Last Review: 2026-01-23
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -17,7 +17,7 @@ Status: Active
 - `sampling.py`: geometria + scheduler + loop de sampling por stage (`sample_stage_latents*`) e adaptação de shape/I2V channels.
 - `text_context.py`: tokenizer + text encoder (strict local-files-only) para embeddings de prompt/negative.
 - `vae_io.py`: VAE encode/decode + latent norms (I2V conditioning encode + decode frames), com offload.
-- `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., bnb_dtype="gguf")` + remap de chaves.
+- `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., weight_format="gguf")` + remap de chaves.
 - `stage_lora.py`: aplicação de LoRA por stage (High/Low) no caminho GGUF (LightX2V), com mapping Diffusers→Codex e modo global `CODEX_LORA_APPLY_MODE`.
 - `paths.py`: normalização de paths Windows (`C:\\...`) para WSL (`/mnt/c/...`) usada por config + loaders (evita drift).
 - `diagnostics.py`: logging/diagnostics (sigmas parity, CUDA mem snapshots, cache empty) para o caminho GGUF.

@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanTextPipelines` (dataclass): Text processing pipelines for WAN (T5 only; no CLIP).
 - `WanEngineRuntime` (dataclass): Runtime container for WAN components (VAE, denoiser patcher, text pipelines, device/dtype).
 - `WanEngineSpec` (dataclass): Engine spec wrapper that delegates defaults to `FamilyRuntimeSpec` with per-variant overrides.
-- `_k_predictor` (function): Builds the WAN flow predictor configured from the spec.
+- `_predictor` (function): Builds the WAN flow predictor configured from the spec.
 - `assemble_wan_runtime` (function): Assembles a `WanEngineRuntime` from a model family spec + loaded components.
 """
 
@@ -29,7 +29,7 @@ from apps.backend.patchers.vae import VAE
 from apps.backend.runtime.model_registry.flow_shift import flow_shift_spec_from_repo_dir
 from apps.backend.runtime.model_registry.specs import ModelFamily
 from apps.backend.runtime.model_registry.family_runtime import get_family_spec, FamilyRuntimeSpec
-from apps.backend.runtime.k_diffusion.k_prediction import FlowMatchEulerPrediction
+from apps.backend.runtime.sampling_adapters.prediction import FlowMatchEulerPrediction
 from apps.backend.runtime.text_processing.t5_engine import T5TextProcessingEngine
 
 logger = logging.getLogger("backend.engines.wan22.spec")
@@ -129,7 +129,7 @@ class WanEngineSpec:
         return "14b" in self.name.lower()
 
 
-def _k_predictor(spec: WanEngineSpec) -> FlowMatchEulerPrediction:
+def _predictor(spec: WanEngineSpec) -> FlowMatchEulerPrediction:
     """Create flow-match prediction for WAN."""
     logger.debug("Using FlowMatch predictor for WAN %s (shift=%.2f)", spec.name, spec.flow_shift)
     return FlowMatchEulerPrediction(
@@ -176,11 +176,11 @@ def assemble_wan_runtime(
     if transformer is None:
         raise ValueError("WAN runtime requires 'transformer' component")
     
-    k_predictor = _k_predictor(spec)
+    predictor = _predictor(spec)
     denoiser = DenoiserPatcher.from_model(
         model=transformer,
         diffusers_scheduler=None,
-        k_predictor=k_predictor,
+        predictor=predictor,
         config=estimated_config,
     )
     

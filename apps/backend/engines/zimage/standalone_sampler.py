@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Standalone Z Image sampler using Diffusers scheduler math.
-Runs the Z-Image transformer directly while following `FlowMatchEulerDiscreteScheduler` semantics (including `shift` and terminal sigma handling) without the k-diffusion stack.
+Runs the Z-Image transformer directly while following `FlowMatchEulerDiscreteScheduler` semantics (including `shift` and terminal sigma handling) without the native sampler driver stack.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `sample_zimage_diffusers_math` (function): Samples Z Image latents using Diffusers math/scheduler steps with optional classic CFG

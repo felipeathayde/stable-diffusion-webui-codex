@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Quantization detection and dtype validation for model-parser components.
-Detects GGUF quantization via `CodexParameter` / CodexPack markers and NF4/FP4 via bitsandbytes key markers / fp8 dtypes, and provides a
+Detects GGUF quantization via `CodexParameter` / CodexPack markers and detects NF4/FP4 key markers for fail-loud reporting, and provides a
 strict validation helper to catch mis-detections where a component contains no floating-point tensors.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/NF4/FP4/none).
+- `detect_quantization_from_tensors` (function): Recursively scans tensors/mappings to infer quantization kind (GGUF/none).
 - `detect_state_dict_dtype` (function): Best-effort dtype / quantization hint for a state dict (returns a torch dtype or `"gguf"`).
 - `detect_quantization_from_component` (function): Infers quantization from one component mapping (prefers GGUF tensor markers).
 - `detect_quantization` (function): Infers quantization for a full parser context (UNet/transformer prioritized).
@@ -32,23 +32,15 @@ from .errors import ValidationError
 
 
 def detect_quantization_from_tensors(tensors: Iterable[object]) -> QuantizationHint:
-    has_fp4 = False
     for value in tensors:
         if isinstance(value, CodexParameter) and value.qtype is not None:
             return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_gguf")
         if isinstance(value, CodexPackLinearQ4KTilepackV1Parameter):
             return QuantizationHint(kind=QuantizationKind.GGUF, detail="parameter_codexpack")
-        if isinstance(value, torch.Tensor):
-            if value.dtype == torch.float8_e4m3fn:
-                has_fp4 = True
-            elif value.dtype == torch.float8_e5m2:
-                has_fp4 = True
         if isinstance(value, Mapping):
             nested = detect_quantization_from_tensors(value.values())
             if nested.kind != QuantizationKind.NONE:
                 return nested
-    if has_fp4:
-        return QuantizationHint(kind=QuantizationKind.FP4)
     return QuantizationHint()
 
 

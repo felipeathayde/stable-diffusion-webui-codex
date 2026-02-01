@@ -12,7 +12,7 @@ Detects classic UNet checkpoints by key patterns, channel shapes, and CLIP-L emb
 Symbols (top-level; keep in sync; no ghosts):
 - `SD15_REQUIRED_KEYS` (constant): Keys required to identify SD1.x/SD1.5-style checkpoints.
 - `StableDiffusionV1Detector` (class): Detector for SD1.5-style UNet checkpoints (channels 4/9; CLIP-L text encoder).
-- `_infer_quantization` (function): Infers `QuantizationHint` from state-dict key patterns (bitsandbytes NF4/FP4).
+- `_infer_quantization` (function): Infers `QuantizationHint` from state-dict key patterns (unsupported NF4/FP4 marker keys).
 """
 
 from __future__ import annotations
@@ -101,9 +101,9 @@ class StableDiffusionV1Detector:
 def _infer_quantization(bundle: SignalBundle) -> QuantizationHint:
     for key in bundle.keys:
         if "bitsandbytes__nf4" in key:
-            return QuantizationHint(kind=QuantizationKind.NF4, detail="bitsandbytes")
+            return QuantizationHint(kind=QuantizationKind.NF4, detail="key_marker")
         if "bitsandbytes__fp4" in key:
-            return QuantizationHint(kind=QuantizationKind.FP4, detail="bitsandbytes")
+            return QuantizationHint(kind=QuantizationKind.FP4, detail="key_marker")
     return QuantizationHint(kind=QuantizationKind.NONE)
 
 

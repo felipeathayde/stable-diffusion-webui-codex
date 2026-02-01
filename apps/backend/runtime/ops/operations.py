@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_log_weight_fetch` (function): Debug logger for repeated weight/bias fetch events (with per-layer mute limit).
 - `_codexpack_require_sm86_cuda` (function): Validates CUDA + SM86+ prerequisites for CodexPack packed-kernel execution.
 - `_codexpack_q4k_tilepack_linear` (function): Calls the CodexPack packed linear kernel op (fail loud when unavailable).
-- `OperationContext` (dataclass): Thread-local-ish operation config (device/dtype + manual cast + bnb dtype hints).
+- `OperationContext` (dataclass): Thread-local-ish operation config (device/dtype + manual cast + weight-format hints).
 - `StreamStashEntry` (dataclass): One stashed streaming entry (weight/bias + bookkeeping for swap/stream state).
 - `StreamStash` (dataclass): Tracks streaming stash state across ops (used to coordinate stream workers and cleanup).
 - `get_operation_context` (function): Returns the active `OperationContext` (resolved from env/defaults).
@@ -162,12 +162,12 @@ class OperationContext:
     device: Optional[torch.device] = None
     dtype: Optional[torch.dtype] = None
     manual_cast_enabled: bool = False
-    bnb_dtype: Optional[str] = None
+    weight_format: Optional[str] = None
 
     def describe(self) -> str:
         return (
             f"device={self.device}, dtype={self.dtype}, manual_cast={self.manual_cast_enabled}, "
-            f"bnb_dtype={self.bnb_dtype}"
+            f"weight_format={self.weight_format}"
         )
 
 
@@ -362,11 +362,14 @@ def cleanup_cache():
 def _select_operations_class(context: OperationContext, override=None):
     if override is not None:
         return override
-    if context.bnb_dtype in {"gguf"}:
+    if context.weight_format is None:
+        return CodexOperations
+    if context.weight_format == "gguf":
         return CodexOperationsGGUF
-    if _BNB_AVAILABLE and context.bnb_dtype in {"nf4", "fp4"}:
-        return CodexOperationsBNB4bits
-    return CodexOperations
+    raise NotImplementedError(
+        "Unsupported pre-quant weight format (NF4/FP4 is not supported). "
+        f"Got weight_format={context.weight_format!r}. Convert the model to GGUF or use a safetensors fp16/bf16/fp32 checkpoint."
+    )
 
 
 class CodexOperations:
@@ -631,73 +634,6 @@ class CodexOperations:
                         self.sparse,
                     )
             return super().forward(x)
-
-
-try:
-    from .operations_bnb import (
-        BnbQuantConfig,
-        CodexLoader4Bit,
-        functional_dequantize_4bit,
-        functional_linear_4bits,
-    )
-
-    _BNB_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dependency
-    _BNB_AVAILABLE = False
-
-
-if _BNB_AVAILABLE:
-
-    class CodexOperationsBNB4bits(CodexOperations):
-        class Linear(CodexLoader4Bit):
-            def __init__(self, *args, **kwargs):
-                ctx = get_operation_context()
-                quant_type = ctx.bnb_dtype or "4bit"
-                config = BnbQuantConfig(blocksize=64, quant_type=quant_type)
-                super().__init__(device=ctx.device, dtype=ctx.dtype, quant_config=config)
-                self.parameters_manual_cast = ctx.manual_cast_enabled
-
-            def forward(self, x):
-                if self.bias is not None and self.bias.dtype != x.dtype:
-                    self.bias = utils.tensor2parameter(self.bias.to(x.dtype))
-
-                if hasattr(self, "codex_online_loras"):
-                    weight, bias, signal = weights_manual_cast(
-                        self,
-                        x,
-                        weight_fn=functional_dequantize_4bit,
-                        bias_fn=None,
-                        skip_bias_dtype=True,
-                    )
-                    with main_stream_worker(weight, bias, signal):
-                        return torch.nn.functional.linear(x, weight, bias)
-
-                if not self.parameters_manual_cast:
-                    return functional_linear_4bits(x, self.weight, self.bias)
-
-                if not self.weight.bnb_quantized:
-                    if x.device.type != "cuda":
-                        raise AssertionError("BNB 4-bit quantization requires CUDA device.")
-                    layer_original_device = self.weight.device
-                    self.weight = self.weight._quantize(x.device)
-                    bias = self.bias.to(x.device) if self.bias is not None else None
-                    out = functional_linear_4bits(x, self.weight, bias)
-                    self.weight = self.weight.to(layer_original_device)
-                    return out
-
-                weight, bias, signal = weights_manual_cast(
-                    self,
-                    x,
-                    skip_weight_dtype=True,
-                    skip_bias_dtype=True,
-                )
-                with main_stream_worker(weight, bias, signal):
-                    return functional_linear_4bits(x, weight, bias)
-
-else:
-
-    class CodexOperationsBNB4bits(CodexOperations):  # pragma: no cover - fallback
-        pass
 
 
 class CodexOperationsGGUF(CodexOperations):
@@ -1152,14 +1088,23 @@ class CodexOperationsGGUF(CodexOperations):
 
 
 @contextlib.contextmanager
-def using_codex_operations(operations=None, device=None, dtype=None, manual_cast_enabled=False, bnb_dtype=None):
+def using_codex_operations(operations=None, device=None, dtype=None, manual_cast_enabled=False, weight_format=None):
+    if weight_format is not None:
+        if not isinstance(weight_format, str):
+            raise TypeError(f"weight_format must be a string or None; got {type(weight_format).__name__}.")
+        if weight_format != "gguf":
+            raise NotImplementedError(
+                "NF4/FP4 is not supported. "
+                f"Got weight_format={weight_format!r}. Convert the model to GGUF or use a safetensors fp16/bf16/fp32 checkpoint."
+            )
+
     global _operation_context
     previous_context = _operation_context
     _operation_context = OperationContext(
         device=device,
         dtype=dtype,
         manual_cast_enabled=manual_cast_enabled,
-        bnb_dtype=bnb_dtype,
+        weight_format=weight_format,
     )
 
     operations_class = _select_operations_class(_operation_context, operations)

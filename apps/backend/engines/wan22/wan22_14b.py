@@ -221,7 +221,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
         dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
         dtype = dtype_map.get(self._dtype, torch.bfloat16)
         
-        # Get transformer core from the KModel wrapper
+        # Get transformer core from the SamplerModel wrapper
         transformer = getattr(self.codex_objects.denoiser.model, "diffusion_model", self.codex_objects.denoiser.model)
         vae = runtime.vae
         

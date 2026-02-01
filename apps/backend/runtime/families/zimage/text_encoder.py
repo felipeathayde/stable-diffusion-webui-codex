@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Qwen3-4B text encoder wrapper for Z Image (GGUF or safetensors).
 Wraps the Qwen3 model used by Z Image (Turbo/Base variants) for text encoding, preferring vendored HF tokenizers under `apps/backend/huggingface/Tongyi-MAI/**`.
+GGUF loads are constructed under `using_codex_operations(weight_format="gguf")` so `torch.nn` layers can load packed `CodexParameter` weights.
 This module follows the “Flux pattern” by providing a small text-processing engine wrapper for consistent interfaces.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -105,7 +106,7 @@ class ZImageTextEncoder(nn.Module):
             
             # Use Codex operations context to enable GGUF tensor support
             # This patches torch.nn.Linear to CodexOperationsGGUF.Linear which handles CodexParameter
-            with using_codex_operations(bnb_dtype='gguf', manual_cast_enabled=True, device=None, dtype=torch_dtype):
+            with using_codex_operations(weight_format='gguf', manual_cast_enabled=True, device=None, dtype=torch_dtype):
                 # Create model with native Qwen3_4B inside the context
                 config = Qwen3Config()
                 model = Qwen3_4B(config, dtype=torch_dtype)

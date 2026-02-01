@@ -1,7 +1,7 @@
 # Apps Structure & Functionality Improvements
 Date: 2025-10-28
 Owner: Repository Maintainers
-Last Review: 2026-01-20
+Last Review: 2026-01-31
 Status: Draft
 
 ## 1. Consolidate Launcher Tooling (COMPLETED — 2025-10-28)
@@ -11,7 +11,7 @@ Status: Draft
 
 ## 2. Retire Transitional Modules
 - 2026-01-03: Removed `apps/backend/codex/` after migrating its remaining responsibilities into native modules (options store, LoRA selections, engine loader).
-- Audit `apps/backend/runtime/k_diffusion/` for active code.
+- Audit `apps/backend/runtime/sampling_adapters/` for active code.
   - For useful logic, port into the appropriate runtime/service modules using Codex conventions.
   - Archive or delete leftover shims once migration is complete.
 

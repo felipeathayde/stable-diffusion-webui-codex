@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Deterministic LoRA loader/applier with transactional backups.
-Applies patch dictionaries onto model parameters with device/dtype management, supporting GGUF and optional bitsandbytes paths.
+Applies patch dictionaries onto model parameters with device/dtype management, supporting GGUF packed parameters.
 Fails loud when CodexPack packed weights are present (v1 packed-kernel execution does not support LoRA/DoRA yet).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -119,13 +119,14 @@ class CodexLoraLoader:
                     else:
                         self.backup[param_key] = parameter.detach().to(device=offload_device).clone()
 
-                bnb_layer = None
                 gguf_parameter = None
                 tensor = parameter
 
                 if hasattr(parameter, "bnb_quantized"):
-                    bnb_layer = parent_layer
-                    tensor = self._dequantize_bnb(parameter)
+                    raise NotImplementedError(
+                        "NF4/FP4 is not supported for LoRA. "
+                        f"Found bnb_quantized weight at {param_key!r}. Convert the base model to GGUF or use a safetensors fp16/bf16/fp32 checkpoint."
+                    )
                 elif isinstance(parameter, CodexParameter) and parameter.qtype is not None:
                     gguf_parameter = parameter
                     tensor = dequantize_tensor(parameter)
@@ -155,9 +156,7 @@ class CodexLoraLoader:
                 if gguf_parameter is None:
                     merged = merged.to(dtype=parameter.dtype, device=parameter.device)
 
-                if bnb_layer is not None:
-                    bnb_layer.reload_weight(merged)
-                elif gguf_parameter is not None:
+                if gguf_parameter is not None:
                     # Re-quantize offline-merged weights back into GGUF packed storage.
                     # We do this explicitly (no implicit dtype casts): storage stays byte-packed.
                     qtype = gguf_parameter.qtype
@@ -253,14 +252,6 @@ class CodexLoraLoader:
                 key,
                 torch.nn.Parameter(parameter.to(device=offload_device).clone(), requires_grad=False),
             )
-
-    def _dequantize_bnb(self, parameter: torch.nn.Parameter) -> torch.Tensor:
-        try:
-            from apps.backend.runtime.ops.operations_bnb import functional_dequantize_4bit
-        except Exception as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError("bitsandbytes support requested but not available.") from exc
-        return functional_dequantize_4bit(parameter)
-
 
 __all__ = [
     "CodexLoraLoader",

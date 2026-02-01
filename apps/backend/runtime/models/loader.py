@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
 Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts, and selects storage/compute dtypes (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
+NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -1065,30 +1066,29 @@ def _load_huggingface_component(
         from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 
         state_dict_dtype = detect_state_dict_dtype(state_dict)
-        if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "nf4", "fp4", "gguf"]:
+        if state_dict_dtype in [torch.float8_e4m3fn, torch.float8_e5m2, "gguf"]:
             LOGGER.info("Using Detected T5 Data Type: %s", state_dict_dtype)
             storage_dtype = state_dict_dtype
-            if state_dict_dtype in ["nf4", "fp4", "gguf"]:
+            if state_dict_dtype == "gguf":
                 LOGGER.info("Using pre-quant state dict!")
-                if state_dict_dtype == "gguf":
-                    beautiful_print_gguf_state_dict_statics(state_dict)
+                beautiful_print_gguf_state_dict_statics(state_dict)
         else:
             LOGGER.info("Using Default T5 Data Type: %s", storage_dtype)
 
         te_load_device = te_device
-        if smart_offload_enabled() and te_device.type != "cpu" and storage_dtype not in ("nf4", "fp4", "gguf"):
+        if smart_offload_enabled() and te_device.type != "cpu" and storage_dtype != "gguf":
             te_load_device = torch.device("cpu")
             LOGGER.info("[loader] Smart offload: loading %s on CPU (initial)", component_name)
 
             from transformers import modeling_utils
 
-            if storage_dtype in ["nf4", "fp4", "gguf"]:
+            if storage_dtype == "gguf":
                 with modeling_utils.no_init_weights():
                     with using_codex_operations(
                         device=te_load_device,
                         dtype=memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER),
                         manual_cast_enabled=False,
-                        bnb_dtype=storage_dtype,
+                        weight_format="gguf",
                     ):
                         model = IntegratedT5(t5_config)
             else:
@@ -1212,11 +1212,12 @@ def _load_huggingface_component(
             selected=storage_dtype,
             hint=_safetensors_primary_dtype_hint(weights_path),
         )
-        if quant_kind == QuantizationKind.NF4:
-            storage_dtype = "nf4"
-        elif quant_kind == QuantizationKind.FP4:
-            storage_dtype = "fp4"
-        elif quant_kind == QuantizationKind.GGUF:
+        if quant_kind in (QuantizationKind.NF4, QuantizationKind.FP4):
+            raise NotImplementedError(
+                "NF4/FP4 is not supported. "
+                "Convert the model to GGUF or use a safetensors fp16/bf16/fp32 checkpoint."
+            )
+        if quant_kind == QuantizationKind.GGUF:
             storage_dtype = "gguf"
 
         load_device = memory_management.manager.get_device(DeviceRole.CORE)
@@ -1224,7 +1225,7 @@ def _load_huggingface_component(
 
         mem_config = memory_management.manager.config
 
-        if storage_dtype in ["nf4", "fp4", "gguf"]:
+        if storage_dtype == "gguf":
             computation_dtype = memory_management.manager.compute_dtype_for_role(
                 DeviceRole.CORE,
                 supported=supported_dtypes,
@@ -1248,7 +1249,7 @@ def _load_huggingface_component(
             # The model will automatically cast to appropriate dtype during forward pass on GPU
             construct_dtype = torch.bfloat16 if initial_device.type == "cpu" else computation_dtype
             
-            with using_codex_operations(device=initial_device, dtype=construct_dtype, manual_cast_enabled=False, bnb_dtype=storage_dtype):
+            with using_codex_operations(device=initial_device, dtype=construct_dtype, manual_cast_enabled=False, weight_format="gguf"):
                 model = model_ctor(config_json)
         else:
             computation_dtype = memory_management.manager.compute_dtype_for_role(

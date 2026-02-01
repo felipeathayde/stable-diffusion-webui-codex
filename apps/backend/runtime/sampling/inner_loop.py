@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Torch-bound sampling inner loop (kept separate so `apps.backend.runtime.sampling` stays import-light for API/UI imports).
 Implements conditioning batching, CFG routing, and sampling lifecycle hooks (prepare/cleanup) for native samplers.
+Emits optional profiling sections (torch-profiler `record_function`) at key seams when `CODEX_PROFILE` is enabled.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `get_area_and_mult` (function): Computes per-conditioning spatial area crop + mask multiplier (supports `area`, `mask`, `strength`,
@@ -38,6 +39,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.smart_offload import smart_offload_enabled
 from apps.backend.runtime import utils
 from apps.backend.infra.config.env_flags import env_flag, env_int
+from apps.backend.runtime.diagnostics.profiler import profiler
 from .condition import Condition, compile_conditions, compile_weighted_conditions
 
 
@@ -262,15 +264,16 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                     "Ensure SDXL pooled embedding is wired as 'vector' and compiled to 'y'."
                 )
 
-        # Align dtype/device for conditioning tensors
-        target_dtype = getattr(model, 'computation_dtype', None) or input_x.dtype
-        dev = input_x.device
-        c['c_crossattn'] = c['c_crossattn'].to(dtype=target_dtype, device=dev)
-        if 'y' in c and isinstance(c['y'], torch.Tensor):
-            c['y'] = c['y'].to(device=dev)
-        if 'c_concat' in c and isinstance(c['c_concat'], torch.Tensor):
-            c['c_concat'] = c['c_concat'].to(device=dev)
-        timestep_ = torch.cat([timestep] * batch_chunks)
+        # Align dtype/device for conditioning tensors (often triggers device transfers).
+        with profiler.section("sampling.cond_align"):
+            target_dtype = getattr(model, 'computation_dtype', None) or input_x.dtype
+            dev = input_x.device
+            c['c_crossattn'] = c['c_crossattn'].to(dtype=target_dtype, device=dev)
+            if 'y' in c and isinstance(c['y'], torch.Tensor):
+                c['y'] = c['y'].to(device=dev)
+            if 'c_concat' in c and isinstance(c['c_concat'], torch.Tensor):
+                c['c_concat'] = c['c_concat'].to(device=dev)
+            timestep_ = torch.cat([timestep] * batch_chunks)
 
         transformer_options = {}
         if 'transformer_options' in model_options:
@@ -307,17 +310,22 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         if control:
             control.set_transformer_options(transformer_options)
             control_cond = c.copy()  # get_control may change items in this dict, so we need to copy it
-            try:
-                c['control'] = control.get_control(input_x, timestep_, control_cond, len(cond_or_uncond))
-            except Exception as err:
-                logger.error("ControlNet get_control failed: %s", err, exc_info=True)
-                raise
+            with profiler.section("sampling.controlnet.get_control"):
+                try:
+                    c['control'] = control.get_control(input_x, timestep_, control_cond, len(cond_or_uncond))
+                except Exception as err:
+                    logger.error("ControlNet get_control failed: %s", err, exc_info=True)
+                    raise
             c['control_model'] = control
 
-        if 'model_function_wrapper' in model_options:
-            output = model_options['model_function_wrapper'](model.apply_model, {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond}).chunk(batch_chunks)
-        else:
-            output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
+        with profiler.section("sampling.apply_model"):
+            if 'model_function_wrapper' in model_options:
+                output = model_options['model_function_wrapper'](
+                    model.apply_model,
+                    {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond},
+                ).chunk(batch_chunks)
+            else:
+                output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
         del input_x
 
         for o in range(batch_chunks):
@@ -347,7 +355,8 @@ def sampling_function_inner(model, x, timestep, uncond, cond, cond_scale, model_
     for fn in model_options.get("sampler_pre_cfg_function", []):
         model, cond, uncond_, x, timestep, model_options = fn(model, cond, uncond_, x, timestep, model_options)
 
-    cond_pred, uncond_pred = calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+    with profiler.section("sampling.calc_cond_uncond_batch"):
+        cond_pred, uncond_pred = calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
     # Optional deep diagnostics for flow models (Z Image/Flux): log CFG routing and tensor norms.
     global _ZIMAGE_SAMPLING_DEBUG_COUNT

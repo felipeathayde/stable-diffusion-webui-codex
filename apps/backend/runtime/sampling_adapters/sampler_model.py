@@ -6,13 +6,13 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: KModel adapter for k-diffusion-style `apply_model` callers.
-Bridges k-diffusion-style apply_model usage to Codex diffusion models/predictors, enforcing context/y invariants and providing opt-in debug
+Purpose: SamplerModel adapter for sampler-style `apply_model` callers.
+Bridges `apply_model` usage to Codex diffusion models/predictors, enforcing context/y invariants and providing opt-in debug
 tensor stats for Z Image and other flow runtimes.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Formats quick tensor statistics for debug logging.
-- `KModel` (class): Adapter module exposing `apply_model`/`forward` and `memory_required` for k-diffusion-style sampling paths.
+- `SamplerModel` (class): Adapter module exposing `apply_model`/`forward` and `memory_required` for sampler call sites.
 """
 
 import torch
@@ -20,10 +20,10 @@ import logging
 
 from apps.backend.infra.config.env_flags import env_flag, env_int
 from apps.backend.runtime import attention
-from apps.backend.runtime.k_diffusion.k_prediction import k_prediction_from_diffusers_scheduler
+from .prediction import prediction_from_diffusers_scheduler
 
 
-logger = logging.getLogger("backend.runtime.k_model")
+logger = logging.getLogger("backend.runtime.sampling_adapters.sampler_model")
 
 
 def _tensor_stats(label: str, tensor: torch.Tensor | None) -> str:
@@ -40,8 +40,8 @@ def _tensor_stats(label: str, tensor: torch.Tensor | None) -> str:
         )
 
 
-class KModel(torch.nn.Module):
-    def __init__(self, model, diffusers_scheduler, k_predictor=None, config=None):
+class SamplerModel(torch.nn.Module):
+    def __init__(self, model, diffusers_scheduler, predictor=None, config=None):
         super().__init__()
 
         self.config = config
@@ -49,14 +49,14 @@ class KModel(torch.nn.Module):
         self.storage_dtype = model.storage_dtype
         self.computation_dtype = model.computation_dtype
 
-        logger.info('K-Model Created: storage_dtype=%s computation_dtype=%s', self.storage_dtype, self.computation_dtype)
+        logger.info("SamplerModel created: storage_dtype=%s computation_dtype=%s", self.storage_dtype, self.computation_dtype)
 
         self.diffusion_model = model
 
-        if k_predictor is None:
-            self.predictor = k_prediction_from_diffusers_scheduler(diffusers_scheduler)
+        if predictor is None:
+            self.predictor = prediction_from_diffusers_scheduler(diffusers_scheduler)
         else:
-            self.predictor = k_predictor
+            self.predictor = predictor
 
     def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
         debug_enabled = env_flag("CODEX_ZIMAGE_DEBUG") or env_flag("CODEX_ZIMAGE_DEBUG_APPLY_MODEL")

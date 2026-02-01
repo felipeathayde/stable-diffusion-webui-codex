@@ -11,7 +11,7 @@ Implements the profile store used by the TUI/GUI launchers to load/save settings
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_default_area_env` (function): Builds default per-area env maps (debug/log + device defaults + GGUF/LoRA runtime knobs).
+- `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
 - `DEFAULT_PYTORCH_CUDA_ALLOC_CONF` (constant): Default `PYTORCH_CUDA_ALLOC_CONF` applied by launchers when unset.
 - `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
@@ -53,6 +53,13 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
     """Compute default environment values partitioned by area."""
     core = {
         "CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0"),
+        "CODEX_PROFILE": os.getenv("CODEX_PROFILE", "0"),
+        "CODEX_PROFILE_TRACE": os.getenv("CODEX_PROFILE_TRACE", "1"),
+        "CODEX_PROFILE_RECORD_SHAPES": os.getenv("CODEX_PROFILE_RECORD_SHAPES", "0"),
+        "CODEX_PROFILE_PROFILE_MEMORY": os.getenv("CODEX_PROFILE_PROFILE_MEMORY", "1"),
+        "CODEX_PROFILE_WITH_STACK": os.getenv("CODEX_PROFILE_WITH_STACK", "0"),
+        "CODEX_PROFILE_TOP_N": os.getenv("CODEX_PROFILE_TOP_N", "25"),
+        "CODEX_PROFILE_MAX_STEPS": os.getenv("CODEX_PROFILE_MAX_STEPS", "0"),
         "CODEX_CORE_DEVICE": "auto",
         "CODEX_TE_DEVICE": "auto",
         "CODEX_VAE_DEVICE": "auto",

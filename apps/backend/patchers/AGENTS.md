@@ -1,7 +1,7 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
 Owner: Backend Runtime Maintainers
-Last Review: 2026-01-26
+Last Review: 2026-01-31
 Status: Active
 
 ## Purpose
@@ -15,7 +15,7 @@ Status: Active
 - `lora_state_dict.py` — LoRA tensor parsing + target-key mapping wrappers (backed by `runtime.adapters.lora`).
 - `lora_apply.py` — Applies native LoRA selections to loaded networks.
 - `unet.py` — Codex-native UNet patcher built on typed helpers (`SamplingReservation`, `ControlNetChain`) for deterministic sampling reservations, ControlNet chaining, and patch registration.
-- `denoiser.py` — Generic `DenoiserPatcher` wrapper (ControlNet-free) for non-UNet denoisers; wraps `KModel` and exposes the shared `ModelPatcher` surface.
+- `denoiser.py` — Generic `DenoiserPatcher` wrapper (ControlNet-free) for non-UNet denoisers; wraps `SamplerModel` and exposes the shared `ModelPatcher` surface.
 - Additional patch modules (e.g., adapters) live here as they are ported.
 
 ## Notes

@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: K-prediction helpers and predictor modules (FlowMatch / EDM variants) used by schedulers/samplers.
+Purpose: Prediction adapters and helpers (FlowMatch / EDM variants) used by schedulers/samplers.
 Provides prediction modules that transform model outputs into the form expected by different sigma schedules (including FlowMatch Euler),
 plus helper utilities for beta schedules and SNR/sigma rescaling.
 
@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PredictionFlow` (class): Flow prediction implementation (for flow-matching style training/inference).
 - `PredictionDiscreteFlow` (class): Discrete flow prediction implementation.
 - `FlowMatchEulerPrediction` (class): FlowMatch Euler discrete prediction module (used by Flux schedulers; contains nested scheduler mapping).
-- `k_prediction_from_diffusers_scheduler` (function): Builds the appropriate prediction module from a diffusers scheduler instance.
+- `prediction_from_diffusers_scheduler` (function): Builds the appropriate prediction module from a diffusers scheduler instance.
 """
 
 import math
@@ -361,7 +361,7 @@ class FlowMatchEulerPrediction(AbstractPrediction):
         return 1.0 - percent
 
 
-def k_prediction_from_diffusers_scheduler(scheduler):
+def prediction_from_diffusers_scheduler(scheduler):
     cfg = getattr(scheduler, "config", None)
     if cfg is None:
         raise NotImplementedError(f"Failed to recognize {scheduler}")

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Diagnostics tab for the Tk launcher.
-Shows environment preflight checks and exposes debug/logging env flags used by the backend.
+Shows environment preflight checks and exposes debug/logging/profiling env flags used by the backend.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DiagnosticsTab` (class): Diagnostics tab (checks + debug flags + log levels).
@@ -48,6 +48,8 @@ class DiagnosticsTab:
         self._var_cfg_delta_n = tk.StringVar()
         self._var_trace_max = tk.StringVar()
         self._var_dump_path = tk.StringVar()
+        self._var_profile_top_n = tk.StringVar()
+        self._var_profile_max_steps = tk.StringVar()
         self._var_log_file = tk.BooleanVar()
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
@@ -87,6 +89,11 @@ class DiagnosticsTab:
             ("CODEX_PIPELINE_DEBUG", "Pipeline Debug"),
             ("CODEX_DUMP_LATENTS", "Dump Latents"),
             ("CODEX_TIMELINE", "Timeline Tracer (TVA-style execution timeline)"),
+            ("CODEX_PROFILE", "Global Profiler (torch.profiler)"),
+            ("CODEX_PROFILE_TRACE", "Profiler: export Perfetto trace"),
+            ("CODEX_PROFILE_RECORD_SHAPES", "Profiler: record shapes"),
+            ("CODEX_PROFILE_PROFILE_MEMORY", "Profiler: profile memory"),
+            ("CODEX_PROFILE_WITH_STACK", "Profiler: include stacks (very heavy)"),
         ]
         r = 1
         for key, label in debug_flags:
@@ -101,6 +108,8 @@ class DiagnosticsTab:
         self._var_cfg_delta_n.set(str(self._controller.store.env.get("CODEX_LOG_CFG_DELTA_N", "2") or "2"))
         self._var_trace_max.set(str(self._controller.store.env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "50") or "50"))
         self._var_dump_path.set(str(self._controller.store.env.get("CODEX_DUMP_LATENTS_PATH", "") or ""))
+        self._var_profile_top_n.set(str(self._controller.store.env.get("CODEX_PROFILE_TOP_N", "25") or "25"))
+        self._var_profile_max_steps.set(str(self._controller.store.env.get("CODEX_PROFILE_MAX_STEPS", "0") or "0"))
 
         r = self._add_entry(
             dbg_col,
@@ -118,13 +127,29 @@ class DiagnosticsTab:
             width=10,
             on_change=lambda: self._set_text("CODEX_TRACE_DEBUG_MAX_PER_FUNC", self._var_trace_max.get()),
         )
-        _ = self._add_entry(
+        r = self._add_entry(
             dbg_col,
             r,
             label="Dump latents path:",
             var=self._var_dump_path,
             width=36,
             on_change=lambda: self._set_text("CODEX_DUMP_LATENTS_PATH", self._var_dump_path.get()),
+        )
+        r = self._add_entry(
+            dbg_col,
+            r,
+            label="Profiler top ops (N):",
+            var=self._var_profile_top_n,
+            width=10,
+            on_change=lambda: self._set_text("CODEX_PROFILE_TOP_N", self._var_profile_top_n.get()),
+        )
+        _ = self._add_entry(
+            dbg_col,
+            r,
+            label="Profiler max steps (0=all):",
+            var=self._var_profile_max_steps,
+            width=10,
+            on_change=lambda: self._set_text("CODEX_PROFILE_MAX_STEPS", self._var_profile_max_steps.get()),
         )
 
         log_col = ttk.Frame(diag)
@@ -179,6 +204,8 @@ class DiagnosticsTab:
         self._var_cfg_delta_n.set(str(env.get("CODEX_LOG_CFG_DELTA_N", "2") or "2"))
         self._var_trace_max.set(str(env.get("CODEX_TRACE_DEBUG_MAX_PER_FUNC", "50") or "50"))
         self._var_dump_path.set(str(env.get("CODEX_DUMP_LATENTS_PATH", "") or ""))
+        self._var_profile_top_n.set(str(env.get("CODEX_PROFILE_TOP_N", "25") or "25"))
+        self._var_profile_max_steps.set(str(env.get("CODEX_PROFILE_MAX_STEPS", "0") or "0"))
         self._var_log_file.set(bool(str(env.get("CODEX_LOG_FILE", "") or "").strip()))
 
         self._install_cfg_delta_guard()
@@ -281,5 +308,7 @@ class DiagnosticsTab:
         try:
             IntSetting("CODEX_LOG_CFG_DELTA_N", default=2, minimum=1).get(env)
             IntSetting("CODEX_TRACE_DEBUG_MAX_PER_FUNC", default=50, minimum=1).get(env)
+            IntSetting("CODEX_PROFILE_TOP_N", default=25, minimum=1, maximum=500).get(env)
+            IntSetting("CODEX_PROFILE_MAX_STEPS", default=0, minimum=0, maximum=10_000).get(env)
         except SettingValidationError as exc:
             raise RuntimeError(str(exc)) from exc

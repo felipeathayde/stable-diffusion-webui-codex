@@ -3,7 +3,7 @@
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
 Owner: Runtime WAN Maintainers
-Last Review: 2026-01-31
+Last Review: 2026-02-01
 Status: Active
 
 ## Purpose
@@ -15,6 +15,7 @@ Status: Active
 - `config.py`: dataclasses/config do runtime GGUF (`RunConfig`, `StageConfig`) + parsing helpers (dtype/device).
 - `run.py`: entrypoints `run_txt2vid`/`run_img2vid` + versões streaming; orquestra TE, sampling por stage e VAE IO.
 - `sampling.py`: geometria + scheduler + loop de sampling por stage (`sample_stage_latents*`) e adaptação de shape/I2V channels.
+- `scheduler.py`: Diffusers-free scheduler helpers for WAN2.2 (vendor `scheduler_config.json` reader + UniPC flow-sigmas scheduler).
 - `text_context.py`: tokenizer + text encoder (strict local-files-only) para embeddings de prompt/negative.
 - `vae_io.py`: VAE encode/decode + latent norms (I2V conditioning encode + decode frames), com offload.
 - `stage_loader.py`: validação de paths `.gguf` + load de weights em `WanTransformer2DModel` via `using_codex_operations(..., weight_format="gguf")` + remap de chaves.
@@ -37,7 +38,8 @@ Status: Active
 - 2025-12-14: `sampler.py` (caminho experimental runtime/spec) agora escala o timestep passado ao core por `flow_multiplier` (default `1000.0`) e tem teste de regressão; `wan22.py` emite logs opt-in de paridade (sigma ladder + mapeamento de timestep) quando `CODEX_LOG_SIGMAS=1`.
 - 2026-01-03: Removed upstream pipeline brand wording from WAN22 runtime comments; keep behaviour described directly and treat Diffusers as the baseline only for the HF asset path.
 - 2026-01-04: Centralized WAN22 patch/head shape inference in `inference.py` so detector and runtime loaders agree on GGUF vs torch layout.
-- 2026-01-06: `sampling.make_scheduler` now recognizes canonical `uni-pc` and instantiates `UniPCMultistepScheduler` for WAN GGUF stage runs.
+- 2026-01-06: `sampling.make_scheduler` recognizes canonical `uni-pc` for WAN GGUF stage runs (solver_type/solver_order follow `scheduler_config.json`).
+- 2026-02-01: WAN22 GGUF scheduler no longer depends on the Diffusers library (`UniPCMultistepScheduler`); the runtime implements a strict, WAN-only UniPC flow scheduler under `scheduler.py` and includes parity tests vs `.refs/diffusers`.
 - 2026-01-08: Removed the global `WAN_FLOW_SHIFT_DEFAULT`; `StageConfig.flow_shift` is required and defaults are resolved from the vendored diffusers `scheduler_config.json` (variant-correct, fail-fast if missing).
 - 2026-01-08: Refreshed `run.py` file header block to include new helpers and removed a duplicate `_require_flow_shift` call (no behavior change).
 - 2026-01-16: Updated `model.py` remapping to accept Diffusers `WanTransformer3DModel` key layout (`condition_embedder.*`, `attn1/attn2`, `scale_shift_table`, `proj_out`, `norm2↔norm3`) and aligned modulation parameter shapes/head modulation semantics with upstream exports.

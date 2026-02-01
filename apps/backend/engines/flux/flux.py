@@ -22,11 +22,18 @@ from typing import Any, Iterable, List, Mapping, Optional
 
 import torch
 
-from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.core.engine_interface import EngineCapabilities
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.capabilities_presets import (
+    DEFAULT_IMAGE_DEVICES,
+    DEFAULT_IMAGE_PRECISION,
+    IMAGE_TASKS,
+)
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.prompt_wrappers import PromptListBase
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.common.tensor_tree import detach_to_cpu, move_to_device
+from apps.backend.engines.flux._clip_skip import apply_flux_clip_skip
 from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import FLUX_SPEC, FluxEngineRuntime
 from apps.backend.runtime.memory import memory_management
@@ -67,10 +74,10 @@ class Flux(CodexDiffusionEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            tasks=IMAGE_TASKS,
             model_types=("flux1",),
-            devices=("cpu", "cuda"),
-            precision=("fp16", "bf16", "fp32"),
+            devices=DEFAULT_IMAGE_DEVICES,
+            precision=DEFAULT_IMAGE_PRECISION,
             extras={
                 "samplers": ("euler", "euler a", "ddim", "dpm++ 2m"),
                 "schedulers": ("simple", "beta", "normal"),
@@ -132,28 +139,23 @@ class Flux(CodexDiffusionEngine):
 
     def set_clip_skip(self, clip_skip: int) -> None:
         runtime = self._require_runtime()
-        try:
-            requested = int(clip_skip)
-        except Exception as exc:  # noqa: BLE001
-            raise TypeError("clip_skip must be an integer") from exc
-        if requested < 0:
-            raise ValueError("clip_skip must be >= 0")
-        runtime.set_clip_skip(requested)
-        # Cached conditioning depends on clip_skip (pooled CLIP output changes).
-        self._cond_cache.clear()
-        if requested == 0:
-            logger.debug("Flux clip skip reset to default.")
-        else:
-            logger.debug("Flux clip skip set to %d", requested)
+        apply_flux_clip_skip(
+            engine=self,
+            runtime=runtime,
+            clip_skip=clip_skip,
+            logger=logger,
+            label=self.engine_id,
+        )
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         clip_patcher = self.codex_objects.text_encoders["clip"].patcher
-        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
-        memory_management.manager.load_model(clip_patcher)
-        unload_clip = self.smart_offload_enabled and not already_loaded
-        try:
+        with stage_scoped_model_load(
+            clip_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
             texts = tuple(str(x or "") for x in prompt)
             is_negative = bool(getattr(prompt, "is_negative_prompt", False))
             smart_flag = getattr(prompt, "smart_cache", None)
@@ -171,7 +173,7 @@ class Flux(CodexDiffusionEngine):
                 cond = move_to_device(cached, device=target_device)
                 logger.debug("[flux] conditioning cache hit for %d prompts", len(prompt))
                 return cond
-	            
+
             # Cache miss - compute conditioning
             clip_branch = runtime.text.clip_text
             cond_l, pooled_l = (clip_branch(prompt) if clip_branch is not None else (None, None))
@@ -183,21 +185,20 @@ class Flux(CodexDiffusionEngine):
 
             if self.use_distilled_cfg_scale:
                 cond["guidance"] = torch.full((len(prompt),), float(distilled_cfg_scale), dtype=torch.float32)
-                logger.info("[flux] guidance enabled: scale=%.2f shape=%s", distilled_cfg_scale, tuple(cond["guidance"].shape))
+                logger.info(
+                    "[flux] guidance enabled: scale=%.2f shape=%s", distilled_cfg_scale, tuple(cond["guidance"].shape)
+                )
             else:
                 logger.info("[flux] guidance disabled (schnell variant)")
-            
+
             # Debug: log all cond keys and shapes
-            cond_info = {k: tuple(v.shape) if hasattr(v, 'shape') else type(v).__name__ for k, v in cond.items()}
+            cond_info = {k: tuple(v.shape) if hasattr(v, "shape") else type(v).__name__ for k, v in cond.items()}
             logger.info("[flux] conditioning dict: %s", cond_info)
 
             if use_cache:
                 self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
 
             return cond
-        finally:
-            if unload_clip:
-                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

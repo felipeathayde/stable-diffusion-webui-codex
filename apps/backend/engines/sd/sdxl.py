@@ -29,9 +29,16 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
-from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.core.engine_interface import EngineCapabilities
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.capabilities_presets import (
+    DEFAULT_IMAGE_DEVICES,
+    DEFAULT_IMAGE_PRECISION,
+    IMAGE_TASKS,
+)
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
+from apps.backend.engines.common.tensor_tree import detach_to_cpu, move_to_device
 from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
 from apps.backend.engines.sd.spec import SDXL_REFINER_SPEC, SDXL_SPEC, SDEngineRuntime
@@ -204,6 +211,67 @@ def _smart_cache_from_prompts(prompts: Sequence[str]) -> Optional[bool]:
     except Exception:
         return None
 
+def _sdxl_force_zero_negative_prompt(prompts: Sequence[str], *, is_negative: bool) -> bool:
+    if not is_negative:
+        return False
+    return all(str(x or "").strip() == "" for x in prompts)
+
+
+def _sdxl_embed_key(
+    *,
+    height: int,
+    width: int,
+    target_height: int,
+    target_width: int,
+    crop_top: int,
+    crop_left: int,
+) -> tuple[int, int, int, int, int, int]:
+    return (
+        int(height),
+        int(width),
+        int(target_height),
+        int(target_width),
+        int(crop_top),
+        int(crop_left),
+    )
+
+
+def _sdxl_get_embed_flat(
+    *,
+    embedder: Timestep,
+    embed_cache: dict[tuple[int, int, int, int, int, int], torch.Tensor],
+    embed_key: tuple[int, int, int, int, int, int],
+    batch: int,
+    dtype_like: torch.Tensor,
+    use_cache: bool,
+    bucket: str,
+) -> torch.Tensor:
+    flat = None
+    if use_cache:
+        flat = embed_cache.get(embed_key)
+        if flat is not None:
+            record_smart_cache_hit(bucket)
+        else:
+            record_smart_cache_miss(bucket)
+
+    if flat is None:
+        embed_values = [
+            embedder(torch.tensor([embed_key[0]])),
+            embedder(torch.tensor([embed_key[1]])),
+            embedder(torch.tensor([embed_key[4]])),
+            embedder(torch.tensor([embed_key[5]])),
+            embedder(torch.tensor([embed_key[2]])),
+            embedder(torch.tensor([embed_key[3]])),
+        ]
+        flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
+        if use_cache:
+            embed_cache.clear()
+            # Store cached embeddings on CPU to avoid pinning VRAM.
+            embed_cache[embed_key] = flat_tensor.to("cpu")
+        flat = flat_tensor
+
+    return flat.repeat(int(batch), 1).to(dtype_like)
+
 
 class StableDiffusionXL(CodexDiffusionEngine):
     """Codex-native SDXL base engine."""
@@ -229,10 +297,10 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            tasks=IMAGE_TASKS,
             model_types=("sdxl",),
-            devices=("cpu", "cuda"),
-            precision=("fp16", "bf16", "fp32"),
+            devices=DEFAULT_IMAGE_DEVICES,
+            precision=DEFAULT_IMAGE_PRECISION,
         )
 
     # load() behavior inherited from CodexDiffusionEngine
@@ -329,32 +397,24 @@ class StableDiffusionXL(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         clip_patcher = self.codex_objects.text_encoders["clip"].patcher
-        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
-        memory_management.manager.load_model(clip_patcher)
-        unload_clip = self.smart_offload_enabled and not already_loaded
-        try:
+        with stage_scoped_model_load(
+            clip_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
             texts = tuple(str(x or "") for x in prompt)
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
             label = "uncond" if is_negative else "cond"
             smart_cache = _smart_cache_from_prompts(prompt)
             use_cache = smart_cache_enabled() if smart_cache is None else bool(smart_cache)
 
-            cond_l = pooled_l = cond_g = pooled_g = None  # type: ignore[assignment]
-            if use_cache:
-                cache_key = (texts, bool(is_negative))
-                cached = self._cond_cache.get(cache_key)
-                if cached is not None:
-                    cached_cond_l, cached_pooled_l, cached_cond_g, cached_pooled_g = cached
-                    target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-                    cond_l = cached_cond_l.to(target_device) if cached_cond_l is not None else None
-                    pooled_l = cached_pooled_l.to(target_device) if cached_pooled_l is not None else None
-                    cond_g = cached_cond_g.to(target_device)
-                    pooled_g = cached_pooled_g.to(target_device)
-                    record_smart_cache_hit("sdxl.base.text")
-                else:
-                    record_smart_cache_miss("sdxl.base.text")
+            cache_key = (texts, bool(is_negative))
+            te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
 
-            if cond_l is None or cond_g is None:
+            cached = self._get_cached_cond(cache_key, bucket_name="sdxl.base.text", enabled=use_cache)
+            if cached is not None:
+                cond_l, pooled_l, cond_g, pooled_g = move_to_device(cached, device=te_device)
+            else:
                 out_l = runtime.classic_engine("clip_l")(prompt)
                 pooled_l = None
                 if isinstance(out_l, tuple) and len(out_l) == 2:
@@ -367,59 +427,38 @@ class StableDiffusionXL(CodexDiffusionEngine):
                 if isinstance(out_g, tuple) and len(out_g) == 2:
                     cond_g, pooled_g = out_g
                 else:
-                    # Fallback: older engines attach pooled on the tensor
                     pooled_g = getattr(out_g, "pooled", None)
                     cond_g = out_g
                     if pooled_g is None:
                         raise RuntimeError(
                             "SDXL CLIP-G did not provide a pooled embedding; cannot build conditioning vector."
                         )
-
                 if use_cache:
-                    # Cache textual piece only (independent of spatial metadata).
-                    self._cond_cache.clear()
-                    self._cond_cache[(texts, bool(is_negative))] = (
-                        cond_l.detach().to("cpu") if cond_l is not None else None,
-                        pooled_l.detach().to("cpu") if pooled_l is not None else None,
-                        cond_g.detach().to("cpu"),
-                        pooled_g.detach().to("cpu"),
+                    self._set_cached_cond(
+                        cache_key,
+                        detach_to_cpu((cond_l, pooled_l, cond_g, pooled_g)),
+                        enabled=use_cache,
                     )
 
-            embed_key = (
-                int(height),
-                int(width),
-                int(target_height),
-                int(target_width),
-                int(crop_top),
-                int(crop_left),
+            embed_key = _sdxl_embed_key(
+                height=height,
+                width=width,
+                target_height=target_height,
+                target_width=target_width,
+                crop_top=crop_top,
+                crop_left=crop_left,
             )
-            flat = None
-            if use_cache:
-                flat = self._embed_cache.get(embed_key)
-                if flat is not None:
-                    record_smart_cache_hit("sdxl.base.embed")
-                else:
-                    record_smart_cache_miss("sdxl.base.embed")
-            if flat is None:
-                embed_values = [
-                    self.embedder(torch.tensor([height])),
-                    self.embedder(torch.tensor([width])),
-                    self.embedder(torch.tensor([crop_top])),
-                    self.embedder(torch.tensor([crop_left])),
-                    self.embedder(torch.tensor([target_height])),
-                    self.embedder(torch.tensor([target_width])),
-                ]
-                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
-                if use_cache:
-                    self._embed_cache.clear()
-                    # Store cached embeddings on CPU to avoid pinning VRAM.
-                    self._embed_cache[embed_key] = flat_tensor.to("cpu")
-                flat = flat_tensor
-            flat = flat.repeat(pooled_g.shape[0], 1).to(pooled_g)
+            flat = _sdxl_get_embed_flat(
+                embedder=self.embedder,
+                embed_cache=self._embed_cache,
+                embed_key=embed_key,
+                batch=pooled_g.shape[0],
+                dtype_like=pooled_g,
+                use_cache=use_cache,
+                bucket="sdxl.base.embed",
+            )
 
-            # Only zero-out negative embeddings when all underlying texts are truly empty.
-            raw_texts = [str(x or "") for x in prompt]
-            force_zero_negative_prompt = is_negative and all(t.strip() == "" for t in raw_texts)
+            force_zero_negative_prompt = _sdxl_force_zero_negative_prompt(prompt, is_negative=bool(is_negative))
 
             if force_zero_negative_prompt:
                 if pooled_l is not None:
@@ -437,9 +476,6 @@ class StableDiffusionXL(CodexDiffusionEngine):
 
             logger.debug("Generated SDXL conditioning for %d prompts.", len(prompt))
             return cond
-        finally:
-            if unload_clip:
-                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):
@@ -479,10 +515,10 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            tasks=IMAGE_TASKS,
             model_types=("sdxl_refiner",),
-            devices=("cpu", "cuda"),
-            precision=("fp16", "bf16", "fp32"),
+            devices=DEFAULT_IMAGE_DEVICES,
+            precision=DEFAULT_IMAGE_PRECISION,
         )
 
     # load() behavior inherited from CodexDiffusionEngine
@@ -528,72 +564,51 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         clip_patcher = self.codex_objects.text_encoders["clip"].patcher
-        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
-        memory_management.manager.load_model(clip_patcher)
-        unload_clip = self.smart_offload_enabled and not already_loaded
-        try:
+        with stage_scoped_model_load(
+            clip_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
             texts = tuple(str(x or "") for x in prompt)
             width, height, target_width, target_height, crop_left, crop_top, is_negative = _prompt_meta(prompt)
             label = "uncond" if is_negative else "cond"
             smart_cache = _smart_cache_from_prompts(prompt)
             use_cache = smart_cache_enabled() if smart_cache is None else bool(smart_cache)
 
-            cond_g = pooled = None  # type: ignore[assignment]
-            if use_cache:
-                cache_key = (texts, bool(is_negative))
-                cached = self._cond_cache.get(cache_key)
-                if cached is not None:
-                    cached_cond_g, cached_pooled = cached
-                    target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-                    cond_g = cached_cond_g.to(target_device)
-                    pooled = cached_pooled.to(target_device)
-                    record_smart_cache_hit("sdxl.refiner.text")
-                else:
-                    record_smart_cache_miss("sdxl.refiner.text")
+            cache_key = (texts, bool(is_negative))
+            te_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
 
-            if cond_g is None or pooled is None:
+            cached = self._get_cached_cond(cache_key, bucket_name="sdxl.refiner.text", enabled=use_cache)
+            if cached is not None:
+                cond_g, pooled = move_to_device(cached, device=te_device)
+            else:
                 cond_g, pooled = runtime.classic_engine("clip_g")(prompt)
                 if use_cache:
-                    self._cond_cache.clear()
-                    self._cond_cache[(texts, bool(is_negative))] = (
-                        cond_g.detach().to("cpu"),
-                        pooled.detach().to("cpu"),
+                    self._set_cached_cond(
+                        cache_key,
+                        detach_to_cpu((cond_g, pooled)),
+                        enabled=use_cache,
                     )
 
-            embed_key = (
-                int(height),
-                int(width),
-                int(target_height),
-                int(target_width),
-                int(crop_top),
-                int(crop_left),
+            embed_key = _sdxl_embed_key(
+                height=height,
+                width=width,
+                target_height=target_height,
+                target_width=target_width,
+                crop_top=crop_top,
+                crop_left=crop_left,
             )
-            flat = None
-            if use_cache:
-                flat = self._embed_cache.get(embed_key)
-                if flat is not None:
-                    record_smart_cache_hit("sdxl.refiner.embed")
-                else:
-                    record_smart_cache_miss("sdxl.refiner.embed")
-            if flat is None:
-                embed_values = [
-                    self.embedder(torch.tensor([height])),
-                    self.embedder(torch.tensor([width])),
-                    self.embedder(torch.tensor([crop_top])),
-                    self.embedder(torch.tensor([crop_left])),
-                    self.embedder(torch.tensor([target_height])),
-                    self.embedder(torch.tensor([target_width])),
-                ]
-                flat_tensor = torch.flatten(torch.cat(embed_values)).unsqueeze(dim=0).detach()
-                if use_cache:
-                    self._embed_cache.clear()
-                    # Store cached embeddings on CPU to avoid pinning VRAM.
-                    self._embed_cache[embed_key] = flat_tensor.to("cpu")
-                flat = flat_tensor
-            flat = flat.repeat(pooled.shape[0], 1).to(pooled)
+            flat = _sdxl_get_embed_flat(
+                embedder=self.embedder,
+                embed_cache=self._embed_cache,
+                embed_key=embed_key,
+                batch=pooled.shape[0],
+                dtype_like=pooled,
+                use_cache=use_cache,
+                bucket="sdxl.refiner.embed",
+            )
 
-            raw_texts = [str(x or "") for x in prompt]
-            force_zero_negative_prompt = is_negative and all(t.strip() == "" for t in raw_texts)
+            force_zero_negative_prompt = _sdxl_force_zero_negative_prompt(prompt, is_negative=bool(is_negative))
 
             if force_zero_negative_prompt:
                 pooled = torch.zeros_like(pooled)
@@ -608,9 +623,6 @@ class StableDiffusionXLRefiner(CodexDiffusionEngine):
 
             logger.debug("Generated SDXL refiner conditioning for %d prompts.", len(prompt))
             return cond
-        finally:
-            if unload_clip:
-                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

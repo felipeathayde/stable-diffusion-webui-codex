@@ -6,20 +6,17 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: WAN 2.2 5B video engine implementation (Diffusers and GGUF paths).
-Implements txt2vid/img2vid/vid2vid by loading WAN components (pipeline, VAE, text encoder, metadata) and dispatching to the respective
-use-cases, with strict asset resolution and stage overrides via request extras.
+Purpose: WAN 2.2 5B video engine implementation (GGUF runtime).
+Implements txt2vid/img2vid/vid2vid by dispatching to the canonical WAN22 use-cases; GGUF execution is owned by
+`apps/backend/runtime/families/wan22/**` and is configured via request extras (sha-only assets + stage overrides).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_is_diffusers_dir` (function): Heuristic check for a Diffusers-style WAN weights directory (config/model_index presence).
-- `_looks_like_wan_diffusers_weights_dir` (function): Heuristic check for WAN Diffusers weights (safetensors/bin shards under transformer/vae).
-- `Wan225BEngine` (class): `BaseVideoEngine` implementation for WAN22 5B; loads vendor HF metadata, builds/loads components, and runs
-  txt2vid/img2vid/vid2vid via progress-streamed use-cases (contains nested helper logic for diffusers/GGUF mode selection).
+- `Wan225BEngine` (class): `BaseVideoEngine` implementation for WAN22 5B; GGUF-only engine that runs txt2vid/img2vid/vid2vid via
+  progress-streamed use-cases.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
@@ -32,48 +29,7 @@ from apps.backend.core.exceptions import EngineLoadError
 
 import os
 
-from apps.backend.engines.wan22.wan22_common import (
-    WanComponents,
-    resolve_wan_repo_candidates,
-)
-from apps.backend.engines.wan22.diffusers_loader import load_wan_diffusers_pipeline
-from apps.backend.infra.config.repo_root import get_repo_root
-from apps.backend.huggingface.assets import ensure_repo_minimal_files
-
-REPO_ROOT = get_repo_root()
-HF_ROOT = REPO_ROOT / "apps" / "backend" / "huggingface"
-
-
-def _is_diffusers_dir(path: str) -> bool:
-    try:
-        return (
-            os.path.isfile(os.path.join(path, "model_index.json"))
-            or os.path.isfile(os.path.join(path, "unet", "config.json"))
-            or os.path.isfile(os.path.join(path, "transformer", "config.json"))
-            or os.path.isfile(os.path.join(path, "vae", "config.json"))
-        )
-    except Exception:
-        return False
-
-
-def _looks_like_wan_diffusers_weights_dir(path: str) -> bool:
-    try:
-        tdir = os.path.join(path, "transformer")
-        if os.path.isdir(tdir):
-            for name in os.listdir(tdir):
-                n = name.lower()
-                if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
-                    return True
-        vdir = os.path.join(path, "vae")
-        if os.path.isdir(vdir):
-            for name in os.listdir(vdir):
-                n = name.lower()
-                if n.endswith(".safetensors") or n.endswith(".bin") or n.endswith(".safetensors.index.json"):
-                    return True
-    except Exception:
-        return False
-    return False
-
+from apps.backend.engines.wan22.wan22_common import WanComponents
 
 class Wan225BEngine(BaseVideoEngine):
     engine_id = "wan22_5b"
@@ -88,7 +44,7 @@ class Wan225BEngine(BaseVideoEngine):
             tasks=(TaskType.TXT2VID, TaskType.IMG2VID, TaskType.VID2VID),
             model_types=("wan-2.2-5b",),
             precision=("fp16", "bf16", "fp32"),
-            extras={"notes": "WAN 2.2 5B via Diffusers or GGUF"},
+            extras={"notes": "WAN 2.2 5B via GGUF runtime"},
         )
 
     # ------------------------------ lifecycle
@@ -98,20 +54,27 @@ class Wan225BEngine(BaseVideoEngine):
         dty = str(options.get("dtype", "fp16"))
         comp = WanComponents()
 
-        p = model_ref
-        try:
-            if os.path.isfile(p):
-                p = os.path.dirname(p)
-        except Exception:
-            pass
+        p = os.path.expanduser(str(model_ref or "")).strip()
+        if not p:
+            raise EngineLoadError("WAN22 5B: empty model_ref")
         if not os.path.isabs(p):
             p = os.path.abspath(p)
-        if not os.path.isdir(p):
+        if os.path.isdir(p):
+            raise EngineLoadError(
+                "WAN22 5B is GGUF-only (expected a .gguf file resolved from model_sha); "
+                f"got a directory: {model_ref}"
+            )
+        if not str(p).lower().endswith(".gguf"):
+            raise EngineLoadError(
+                "WAN22 5B is GGUF-only (expected a .gguf file resolved from model_sha); "
+                f"got: {model_ref}"
+            )
+        if not os.path.isfile(p):
             alt = os.path.abspath(os.path.join("models", "Wan", model_ref))
-            if os.path.isdir(alt):
+            if os.path.isfile(alt) and str(alt).lower().endswith(".gguf"):
                 p = alt
             else:
-                raise EngineLoadError(f"WAN22 5B model path not found: {model_ref}")
+                raise EngineLoadError(f"WAN22 5B GGUF model not found: {model_ref}")
 
         comp.model_dir = p
         comp.dtype = dty
@@ -123,63 +86,18 @@ class Wan225BEngine(BaseVideoEngine):
         except Exception as exc:
             raise EngineLoadError(str(exc)) from exc
 
-        if _is_diffusers_dir(p) or _looks_like_wan_diffusers_weights_dir(p):
-            # Diffusers path requires vendored HF metadata (model_index/tokenizers/etc).
-            from apps.backend.infra.config.args import args as backend_args
-
-            offline = bool(getattr(backend_args, "disable_online_tokenizer", False))
-            vendor_dir: Optional[Path] = None
-            last_exc: Optional[Exception] = None
-            for rid in resolve_wan_repo_candidates(self.engine_id):
-                local_dir = HF_ROOT / Path(rid.replace("/", os.sep))
-                try:
-                    ensure_repo_minimal_files(rid, str(local_dir), offline=offline)
-                    vendor_dir = local_dir
-                    comp.hf_repo_dir = str(local_dir)
-                    te_dir = local_dir / "text_encoder"
-                    tk_dir = local_dir / "tokenizer"
-                    vae_dir = local_dir / "vae"
-                    comp.hf_text_encoder_dir = str(te_dir) if te_dir.exists() else None
-                    comp.hf_tokenizer_dir = str(tk_dir) if tk_dir.exists() else None
-                    comp.hf_vae_dir = str(vae_dir) if vae_dir.exists() else None
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    self._logger.error("WAN22 5B: failed to prepare minimal HF assets from %s: %s", rid, exc)
-            if vendor_dir is None:
-                raise EngineLoadError(
-                    f"WAN22 5B: unable to prepare required HF assets for Diffusers path; last error: {last_exc}"
-                )
-
-            try:
-                vendor = Path(str(comp.hf_repo_dir or "")).resolve() if comp.hf_repo_dir else None
-                if vendor is None or not vendor.is_dir():
-                    raise EngineLoadError("WAN22 5B diffusers path requires vendored HF metadata (hf_repo_dir).")
-                pipe = load_wan_diffusers_pipeline(
-                    weights_dir=Path(p),
-                    vendor_dir=vendor,
-                    engine_id=self.engine_id,
-                    device=comp.device,
-                    dtype=dty,
-                    logger=self._logger,
-                )
-                comp.pipeline = pipe
-                comp.vae = getattr(pipe, "vae", None)
-            except Exception as exc:
-                raise EngineLoadError(f"WAN22 5B diffusers pipeline load failed: {exc}") from exc
-        else:
-            # GGUF path: assets are payload-driven (sha-only); avoid any local/online HF metadata probing here.
-            comp.pipeline = None
-            ref_base = os.path.basename(str(model_ref or "")).lower()
-            weights_hint = "14b" if "14b" in ref_base else ("5b" if "5b" in ref_base else "unknown")
-            self._logger.info(
-                "WAN22 GGUF runtime selected (engine=%s weights_hint=%s) for %s (device=%s dtype=%s)",
-                self.engine_id,
-                weights_hint,
-                p,
-                comp.device,
-                dty,
-            )
+        # GGUF path: assets are payload-driven (sha-only); avoid any local/online HF metadata probing here.
+        comp.pipeline = None
+        ref_base = os.path.basename(str(model_ref or "")).lower()
+        weights_hint = "14b" if "14b" in ref_base else ("5b" if "5b" in ref_base else "unknown")
+        self._logger.info(
+            "WAN22 GGUF runtime selected (engine=%s weights_hint=%s) for %s (device=%s dtype=%s)",
+            self.engine_id,
+            weights_hint,
+            p,
+            comp.device,
+            dty,
+        )
 
         self._comp = comp
         self._logger.debug("[wan22_5b] after load()")

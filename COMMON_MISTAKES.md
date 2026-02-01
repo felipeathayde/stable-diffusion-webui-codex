@@ -201,6 +201,29 @@ done
 
 ---
 
+## PyTest
+
+### Using `|` in `pytest -k` expressions
+
+Wrong command:
+```bash
+export CODEX_ROOT="$(git rev-parse --show-toplevel)"
+cd "$CODEX_ROOT"
+PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend -k "(engine_model_scopes|wan22_sampling)"
+```
+
+Cause and fix:
+`pytest -k` uses a Python-like expression syntax. `|` is not a valid operator there; use `or` (or run explicit test files).
+
+Correct command:
+```bash
+export CODEX_ROOT="$(git rev-parse --show-toplevel)"
+cd "$CODEX_ROOT"
+PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend -k "engine_model_scopes or wan22_sampling"
+```
+
+---
+
 ## Tests
 
 ### Running `pytest` without the workspace env

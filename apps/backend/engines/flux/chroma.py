@@ -21,8 +21,14 @@ from typing import Any, List, Mapping, Optional
 
 import torch
 
-from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.core.engine_interface import EngineCapabilities
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.capabilities_presets import (
+    DEFAULT_IMAGE_DEVICES,
+    DEFAULT_IMAGE_PRECISION,
+    IMAGE_TASKS,
+)
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.flux.factory import CodexFluxFamilyFactory
 from apps.backend.engines.flux.spec import CHROMA_SPEC, FluxEngineRuntime
@@ -48,10 +54,10 @@ class Chroma(CodexDiffusionEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            tasks=IMAGE_TASKS,
             model_types=("chroma",),
-            devices=("cpu", "cuda"),
-            precision=("fp16", "bf16", "fp32"),
+            devices=DEFAULT_IMAGE_DEVICES,
+            precision=DEFAULT_IMAGE_PRECISION,
         )
 
     def _build_components(
@@ -81,16 +87,14 @@ class Chroma(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         clip_patcher = self.codex_objects.text_encoders["clip"].patcher
-        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
-        memory_management.manager.load_model(clip_patcher)
-        unload_clip = self.smart_offload_enabled and not already_loaded
-        try:
+        with stage_scoped_model_load(
+            clip_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
             conditioning = runtime.text.t5_text(prompt)
             logger.debug("Chroma conditioning generated for %d prompts", len(prompt))
             return conditioning
-        finally:
-            if unload_clip:
-                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

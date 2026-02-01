@@ -312,50 +312,15 @@ def build_wan22_gguf_run_config(
                 f"(request.steps={total_steps} wan_high.steps={default_steps_high} wan_low.steps={default_steps_low})."
             )
     else:
-        scheduler_config_path = None
-        for fname in ("scheduler_config.json", "config.json"):
-            candidate = os.path.join(vendor_dir, "scheduler", fname)
-            if os.path.isfile(candidate):
-                scheduler_config_path = candidate
-                break
-        if not scheduler_config_path:
-            raise RuntimeError(f"WAN22 GGUF: missing scheduler_config.json under: {vendor_dir!r}")
-        try:
-            scheduler_cfg = json.loads(open(scheduler_config_path, encoding="utf-8").read())
-        except Exception as exc:  # noqa: BLE001 - strict decode
-            raise RuntimeError(f"WAN22 GGUF: invalid scheduler config JSON: {scheduler_config_path}: {exc}") from exc
-        if not isinstance(scheduler_cfg, dict):
-            raise RuntimeError(f"WAN22 GGUF: scheduler config must be a JSON object: {scheduler_config_path}")
+        from .scheduler import infer_high_steps_from_boundary_ratio
 
-        class_name = str(scheduler_cfg.get("_class_name") or "").strip()
-        if not class_name:
-            raise RuntimeError(f"WAN22 GGUF: scheduler config missing _class_name: {scheduler_config_path}")
-
-        try:
-            import diffusers  # type: ignore
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "WAN22 GGUF: diffusers is required to derive default High/Low step split from boundary_ratio."
-            ) from exc
-        cls = getattr(diffusers, class_name, None)
-        if cls is None:
-            raise RuntimeError(
-                f"WAN22 GGUF: diffusers does not expose scheduler class {class_name!r} required by {scheduler_config_path}."
-            )
-        try:
-            sched = cls.from_pretrained(vendor_dir, subfolder="scheduler", local_files_only=True)
-        except TypeError:
-            sched = cls.from_pretrained(vendor_dir, subfolder="scheduler")
-        except Exception as exc:  # noqa: BLE001 - strict load
-            raise RuntimeError(f"WAN22 GGUF: failed to load scheduler from {vendor_dir!r}: {exc}") from exc
-        register = getattr(sched, "register_to_config", None)
-        if callable(register):
-            register(flow_shift=float(effective_flow_shift))
-        sched.set_timesteps(total_steps)
-        boundary_timestep = float(boundary_ratio) * float(getattr(sched.config, "num_train_timesteps", 1000))
-        hi_steps = int((sched.timesteps >= boundary_timestep).sum().item())
-        hi_steps = max(1, min(hi_steps, total_steps - 1))
-        default_steps_high = hi_steps
+        hi_steps = infer_high_steps_from_boundary_ratio(
+            total_steps=total_steps,
+            boundary_ratio=boundary_ratio,
+            vendor_dir=vendor_dir,
+            flow_shift=float(effective_flow_shift),
+        )
+        default_steps_high = int(hi_steps)
         default_steps_low = int(total_steps - hi_steps)
 
     def _stage_opts(

@@ -2,7 +2,7 @@
 <!-- tags: backend, engines, sdxl -->
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-31
+Last Review: 2026-02-01
 Status: Active
 
 ## Purpose
@@ -27,6 +27,7 @@ Status: Active
 - 2026-01-30: SD-family txt2img now consumes `GenerationResult` from the canonical staged runner (removed `_already_decoded` decode sentinels).
 - 2026-01-31: SD-family clip-skip handling is centralized in `apps/backend/engines/sd/_clip_skip.py` (validation + reset semantics + cache invalidation). SDXL no longer overrides `txt2img`; mode streaming lives in `apps/backend/use_cases/` (Option A).
 - 2026-01-31: SD engines now use the shared `require_runtime(...)` helper for consistent runtime guards; SDXL `_on_unload` clears embed caches to avoid stale state across unload/reload.
+- 2026-02-01: SDXL base/refiner text-conditioning caches now reuse engine-common cache helpers (`_get_cached_cond/_set_cached_cond`) and tensor-tree moves (`detach_to_cpu` / `move_to_device`) to remove local boilerplate while preserving Smart Cache override semantics.
 
 ### Event Emission
 - Mode streaming wrappers live in `apps/backend/use_cases/{txt2img,img2img}.py` and are invoked via `CodexDiffusionEngine.txt2img/img2img` (Option A).

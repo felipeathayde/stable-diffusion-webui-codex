@@ -1,7 +1,7 @@
 # apps/backend/engines/common Overview
 Date: 2025-10-28
 Owner: Engine Maintainers
-Last Review: 2026-01-31
+Last Review: 2026-02-01
 Status: Active
 
 ## Purpose
@@ -32,6 +32,9 @@ Status: Active
   - `runtime_lifecycle.py` (`require_runtime`) for consistent fail-fast runtime guards across engines.
   - `tensor_tree.py` (`detach_to_cpu` / `move_to_device`) for caching payload CPU↔device moves.
   - `prompt_wrappers.py` (`PromptListBase`) for common prompt metadata flags (negative + smart-cache override).
+- 2026-02-01: Added shared helper modules:
+  - `model_scopes.py` (`stage_scoped_model_load`) to enforce stage-scoped smart-offload semantics when loading text encoders.
+  - `capabilities_presets.py` (constants) to dedupe common image-engine capabilities tuples without hiding fields.
 - 2026-01-31: `CodexDiffusionEngine` improvements:
   - `__init__` accepts an optional `logger=` to avoid subclass logger collisions and keep per-engine log namespaces consistent.
   - Conditioning cache helpers (`_get_cached_cond/_set_cached_cond`) accept per-call enable overrides and store arbitrary payloads (tensors/dicts/tuples), with hit/miss metrics.

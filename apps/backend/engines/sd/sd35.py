@@ -23,8 +23,14 @@ from typing import Any, List, Mapping, Optional
 
 import torch
 
-from apps.backend.core.engine_interface import EngineCapabilities, TaskType
+from apps.backend.core.engine_interface import EngineCapabilities
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.capabilities_presets import (
+    DEFAULT_IMAGE_DEVICES,
+    DEFAULT_IMAGE_PRECISION,
+    IMAGE_TASKS,
+)
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
 from apps.backend.engines.sd._clip_skip import apply_sd_clip_skip
 from apps.backend.engines.sd.factory import CodexSDFamilyFactory
@@ -58,10 +64,10 @@ class StableDiffusion3(CodexDiffusionEngine):
     def capabilities(self) -> EngineCapabilities:  # type: ignore[override]
         return EngineCapabilities(
             engine_id=self.engine_id,
-            tasks=(TaskType.TXT2IMG, TaskType.IMG2IMG),
+            tasks=IMAGE_TASKS,
             model_types=("sd35", "sd3"),
-            devices=("cpu", "cuda"),
-            precision=("fp16", "bf16", "fp32"),
+            devices=DEFAULT_IMAGE_DEVICES,
+            precision=DEFAULT_IMAGE_PRECISION,
         )
 
     def _build_components(
@@ -99,10 +105,11 @@ class StableDiffusion3(CodexDiffusionEngine):
     def get_learned_conditioning(self, prompt: List[str]):
         runtime = self._require_runtime()
         clip_patcher = self.codex_objects.text_encoders["clip"].patcher
-        already_loaded = memory_management.manager.is_model_loaded(clip_patcher)
-        memory_management.manager.load_model(clip_patcher)
-        unload_clip = self.smart_offload_enabled and not already_loaded
-        try:
+        with stage_scoped_model_load(
+            clip_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
             cond_l, pooled_l = runtime.classic_engine("clip_l")(prompt)
             cond_g, pooled_g = runtime.classic_engine("clip_g")(prompt)
 
@@ -113,7 +120,7 @@ class StableDiffusion3(CodexDiffusionEngine):
                 cond_t5 = torch.zeros((len(prompt), 256, 4096), device=cond_l.device, dtype=cond_l.dtype)
 
             is_negative_prompt = getattr(prompt, "is_negative_prompt", False)
-            force_zero_negative_prompt = is_negative_prompt and all(x == "" for x in prompt)
+            force_zero_negative_prompt = bool(is_negative_prompt) and all(str(x or "").strip() == "" for x in prompt)
 
             if force_zero_negative_prompt:
                 pooled_l = torch.zeros_like(pooled_l)
@@ -133,9 +140,6 @@ class StableDiffusion3(CodexDiffusionEngine):
             }
 
             return cond
-        finally:
-            if unload_clip:
-                memory_management.manager.unload_model(clip_patcher)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str):

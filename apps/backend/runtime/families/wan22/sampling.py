@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resize_latents_hw` (function): Resizes latents to a target H/W (used for compatibility across stages/sizes).
 - `ensure_latent_shape` (function): Validates/reshapes latent tensors to the expected `PatchGeometry` layout.
 - `infer_patch_geometry` (function): Infers patch geometry defaults from config and requested latent size.
-- `make_scheduler` (function): Loads the Diffusers scheduler from vendored WAN metadata (`scheduler_config.json`) and validates sampler strings.
+- `make_scheduler` (function): Builds the WAN22 scheduler from vendored metadata (`scheduler_config.json`) and validates sampler strings (Diffusers-free).
 - `resolve_init_noise_sigma` (function): Resolves the scheduler initial noise sigma (`init_noise_sigma`) for seeding parity with Diffusers.
 - `cfg_merge` (function): Classifier-free guidance merge helper (uncond/cond + scale).
 - `time_snr_shift` (function): Time/SNR shift helper used in scheduler-time transformations.
@@ -127,7 +127,7 @@ def make_scheduler(
     sampler: Optional[str] = None,
     scheduler: Optional[str] = None,
 ):
-    """Instantiate the WAN22 scheduler from vendored diffusers metadata.
+    """Instantiate the WAN22 scheduler from vendored metadata (Diffusers-free).
 
     Source of truth is `model_index.json` + `scheduler/scheduler_config.json` shipped with the official repos.
     We do **not** silently fall back to unrelated schedulers (e.g., SD-style Euler) because WAN uses flow prediction.
@@ -215,33 +215,18 @@ def make_scheduler(
     # Note: `scheduler` is a legacy UI knob (sigma ladder families) in other engines.
     # WAN22 stage sampling uses the diffusers `scheduler_config.json` as source of truth.
 
-    try:
-        import diffusers  # type: ignore
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "WAN22 GGUF: diffusers is required for stage sampling (scheduler missing). "
-            "Install diffusers or use the WAN22 spec runtime path."
-        ) from exc
+    from .scheduler import build_wan_unipc_flow_scheduler
 
-    cls = getattr(diffusers, class_name, None)
-    if cls is None:
+    if class_name != "UniPCMultistepScheduler":
         raise RuntimeError(
-            f"WAN22 GGUF: diffusers does not expose scheduler class {class_name!r} required by {config_path}."
+            f"WAN22 GGUF: unsupported metadata scheduler {class_name!r} in {config_path}; expected UniPCMultistepScheduler."
         )
 
-    try:
-        sched = cls.from_pretrained(vendor_dir, subfolder="scheduler", local_files_only=True)
-    except TypeError:
-        sched = cls.from_pretrained(vendor_dir, subfolder="scheduler")
-    except Exception as exc:  # noqa: BLE001 - strict load
-        raise RuntimeError(f"WAN22 GGUF: failed to load scheduler from {vendor_dir!r}: {exc}") from exc
-
-    register = getattr(sched, "register_to_config", None)
-    if callable(register):
-        register(flow_shift=float(flow_shift))
-
-    sched.set_timesteps(max(1, int(steps)))
-    return sched
+    return build_wan_unipc_flow_scheduler(
+        steps=max(1, int(steps)),
+        vendor_dir=vendor_dir,
+        flow_shift=float(flow_shift),
+    )
 
 
 def resolve_init_noise_sigma(scheduler: Any) -> float:

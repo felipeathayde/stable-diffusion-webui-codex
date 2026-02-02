@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Tiling toggles for VAE decoding/encoding in workflows.
+Purpose: Tiling toggles for VAE decoding/encoding in generation pipelines.
 Applies prompt-derived tiling controls by temporarily mutating the runtime VAE tiling flag and restoring it afterwards.
 
 Symbols (top-level; keep in sync; no ghosts):

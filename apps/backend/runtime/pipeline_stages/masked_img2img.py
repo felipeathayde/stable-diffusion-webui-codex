@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Masked img2img (“inpaint”) helpers for SD-family workflows.
+Purpose: Masked img2img (“inpaint”) helpers for SD-family pipelines.
 Normalizes masks (RGBA alpha semantics), applies invert/blur/round options, optionally builds an inpaint-full-res crop plan
 (Forge-style zoom-crop + paste-back overlay), and produces latent-space masks for sampler enforcement.
 
@@ -28,7 +28,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageFilter, ImageOps
 
-from apps.backend.runtime.workflows.image_io import pil_to_tensor
+from apps.backend.runtime.pipeline_stages.image_io import pil_to_tensor
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 

@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Sampling execution helper for workflow orchestrators.
+Purpose: Sampling execution helper for pipeline orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics.
 
 Symbols (top-level; keep in sync; no ghosts):

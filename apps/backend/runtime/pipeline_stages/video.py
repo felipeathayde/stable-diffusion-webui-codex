@@ -6,11 +6,11 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Shared helpers for Codex video generation workflows.
+Purpose: Shared helpers for Codex video generation pipelines.
 Builds `VideoPlan`/`VideoResult`, applies LoRAs, configures sampler/scheduler, and assembles export metadata.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `logger` (constant): Module logger used by video workflow helpers.
+- `logger` (constant): Module logger used by video pipeline helpers.
 - `build_video_plan` (function): Normalizes request attributes into a `VideoPlan`.
 - `apply_engine_loras` (function): Applies globally selected LoRAs to the engine (when supported).
 - `configure_sampler` (function): Applies sampler/scheduler configuration to a component given a `VideoPlan`.
@@ -58,7 +58,7 @@ def build_video_plan(request: Any) -> VideoPlan:
 def apply_engine_loras(engine: Any, logger_: logging.Logger | None = None) -> Any | None:
     """Apply globally selected LoRAs to the engine, returning stats when available."""
 
-    # Lazy import to keep workflow module dependency-light for non-LoRA users.
+    # Lazy import to keep pipeline stage module dependency-light for non-LoRA users.
     from apps.backend.patchers.lora_apply import apply_loras_to_engine
 
     try:

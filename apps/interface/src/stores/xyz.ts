@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Frontend-driven XYZ sweep store for image tabs.
 Builds parameter grid combos, enqueues jobs, starts txt2img tasks, streams task events, and supports stop modes/cancellation while collecting
-per-cell results.
+per-cell results. HiRes upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
@@ -29,6 +29,7 @@ import type { GeneratedImage, TaskEvent } from '../api/types'
 import { AXIS_OPTIONS, buildCombos, labelOf, parseAxisValues, type AxisParam, type AxisValue, type XyzCell } from '../utils/xyz'
 import { useModelTabsStore, type ImageBaseParams } from './model_tabs'
 import { useQuicksettingsStore } from './quicksettings'
+import { useUpscalersStore } from './upscalers'
 
 type Status = 'idle' | 'running' | 'stopped' | 'error' | 'done'
 type StopMode = 'immediate' | 'after_current'
@@ -181,12 +182,12 @@ export const useXyzStore = defineStore('xyz', () => {
         form.height = Number(value)
         break
       case 'highres_scale':
-        form.highres = form.highres || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'Use same upscaler' }
+        form.highres = form.highres || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
         form.highres.enabled = true
         form.highres.scale = Number(value)
         break
       case 'highres_steps':
-        form.highres = form.highres || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'Use same upscaler' }
+        form.highres = form.highres || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
         form.highres.enabled = true
         form.highres.steps = Number(value)
         break
@@ -260,6 +261,8 @@ export const useXyzStore = defineStore('xyz', () => {
     progress.completed = 0
     cells.value = comboList.map((combo) => ({ x: combo.x, y: combo.y, z: combo.z, status: 'queued' }))
     jobs.value = []
+    const upscalers = useUpscalersStore()
+    const hiresFallbackOnOom = Boolean(upscalers.fallbackOnOom)
 
     // Pre-build job queue with payload snapshots
     for (const combo of comboList) {
@@ -268,7 +271,7 @@ export const useXyzStore = defineStore('xyz', () => {
       if (combo.y !== null) applyAxis(form, yParam.value, combo.y)
       if (combo.z !== null) applyAxis(form, zParam.value, combo.z)
       try {
-        const payload = buildTxt2ImgPayload(form)
+        const payload = buildTxt2ImgPayload(form, { hiresFallbackOnOom })
         jobs.value.push({
           id: `job-${jobs.value.length + 1}`,
           combo: { x: combo.x, y: combo.y, z: combo.z },

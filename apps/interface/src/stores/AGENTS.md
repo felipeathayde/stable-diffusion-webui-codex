@@ -2,7 +2,7 @@
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-01-28
+Last Review: 2026-02-01
 Status: Active
 
 ## Purpose
@@ -41,3 +41,5 @@ Status: Active
 - 2026-01-27: `model_tabs.ts` WAN video params now include `returnFrames` (default false) to control whether frames are included in the final result payload (txt2vid/img2vid full frames; vid2vid preview frames).
 - 2026-01-28: `model_tabs.ts` Z-Image params now include `zimageTurbo` (default true) to persist the Turbo/Base variant selection per tab.
 - 2026-01-29: `model_tabs.ts` image-tab params now include masked img2img (“inpaint”) fields (`useMask`, `maskImageData`, and inpaint controls like enforcement/full-res/padding/invert/round/blur/fill mode) so the model tab can drive Codex-native masking end-to-end.
+- 2026-02-01: `presets.ts` now supports an `upscale` mode for the standalone `/upscale` workspace presets.
+- 2026-02-01: Added `upscalers.ts` store to cache local upscalers inventory (`/api/upscalers`) and persist the global tile OOM fallback preference (shared by hires-fix + `/upscale`).

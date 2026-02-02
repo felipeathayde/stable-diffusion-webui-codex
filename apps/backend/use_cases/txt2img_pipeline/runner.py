@@ -8,13 +8,15 @@ Required Notice: see NOTICE
 
 Purpose: Stage-based txt2img pipeline orchestrator (sampling + hi-res + optional refiner).
 Coordinates prompt parsing, conditioning, sampling execution, tiling/overrides, and optional refiner stages while producing images and metadata.
+The hires stage delegates init preparation and `denoise` semantics to the global hires-fix workflow stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
+When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PrepareState` (dataclass): Prepared per-run state (resolved engine + plans + prompt context) used across stages.
 - `SamplingOutput` (dataclass): Sampling result container (latents/images + metadata) passed between pipeline stages.
 - `Txt2ImgPipelineRunner` (class): Main orchestrator; owns the stage pipeline (conditioning/sampling/hires/refiner) and calls the runtime helpers
-  (contains nested stage methods and integrates smart cache + pipeline tracing).
+  (hires stage uses the global hires-fix stage to route latent vs spandrel upscalers; integrates smart cache + pipeline tracing).
 - `GenerationResult` (dataclass): Standardized output container for the runner (`samples` + optional `decoded`).
 """
 # // tags: txt2img, pipeline, sdxl, hires, refiner
@@ -28,18 +30,12 @@ from typing import Sequence
 
 import numpy as np
 import torch
-from PIL import Image
 
 from apps.backend.core import devices
 from apps.backend.core.rng import ImageRNG
 from apps.backend.infra.config import args as backend_args
 from apps.backend.runtime.diagnostics.pipeline_debug import log as pipeline_log, pipeline_trace
 from apps.backend.runtime.memory import memory_management
-from apps.backend.runtime.processing.conditioners import (
-    decode_latent_batch,
-    img2img_conditioning,
-    txt2img_conditioning,
-)
 from apps.backend.runtime.memory.smart_offload import (
     smart_cache_enabled,
     smart_offload_enabled,
@@ -59,24 +55,28 @@ from apps.backend.runtime.processing.datatypes import (
 )
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
-from apps.backend.runtime.workflows.image_io import latents_to_pil, maybe_decode_for_hr, pil_to_tensor
-from apps.backend.runtime.workflows.prompt_context import (
+from apps.backend.runtime.pipeline_stages.image_io import maybe_decode_for_hr
+from apps.backend.runtime.pipeline_stages.hires_fix import (
+    prepare_hires_latents_and_conditioning,
+    start_at_step_from_denoise,
+)
+from apps.backend.runtime.pipeline_stages.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
     build_prompt_context,
 )
-from apps.backend.runtime.workflows.sampling_execute import execute_sampling
-from apps.backend.runtime.workflows.sampling_plan import (
+from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
+from apps.backend.runtime.pipeline_stages.sampling_plan import (
     apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
+    resolve_sampler_scheduler_override,
 )
-from apps.backend.runtime.workflows.scripts import run_process_scripts
-from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, finalize_tiling
+from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
+from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
+from apps.backend.runtime.sampling.driver import CodexSampler
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.use_cases.txt2img_pipeline.refiner import GlobalRefinerStage, HiresRefinerStage, RefinerStage
-
-_RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
 
 @dataclass(slots=True)
@@ -551,13 +551,14 @@ class Txt2ImgPipelineRunner:
         base_result: SamplingOutput,
     ) -> torch.Tensor:
         assert state.hires_plan is not None
+        hires_plan_cfg = state.hires_plan
         hires_cfg = processing.hires
         processing.ensure_hires_prompts()
 
-        target_width = hires_cfg.resize_x or int(processing.width * hires_cfg.scale)
-        target_height = hires_cfg.resize_y or int(processing.height * hires_cfg.scale)
-        steps = hires_cfg.second_pass_steps or processing.steps
-        denoise = float(hires_cfg.denoise)
+        target_width = int(hires_plan_cfg.target_width)
+        target_height = int(hires_plan_cfg.target_height)
+        steps = int(hires_plan_cfg.steps)
+        denoise = float(hires_plan_cfg.denoise)
 
         original_attrs = {
             "prompts": processing.prompts,
@@ -566,6 +567,9 @@ class Txt2ImgPipelineRunner:
             "height": processing.height,
             "guidance_scale": processing.guidance_scale,
             "steps": processing.steps,
+            "sampler_name": getattr(processing, "sampler_name", None),
+            "scheduler": getattr(processing, "scheduler", None),
+            "sampler": getattr(processing, "sampler", None),
         }
 
         hr_prompts_source = (
@@ -590,49 +594,24 @@ class Txt2ImgPipelineRunner:
         processing.guidance_scale = float(hires_cfg.cfg or processing.guidance_scale)
         processing.cfg_scale = processing.guidance_scale
         processing.steps = int(steps)
+        hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
+            base_sampler=str(state.sampling_plan.sampler_name or ""),
+            base_scheduler=str(state.sampling_plan.scheduler_name or ""),
+            sampler_override=getattr(hires_cfg, "sampler_name", None),
+            scheduler_override=getattr(hires_cfg, "scheduler", None),
+        )
+        processing.sampler_name = hires_sampler
+        processing.scheduler = hires_scheduler
+        processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
         processing.prepare_prompt_data()
 
-        if getattr(processing, "latent_scale_mode", None) is not None:
-            mode = processing.latent_scale_mode.get("mode", "bilinear")
-            antialias = bool(processing.latent_scale_mode.get("antialias", False))
-            latents = torch.nn.functional.interpolate(
-                base_result.samples,
-                size=(target_height // 8, target_width // 8),
-                mode=mode,
-                antialias=antialias,
-            )
-            # Latent hires path: only decode for inpaint models that require pixel-space conditioning.
-            if getattr(processing.sd_model, "is_inpaint", False):
-                tensor = decode_latent_batch(processing.sd_model, latents)
-                image_conditioning = img2img_conditioning(
-                    processing.sd_model,
-                    tensor,
-                    latents,
-                    image_mask=getattr(processing, "image_mask", None),
-                    round_mask=getattr(processing, "round_image_mask", True),
-                )
-            else:
-                image_conditioning = txt2img_conditioning(
-                    processing.sd_model,
-                    latents,
-                    target_width,
-                    target_height,
-                )
-        else:
-            decoded_samples = base_result.decoded
-            if decoded_samples is None:
-                decoded_samples = decode_latent_batch(processing.sd_model, base_result.samples)
-            pil_images = latents_to_pil(decoded_samples)
-            upscaled = [img.resize((target_width, target_height), _RESAMPLE_LANCZOS) for img in pil_images]
-            tensor = pil_to_tensor(upscaled)
-            latents = processing.sd_model.encode_first_stage(tensor)
-            image_conditioning = img2img_conditioning(
-                processing.sd_model,
-                tensor,
-                latents,
-                image_mask=getattr(processing, "image_mask", None),
-                round_mask=getattr(processing, "round_image_mask", True),
-            )
+        latents, image_conditioning = prepare_hires_latents_and_conditioning(
+            processing,
+            base_samples=base_result.samples,
+            base_decoded=base_result.decoded,
+            hires_plan=hires_plan_cfg,
+            tile=getattr(hires_cfg, "tile", None),
+        )
 
         hires_settings = state.sampling_plan.noise_settings
         rng_hr = ImageRNG(
@@ -645,10 +624,12 @@ class Txt2ImgPipelineRunner:
             settings=hires_settings,
         )
         noise = rng_hr.next().to(latents)
-        start_index = max(0, min(int(round(denoise * processing.steps)), processing.steps - 1))
+        start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
 
         hires_plan = replace(
             state.sampling_plan,
+            sampler_name=hires_sampler,
+            scheduler_name=hires_scheduler,
             steps=int(processing.steps),
             guidance_scale=float(processing.guidance_scale),
         )
@@ -689,6 +670,9 @@ class Txt2ImgPipelineRunner:
         processing.guidance_scale = original_attrs["guidance_scale"]
         processing.cfg_scale = processing.guidance_scale
         processing.steps = original_attrs["steps"]
+        processing.sampler_name = original_attrs["sampler_name"]
+        processing.scheduler = original_attrs["scheduler"]
+        processing.sampler = original_attrs["sampler"]
         processing.prepare_prompt_data()
 
         return samples
@@ -754,6 +738,20 @@ class Txt2ImgPipelineRunner:
             return None
 
         hi_cfg = processing.hires
+        raw_upscaler = getattr(hi_cfg, "upscaler", None)
+        if not isinstance(raw_upscaler, str) or not raw_upscaler.strip():
+            raise ValueError(
+                "Highres is enabled but 'highres.upscaler' is missing. "
+                "Choose an upscaler id from GET /api/upscalers (e.g. 'latent:bicubic-aa')."
+            )
+        upscaler_id = raw_upscaler.strip()
+        from apps.backend.runtime.vision.upscalers.specs import LATENT_UPSCALE_MODES
+
+        if upscaler_id not in LATENT_UPSCALE_MODES and not upscaler_id.startswith("spandrel:"):
+            raise ValueError(
+                f"Invalid 'highres.upscaler': {upscaler_id!r}. "
+                "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
+            )
         target_width = hi_cfg.resize_x or int(processing.width * hi_cfg.scale)
         target_height = hi_cfg.resize_y or int(processing.height * hi_cfg.scale)
         steps = hi_cfg.second_pass_steps or processing.steps
@@ -763,6 +761,7 @@ class Txt2ImgPipelineRunner:
             enabled=True,
             target_width=target_width,
             target_height=target_height,
+            upscaler_id=upscaler_id,
             steps=int(steps),
             denoise=denoise,
             cfg_scale=float(cfg_scale) if cfg_scale is not None else None,

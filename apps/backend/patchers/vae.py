@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: VAE patcher + tiling helpers for encode/decode (diffusers + WAN-aware).
 Provides a VAE wrapper that normalizes diffusers outputs, supports tiled decode/encode paths, and integrates memory-management
 and smart-fallback behavior. Supports separate storage vs compute dtype selection (compute defaults to fp32 unless overridden).
+Tiling helpers are shared with the global upscalers runtime to avoid drift.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
@@ -23,8 +24,6 @@ Symbols (top-level; keep in sync; no ghosts):
 """
 
 import torch
-import math
-import itertools
 import logging
 
 try:  # Optional import; diffusers may not be present in minimal environments
@@ -37,10 +36,14 @@ try:  # Optional; only needed to detect WAN VAEs explicitly
 except Exception:  # noqa: BLE001
     AutoencoderKLWan = None
 
-from tqdm import trange
 from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.memory.smart_offload import smart_fallback_enabled
+from apps.backend.runtime.vision.upscalers.tiled_scale import (
+    get_tiled_scale_steps,
+    tiled_scale,
+    tiled_scale_multidim,
+)
 from .base import ModelPatcher
 
 logger = logging.getLogger("backend.patchers.vae")
@@ -206,57 +209,6 @@ class _NormalizingFirstStage:
         
         logger.info("[VAE] normalization enabled: scaling_factor=%s shift_factor=%s", scale, shift)
         return _NormalizingFirstStage(base, scale=float(scale), shift=float(shift))
-
-
-@torch.inference_mode()
-def tiled_scale_multidim(samples, function, tile=(64, 64), overlap=8, upscale_amount=4, out_channels=3, output_device="cpu"):
-    dims = len(tile)
-    output = torch.empty([samples.shape[0], out_channels] + list(map(lambda a: round(a * upscale_amount), samples.shape[2:])), device=output_device)
-
-    for b in trange(samples.shape[0]):
-        s = samples[b:b + 1]
-        out = torch.zeros([s.shape[0], out_channels] + list(map(lambda a: round(a * upscale_amount), s.shape[2:])), device=output_device)
-        out_div = torch.zeros([s.shape[0], out_channels] + list(map(lambda a: round(a * upscale_amount), s.shape[2:])), device=output_device)
-
-        for it in itertools.product(*map(lambda a: range(0, a[0], a[1] - overlap), zip(s.shape[2:], tile))):
-            s_in = s
-            upscaled = []
-
-            for d in range(dims):
-                pos = max(0, min(s.shape[d + 2] - overlap, it[d]))
-                length = min(tile[d], s.shape[d + 2] - pos)
-                s_in = s_in.narrow(d + 2, pos, length)
-                upscaled.append(round(pos * upscale_amount))
-            ps = function(s_in).to(output_device)
-            mask = torch.ones_like(ps)
-            feather = round(overlap * upscale_amount)
-            for t in range(feather):
-                for d in range(2, dims + 2):
-                    m = mask.narrow(d, t, 1)
-                    m *= ((1.0 / feather) * (t + 1))
-                    m = mask.narrow(d, mask.shape[d] - 1 - t, 1)
-                    m *= ((1.0 / feather) * (t + 1))
-
-            o = out
-            o_d = out_div
-            for d in range(dims):
-                o = o.narrow(d + 2, upscaled[d], mask.shape[d + 2])
-                o_d = o_d.narrow(d + 2, upscaled[d], mask.shape[d + 2])
-
-            o += ps * mask
-            o_d += mask
-
-        output[b:b + 1] = out / out_div
-    return output
-
-
-def get_tiled_scale_steps(width, height, tile_x, tile_y, overlap):
-    return math.ceil((height / (tile_y - overlap))) * math.ceil((width / (tile_x - overlap)))
-
-
-def tiled_scale(samples, function, tile_x=64, tile_y=64, overlap=8, upscale_amount=4, out_channels=3, output_device="cpu"):
-    return tiled_scale_multidim(samples, function, (tile_y, tile_x), overlap, upscale_amount, out_channels, output_device)
-
 
 class VAE:
     def __init__(self, model=None, device=None, dtype=None, no_init=False, *, family=None):

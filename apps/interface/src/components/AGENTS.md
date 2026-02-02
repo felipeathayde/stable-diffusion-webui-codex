@@ -2,7 +2,7 @@
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-01-28
+Last Review: 2026-02-01
 Status: Active
 
 ## Purpose
@@ -53,3 +53,4 @@ Status: Active
 - 2026-01-06: `BasicParametersCard.vue` now defaults to explicit sampler/scheduler selection (no empty option) and selector components tolerate missing `label` by falling back to `name`.
 - 2026-01-06: Sampler/Scheduler selectors now default the empty-option label to “Select” (no `Automatic` placeholder); WAN stage panels still override with “Inherit”.
 - 2026-01-21: WAN stage LoRA UI (`components/wan/WanStageLoraField.vue`) selects by sha (`loraSha`) and payload builders emit `lora_sha` (no stage `lora_path`).
+- 2026-02-01: `HighresSettingsCard.vue` now lists upscalers from `/api/upscalers` (stable ids: `latent:*` / `spandrel:*`) and reuses the shared tile controls + OOM fallback toggle (same as `/upscale`).

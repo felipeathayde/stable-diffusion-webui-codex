@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FluxTextPipelines` (dataclass): Holds the text processing engines used by Flux (optional CLIP classic + required T5).
 - `FluxEngineRuntime` (dataclass): Fully assembled runtime components for Flux (CLIP, VAE, denoiser patcher, text pipelines, distilled CFG flag).
 - `FluxEngineSpec` (dataclass): Spec/config holder for a Flux runtime build (repo/model selection + streaming policy/config).
-- `_predictor` (function): Builds the FlowMatchEuler predictor for the selected Flux variant (Schnell vs dev).
+- `_predictor` (function): Builds the FlowMatchEuler predictor (effective shift parameterization) for the selected Flux variant (Schnell vs dev).
 - `_maybe_enable_streaming_core` (function): Wraps a core transformer with streaming support based on policy/config and runtime flags.
 - `_is_clip_encoder` (function): Type guard for identifying CLIP text encoder models in a mixed component set.
 - `_is_t5_encoder` (function): Type guard for identifying T5 text encoder models in a mixed component set.
@@ -89,7 +89,7 @@ class FluxEngineSpec:
 def _predictor(repo: str, is_schnell: bool) -> FlowMatchEulerPrediction:
     if is_schnell:
         logger.debug("Using FlowMatch predictor for schnell repo=%s", repo)
-        return FlowMatchEulerPrediction(mu=1.0)
+        return FlowMatchEulerPrediction(shift=1.0)
     logger.debug("Using FlowMatch predictor with seq_len scheduling for repo=%s", repo)
     return FlowMatchEulerPrediction(
         seq_len=4096,

@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Init-image preparation helpers for img2img-style workflows.
-Encodes an init image into tensors/latents and returns a structured `InitImageBundle` for downstream workflows.
+Purpose: Init-image preparation helpers for img2img-style pipelines.
+Encodes an init image into tensors/latents and returns a structured `InitImageBundle` for downstream pipelines.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `prepare_init_bundle` (function): Converts a processing init image into a tensor/latent bundle (optionally includes a mask).
@@ -26,7 +26,7 @@ from apps.backend.runtime.processing.datatypes import InitImageBundle
 
 
 def prepare_init_bundle(processing: Any) -> InitImageBundle:
-    """Encode the init image into tensor/latents for downstream workflows."""
+    """Encode the init image into tensor/latents for downstream pipelines."""
     image = getattr(processing, "init_image", None)
     if image is None:
         raise ValueError("img2img requires processing.init_image")

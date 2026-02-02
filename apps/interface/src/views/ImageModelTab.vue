@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-family engines.
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
+Highres settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
@@ -25,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setHighresRefiner` (function): Applies partial updates to the highres-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
+- `setFallbackOnOom` (function): Updates the global “fallback on OOM” preference used by upscaler tiling (hires-fix + `/upscale`).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
 - `toggleInitImage` (function): Toggles init-image usage (img2img).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
@@ -273,24 +275,32 @@ Symbols (top-level; keep in sync; no ghosts):
 
           <HighresSettingsCard
             v-if="showHighres"
+            :disabled="isRunning"
             :enabled="params.highres.enabled"
             :denoise="params.highres.denoise"
             :scale="params.highres.scale"
             :steps="params.highres.steps"
             :upscaler="params.highres.upscaler"
+            :tile="params.highres.tile"
+            :fallbackOnOom="fallbackOnOom"
+            :upscalers="upscalers"
+            :upscalersLoading="upscalersLoading"
+            :upscalersError="upscalersError"
             :base-width="params.width"
             :base-height="params.height"
-            :refinerEnabled="params.highres.refiner?.enabled"
-            :refinerSteps="params.highres.refiner?.steps"
-            :refinerCfg="params.highres.refiner?.cfg"
-            :refinerSeed="params.highres.refiner?.seed"
-            :refinerModel="params.highres.refiner?.model"
-            :refinerVae="params.highres.refiner?.vae"
+            :refinerEnabled="showHighresRefiner ? params.highres.refiner?.enabled : undefined"
+            :refinerSteps="showHighresRefiner ? params.highres.refiner?.steps : undefined"
+            :refinerCfg="showHighresRefiner ? params.highres.refiner?.cfg : undefined"
+            :refinerSeed="showHighresRefiner ? params.highres.refiner?.seed : undefined"
+            :refinerModel="showHighresRefiner ? params.highres.refiner?.model : undefined"
+            :refinerVae="showHighresRefiner ? params.highres.refiner?.vae : undefined"
             @update:enabled="(v: boolean) => setHighres({ enabled: v })"
             @update:denoise="(v: number) => setHighres({ denoise: clampFloat(v, 0, 1) })"
             @update:scale="(v: number) => setHighres({ scale: v })"
             @update:steps="(v: number) => setHighres({ steps: Math.max(0, Math.trunc(v)) })"
             @update:upscaler="(v: string) => setHighres({ upscaler: v })"
+            @update:tile="(v: { tile: number; overlap: number }) => setHighres({ tile: v })"
+            @update:fallbackOnOom="setFallbackOnOom"
             @update:refinerEnabled="(v: boolean) => setHighresRefiner({ enabled: v })"
             @update:refinerSteps="(v: number) => setHighresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
             @update:refinerCfg="(v: number) => setHighresRefiner({ cfg: v })"
@@ -413,6 +423,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
@@ -421,6 +432,7 @@ import { useGeneration, type ImageRunHistoryItem } from '../composables/useGener
 import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults, type EngineType } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HighresSettingsCard from '../components/HighresSettingsCard.vue'
@@ -438,6 +450,8 @@ const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
 const workflows = useWorkflowsStore()
+const upscalersStore = useUpscalersStore()
+const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnOom } = storeToRefs(upscalersStore)
 
 // Use unified generation composable
 const {
@@ -468,6 +482,7 @@ const schedulers = ref<SchedulerInfo[]>([])
 onMounted(async () => {
   if (!store.tabs.length) store.load()
   void engineCaps.init()
+  void upscalersStore.load()
   const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
   samplers.value = samp.samplers
   schedulers.value = sched.schedulers
@@ -513,6 +528,8 @@ const showHighres = computed(() => {
   if (!surf) return true
   return surf.supports_highres
 })
+
+const showHighresRefiner = computed(() => !Boolean((params.value as any)?.useInitImage))
 
 const showGlobalRefiner = computed(() => {
   if (props.type === 'zimage') return false
@@ -791,6 +808,10 @@ function setRefiner(patch: Record<string, unknown>): void {
 function clampFloat(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, value))
+}
+
+function setFallbackOnOom(value: boolean): void {
+  fallbackOnOom.value = Boolean(value)
 }
 
 const _KONTEXT_DEFAULT_STEPS = 28

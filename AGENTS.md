@@ -302,7 +302,7 @@ Drift counts as drift when any of this changes per engine for the same mode:
 * Engines are adapters and hooks. They load models and expose primitives. They do **not** re-implement the mode.
 * Routers stay thin: validate + dispatch + stream.
 * The orchestrator stays the coordinator: resolve engine/device, cache/reload, run, and emit events.
-* Shared, reusable stages live in `apps/backend/runtime/workflows/`. If it’s shared, it goes there. If it’s not shared, it stays in the canonical use-case.
+* Shared, reusable stages live in `apps/backend/runtime/pipeline_stages/`. If it’s shared, it goes there. If it’s not shared, it stays in the canonical use-case.
 
 If an engine needs special behavior, you add a hook that the canonical use-case calls.
 If you can’t express it as a hook, you stop and redesign until you can.

@@ -9,9 +9,10 @@ Status: Active
 
 ## Key Files
 - `txt2img.py`, `img2img.py`, `txt2vid.py`, `img2vid.py`, `vid2vid.py` — Task-specific pipelines that bind request parameters, engines, runtimes, and services.
+- `upscale.py` — Standalone upscaling pipeline (Spandrel/builtin upscalers) used by `/api/upscale`.
 - `txt2img_pipeline/` — Stage-based runner used by `txt2img.py` to prepare prompts, execute base sampling, and handle HiRes passes without monolithic functions.
 - `__init__.py` — Exposes helpers to orchestrator modules in `apps/backend/core`.
-- Shared orchestration logic now lives in `apps/backend/runtime/workflows/`; use cases should prefer these helpers over bespoke copies of sampler/prompt setup.
+- Shared orchestration logic now lives in `apps/backend/runtime/pipeline_stages/`; use cases should prefer these helpers over bespoke copies of sampler/prompt setup.
 
 ## Notes
 - Introduza novos use cases sempre que uma combinação de tarefa + modo precisar de orquestração própria; mantenha a lógica focalizada em preparar entradas, chamar engines e relatar progresso, delegando detalhes de modelo para `engines/` ou `runtime/`.

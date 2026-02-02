@@ -31,6 +31,11 @@ Symbols (top-level; keep in sync; no ghosts):
 - `startTxt2Vid` (function): Starts a txt2vid task (`POST /txt2vid`).
 - `startImg2Vid` (function): Starts an img2vid task (`POST /img2vid`).
 - `startVid2Vid` (function): Starts a vid2vid task (`POST /vid2vid` multipart).
+- `fetchUpscalers` (function): Fetches the local upscalers list (`/upscalers`).
+- `refreshUpscalers` (function): Forces an upscalers re-fetch (clears cache, then calls `/upscalers`).
+- `fetchRemoteUpscalers` (function): Fetches curated HF upscalers list (`/upscalers/remote`).
+- `downloadUpscalers` (function): Starts an upscalers download task (`POST /upscalers/download`).
+- `startUpscale` (function): Starts a standalone upscale task (`POST /upscale` multipart).
 - `fetchTaskResult` (function): Fetches a task result (`/tasks/:id`).
 - `cancelTask` (function): Requests task cancellation (`/tasks/:id/cancel`).
 - `subscribeTask` (function): Subscribes to task SSE events and returns an unsubscribe closure.
@@ -63,6 +68,7 @@ import type {
   OptionsResponse,
   OptionsUpdateResponse,
   Txt2ImgStartResponse,
+  TaskStartResponse,
   TaskResult,
   TaskEvent,
   MemoryResponse,
@@ -79,6 +85,8 @@ import type {
   FileMetadataResponse,
   CheckpointMetadataResponse,
   PngInfoAnalyzeResponse,
+  UpscalersResponse,
+  RemoteUpscalersResponse,
 } from './types'
 import type { Txt2ImgRequest } from './payloads'
 
@@ -253,6 +261,36 @@ export function startImg2Vid(payload: Record<string, unknown>): Promise<Txt2ImgS
 
 export function startVid2Vid(form: FormData): Promise<Txt2ImgStartResponse> {
   return requestForm<Txt2ImgStartResponse>('/vid2vid', form)
+}
+
+export function fetchUpscalers(): Promise<UpscalersResponse> {
+  return requestJsonCached<UpscalersResponse>('/upscalers')
+}
+
+export async function refreshUpscalers(): Promise<UpscalersResponse> {
+  invalidateJsonCache('/upscalers')
+  const res = await requestJson<UpscalersResponse>('/upscalers')
+  _jsonCache.set('/upscalers', res)
+  return res
+}
+
+export function fetchRemoteUpscalers(opts: { repo_id?: string; revision?: string } = {}): Promise<RemoteUpscalersResponse> {
+  const params = new URLSearchParams()
+  if (typeof opts.repo_id === 'string' && opts.repo_id.trim()) params.set('repo_id', opts.repo_id.trim())
+  if (typeof opts.revision === 'string' && opts.revision.trim()) params.set('revision', opts.revision.trim())
+  const q = params.toString()
+  return requestJson<RemoteUpscalersResponse>(`/upscalers/remote${q ? `?${q}` : ''}`)
+}
+
+export function downloadUpscalers(payload: { repo_id?: string; revision?: string | null; files: string[] }): Promise<TaskStartResponse> {
+  return requestJson<TaskStartResponse>('/upscalers/download', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function startUpscale(image: File, payload: Record<string, unknown>): Promise<TaskStartResponse> {
+  const form = new FormData()
+  form.append('image', image)
+  form.append('payload', JSON.stringify(payload))
+  return requestForm<TaskStartResponse>('/upscale', form)
 }
 
 export function fetchTaskResult(taskId: string): Promise<TaskResult> {

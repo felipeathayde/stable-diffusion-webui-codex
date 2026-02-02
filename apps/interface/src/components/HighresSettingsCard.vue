@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: HiRes (second pass) settings panel.
-Renders HiRes controls (scale/denoise/steps/upscaler) and optional hires refiner settings when enabled.
+Renders HiRes controls (scale/denoise/steps/upscaler + Spandrel tile config) and optional hires refiner settings when enabled.
+Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `HighresSettingsCard` (component): HiRes settings block for supported image tabs.
@@ -33,7 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :max="4"
           :step="0.1"
           :inputStep="0.1"
-          :disabled="!enabled"
+          :disabled="disabled || !enabled"
           :showButtons="false"
           inputClass="cdx-input-w-xs"
           @update:modelValue="(v) => emit('update:scale', v)"
@@ -48,7 +49,7 @@ Symbols (top-level; keep in sync; no ghosts):
           :max="1"
           :step="0.01"
           :inputStep="0.01"
-          :disabled="!enabled"
+          :disabled="disabled || !enabled"
           :showButtons="false"
           inputClass="cdx-input-w-xs"
           @update:modelValue="(v) => emit('update:denoise', v)"
@@ -61,16 +62,39 @@ Symbols (top-level; keep in sync; no ghosts):
           type="number"
           min="0"
           :value="steps"
-          :disabled="!enabled"
+          :disabled="disabled || !enabled"
           @change="onStepsChange"
         />
         <p class="hr-hint">0 = reuse base steps</p>
       </div>
       <div class="hr-cell">
         <label class="label-muted">Upscaler</label>
-        <select class="select-md" :value="upscaler" :disabled="!enabled" @change="onUpscalerChange">
-          <option v-for="opt in upscalerOptions" :key="opt" :value="opt">{{ opt }}</option>
+        <select class="select-md" :value="upscaler" :disabled="disabled || !enabled || upscalersLoading" @change="onUpscalerChange">
+          <option v-if="upscalersLoading" :value="upscaler">Loading…</option>
+          <option v-else-if="upscaler && !isUpscalerKnown" :value="upscaler">Invalid selection: {{ upscaler }}</option>
+          <option v-else value="" disabled>Select</option>
+          <optgroup v-if="spandrelUpscalers.length" label="Spandrel (pixel SR)">
+            <option v-for="u in spandrelUpscalers" :key="u.id" :value="u.id">{{ u.label }}</option>
+          </optgroup>
+          <optgroup v-if="latentUpscalers.length" label="Latent">
+            <option v-for="u in latentUpscalers" :key="u.id" :value="u.id">{{ u.label }}</option>
+          </optgroup>
         </select>
+        <p class="hr-hint" v-if="upscalersError">Error: {{ upscalersError }}</p>
+        <p class="hr-hint" v-else-if="upscaler && !isUpscalerKnown">Select an upscaler id from `GET /api/upscalers`.</p>
+      </div>
+      <div class="hr-cell hr-cell--span2">
+        <label class="label-muted">Tile</label>
+        <UpscalerTileControls
+          :tileSize="tileConfig.tile"
+          :overlap="tileConfig.overlap"
+          :fallbackOnOom="fallbackOnOom"
+          :disabled="disabled || !enabled || !isSpandrelSelected"
+          @update:tileSize="onTileSize"
+          @update:overlap="onTileOverlap"
+          @update:fallbackOnOom="(v) => emit('update:fallbackOnOom', v)"
+        />
+        <p class="hr-hint" v-if="upscaler && !isSpandrelSelected">Tile settings apply to Spandrel (pixel SR) upscalers only.</p>
       </div>
     </div>
     <div v-if="enabled && showRefiner" class="hr-refiner">
@@ -92,15 +116,25 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 // tags: highres, settings, grid
 import { computed } from 'vue'
+import type { UpscalerDefinition, UpscalerKind } from '../api/types'
 import RefinerSettingsCard from './RefinerSettingsCard.vue'
 import SliderField from './ui/SliderField.vue'
+import UpscalerTileControls from './ui/UpscalerTileControls.vue'
+
+type TileConfigState = { tile: number; overlap: number }
 
 const props = defineProps<{
+  disabled?: boolean
   enabled: boolean
   denoise: number
   scale: number
   steps: number
   upscaler: string
+  tile?: TileConfigState
+  fallbackOnOom?: boolean
+  upscalers?: UpscalerDefinition[]
+  upscalersLoading?: boolean
+  upscalersError?: string
   baseWidth?: number
   baseHeight?: number
   refinerEnabled?: boolean
@@ -117,6 +151,8 @@ const emit = defineEmits<{
   (e: 'update:scale', value: number): void
   (e: 'update:steps', value: number): void
   (e: 'update:upscaler', value: string): void
+  (e: 'update:tile', value: TileConfigState): void
+  (e: 'update:fallbackOnOom', value: boolean): void
   (e: 'update:refinerEnabled', value: boolean): void
   (e: 'update:refinerSteps', value: number): void
   (e: 'update:refinerCfg', value: number): void
@@ -125,7 +161,32 @@ const emit = defineEmits<{
   (e: 'update:refinerVae', value: string): void
 }>()
 
-const upscalerOptions = ['Use same upscaler', 'Latent (nearest)', 'Latent (Lanczos)']
+const disabled = computed(() => Boolean(props.disabled))
+const fallbackOnOom = computed(() => props.fallbackOnOom ?? true)
+const upscalersLoading = computed(() => Boolean(props.upscalersLoading))
+const upscalersError = computed(() => String(props.upscalersError ?? '').trim())
+
+const upscalers = computed(() => Array.isArray(props.upscalers) ? props.upscalers : [])
+const spandrelUpscalers = computed(() => upscalers.value.filter((u) => u.kind === 'spandrel'))
+const latentUpscalers = computed(() => upscalers.value.filter((u) => u.kind === 'latent'))
+const isUpscalerKnown = computed(() => upscalers.value.some((u) => u.id === props.upscaler))
+const selectedUpscalerKind = computed<UpscalerKind | null>(() => {
+  const found = upscalers.value.find((u) => u.id === props.upscaler)
+  if (found) return found.kind
+  const id = String(props.upscaler || '')
+  if (id.startsWith('spandrel:')) return 'spandrel'
+  if (id.startsWith('latent:')) return 'latent'
+  return null
+})
+const isSpandrelSelected = computed(() => selectedUpscalerKind.value === 'spandrel')
+
+const tileConfig = computed<TileConfigState>(() => {
+  const v = props.tile
+  if (!v) return { tile: 256, overlap: 16 }
+  const tile = Number.isFinite(v.tile) ? Math.max(1, Math.trunc(v.tile)) : 256
+  const overlap = Number.isFinite(v.overlap) ? Math.max(0, Math.trunc(v.overlap)) : 16
+  return { tile, overlap: Math.min(tile - 1, overlap) }
+})
 
 const targetWidth = computed(() => {
   if (!props.baseWidth || props.scale <= 1) return null
@@ -174,6 +235,18 @@ function onStepsChange(event: Event): void {
 
 function onUpscalerChange(event: Event): void {
   emit('update:upscaler', (event.target as HTMLSelectElement).value)
+}
+
+function onTileSize(value: number): void {
+  const v = Math.max(1, Math.trunc(Number(value)))
+  if (!Number.isFinite(v)) return
+  emit('update:tile', { tile: v, overlap: Math.min(v - 1, tileConfig.value.overlap) })
+}
+
+function onTileOverlap(value: number): void {
+  const v = Math.max(0, Math.trunc(Number(value)))
+  if (!Number.isFinite(v)) return
+  emit('update:tile', { tile: tileConfig.value.tile, overlap: Math.min(tileConfig.value.tile - 1, v) })
 }
 </script>
 

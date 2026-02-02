@@ -128,7 +128,7 @@ def _decode_generation_output(
 
     from apps.backend.runtime.processing.conditioners import decode_latent_batch
     from apps.backend.runtime.processing.datatypes import GenerationResult
-    from apps.backend.runtime.workflows.image_io import latents_to_pil
+    from apps.backend.runtime.pipeline_stages.image_io import latents_to_pil
 
     decoded_images: Any | None = None
     latents: Any = None
@@ -208,4 +208,3 @@ def _build_common_info(
     if mode_info:
         info.update(dict(mode_info))
     return info
-

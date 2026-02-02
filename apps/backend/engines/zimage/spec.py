@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ZImageTextPipelines` (dataclass): Text processing pipeline bundle for the Z Image engine (currently Qwen3 text).
 - `ZImageEngineRuntime` (dataclass): Runtime container for Z Image engine components, including explicit storage vs compute dtypes per role.
 - `ZImageEngineSpec` (dataclass): Engine specification delegating defaults to `FamilyRuntimeSpec` with optional overrides.
-- `_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling.
+- `_predictor` (function): Builds the flow-match predictor used by the denoiser patcher for Z Image sampling (effective shift / alpha).
 - `_load_external_vae` (function): Loads an external Flow16 VAE from a path (required for core-only; optional override for full checkpoints).
 - `_load_external_text_encoder` (function): Loads an external Qwen3 text encoder from a path (required for core-only; optional override for full checkpoints).
 - `assemble_zimage_runtime` (function): Assembles the runtime (including external assets when required) and returns a `ZImageEngineRuntime`.
@@ -182,7 +182,7 @@ class ZImageEngineSpec:
     
     @property
     def flow_shift(self) -> float:
-        """Flow-match shift (mu) for Z Image Turbo.
+        """Flow-match effective shift (alpha) for Z Image Turbo.
 
         Source of truth is the vendored diffusers scheduler config:
         `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/scheduler/scheduler_config.json`.
@@ -214,8 +214,7 @@ class ZImageEngineSpec:
 def _predictor(spec: ZImageEngineSpec) -> FlowMatchEulerPrediction:
     """Create flow-match predictor for Z Image."""
     logger.debug("Using FlowMatch predictor for Z Image (shift=%.2f)", spec.flow_shift)
-    # Turbo uses linear schedule (shift=1.0); standard models use shift=3.0
-    return FlowMatchEulerPrediction(pseudo_timestep_range=1000, mu=spec.flow_shift)
+    return FlowMatchEulerPrediction(pseudo_timestep_range=1000, shift=spec.flow_shift)
 
 
 def _load_external_vae(vae_path: str | None, *, torch_dtype) -> object:

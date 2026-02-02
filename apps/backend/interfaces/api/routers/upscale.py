@@ -1,0 +1,243 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Upscalers and standalone upscale API routes.
+Exposes:
+- local upscaler discovery (`GET /api/upscalers`)
+- remote curated upscaler listing + downloads (`GET/POST /api/upscalers/*`)
+- standalone upscaling tasks (`POST /api/upscale`)
+
+Symbols (top-level; keep in sync; no ghosts):
+- `build_router` (function): Build the APIRouter for upscaler endpoints.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from uuid import uuid4
+from pathlib import Path
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+
+from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
+from apps.backend.infra.config.paths import get_paths_for
+
+
+_HF_UPSCALERS_REPO_ID = "sangoi-exe/sd-webui-codex"
+_HF_MANIFEST_PATH = "upscalers/manifest.json"
+
+
+def _normalize_hf_repo_id(repo_id: str | None) -> str:
+    repo = str(repo_id or "").strip()
+    if not repo:
+        return _HF_UPSCALERS_REPO_ID
+    if repo != _HF_UPSCALERS_REPO_ID:
+        raise HTTPException(status_code=400, detail=f"repo_id not allowed in v1 (allowed: {_HF_UPSCALERS_REPO_ID})")
+    return repo
+
+
+def _normalize_hf_revision(revision: str | None) -> str | None:
+    rev = str(revision).strip() if isinstance(revision, str) else None
+    return rev or None
+
+
+def _require_explicit_device(payload: Dict[str, Any]) -> str:
+    from apps.backend.runtime.memory import memory_management as mem_management
+
+    raw = payload.get("codex_device") or payload.get("device") or ""
+    dev = str(raw).strip().lower()
+    allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
+    if dev not in allowed:
+        raise HTTPException(status_code=400, detail="Missing or invalid 'device' (cpu|cuda|mps|xpu|directml)")
+    try:
+        mem_management.switch_primary_device(dev)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return dev
+
+
+def _safe_relpath(raw: str) -> str:
+    s = str(raw or "").replace("\\", "/").lstrip("/")
+    if ".." in s.split("/"):
+        raise HTTPException(status_code=400, detail="invalid path")
+    return s
+
+
+def build_router(
+    *,
+    codex_root: Path,
+    opts_get,
+    generation_provenance,
+    save_generated_images,
+) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/api/upscalers")
+    async def get_upscalers() -> Dict[str, Any]:
+        from apps.backend.runtime.vision.upscalers.registry import list_upscalers
+
+        items = [
+            {
+                "id": u.id,
+                "label": u.label,
+                "kind": u.kind.value,
+                "meta": u.meta,
+            }
+            for u in list_upscalers()
+        ]
+        return {"upscalers": items}
+
+    @router.get("/api/upscalers/remote")
+    async def get_remote_upscalers(
+        repo_id: str | None = None,
+        revision: str | None = None,
+    ) -> Dict[str, Any]:
+        # v1: curated allowlist only. The UI can surface "manifest missing" and fall back to raw listing.
+        hf_repo_id = _normalize_hf_repo_id(repo_id)
+        hf_revision = _normalize_hf_revision(revision)
+
+        try:
+            from huggingface_hub import HfApi, hf_hub_download  # type: ignore
+
+            files = HfApi().list_repo_files(repo_id=hf_repo_id, revision=hf_revision)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"failed to query Hugging Face repo: {exc}") from None
+
+        manifest_found = any(isinstance(name, str) and name == _HF_MANIFEST_PATH for name in files)
+        manifest: Any | None = None
+        manifest_error: str | None = None
+        if manifest_found:
+            try:
+                local_path = hf_hub_download(
+                    repo_id=hf_repo_id,
+                    filename=_HF_MANIFEST_PATH,
+                    revision=hf_revision,
+                )
+                with open(local_path, "r", encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+            except Exception as exc:
+                manifest_error = str(exc)
+
+        weights: list[dict[str, Any]] = []
+        for name in files:
+            if not isinstance(name, str):
+                continue
+            if not name.startswith("upscalers/"):
+                continue
+            if not name.lower().endswith((".safetensors", ".pth", ".pt")):
+                continue
+            weights.append({"hf_path": name, "label": name.split("/")[-1]})
+
+        weights.sort(key=lambda x: str(x.get("hf_path", "")).lower())
+        return {
+            "repo_id": hf_repo_id,
+            "revision": hf_revision,
+            "manifest_path": _HF_MANIFEST_PATH,
+            "manifest_found": bool(manifest_found),
+            "manifest_error": manifest_error,
+            "manifest": manifest,
+            "weights": weights,
+        }
+
+    @router.post("/api/upscalers/download")
+    async def download_upscalers(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Payload must be JSON object")
+
+        hf_repo_id = _normalize_hf_repo_id(payload.get("repo_id"))
+        hf_revision = _normalize_hf_revision(payload.get("revision"))
+
+        files = payload.get("files")
+        if not isinstance(files, list) or not files:
+            raise HTTPException(status_code=400, detail="Missing 'files' (list)")
+
+        # Destination root: first configured upscale_models root.
+        roots = get_paths_for("upscale_models")
+        if not roots:
+            raise HTTPException(status_code=400, detail="No 'upscale_models' path configured in apps/paths.json")
+        dst_root = Path(roots[0])
+        dst_root.mkdir(parents=True, exist_ok=True)
+
+        items = []
+        for entry in files:
+            if not isinstance(entry, str) or not entry.strip():
+                raise HTTPException(status_code=400, detail="Invalid file entry")
+            hf_path = _safe_relpath(entry)
+            if not hf_path.startswith("upscalers/"):
+                raise HTTPException(status_code=400, detail="hf_path must be under upscalers/")
+            rel = hf_path[len("upscalers/") :]
+            dst = (dst_root / rel).resolve()
+            # Keep writes within configured root.
+            try:
+                dst.relative_to(dst_root.resolve())
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid destination path") from None
+            items.append({"hf_path": hf_path, "dst_path": str(dst)})
+
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-upscalers-download-{uuid4().hex})"
+        register_task(task_id, entry)
+
+        from apps.backend.interfaces.api.tasks.upscale_tasks import _DownloadItem, run_upscaler_download_task
+
+        dl_items = [_DownloadItem(hf_path=str(x["hf_path"]), dst_path=Path(str(x["dst_path"]))) for x in items]
+        run_upscaler_download_task(
+            task_id=task_id,
+            items=dl_items,
+            entry=entry,
+            hf_repo_id=hf_repo_id,
+            hf_revision=hf_revision,
+        )
+        return {"task_id": task_id}
+
+    @router.post("/api/upscale")
+    async def upscale(
+        image: UploadFile | None = File(default=None),
+        payload: str = Form(default="{}"),
+    ) -> Dict[str, Any]:
+        if image is None:
+            raise HTTPException(status_code=400, detail="Missing 'image' file")
+        try:
+            data = json.loads(payload) if payload else {}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"payload must be JSON: {exc}") from None
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="payload must be JSON object")
+
+        _require_explicit_device(data)
+
+        try:
+            image_bytes = await image.read()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"failed to read upload: {exc}") from None
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="empty image upload")
+
+        loop = asyncio.get_running_loop()
+        entry = TaskEntry(loop)
+        task_id = f"task(api-upscale-{uuid4().hex})"
+        register_task(task_id, entry)
+
+        from apps.backend.interfaces.api.tasks.upscale_tasks import run_upscale_task
+
+        run_upscale_task(
+            task_id=task_id,
+            payload=data,
+            image_bytes=image_bytes,
+            entry=entry,
+            require_explicit_device=_require_explicit_device,
+            opts_get=opts_get,
+            generation_provenance=generation_provenance,
+            save_generated_images=save_generated_images,
+        )
+        return {"task_id": task_id}
+
+    return router

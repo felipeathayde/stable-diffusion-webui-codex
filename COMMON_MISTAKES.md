@@ -100,6 +100,23 @@ Correct command:
 rg -n -- "--core-dtype" apps/backend/infra/config/args.py
 ```
 
+### Using backticks in a double-quoted ripgrep pattern (bash command substitution)
+
+Wrong command:
+```bash
+rg -n "use_cases/restore\\.py|`restore\\.py`" .sangoi/planning/2026-02-01-supir-webui-integration-v1.md
+```
+
+Cause and fix:
+In bash, backticks (`` `...` ``) trigger command substitution even inside double quotes, so the shell tries to execute `restore.py` as a command.
+Use single quotes around the pattern, escape backticks, or just search for the literal without backticks.
+
+Correct command:
+```bash
+rg -n 'use_cases/restore\\.py|`restore\\.py`' .sangoi/planning/2026-02-01-supir-webui-integration-v1.md
+rg -n "restore\\.py" .sangoi/planning/2026-02-01-supir-webui-integration-v1.md
+```
+
 ---
 
 ## Python & virtualenv
@@ -465,11 +482,29 @@ Correct command:
 rg -n 'Validate `dtype` strings' .sangoi/task-logs/2026-01-30-zimage-cleanup.md
 ```
 
+### Inline env var assignments don’t affect `$VAR` expansion (bash)
+
+Wrong command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q
+```
+
+Cause and fix:
+In bash, the `VAR=value cmd ...` form sets environment variables for the command, but **does not** make `$VAR` available for argument expansion on the same line. `$CODEX_ROOT` expands before the assignment takes effect, resulting in paths like `/.venv/bin/python`.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q
+```
+
 ### `ls` with accidental non-ASCII option flags (IME / keyboard layout)
 
 Wrong command:
 ```bash
 ls -<CTRL>Q>a .sangoi/plans | sed -n "1,120p"
+# or (common when copying/pasting): a non-ASCII `-la` variant
+ls -<non-ascii> .sangoi/task-logs | sed -n "1,120p"
 ```
 
 Cause and fix:
@@ -478,4 +513,6 @@ Accidental non-ASCII/control flag characters (e.g., from an IME/keyboard layout)
 Correct command:
 ```bash
 ls -la .sangoi/plans | sed -n "1,120p"
+# same pattern
+ls -la .sangoi/task-logs | sed -n "1,120p"
 ```

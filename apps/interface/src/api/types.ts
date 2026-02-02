@@ -18,7 +18,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `SchedulersResponse` (interface): `/api/schedulers` response shape.
 - `OptionsResponse` (interface): `/api/options` response shape.
 - `OptionsUpdateResponse` (interface): `/api/options` update response shape.
+- `TaskStartResponse` (interface): Start-task response shape (`task_id`) used by multiple endpoints.
 - `Txt2ImgStartResponse` (interface): Start-task response shape (`task_id`).
+- `UpscalerKind` (type): Allowed upscaler kind values (`latent`/`spandrel`).
+- `UpscalerDefinition` (interface): Upscaler entry returned by `/api/upscalers`.
+- `UpscalersResponse` (interface): `/api/upscalers` response shape.
+- `RemoteUpscalerWeight` (interface): Remote HF weight entry for upscalers downloads.
+- `RemoteUpscalersResponse` (interface): `/api/upscalers/remote` response shape (manifest + raw weights fallback).
 - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
 - `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
 - `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
@@ -125,8 +131,38 @@ export interface OptionsUpdateResponse {
   updated: string[]
 }
 
-export interface Txt2ImgStartResponse {
+export interface TaskStartResponse {
   task_id: string
+}
+
+export interface Txt2ImgStartResponse extends TaskStartResponse {}
+
+export type UpscalerKind = 'latent' | 'spandrel'
+
+export interface UpscalerDefinition {
+  id: string
+  label: string
+  kind: UpscalerKind
+  meta: Record<string, unknown>
+}
+
+export interface UpscalersResponse {
+  upscalers: UpscalerDefinition[]
+}
+
+export interface RemoteUpscalerWeight {
+  hf_path: string
+  label: string
+}
+
+export interface RemoteUpscalersResponse {
+  repo_id: string
+  revision: string | null
+  manifest_path: string
+  manifest_found: boolean
+  manifest_error: string | null
+  manifest: unknown | null
+  weights: RemoteUpscalerWeight[]
 }
 
 export interface GeneratedImage {

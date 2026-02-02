@@ -58,5 +58,14 @@
   ],
   "zimage_loras": [
     "models/zimage-loras"
+  ],
+  "supir_models": [
+    "models/supir_models"
+  ],
+  "upscale_models": [
+    "models/upscale_models"
+  ],
+  "latent_upscale_models": [
+    "models/latent_upscale_models"
   ]
 }

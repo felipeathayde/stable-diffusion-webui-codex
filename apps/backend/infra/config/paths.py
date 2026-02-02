@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Load and normalize the `apps/paths.json` backend paths config.
 Provides cached accessors for model asset roots (checkpoints/text encoders/VAEs/LoRAs) and expands repo-relative paths into absolute paths.
+Also provides roots for global modules such as upscalers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_MODEL_DIR_KEYS` (constant): Keys in `apps/paths.json` whose missing repo-relative directories are created best-effort.
@@ -60,6 +61,11 @@ _MODEL_DIR_KEYS: tuple[str, ...] = (
     "zimage_tenc",
     "zimage_vae",
     "zimage_loras",
+    # SUPIR
+    "supir_models",
+    # Upscalers (standalone + hires-fix)
+    "upscale_models",
+    "latent_upscale_models",
 )
 
 

@@ -27,8 +27,8 @@ import torch
 from apps.backend.core.engine_loader import EngineLoadOptions, load_engine as _load_engine
 from apps.backend.runtime.processing.datatypes import ConditioningPayload, PromptContext
 from apps.backend.runtime.processing.models import CodexProcessingTxt2Img, RefinerConfig
-from apps.backend.runtime.workflows.sampling_execute import execute_sampling
-from apps.backend.runtime.workflows.sampling_plan import build_sampling_plan, ensure_sampler_and_rng
+from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
+from apps.backend.runtime.pipeline_stages.sampling_plan import build_sampling_plan, ensure_sampler_and_rng
 
 
 RefinerConditioningFn = Callable[[CodexProcessingTxt2Img, PromptContext], tuple[object, object]]

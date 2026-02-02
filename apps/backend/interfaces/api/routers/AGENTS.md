@@ -18,6 +18,8 @@ Status: Active
 - `apps/backend/interfaces/api/routers/tasks.py` — task status/SSE/output endpoints.
 - `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + file browser endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
+- `apps/backend/interfaces/api/routers/supir.py` — SUPIR enhance endpoints (tasks + model diagnostics).
+- `apps/backend/interfaces/api/routers/upscale.py` — upscalers inventory + remote downloads + standalone upscaling endpoints.
 - `apps/backend/interfaces/api/routers/models.py` also exposes `/api/models/checkpoint-metadata` (UI metadata modal payload for a checkpoint selection).
 
 ## Notes

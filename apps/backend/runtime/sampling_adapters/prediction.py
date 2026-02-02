@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Prediction adapters and helpers (FlowMatch / EDM variants) used by schedulers/samplers.
 Provides prediction modules that transform model outputs into the form expected by different sigma schedules (including FlowMatch Euler),
-plus helper utilities for beta schedules and SNR/sigma rescaling.
+plus helper utilities for beta schedules and SNR/sigma rescaling. This module is Diffusers-free and uses Codex-native flow-shift helpers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `betas_for_alpha_bar` (function): Builds beta schedule from an alpha-bar function (discretized diffusion schedule helper).
@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PredictionContinuousV` (class): Continuous V-prediction implementation (inherits continuous EDM base).
 - `PredictionFlow` (class): Flow prediction implementation (for flow-matching style training/inference).
 - `PredictionDiscreteFlow` (class): Discrete flow prediction implementation.
-- `FlowMatchEulerPrediction` (class): FlowMatch Euler discrete prediction module (used by Flux schedulers; contains nested scheduler mapping).
+- `FlowMatchEulerPrediction` (class): FlowMatch Euler discrete prediction module (supports explicit shift/alpha and seq-len derived shift).
 - `prediction_from_diffusers_scheduler` (function): Builds the appropriate prediction module from a diffusers scheduler instance.
 """
 
@@ -30,7 +30,7 @@ import math
 import torch
 import numpy as np
 
-from diffusers.pipelines.flux.pipeline_flux import calculate_shift
+from apps.backend.runtime.model_registry.flow_shift import calculate_shift
 
 
 def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
@@ -310,23 +310,69 @@ class PredictionDiscreteFlow(AbstractPrediction):
 
 
 class FlowMatchEulerPrediction(AbstractPrediction):
-    def __init__(self, seq_len=4096, base_seq_len=256, max_seq_len=4096, base_shift=0.5, max_shift=1.15, pseudo_timestep_range=10000, mu=None):
+    def __init__(
+        self,
+        seq_len=4096,
+        base_seq_len=256,
+        max_seq_len=4096,
+        base_shift=0.5,
+        max_shift=1.15,
+        pseudo_timestep_range=10000,
+        shift=None,
+        time_shift_type="exponential",
+    ):
         super().__init__(sigma_data=1.0, prediction_type='const')
-        self.mu = mu
+        # Credits: semantics match diffusers FlowMatchEulerDiscreteScheduler (sigma=1) and kohya-ss sd-scripts reference loops.
+        self.mu = None
+        self.shift = None
         self.pseudo_timestep_range = pseudo_timestep_range
-        self.apply_mu_transform(seq_len=seq_len, base_seq_len=base_seq_len, max_seq_len=max_seq_len, base_shift=base_shift, max_shift=max_shift, mu=mu)
+        self.apply_mu_transform(
+            seq_len=seq_len,
+            base_seq_len=base_seq_len,
+            max_seq_len=max_seq_len,
+            base_shift=base_shift,
+            max_shift=max_shift,
+            shift=shift,
+            time_shift_type=time_shift_type,
+        )
 
-    def apply_mu_transform(self, seq_len=4096, base_seq_len=256, max_seq_len=4096, base_shift=0.5, max_shift=1.15, mu=None):
+    def apply_mu_transform(
+        self,
+        seq_len=4096,
+        base_seq_len=256,
+        max_seq_len=4096,
+        base_shift=0.5,
+        max_shift=1.15,
+        shift=None,
+        time_shift_type="exponential",
+    ):
         # TODO: Add an UI option to let user choose whether to call this in each generation to bind latent size to sigmas
         # And some cases may want their own mu values or other parameters
-        if mu is None:
-            self.mu = calculate_shift(image_seq_len=seq_len, base_seq_len=base_seq_len, max_seq_len=max_seq_len, base_shift=base_shift, max_shift=max_shift)
+        if shift is None:
+            mu = calculate_shift(
+                image_seq_len=seq_len,
+                base_seq_len=base_seq_len,
+                max_seq_len=max_seq_len,
+                base_shift=base_shift,
+                max_shift=max_shift,
+            )
+            self.mu = float(mu)
+
+            kind = str(time_shift_type or "exponential").strip().lower()
+            if kind == "linear":
+                self.shift = float(mu)
+            elif kind == "exponential":
+                self.shift = float(math.exp(float(mu)))
+            else:
+                raise ValueError(f"Invalid time_shift_type={time_shift_type!r} (expected 'exponential' or 'linear')")
         else:
-            self.mu = mu
+            self.mu = None
+            self.shift = float(shift)
+        if self.shift <= 0:
+            raise ValueError("shift must be > 0")
         sigmas = torch.arange(1, self.pseudo_timestep_range + 1, 1) / self.pseudo_timestep_range
-        # Apply time_shift formula locally (same as FlowMatchEulerDiscreteScheduler.time_shift)
-        # Formula: mu * t / (1 + (mu - 1) * t) for exponential time shift
-        sigmas = self.mu * sigmas / (1 + (self.mu - 1) * sigmas)
+        # Apply the effective shift (alpha) using the standard rational shift form.
+        sigmas = time_snr_shift(self.shift, sigmas)
         self.register_buffer('sigmas', sigmas)
 
     @property

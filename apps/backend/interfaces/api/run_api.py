@@ -8,7 +8,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: FastAPI entrypoint + uvicorn factory for the Codex WebUI backend.
-This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
+This module builds the `/api/*` surface by assembling router modules (generation/tasks/models/options/tools/ui persistence/upscale/supir), and mounts the built UI as SPA static files after API routes (uses lifespan handlers for startup hooks; no deprecated `on_event`).
 Bootstrap env overrides are published only when non-default to avoid pinning global defaults across test runs.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -48,7 +48,7 @@ from apps.backend.services.output_service import save_generated_images as _save_
 from apps.backend.services.media_service import MediaService
 from apps.backend.services.live_preview_service import LivePreviewService
 from apps.backend.interfaces.api.path_utils import CODEX_ROOT
-from apps.backend.interfaces.api.routers import generation, models, options, paths, settings, system, tasks, tools, ui
+from apps.backend.interfaces.api.routers import generation, models, options, paths, settings, supir, system, tasks, tools, ui, upscale
 from apps.backend.services import options_store
 from apps.backend.infra.config import args as config_args
 from apps.backend.runtime.diagnostics.pipeline_debug import apply_env_flag as _apply_pipeline_debug_flag
@@ -447,6 +447,18 @@ def build_app() -> FastAPI:
     ))
     app.include_router(tasks.build_router(codex_root=CODEX_ROOT, backend_state=backend_state))
     app.include_router(tools.build_router(codex_root=CODEX_ROOT))
+    app.include_router(upscale.build_router(
+        codex_root=CODEX_ROOT,
+        opts_get=_opts_get,
+        generation_provenance=_generation_provenance,
+        save_generated_images=_save_generated_images,
+    ))
+    app.include_router(supir.build_router(
+        codex_root=CODEX_ROOT,
+        opts_get=_opts_get,
+        generation_provenance=_generation_provenance,
+        save_generated_images=_save_generated_images,
+    ))
     app.include_router(generation.build_router(
         codex_root=CODEX_ROOT,
         media=media,

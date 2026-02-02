@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PromptContext` (dataclass): Normalized prompt state after preprocessing (prompts/negatives/loras/controls/metadata).
 - `ConditioningPayload` (dataclass): Conditioning tensors assembled for a generation pass (cond/uncond + extras).
 - `SamplingPlan` (dataclass): Complete specification of a sampling run (sampler/scheduler/steps/seeds/noise settings).
-- `HiResPlan` (dataclass): High-resolution second pass configuration (target size + steps/denoise/cfg).
+- `HiResPlan` (dataclass): High-resolution second pass configuration (target size + upscaler id + steps/denoise/cfg).
 - `InitImageBundle` (dataclass): Inputs derived from an initial image (pixels/latents + optional mask).
 - `AppliedExtra` (dataclass): Record of applied extra network or post-processing effect.
 - `GenerationResult` (dataclass): Outputs and diagnostics from a generation pass (samples/decoded + metadata/applied_extras).
@@ -80,6 +80,7 @@ class HiResPlan:
     enabled: bool
     target_width: int
     target_height: int
+    upscaler_id: str
     steps: int
     denoise: float
     cfg_scale: float | None

@@ -7,7 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
-Contains request parsing, payload validation (including Z-Image Turbo/Base `extras.zimage_variant` and WAN video export options like `video_return_frames`), and delegates image task workers to `apps/backend/interfaces/api/tasks/generation_tasks.py`.
+Contains request parsing and payload validation (including hires tile config via `extras.highres.tile` / `img2img_hr_tile`, Z-Image Turbo/Base
+`extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
+`apps/backend/interfaces/api/tasks/generation_tasks.py`.
+Highres supports sampler/scheduler overrides for the hires pass (txt2img: `extras.highres.sampler` / `extras.highres.scheduler`; img2img: `img2img_hr_sampling` / `img2img_hr_scheduler`).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -65,6 +68,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
+    from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
         unknown = sorted(set(obj.keys()) - allowed)
@@ -303,6 +307,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             refiner_cfg['model'] = str(refiner_raw['model'])
                         if 'vae' in refiner_raw:
                             refiner_cfg['vae'] = str(refiner_raw['vae'])
+                try:
+                    tile_cfg = tile_config_from_payload(highres.get("tile"), context="extras.highres.tile")
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from None
+                tile = {
+                    "tile": int(tile_cfg.tile),
+                    "overlap": int(tile_cfg.overlap),
+                    "fallback_on_oom": bool(tile_cfg.fallback_on_oom),
+                    "min_tile": int(tile_cfg.min_tile),
+                }
                 highres_cfg = {
                     "denoise": float(highres['denoise']),
                     "scale": float(highres['scale']),
@@ -310,6 +324,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "resize_y": _require_int_field(highres, 'resize_y'),
                     "steps": _require_int_field(highres, 'steps', minimum=0),
                     "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
+                    "tile": tile,
                     "checkpoint": highres.get('checkpoint'),
                     "modules": modules_list,
                     "sampler": highres.get('sampler'),
@@ -446,6 +461,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             "denoise": cfg["denoise"],
             "scale": cfg["scale"],
             "upscaler": cfg["upscaler"],
+            "tile": cfg.get("tile"),
             "steps": cfg["steps"],
             "resize_x": cfg["resize_x"],
             "resize_y": cfg["resize_y"],
@@ -965,6 +981,28 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
         if enable_hr:
+            try:
+                hr_tile_cfg = tile_config_from_payload(payload.get("img2img_hr_tile"), context="img2img_hr_tile")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            hr_tile = {
+                "tile": int(hr_tile_cfg.tile),
+                "overlap": int(hr_tile_cfg.overlap),
+                "fallback_on_oom": bool(hr_tile_cfg.fallback_on_oom),
+                "min_tile": int(hr_tile_cfg.min_tile),
+            }
+            hr_sampler_name = payload.get("img2img_hr_sampling")
+            if hr_sampler_name is not None:
+                if not isinstance(hr_sampler_name, str):
+                    raise HTTPException(status_code=400, detail="'img2img_hr_sampling' must be a string")
+                if not hr_sampler_name.strip():
+                    raise HTTPException(status_code=400, detail="'img2img_hr_sampling' must not be empty")
+            hr_scheduler = payload.get("img2img_hr_scheduler")
+            if hr_scheduler is not None:
+                if not isinstance(hr_scheduler, str):
+                    raise HTTPException(status_code=400, detail="'img2img_hr_scheduler' must be a string")
+                if not hr_scheduler.strip():
+                    raise HTTPException(status_code=400, detail="'img2img_hr_scheduler' must not be empty")
             hr_data = {
                 "enable": True,
                 "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
@@ -973,6 +1011,9 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
                 "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
                 "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
+                "tile": hr_tile,
+                "hr_sampler_name": hr_sampler_name.strip() if isinstance(hr_sampler_name, str) and hr_sampler_name.strip() else None,
+                "hr_scheduler": hr_scheduler.strip() if isinstance(hr_scheduler, str) and hr_scheduler.strip() else None,
                 "hr_prompt": payload.get('img2img_hr_prompt', ''),
                 "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
                 "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Local presets store backed by localStorage.
-Persists named parameter snapshots for txt2img/img2img (mode-scoped) and exposes helpers to list, upsert, and retrieve presets.
+Persists named parameter snapshots for txt2img/img2img/upscale (mode-scoped) and exposes helpers to list, upsert, and retrieve presets.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `PresetDef` (interface): Preset definition (name + values object).
@@ -19,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { defineStore } from 'pinia'
 
 type Mode = 'txt2img' | 'img2img'
+  | 'upscale'
 
 export interface PresetDef {
   name: string

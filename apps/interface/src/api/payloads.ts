@@ -15,10 +15,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DEVICE_VALUES` (const): Allowed device tokens for requests.
 - `DeviceEnum` (const): Zod enum built from `DEVICE_VALUES`.
 - `RefinerOptionsSchema` (const): Zod schema for refiner options.
+- `UpscalerTileSchema` (const): Zod schema for upscaler tiling config (tile/overlap + OOM fallback).
 - `HighresOptionsSchema` (const): Zod schema for highres options (including nested refiner).
 - `PromptSchema` (const): Zod schema for prompt validation/normalization.
 - `Txt2ImgRequestSchema` (const): Zod schema for txt2img/img2img request payloads.
 - `Txt2ImgRequest` (type): Inferred request type from `Txt2ImgRequestSchema`.
+- `UpscalerTileFormState` (interface): UI form state for tile config used by upscaler-driven stages.
 - `HighresFormState` (interface): UI form state for highres options.
 - `RefinerFormState` (interface): UI form state for refiner options.
 - `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
@@ -45,6 +47,23 @@ const RefinerOptionsSchema = z
   })
   .strict()
 
+const UpscalerTileSchema = z
+  .object({
+    tile: z.number().int().min(1),
+    overlap: z.number().int().min(0),
+    fallback_on_oom: z.boolean(),
+    min_tile: z.number().int().min(1),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.overlap >= value.tile) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'highres.tile.overlap' must be < tile" })
+    }
+    if (value.fallback_on_oom && value.min_tile > value.tile) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'highres.tile.min_tile' must be <= tile when fallback_on_oom is enabled" })
+    }
+  })
+
 const HighresOptionsSchema = z
   .object({
     enable: z.literal(true),
@@ -53,7 +72,13 @@ const HighresOptionsSchema = z
     resize_x: z.number().int().min(0),
     resize_y: z.number().int().min(0),
     steps: z.number().int().min(0),
-    upscaler: z.string().min(1),
+    upscaler: z
+      .string()
+      .min(1)
+      .refine((value) => value.startsWith('latent:') || value.startsWith('spandrel:'), {
+        message: "highres.upscaler must be an id like 'latent:*' or 'spandrel:*'",
+      }),
+    tile: UpscalerTileSchema.optional(),
     checkpoint: z.string().min(1).optional(),
     modules: z.array(z.string().min(1)).optional(),
     sampler: z.string().min(1).optional(),
@@ -121,6 +146,11 @@ export const Txt2ImgRequestSchema = z
 
 export type Txt2ImgRequest = z.infer<typeof Txt2ImgRequestSchema>
 
+export interface UpscalerTileFormState {
+  tile: number
+  overlap: number
+}
+
 export interface HighresFormState {
   enabled: boolean
   denoise: number
@@ -129,6 +159,7 @@ export interface HighresFormState {
   resizeY: number
   steps: number
   upscaler: string
+  tile: UpscalerTileFormState
   checkpoint?: string
   modules?: string[]
   sampler?: string
@@ -182,8 +213,9 @@ function normalizeDevice(device: string): Txt2ImgRequest['device'] {
   throw new Error(`Unsupported device '${device}'`)
 }
 
-export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
+export function buildTxt2ImgPayload(state: Txt2ImgFormState, opts: { hiresFallbackOnOom?: boolean } = {}): Txt2ImgRequest {
   const isDistilledCfgModel = DISTILLED_CFG_ENGINES.includes(state.engine as typeof DISTILLED_CFG_ENGINES[number])
+  const hiresFallbackOnOom = opts.hiresFallbackOnOom ?? true
   
   const payload: Record<string, unknown> = {
     device: normalizeDevice(state.device),
@@ -237,6 +269,7 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
     batch_count: state.batchCount,
   }
   if (state.highres?.enabled) {
+    const tile = state.highres.tile ?? { tile: 256, overlap: 16 }
     extras.highres = {
       enable: true,
       denoise: state.highres.denoise,
@@ -245,6 +278,12 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState): Txt2ImgRequest {
       resize_y: state.highres.resizeY,
       steps: state.highres.steps,
       upscaler: state.highres.upscaler,
+      tile: {
+        tile: Math.trunc(tile.tile),
+        overlap: Math.trunc(tile.overlap),
+        fallback_on_oom: Boolean(hiresFallbackOnOom),
+        min_tile: 128,
+      },
       checkpoint: state.highres.checkpoint,
       modules: state.highres.modules && state.highres.modules.length > 0 ? state.highres.modules : undefined,
       sampler: state.highres.sampler,

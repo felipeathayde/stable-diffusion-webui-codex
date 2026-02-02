@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Image/latent conversion helpers used by workflow orchestrators.
+Purpose: Image/latent conversion helpers used by pipeline orchestrators.
 Provides small utilities to convert between decoded latent tensors and PIL images, and to decode samples for hi-res stages.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -60,4 +60,3 @@ def maybe_decode_for_hr(processing: Any, samples: torch.Tensor) -> torch.Tensor 
         decoded = decode_latent_batch(processing.sd_model, samples)
         return decoded.to(dtype=torch.float32)
     return None
-

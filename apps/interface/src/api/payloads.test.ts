@@ -30,6 +30,7 @@ describe('buildTxt2ImgPayload', () => {
       sampler: 'euler',
       scheduler: 'karras',
       seed: 42,
+      clipSkip: 0,
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
@@ -40,7 +41,8 @@ describe('buildTxt2ImgPayload', () => {
         resizeX: 0,
         resizeY: 0,
         steps: 10,
-        upscaler: 'Latent (nearest)',
+        upscaler: 'latent:nearest',
+        tile: { tile: 256, overlap: 16 },
         refiner: {
           enabled: true,
           steps: 4,
@@ -66,6 +68,36 @@ describe('buildTxt2ImgPayload', () => {
     expect(payload.extras?.highres?.refiner).toMatchObject({ steps: 4, cfg: 5 })
   })
 
+  it('propagates hiresFallbackOnOom into highres tile config', () => {
+    const payload = buildTxt2ImgPayload({
+      prompt: 'test prompt',
+      negativePrompt: 'neg',
+      width: 512,
+      height: 512,
+      steps: 20,
+      guidanceScale: 7,
+      sampler: 'euler',
+      scheduler: 'karras',
+      seed: 42,
+      clipSkip: 0,
+      batchSize: 1,
+      batchCount: 1,
+      device: 'cuda',
+      highres: {
+        enabled: true,
+        denoise: 0.4,
+        scale: 1.5,
+        resizeX: 0,
+        resizeY: 0,
+        steps: 0,
+        upscaler: 'latent:nearest',
+        tile: { tile: 256, overlap: 16 },
+      },
+    }, { hiresFallbackOnOom: false })
+
+    expect((payload.extras as any)?.highres?.tile?.fallback_on_oom).toBe(false)
+  })
+
   it('uses cfg (not distilled_cfg) for zimage', () => {
     const payload = buildTxt2ImgPayload({
       prompt: 'test prompt',
@@ -77,6 +109,7 @@ describe('buildTxt2ImgPayload', () => {
       sampler: 'euler',
       scheduler: 'simple',
       seed: 42,
+      clipSkip: 0,
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',

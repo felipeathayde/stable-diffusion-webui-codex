@@ -8,13 +8,15 @@ Required Notice: see NOTICE
 
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, runs the sampler loop, and optionally performs a hires second pass.
+The hires pass init is prepared via the global hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
+When configured, the hires second pass applies sampler/scheduler overrides (validated) by deriving a dedicated `SamplingPlan` for the hires pass.
 When smart offload is enabled, keeps the CLIP patcher loaded across cond+uncond so the text encoder is not unloaded/reloaded mid-stage.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
 - `_build_hires_plan` (function): Builds a `HiResPlan` from the processing config (or returns `None` when disabled).
 - `_build_hr_prompt_context` (function): Builds the prompt context used for the hires second pass (supports prompt overrides).
-- `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples.
+- `_run_hires_pass` (function): Runs the hires second pass by reconditioning and resampling from the base samples (init prepared via global hires-fix stage).
 - `_compute_conditioning_payload` (function): Ensure (cond/uncond) conditioning exists for a prompt context.
 - `_generate_kontext_img2img` (function): Flux Kontext img2img implementation (init image as `image_latents`, no denoise schedule).
 - `_derive_seeds` (function): Normalizes seed/subseed inputs from processing config.
@@ -50,27 +52,33 @@ from apps.backend.runtime.processing.datatypes import (
 )
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
 from apps.backend.runtime.text_processing.extra_nets import parse_prompts_with_extras
-from apps.backend.runtime.workflows.image_init import prepare_init_bundle
-from apps.backend.runtime.workflows.image_io import latents_to_pil, pil_to_tensor
-from apps.backend.runtime.workflows.masked_img2img import (
+from apps.backend.runtime.pipeline_stages.image_init import prepare_init_bundle
+from apps.backend.runtime.pipeline_stages.image_io import latents_to_pil, pil_to_tensor
+from apps.backend.runtime.pipeline_stages.hires_fix import (
+    prepare_hires_latents_and_conditioning,
+    start_at_step_from_denoise,
+)
+from apps.backend.runtime.pipeline_stages.masked_img2img import (
     MASK_ENFORCEMENT_PER_STEP_CLAMP,
     MASK_ENFORCEMENT_POST_BLEND,
     apply_inpaint_full_res_composite,
     prepare_masked_img2img_bundle,
 )
-from apps.backend.runtime.workflows.prompt_context import (
+from apps.backend.runtime.pipeline_stages.prompt_context import (
     apply_dimension_overrides,
     apply_prompt_context,
     build_prompt_context,
 )
-from apps.backend.runtime.workflows.sampling_execute import execute_sampling
-from apps.backend.runtime.workflows.sampling_plan import (
+from apps.backend.runtime.pipeline_stages.sampling_execute import execute_sampling
+from apps.backend.runtime.pipeline_stages.sampling_plan import (
     apply_sampling_overrides,
     build_sampling_plan,
     ensure_sampler_and_rng,
+    resolve_sampler_scheduler_override,
 )
-from apps.backend.runtime.workflows.scripts import run_process_scripts
-from apps.backend.runtime.workflows.tiling import apply_tiling_if_requested, finalize_tiling
+from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
+from apps.backend.runtime.pipeline_stages.tiling import apply_tiling_if_requested, finalize_tiling
+from apps.backend.runtime.sampling.driver import CodexSampler
 from PIL import Image
 
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
@@ -286,6 +294,20 @@ def _build_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
         return None
 
     hi_cfg = processing.hires
+    raw_upscaler = getattr(hi_cfg, "upscaler", None)
+    if not isinstance(raw_upscaler, str) or not raw_upscaler.strip():
+        raise ValueError(
+            "Highres is enabled but 'highres.upscaler' is missing. "
+            "Choose an upscaler id from GET /api/upscalers (e.g. 'latent:bicubic-aa')."
+        )
+    upscaler_id = raw_upscaler.strip()
+    from apps.backend.runtime.vision.upscalers.specs import LATENT_UPSCALE_MODES
+
+    if upscaler_id not in LATENT_UPSCALE_MODES and not upscaler_id.startswith("spandrel:"):
+        raise ValueError(
+            f"Invalid 'highres.upscaler': {upscaler_id!r}. "
+            "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
+        )
     target_width = hi_cfg.resize_x or int(processing.width * hi_cfg.scale)
     target_height = hi_cfg.resize_y or int(processing.height * hi_cfg.scale)
     steps = hi_cfg.second_pass_steps or processing.steps
@@ -295,6 +317,7 @@ def _build_hires_plan(processing: CodexProcessingImg2Img) -> HiResPlan | None:
         enabled=True,
         target_width=target_width,
         target_height=target_height,
+        upscaler_id=upscaler_id,
         steps=int(steps),
         denoise=denoise,
         cfg_scale=float(cfg_scale) if cfg_scale is not None else None,
@@ -332,16 +355,17 @@ def _build_hr_prompt_context(
 
 def _run_hires_pass(
     processing: CodexProcessingImg2Img,
+    hires_plan: HiResPlan,
     plan: SamplingPlan,
     payload: ConditioningPayload,
     base_samples: torch.Tensor,
     base_context: PromptContext,
 ) -> torch.Tensor:
     hi_cfg = processing.hires
-    target_width = hi_cfg.resize_x or int(processing.width * hi_cfg.scale)
-    target_height = hi_cfg.resize_y or int(processing.height * hi_cfg.scale)
-    steps = hi_cfg.second_pass_steps or processing.steps
-    denoise = float(hi_cfg.denoise)
+    target_width = int(hires_plan.target_width)
+    target_height = int(hires_plan.target_height)
+    steps = int(hires_plan.steps)
+    denoise = float(hires_plan.denoise)
 
     original = {
         "prompts": processing.prompts,
@@ -351,6 +375,9 @@ def _run_hires_pass(
         "guidance_scale": processing.guidance_scale,
         "steps": processing.steps,
         "denoising_strength": getattr(processing, "denoising_strength", 0.75),
+        "sampler_name": getattr(processing, "sampler_name", None),
+        "scheduler": getattr(processing, "scheduler", None),
+        "sampler": getattr(processing, "sampler", None),
     }
 
     hi_prompt_context = _build_hr_prompt_context(processing, base_context)
@@ -363,19 +390,23 @@ def _run_hires_pass(
     processing.cfg_scale = processing.guidance_scale
     processing.steps = int(steps)
     processing.denoising_strength = denoise
+    hires_sampler, hires_scheduler = resolve_sampler_scheduler_override(
+        base_sampler=str(plan.sampler_name or ""),
+        base_scheduler=str(plan.scheduler_name or ""),
+        sampler_override=getattr(hi_cfg, "sampler_name", None),
+        scheduler_override=getattr(hi_cfg, "scheduler", None),
+    )
+    processing.sampler_name = hires_sampler
+    processing.scheduler = hires_scheduler
+    processing.sampler = CodexSampler(processing.sd_model, algorithm=hires_sampler)
     processing.prepare_prompt_data()
 
-    decoded = decode_latent_batch(processing.sd_model, base_samples)
-    pil_images = latents_to_pil(decoded)
-    upscaled = [img.resize((target_width, target_height), _RESAMPLE_LANCZOS) for img in pil_images]
-    tensor = pil_to_tensor(upscaled)
-    latents = processing.sd_model.encode_first_stage(tensor)
-    image_conditioning = img2img_conditioning(
-        processing.sd_model,
-        tensor,
-        latents,
-        image_mask=getattr(processing, "image_mask", None),
-        round_mask=getattr(processing, "round_image_mask", True),
+    latents, image_conditioning = prepare_hires_latents_and_conditioning(
+        processing,
+        base_samples=base_samples,
+        base_decoded=None,
+        hires_plan=hires_plan,
+        tile=getattr(hi_cfg, "tile", None),
     )
 
     hires_settings = plan.noise_settings
@@ -390,10 +421,12 @@ def _run_hires_pass(
     )
     noise = rng.next().to(latents)
 
-    start_index = max(0, min(int(round(denoise * processing.steps)), processing.steps - 1))
+    start_index = start_at_step_from_denoise(denoise=denoise, steps=int(processing.steps))
 
     hr_plan = replace(
         plan,
+        sampler_name=hires_sampler,
+        scheduler_name=hires_scheduler,
         steps=int(processing.steps),
         guidance_scale=float(processing.guidance_scale),
     )
@@ -420,6 +453,9 @@ def _run_hires_pass(
     processing.cfg_scale = processing.guidance_scale
     processing.steps = original["steps"]
     processing.denoising_strength = original["denoising_strength"]
+    processing.sampler_name = original["sampler_name"]
+    processing.scheduler = original["scheduler"]
+    processing.sampler = original["sampler"]
     processing.prepare_prompt_data()
 
     return samples
@@ -540,12 +576,9 @@ def generate_img2img(
         init_latent = bundle.latents
 
     noise = rng.next().to(init_latent)
-    start_step = max(
-        0,
-        min(
-            int(round(float(getattr(processing, "denoising_strength", 0.5) or 0.5) * plan.steps)),
-            plan.steps - 1,
-        ),
+    start_step = start_at_step_from_denoise(
+        denoise=float(getattr(processing, "denoising_strength", 0.5) or 0.5),
+        steps=int(plan.steps),
     )
 
     tiling_applied, old_tiled = apply_tiling_if_requested(processing, prompt_context.controls)
@@ -580,6 +613,7 @@ def generate_img2img(
 
     hires_samples = _run_hires_pass(
         processing,
+        hires_plan,
         plan,
         payload,
         samples,

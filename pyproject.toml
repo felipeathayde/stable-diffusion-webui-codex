@@ -32,6 +32,8 @@ dependencies = [
   # Imaging / numerics
   "numpy==1.26.4",
   "Pillow==10.4.0",
+  # Upscalers / SR (Spandrel: unified loader/runner for ESRGAN/SwinIR/HAT/DAT/etc)
+  "spandrel==0.4.1",
   # Small pins to keep resolver stable across platforms
   "filelock==3.20.3",
   "packaging==25.0",
@@ -45,6 +47,9 @@ dependencies = [
 [project.optional-dependencies]
 # PyTorch is intentionally optional and selected by install scripts.
 # Pick exactly one: cpu / cu126 / cu128 / cu130 / rocm64.
+dev = [
+  "pytest==8.3.4",
+]
 cpu = [
   "torch==2.9.1; sys_platform == 'darwin'",
   "torchvision==0.24.1; sys_platform == 'darwin'",

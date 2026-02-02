@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Request→processing adapters for txt2img/img2img (highres/refiner/smart flags).
-Builds Codex processing objects from API request DTOs, including Highres/Refiner configs and per-job smart runtime flags used by workflows.
+Builds Codex processing objects from API request DTOs, including Highres/Refiner configs (with hires tile config) and per-job smart runtime
+flags used by workflows.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_build_hires_config` (function): Builds a `CodexHighResConfig` from request payload data (including nested hires refiner).
+- `_build_hires_config` (function): Builds a `CodexHighResConfig` from request payload data (including hires tile config + nested hires refiner).
 - `_build_refiner_config` (function): Builds a `RefinerConfig` from request payload data.
 - `build_txt2img_processing` (function): Converts a `Txt2ImgRequest` into a fully-populated `CodexProcessingTxt2Img`.
 - `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img`.
@@ -28,6 +29,7 @@ from apps.backend.runtime.processing.models import (
     CodexProcessingTxt2Img,
     RefinerConfig,
 )
+from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
 _log = logging.getLogger(__name__)
 
@@ -93,12 +95,14 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
         checkpoint_name = payload.get("checkpoint")
 
     refiner_cfg = _build_refiner_config(payload.get("refiner"), default_cfg=cfg_value)
+    tile_cfg = tile_config_from_payload(payload.get("tile"), context="highres.tile")
 
     return CodexHighResConfig(
         enabled=enabled,
         scale=float(payload.get("scale", 2.0)) if enabled else 1.0,
         denoise=float(payload.get("denoise", default_denoise)) if enabled else 0.0,
         upscaler=payload.get("upscaler") if enabled else None,
+        tile=tile_cfg,
         second_pass_steps=int(payload.get("steps", 0)) if enabled else 0,
         resize_x=int(payload.get("resize_x", 0)) if enabled else 0,
         resize_y=int(payload.get("resize_y", 0)) if enabled else 0,

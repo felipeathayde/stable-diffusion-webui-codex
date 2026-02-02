@@ -26,7 +26,7 @@ from typing import Any, Iterator, Optional
 from apps.backend.core.requests import InferenceEvent, ProgressEvent, ResultEvent, Txt2VidRequest
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.runtime.processing.datatypes import VideoPlan
-from apps.backend.runtime.workflows.video import (
+from apps.backend.runtime.pipeline_stages.video import (
     apply_engine_loras,
     build_video_plan,
     build_video_result,

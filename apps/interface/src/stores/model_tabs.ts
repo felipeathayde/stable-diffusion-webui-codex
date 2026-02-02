@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
-default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas.
+default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. HiRes upscaler values are stable ids
+(`latent:*` / `spandrel:*`) for hires-fix wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -232,7 +233,8 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     resizeX: 0,
     resizeY: 0,
     steps: 0,
-    upscaler: 'Use same upscaler',
+    upscaler: 'latent:bicubic-aa',
+    tile: { tile: 256, overlap: 16 },
     checkpoint: undefined,
     modules: [],
     sampler: undefined,
@@ -313,6 +315,9 @@ function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string,
     merged.highres = { ...(d.highres || {}), ...(p.highres || {}) }
     if ((d.highres as any).refiner && typeof (d.highres as any).refiner === 'object') {
       ;(merged.highres as any).refiner = { ...((d.highres as any).refiner || {}), ...((p.highres as any)?.refiner || {}) }
+    }
+    if ((d.highres as any).tile && typeof (d.highres as any).tile === 'object') {
+      ;(merged.highres as any).tile = { ...((d.highres as any).tile || {}), ...((p.highres as any)?.tile || {}) }
     }
   }
   if (d.refiner && typeof d.refiner === 'object') {

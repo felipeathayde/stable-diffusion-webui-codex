@@ -13,6 +13,7 @@ Status: Active
 - `apps/interface/src/components/ui/SliderField.vue` — Shared slider layout (label left, input right, slider below).
 - `apps/interface/src/components/ui/NumberStepperInput.vue` — Numeric input with optional +/- stepper controls.
 - `apps/interface/src/components/ui/DimensionPresetsGrid.vue` — Resolution preset buttons (2×2 grid), used by `BasicParametersCard.vue`.
+- `apps/interface/src/components/ui/UpscalerTileControls.vue` — Tile presets + overlap + explicit OOM fallback toggle (shared by hires-fix + `/upscale`).
 - `apps/interface/src/components/ui/JsonTreeView.vue` — Collapsible JSON renderer used by the metadata modal (`<details>/<summary>` tree).
 - `apps/interface/src/components/ui/Dropzone.vue` — Drag-and-drop file picker primitive (presentational; emits `select`/`rejected`).
 

@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Script hooks + extra network activation for workflow orchestration.
+Purpose: Script hooks + extra network activation for pipeline orchestration.
 Keeps processing-level script callbacks and LoRA selection application isolated from sampler execution logic.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -121,4 +121,3 @@ def run_post_sample_hooks(processing: Any, samples: torch.Tensor) -> torch.Tenso
     args = _Args(samples)
     script_runner.post_sample(processing, args)
     return getattr(args, "samples", samples)
-

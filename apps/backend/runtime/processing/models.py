@@ -13,7 +13,7 @@ per-batch runs have consistent lengths.
 Symbols (top-level; keep in sync; no ghosts):
 - `_repeat_to_length` (function): Expands/truncates a sequence to a target length (used for per-batch list normalization).
 - `RefinerConfig` (dataclass): Refiner stage configuration (enabled/steps/cfg/seed + model/vae overrides) with override serialization.
-- `CodexHighResConfig` (dataclass): Hi-res fix configuration (target scale/steps/denoise + latent settings) with override serialization.
+- `CodexHighResConfig` (dataclass): Hi-res fix configuration (target scale/steps/denoise + upscaler tile config) with override serialization.
 - `CodexProcessingBase` (dataclass): Shared processing fields for image generation runs (prompt/negative/seed/steps/cfg/dims + hi-res/refiner).
 - `CodexProcessingTxt2Img` (dataclass): Txt2img processing container (extends base with txt2img-specific fields).
 - `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength and related fields).
@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import logging
 import math
+
+from apps.backend.runtime.vision.upscalers.specs import TileConfig, default_tile_config, tile_config_from_payload
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ class CodexHighResConfig:
     scale: float = 1.0
     denoise: float = 0.0
     upscaler: Optional[str] = None
+    tile: TileConfig = field(default_factory=default_tile_config)
     second_pass_steps: int = 0
     resize_x: int = 0
     resize_y: int = 0
@@ -101,6 +104,12 @@ class CodexHighResConfig:
             "scale": self.scale,
             "denoise": self.denoise,
             "upscaler": self.upscaler,
+            "tile": {
+                "tile": int(self.tile.tile),
+                "overlap": int(self.tile.overlap),
+                "fallback_on_oom": bool(self.tile.fallback_on_oom),
+                "min_tile": int(self.tile.min_tile),
+            },
             "second_pass_steps": self.second_pass_steps,
             "resize_x": self.resize_x,
             "resize_y": self.resize_y,
@@ -122,6 +131,8 @@ class CodexHighResConfig:
         self.scale = float(payload.get("scale", self.scale))
         self.denoise = float(payload.get("denoise", self.denoise))
         self.upscaler = payload.get("upscaler", self.upscaler)
+        if "tile" in payload:
+            self.tile = tile_config_from_payload(payload.get("tile"), context="highres.tile")
         self.second_pass_steps = int(payload.get("second_pass_steps", self.second_pass_steps))
         self.resize_x = int(payload.get("resize_x", self.resize_x))
         self.resize_y = int(payload.get("resize_y", self.resize_y))

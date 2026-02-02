@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Prompt parsing and prompt-derived overrides for workflow processing objects.
+Purpose: Prompt parsing and prompt-derived overrides for pipeline processing objects.
 Builds a `PromptContext` (cleaned prompts, negative prompts, LoRA tags, controls) and applies it onto a processing object.
 
 Symbols (top-level; keep in sync; no ghosts):

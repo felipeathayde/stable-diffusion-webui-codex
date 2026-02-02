@@ -14,7 +14,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanTextPipelines` (dataclass): Text processing pipelines for WAN (T5 only; no CLIP).
 - `WanEngineRuntime` (dataclass): Runtime container for WAN components (VAE, denoiser patcher, text pipelines, device/dtype).
 - `WanEngineSpec` (dataclass): Engine spec wrapper that delegates defaults to `FamilyRuntimeSpec` with per-variant overrides.
-- `_predictor` (function): Builds the WAN flow predictor configured from the spec.
+- `_predictor` (function): Builds the WAN flow predictor configured from the spec (effective shift / alpha).
 - `assemble_wan_runtime` (function): Assembles a `WanEngineRuntime` from a model family spec + loaded components.
 """
 
@@ -75,7 +75,7 @@ class WanEngineSpec:
     
     @property
     def flow_shift(self) -> float:
-        """Flow-match shift (mu).
+        """Flow-match effective shift (alpha).
 
         Source of truth is the WAN diffusers `scheduler/scheduler_config.json` shipped
         with the official repos (vendored under `apps/backend/huggingface/Wan-AI/**`).
@@ -133,7 +133,7 @@ def _predictor(spec: WanEngineSpec) -> FlowMatchEulerPrediction:
     """Create flow-match prediction for WAN."""
     logger.debug("Using FlowMatch predictor for WAN %s (shift=%.2f)", spec.name, spec.flow_shift)
     return FlowMatchEulerPrediction(
-        mu=spec.flow_shift,
+        shift=spec.flow_shift,
     )
 
 

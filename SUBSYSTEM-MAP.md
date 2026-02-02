@@ -97,6 +97,20 @@ Generation tasks (async; return `{task_id}`):
 - `POST /api/img2vid`
 - `POST /api/vid2vid`
 
+Upscale tasks (async; return `{task_id}`):
+- `POST /api/upscale`
+- `POST /api/upscalers/download`
+
+SUPIR tasks (async; return `{task_id}`):
+- `POST /api/supir/enhance`
+
+SUPIR diagnostics:
+- `GET /api/supir/models`
+
+Upscalers:
+- `GET /api/upscalers`
+- `GET /api/upscalers/remote`
+
 Task lifecycle + streaming (SSE):
 - `GET /api/tasks/{task_id}`
 - `GET /api/tasks/{task_id}/events`

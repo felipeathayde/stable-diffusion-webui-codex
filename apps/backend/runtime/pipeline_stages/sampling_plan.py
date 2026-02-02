@@ -6,11 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Sampling plan construction helpers for workflow orchestration.
+Purpose: Sampling plan construction helpers for pipeline orchestration.
 Validates sampler/scheduler selection, resolves noise settings, builds/overrides a `SamplingPlan`, and prepares the sampler + RNG.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_normalize_scheduler_name` (function): Validate a scheduler name for the given sampler.
+- `resolve_sampler_scheduler_override` (function): Resolve sampler/scheduler for a derived plan (e.g., hires pass) with override semantics.
 - `resolve_noise_settings` (function): Derive `NoiseSettings` for a run from processing overrides and env.
 - `build_sampling_plan` (function): Build a `SamplingPlan` from processing state and explicit seeds/subseeds.
 - `apply_sampling_overrides` (function): Apply prompt-derived overrides to a `SamplingPlan` (and reflect them into processing state).
@@ -43,6 +44,44 @@ def _normalize_scheduler_name(sampler: str, scheduler: str) -> str:
     if not spec.is_supported_scheduler(canonical_enum.value):
         raise ValueError(f"Scheduler '{scheduler}' is not supported for sampler '{sampler}'")
     return canonical_enum.value
+
+
+def resolve_sampler_scheduler_override(
+    *,
+    base_sampler: str,
+    base_scheduler: str,
+    sampler_override: str | None,
+    scheduler_override: str | None,
+) -> tuple[str, str]:
+    """Resolve sampler/scheduler selection for a derived sampling plan (e.g., hires pass).
+
+    Semantics:
+    - If `sampler_override` is set, it becomes the sampler for the derived plan.
+      - If `scheduler_override` is NOT set, the scheduler defaults to the sampler's default scheduler.
+    - If only `scheduler_override` is set, it is validated against the base sampler.
+    - If neither override is set, base sampler/scheduler are kept.
+    """
+
+    base_sampler_value = str(base_sampler or "").strip()
+    base_scheduler_value = str(base_scheduler or "").strip()
+    if not base_sampler_value:
+        raise ValueError("base_sampler must be a non-empty sampler name")
+    if not base_scheduler_value:
+        raise ValueError("base_scheduler must be a non-empty scheduler name")
+
+    sampler_override_value = str(sampler_override).strip() if isinstance(sampler_override, str) else ""
+    scheduler_override_value = str(scheduler_override).strip() if isinstance(scheduler_override, str) else ""
+
+    sampler_name = sampler_override_value or base_sampler_value
+    if scheduler_override_value:
+        scheduler_name = scheduler_override_value
+    elif sampler_override_value:
+        scheduler_name = get_sampler_spec(sampler_name).default_scheduler
+    else:
+        scheduler_name = base_scheduler_value
+
+    normalized_scheduler = _normalize_scheduler_name(sampler_name, scheduler_name)
+    return sampler_name, normalized_scheduler
 
 
 def resolve_noise_settings(processing: Any) -> NoiseSettings:

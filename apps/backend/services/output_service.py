@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Best-effort persistence of generated images to disk.
 Saves PNG samples under `CODEX_ROOT/output/<task>/<YYYY-MM-DD>/` with seed-aware filenames and optional PNG metadata, without breaking inference on errors.
+Supports image-producing tasks (`txt2img`, `img2img`, `upscale`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_LOGGER` (constant): Module logger used for best-effort persistence warnings.
@@ -120,7 +121,7 @@ def save_generated_images(
         if not images_list:
             return saved
 
-        if task not in {TaskType.TXT2IMG, TaskType.IMG2IMG}:
+        if task not in {TaskType.TXT2IMG, TaskType.IMG2IMG, TaskType.UPSCALE}:
             return saved
 
         root = get_repo_root() / "output"

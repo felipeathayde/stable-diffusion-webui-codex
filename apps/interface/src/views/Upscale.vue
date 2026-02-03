@@ -9,7 +9,10 @@ Required Notice: see NOTICE
 Purpose: Upscale route view.
 Standalone upscaling workspace (Spandrel SR) with tile controls, explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
 Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight upscale tasks after reload (SSE replay via `after` / `lastEventId`).
-Surfaces the backend upscaler safeweights mode (`CODEX_SAFE_WEIGHTS`) in the remote download modal.
+The remote download modal:
+- surfaces backend safeweights mode (`CODEX_SAFE_WEIGHTS`) and allowed suffixes,
+- shows manifest issues explicitly, and
+- splits remote weights into Curated (manifest metadata) vs Other files (raw listing), with raw manifest JSON behind a hamburger (Advanced) action.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Upscale` (component): Upscale route view component.
@@ -156,6 +159,18 @@ Symbols (top-level; keep in sync; no ghosts):
         <button class="btn btn-sm btn-outline" type="button" :disabled="remoteLoading || downloadBusy || !remoteSelected.size" @click="clearRemoteSelection">
           Clear
         </button>
+        <button
+          class="btn-icon"
+          type="button"
+          :disabled="remoteLoading || downloadBusy || !remote?.manifest"
+          aria-label="Raw manifest JSON"
+          title="Raw manifest JSON"
+          @click="openRawManifest"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7H20M4 12H20M4 17H20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
 
       <p v-if="remoteError" class="caption">Error: {{ remoteError }}</p>
@@ -167,25 +182,71 @@ Symbols (top-level; keep in sync; no ghosts):
           <span v-else-if="remote.safeweights_enabled"> (allowed: .safetensors)</span>
           <span v-else> (allowed: .safetensors, .pt, .pth)</span>
         </p>
-        <p v-if="remote.manifest_found && remote.manifest_error" class="caption">Manifest error: {{ remote.manifest_error }}</p>
-        <p v-else-if="!remote.manifest_found" class="caption">Manifest not found; falling back to raw `upscalers/**` weight listing.</p>
-
-        <details v-if="remote.manifest" class="accordion">
-          <summary>Manifest</summary>
+        <p v-if="remote.manifest_found && remote.manifest_error" class="caption">
+          Manifest issues: {{ remote.manifest_error }}
+        </p>
+        <details v-if="remote.manifest_found && remote.manifest_errors?.length" class="accordion">
+          <summary>Manifest issues (details)</summary>
           <div class="accordion-body">
-            <JsonTreeView :value="remote.manifest" :default-open-depth="1" :max-depth="12" />
+            <ul class="caption">
+              <li v-for="(e, idx) in remote.manifest_errors" :key="idx">{{ e }}</li>
+            </ul>
           </div>
         </details>
+        <p v-else-if="!remote.manifest_found" class="caption">
+          Manifest not found; showing raw `upscalers/**` listing (no metadata).
+        </p>
 
         <div class="panel-section">
-          <label class="label-muted">Weights</label>
-          <div v-if="remoteSelectable.length" class="form-grid">
-            <label v-for="w in remoteSelectable" :key="w.hf_path" class="toolbar">
-              <input type="checkbox" :checked="remoteSelected.has(w.hf_path)" :disabled="downloadBusy" @change="toggleRemote(w.hf_path, ($event.target as HTMLInputElement).checked)" />
-              <span class="caption">{{ w.label }}</span>
-            </label>
+          <label class="label-muted">Curated (manifest)</label>
+          <div v-if="curatedRemoteWeights.length" class="form-grid">
+            <div v-for="(w, idx) in curatedRemoteWeights" :key="w.hf_path" class="form-row">
+              <div class="toolbar">
+                <input
+                  :id="`remote-curated-${idx}`"
+                  type="checkbox"
+                  :checked="remoteSelected.has(w.hf_path)"
+                  :disabled="downloadBusy"
+                  @change="toggleRemote(w.hf_path, ($event.target as HTMLInputElement).checked)"
+                />
+                <label class="caption" :for="`remote-curated-${idx}`">{{ w.label }}</label>
+              </div>
+              <p class="caption">
+                Arch: <strong>{{ w.meta.arch }}</strong> · Scale: <strong>{{ w.meta.scale }}×</strong>
+              </p>
+              <p class="caption">
+                License:
+                <a :href="w.meta.license_url" target="_blank" rel="noreferrer">{{ w.meta.license_name }}</a>
+                <span v-if="w.meta.license_spdx"> ({{ w.meta.license_spdx }})</span>
+              </p>
+              <p class="caption">SHA256: <code>{{ w.meta.sha256 }}</code></p>
+              <p v-if="w.meta.tags?.length" class="caption">Tags: {{ w.meta.tags.join(', ') }}</p>
+              <p v-if="w.meta.notes" class="caption">Notes: {{ w.meta.notes }}</p>
+              <p class="caption">HF path: <code>{{ w.hf_path }}</code></p>
+            </div>
           </div>
-          <p v-else class="caption">No weights found in the remote repo.</p>
+          <p v-else class="caption">No curated weights available.</p>
+        </div>
+
+        <div class="panel-section">
+          <label class="label-muted">Other files</label>
+          <div v-if="otherRemoteWeights.length" class="form-grid">
+            <div v-for="(w, idx) in otherRemoteWeights" :key="w.hf_path" class="form-row">
+              <div class="toolbar">
+                <input
+                  :id="`remote-other-${idx}`"
+                  type="checkbox"
+                  :checked="remoteSelected.has(w.hf_path)"
+                  :disabled="downloadBusy"
+                  @change="toggleRemote(w.hf_path, ($event.target as HTMLInputElement).checked)"
+                />
+                <label class="caption" :for="`remote-other-${idx}`">{{ w.label }}</label>
+              </div>
+              <p class="caption">HF path: <code>{{ w.hf_path }}</code></p>
+              <p class="caption">No manifest metadata for this file.</p>
+            </div>
+          </div>
+          <p v-else class="caption">No other weights found in the remote repo.</p>
         </div>
 
         <div class="panel-section">
@@ -201,12 +262,26 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
     </div>
   </Modal>
+
+  <Modal title="Upscalers manifest (raw)" v-model="rawManifestModalOpen">
+    <div v-if="!remote?.manifest" class="card text-sm">
+      No manifest JSON available (missing or invalid).
+    </div>
+
+    <div v-else class="card text-sm cdx-json-scroll">
+      <JsonTreeView :value="remote.manifest" :default-open-depth="1" :max-depth="12" />
+    </div>
+
+    <template #footer>
+      <button class="btn btn-md btn-outline" type="button" @click="rawManifestModalOpen = false">Close</button>
+    </template>
+  </Modal>
 </template>
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { GeneratedImage, RemoteUpscalersResponse, TaskEvent } from '../api/types'
+import type { GeneratedImage, RemoteUpscalerWeight, RemoteUpscalersResponse, TaskEvent } from '../api/types'
 import {
   cancelTask,
   downloadUpscalers,
@@ -393,6 +468,7 @@ const remote = ref<RemoteUpscalersResponse | null>(null)
 const remoteLoading = ref(false)
 const remoteError = ref('')
 const remoteSelected = ref<Set<string>>(new Set())
+const rawManifestModalOpen = ref(false)
 const downloadBusy = ref(false)
 const downloadProgress = ref<{ stage: string; percent: number | null; step: number | null; totalSteps: number | null } | null>(null)
 const downloadError = ref('')
@@ -415,7 +491,14 @@ const statusLine = computed(() => {
   return parts.join(' · ')
 })
 
-const remoteSelectable = computed(() => remote.value?.weights ?? [])
+const remoteSelectable = computed<RemoteUpscalerWeight[]>(() => remote.value?.weights ?? [])
+
+function isCuratedRemoteWeight(w: RemoteUpscalerWeight): w is Extract<RemoteUpscalerWeight, { curated: true }> {
+  return w.curated
+}
+
+const curatedRemoteWeights = computed(() => remoteSelectable.value.filter(isCuratedRemoteWeight))
+const otherRemoteWeights = computed(() => remoteSelectable.value.filter((w) => !w.curated))
 
 const downloadStatusLine = computed(() => {
   const p = downloadProgress.value
@@ -683,6 +766,11 @@ function download(image: GeneratedImage, index: number): void {
 
 function openRemoteModal(): void {
   remoteModalOpen.value = true
+}
+
+function openRawManifest(): void {
+  if (!remote.value?.manifest) return
+  rawManifestModalOpen.value = true
 }
 
 async function refreshRemote(): Promise<void> {

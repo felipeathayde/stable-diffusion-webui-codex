@@ -517,6 +517,22 @@ CODEX_ROOT="$(git rev-parse --show-toplevel)"
 PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q
 ```
 
+### Backticks inside `rg` patterns trigger command substitution (bash)
+
+Wrong command:
+```bash
+rg -n "^### `/api/upscalers/download`" -n .sangoi/reference/models/upscalers-hf-manifest-v1.md
+```
+
+Cause and fix:
+In bash, backticks (`` `...` ``) run **command substitution**. The shell tries to execute `/api/upscalers/download` as a command before `rg` runs.
+Wrap the pattern in single quotes (or escape the backticks) so the backticks are treated literally.
+
+Correct command:
+```bash
+rg -n '^### `/api/upscalers/download`' .sangoi/reference/models/upscalers-hf-manifest-v1.md
+```
+
 ### `ls` with accidental non-ASCII option flags (IME / keyboard layout)
 
 Wrong command:

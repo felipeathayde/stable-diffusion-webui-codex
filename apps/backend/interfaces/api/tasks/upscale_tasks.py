@@ -10,6 +10,8 @@ Purpose: Task orchestration helpers for upscaler endpoints.
 Keeps `/api/upscale` and `/api/upscalers/download` routers thin by centralizing the worker boilerplate:
 status/progress/result/end/error + cancellation checks.
 Uses the shared inference gate for the upscale worker when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished`.
+The upscalers download task verifies file integrity against the HF manifest (`upscalers/manifest.json`, schema v1) when available,
+and returns a per-destination `sha256_by_path` mapping in the task result `info` payload.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_upscale_task` (function): Runs an upscale task worker (single-image v1).
@@ -19,23 +21,64 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 import io
+import json
+import hashlib
 import logging
 import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from uuid import uuid4
 
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
 from apps.backend.interfaces.api.task_registry import TaskEntry
 
 logger = logging.getLogger("backend.api.tasks.upscale")
 
+_HF_MANIFEST_PATH = "upscalers/manifest.json"
+
 
 @dataclass(slots=True)
 class _DownloadItem:
     hf_path: str
     dst_path: Path
+
+
+def _copy_to_dst_atomic_and_hash_sha256(
+    *,
+    src: Path,
+    dst: Path,
+    expected_sha256: str | None,
+    label: str,
+) -> str:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        raise RuntimeError(f"Destination exists: {dst}")
+
+    tmp = dst.with_name(f".{dst.name}.tmp-{uuid4().hex}")
+    try:
+        digest = hashlib.sha256()
+        with src.open("rb") as src_handle, tmp.open("xb") as dst_handle:
+            for chunk in iter(lambda: src_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+                dst_handle.write(chunk)
+        sha256 = digest.hexdigest()
+        if expected_sha256 and sha256.lower() != str(expected_sha256).strip().lower():
+            raise RuntimeError(f"SHA256 mismatch for {label}: expected {expected_sha256}, got {sha256}")
+        shutil.copystat(src, tmp)
+        tmp.replace(dst)
+        return sha256
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            dst.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
 
 
 def run_upscale_task(
@@ -158,6 +201,7 @@ def run_upscaler_download_task(
 
     def worker() -> None:
         success = False
+        written_paths: list[Path] = []
         try:
             push({"type": "status", "stage": "running"})
 
@@ -165,7 +209,30 @@ def run_upscaler_download_task(
 
             total = len(items)
             completed = 0
-            written: list[str] = []
+            sha256_by_path: dict[str, str] = {}
+
+            expected_sha256_by_hf_path: dict[str, str] = {}
+            manifest_errors: list[str] = []
+            try:
+                local_manifest = hf_hub_download(
+                    repo_id=hf_repo_id,
+                    filename=_HF_MANIFEST_PATH,
+                    revision=hf_revision,
+                )
+                with open(local_manifest, "r", encoding="utf-8") as handle:
+                    raw_manifest = json.load(handle)
+                from apps.backend.interfaces.api.upscalers_manifest import validate_upscalers_manifest
+
+                result = validate_upscalers_manifest(raw_manifest)
+                manifest_errors = list(result.errors or [])
+                expected_sha256_by_hf_path = {
+                    str(hf_path): str(meta.get("sha256"))
+                    for hf_path, meta in (result.weights_by_hf_path or {}).items()
+                    if isinstance(hf_path, str) and isinstance(meta, dict) and isinstance(meta.get("sha256"), str) and meta.get("sha256")
+                }
+            except Exception as exc:
+                manifest_errors = [f"manifest unavailable: {exc}"]
+                expected_sha256_by_hf_path = {}
 
             for item in items:
                 if entry.cancel_requested and entry.cancel_mode == "immediate":
@@ -188,11 +255,17 @@ def run_upscaler_download_task(
                     filename=item.hf_path,
                     revision=hf_revision,
                 )
-                item.dst_path.parent.mkdir(parents=True, exist_ok=True)
-                if item.dst_path.exists():
-                    raise RuntimeError(f"Destination exists: {item.dst_path}")
-                shutil.copy2(local_tmp, item.dst_path)
-                written.append(str(item.dst_path))
+                src_path = Path(str(local_tmp)).resolve()
+                dst_path = item.dst_path
+
+                expected = expected_sha256_by_hf_path.get(item.hf_path)
+                sha256_by_path[str(dst_path)] = _copy_to_dst_atomic_and_hash_sha256(
+                    src=src_path,
+                    dst=dst_path,
+                    expected_sha256=expected,
+                    label=item.hf_path,
+                )
+                written_paths.append(dst_path)
 
             try:
                 from apps.backend.runtime.vision.upscalers.registry import invalidate_upscalers_cache
@@ -201,10 +274,19 @@ def run_upscaler_download_task(
             except Exception:
                 pass
 
-            result = {"files": written}
+            result = {
+                "files": [str(p) for p in written_paths],
+                "sha256_by_path": sha256_by_path,
+                "manifest_errors": manifest_errors,
+            }
             entry.result = {"status": "completed", "result": {"images": [], "info": result}}
             success = True
         except Exception as err:  # pragma: no cover
+            for path in written_paths:
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception:
+                    pass
             entry.error = str(err)
             success = False
         finally:

@@ -2,7 +2,7 @@
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
 Owner: Backend API Maintainers
-Last Review: 2026-01-26
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -25,6 +25,7 @@ Status: Active
 - `apps/backend/interfaces/api/task_registry.py` — in-process task registry (SSE queue + cancel flags).
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — shared generation task worker helpers (image task runners + engine options + PNG encoding).
 - `apps/backend/interfaces/api/serializers.py` — checkpoint serialization helper.
+- `apps/backend/interfaces/api/upscalers_manifest.py` — `upscalers/manifest.json` schema validation/normalization (used by `/api/upscalers/remote`).
 
 ## Notes
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.

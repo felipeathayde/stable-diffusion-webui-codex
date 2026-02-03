@@ -23,7 +23,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `UpscalerKind` (type): Allowed upscaler kind values (`latent`/`spandrel`).
 - `UpscalerDefinition` (interface): Upscaler entry returned by `/api/upscalers`.
 - `UpscalersResponse` (interface): `/api/upscalers` response shape.
-- `RemoteUpscalerWeight` (interface): Remote HF weight entry for upscalers downloads.
+- `UpscalersHfManifestV1` (interface): Canonical schema for `upscalers/manifest.json` (HF curated metadata).
+- `UpscalersHfManifestV1Weight` (interface): One HF manifest weight entry.
+- `RemoteUpscalerWeight` (type): Remote HF weight entry (either raw listing or curated + metadata).
 - `RemoteUpscalersResponse` (interface): `/api/upscalers/remote` response shape (manifest + raw weights fallback).
 - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
 - `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/events` (supports replay via `id:` / `after` and emits `gap` on truncation).
@@ -150,10 +152,50 @@ export interface UpscalersResponse {
   upscalers: UpscalerDefinition[]
 }
 
-export interface RemoteUpscalerWeight {
+export interface UpscalersHfManifestV1Weight {
+  id: string
   hf_path: string
   label: string
+  arch: string
+  scale: number
+  license_name: string
+  license_url: string
+  license_spdx: string | null
+  sha256: string
+  tags: string[]
+  notes: string | null
 }
+
+export interface UpscalersHfManifestV1 {
+  schema_version: 1
+  weights: UpscalersHfManifestV1Weight[]
+}
+
+export interface RemoteUpscalerWeightMeta {
+  id: string
+  arch: string
+  scale: number
+  license_name: string
+  license_url: string
+  license_spdx: string | null
+  sha256: string
+  tags: string[]
+  notes: string | null
+}
+
+export type RemoteUpscalerWeight =
+  | {
+      hf_path: string
+      label: string
+      curated: false
+      meta: null
+    }
+  | {
+      hf_path: string
+      label: string
+      curated: true
+      meta: RemoteUpscalerWeightMeta
+    }
 
 export interface RemoteUpscalersResponse {
   repo_id: string
@@ -161,7 +203,8 @@ export interface RemoteUpscalersResponse {
   manifest_path: string
   manifest_found: boolean
   manifest_error: string | null
-  manifest: unknown | null
+  manifest_errors: string[]
+  manifest: UpscalersHfManifestV1 | null
   weights: RemoteUpscalerWeight[]
   safeweights_enabled: boolean
   allowed_weight_suffixes: string[]

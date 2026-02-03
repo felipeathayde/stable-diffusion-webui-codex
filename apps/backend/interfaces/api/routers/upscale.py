@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Upscalers and standalone upscale API routes.
 Exposes:
 - local upscaler discovery (`GET /api/upscalers`)
-- remote curated upscaler listing + downloads (`GET/POST /api/upscalers/*`)
+- remote HF upscaler listing + downloads (`GET/POST /api/upscalers/*`), with optional manifest-based metadata enrichment
+  (`upscalers/manifest.json`, schema v1) and explicit `manifest_error`/`manifest_errors` surfacing
 - standalone upscaling tasks (`POST /api/upscale`)
 Remote listing/download respects the upscaler safeweights policy (`CODEX_SAFE_WEIGHTS=1` blocks non-`.safetensors` weights).
 
@@ -30,6 +31,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.interfaces.api.device_selection import parse_device_from_payload
+from apps.backend.interfaces.api.upscalers_manifest import validate_upscalers_manifest
 from apps.backend.runtime.vision.upscalers.safeweights import allowed_upscaler_weight_suffixes, safeweights_enabled
 
 
@@ -98,7 +100,8 @@ def build_router(
         repo_id: str | None = None,
         revision: str | None = None,
     ) -> Dict[str, Any]:
-        # v1: curated allowlist only. The UI can surface "manifest missing" and fall back to raw listing.
+        # v1: manifest is a plus. Always return the raw `upscalers/**` listing (suffix-filtered) and enrich it when the
+        # manifest is present/valid.
         hf_repo_id = _normalize_hf_repo_id(repo_id)
         hf_revision = _normalize_hf_revision(revision)
 
@@ -112,6 +115,8 @@ def build_router(
         manifest_found = any(isinstance(name, str) and name == _HF_MANIFEST_PATH for name in files)
         manifest: Any | None = None
         manifest_error: str | None = None
+        manifest_errors: list[str] = []
+        manifest_weights_by_hf_path: dict[str, dict[str, Any]] = {}
         if manifest_found:
             try:
                 local_path = hf_hub_download(
@@ -120,9 +125,21 @@ def build_router(
                     revision=hf_revision,
                 )
                 with open(local_path, "r", encoding="utf-8") as handle:
-                    manifest = json.load(handle)
+                    raw_manifest = json.load(handle)
+                result = validate_upscalers_manifest(raw_manifest)
+                manifest = result.manifest
+                manifest_errors = list(result.errors or [])
+                manifest_weights_by_hf_path = dict(result.weights_by_hf_path or {})
+                if manifest_errors:
+                    manifest_error = (
+                        manifest_errors[0]
+                        if len(manifest_errors) == 1
+                        else f"{manifest_errors[0]} (+{len(manifest_errors) - 1} more)"
+                    )
             except Exception as exc:
                 manifest_error = str(exc)
+                manifest_errors = [manifest_error]
+                manifest_weights_by_hf_path = {}
 
         weights: list[dict[str, Any]] = []
         allowed_suffixes = allowed_upscaler_weight_suffixes()
@@ -133,16 +150,38 @@ def build_router(
                 continue
             if not name.lower().endswith(allowed_suffixes):
                 continue
-            weights.append({"hf_path": name, "label": name.split("/")[-1]})
+            base: dict[str, Any] = {"hf_path": name, "label": name.split("/")[-1], "curated": False, "meta": None}
+            meta = manifest_weights_by_hf_path.get(name)
+            if isinstance(meta, dict):
+                base["curated"] = True
+                base["label"] = meta["label"]
+                base["meta"] = {
+                    "id": meta["id"],
+                    "arch": meta["arch"],
+                    "scale": meta["scale"],
+                    "license_name": meta["license_name"],
+                    "license_url": meta["license_url"],
+                    "license_spdx": meta.get("license_spdx"),
+                    "sha256": meta["sha256"],
+                    "tags": meta.get("tags") or [],
+                    "notes": meta.get("notes"),
+                }
+            weights.append(base)
 
-        weights.sort(key=lambda x: str(x.get("hf_path", "")).lower())
-        allowed_suffixes = allowed_upscaler_weight_suffixes()
+        weights.sort(
+            key=lambda x: (
+                0 if bool(x.get("curated")) else 1,
+                str(x.get("label", "")).lower(),
+                str(x.get("hf_path", "")).lower(),
+            )
+        )
         return {
             "repo_id": hf_repo_id,
             "revision": hf_revision,
             "manifest_path": _HF_MANIFEST_PATH,
             "manifest_found": bool(manifest_found),
             "manifest_error": manifest_error,
+            "manifest_errors": list(manifest_errors),
             "manifest": manifest,
             "weights": weights,
             "safeweights_enabled": bool(safeweights_enabled()),

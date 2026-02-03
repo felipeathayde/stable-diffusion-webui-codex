@@ -2,7 +2,7 @@
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-02-01
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -36,3 +36,4 @@ Status: Active
 - 2026-01-28: `payloads.ts` supports Z-Image Turbo/Base by emitting `extras.zimage_variant="turbo"|"base"`; both variants use classic CFG (`cfg` + optional `negative_prompt`) and the variant only affects scheduler semantics (shift=3.0/6.0) and UI defaults.
 - 2026-01-29: Added `analyzePngInfo()` client wrapper + `PngInfoAnalyzeResponse` for `POST /api/tools/pnginfo/analyze` (used by the PNG Info view).
 - 2026-02-01: Added upscalers client wrappers + DTOs for the standalone upscale surface (`GET /api/upscalers`, `GET /api/upscalers/remote`, `POST /api/upscalers/download`, `POST /api/upscale`).
+- 2026-02-03: `/api/upscalers/remote` DTO now includes `manifest_errors` and categorizes `weights[]` as either curated (`curated=true` with `meta`) or raw listing (`curated=false`).

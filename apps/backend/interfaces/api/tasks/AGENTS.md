@@ -2,7 +2,7 @@
 <!-- tags: backend, api, tasks, orchestration -->
 Date: 2026-01-30
 Owner: Backend API Maintainers
-Last Review: 2026-01-30
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 
 ## Key Files
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — common task runner helpers for generation endpoints (event streaming, engine options build, image encoding).
+- `apps/backend/interfaces/api/tasks/upscale_tasks.py` — task workers for standalone `/api/upscale` and HF upscaler downloads (`/api/upscalers/download`) with explicit integrity verification (manifest sha256 when available).
 
 ## Notes
 - This package must remain import-light (avoid importing torch-heavy modules at import time). Prefer local imports inside functions.

@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Runtime settings tab for the Tk launcher.
-Edits bootstrap-critical device defaults and global runtime knobs that must exist before the API starts.
+Edits bootstrap-critical device defaults and global runtime/task knobs that must exist before the API starts (devices, GGUF/LoRA, task single-flight,
+task SSE buffer caps, upscaler safeweights).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RuntimeTab` (class): Runtime settings tab (devices + GGUF/LoRA + PyTorch alloc conf).
@@ -20,7 +21,16 @@ from tkinter import messagebox, ttk
 from typing import Callable, List
 
 from apps.launcher.profiles import DEFAULT_PYTORCH_CUDA_ALLOC_CONF
-from apps.launcher.settings import DEVICE_CHOICES, SettingValidationError, normalize_gguf_lora_env
+from apps.launcher.settings import (
+    BoolSetting,
+    DEVICE_CHOICES,
+    IntSetting,
+    SettingValidationError,
+    TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
+    TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
+    normalize_gguf_lora_env,
+    normalize_task_runtime_env,
+)
 
 from ..controller import LauncherController
 from ..widgets import ScrollableFrame, add_help, add_section_header
@@ -50,6 +60,11 @@ class RuntimeTab:
         self._var_gguf_dequant_cache_ratio = tk.StringVar()
         self._var_lora_online_math = tk.StringVar()
         self._var_pytorch_alloc_conf = tk.StringVar()
+
+        self._var_single_flight = tk.BooleanVar()
+        self._var_safeweights = tk.BooleanVar()
+        self._var_task_buffer_max_events = tk.StringVar()
+        self._var_task_buffer_max_mb = tk.StringVar()
 
         self._lora_math_combo: ttk.Combobox | None = None
         self._gguf_dequant_cache_combo: ttk.Combobox | None = None
@@ -191,6 +206,58 @@ class RuntimeTab:
             "This launcher focuses on bootstrap + global runtime knobs that must exist before the API starts.",
         )
 
+        row = add_section_header(body, row, "Tasks / Safety")
+        row = self._add_check(
+            body,
+            row,
+            label="Single-flight inference (requires API restart):",
+            var=self._var_single_flight,
+            on_change=lambda: self._sync_task_deps(mark_changed=True),
+        )
+        row = add_help(
+            body,
+            row,
+            "Env var: CODEX_SINGLE_FLIGHT\n"
+            "When enabled (default), GPU-heavy tasks (generation/video/upscale/SUPIR) are serialized to avoid global-state races.",
+        )
+        row = self._add_entry_commit_int(
+            body,
+            row,
+            label="Task SSE buffer max events (requires API restart):",
+            var=self._var_task_buffer_max_events,
+            key="CODEX_TASK_EVENT_BUFFER_MAX_EVENTS",
+            default=TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
+            minimum=1,
+        )
+        row = self._add_entry_commit_int(
+            body,
+            row,
+            label="Task SSE buffer max MB (requires API restart):",
+            var=self._var_task_buffer_max_mb,
+            key="CODEX_TASK_EVENT_BUFFER_MAX_MB",
+            default=TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
+            minimum=1,
+        )
+        row = add_help(
+            body,
+            row,
+            "These caps bound in-memory task replay buffers (per task) used for reconnect/resume.\n"
+            "Env vars: CODEX_TASK_EVENT_BUFFER_MAX_EVENTS, CODEX_TASK_EVENT_BUFFER_MAX_MB",
+        )
+        row = self._add_check(
+            body,
+            row,
+            label="Upscalers safeweights mode (requires API restart):",
+            var=self._var_safeweights,
+            on_change=lambda: self._sync_task_deps(mark_changed=True),
+        )
+        _ = add_help(
+            body,
+            row,
+            "Env var: CODEX_SAFE_WEIGHTS\n"
+            "When enabled, upscaler weights must be .safetensors (blocks .pt/.pth at discovery, download, and load-time).",
+        )
+
         self.frame = frame
         self.reload()
         return frame
@@ -214,6 +281,21 @@ class RuntimeTab:
 
         alloc = str(self._controller.store.build_env().get("PYTORCH_CUDA_ALLOC_CONF") or DEFAULT_PYTORCH_CUDA_ALLOC_CONF).strip()
         self._var_pytorch_alloc_conf.set(alloc)
+
+        try:
+            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+        except SettingValidationError as exc:
+            self._controller.store.env["CODEX_SINGLE_FLIGHT"] = "1"
+            self._controller.store.env["CODEX_SAFE_WEIGHTS"] = "0"
+            self._controller.store.env["CODEX_TASK_EVENT_BUFFER_MAX_EVENTS"] = str(TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT)
+            self._controller.store.env["CODEX_TASK_EVENT_BUFFER_MAX_MB"] = str(TASK_EVENT_BUFFER_MAX_MB_DEFAULT)
+            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+            messagebox.showerror("Invalid task setting", str(exc))
+
+        self._var_single_flight.set(bool(single_flight))
+        self._var_safeweights.set(bool(safeweights))
+        self._var_task_buffer_max_events.set(str(int(max_events)))
+        self._var_task_buffer_max_mb.set(str(int(max_mb)))
 
         self._sync_runtime_deps(mark_changed=False)
 
@@ -241,6 +323,51 @@ class RuntimeTab:
                 self._lora_math_combo = combo
             elif out_combo == "_gguf_dequant_cache_combo":
                 self._gguf_dequant_cache_combo = combo
+        return row + 1
+
+    def _add_check(
+        self,
+        parent: ttk.Frame,
+        row: int,
+        *,
+        label: str,
+        var: tk.BooleanVar,
+        on_change: Callable[[], None],
+    ) -> int:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=16, pady=8)
+        cb = ttk.Checkbutton(parent, variable=var, command=on_change)
+        cb.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+        return row + 1
+
+    def _add_entry_commit_int(
+        self,
+        parent: ttk.Frame,
+        row: int,
+        *,
+        label: str,
+        var: tk.StringVar,
+        key: str,
+        default: int,
+        minimum: int,
+    ) -> int:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=16, pady=8)
+        entry = ttk.Entry(parent, textvariable=var, width=12)
+        entry.grid(row=row, column=1, sticky="w", padx=(0, 16), pady=8)
+
+        def commit() -> None:
+            env = self._controller.store.env
+            setting = IntSetting(key, default=default, minimum=minimum)
+            try:
+                value = setting.parse(str(var.get() or ""))
+            except SettingValidationError as exc:
+                messagebox.showerror("Invalid task setting", str(exc))
+                value = int(default)
+            setting.set(env, value)
+            var.set(str(value))
+            self._mark_changed()
+
+        entry.bind("<FocusOut>", lambda _e: commit())
+        entry.bind("<Return>", lambda _e: commit())
         return row + 1
 
     def _add_entry(
@@ -285,6 +412,33 @@ class RuntimeTab:
         else:
             self._controller.store.env[key] = value
         self._mark_changed()
+
+    def _sync_task_deps(self, *, mark_changed: bool) -> None:
+        env = self._controller.store.env
+
+        BoolSetting("CODEX_SINGLE_FLIGHT", default=True).set(env, bool(self._var_single_flight.get()))
+        BoolSetting("CODEX_SAFE_WEIGHTS", default=False).set(env, bool(self._var_safeweights.get()))
+        env["CODEX_TASK_EVENT_BUFFER_MAX_EVENTS"] = str(self._var_task_buffer_max_events.get() or "").strip()
+        env["CODEX_TASK_EVENT_BUFFER_MAX_MB"] = str(self._var_task_buffer_max_mb.get() or "").strip()
+
+        try:
+            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+        except SettingValidationError as exc:
+            env["CODEX_SINGLE_FLIGHT"] = "1"
+            env["CODEX_SAFE_WEIGHTS"] = "0"
+            env["CODEX_TASK_EVENT_BUFFER_MAX_EVENTS"] = str(TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT)
+            env["CODEX_TASK_EVENT_BUFFER_MAX_MB"] = str(TASK_EVENT_BUFFER_MAX_MB_DEFAULT)
+            single_flight, safeweights, max_events, max_mb = normalize_task_runtime_env(env)
+            messagebox.showerror("Invalid task setting", str(exc))
+            mark_changed = True
+
+        self._var_single_flight.set(bool(single_flight))
+        self._var_safeweights.set(bool(safeweights))
+        self._var_task_buffer_max_events.set(str(int(max_events)))
+        self._var_task_buffer_max_mb.set(str(int(max_mb)))
+
+        if mark_changed:
+            self._mark_changed()
 
     # ------------------------------------------------------------------ dependency logic
 

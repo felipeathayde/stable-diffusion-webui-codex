@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 	Purpose: Unified video generation composable for WAN (txt2vid/img2vid/vid2vid).
 	Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
-	to update UI state and fetch final results.
+	to update UI state and fetch final results. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
+	via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Video generation status state (`idle|running|error|done`).
@@ -18,12 +19,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `VideoQueuedRun` (interface): Queued run entry (payload snapshot + optional file) to support sequential submissions.
 - `VideoProgressState` (interface): Progress payload shape (stage/percent/eta/step/totalSteps).
 - `VideoGenerationState` (interface): Per-tab runtime state (status/progress/frames/video result/history/queue/cancel flags).
+- `ResumeState` (type): Persisted task resume marker (task id + last event id + params snapshot).
 - `freshState` (function): Creates a new `VideoGenerationState` with empty progress/history/queue.
 - `getTabState` (function): Returns (and initializes) the per-tab `VideoGenerationState` for a given tab id.
 - `defaultStage` (function): Creates default `WanStageParams` for UI state initialization.
 - `defaultVideo` (function): Creates default `WanVideoParams` for UI state initialization.
 - `WanAssetsParams` (interface): Minimal assets selection state (metadata/text encoder/VAE labels/paths) used for WAN requests.
 - `defaultAssets` (function): Creates default `WanAssetsParams`.
+- `resumeKey` (function): Returns the localStorage key used to persist a WAN task resume marker for a tab.
 - `useVideoGeneration` (function): Main composable API; wires payload building, task start/cancel, SSE handling, queued runs, and history updates
   (contains nested handlers for events, queue progression, and per-mode payload assembly).
 */
@@ -95,6 +98,79 @@ const MAX_QUEUE = 3
 const tabStates = new Map<string, VideoGenerationState>()
 const unsubscribers = new Map<string, () => void>()
 const initVideos = new Map<string, File | null>()
+const resumeAttempts = new Set<string>()
+const resumeToastShown = new Set<string>()
+
+type ResumeState = {
+  taskId: string
+  lastEventId: number
+  createdAtMs: number
+  mode: VideoMode
+  summary: string
+  promptPreview: string
+  paramsSnapshot: Record<string, unknown>
+}
+
+function resumeKey(tabId: string): string {
+  return `codex.resume.wan.${tabId}`
+}
+
+function loadResumeState(key: string): ResumeState | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const obj = JSON.parse(raw) as any
+    if (!obj || typeof obj !== 'object') return null
+    if (typeof obj.taskId !== 'string' || !obj.taskId.trim()) return null
+    const taskId = String(obj.taskId).trim()
+
+    const lastEventId = typeof obj.lastEventId === 'number' && Number.isFinite(obj.lastEventId) ? Math.trunc(obj.lastEventId) : 0
+    const createdAtMs = typeof obj.createdAtMs === 'number' && Number.isFinite(obj.createdAtMs) ? Math.trunc(obj.createdAtMs) : 0
+    const summary = typeof obj.summary === 'string' ? obj.summary : ''
+    const promptPreview = typeof obj.promptPreview === 'string' ? obj.promptPreview : ''
+    const paramsSnapshot = obj.paramsSnapshot && typeof obj.paramsSnapshot === 'object' ? (obj.paramsSnapshot as Record<string, unknown>) : {}
+
+    const modeRaw = String(obj.mode || '').trim()
+    const mode: VideoMode = modeRaw === 'vid2vid' || modeRaw === 'img2vid' ? modeRaw : 'txt2vid'
+
+    return {
+      taskId,
+      lastEventId: Math.max(0, lastEventId),
+      createdAtMs,
+      mode,
+      summary,
+      promptPreview,
+      paramsSnapshot,
+    }
+  } catch {
+    return null
+  }
+}
+
+function saveResumeState(key: string, state: ResumeState): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(state))
+  } catch {
+    // ignore localStorage failures (private mode/quota)
+  }
+}
+
+function clearResumeState(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // ignore
+  }
+}
+
+function updateResumeEventId(key: string, eventId: number): void {
+  const v = Math.trunc(Number(eventId))
+  if (!Number.isFinite(v) || v <= 0) return
+  const cur = loadResumeState(key)
+  if (!cur) return
+  if (v <= cur.lastEventId) return
+  saveResumeState(key, { ...cur, lastEventId: v })
+}
 
 function freshState(): VideoGenerationState {
   return {
@@ -186,6 +262,7 @@ export function useVideoGeneration(tabId: string) {
   const quicksettings = useQuicksettingsStore()
 
   const state = ref(getTabState(tabId))
+  const resumeNotice = ref('')
 
   const tab = computed(() => modelTabs.tabs.find(t => t.id === tabId) || null)
   const params = computed(() => (tab.value?.params as any) as Record<string, unknown> | null)
@@ -522,9 +599,24 @@ export function useVideoGeneration(tabId: string) {
         promptPreview: run.promptPreview,
         paramsSnapshot: run.paramsSnapshot,
       }
-      const unsub = subscribeTask(task_id, onTaskEvent)
+      const key = resumeKey(tabId)
+      saveResumeState(key, {
+        taskId: task_id,
+        lastEventId: 0,
+        createdAtMs: run.createdAtMs,
+        mode: run.mode,
+        summary: run.summary,
+        promptPreview: run.promptPreview,
+        paramsSnapshot: run.paramsSnapshot,
+      })
+      const unsub = subscribeTask(task_id, onTaskEvent, undefined, {
+        onMeta: ({ eventId }) => {
+          if (typeof eventId === 'number') updateResumeEventId(key, eventId)
+        },
+      })
       unsubscribers.set(tabId, unsub)
     } catch (err) {
+      clearResumeState(resumeKey(tabId))
       setError(formatZodError(err))
     }
   }
@@ -562,6 +654,7 @@ export function useVideoGeneration(tabId: string) {
   }
 
   function onTaskEvent(event: TaskEvent): void {
+    const key = resumeKey(tabId)
     switch (event.type) {
       case 'status':
         state.value.progress.stage = event.stage
@@ -575,36 +668,31 @@ export function useVideoGeneration(tabId: string) {
           totalSteps: event.total_steps ?? null,
         }
         break
+      case 'gap':
+        if (state.value.taskId) void refreshTaskSnapshot(state.value.taskId)
+        break
       case 'result':
         state.value.frames = event.images
         state.value.info = event.info ?? null
         state.value.video = event.video ?? null
         state.value.status = 'done'
-        if (state.value.currentRun && state.value.currentRun.taskId) {
-          state.value.currentRun.status = 'completed'
-          pushHistory(state.value.currentRun)
-          state.value.selectedTaskId = state.value.currentRun.taskId
-          state.value.currentRun = null
-        }
-        stopStream()
-        void startNextQueued()
+        if (state.value.currentRun && state.value.currentRun.taskId) state.value.currentRun.status = 'completed'
         break
       case 'error':
         setError(event.message)
+        clearResumeState(key)
         if (state.value.currentRun && state.value.currentRun.taskId) {
-          state.value.currentRun.status = 'error'
+          state.value.currentRun.status = state.value.cancelRequested ? 'cancelled' : 'error'
           state.value.currentRun.errorMessage = event.message
-          pushHistory(state.value.currentRun)
-          state.value.selectedTaskId = state.value.currentRun.taskId
-          state.value.currentRun = null
         }
-        stopStream()
-        void startNextQueued()
         break
       case 'end':
-        if (state.value.status !== 'error') state.value.status = 'done'
+        clearResumeState(key)
         if (state.value.cancelRequested && state.value.currentRun && state.value.currentRun.taskId) {
           state.value.currentRun.status = 'cancelled'
+        }
+        if (state.value.status !== 'error') state.value.status = 'done'
+        if (state.value.currentRun && state.value.currentRun.taskId) {
           pushHistory(state.value.currentRun)
           state.value.selectedTaskId = state.value.currentRun.taskId
           state.value.currentRun = null
@@ -614,6 +702,127 @@ export function useVideoGeneration(tabId: string) {
         break
     }
   }
+
+  async function refreshTaskSnapshot(taskId: string): Promise<void> {
+    try {
+      const res = await fetchTaskResult(taskId)
+      if (res.status !== 'running') return
+      if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
+      const p = res.progress
+      if (p && typeof p === 'object') {
+        state.value.progress = {
+          stage: String(p.stage ?? state.value.progress.stage),
+          percent: p.percent ?? null,
+          etaSeconds: p.eta_seconds ?? null,
+          step: p.step ?? null,
+          totalSteps: p.total_steps ?? null,
+        }
+      }
+    } catch {
+      // ignore snapshot refresh failures
+    }
+  }
+
+  async function tryAutoResume(): Promise<void> {
+    if (resumeAttempts.has(tabId)) return
+    resumeAttempts.add(tabId)
+
+    const key = resumeKey(tabId)
+    const saved = loadResumeState(key)
+    if (!saved) return
+
+    let res
+    try {
+      res = await fetchTaskResult(saved.taskId)
+    } catch {
+      clearResumeState(key)
+      return
+    }
+
+    if (res.status === 'running') {
+      stopStream()
+      state.value.status = 'running'
+      state.value.taskId = saved.taskId
+      state.value.errorMessage = ''
+      state.value.frames = []
+      state.value.info = null
+      state.value.video = null
+      resetProgress()
+      state.value.cancelRequested = false
+      state.value.currentRun = {
+        taskId: saved.taskId,
+        mode: saved.mode,
+        createdAtMs: saved.createdAtMs,
+        status: 'completed',
+        summary: saved.summary,
+        promptPreview: saved.promptPreview,
+        paramsSnapshot: saved.paramsSnapshot,
+      }
+
+      if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
+      const p = res.progress
+      if (p && typeof p === 'object') {
+        state.value.progress = {
+          stage: String(p.stage ?? state.value.progress.stage),
+          percent: p.percent ?? null,
+          etaSeconds: p.eta_seconds ?? null,
+          step: p.step ?? null,
+          totalSteps: p.total_steps ?? null,
+        }
+      }
+
+      const unsub = subscribeTask(saved.taskId, onTaskEvent, undefined, {
+        after: saved.lastEventId,
+        onMeta: ({ eventId }) => {
+          if (typeof eventId === 'number') updateResumeEventId(key, eventId)
+        },
+      })
+      unsubscribers.set(tabId, unsub)
+
+      if (!resumeToastShown.has(saved.taskId)) {
+        resumeNotice.value = 'Reconnected (resumed task).'
+        resumeToastShown.add(saved.taskId)
+      }
+      return
+    }
+
+    clearResumeState(key)
+
+    if (res.status === 'completed' && res.result) {
+      state.value.frames = res.result.images
+      state.value.info = res.result.info ?? null
+      state.value.video = res.result.video ?? null
+      state.value.status = 'done'
+      pushHistory({
+        taskId: saved.taskId,
+        mode: saved.mode,
+        createdAtMs: saved.createdAtMs,
+        status: 'completed',
+        summary: saved.summary,
+        promptPreview: saved.promptPreview,
+        paramsSnapshot: saved.paramsSnapshot,
+      })
+      state.value.selectedTaskId = saved.taskId
+      return
+    }
+    if (res.status === 'error') {
+      state.value.status = 'error'
+      state.value.errorMessage = String(res.error || 'Task failed.')
+      pushHistory({
+        taskId: saved.taskId,
+        mode: saved.mode,
+        createdAtMs: saved.createdAtMs,
+        status: 'error',
+        summary: saved.summary,
+        promptPreview: saved.promptPreview,
+        paramsSnapshot: saved.paramsSnapshot,
+        errorMessage: String(res.error || 'Task failed.'),
+      })
+      state.value.selectedTaskId = saved.taskId
+    }
+  }
+
+  void tryAutoResume()
 
   async function cancel(mode: 'immediate' | 'after_current' = 'immediate'): Promise<void> {
     const taskId = state.value.taskId
@@ -735,5 +944,6 @@ export function useVideoGeneration(tabId: string) {
     clearQueue,
     setInitVideoFile,
     clearInitVideoFile,
+    resumeNotice,
   }
 }

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Frontend API client (typed fetch helpers + endpoint wrappers).
 Provides JSON/Form fetch helpers and exports functions for models/options/inventory/tasks, UI tabs/workflows persistence, and UI schema/preset
 endpoints under `VITE_API_BASE` (default `/api`).
+Task SSE subscriptions support resume via `after=<event_id>` and expose the latest `lastEventId` for reconnect/replay persistence.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `API_BASE` (const): Base URL prefix for backend endpoints (from Vite env, default `/api`).
@@ -304,12 +305,27 @@ export function cancelTask(taskId: string, mode: 'immediate' | 'after_current' =
   })
 }
 
-export function subscribeTask(taskId: string, onEvent: (event: TaskEvent) => void, onError?: (err: unknown) => void): () => void {
-  const es = new EventSource(`${API_BASE}/tasks/${taskId}/events`)
+export function subscribeTask(
+  taskId: string,
+  onEvent: (event: TaskEvent) => void,
+  onError?: (err: unknown) => void,
+  opts: { after?: number; onMeta?: (meta: { eventId?: number }) => void } = {},
+): () => void {
+  const params = new URLSearchParams()
+  if (typeof opts.after === 'number' && Number.isFinite(opts.after) && opts.after > 0) {
+    params.set('after', String(Math.trunc(opts.after)))
+  }
+  const q = params.toString()
+  const es = new EventSource(`${API_BASE}/tasks/${taskId}/events${q ? `?${q}` : ''}`)
   let ended = false
   es.onmessage = (msg: MessageEvent<string>) => {
     try {
       const payload = JSON.parse(msg.data) as TaskEvent
+      const idRaw = (msg as any).lastEventId
+      const id = typeof idRaw === 'string' && idRaw.trim() ? Number(idRaw) : null
+      if (id !== null && Number.isFinite(id)) {
+        try { opts.onMeta?.({ eventId: Math.trunc(id) }) } catch (_) { /* ignore */ }
+      }
       // Mark graceful end so we don’t log a browser “error” on normal close
       if ((payload as any)?.type === 'end') {
         ended = true

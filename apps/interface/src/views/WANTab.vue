@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 	Purpose: WAN video generation tab (txt2vid/img2vid/vid2vid) UI.
 	Owns prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
 	renders progress/results via task events (frames and/or exported video).
+	Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot) and surfaces a one-shot “Reconnected” toast.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
@@ -731,6 +732,7 @@ const {
   clearQueue,
   setInitVideoFile,
   clearInitVideoFile,
+  resumeNotice,
 } = useVideoGeneration(props.tabId)
 
 async function onGenerateClick(): Promise<void> {
@@ -775,6 +777,17 @@ onBeforeUnmount(() => {
 })
 
 const { notice: copyNotice, toast, copyJson, formatJson } = useResultsCard()
+
+watch(
+  resumeNotice,
+  (msg) => {
+    const text = String(msg || '').trim()
+    if (!text) return
+    toast(text)
+    resumeNotice.value = ''
+  },
+  { immediate: true },
+)
 
 type GuidedStep = { id: string; message: string; selector: string; focusSelector?: string }
 const guidedActive = ref(false)

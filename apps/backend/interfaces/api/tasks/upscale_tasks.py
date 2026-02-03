@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Task orchestration helpers for upscaler endpoints.
 Keeps `/api/upscale` and `/api/upscalers/download` routers thin by centralizing the worker boilerplate:
 status/progress/result/end/error + cancellation checks.
+Uses the shared inference gate for the upscale worker when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `run_upscale_task` (function): Runs an upscale task worker (single-image v1).
@@ -25,7 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from apps.backend.interfaces.api.task_registry import TaskEntry, tasks, tasks_lock
+from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.task_registry import TaskEntry
 
 logger = logging.getLogger("backend.api.tasks.upscale")
 
@@ -42,47 +44,39 @@ def run_upscale_task(
     payload: dict[str, Any],
     image_bytes: bytes,
     entry: TaskEntry,
-    require_explicit_device: Callable[[dict[str, Any]], str],
+    device: str,
     opts_get: Callable[..., Any],
     generation_provenance: Mapping[str, str],
     save_generated_images: Callable[..., Any],
 ) -> None:
     """Run a standalone upscaling task (single image)."""
 
-    loop = entry.loop
-
     def push(event: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-    def mark_done(success: bool) -> None:
-        def _set() -> None:
-            if not entry.done.done():
-                entry.done.set_result(success)
-
-        loop.call_soon_threadsafe(_set)
+        entry.push_event(event)
 
     push({"type": "status", "stage": "queued"})
 
-    try:
-        require_explicit_device(payload)
-    except Exception as err:
-        entry.error = str(err)
-        push({"type": "error", "message": entry.error})
-        push({"type": "end"})
-        mark_done(False)
-        entry.schedule_cleanup(task_id, delay=0.0)
-        with tasks_lock:
-            tasks.pop(task_id, None)
-        raise
-
     def worker() -> None:
+        acquired = False
+        success = False
         try:
+            if single_flight_enabled():
+                push({"type": "status", "stage": "waiting_for_inference"})
+
+            acquired = acquire_inference_gate(
+                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+            )
+            if not acquired:
+                entry.error = "cancelled"
+                return
+
             push({"type": "status", "stage": "running"})
+            from apps.backend.interfaces.api.device_selection import apply_primary_device
+
+            apply_primary_device(device)
+
             if entry.cancel_requested and entry.cancel_mode == "immediate":
                 entry.error = "cancelled"
-                push({"type": "error", "message": "cancelled"})
-                push({"type": "end"})
-                mark_done(False)
                 return
 
             from PIL import Image  # type: ignore
@@ -131,14 +125,18 @@ def run_upscale_task(
                 "info": info_obj,
             }
             entry.result = {"status": "completed", "result": result}
-            push({"type": "result", **result})
-            push({"type": "end"})
-            mark_done(True)
+            success = True
         except Exception as err:  # pragma: no cover - surfaces runtime errors
             entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
+            success = False
+        finally:
+            entry.mark_finished(success=success)
+            entry.schedule_cleanup(task_id)
+            if acquired:
+                try:
+                    release_inference_gate()
+                except Exception:
+                    pass
 
     threading.Thread(target=worker, name=f"upscale-task-{task_id}", daemon=True).start()
 
@@ -153,21 +151,13 @@ def run_upscaler_download_task(
 ) -> None:
     """Download allowlisted upscaler weights from a curated HF repo into local model roots."""
 
-    loop = entry.loop
-
     def push(event: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-    def mark_done(success: bool) -> None:
-        def _set() -> None:
-            if not entry.done.done():
-                entry.done.set_result(success)
-
-        loop.call_soon_threadsafe(_set)
+        entry.push_event(event)
 
     push({"type": "status", "stage": "queued"})
 
     def worker() -> None:
+        success = False
         try:
             push({"type": "status", "stage": "running"})
 
@@ -213,14 +203,13 @@ def run_upscaler_download_task(
 
             result = {"files": written}
             entry.result = {"status": "completed", "result": {"images": [], "info": result}}
-            push({"type": "result", "images": [], "info": result})
-            push({"type": "end"})
-            mark_done(True)
+            success = True
         except Exception as err:  # pragma: no cover
             entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
+            success = False
+        finally:
+            entry.mark_finished(success=success)
+            entry.schedule_cleanup(task_id)
 
     threading.Thread(target=worker, name=f"upscalers-download-task-{task_id}", daemon=True).start()
 

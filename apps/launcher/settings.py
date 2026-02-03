@@ -17,11 +17,14 @@ Symbols (top-level; keep in sync; no ghosts):
 - `IntSetting` (dataclass): Typed view over an integer setting serialized as a string.
 - `DEVICE_CHOICES` (constant): Allowed values for `CODEX_*_DEVICE`.
 - `CFG_BATCH_MODE_CHOICES` (constant): Allowed values for `CODEX_CFG_BATCH_MODE`.
+- `TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT` (constant): Default max SSE events buffered per task.
+- `TASK_EVENT_BUFFER_MAX_MB_DEFAULT` (constant): Default max SSE MB buffered per task.
 - `GGUF_EXEC_CHOICES` (constant): Allowed values for `CODEX_GGUF_EXEC`.
 - `GGUF_DEQUANT_CACHE_CHOICES` (constant): Allowed values for `CODEX_GGUF_DEQUANT_CACHE`.
 - `LORA_APPLY_CHOICES` (constant): Allowed values for `CODEX_LORA_APPLY_MODE`.
 - `LORA_ONLINE_MATH_CHOICES` (constant): Allowed values for `CODEX_LORA_ONLINE_MATH`.
 - `normalize_gguf_lora_env` (function): Normalizes GGUF/LoRA env keys enforcing cross-setting invariants.
+- `normalize_task_runtime_env` (function): Normalizes task/runtime env keys (single-flight, safeweights, task SSE buffer caps).
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ class SettingValidationError(ValueError):
 
 DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda", "cpu", "mps", "xpu", "directml")
 CFG_BATCH_MODE_CHOICES: tuple[str, ...] = ("fused", "split")
+TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT = 5000
+TASK_EVENT_BUFFER_MAX_MB_DEFAULT = 64
 GGUF_EXEC_CHOICES: tuple[str, ...] = ("dequant_forward", "dequant_upfront")
 GGUF_DEQUANT_CACHE_CHOICES: tuple[str, ...] = ("off", "lvl1", "lvl2")
 LORA_APPLY_CHOICES: tuple[str, ...] = ("merge", "online")
@@ -180,3 +185,35 @@ def normalize_gguf_lora_env(env: MutableMapping[str, str]) -> tuple[str, str, st
     env["CODEX_LORA_ONLINE_MATH"] = lora_math
 
     return gguf, gguf_dequant_cache, lora_apply, lora_math
+
+
+def normalize_task_runtime_env(env: MutableMapping[str, str]) -> tuple[bool, bool, int, int]:
+    """Normalize task/runtime env keys and enforce invariants.
+
+    Returns (single_flight, safe_weights, buffer_max_events, buffer_max_mb).
+    """
+
+    single_flight_setting = BoolSetting("CODEX_SINGLE_FLIGHT", default=True)
+    safeweights_setting = BoolSetting("CODEX_SAFE_WEIGHTS", default=False)
+    max_events_setting = IntSetting(
+        "CODEX_TASK_EVENT_BUFFER_MAX_EVENTS",
+        default=TASK_EVENT_BUFFER_MAX_EVENTS_DEFAULT,
+        minimum=1,
+    )
+    max_mb_setting = IntSetting(
+        "CODEX_TASK_EVENT_BUFFER_MAX_MB",
+        default=TASK_EVENT_BUFFER_MAX_MB_DEFAULT,
+        minimum=1,
+    )
+
+    single_flight = single_flight_setting.get(env)
+    safeweights = safeweights_setting.get(env)
+    max_events = max_events_setting.get(env)
+    max_mb = max_mb_setting.get(env)
+
+    single_flight_setting.set(env, single_flight)
+    safeweights_setting.set(env, safeweights)
+    max_events_setting.set(env, max_events)
+    max_mb_setting.set(env, max_mb)
+
+    return single_flight, safeweights, max_events, max_mb

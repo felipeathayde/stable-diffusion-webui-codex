@@ -26,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `RemoteUpscalerWeight` (interface): Remote HF weight entry for upscalers downloads.
 - `RemoteUpscalersResponse` (interface): `/api/upscalers/remote` response shape (manifest + raw weights fallback).
 - `GeneratedImage` (interface): Base64-encoded image payload used in task results and previews.
-- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/stream`.
+- `TaskEvent` (type): Task SSE event union emitted by `/api/tasks/:id/events` (supports replay via `id:` / `after` and emits `gap` on truncation).
 - `TaskResult` (interface): Polled task result shape returned by `/api/tasks/:id`.
 - `MemoryResponse` (interface): `/api/memory` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
@@ -163,6 +163,8 @@ export interface RemoteUpscalersResponse {
   manifest_error: string | null
   manifest: unknown | null
   weights: RemoteUpscalerWeight[]
+  safeweights_enabled: boolean
+  allowed_weight_suffixes: string[]
 }
 
 export interface GeneratedImage {
@@ -182,12 +184,28 @@ export type TaskEvent =
       preview_image?: GeneratedImage
       preview_step?: number | null
     }
+  | { type: 'gap'; oldest_event_id: number; newest_event_id: number }
   | { type: 'result'; images: GeneratedImage[]; info: unknown; video?: { rel_path?: string | null; mime?: string | null } }
   | { type: 'error'; message: string }
   | { type: 'end' }
 
 export interface TaskResult {
   status: 'running' | 'completed' | 'error'
+  task_id?: string
+  stage?: string
+  progress?: {
+    stage?: string
+    percent?: number | null
+    step?: number | null
+    total_steps?: number | null
+    eta_seconds?: number | null
+  } | null
+  preview_image?: GeneratedImage
+  preview_step?: number | null
+  last_event_id?: number
+  buffer_oldest_event_id?: number
+  buffer_newest_event_id?: number
+  started_at_ms?: number | null
   error?: string
   result?: {
     images: GeneratedImage[]

@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Launcher profile persistence (meta + env areas + per-model env overlays).
 Implements the profile store used by the TUI/GUI launchers to load/save settings under `.sangoi/launcher/` (meta/areas/models) and to
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
-Defines defaults for performance-related env keys (GGUF exec/cache knobs, CFG batching, profiling flags) so runs are reproducible.
+Defines defaults for performance-related env keys (GGUF exec/cache knobs, CFG batching, profiling flags) and task/runtime safety knobs (single-flight,
+task SSE buffer caps, safeweights) so runs are reproducible.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF/LoRA runtime knobs).
@@ -55,6 +56,10 @@ def _default_area_env() -> Dict[str, Dict[str, str]]:
     core = {
         "CODEX_PIPELINE_DEBUG": os.getenv("CODEX_PIPELINE_DEBUG", "0"),
         "CODEX_CFG_BATCH_MODE": os.getenv("CODEX_CFG_BATCH_MODE", "fused"),
+        "CODEX_SINGLE_FLIGHT": os.getenv("CODEX_SINGLE_FLIGHT", "1"),
+        "CODEX_TASK_EVENT_BUFFER_MAX_EVENTS": os.getenv("CODEX_TASK_EVENT_BUFFER_MAX_EVENTS", "5000"),
+        "CODEX_TASK_EVENT_BUFFER_MAX_MB": os.getenv("CODEX_TASK_EVENT_BUFFER_MAX_MB", "64"),
+        "CODEX_SAFE_WEIGHTS": os.getenv("CODEX_SAFE_WEIGHTS", "0"),
         "CODEX_PROFILE": os.getenv("CODEX_PROFILE", "0"),
         "CODEX_PROFILE_TRACE": os.getenv("CODEX_PROFILE_TRACE", "1"),
         "CODEX_PROFILE_RECORD_SHAPES": os.getenv("CODEX_PROFILE_RECORD_SHAPES", "0"),

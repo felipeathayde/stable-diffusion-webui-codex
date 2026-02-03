@@ -11,6 +11,7 @@ Exposes:
 - local upscaler discovery (`GET /api/upscalers`)
 - remote curated upscaler listing + downloads (`GET/POST /api/upscalers/*`)
 - standalone upscaling tasks (`POST /api/upscale`)
+Remote listing/download respects the upscaler safeweights policy (`CODEX_SAFE_WEIGHTS=1` blocks non-`.safetensors` weights).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for upscaler endpoints.
@@ -28,6 +29,8 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.interfaces.api.device_selection import parse_device_from_payload
+from apps.backend.runtime.vision.upscalers.safeweights import allowed_upscaler_weight_suffixes, safeweights_enabled
 
 
 _HF_UPSCALERS_REPO_ID = "sangoi-exe/sd-webui-codex"
@@ -48,19 +51,15 @@ def _normalize_hf_revision(revision: str | None) -> str | None:
     return rev or None
 
 
-def _require_explicit_device(payload: Dict[str, Any]) -> str:
-    from apps.backend.runtime.memory import memory_management as mem_management
+def _parse_explicit_device(payload: Dict[str, Any]) -> str:
+    """Parse/validate per-request device selection (fail loud).
 
-    raw = payload.get("codex_device") or payload.get("device") or ""
-    dev = str(raw).strip().lower()
-    allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
-    if dev not in allowed:
-        raise HTTPException(status_code=400, detail="Missing or invalid 'device' (cpu|cuda|mps|xpu|directml)")
+    Note: do not call `switch_primary_device()` here; apply it only when the task starts running (single-flight-safe).
+    """
     try:
-        mem_management.switch_primary_device(dev)
+        return parse_device_from_payload(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    return dev
 
 
 def _safe_relpath(raw: str) -> str:
@@ -126,16 +125,18 @@ def build_router(
                 manifest_error = str(exc)
 
         weights: list[dict[str, Any]] = []
+        allowed_suffixes = allowed_upscaler_weight_suffixes()
         for name in files:
             if not isinstance(name, str):
                 continue
             if not name.startswith("upscalers/"):
                 continue
-            if not name.lower().endswith((".safetensors", ".pth", ".pt")):
+            if not name.lower().endswith(allowed_suffixes):
                 continue
             weights.append({"hf_path": name, "label": name.split("/")[-1]})
 
         weights.sort(key=lambda x: str(x.get("hf_path", "")).lower())
+        allowed_suffixes = allowed_upscaler_weight_suffixes()
         return {
             "repo_id": hf_repo_id,
             "revision": hf_revision,
@@ -144,6 +145,8 @@ def build_router(
             "manifest_error": manifest_error,
             "manifest": manifest,
             "weights": weights,
+            "safeweights_enabled": bool(safeweights_enabled()),
+            "allowed_weight_suffixes": list(allowed_suffixes),
         }
 
     @router.post("/api/upscalers/download")
@@ -166,12 +169,22 @@ def build_router(
         dst_root.mkdir(parents=True, exist_ok=True)
 
         items = []
+        allowed_suffixes = set(allowed_upscaler_weight_suffixes())
         for entry in files:
             if not isinstance(entry, str) or not entry.strip():
                 raise HTTPException(status_code=400, detail="Invalid file entry")
             hf_path = _safe_relpath(entry)
             if not hf_path.startswith("upscalers/"):
                 raise HTTPException(status_code=400, detail="hf_path must be under upscalers/")
+            suffix = Path(hf_path).suffix.lower()
+            if suffix not in allowed_suffixes:
+                allowed = "|".join(sorted(allowed_suffixes))
+                if safeweights_enabled():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsafe weights blocked by CODEX_SAFE_WEIGHTS=1 (allowed: {allowed})",
+                    )
+                raise HTTPException(status_code=400, detail=f"Unsupported weights extension (allowed: {allowed})")
             rel = hf_path[len("upscalers/") :]
             dst = (dst_root / rel).resolve()
             # Keep writes within configured root.
@@ -212,7 +225,7 @@ def build_router(
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="payload must be JSON object")
 
-        _require_explicit_device(data)
+        device = _parse_explicit_device(data)
 
         try:
             image_bytes = await image.read()
@@ -233,7 +246,7 @@ def build_router(
             payload=data,
             image_bytes=image_bytes,
             entry=entry,
-            require_explicit_device=_require_explicit_device,
+            device=device,
             opts_get=opts_get,
             generation_provenance=generation_provenance,
             save_generated_images=save_generated_images,

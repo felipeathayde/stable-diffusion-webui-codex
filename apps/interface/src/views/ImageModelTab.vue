@@ -10,6 +10,7 @@ Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-fa
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
 Highres settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
+Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
@@ -472,6 +473,7 @@ const {
   gentimeMs,
   loadHistory,
   clearHistory,
+  resumeNotice,
 } = useGeneration(props.tabId)
 
 const leftStack = ref<HTMLElement | null>(null)
@@ -497,6 +499,17 @@ onBeforeUnmount(() => {
 
 const workflowBusy = ref(false)
 const { notice: copyNotice, toast, copyJson } = useResultsCard()
+
+watch(
+  resumeNotice,
+  (msg) => {
+    const text = String(msg || '').trim()
+    if (!text) return
+    toast(text)
+    resumeNotice.value = ''
+  },
+  { immediate: true },
+)
 
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
 const engineConfig = computed(() => getEngineConfig(props.type))

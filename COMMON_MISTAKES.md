@@ -260,6 +260,25 @@ export PYTHONPATH="$CODEX_ROOT"
 "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests
 ```
 
+### Running `pytest` at repo root (collects `tmp/**` tests/artifacts)
+
+Wrong command:
+```bash
+export CODEX_ROOT="$(git rev-parse --show-toplevel)"
+cd "$CODEX_ROOT"
+PYTHONPATH=. .venv/bin/python -m pytest -q
+```
+
+Cause and fix:
+Running pytest at the repo root can collect “third party” or local artifact tests under `tmp/**` (and other non-canonical locations) which may require extra dependencies or a different runtime environment. Scope test runs explicitly (or ignore `tmp`).
+
+Correct command:
+```bash
+export CODEX_ROOT="$(git rev-parse --show-toplevel)"
+export PYTHONPATH="$CODEX_ROOT"
+"$CODEX_ROOT/.venv/bin/python" -m pytest -q tests
+```
+
 ---
 
 ## Git (policy + safety)

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
 starts `/api/txt2img` and `/api/img2img` (including optional hires/highres settings), and consumes task SSE events to update UI state.
+Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
@@ -65,6 +66,60 @@ export interface GenerationState {
 }
 
 const MAX_HISTORY = 8
+const RESUME_STORAGE_PREFIX = 'codex.resume.image'
+const resumeAttempts = new Set<string>()
+
+type ResumeState = {
+  taskId: string
+  lastEventId: number
+  createdAtMs: number
+  paramsSnapshot: Record<string, unknown>
+}
+
+function resumeKey(tabId: string): string {
+  return `${RESUME_STORAGE_PREFIX}.${tabId}`
+}
+
+function loadResumeState(key: string): ResumeState | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const obj = JSON.parse(raw) as any
+    if (!obj || typeof obj !== 'object') return null
+    if (typeof obj.taskId !== 'string' || !obj.taskId.trim()) return null
+    const lastEventId = typeof obj.lastEventId === 'number' && Number.isFinite(obj.lastEventId) ? Math.trunc(obj.lastEventId) : 0
+    const createdAtMs = typeof obj.createdAtMs === 'number' && Number.isFinite(obj.createdAtMs) ? Math.trunc(obj.createdAtMs) : 0
+    const paramsSnapshot = obj.paramsSnapshot && typeof obj.paramsSnapshot === 'object' ? (obj.paramsSnapshot as Record<string, unknown>) : {}
+    return { taskId: obj.taskId, lastEventId: Math.max(0, lastEventId), createdAtMs, paramsSnapshot }
+  } catch {
+    return null
+  }
+}
+
+function saveResumeState(key: string, state: ResumeState): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(state))
+  } catch {
+    // ignore localStorage failures (private mode/quota)
+  }
+}
+
+function clearResumeState(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // ignore
+  }
+}
+
+function updateResumeEventId(key: string, eventId: number): void {
+  const v = Math.trunc(Number(eventId))
+  if (!Number.isFinite(v) || v <= 0) return
+  const cur = loadResumeState(key)
+  if (!cur) return
+  if (v <= cur.lastEventId) return
+  saveResumeState(key, { ...cur, lastEventId: v })
+}
 
 function defaultState(): GenerationState {
   return {
@@ -105,6 +160,7 @@ export function useGeneration(tabId: string) {
   
   // Reactive state for this tab
   const state = ref(getTabState(tabId))
+  const resumeNotice = ref('')
   
   // Tab info
   const tab = computed(() => modelTabs.tabs.find(t => t.id === tabId) as BaseTab | undefined)
@@ -422,7 +478,13 @@ export function useGeneration(tabId: string) {
 
       state.value.progress.stage = 'submitted'
 
-      const unsub = subscribeTask(state.value.taskId, handleTaskEvent)
+      const key = resumeKey(tabId)
+      saveResumeState(key, { taskId, lastEventId: 0, createdAtMs, paramsSnapshot })
+      const unsub = subscribeTask(state.value.taskId, handleTaskEvent, undefined, {
+        onMeta: ({ eventId }) => {
+          if (typeof eventId === 'number') updateResumeEventId(key, eventId)
+        },
+      })
       unsubscribers.set(tabId, unsub)
     } catch (error) {
       state.value.status = 'error'
@@ -472,6 +534,10 @@ export function useGeneration(tabId: string) {
         state.value.finishedAtMs = performance.now()
         state.value.status = 'done'
         break
+      case 'gap':
+        // History truncated while disconnected; refresh snapshot and keep streaming.
+        if (state.value.taskId) void refreshTaskSnapshot(state.value.taskId)
+        break
       case 'error':
         state.value.status = 'error'
         state.value.errorMessage = event.message
@@ -485,9 +551,11 @@ export function useGeneration(tabId: string) {
           state.value.selectedTaskId = state.value.currentRun.taskId
           state.value.currentRun = null
         }
+        clearResumeState(resumeKey(tabId))
         stopStream()
         break
       case 'end':
+        clearResumeState(resumeKey(tabId))
         if (state.value.status !== 'error') {
           state.value.status = 'done'
         }
@@ -500,6 +568,96 @@ export function useGeneration(tabId: string) {
         break
     }
   }
+
+  async function refreshTaskSnapshot(taskId: string): Promise<void> {
+    try {
+      const res = await fetchTaskResult(taskId)
+      if (res.status !== 'running') return
+      if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
+      const p = res.progress
+      if (p && typeof p === 'object') {
+        state.value.progress = {
+          stage: String(p.stage ?? state.value.progress.stage),
+          percent: p.percent ?? null,
+          etaSeconds: p.eta_seconds ?? null,
+          step: p.step ?? null,
+          totalSteps: p.total_steps ?? null,
+        }
+      }
+      if (res.preview_image) state.value.previewImage = res.preview_image
+      if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
+    } catch {
+      // ignore snapshot refresh failures
+    }
+  }
+
+  async function tryAutoResume(): Promise<void> {
+    if (resumeAttempts.has(tabId)) return
+    resumeAttempts.add(tabId)
+
+    const key = resumeKey(tabId)
+    const saved = loadResumeState(key)
+    if (!saved) return
+
+    let res
+    try {
+      res = await fetchTaskResult(saved.taskId)
+    } catch {
+      clearResumeState(key)
+      return
+    }
+
+    if (res.status === 'running') {
+      state.value.status = 'running'
+      state.value.taskId = saved.taskId
+      state.value.errorMessage = ''
+      state.value.finishedAtMs = null
+      if (typeof res.stage === 'string' && res.stage.trim()) state.value.progress.stage = res.stage
+      const p = res.progress
+      if (p && typeof p === 'object') {
+        state.value.progress = {
+          stage: String(p.stage ?? state.value.progress.stage),
+          percent: p.percent ?? null,
+          etaSeconds: p.eta_seconds ?? null,
+          step: p.step ?? null,
+          totalSteps: p.total_steps ?? null,
+        }
+      }
+      if (res.preview_image) state.value.previewImage = res.preview_image
+      if (res.preview_step !== undefined) state.value.previewStep = res.preview_step ?? null
+      const unsub = subscribeTask(saved.taskId, handleTaskEvent, undefined, {
+        after: saved.lastEventId,
+        onMeta: ({ eventId }) => {
+          if (typeof eventId === 'number') updateResumeEventId(key, eventId)
+        },
+      })
+      unsubscribers.set(tabId, unsub)
+      resumeNotice.value = 'Reconnected (resumed task).'
+      return
+    }
+
+    // Task is terminal; hydrate UI and clear resume marker.
+    clearResumeState(key)
+    if (res.status === 'completed' && res.result) {
+      state.value.gallery = res.result.images || []
+      state.value.info = res.result.info ?? null
+      state.value.status = 'done'
+      state.value.previewImage = null
+      state.value.previewStep = null
+      state.value.finishedAtMs = performance.now()
+      return
+    }
+    if (res.status === 'error') {
+      state.value.status = 'error'
+      state.value.errorMessage = String(res.error || 'Task failed.')
+      state.value.finishedAtMs = performance.now()
+      state.value.previewImage = null
+      state.value.previewStep = null
+    }
+  }
+
+  // Attempt to resume an in-flight task after a browser reload/crash.
+  void tryAutoResume()
 
   async function loadHistory(taskId: string): Promise<void> {
     if (!taskId || state.value.status === 'running') return
@@ -566,5 +724,6 @@ export function useGeneration(tabId: string) {
     stopStream,
     loadHistory,
     clearHistory,
+    resumeNotice,
   }
 }

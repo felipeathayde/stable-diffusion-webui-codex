@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Spandrel backend adapter (single import boundary).
 Implements load + inference for Spandrel SR models while keeping Spandrel types isolated from the rest of the codebase.
+Enforces the upscaler safeweights policy: when `CODEX_SAFE_WEIGHTS=1`, non-`.safetensors` model files are rejected before loading.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SpandrelModelHandle` (dataclass): Loaded Spandrel model handle (descriptor + scale + channels).
@@ -27,6 +28,7 @@ from apps.backend.runtime.memory import memory_management
 from apps.backend.runtime.memory.config import DeviceRole
 
 from .errors import UpscalerLoadError, UpscalerRuntimeError
+from .safeweights import safeweights_enabled
 from .specs import TileConfig
 from .tiled_scale import tiled_scale
 
@@ -46,6 +48,11 @@ def load_spandrel_model(path: str | Path) -> SpandrelModelHandle:
     p = Path(str(path))
     if not p.is_file():
         raise UpscalerLoadError(f"Upscaler model file not found: {p}")
+
+    if safeweights_enabled() and p.suffix.lower() != ".safetensors":
+        raise UpscalerLoadError(
+            f"Unsafe upscaler weights blocked by CODEX_SAFE_WEIGHTS=1 (expected .safetensors): {p}"
+        )
 
     try:
         descriptor = ModelLoader().load_from_file(str(p)).eval()

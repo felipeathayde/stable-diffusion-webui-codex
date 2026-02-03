@@ -8,6 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Upscale route view.
 Standalone upscaling workspace (Spandrel SR) with tile controls, explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
+Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight upscale tasks after reload (SSE replay via `after` / `lastEventId`).
+Surfaces the backend upscaler safeweights mode (`CODEX_SAFE_WEIGHTS`) in the remote download modal.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Upscale` (component): Upscale route view component.
@@ -159,6 +161,12 @@ Symbols (top-level; keep in sync; no ghosts):
       <p v-if="remoteError" class="caption">Error: {{ remoteError }}</p>
       <p v-else-if="remoteLoading" class="caption">Loading remote list…</p>
       <template v-else-if="remote">
+        <p class="caption">
+          Safeweights: <strong>{{ remote.safeweights_enabled ? 'ON' : 'OFF' }}</strong>
+          <span v-if="remote.allowed_weight_suffixes?.length"> (allowed: {{ remote.allowed_weight_suffixes.join(', ') }})</span>
+          <span v-else-if="remote.safeweights_enabled"> (allowed: .safetensors)</span>
+          <span v-else> (allowed: .safetensors, .pt, .pth)</span>
+        </p>
         <p v-if="remote.manifest_found && remote.manifest_error" class="caption">Manifest error: {{ remote.manifest_error }}</p>
         <p v-else-if="!remote.manifest_found" class="caption">Manifest not found; falling back to raw `upscalers/**` weight listing.</p>
 
@@ -202,6 +210,7 @@ import type { GeneratedImage, RemoteUpscalersResponse, TaskEvent } from '../api/
 import {
   cancelTask,
   downloadUpscalers,
+  fetchTaskResult,
   fetchRemoteUpscalers,
   startUpscale,
   subscribeTask,
@@ -253,6 +262,131 @@ const taskId = ref('')
 const isRunning = ref(false)
 const progress = ref<{ stage: string; percent: number | null; step: number | null; totalSteps: number | null } | null>(null)
 let unsubTask: (() => void) | null = null
+
+const RESUME_STORAGE_KEY = 'codex.resume.upscale'
+const resumeToastShown = new Set<string>()
+
+type ResumeState = {
+  taskId: string
+  lastEventId: number
+  createdAtMs: number
+  paramsSnapshot: Record<string, unknown>
+}
+
+function loadResumeState(): ResumeState | null {
+  try {
+    const raw = localStorage.getItem(RESUME_STORAGE_KEY)
+    if (!raw) return null
+    const obj = JSON.parse(raw) as any
+    if (!obj || typeof obj !== 'object') return null
+    if (typeof obj.taskId !== 'string' || !obj.taskId.trim()) return null
+    const lastEventId = typeof obj.lastEventId === 'number' && Number.isFinite(obj.lastEventId) ? Math.trunc(obj.lastEventId) : 0
+    const createdAtMs = typeof obj.createdAtMs === 'number' && Number.isFinite(obj.createdAtMs) ? Math.trunc(obj.createdAtMs) : 0
+    const paramsSnapshot = obj.paramsSnapshot && typeof obj.paramsSnapshot === 'object' ? (obj.paramsSnapshot as Record<string, unknown>) : {}
+    return { taskId: obj.taskId, lastEventId: Math.max(0, lastEventId), createdAtMs, paramsSnapshot }
+  } catch {
+    return null
+  }
+}
+
+function saveResumeState(state: ResumeState): void {
+  try {
+    localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // ignore localStorage failures (private mode/quota)
+  }
+}
+
+function clearResumeState(): void {
+  try {
+    localStorage.removeItem(RESUME_STORAGE_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function updateResumeEventId(eventId: number): void {
+  const v = Math.trunc(Number(eventId))
+  if (!Number.isFinite(v) || v <= 0) return
+  const cur = loadResumeState()
+  if (!cur) return
+  if (v <= cur.lastEventId) return
+  saveResumeState({ ...cur, lastEventId: v })
+}
+
+async function refreshTaskSnapshot(id: string): Promise<void> {
+  try {
+    const res = await fetchTaskResult(id)
+    if (res.status !== 'running') return
+    const p = res.progress
+    if (p && typeof p === 'object') {
+      progress.value = {
+        stage: String(p.stage ?? progress.value?.stage ?? 'running'),
+        percent: p.percent ?? null,
+        step: p.step ?? null,
+        totalSteps: p.total_steps ?? null,
+      }
+    } else if (typeof res.stage === 'string' && res.stage.trim()) {
+      progress.value = { stage: res.stage, percent: null, step: null, totalSteps: null }
+    }
+  } catch {
+    // ignore snapshot refresh failures
+  }
+}
+
+async function tryAutoResume(): Promise<void> {
+  const saved = loadResumeState()
+  if (!saved) return
+
+  let res
+  try {
+    res = await fetchTaskResult(saved.taskId)
+  } catch {
+    clearResumeState()
+    return
+  }
+
+  if (res.status === 'running') {
+    stopStreams()
+    isRunning.value = true
+    taskId.value = saved.taskId
+    errorMessage.value = ''
+    const p = res.progress
+    if (p && typeof p === 'object') {
+      progress.value = {
+        stage: String(p.stage ?? 'running'),
+        percent: p.percent ?? null,
+        step: p.step ?? null,
+        totalSteps: p.total_steps ?? null,
+      }
+    } else if (typeof res.stage === 'string' && res.stage.trim()) {
+      progress.value = { stage: res.stage, percent: null, step: null, totalSteps: null }
+    }
+    unsubTask = subscribeTask(saved.taskId, handleTaskEvent, undefined, {
+      after: saved.lastEventId,
+      onMeta: ({ eventId }) => {
+        if (typeof eventId === 'number') updateResumeEventId(eventId)
+      },
+    })
+    if (!resumeToastShown.has(saved.taskId)) {
+      toast('Reconnected (resumed task).')
+      resumeToastShown.add(saved.taskId)
+    }
+    return
+  }
+
+  clearResumeState()
+  isRunning.value = false
+
+  if (res.status === 'completed' && res.result) {
+    images.value = res.result.images || []
+    info.value = res.result.info ?? null
+    return
+  }
+  if (res.status === 'error') {
+    errorMessage.value = String(res.error || 'Task failed.')
+  }
+}
 
 const remoteModalOpen = ref(false)
 const remote = ref<RemoteUpscalersResponse | null>(null)
@@ -423,11 +557,18 @@ function handleTaskEvent(event: TaskEvent): void {
       images.value = event.images || []
       info.value = event.info ?? null
       break
+    case 'gap':
+      if (taskId.value) void refreshTaskSnapshot(taskId.value)
+      break
     case 'error':
       errorMessage.value = event.message
+      clearResumeState()
       break
     case 'end':
+      clearResumeState()
       isRunning.value = false
+      if (unsubTask) unsubTask()
+      unsubTask = null
       break
   }
 }
@@ -501,8 +642,21 @@ async function start(): Promise<void> {
     return
   }
 
+  const createdAtMs = Date.now()
+  const paramsSnapshot = {
+    device: payload.device,
+    upscaler_id: payload.upscaler_id,
+    scale: payload.scale,
+    tile: payload.tile,
+  }
+  saveResumeState({ taskId: taskId.value, lastEventId: 0, createdAtMs, paramsSnapshot })
+
   unsubTask = subscribeTask(taskId.value, handleTaskEvent, (err) => {
     if (err) console.warn('[upscale] task stream error', err)
+  }, {
+    onMeta: ({ eventId }) => {
+      if (typeof eventId === 'number') updateResumeEventId(eventId)
+    },
   })
 }
 
@@ -589,6 +743,7 @@ async function downloadSelectedRemote(): Promise<void> {
 
 onMounted(() => {
   void loadUpscalers()
+  void tryAutoResume()
 })
 
 onBeforeUnmount(() => {

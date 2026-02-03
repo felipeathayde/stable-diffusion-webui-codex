@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Upscaler registry + orchestration.
 Discovers upscaler model files from configured roots, exposes a stable list for the UI, and provides a single entry point to run
 either latent upscaling (torch interpolate) or Spandrel SR models (tiled).
+Discovery respects the safeweights policy: when `CODEX_SAFE_WEIGHTS=1`, only `.safetensors` upscaler weights are surfaced (defense in depth at load-time).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `list_upscalers` (function): Returns all available upscalers (builtin latent + local Spandrel models).
@@ -26,10 +27,9 @@ from typing import Callable, Iterable, Optional
 from apps.backend.infra.config.paths import get_paths_for
 
 from .errors import UpscalerNotFoundError
+from .safeweights import allowed_upscaler_weight_suffixes, safeweights_enabled
 from .specs import LATENT_UPSCALE_MODES, TileConfig, UpscalerDefinition, UpscalerKind
 
-
-_ALLOWED_MODEL_EXTS = {".pth", ".pt", ".safetensors"}
 
 _UPSCALERS_CACHE: list[UpscalerDefinition] | None = None
 _UPSCALERS_CACHE_KEY: tuple[tuple[str, str, float | None], ...] | None = None
@@ -41,11 +41,12 @@ def _iter_model_files(root: str) -> Iterable[Path]:
         return []
     if not base.is_dir():
         return []
+    allowed_exts = set(allowed_upscaler_weight_suffixes())
     out: list[Path] = []
     for path in base.rglob("*"):
         if not path.is_file():
             continue
-        if path.suffix.lower() not in _ALLOWED_MODEL_EXTS:
+        if path.suffix.lower() not in allowed_exts:
             continue
         out.append(path)
     out.sort(key=lambda p: p.as_posix().lower())
@@ -74,6 +75,7 @@ def _dir_mtime(path: Path) -> float | None:
 
 def _compute_upscalers_cache_key() -> tuple[tuple[str, str, float | None], ...]:
     parts: list[tuple[str, str, float | None]] = []
+    parts.append(("policy", f"safeweights={int(safeweights_enabled())}", None))
     for root_key in ("upscale_models", "latent_upscale_models"):
         for root in get_paths_for(root_key):
             base = Path(str(root))

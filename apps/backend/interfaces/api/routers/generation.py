@@ -12,6 +12,7 @@ Contains request parsing and payload validation (including hires tile config via
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
 Highres supports sampler/scheduler overrides for the hires pass (txt2img: `extras.highres.sampler` / `extras.highres.scheduler`; img2img: `img2img_hr_sampling` / `img2img_hr_scheduler`).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
+Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for generation endpoints.
@@ -32,7 +33,8 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from apps.backend.interfaces.api.path_utils import _path_from_api
-from apps.backend.interfaces.api.task_registry import TaskEntry, register_task, tasks, tasks_lock
+from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.task_registry import TaskEntry, register_task, unregister_task
 
 
 def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapshot, generation_provenance, save_generated_images, param_utils) -> APIRouter:
@@ -55,7 +57,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Img2VidRequest,
         Vid2VidRequest,
     )
-    from apps.backend.runtime.memory import memory_management as mem_management
+    from apps.backend.interfaces.api.device_selection import parse_device_from_payload
 
     def _ensure_default_engines_registered() -> None:
         # Generation endpoints require the engine registry, but API startup should remain import-light.
@@ -798,37 +800,31 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return req, engine_key, model_override
 
-    def _require_explicit_device(payload: Dict[str, Any]) -> str:
-        # Accept explicit aliases from payload only (no options fallback)
-        raw = (
-            payload.get('codex_device')
-            or payload.get('device')
-            or ""
-        )
-        dev = str(raw).strip().lower()
-        allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
-        if dev not in allowed:
-            raise HTTPException(status_code=400, detail="Missing or invalid 'codex_device' (cpu|cuda|mps|xpu|directml)")
+    def _parse_explicit_device(payload: Dict[str, Any]) -> str:
+        """Parse/validate the per-request device selection (fail loud).
+
+        Note: do not apply `switch_primary_device()` here; apply it only when the task actually starts running
+        (single-flight-safe).
+        """
         try:
-            mem_management.switch_primary_device(dev)
+            return parse_device_from_payload(payload)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        return dev
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     _ORCH = InferenceOrchestrator()
 
 
-    def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+    def run_txt2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, *, device: str) -> None:
         from apps.backend.interfaces.api.tasks.generation_tasks import run_image_task as _run_image_task
 
         _run_image_task(
             task_id=task_id,
             payload=payload,
             entry=entry,
+            device=device,
             task_type=TaskType.TXT2IMG,
             prepare=prepare_txt2img,
             orch=_ORCH,
-            require_explicit_device=_require_explicit_device,
             ensure_default_engines_registered=_ensure_default_engines_registered,
             live_preview=live_preview,
             opts_get=_opts_get,
@@ -1155,17 +1151,17 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return req, engine_key, model_ref
 
-    def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry) -> None:
+    def run_img2img_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, *, device: str) -> None:
         from apps.backend.interfaces.api.tasks.generation_tasks import run_image_task as _run_image_task
 
         _run_image_task(
             task_id=task_id,
             payload=payload,
             entry=entry,
+            device=device,
             task_type=TaskType.IMG2IMG,
             prepare=prepare_img2img,
             orch=_ORCH,
-            require_explicit_device=_require_explicit_device,
             ensure_default_engines_registered=_ensure_default_engines_registered,
             live_preview=live_preview,
             opts_get=_opts_get,
@@ -1925,22 +1921,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         model_ref = str(extras["wan_high"]["model_dir"])  # type: ignore[index]
         return req, engine_key, model_ref
 
-    def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType) -> None:
-        loop = entry.loop
-
+    def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType, *, device: str) -> None:
         def push(event: Dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-        def mark_done(success: bool) -> None:
-            def _set() -> None:
-                if not entry.done.done():
-                    entry.done.set_result(success)
-
-            loop.call_soon_threadsafe(_set)
+            entry.push_event(event)
 
         push({"type": "status", "stage": "queued"})
         try:
-            _require_explicit_device(payload)
             _ensure_default_engines_registered()
             if task_type == TaskType.TXT2VID:
                 req, engine_key, model_ref = prepare_txt2vid(payload)
@@ -1952,60 +1938,66 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise RuntimeError(f"Unsupported video task: {task_type}")
         except Exception as err:
             entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
-            entry.schedule_cleanup(task_id, delay=0.0)
-            with tasks_lock:
-                tasks.pop(task_id, None)
+            entry.mark_finished(success=False)
+            unregister_task(task_id)
             raise
 
         def worker() -> None:
-            logging.getLogger('backend.api').info('[api] DEBUG: enter worker task_id=%s type=%s engine=%s model=%s', task_id, task_type.value, engine_key, model_ref)
+            acquired = False
+            success = False
             try:
-                push({"type": "status", "stage": "running"})
-                with tasks_lock:
-                    engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
-                    from apps.backend.interfaces.api.tasks.generation_tasks import encode_images as _encode_images
-                    from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+                if single_flight_enabled():
+                    push({"type": "status", "stage": "waiting_for_inference"})
 
-                    with smart_runtime_overrides(
-                        smart_offload=bool(getattr(req, "smart_offload", False)),
-                        smart_fallback=bool(getattr(req, "smart_fallback", False)),
-                        smart_cache=bool(getattr(req, "smart_cache", False)),
-                    ):
-                        for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
-                            if entry.cancel_requested and entry.cancel_mode == "immediate":
-                                entry.error = "cancelled"
-                                push({"type": "error", "message": "cancelled"})
-                                push({"type": "end"})
-                                mark_done(False)
-                                return
-                            if isinstance(ev, ProgressEvent):
-                                push({
+                acquired = acquire_inference_gate(
+                    should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+                )
+                if not acquired:
+                    entry.error = "cancelled"
+                    return
+
+                push({"type": "status", "stage": "running"})
+                from apps.backend.interfaces.api.device_selection import apply_primary_device
+
+                apply_primary_device(device)
+
+                engine_opts = {"export_video": bool(_opts_snapshot().codex_export_video)}
+                from apps.backend.interfaces.api.tasks.generation_tasks import encode_images as _encode_images
+                from apps.backend.runtime.memory.smart_offload import smart_runtime_overrides
+
+                with smart_runtime_overrides(
+                    smart_offload=bool(getattr(req, "smart_offload", False)),
+                    smart_fallback=bool(getattr(req, "smart_fallback", False)),
+                    smart_cache=bool(getattr(req, "smart_cache", False)),
+                ):
+                    for ev in _ORCH.run(task_type, engine_key, req, model_ref=model_ref, engine_options=engine_opts):
+                        if entry.cancel_requested and entry.cancel_mode == "immediate":
+                            entry.error = "cancelled"
+                            return
+                        if isinstance(ev, ProgressEvent):
+                            push(
+                                {
                                     "type": "progress",
                                     "stage": ev.stage,
                                     "percent": ev.percent,
                                     "step": ev.step,
                                     "total_steps": ev.total_steps,
                                     "eta_seconds": ev.eta_seconds,
-                                })
-                            elif isinstance(ev, ResultEvent):
-                                payload_obj = ev.payload or {}
-                                info_raw = payload_obj.get("info", "{}")
-                                try:
-                                    info_obj = json.loads(info_raw)
-                                except Exception:
-                                    info_obj = info_raw
-                                encoded = _encode_images(payload_obj.get("images", []))
-                                result = {"images": encoded, "info": info_obj}
-                                if isinstance(payload_obj.get("video"), dict):
-                                    result["video"] = payload_obj.get("video")
-                                entry.result = {"status": "completed", "result": result}
-                                push({"type": "result", **result})
-                push({"type": "end"})
-                mark_done(True)
-                logging.getLogger('backend.api').info('[api] DEBUG: exit worker task_id=%s', task_id)
+                                }
+                            )
+                        elif isinstance(ev, ResultEvent):
+                            payload_obj = ev.payload or {}
+                            info_raw = payload_obj.get("info", "{}")
+                            try:
+                                info_obj = json.loads(info_raw)
+                            except Exception:
+                                info_obj = info_raw
+                            encoded = _encode_images(payload_obj.get("images", []))
+                            result = {"images": encoded, "info": info_obj}
+                            if isinstance(payload_obj.get("video"), dict):
+                                result["video"] = payload_obj.get("video")
+                            entry.result = {"status": "completed", "result": result}
+                success = True
             except Exception as err:
                 try:
                     from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
@@ -2013,10 +2005,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 except Exception:
                     pass
                 entry.error = str(err)
-                push({"type": "error", "message": entry.error})
-                push({"type": "end"})
-                mark_done(False)
+                success = False
             finally:
+                entry.mark_finished(success=success)
+                entry.schedule_cleanup(task_id)
+                if acquired:
+                    try:
+                        release_inference_gate()
+                    except Exception:
+                        pass
                 if task_type == TaskType.VID2VID:
                     try:
                         uploaded_paths: list[str] = []
@@ -2054,11 +2051,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
 
+        device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-{uuid4().hex})"
         register_task(task_id, entry)
-        run_txt2img_task(task_id, payload, entry)
+        run_txt2img_task(task_id, payload, entry, device=device)
         return {"task_id": task_id}
 
     @router.post('/api/img2img')
@@ -2066,11 +2064,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
 
+        device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-img2img-{uuid4().hex})"
         register_task(task_id, entry)
-        run_img2img_task(task_id, payload, entry)
+        run_img2img_task(task_id, payload, entry, device=device)
         return {"task_id": task_id}
 
     @router.post('/api/txt2vid')
@@ -2078,11 +2077,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
 
+        device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-txt2vid-{uuid4().hex})"
         register_task(task_id, entry)
-        run_video_task(task_id, payload, entry, TaskType.TXT2VID)
+        run_video_task(task_id, payload, entry, TaskType.TXT2VID, device=device)
         return {"task_id": task_id}
 
     @router.post('/api/img2vid')
@@ -2091,12 +2091,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="Payload must be JSON object")
 
+        device = _parse_explicit_device(payload)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-img2vid-{uuid4().hex})"
         register_task(task_id, entry)
         logging.getLogger('backend.api').info('[api] DEBUG: scheduling img2vid task_id=%s', task_id)
-        run_video_task(task_id, payload, entry, TaskType.IMG2VID)
+        run_video_task(task_id, payload, entry, TaskType.IMG2VID, device=device)
         return {"task_id": task_id}
 
     @router.post('/api/vid2vid')
@@ -2127,6 +2128,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="payload must be JSON object")
 
+        device = _parse_explicit_device(data)
         loop = asyncio.get_running_loop()
         entry = TaskEntry(loop)
         task_id = f"task(api-vid2vid-{uuid4().hex})"
@@ -2171,7 +2173,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if uploaded_paths:
             data["__vid2vid_uploaded_paths"] = uploaded_paths
 
-        run_video_task(task_id, data, entry, TaskType.VID2VID)
+        run_video_task(task_id, data, entry, TaskType.VID2VID, device=device)
         return {"task_id": task_id}
 
     return router

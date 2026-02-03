@@ -10,6 +10,7 @@ Purpose: SUPIR enhance API routes.
 Exposes:
 - SUPIR weights diagnostics (`GET /api/supir/models`)
 - SUPIR enhance tasks (`POST /api/supir/enhance`)
+Validates explicit per-request device selection and dispatches a background task worker (single-flight-gated) for enhance runs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for SUPIR endpoints.
@@ -26,6 +27,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.interfaces.api.device_selection import parse_device_from_payload
 from apps.backend.interfaces.api.task_registry import TaskEntry, register_task
 from apps.backend.runtime.families.supir.config import parse_supir_enhance_config
 from apps.backend.runtime.families.supir.errors import SupirBaseModelError, SupirConfigError, SupirWeightsError
@@ -34,21 +36,15 @@ from apps.backend.runtime.families.supir.samplers.registry import iter_supir_sam
 from apps.backend.runtime.families.supir.weights import SupirVariant, supir_weights_diagnostics
 
 
-def _require_explicit_device(payload: Dict[str, Any]) -> str:
-    """Validate and apply the per-request device selection (fail loud)."""
+def _parse_explicit_device(payload: Dict[str, Any]) -> str:
+    """Validate the per-request device selection (fail loud).
 
-    from apps.backend.runtime.memory import memory_management as mem_management
-
-    raw = payload.get("codex_device") or payload.get("device") or payload.get("codex_diffusion_device") or ""
-    dev = str(raw).strip().lower()
-    allowed = {"cpu", "cuda", "mps", "xpu", "directml"}
-    if dev not in allowed:
-        raise HTTPException(status_code=400, detail="Missing or invalid device (cpu|cuda|mps|xpu|directml)")
+    Note: do not call `switch_primary_device()` here; apply it only when the task starts running (single-flight-safe).
+    """
     try:
-        mem_management.switch_primary_device(dev)
+        return parse_device_from_payload(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    return dev
 
 
 def build_router(
@@ -92,8 +88,7 @@ def build_router(
         except SupirConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
-        # Apply device selection (fail loud; no silent fallbacks).
-        _require_explicit_device(data)
+        device = _parse_explicit_device(data)
 
         try:
             assets = resolve_supir_assets(
@@ -125,7 +120,7 @@ def build_router(
             base_model_path=str(assets.base_checkpoint),
             variant_ckpt_path=str(assets.variant_ckpt),
             entry=entry,
-            require_explicit_device=_require_explicit_device,
+            device=device,
             opts_get=opts_get,
             generation_provenance=generation_provenance,
             save_generated_images=save_generated_images,

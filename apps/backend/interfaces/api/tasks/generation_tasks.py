@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Shared task orchestration helpers for generation endpoints.
 Centralizes image encoding, engine-options building, and the common task worker loop (status/progress/result/end/error) so routers stay thin.
+Uses the shared inference gate when `CODEX_SINGLE_FLIGHT=1` and always marks tasks finished via `TaskEntry.mark_finished` (stream termination + cleanup).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `encode_images` (function): Encode PIL images to base64 PNG payloads, optionally injecting PNG text metadata.
@@ -24,7 +25,8 @@ import logging
 import threading
 from typing import Any, Callable, Mapping, Optional
 
-from apps.backend.interfaces.api.task_registry import TaskEntry, tasks, tasks_lock
+from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
+from apps.backend.interfaces.api.task_registry import TaskEntry, unregister_task
 
 logger = logging.getLogger("backend.api.tasks.generation")
 
@@ -117,10 +119,10 @@ def run_image_task(
     task_id: str,
     payload: dict[str, Any],
     entry: TaskEntry,
+    device: str,
     task_type: Any,
     prepare: Callable[[dict[str, Any]], tuple[Any, str, Optional[str]]],
     orch: Any,
-    require_explicit_device: Callable[[dict[str, Any]], str],
     ensure_default_engines_registered: Callable[[], None],
     live_preview: Any,
     opts_get: Callable[..., Any],
@@ -128,36 +130,38 @@ def run_image_task(
     generation_provenance: Mapping[str, str],
     save_generated_images: Callable[..., Any],
 ) -> None:
-    loop = entry.loop
-
     def push(event: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(entry.queue.put_nowait, event)
-
-    def mark_done(success: bool) -> None:
-        def _set() -> None:
-            if not entry.done.done():
-                entry.done.set_result(success)
-
-        loop.call_soon_threadsafe(_set)
+        entry.push_event(event)
 
     push({"type": "status", "stage": "queued"})
     try:
-        require_explicit_device(payload)
         ensure_default_engines_registered()
         req, engine_key, model_ref = prepare(payload)
     except Exception as err:
         entry.error = str(err)
-        push({"type": "error", "message": entry.error})
-        push({"type": "end"})
-        mark_done(False)
-        entry.schedule_cleanup(task_id, delay=0.0)
-        with tasks_lock:
-            tasks.pop(task_id, None)
+        entry.mark_finished(success=False)
+        unregister_task(task_id)
         raise
 
     def worker() -> None:
+        acquired = False
+        success = False
         try:
+            if single_flight_enabled():
+                push({"type": "status", "stage": "waiting_for_inference"})
+
+            acquired = acquire_inference_gate(
+                should_cancel=lambda: bool(entry.cancel_requested and entry.cancel_mode == "immediate"),
+            )
+            if not acquired:
+                entry.error = "cancelled"
+                return
+
             push({"type": "status", "stage": "running"})
+            from apps.backend.interfaces.api.device_selection import apply_primary_device
+
+            apply_primary_device(device)
+
             preview_cfg = live_preview.build_task_config(opts_get)
             entry.last_preview_id_sent = 0
 
@@ -165,66 +169,60 @@ def run_image_task(
 
             from apps.backend.core.requests import ProgressEvent, ResultEvent
 
-            with tasks_lock:
-                with preview_cfg.runtime_overrides():
-                    for ev in orch.run(
-                        task_type,
-                        engine_key,
-                        req,
-                        model_ref=model_ref,
-                        engine_options=engine_options,
-                    ):
-                        if entry.cancel_requested and entry.cancel_mode == "immediate":
-                            entry.error = "cancelled"
-                            push({"type": "error", "message": "cancelled"})
-                            push({"type": "end"})
-                            mark_done(False)
-                            return
+            with preview_cfg.runtime_overrides():
+                for ev in orch.run(
+                    task_type,
+                    engine_key,
+                    req,
+                    model_ref=model_ref,
+                    engine_options=engine_options,
+                ):
+                    if entry.cancel_requested and entry.cancel_mode == "immediate":
+                        entry.error = "cancelled"
+                        return
 
-                        if isinstance(ev, ProgressEvent):
-                            evt: dict[str, Any] = {
-                                "type": "progress",
-                                "stage": ev.stage,
-                                "percent": ev.percent,
-                                "step": ev.step,
-                                "total_steps": ev.total_steps,
-                                "eta_seconds": ev.eta_seconds,
-                            }
-                            live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
-                            push(evt)
-                            continue
-
-                        if not isinstance(ev, ResultEvent):
-                            continue
-
-                        payload_obj = ev.payload or {}
-                        info_raw = payload_obj.get("info", "{}")
-                        try:
-                            info_obj = json.loads(info_raw)
-                        except Exception:
-                            info_obj = info_raw
-                        info_dict = info_obj if isinstance(info_obj, dict) else None
-                        if isinstance(info_obj, dict):
-                            for key, value in generation_provenance.items():
-                                info_obj.setdefault(key, value)
-
-                        if bool(opts_get("samples_save", True)):
-                            save_generated_images(
-                                payload_obj.get("images", []),
-                                task=task_type,
-                                info=info_dict,
-                                metadata=generation_provenance,
-                            )
-
-                        result = {
-                            "images": encode_images(payload_obj.get("images", []), metadata=generation_provenance),
-                            "info": info_obj,
+                    if isinstance(ev, ProgressEvent):
+                        evt: dict[str, Any] = {
+                            "type": "progress",
+                            "stage": ev.stage,
+                            "percent": ev.percent,
+                            "step": ev.step,
+                            "total_steps": ev.total_steps,
+                            "eta_seconds": ev.eta_seconds,
                         }
-                        entry.result = {"status": "completed", "result": result}
-                        push({"type": "result", **result})
+                        live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
+                        push(evt)
+                        continue
 
-            push({"type": "end"})
-            mark_done(True)
+                    if not isinstance(ev, ResultEvent):
+                        continue
+
+                    payload_obj = ev.payload or {}
+                    info_raw = payload_obj.get("info", "{}")
+                    try:
+                        info_obj = json.loads(info_raw)
+                    except Exception:
+                        info_obj = info_raw
+                    info_dict = info_obj if isinstance(info_obj, dict) else None
+                    if isinstance(info_obj, dict):
+                        for key, value in generation_provenance.items():
+                            info_obj.setdefault(key, value)
+
+                    if bool(opts_get("samples_save", True)):
+                        save_generated_images(
+                            payload_obj.get("images", []),
+                            task=task_type,
+                            info=info_dict,
+                            metadata=generation_provenance,
+                        )
+
+                    result = {
+                        "images": encode_images(payload_obj.get("images", []), metadata=generation_provenance),
+                        "info": info_obj,
+                    }
+                    entry.result = {"status": "completed", "result": result}
+
+            success = True
         except Exception as err:  # pragma: no cover - surfaces runtime errors
             try:
                 from apps.backend.runtime.diagnostics.exception_hook import dump_exception as _dump_exc
@@ -234,8 +232,14 @@ def run_image_task(
                 pass
 
             entry.error = str(err)
-            push({"type": "error", "message": entry.error})
-            push({"type": "end"})
-            mark_done(False)
+            success = False
+        finally:
+            entry.mark_finished(success=success)
+            entry.schedule_cleanup(task_id)
+            if acquired:
+                try:
+                    release_inference_gate()
+                except Exception:
+                    pass
 
     threading.Thread(target=worker, name=f"{task_type.value}-task-{task_id}", daemon=True).start()

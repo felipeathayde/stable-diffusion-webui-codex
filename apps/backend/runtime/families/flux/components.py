@@ -11,7 +11,7 @@ Implements RMSNorm/QKNorm, rotary-aware self-attention, modulation MLPs, and the
 projection layer used by Flux-family runtimes.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `RMSNorm` (class): Root-mean-square normalization with dtype-aware parameter casting.
+- `RMSNorm` (class): Root-mean-square normalization (fp32 compute, dtype-preserving output).
 - `QKNorm` (class): Applies independent RMSNorm to query/key pairs for attention.
 - `SelfAttention` (class): Rotary-aware self-attention module with QKV projection and output projection.
 - `ModulationMLP` (class): Produces shift/scale/gate modulation vectors (single or double stream).
@@ -29,13 +29,14 @@ from torch import nn
 
 from apps.backend.runtime.attention import attention_function
 from apps.backend.runtime import utils
+from apps.backend.runtime.misc.autocast import autocast_disabled
 from .geometry import apply_rotary_embeddings
 
 logger = logging.getLogger("backend.runtime.flux")
 
 
 class RMSNorm(nn.Module):
-    """Root mean square layer norm with dtype-aware casting."""
+    """Root mean square layer norm (fp32 compute, dtype-preserving output)."""
 
     def __init__(self, dim: int) -> None:
         super().__init__()
@@ -43,11 +44,15 @@ class RMSNorm(nn.Module):
         self.eps = 1e-6
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.scale.dtype != x.dtype:
-            self.scale = utils.tensor2parameter(self.scale.to(dtype=x.dtype))
-        second_moment = torch.mean(x * x, dim=-1, keepdim=True)
-        norm = torch.rsqrt(second_moment + self.eps)
-        return x * norm * self.scale
+        if not x.is_floating_point():
+            raise TypeError(f"Flux RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
+        dtype = x.dtype
+        with autocast_disabled(x.device.type):
+            x_float = x.float()
+            second_moment = torch.mean(x_float * x_float, dim=-1, keepdim=True)
+            inv_rms = torch.rsqrt(second_moment + self.eps)
+            out = x_float * inv_rms * self.scale.float()
+            return out.to(dtype=dtype)
 
 
 class QKNorm(nn.Module):

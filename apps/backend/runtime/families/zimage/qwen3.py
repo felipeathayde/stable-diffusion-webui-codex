@@ -12,10 +12,10 @@ This is a standalone implementation that avoids `transformers`, enabling GGUF su
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Qwen3Config` (dataclass): Configuration defaults for Qwen3-4B (dims/layers/heads/RoPE/norm eps).
-- `RMSNorm` (class): RMSNorm implementation used throughout the encoder.
+- `RMSNorm` (class): RMSNorm implementation used throughout the encoder (fp32 compute, dtype-preserving output).
 - `rotate_half` (function): Helper for RoPE rotation (splits and rotates half-dims).
-- `apply_rotary_pos_emb` (function): Applies rotary positional embeddings to `(q, k)` tensors.
-- `RotaryEmbedding` (class): Builds rotary embedding frequency tensors for a given head dim and max positions.
+- `apply_rotary_pos_emb` (function): Applies rotary positional embeddings in fp32 and preserves `(q, k)` dtypes.
+- `RotaryEmbedding` (class): Builds/caches fp32 rotary embedding frequency tensors for a given head dim and max positions.
 - `Attention` (class): Attention module (GQA support + optional Q/K norm + SDPA).
 - `MLP` (class): SwiGLU feed-forward block.
 - `TransformerBlock` (class): One transformer layer (attn + MLP + residual/norm plumbing).
@@ -43,6 +43,8 @@ from typing import Optional, Tuple, List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from apps.backend.runtime.misc.autocast import autocast_disabled
 
 logger = logging.getLogger("backend.runtime.zimage.qwen3")
 
@@ -81,10 +83,14 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not x.is_floating_point():
+            raise TypeError(f"Qwen3 RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         dtype = x.dtype
-        x = x.float()
-        norm = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        return (norm * self.weight).to(dtype)
+        with autocast_disabled(x.device.type):
+            x_float = x.float()
+            norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+            out = norm * self.weight.float()
+            return out.to(dtype=dtype)
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -101,9 +107,20 @@ def apply_rotary_pos_emb(
     sin: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Apply rotary position embeddings to Q and K."""
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+    if not q.is_floating_point() or not k.is_floating_point():
+        raise TypeError(f"RoPE expects floating-point Q/K tensors; got q.dtype={q.dtype} k.dtype={k.dtype}.")
+    if not cos.is_floating_point() or not sin.is_floating_point():
+        raise TypeError(f"RoPE expects floating-point cos/sin tensors; got cos.dtype={cos.dtype} sin.dtype={sin.dtype}.")
+    q_dtype = q.dtype
+    k_dtype = k.dtype
+    with autocast_disabled(q.device.type):
+        q_float = q.float()
+        k_float = k.float()
+        cos_float = cos.float()
+        sin_float = sin.float()
+        q_embed = (q_float * cos_float) + (rotate_half(q_float) * sin_float)
+        k_embed = (k_float * cos_float) + (rotate_half(k_float) * sin_float)
+        return q_embed.to(dtype=q_dtype), k_embed.to(dtype=k_dtype)
 
 
 class RotaryEmbedding(nn.Module):
@@ -135,8 +152,8 @@ class RotaryEmbedding(nn.Module):
             self._set_cos_sin_cache(seq_len)
         
         return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
+            self.cos_cached[:seq_len].to(dtype=torch.float32),
+            self.sin_cached[:seq_len].to(dtype=torch.float32),
         )
 
 

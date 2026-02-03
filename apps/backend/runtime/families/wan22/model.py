@@ -12,9 +12,9 @@ multiple formats (GGUF, safetensors, etc.) via the operations registry; GGUF han
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanArchitectureConfig` (dataclass): Architecture hyperparameters for WAN (dims/heads/blocks/patch size/etc) used for construction/inference.
-- `WanRMSNorm` (class): RMSNorm with optional GGUF parameter dequantization (supports `CodexParameter` weights).
+- `WanRMSNorm` (class): RMSNorm with optional GGUF dequantization (fp32 compute, dtype-preserving output).
 - `WanFP32LayerNorm` (class): LayerNorm that computes in float32 and casts back (Diffusers parity; improves fp16 stability).
-- `WanRotaryPosEmbed` (class): Rotary positional embedding (RoPE) cache + per-input embedding builder for WAN tokens.
+- `WanRotaryPosEmbed` (class): Rotary positional embedding (RoPE) cache + per-input embedding builder (fp32 caches).
 - `WanSelfAttention` (class): Self-attention block for WAN (QKV projection + SDPA implementation).
 - `WanCrossAttention` (class): Cross-attention block for WAN (text context attention path).
 - `WanFFN` (class): Feed-forward (MLP) block used in WAN transformer blocks.
@@ -36,6 +36,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from apps.backend.runtime.misc.autocast import autocast_disabled
 from apps.backend.runtime.ops.operations import get_operation_context
 from apps.backend.runtime.ops.operations_gguf import CodexParameter, dequantize_tensor as gguf_dequantize_tensor
 
@@ -77,13 +78,22 @@ class WanRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not x.is_floating_point():
+            raise TypeError(f"WanRMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
+        original_dtype = x.dtype
+
         w = self.weight
         if isinstance(w, CodexParameter) and w.qtype is not None:
             w = gguf_dequantize_tensor(w)
         if not torch.is_tensor(w):
             w = torch.as_tensor(w)
-        w = w.to(device=x.device, dtype=x.dtype)
-        return (x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)) * w
+        w = w.to(device=x.device)
+        with autocast_disabled(x.device.type):
+            x_float = x.float()
+            w_float = w.float()
+            out = x_float * torch.rsqrt(x_float.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            out = out * w_float
+            return out.to(dtype=original_dtype)
 
 
 class WanFP32LayerNorm(nn.LayerNorm):
@@ -157,7 +167,7 @@ class WanRotaryPosEmbed(nn.Module):
         self.h_dim = int(h_dim)
         self.w_dim = int(w_dim)
 
-        freqs_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
+        freqs_dtype = torch.float32
 
         freqs_cos = []
         freqs_sin = []
@@ -241,13 +251,22 @@ class WanSelfAttention(nn.Module):
         freqs_cos: torch.Tensor,
         freqs_sin: torch.Tensor,
     ) -> torch.Tensor:
-        x1 = hidden_states[..., 0::2]
-        x2 = hidden_states[..., 1::2]
-        cos = freqs_cos[..., 0::2]
-        sin = freqs_sin[..., 1::2]
+        if not hidden_states.is_floating_point():
+            raise TypeError(
+                "WAN RoPE expects floating-point hidden states; "
+                f"got dtype={hidden_states.dtype} shape={tuple(hidden_states.shape)}."
+            )
+        original_dtype = hidden_states.dtype
+        with autocast_disabled(hidden_states.device.type):
+            x1 = hidden_states[..., 0::2].float()
+            x2 = hidden_states[..., 1::2].float()
+            cos = freqs_cos[..., 0::2].float()
+            sin = freqs_sin[..., 1::2].float()
+            out0 = x1 * cos - x2 * sin
+            out1 = x1 * sin + x2 * cos
         out = torch.empty_like(hidden_states)
-        out[..., 0::2] = x1 * cos - x2 * sin
-        out[..., 1::2] = x1 * sin + x2 * cos
+        out[..., 0::2] = out0.to(dtype=original_dtype)
+        out[..., 1::2] = out1.to(dtype=original_dtype)
         return out
 
     def forward(self, x: torch.Tensor, *, rotary_emb: Optional[tuple[torch.Tensor, torch.Tensor]] = None) -> torch.Tensor:

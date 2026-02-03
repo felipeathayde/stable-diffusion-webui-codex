@@ -9,8 +9,8 @@ Required Notice: see NOTICE
 Purpose: Rotary positional embedding (RoPE) utilities and timestep embeddings for Flux variants.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `build_rotary_frequencies` (function): Construct RoPE rotation matrices for positional indices.
-- `apply_rotary_embeddings` (function): Apply RoPE rotations to query/key tensors.
+- `build_rotary_frequencies` (function): Construct fp32 RoPE rotation matrices for positional indices.
+- `apply_rotary_embeddings` (function): Apply RoPE in fp32 and preserve query/key dtypes.
 - `timestep_embedding` (function): Stable diffusion-style sinusoidal timestep embedding used by Flux variants.
 """
 
@@ -19,6 +19,8 @@ from __future__ import annotations
 import math
 
 import torch
+
+from apps.backend.runtime.misc.autocast import autocast_disabled
 
 
 def build_rotary_frequencies(
@@ -35,10 +37,7 @@ def build_rotary_frequencies(
     """
     if dim % 2 != 0:
         raise ValueError("RoPE dimension must be even")
-    if positions.device.type in {"mps", "xpu"}:
-        scale = torch.arange(0, dim, 2, dtype=torch.float32, device=positions.device) / dim
-    else:
-        scale = torch.arange(0, dim, 2, dtype=torch.float64, device=positions.device) / dim
+    scale = torch.arange(0, dim, 2, dtype=torch.float32, device=positions.device) / dim
     omega = 1.0 / (theta ** scale)
     out = positions.unsqueeze(-1) * omega.unsqueeze(0)
     cos_out = torch.cos(out)
@@ -56,17 +55,25 @@ def apply_rotary_embeddings(
     freqs: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply rotary embeddings to the provided query and key tensors."""
+    if not q.is_floating_point() or not k.is_floating_point():
+        raise TypeError(
+            "RoPE expects floating-point query/key tensors; "
+            f"got q.dtype={q.dtype} k.dtype={k.dtype}."
+        )
+    if not freqs.is_floating_point():
+        raise TypeError(f"RoPE expects a floating-point frequency tensor; got freqs.dtype={freqs.dtype}.")
     if freqs.dim() == q.dim() + 1:
         freqs = freqs.unsqueeze(1)
     if freqs.dim() != q.dim() + 2:
         raise ValueError("Unexpected rotary frequency shape")
-    freqs = freqs.to(q.dtype)
+    freqs = freqs.float()
     freqs = freqs.expand(q.shape[0], q.shape[1], *freqs.shape[2:])
-    q_view = q.float().reshape(q.shape[0], q.shape[1], q.shape[2], -1, 1, 2)
-    k_view = k.float().reshape(k.shape[0], k.shape[1], k.shape[2], -1, 1, 2)
-    q_out = freqs[..., 0] * q_view[..., 0] + freqs[..., 1] * q_view[..., 1]
-    k_out = freqs[..., 0] * k_view[..., 0] + freqs[..., 1] * k_view[..., 1]
-    return q_out.reshape_as(q).type_as(q), k_out.reshape_as(k).type_as(k)
+    with autocast_disabled(q.device.type):
+        q_view = q.float().reshape(q.shape[0], q.shape[1], q.shape[2], -1, 1, 2)
+        k_view = k.float().reshape(k.shape[0], k.shape[1], k.shape[2], -1, 1, 2)
+        q_out = freqs[..., 0] * q_view[..., 0] + freqs[..., 1] * q_view[..., 1]
+        k_out = freqs[..., 0] * k_view[..., 0] + freqs[..., 1] * k_view[..., 1]
+        return q_out.reshape_as(q).type_as(q), k_out.reshape_as(k).type_as(k)
 
 
 def timestep_embedding(

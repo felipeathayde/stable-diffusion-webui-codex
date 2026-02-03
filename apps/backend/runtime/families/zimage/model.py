@@ -11,11 +11,11 @@ Implements core blocks (norm/RoPE/attention/transformers/refiners) and loads che
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ZImageConfig` (dataclass): Architecture/config defaults for ZImage transformer (dims, layers, RoPE axes, eps, etc).
-- `RMSNorm` (class): RMSNorm layer used across transformer blocks.
+- `RMSNorm` (class): RMSNorm layer used across transformer blocks (fp32 compute, dtype-preserving output).
 - `TimestepEmbedder` (class): Timestep embedding module for diffusion timestep conditioning.
 - `SwiGLU` (class): SwiGLU MLP block used inside transformer blocks.
 - `RoPEEmbedding` (class): Rotary positional embedding builder for multi-axis RoPE.
-- `apply_rotary_emb` (function): Applies rotary embeddings to a tensor using precomputed complex frequencies.
+- `apply_rotary_emb` (function): Applies rotary embeddings in fp32 using precomputed complex frequencies (dtype-preserving output).
 - `apply_rope_pair` (function): Applies RoPE to a `(q, k)` pair and returns the rotated tensors.
 - `Attention` (class): Attention module (QKV + optional norms + RoPE application; used by transformer blocks).
 - `TransformerBlock` (class): Main transformer block (attn + MLP + residuals; composes the core model depth).
@@ -46,6 +46,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from apps.backend.runtime.misc.autocast import autocast_disabled
 from .debug import env_flag, env_int, tensor_stats
 
 logger = logging.getLogger("backend.runtime.zimage.model")
@@ -99,10 +100,13 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if not x.is_floating_point():
+            raise TypeError(f"ZImage RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
         dtype = x.dtype
-        x_float = x.float()
-        norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
-        return (norm * self.weight.float()).to(dtype)
+        with autocast_disabled(x.device.type):
+            x_float = x.float()
+            norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+            return (norm * self.weight.float()).to(dtype)
 
 
 class TimestepEmbedder(nn.Module):
@@ -266,7 +270,9 @@ def apply_rotary_emb(x_in: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tenso
     Returns:
         Rotated tensor [B, N, H, D]
     """
-    with torch.amp.autocast("cuda", enabled=False):
+    if not x_in.is_floating_point():
+        raise TypeError(f"ZImage RoPE expects a floating-point input tensor; got dtype={x_in.dtype}.")
+    with autocast_disabled(x_in.device.type):
         # Reshape x to complex: [B, N, H, D] -> [B, N, H, D//2] complex
         x = torch.view_as_complex(x_in.float().reshape(*x_in.shape[:-1], -1, 2))
         # freqs_cis is [B, N, D//2], needs unsqueeze for head broadcast

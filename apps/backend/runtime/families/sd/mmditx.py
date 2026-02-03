@@ -22,7 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `split_qkv` (function): Splits a fused QKV tensor into `(q, k, v)` views.
 - `optimized_attention` (function): Optimized attention path for fused QKV inputs.
 - `SelfAttention` (class): Self-attention module (QKV + attention compute + projections).
-- `RMSNorm` (class): RMS normalization module.
+- `RMSNorm` (class): RMS normalization module (fp32 compute, dtype-preserving output).
 - `SwiGLUFeedForward` (class): SwiGLU feed-forward block used by transformer layers.
 - `DismantledBlock` (class): Core transformer block variant used in SD3’s architecture.
 - `block_mixing` (function): Mixing helper for context/x streams inside joint blocks.
@@ -39,6 +39,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
+
+from apps.backend.runtime.misc.autocast import autocast_disabled
 
 _log = logging.getLogger("backend.runtime.sd.mmditx")
 
@@ -395,14 +397,15 @@ class RMSNorm(torch.nn.Module):
             self.register_parameter("weight", None)
 
     def _norm(self, x):
-        """
-        Apply the RMSNorm normalization to the input tensor.
-        Args:
-            x (torch.Tensor): The input tensor.
-        Returns:
-            torch.Tensor: The normalized tensor.
-        """
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        if not torch.is_tensor(x):
+            raise TypeError(f"RMSNorm expects a tensor; got {type(x).__name__}.")
+        if not x.is_floating_point():
+            raise TypeError(f"RMSNorm expects a floating-point input tensor; got dtype={x.dtype}.")
+        dtype = x.dtype
+        with autocast_disabled(x.device.type):
+            x_float = x.float()
+            norm = x_float * torch.rsqrt(x_float.pow(2).mean(-1, keepdim=True) + self.eps)
+            return norm.to(dtype=dtype)
 
     def forward(self, x):
         """
@@ -414,9 +417,13 @@ class RMSNorm(torch.nn.Module):
         """
         x = self._norm(x)
         if self.learnable_scale:
-            return x * self.weight.to(device=x.device, dtype=x.dtype)
-        else:
-            return x
+            weight = self.weight
+            if weight is None:
+                raise RuntimeError("RMSNorm learnable_scale=True but weight is None.")
+            with autocast_disabled(x.device.type):
+                out = x.float() * weight.to(device=x.device, dtype=torch.float32)
+                return out.to(dtype=x.dtype)
+        return x
 
 
 class SwiGLUFeedForward(nn.Module):

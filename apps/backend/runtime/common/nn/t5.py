@@ -12,7 +12,7 @@ transformers model class at runtime, and supports an optional `compute_dtype` at
 
 Symbols (top-level; keep in sync; no ghosts):
 - `activations` (constant): Mapping from activation names to callables used by FF blocks.
-- `T5LayerNorm` (class): T5-style layer norm (weight-only) used across the stack.
+- `T5LayerNorm` (class): T5-style layer norm (weight-only) that computes in fp32 and preserves input dtype.
 - `T5DenseActDense` (class): Feed-forward dense block (wi→act→wo).
 - `T5DenseGatedActDense` (class): Gated feed-forward block (wi_0*act ⊙ wi_1).
 - `T5LayerFF` (class): Residual FF layer (layer norm + dense block).
@@ -28,6 +28,7 @@ import torch
 import math
 
 from apps.backend.runtime.attention import attention_pytorch as attention_function
+from apps.backend.runtime.misc.autocast import autocast_disabled
 from transformers.activations import NewGELUActivation
 
 
@@ -45,9 +46,15 @@ class T5LayerNorm(torch.nn.Module):
         self.variance_epsilon = eps
 
     def forward(self, x):
-        variance = x.pow(2).mean(-1, keepdim=True)
-        x = x * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight.to(x) * x
+        if not x.is_floating_point():
+            raise TypeError(f"T5LayerNorm expects a floating-point input tensor; got dtype={x.dtype}.")
+        original_dtype = x.dtype
+        with autocast_disabled(x.device.type):
+            x_float = x.float()
+            variance = x_float.pow(2).mean(-1, keepdim=True)
+            x_float = x_float * torch.rsqrt(variance + self.variance_epsilon)
+            out = x_float * self.weight.float()
+            return out.to(dtype=original_dtype)
 
 
 class T5DenseActDense(torch.nn.Module):

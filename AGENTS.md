@@ -104,6 +104,8 @@ No stories. No archaeology. No missing pieces.
 
 You follow `.sangoi/howto/PROMPT_GUIDE.md` and use `.sangoi/templates/PROMPT_TO_SELF_TEMPLATE.md`.
 
+When working on tests (especially pipeline semantics and task/SSE events), follow `.sangoi/howto/TESTS_GUIDE.md`.
+
 That prompt must include:
 * The repo identity: repo name + CWD + branch + last commit (hash).
 * The objective (what we are trying to achieve) and the **current status** (done / in-progress / blocked).

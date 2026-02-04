@@ -1,6 +1,5 @@
 # apps/backend/video/interpolation Overview
 Date: 2025-10-28
-Owner: Video Runtime Maintainers
 Last Review: 2026-01-03
 Status: Active
 

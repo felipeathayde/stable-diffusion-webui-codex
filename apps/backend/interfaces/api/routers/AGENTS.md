@@ -1,7 +1,6 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Owner: Backend API Maintainers
 Last Review: 2026-02-03
 Status: Active
 

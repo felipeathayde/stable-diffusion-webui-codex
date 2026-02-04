@@ -1,7 +1,6 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Owner: Frontend Maintainers
 Last Review: 2026-02-04
 Status: Active
 

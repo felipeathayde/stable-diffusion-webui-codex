@@ -1,7 +1,6 @@
 <!-- tags: backend, inventory, scanners, assets -->
 # apps/backend/inventory/scanners Overview
 Date: 2026-01-04
-Owner: Backend Maintainers
 Last Review: 2026-01-04
 Status: Active
 

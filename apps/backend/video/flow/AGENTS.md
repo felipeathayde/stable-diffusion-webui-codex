@@ -1,6 +1,5 @@
 # apps/backend/video/flow Overview
 Date: 2025-12-16
-Owner: Video Runtime Maintainers
 Last Review: 2026-01-18
 Status: Active
 

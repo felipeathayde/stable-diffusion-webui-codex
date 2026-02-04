@@ -1,7 +1,6 @@
 <!-- tags: backend, runtime, kernels, cuda, codexpack -->
 # apps/backend/runtime/kernels/codexpack Overview
 Date: 2026-01-29
-Owner: Runtime Maintainers
 Last Review: 2026-01-29
 Status: Active
 

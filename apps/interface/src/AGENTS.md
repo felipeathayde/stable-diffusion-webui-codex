@@ -1,7 +1,6 @@
 <!-- tags: frontend, interface-src, overview -->
 # apps/interface/src Overview
 Date: 2025-10-28
-Owner: Frontend Maintainers
 Last Review: 2026-01-23
 Status: Active
 

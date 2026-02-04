@@ -1,7 +1,6 @@
 <!-- tags: frontend, settings, paths -->
 # apps/interface/src/components/settings Overview
 Date: 2025-12-04
-Owner: Frontend Maintainers
 Last Review: 2026-01-03
 Status: Active
 

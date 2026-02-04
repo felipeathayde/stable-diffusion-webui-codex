@@ -1,6 +1,5 @@
 # apps.launcher.gui_tk
 Date: 2026-01-25
-Owner: Repository Maintainers
 Status: Active
 Last Review: 2026-01-31
 

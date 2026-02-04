@@ -1,7 +1,6 @@
 <!-- tags: backend, huggingface, wan22, diffusers, assets -->
 # apps/backend/huggingface/Wan-AI Overview
 Date: 2025-12-16
-Owner: Runtime Maintainers
 Last Review: 2025-12-16
 Status: Active
 

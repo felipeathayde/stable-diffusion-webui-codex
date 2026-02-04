@@ -1,7 +1,6 @@
 # apps/backend/use_cases/txt2img_pipeline Overview
 <!-- tags: backend, use-case, txt2img, pipeline, refiner -->
 Date: 2025-10-31
-Owner: Backend Use-Case Maintainers
 Last Review: 2026-02-03
 Status: Active
 

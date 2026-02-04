@@ -1,7 +1,6 @@
 # apps/backend/interfaces Overview
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
-Owner: Backend API Maintainers
 Last Review: 2026-02-03
 Status: Active
 

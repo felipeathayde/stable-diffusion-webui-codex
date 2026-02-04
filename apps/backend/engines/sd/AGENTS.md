@@ -1,7 +1,6 @@
 # apps/backend/engines/sd Overview
 <!-- tags: backend, engines, sdxl -->
 Date: 2025-10-28
-Owner: Engine Maintainers
 Last Review: 2026-02-01
 Status: Active
 

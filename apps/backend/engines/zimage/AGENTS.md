@@ -1,6 +1,5 @@
 # apps/backend/engines/zimage
 Date: 2025-12-12
-Owner: Engine Maintainers
 Last Review: 2026-01-31
 Status: Active
 

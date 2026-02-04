@@ -1,6 +1,5 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Owner: Runtime Maintainers
 Last Review: 2026-01-31
 Status: Active
 

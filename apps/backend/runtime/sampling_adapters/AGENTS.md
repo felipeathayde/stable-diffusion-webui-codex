@@ -1,7 +1,6 @@
 # apps/backend/runtime/sampling_adapters Overview
 <!-- tags: runtime, sampling, adapters, prediction -->
 Date: 2025-11-10
-Owner: Runtime Maintainers
 Last Review: 2026-01-31
 Status: Active
 

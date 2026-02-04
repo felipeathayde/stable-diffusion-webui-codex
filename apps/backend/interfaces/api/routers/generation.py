@@ -2038,7 +2038,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                             uploaded_paths = [str(payload.get("__vid2vid_uploaded_path"))]
 
                         if uploaded_paths:
-                            up_root = (CODEX_ROOT / "tmp" / "uploads" / "vid2vid").resolve()
+                            up_root = (CODEX_ROOT / ".tmp" / "uploads" / "vid2vid").resolve()
                             for item in uploaded_paths:
                                 up_path = Path(str(item))
                                 try:
@@ -2152,7 +2152,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         try:
             import shutil as _shutil
 
-            up_dir = CODEX_ROOT / "tmp" / "uploads" / "vid2vid"
+            up_dir = CODEX_ROOT / ".tmp" / "uploads" / "vid2vid"
             up_dir.mkdir(parents=True, exist_ok=True)
 
             def _save(upload: UploadFile, *, default_suffix: str) -> str:

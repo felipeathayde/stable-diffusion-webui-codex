@@ -1,7 +1,6 @@
 # apps/backend/engines Overview
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
-Owner: Engine Maintainers
 Last Review: 2026-01-31
 Status: Active
 

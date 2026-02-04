@@ -1,6 +1,5 @@
 # apps Overview
 Date: 2025-10-28
-Owner: Repository Maintainers
 Last Review: 2026-01-25
 Status: Active
 

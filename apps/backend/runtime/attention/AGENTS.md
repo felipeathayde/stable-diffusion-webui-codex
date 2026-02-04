@@ -1,6 +1,5 @@
 # apps/backend/runtime/attention Overview
 Date: 2025-10-28
-Owner: Runtime Attention Maintainers
 Last Review: 2026-01-24
 Status: Active
 

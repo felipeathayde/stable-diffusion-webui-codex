@@ -1,7 +1,6 @@
 # apps/backend/runtime/vision/upscalers Overview
 <!-- tags: backend, runtime, vision, upscalers, spandrel, tiling -->
 Date: 2026-02-01
-Owner: Backend Runtime Maintainers
 Last Review: 2026-02-01
 Status: Active
 

@@ -12,6 +12,8 @@ Provides a single source of truth for locating the repository on disk and constr
 Symbols (top-level; keep in sync; no ghosts):
 - `get_repo_root` (function): Resolves and validates the repo root path from `CODEX_ROOT` (fails fast when invalid).
 - `repo_path` (function): Convenience wrapper for `get_repo_root().joinpath(...)`.
+- `repo_scratch_dir` (function): Returns the repo-local scratch directory root (`CODEX_ROOT/.tmp`).
+- `repo_scratch_path` (function): Convenience wrapper for `repo_scratch_dir().joinpath(...)`.
 """
 
 from __future__ import annotations
@@ -46,5 +48,14 @@ def get_repo_root() -> Path:
 def repo_path(*parts: str) -> Path:
     return get_repo_root().joinpath(*parts)
 
+def repo_scratch_dir() -> Path:
+    """Return the repo-local scratch directory root ('.tmp/')."""
+    return repo_path(".tmp")
 
-__all__ = ["get_repo_root", "repo_path"]
+
+def repo_scratch_path(*parts: str) -> Path:
+    """Return a path under the repo-local scratch directory ('.tmp/')."""
+    return repo_scratch_dir().joinpath(*parts)
+
+
+__all__ = ["get_repo_root", "repo_path", "repo_scratch_dir", "repo_scratch_path"]

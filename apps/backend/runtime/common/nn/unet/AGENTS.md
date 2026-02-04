@@ -1,6 +1,5 @@
 # UNet (Codex) — Agent Notes
 Date: 2025-11-10
-Owner: Runtime Maintainers
 Last Review: 2026-01-18
 Status: Active
 

@@ -1,7 +1,6 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Owner: Frontend Maintainers
 Last Review: 2026-02-04
 Status: Active
 

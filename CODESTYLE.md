@@ -1,7 +1,6 @@
 
 # Codex Workspace Code Style Guide
 Date: 2025-10-31
-Owner: Backend Runtime Maintainers
 Status: Active
 
 ## Purpose

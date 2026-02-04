@@ -1,6 +1,5 @@
 # apps.launcher
 Date: 2025-10-28
-Owner: Repository Maintainers
 Status: Active
 Last Review: 2026-01-31
 

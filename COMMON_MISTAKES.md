@@ -119,6 +119,38 @@ rg -n "restore\\.py" .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
 rg -n '\\(Optional\\) Tile controls: expose `min_tile`' .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
 ```
 
+### Putting `rg` flags after `--` (ripgrep stops parsing options)
+
+Wrong command:
+```bash
+rg -n -- "\\bhighres\\b|Highres|highres_|highres\\." -S apps/backend apps/interface/src
+```
+
+Cause and fix:
+In ripgrep, `--` terminates option parsing. Anything after it is treated as a positional argument (pattern/path). If you put `-S` after `--`, ripgrep treats it as a path and fails.
+
+Correct command:
+```bash
+rg -n -S -- "\\bhighres\\b|Highres|highres_|highres\\." apps/backend apps/interface/src
+rg -n -S -- '\\bhighres\\b|Highres|highres_|highres\\.' apps/backend apps/interface/src
+```
+
+### Putting `rg` options (like `--glob`) after the pattern/path
+
+Wrong command:
+```bash
+rg -n -- "`tmp/`" . --glob '!.refs/**' --glob '!.sangoi/**'
+```
+
+Cause and fix:
+- In bash, backticks inside double quotes trigger command substitution, so the shell tries to execute `tmp/`.
+- In ripgrep, options must come **before** the pattern/paths. Once you pass the pattern and at least one path, later tokens like `--glob` are treated as paths and can explode the search.
+
+Correct command:
+```bash
+rg -n --glob '!.refs/**' --glob '!.sangoi/**' -- '`tmp/`' .
+```
+
 ---
 
 ## Python & virtualenv
@@ -262,7 +294,7 @@ export PYTHONPATH="$CODEX_ROOT"
 "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests
 ```
 
-### Running `pytest` at repo root (collects `tmp/**` tests/artifacts)
+### Running `pytest` at repo root (collects `.tmp/**` tests/artifacts)
 
 Wrong command:
 ```bash
@@ -272,7 +304,7 @@ PYTHONPATH=. .venv/bin/python -m pytest -q
 ```
 
 Cause and fix:
-Running pytest at the repo root can collect “third party” or local artifact tests under `tmp/**` (and other non-canonical locations) which may require extra dependencies or a different runtime environment. Scope test runs explicitly (or ignore `tmp`).
+Running pytest at the repo root can collect “third party” or local artifact tests under `.tmp/**` (and other non-canonical locations) which may require extra dependencies or a different runtime environment. Scope test runs explicitly (or ignore `.tmp`).
 
 Correct command:
 ```bash

@@ -1,7 +1,6 @@
 # AGENT — Model Parser
 <!-- tags: runtime, model-parser -->
 Date: 2025-10-29
-Owner: Runtime Maintainers
 Last Review: 2026-01-29
 Status: Draft
 

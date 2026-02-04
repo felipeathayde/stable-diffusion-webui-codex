@@ -2,7 +2,6 @@
 
 # apps/backend/types Overview
 Date: 2026-01-03
-Owner: Backend Maintainers
 Last Review: 2026-02-03
 Status: Active
 

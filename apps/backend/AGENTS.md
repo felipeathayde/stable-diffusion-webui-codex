@@ -1,7 +1,6 @@
 # apps/backend Overview
 <!-- tags: backend, package, exports, lazy-imports -->
 Date: 2025-10-28
-Owner: Backend Steward Team
 Last Review: 2026-01-18
 Status: Active
 

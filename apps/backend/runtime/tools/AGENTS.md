@@ -1,6 +1,5 @@
 # apps/backend/runtime/tools Overview
 Date: 2025-12-31
-Owner: Runtime Maintainers
 Last Review: 2026-01-29
 Status: Active
 

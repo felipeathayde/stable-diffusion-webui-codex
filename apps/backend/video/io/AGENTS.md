@@ -1,6 +1,5 @@
 # apps/backend/video/io Overview
 Date: 2025-12-16
-Owner: Video Runtime Maintainers
 Last Review: 2026-01-18
 Status: Active
 
@@ -12,7 +11,7 @@ Status: Active
 
 ## Notes
 - Keep imports minimal and use subprocess calls (no cv2 dependency).
-- All output paths must be explicit and sandbox-safe (callers should write under `./tmp/`).
+- All output paths must be explicit and sandbox-safe (callers should write under `./.tmp/`).
 - Raise `FFmpegUnavailableError` when ffmpeg/ffprobe are missing instead of silently degrading.
 - 2026-01-02: Added standardized file header docstrings to video IO modules (doc-only change; part of rollout).
 - 2026-01-18: `io/__init__.py` is now a package marker (no re-exports); import `probe_video`/`extract_frames` from `apps/backend/video/io/ffmpeg.py`.

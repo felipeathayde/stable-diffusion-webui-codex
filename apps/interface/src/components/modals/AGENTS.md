@@ -1,7 +1,6 @@
 <!-- tags: frontend, components, modals -->
 # apps/interface/src/components/modals Overview
 Date: 2025-12-04
-Owner: Frontend Maintainers
 Last Review: 2026-01-13
 Status: Active
 

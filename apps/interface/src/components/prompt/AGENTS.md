@@ -1,7 +1,6 @@
 <!-- tags: prompt, components, tiptap -->
 # apps/interface/src/components/prompt Overview
 Date: 2025-12-03
-Owner: Frontend Maintainers
 Last Review: 2026-01-03
 Status: Active
 

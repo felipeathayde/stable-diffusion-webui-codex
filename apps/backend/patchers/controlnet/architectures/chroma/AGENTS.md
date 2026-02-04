@@ -1,6 +1,5 @@
 # AGENT — apps/backend/patchers/controlnet/architectures/chroma
 Date: 2025-10-31  
-Owner: Backend Runtime Maintainers  
 Last Review: 2025-10-31  
 Status: Draft
 

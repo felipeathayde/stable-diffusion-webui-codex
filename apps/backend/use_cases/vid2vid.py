@@ -38,7 +38,7 @@ from apps.backend.core.engine_interface import TaskType
 from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent, Vid2VidRequest
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
-from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.infra.config.repo_root import repo_scratch_path
 from apps.backend.runtime.pipeline_stages.video import assemble_video_metadata, build_video_plan
 from apps.backend.video.export.ffmpeg_exporter import export_video
 from apps.backend.video.flow.torchvision_raft import FlowGuidanceError, RaftFlowEstimator, warp_frame
@@ -247,7 +247,7 @@ def _run_wan_animate(
         max_frames = None
 
     tag = uuid4().hex
-    work = get_repo_root() / "tmp" / "vid2vid" / f"task_{tag}"
+    work = repo_scratch_path("vid2vid", f"task_{tag}")
     pose_dir = work / "pose_frames"
     face_dir = work / "face_frames"
     bg_dir = work / "bg_frames"
@@ -551,7 +551,7 @@ def run_vid2vid(
             if max_frames is not None and max_frames > 0:
                 cap = min(cap, max_frames)
 
-            work = get_repo_root() / "tmp" / "vid2vid" / f"task_{uuid4().hex}"
+            work = repo_scratch_path("vid2vid", f"task_{uuid4().hex}")
             frames_dir = work / "src_frames"
             yield ProgressEvent(stage="decode", percent=0.05, message="Decoding video frames")
             paths = extract_frames(

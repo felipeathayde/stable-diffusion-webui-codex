@@ -1,7 +1,6 @@
 <!-- tags: backend, schemas, settings -->
 # apps/backend/interfaces/schemas Overview
 Date: 2026-01-24
-Owner: Backend API Maintainers
 Last Review: 2026-01-24
 Status: Active
 

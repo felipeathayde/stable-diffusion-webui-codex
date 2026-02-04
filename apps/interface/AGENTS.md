@@ -1,7 +1,6 @@
 <!-- tags: frontend, interface, overview -->
 # apps/interface Overview
 Date: 2025-10-28
-Owner: Frontend Maintainers
 Last Review: 2026-01-27
 Status: Active
 

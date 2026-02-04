@@ -1,7 +1,6 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Owner: Runtime Maintainers
 Last Review: 2026-01-26
 Status: Active
 

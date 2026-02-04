@@ -1,6 +1,5 @@
 # apps/backend/runtime/families/flux Overview
 Date: 2025-12-06
-Owner: Runtime Maintainers
 Last Review: 2026-02-03
 Status: Active
 

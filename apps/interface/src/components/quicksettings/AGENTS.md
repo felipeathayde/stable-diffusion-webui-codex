@@ -1,7 +1,6 @@
 # apps/interface/src/components/quicksettings Overview
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
-Owner: Frontend Maintainers
 Last Review: 2026-01-28
 Status: Active
 

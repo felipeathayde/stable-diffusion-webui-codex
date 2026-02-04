@@ -2,7 +2,6 @@
 
 # apps/backend/runtime/streaming Overview
 Date: 2026-02-03
-Owner: Runtime Maintainers
 Last Review: 2026-02-03
 Status: Active
 

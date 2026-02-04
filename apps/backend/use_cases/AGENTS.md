@@ -1,6 +1,5 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Owner: Backend Use-Case Maintainers
 Last Review: 2026-02-03
 Status: Active
 

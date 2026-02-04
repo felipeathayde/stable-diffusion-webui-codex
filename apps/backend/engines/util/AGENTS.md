@@ -1,7 +1,6 @@
 # apps/backend/engines/util Overview
 <!-- tags: backend, engines, util, adapters -->
 Date: 2025-10-28
-Owner: Engine Maintainers
 Last Review: 2026-02-03
 Status: Active
 

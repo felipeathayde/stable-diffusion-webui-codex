@@ -1,7 +1,6 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Owner: Frontend Maintainers
 Last Review: 2026-02-04
 Status: Active
 

@@ -1,7 +1,6 @@
 <!-- tags: frontend, components, results -->
 # apps/interface/src/components/results Overview
 Date: 2025-12-25
-Owner: Frontend Maintainers
 Last Review: 2026-01-03
 Status: Active
 

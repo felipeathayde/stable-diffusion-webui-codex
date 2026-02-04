@@ -1,7 +1,6 @@
 # Text Processing Runtime — AGENTS Notes
 <!-- tags: backend, runtime, text-processing -->
 Date: 2025-11-03
-Owner: Runtime Maintainers
 Last Review: 2026-01-26
 Status: Active
 

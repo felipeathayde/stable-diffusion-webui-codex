@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.infra.config.repo_root import get_repo_root, repo_scratch_path
 
 
 class VideoExportError(RuntimeError):
@@ -157,7 +157,7 @@ def export_video(
     out_path = out_dir / out_name
 
     # Workspace-local temp dir (avoid /tmp surprises).
-    work = get_repo_root() / "tmp" / "video_export" / f"{task}_{run_id}"
+    work = repo_scratch_path("video_export", f"{task}_{run_id}")
     frames_dir = work / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 

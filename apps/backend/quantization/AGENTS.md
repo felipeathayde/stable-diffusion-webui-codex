@@ -1,7 +1,6 @@
 <!-- tags: backend, codex, quantization, gguf -->
 # apps/backend/quantization Overview
 Date: 2025-12-15
-Owner: Runtime Maintainers
 Last Review: 2026-01-20
 Status: Active
 

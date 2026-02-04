@@ -1,6 +1,5 @@
 # apps/backend/infra Overview
 Date: 2025-10-28
-Owner: Backend Infra Maintainers
 Last Review: 2026-01-24
 Status: Active
 

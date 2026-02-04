@@ -29,7 +29,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.infra.config.repo_root import repo_scratch_path
 
 
 def _torch_dtype(dtype: str):
@@ -100,7 +100,7 @@ def prepare_wan_diffusers_dir(*, weights_dir: Path, vendor_dir: Path, engine_id:
 
     Some setups keep WAN weights in a directory missing tokenizer/config metadata.
     We vendor the minimal HuggingFace metadata under apps/backend/huggingface/Wan-AI/**,
-    and stitch them together via a tmp overlay so diffusers `from_pretrained()` can
+    and stitch them together via a repo-local overlay so diffusers `from_pretrained()` can
     operate in local-files-only mode.
     """
     weights_dir = weights_dir.resolve()
@@ -108,7 +108,7 @@ def prepare_wan_diffusers_dir(*, weights_dir: Path, vendor_dir: Path, engine_id:
     if not vendor_dir.is_dir():
         raise RuntimeError(f"vendor_dir does not exist: {vendor_dir}")
 
-    overlay_root = get_repo_root() / "tmp" / "hf_overlays" / engine_id
+    overlay_root = repo_scratch_path("hf_overlays", engine_id)
     overlay_root.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha1(str(weights_dir).encode("utf-8")).hexdigest()[:12]
     out = overlay_root / key

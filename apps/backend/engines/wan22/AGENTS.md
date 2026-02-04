@@ -2,7 +2,6 @@
 
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
-Owner: Engine Maintainers
 Last Review: 2026-02-03
 Status: Active
 

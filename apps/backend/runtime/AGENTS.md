@@ -1,7 +1,6 @@
 # apps/backend/runtime Overview
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
-Owner: Runtime Maintainers
 Last Review: 2026-02-03
 Status: Active
 

@@ -2,7 +2,6 @@
 
 # apps/backend/runtime/families/supir/nn Overview
 Date: 2026-02-02
-Owner: Runtime Maintainers
 Last Review: 2026-02-02
 Status: In progress
 

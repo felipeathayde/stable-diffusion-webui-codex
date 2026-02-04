@@ -2,7 +2,6 @@
 
 # apps/backend/runtime/families Overview
 Date: 2026-01-17
-Owner: Runtime Maintainers
 Last Review: 2026-01-17
 Status: Active
 

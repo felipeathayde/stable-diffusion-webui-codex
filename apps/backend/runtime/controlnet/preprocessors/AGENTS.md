@@ -1,6 +1,5 @@
 # AGENT — apps/backend/runtime/controlnet/preprocessors
 Date: 2025-10-31
-Owner: Backend Runtime Maintainers
 Last Review: 2026-01-20
 Status: Active
 

@@ -1,7 +1,6 @@
 <!-- tags: frontend, components, wan22, video -->
 # apps/interface/src/components/wan Overview
 Date: 2025-12-14
-Owner: Frontend Maintainers
 Last Review: 2026-01-27
 Status: Active
 

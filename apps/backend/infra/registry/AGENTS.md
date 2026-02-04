@@ -1,7 +1,6 @@
 <!-- tags: backend, infra-registry, assets, text-encoders -->
 # apps/backend/infra/registry Overview
 Date: 2025-12-05
-Owner: Backend Infra Maintainers
 Last Review: 2026-01-20
 Status: Active
 

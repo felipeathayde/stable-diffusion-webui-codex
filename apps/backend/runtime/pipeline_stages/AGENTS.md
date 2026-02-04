@@ -1,6 +1,5 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Owner: Runtime Maintainers
 Last Review: 2026-02-01
 Status: Active
 

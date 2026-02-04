@@ -360,7 +360,7 @@ The engine key and asset requirements are defined by backend capabilities + requ
   - Uses inventory-backed selection for complementary assets when required by the engine spec.
 - **WAN22**
   - Video endpoints share task streaming but have extra payload rules.
-  - `vid2vid` is multipart upload and saves files under `CODEX_ROOT/tmp/uploads/vid2vid/` before running.
+  - `vid2vid` is multipart upload and saves files under `CODEX_ROOT/.tmp/uploads/vid2vid/` before running.
   - WAN (GGUF) selects model parts by SHA (no raw paths):
     - Stage models: `wan_high.model_sha` / `wan_low.model_sha` → must resolve to `.gguf`
     - Complements: `wan_vae_sha` + `wan_tenc_sha` → must resolve to VAE + `.safetensors`
@@ -376,7 +376,7 @@ The engine key and asset requirements are defined by backend capabilities + requ
 ## Security / path hygiene (what is allowed)
 - API responses prefer repo-relative `path` values under `CODEX_ROOT` (avoid leaking host absolute paths).
 - Output serving (`/api/output/{rel_path}`) is root-scoped and rejects traversal.
-- Uploaded vid2vid files are saved under `CODEX_ROOT/tmp/uploads/vid2vid/` and best-effort cleaned up after the task finishes.
+- Uploaded vid2vid files are saved under `CODEX_ROOT/.tmp/uploads/vid2vid/` and best-effort cleaned up after the task finishes.
 
 ## Debugging checklist (common “why is it empty?” issues)
 - `/api/paths` empty → QuickSettings filtering removes most Flux/ZImage assets; fix `apps/paths.json` and `CODEX_ROOT` resolution.

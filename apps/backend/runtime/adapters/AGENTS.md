@@ -1,6 +1,5 @@
 # apps/backend/runtime/adapters Overview
 Date: 2025-10-28
-Owner: Runtime Adapter Maintainers
 Last Review: 2026-01-20
 Status: Active
 

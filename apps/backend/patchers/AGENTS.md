@@ -1,6 +1,5 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Owner: Backend Runtime Maintainers
 Last Review: 2026-01-31
 Status: Active
 

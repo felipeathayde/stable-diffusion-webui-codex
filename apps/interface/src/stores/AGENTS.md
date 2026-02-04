@@ -1,7 +1,6 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Owner: Frontend Maintainers
 Last Review: 2026-02-04
 Status: Active
 

@@ -1,6 +1,5 @@
 # apps/interface/tools Overview
 Date: 2025-10-28
-Owner: Frontend Tooling Maintainers
 Last Review: 2025-10-28
 Status: Active
 

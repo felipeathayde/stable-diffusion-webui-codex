@@ -1,7 +1,6 @@
 # apps/backend/interfaces/api/tasks Overview
 <!-- tags: backend, api, tasks, orchestration -->
 Date: 2026-01-30
-Owner: Backend API Maintainers
 Last Review: 2026-02-03
 Status: Active
 

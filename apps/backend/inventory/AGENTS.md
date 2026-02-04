@@ -2,7 +2,6 @@
 
 # apps/backend/inventory Overview
 Date: 2025-10-28
-Owner: Backend Maintainers
 Last Review: 2026-01-21
 Status: Active
 

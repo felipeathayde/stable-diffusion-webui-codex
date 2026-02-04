@@ -1,7 +1,6 @@
 <!-- tags: frontend, components, ui, primitives -->
 # apps/interface/src/components/ui Overview
 Date: 2025-12-23
-Owner: Frontend Maintainers
 Last Review: 2026-02-04
 Status: Active
 

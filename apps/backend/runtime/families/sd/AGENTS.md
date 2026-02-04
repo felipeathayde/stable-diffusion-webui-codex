@@ -1,6 +1,5 @@
 # apps/backend/runtime/families/sd Overview
 Date: 2025-10-28
-Owner: Runtime Maintainers
 Last Review: 2026-02-01
 Status: Active
 

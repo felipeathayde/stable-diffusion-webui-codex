@@ -1,6 +1,5 @@
 # apps/backend/runtime/families/zimage
 Date: 2025-12-12
-Owner: Runtime Maintainers
 Last Review: 2026-01-30
 Status: Active
 

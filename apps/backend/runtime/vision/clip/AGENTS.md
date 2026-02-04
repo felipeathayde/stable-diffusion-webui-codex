@@ -1,6 +1,5 @@
 # apps/backend/runtime/vision/clip Overview
 Date: 2025-10-31
-Owner: Backend Runtime Maintainers
 Last Review: 2026-01-18
 Status: Active
 

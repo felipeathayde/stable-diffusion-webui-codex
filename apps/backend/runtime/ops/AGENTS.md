@@ -1,6 +1,5 @@
 # apps/backend/runtime/ops Overview
 Date: 2025-10-30
-Owner: Runtime Maintainers
 Last Review: 2026-01-31
 Status: Active
 

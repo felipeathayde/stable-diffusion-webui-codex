@@ -1,7 +1,6 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Owner: Frontend Maintainers
 Last Review: 2026-02-03
 Status: Active
 

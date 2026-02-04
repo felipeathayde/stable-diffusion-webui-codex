@@ -1,6 +1,5 @@
 # apps/backend/core/params Overview
 Date: 2025-10-28
-Owner: Backend Core Maintainers
 Last Review: 2025-10-28
 Status: Active
 

@@ -1,6 +1,5 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Owner: Backend Maintainers
 Last Review: 2026-02-03
 Status: Draft
 

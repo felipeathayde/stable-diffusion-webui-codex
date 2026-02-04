@@ -1,6 +1,5 @@
 # apps/backend/runtime/memory Overview
 Date: 2025-10-28
-Owner: Runtime Maintainers
 Last Review: 2026-01-26
 Status: Active
 

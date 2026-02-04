@@ -19,7 +19,6 @@ __pycache__/
 
 # Local dev caches (do not commit)
 /.tmp/
-/tmp/
 /.npm-cache/
 /.ts-out/
 /artifacts/
@@ -46,6 +45,7 @@ __pycache__/
 /config.json
 /ui-config.json
 /script-gemini*.js
+/HAR-fetch.json
 
 # Frontend artifacts (Vue/Vite)
 node_modules/

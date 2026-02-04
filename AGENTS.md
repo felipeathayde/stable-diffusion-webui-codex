@@ -82,6 +82,8 @@ If a behavior change will surprise a user, you write the surprise out of the sys
 Before you build, you prove what already exists.
 You search the house first.
 
+If there is no honest way to reuse, you create the new piece with restraint and write the reason in the task log so the next soul knows why another brick was laid.
+
 Before you do anything else, you read `SUBSYSTEM-MAP.md`.
 You use it to find the real seam before you touch a file.
 If you don't know what to change, you don't guess — you search the map first.
@@ -95,33 +97,6 @@ It contains vendored snapshots of Hugging Face Diffusers (`.refs/diffusers/`) an
 You read them. You do not import them into `apps/**`. You do not copy them into active code.
 You extract the intent, then you re-implement it clean.
 
----
-
-### INTERLUDE — "PROMPT PRA RECOMEÇAR" (CONTEXT RESET)
-
-If the user asks for **"um prompt pra ti mesmo"**, you produce a single copy/paste prompt they can drop into a brand‑new session with clean context.
-No stories. No archaeology. No missing pieces.
-
-You follow `.sangoi/howto/PROMPT_GUIDE.md` and use `.sangoi/templates/PROMPT_TO_SELF_TEMPLATE.md`.
-
-When working on tests (especially pipeline semantics and task/SSE events), follow `.sangoi/howto/TESTS_GUIDE.md`.
-
-That prompt must include:
-* The repo identity: repo name + CWD + branch + last commit (hash).
-* The objective (what we are trying to achieve) and the **current status** (done / in-progress / blocked).
-* Decisions that are locked (e.g., Option A rules) and the constraints that matter.
-* The follow-up list (ordered) and the **single next step** you would execute first.
-* Files changed in the last relevant commit(s), and the **focus files** to open first (paths + why).
-* Validation commands (and what “green” looks like), plus known traps/gotchas.
-* Links to the relevant `.sangoi/**` docs (plans, reports, task-logs).
-
-Format rules:
-* Output the prompt inside **one** fenced code block.
-* Prefer repo-relative paths and exact commands.
-* No secrets. No giant logs. No giant diffs.
-
-If there is no honest way to reuse, you create the new piece with restraint and write the reason in the task log so the next soul knows why another brick was laid.
-
 Project context lives in `.sangoi`.
 If there is an `AGENTS.md`, you read it.
 If there is a hidden corner at `.sangoi`, you check it.
@@ -134,7 +109,7 @@ You look in `.sangoi` first. The truth sits there now.
 * Research and analysis in `.sangoi/{research,analysis}/`.
 * Reference and specs in `.sangoi/reference/` (features, API, e-Doc templates).
 * Policies / How-to in `.sangoi/{policies,howto}/`.
-* Planning in `.sangoi/planning/`.
+* Plans (execution + coordination) in `.sangoi/plans/`.
 * Assets in `.sangoi/assets/`.
 * Tools in `.sangoi/.tools/`.
 
@@ -278,12 +253,15 @@ You do not plan or write anything under the false god of "compat."
 * You read the archived upstream snapshots with a cold eye.
 * You list risks, side effects, globals.
 * Codex prefix or suffix is used where it actually adds meaning.
-You do not keep or copy archived upstream snapshot code to `apps`.
-You redesign in Codex style:
-* Dataclasses and enums.
-* Small modules with clear seams.
-* Explicit errors.
-* Readable names.
+* You do not keep or copy archived upstream snapshot code to `apps`.
+* You redesign in Codex style:
+	- Dataclasses and enums.
+	- Small modules with clear seams.
+	- Explicit errors.
+	- Readable names.
+
+When working on tests (especially pipeline semantics and task/SSE events), follow `.sangoi/howto/TESTS_GUIDE.md`.
+Tests live in `.sangoi/dev/tests` (repo-root `tests/` must not exist; move any tests there and delete `tests/`)
 
 Drift is not a vibe. Drift is a bug.
 
@@ -402,3 +380,26 @@ Keep your habits.
 Keep your word.
 
 Then your code can stand in daylight.
+
+---
+
+### INTERLUDE — "PROMPT PRA RECOMEÇAR" (CONTEXT RESET)
+
+If the user asks for something like **"um prompt pra ti mesmo"**, you produce a Markdown file with a prompt they can drop into a brand‑new session with clean context.
+No stories. No archaeology. No missing pieces.
+
+You follow `.sangoi/howto/PROMPT_GUIDE.md` and use `.sangoi/templates/PROMPT_TO_SELF_TEMPLATE.md`.
+
+That prompt must include:
+* The repo identity: repo name + CWD + branch + last commit (hash).
+* The objective (what we are trying to achieve) and the **current status** (done / in-progress / blocked).
+* Decisions that are locked (e.g., Option A rules) and the constraints that matter.
+* The follow-up list (ordered) and the **single next step** you would execute first.
+* Files changed in the last relevant commit(s), and the **focus files** to open first (paths + why).
+* Validation commands (and what “green” looks like), plus known traps/gotchas.
+* Links to the relevant `.sangoi/**` docs (plans, reports, task-logs).
+
+Format rules:
+* Output the prompt in a new Markdown file graciously formatted.
+* Prefer repo-relative paths and exact commands.
+* No secrets. No giant logs. No giant diffs.

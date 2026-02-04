@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Frontend-driven XYZ sweep store for image tabs.
 Builds parameter grid combos, enqueues jobs, starts txt2img tasks, streams task events, and supports stop modes/cancellation while collecting
-per-cell results. HiRes upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring.
+per-cell results. Hires upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring; hires tile prefs (fallback/min_tile) are propagated from the shared upscalers store.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
@@ -181,15 +181,15 @@ export const useXyzStore = defineStore('xyz', () => {
       case 'height':
         form.height = Number(value)
         break
-      case 'highres_scale':
-        form.highres = form.highres || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
-        form.highres.enabled = true
-        form.highres.scale = Number(value)
+      case 'hires_scale':
+        form.hires = form.hires || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
+        form.hires.enabled = true
+        form.hires.scale = Number(value)
         break
-      case 'highres_steps':
-        form.highres = form.highres || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
-        form.highres.enabled = true
-        form.highres.steps = Number(value)
+      case 'hires_steps':
+        form.hires = form.hires || { enabled: true, scale: 1.0, denoise: 0.4, steps: 0, resizeX: 0, resizeY: 0, upscaler: 'latent:bicubic-aa', tile: { tile: 256, overlap: 16 } }
+        form.hires.enabled = true
+        form.hires.steps = Number(value)
         break
       case 'refiner_model':
         form.refiner = form.refiner || { enabled: true, steps: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
@@ -263,6 +263,7 @@ export const useXyzStore = defineStore('xyz', () => {
     jobs.value = []
     const upscalers = useUpscalersStore()
     const hiresFallbackOnOom = Boolean(upscalers.fallbackOnOom)
+    const hiresMinTile = Number(upscalers.minTile)
 
     // Pre-build job queue with payload snapshots
     for (const combo of comboList) {
@@ -271,7 +272,7 @@ export const useXyzStore = defineStore('xyz', () => {
       if (combo.y !== null) applyAxis(form, yParam.value, combo.y)
       if (combo.z !== null) applyAxis(form, zParam.value, combo.z)
       try {
-        const payload = buildTxt2ImgPayload(form, { hiresFallbackOnOom })
+        const payload = buildTxt2ImgPayload(form, { hiresFallbackOnOom, hiresMinTile })
         jobs.value.push({
           id: `job-${jobs.value.length + 1}`,
           combo: { x: combo.x, y: combo.y, z: combo.z },

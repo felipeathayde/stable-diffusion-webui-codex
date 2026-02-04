@@ -34,7 +34,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
-      highres: {
+      hires: {
         enabled: true,
         denoise: 0.4,
         scale: 1.5,
@@ -64,11 +64,11 @@ describe('buildTxt2ImgPayload', () => {
 
     expect(payload.extras?.refiner).toBeDefined()
     expect(payload.extras?.refiner).toMatchObject({ steps: 6, cfg: 6.5, seed: 123 })
-    expect(payload.extras?.highres?.refiner).toBeDefined()
-    expect(payload.extras?.highres?.refiner).toMatchObject({ steps: 4, cfg: 5 })
+    expect(payload.extras?.hires?.refiner).toBeDefined()
+    expect(payload.extras?.hires?.refiner).toMatchObject({ steps: 4, cfg: 5 })
   })
 
-  it('propagates hiresFallbackOnOom into highres tile config', () => {
+  it('propagates hiresFallbackOnOom and hiresMinTile into hires tile config', () => {
     const payload = buildTxt2ImgPayload({
       prompt: 'test prompt',
       negativePrompt: 'neg',
@@ -83,7 +83,7 @@ describe('buildTxt2ImgPayload', () => {
       batchSize: 1,
       batchCount: 1,
       device: 'cuda',
-      highres: {
+      hires: {
         enabled: true,
         denoise: 0.4,
         scale: 1.5,
@@ -93,9 +93,40 @@ describe('buildTxt2ImgPayload', () => {
         upscaler: 'latent:nearest',
         tile: { tile: 256, overlap: 16 },
       },
-    }, { hiresFallbackOnOom: false })
+    }, { hiresFallbackOnOom: false, hiresMinTile: 64 })
 
-    expect((payload.extras as any)?.highres?.tile?.fallback_on_oom).toBe(false)
+    expect((payload.extras as any)?.hires?.tile?.fallback_on_oom).toBe(false)
+    expect((payload.extras as any)?.hires?.tile?.min_tile).toBe(64)
+  })
+
+  it('clamps hiresMinTile to hires tile size', () => {
+    const payload = buildTxt2ImgPayload({
+      prompt: 'test prompt',
+      negativePrompt: 'neg',
+      width: 512,
+      height: 512,
+      steps: 20,
+      guidanceScale: 7,
+      sampler: 'euler',
+      scheduler: 'karras',
+      seed: 42,
+      clipSkip: 0,
+      batchSize: 1,
+      batchCount: 1,
+      device: 'cuda',
+      hires: {
+        enabled: true,
+        denoise: 0.4,
+        scale: 1.5,
+        resizeX: 0,
+        resizeY: 0,
+        steps: 0,
+        upscaler: 'latent:nearest',
+        tile: { tile: 256, overlap: 16 },
+      },
+    }, { hiresMinTile: 9999 })
+
+    expect((payload.extras as any)?.hires?.tile?.min_tile).toBe(256)
   })
 
   it('uses cfg (not distilled_cfg) for zimage', () => {

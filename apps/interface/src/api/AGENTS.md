@@ -2,7 +2,7 @@
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
 Owner: Frontend Maintainers
-Last Review: 2026-02-03
+Last Review: 2026-02-04
 Status: Active
 
 ## Purpose
@@ -12,7 +12,7 @@ Status: Active
 - Keep request/response types synchronized with `.sangoi/backend/interfaces/schemas/`.
 - Regenerate or update the client whenever backend schemas change.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
-- `payloads.ts` now carries both `extras.refiner` and nested `extras.highres.refiner`; `HighresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
+- `payloads.ts` now carries both `extras.refiner` and nested `extras.hires.refiner`; `HiresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `lora_sha` (sha256), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`; stage LoRA remains sha-only via `lora_sha`.
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).
@@ -37,3 +37,4 @@ Status: Active
 - 2026-01-29: Added `analyzePngInfo()` client wrapper + `PngInfoAnalyzeResponse` for `POST /api/tools/pnginfo/analyze` (used by the PNG Info view).
 - 2026-02-01: Added upscalers client wrappers + DTOs for the standalone upscale surface (`GET /api/upscalers`, `GET /api/upscalers/remote`, `POST /api/upscalers/download`, `POST /api/upscale`).
 - 2026-02-03: `/api/upscalers/remote` DTO now includes `manifest_errors` and categorizes `weights[]` as either curated (`curated=true` with `meta`) or raw listing (`curated=false`).
+- 2026-02-04: `payloads.ts` now propagates the global hires `min_tile` preference into `extras.hires.tile.min_tile` (clamped to `tile`) to keep hires tile fallback behavior configurable and drift-free.

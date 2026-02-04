@@ -2,7 +2,7 @@
 <!-- tags: backend, api, validation -->
 Date: 2025-12-05
 Owner: Backend API Maintainers
-Last Review: 2026-01-24
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -17,11 +17,11 @@ Status: Active
 - Avoid embedding business logic here—delegate to services/use cases and focus on validation and serialization.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` captures the “how assets are listed + selected” contract (inventory → SHA selection → backend resolution).
 - API workers should reuse a single `InferenceOrchestrator` instance per process to preserve engine caches/VRAM across requests. See `api/routers/generation.py` (`_ORCH` singleton).
-- 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.highres`); legacy compat keys were removed (requests must use the canonical selectors / payload fields).
+- 2025-11-14: `/api/txt2img` enforces the semantic contract (e.g., `prompt`, `negative_prompt`, `width`, `extras.hires`); legacy compat keys were removed (requests must use the canonical selectors / payload fields).
 - 2025-11-21: SPA static mount now registers after all `/api/*` routes to prevent POSTs from being intercepted by the UI fallback; invalid txt2/img2/video payloads raise HTTP errors instead of returning 200 with a background error.
 - 2025-11-21: Module-level `app` remains available for ASGI servers, but the preferred entrypoint is the uvicorn factory `apps.backend.interfaces.api.run_api:create_api_app`. Factory and direct `:app` both build the same FastAPI instance.
 - 2025-11-14: `create_api_app(argv, env)` is the canonical FastAPI factory; when launching uvicorn manually use `--factory apps.backend.interfaces.api.run_api:create_api_app` so the runtime bootstraps before serving (the TUI/launcher already calls it).
-- 2025-12-03: `/api/txt2img` extras now accept `highres.refiner` (enable/steps/cfg/seed/model/vae) alongside the global `extras.refiner`, raising HTTP 400 on malformed nested refiner configs.
+- 2025-12-03: `/api/txt2img` extras now accept `hires.refiner` (enable/steps/cfg/seed/model/vae) alongside the global `extras.refiner`, raising HTTP 400 on malformed nested refiner configs.
 - 2025-12-03: `/api/tasks/{task_id}/cancel` allows best-effort cancellation (immediate vs after_current flag); workers abort event streaming with `error: cancelled` when `mode=immediate`.
 - 2025-12-03: `/api/options` now accepts `codex_{core,te,vae}_{device,dtype}` to set per-role backend/dtype via memory manager; device choices auto/cuda/cpu/mps/xpu/directml, dtype auto/fp16/bf16/fp32.
 - 2025-12-05: `/api/txt2img` extras agora aceitam um objeto opcional `text_encoder_override` (family + label + components[]) validado como JSON; quando presente, o worker de txt2img o encaminha como `engine_options.text_encoder_override` para o orchestrator/engines, que por sua vez repassam o override ao `runtime.models.loader` (via `TextEncoderOverrideConfig`). A partir de 2025-12-06, `components[]` também aceita entradas no formato `alias=/abs/path/to/weights.safetensors` para overrides por arquivo (ex.: Flux), que o loader interpreta como `explicit_paths` sem depender de um endpoint dedicado de labels (roots vêm de `apps/paths.json` via `/api/paths`).

@@ -104,7 +104,8 @@ rg -n -- "--core-dtype" apps/backend/infra/config/args.py
 
 Wrong command:
 ```bash
-rg -n "use_cases/restore\\.py|`restore\\.py`" .sangoi/planning/2026-02-01-supir-webui-integration-v1.md
+rg -n "use_cases/restore\\.py|`restore\\.py`" .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
+rg -n "\\(Optional\\) Tile controls: expose `min_tile`" .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
 ```
 
 Cause and fix:
@@ -113,8 +114,9 @@ Use single quotes around the pattern, escape backticks, or just search for the l
 
 Correct command:
 ```bash
-rg -n 'use_cases/restore\\.py|`restore\\.py`' .sangoi/planning/2026-02-01-supir-webui-integration-v1.md
-rg -n "restore\\.py" .sangoi/planning/2026-02-01-supir-webui-integration-v1.md
+rg -n 'use_cases/restore\\.py|`restore\\.py`' .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
+rg -n "restore\\.py" .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
+rg -n '\\(Optional\\) Tile controls: expose `min_tile`' .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
 ```
 
 ---
@@ -550,4 +552,19 @@ Correct command:
 ls -la .sangoi/plans | sed -n "1,120p"
 # same pattern
 ls -la .sangoi/task-logs | sed -n "1,120p"
+```
+
+### `rg` patterns starting with `-` are parsed as flags
+
+Wrong command:
+```bash
+rg -n "-m pytest -q tests" .sangoi/plans/2026-02-02-p0-task-plumbing-and-upscaler-safety-fixes.md
+```
+
+Cause and fix:
+`rg` treats the first argument starting with `-` as an option flag. Use `--` to terminate option parsing before a pattern that begins with `-`.
+
+Correct command:
+```bash
+rg -n -- "-m pytest -q tests" .sangoi/plans/2026-02-02-p0-task-plumbing-and-upscaler-safety-fixes.md
 ```

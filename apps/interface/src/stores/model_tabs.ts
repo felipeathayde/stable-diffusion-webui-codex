@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
-default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. HiRes upscaler values are stable ids
+default parameter shapes per tab type (image vs WAN video) using engine defaults and form-state schemas. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -33,7 +33,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
 import type { ApiTab } from '../api/types'
-import type { HighresFormState, RefinerFormState } from '../api/payloads'
+import type { HiresFormState, RefinerFormState } from '../api/payloads'
 import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
 
 export type BaseTabType = ApiTab['type']
@@ -121,7 +121,7 @@ export interface ImageBaseParams {
   clipSkip: number
   batchSize: number
   batchCount: number
-  highres: HighresFormState
+  hires: HiresFormState
   refiner: RefinerFormState
   checkpoint: string
   textEncoders: string[]
@@ -142,7 +142,7 @@ export interface ImageBaseParams {
   zimageTurbo?: boolean
 }
 
-export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v1'
+export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
 
 function nowIso(): string {
@@ -226,7 +226,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     model: undefined,
     vae: undefined,
   }
-  const highresDefaults: HighresFormState = {
+  const hiresDefaults: HiresFormState = {
     enabled: false,
     denoise: 0.4,
     scale: 1.5,
@@ -258,7 +258,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     clipSkip: 0,
     batchSize: 1,
     batchCount: 1,
-    highres: { ...highresDefaults },
+    hires: { ...hiresDefaults },
     refiner: { ...refinerDefaults },
     checkpoint: '',
     textEncoders: [],
@@ -311,13 +311,13 @@ function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string,
   const merged: Record<string, unknown> = { ...defaults, ...params }
   const d = defaults as any
   const p = params as any
-  if (d.highres && typeof d.highres === 'object') {
-    merged.highres = { ...(d.highres || {}), ...(p.highres || {}) }
-    if ((d.highres as any).refiner && typeof (d.highres as any).refiner === 'object') {
-      ;(merged.highres as any).refiner = { ...((d.highres as any).refiner || {}), ...((p.highres as any)?.refiner || {}) }
+  if (d.hires && typeof d.hires === 'object') {
+    merged.hires = { ...(d.hires || {}), ...(p.hires || {}) }
+    if ((d.hires as any).refiner && typeof (d.hires as any).refiner === 'object') {
+      ;(merged.hires as any).refiner = { ...((d.hires as any).refiner || {}), ...((p.hires as any)?.refiner || {}) }
     }
-    if ((d.highres as any).tile && typeof (d.highres as any).tile === 'object') {
-      ;(merged.highres as any).tile = { ...((d.highres as any).tile || {}), ...((p.highres as any)?.tile || {}) }
+    if ((d.hires as any).tile && typeof (d.hires as any).tile === 'object') {
+      ;(merged.hires as any).tile = { ...((d.hires as any).tile || {}), ...((p.hires as any)?.tile || {}) }
     }
   }
   if (d.refiner && typeof d.refiner === 'object') {

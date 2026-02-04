@@ -295,11 +295,7 @@ class Wan2214BEngine(CodexDiffusionEngine):
             
         except Exception as e:
             logger.error("txt2vid failed: %s", e)
-            yield ProgressEvent(stage="error", percent=1.0, message=str(e))
-            yield ResultEvent(payload={
-                "images": [],
-                "info": {"engine": self.engine_id, "task": "txt2vid", "error": str(e)},
-            })
+            raise
 
     def img2vid(self, request: Any, **kwargs: Any) -> Iterator[InferenceEvent]:  # type: ignore[override]
         raise NotImplementedError("wan22_14b img2vid not yet ported")

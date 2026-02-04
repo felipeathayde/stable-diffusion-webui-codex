@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Zod request schemas + payload builders for image generation (txt2img/img2img).
-Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including highres/refiner) and to
+Defines the canonical `Txt2ImgRequestSchema`, UI form-state types, and helpers to build request payloads (including hires/refiner) and to
 apply engine-agnostic request normalization/validation.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -16,16 +16,17 @@ Symbols (top-level; keep in sync; no ghosts):
 - `DeviceEnum` (const): Zod enum built from `DEVICE_VALUES`.
 - `RefinerOptionsSchema` (const): Zod schema for refiner options.
 - `UpscalerTileSchema` (const): Zod schema for upscaler tiling config (tile/overlap + OOM fallback).
-- `HighresOptionsSchema` (const): Zod schema for highres options (including nested refiner).
+- `UpscalerTileSchema` (const): Zod schema for upscaler tiling config (tile/overlap + OOM fallback + min tile).
+- `HiresOptionsSchema` (const): Zod schema for hires options (including nested refiner).
 - `PromptSchema` (const): Zod schema for prompt validation/normalization.
 - `Txt2ImgRequestSchema` (const): Zod schema for txt2img/img2img request payloads.
 - `Txt2ImgRequest` (type): Inferred request type from `Txt2ImgRequestSchema`.
 - `UpscalerTileFormState` (interface): UI form state for tile config used by upscaler-driven stages.
-- `HighresFormState` (interface): UI form state for highres options.
+- `HiresFormState` (interface): UI form state for hires options.
 - `RefinerFormState` (interface): UI form state for refiner options.
 - `Txt2ImgFormState` (interface): UI form state for txt2img/img2img payload building.
 - `normalizeDevice` (function): Normalizes and validates a device token.
-- `buildTxt2ImgPayload` (function): Builds and validates a `Txt2ImgRequest` from UI form state.
+- `buildTxt2ImgPayload` (function): Builds and validates a `Txt2ImgRequest` from UI form state (supports hires tile prefs: fallback + min_tile).
 - `formatZodError` (function): Converts Zod errors (or unknown errors) into a readable message.
 */
 
@@ -57,14 +58,14 @@ const UpscalerTileSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.overlap >= value.tile) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'highres.tile.overlap' must be < tile" })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'hires.tile.overlap' must be < tile" })
     }
     if (value.fallback_on_oom && value.min_tile > value.tile) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'highres.tile.min_tile' must be <= tile when fallback_on_oom is enabled" })
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "'hires.tile.min_tile' must be <= tile when fallback_on_oom is enabled" })
     }
   })
 
-const HighresOptionsSchema = z
+const HiresOptionsSchema = z
   .object({
     enable: z.literal(true),
     denoise: z.number().min(0).max(1),
@@ -76,7 +77,7 @@ const HighresOptionsSchema = z
       .string()
       .min(1)
       .refine((value) => value.startsWith('latent:') || value.startsWith('spandrel:'), {
-        message: "highres.upscaler must be an id like 'latent:*' or 'spandrel:*'",
+        message: "hires.upscaler must be an id like 'latent:*' or 'spandrel:*'",
       }),
     tile: UpscalerTileSchema.optional(),
     checkpoint: z.string().min(1).optional(),
@@ -119,7 +120,7 @@ export const Txt2ImgRequestSchema = z
     smart_cache: z.boolean().optional(),
     extras: z
       .object({
-        highres: HighresOptionsSchema.optional(),
+        hires: HiresOptionsSchema.optional(),
         refiner: RefinerOptionsSchema.optional(),
         text_encoder_override: z
           .object({
@@ -151,7 +152,7 @@ export interface UpscalerTileFormState {
   overlap: number
 }
 
-export interface HighresFormState {
+export interface HiresFormState {
   enabled: boolean
   denoise: number
   scale: number
@@ -200,7 +201,7 @@ export interface Txt2ImgFormState {
   smartOffload?: boolean
   smartFallback?: boolean
   smartCache?: boolean
-  highres?: HighresFormState
+  hires?: HiresFormState
   refiner?: RefinerFormState
   extras?: Record<string, unknown>
 }
@@ -213,9 +214,16 @@ function normalizeDevice(device: string): Txt2ImgRequest['device'] {
   throw new Error(`Unsupported device '${device}'`)
 }
 
-export function buildTxt2ImgPayload(state: Txt2ImgFormState, opts: { hiresFallbackOnOom?: boolean } = {}): Txt2ImgRequest {
+export function buildTxt2ImgPayload(
+  state: Txt2ImgFormState,
+  opts: { hiresFallbackOnOom?: boolean; hiresMinTile?: number } = {},
+): Txt2ImgRequest {
   const isDistilledCfgModel = DISTILLED_CFG_ENGINES.includes(state.engine as typeof DISTILLED_CFG_ENGINES[number])
   const hiresFallbackOnOom = opts.hiresFallbackOnOom ?? true
+  const hiresMinTilePrefRaw = opts.hiresMinTile
+  const hiresMinTilePref = (typeof hiresMinTilePrefRaw === 'number' && Number.isFinite(hiresMinTilePrefRaw))
+    ? Math.max(1, Math.trunc(hiresMinTilePrefRaw))
+    : 128
   
   const payload: Record<string, unknown> = {
     device: normalizeDevice(state.device),
@@ -268,38 +276,40 @@ export function buildTxt2ImgPayload(state: Txt2ImgFormState, opts: { hiresFallba
     batch_size: state.batchSize,
     batch_count: state.batchCount,
   }
-  if (state.highres?.enabled) {
-    const tile = state.highres.tile ?? { tile: 256, overlap: 16 }
-    extras.highres = {
+  if (state.hires?.enabled) {
+    const tile = state.hires.tile ?? { tile: 256, overlap: 16 }
+    const tileSize = Math.max(1, Math.trunc(tile.tile))
+    const minTile = Math.max(1, Math.min(tileSize, hiresMinTilePref))
+    extras.hires = {
       enable: true,
-      denoise: state.highres.denoise,
-      scale: state.highres.scale,
-      resize_x: state.highres.resizeX,
-      resize_y: state.highres.resizeY,
-      steps: state.highres.steps,
-      upscaler: state.highres.upscaler,
+      denoise: state.hires.denoise,
+      scale: state.hires.scale,
+      resize_x: state.hires.resizeX,
+      resize_y: state.hires.resizeY,
+      steps: state.hires.steps,
+      upscaler: state.hires.upscaler,
       tile: {
-        tile: Math.trunc(tile.tile),
+        tile: tileSize,
         overlap: Math.trunc(tile.overlap),
         fallback_on_oom: Boolean(hiresFallbackOnOom),
-        min_tile: 128,
+        min_tile: minTile,
       },
-      checkpoint: state.highres.checkpoint,
-      modules: state.highres.modules && state.highres.modules.length > 0 ? state.highres.modules : undefined,
-      sampler: state.highres.sampler,
-      scheduler: state.highres.scheduler,
-      prompt: state.highres.prompt,
-      negative_prompt: state.highres.negativePrompt,
-      cfg: state.highres.cfg,
-      distilled_cfg: state.highres.distilledCfg,
-      refiner: state.highres.refiner?.enabled
+      checkpoint: state.hires.checkpoint,
+      modules: state.hires.modules && state.hires.modules.length > 0 ? state.hires.modules : undefined,
+      sampler: state.hires.sampler,
+      scheduler: state.hires.scheduler,
+      prompt: state.hires.prompt,
+      negative_prompt: state.hires.negativePrompt,
+      cfg: state.hires.cfg,
+      distilled_cfg: state.hires.distilledCfg,
+      refiner: state.hires.refiner?.enabled
         ? {
             enable: true,
-            steps: state.highres.refiner.steps,
-            cfg: state.highres.refiner.cfg,
-            seed: state.highres.refiner.seed,
-            model: state.highres.refiner.model,
-            vae: state.highres.refiner.vae,
+            steps: state.hires.refiner.steps,
+            cfg: state.hires.refiner.cfg,
+            seed: state.hires.refiner.seed,
+            model: state.hires.refiner.model,
+            vae: state.hires.refiner.vae,
           }
         : undefined,
     }

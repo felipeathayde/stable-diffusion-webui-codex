@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Unified generation composable for image tabs (SD/Flux/Chroma/ZImage; txt2img/img2img/inpaint).
 Owns per-tab generation state (progress/live preview/gallery/history), builds request payloads using Model Tabs + QuickSettings,
-starts `/api/txt2img` and `/api/img2img` (including optional hires/highres settings), and consumes task SSE events to update UI state.
+starts `/api/txt2img` and `/api/img2img` (including optional hires settings with shared tile prefs: fallback/min_tile), and consumes task SSE events to update UI state.
 Persists a minimal per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -196,7 +196,7 @@ export function useGeneration(tabId: string) {
       batchSize: p.batchSize,
       batchCount: p.batchCount,
 
-      highres: p.highres,
+      hires: p.hires,
       refiner: p.refiner,
 
       useInitImage: p.useInitImage,
@@ -394,27 +394,29 @@ export function useGeneration(tabId: string) {
           smart_cache: quicksettings.smartCache,
           img2img_extras: img2imgExtras,
         }
-        if (p.highres?.enabled) {
-          payload.img2img_hr_enable = true
-          payload.img2img_hr_scale = p.highres.scale
-          payload.img2img_hr_resize_x = p.highres.resizeX
-          payload.img2img_hr_resize_y = p.highres.resizeY
-          payload.img2img_hr_steps = p.highres.steps
-          payload.img2img_hr_denoise = p.highres.denoise
-          payload.img2img_hr_upscaler = p.highres.upscaler
-          const hrSampler = String(p.highres.sampler || '').trim()
-          if (hrSampler) payload.img2img_hr_sampling = hrSampler
-          const hrScheduler = String(p.highres.scheduler || '').trim()
-          if (hrScheduler) payload.img2img_hr_scheduler = hrScheduler
-          payload.img2img_hr_prompt = p.highres.prompt ?? ''
-          payload.img2img_hr_neg_prompt = supportsNegative ? (p.highres.negativePrompt ?? '') : ''
-          if (p.highres.cfg !== undefined) payload.img2img_hr_cfg = p.highres.cfg
-          if (p.highres.distilledCfg !== undefined) payload.img2img_hr_distilled_cfg = p.highres.distilledCfg
-          payload.img2img_hr_tile = {
-            tile: Math.trunc(p.highres.tile?.tile ?? 256),
-            overlap: Math.trunc(p.highres.tile?.overlap ?? 16),
+        if (p.hires?.enabled) {
+          payload.img2img_hires_enable = true
+          payload.img2img_hires_scale = p.hires.scale
+          payload.img2img_hires_resize_x = p.hires.resizeX
+          payload.img2img_hires_resize_y = p.hires.resizeY
+          payload.img2img_hires_steps = p.hires.steps
+          payload.img2img_hires_denoise = p.hires.denoise
+          payload.img2img_hires_upscaler = p.hires.upscaler
+          const hrSampler = String(p.hires.sampler || '').trim()
+          if (hrSampler) payload.img2img_hires_sampling = hrSampler
+          const hrScheduler = String(p.hires.scheduler || '').trim()
+          if (hrScheduler) payload.img2img_hires_scheduler = hrScheduler
+          payload.img2img_hires_prompt = p.hires.prompt ?? ''
+          payload.img2img_hires_neg_prompt = supportsNegative ? (p.hires.negativePrompt ?? '') : ''
+          if (p.hires.cfg !== undefined) payload.img2img_hires_cfg = p.hires.cfg
+          if (p.hires.distilledCfg !== undefined) payload.img2img_hires_distilled_cfg = p.hires.distilledCfg
+          const hiresTileSize = Math.trunc(p.hires.tile?.tile ?? 256)
+          const hiresMinTilePref = Math.trunc(Number(upscalersStore.minTile) || 128)
+          payload.img2img_hires_tile = {
+            tile: hiresTileSize,
+            overlap: Math.trunc(p.hires.tile?.overlap ?? 16),
             fallback_on_oom: Boolean(upscalersStore.fallbackOnOom),
-            min_tile: 128,
+            min_tile: Math.max(1, Math.min(hiresTileSize, hiresMinTilePref)),
           }
         }
         if (p.useMask) {
@@ -452,10 +454,10 @@ export function useGeneration(tabId: string) {
             smartOffload: quicksettings.smartOffload,
             smartFallback: quicksettings.smartFallback,
             smartCache: quicksettings.smartCache,
-            highres: p.highres,
+            hires: p.hires,
             refiner: p.refiner,
             extras,
-          }, { hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom) })
+          }, { hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom), hiresMinTile: Number(upscalersStore.minTile) })
         } catch (error) {
           state.value.status = 'error'
           state.value.errorMessage = error instanceof Error ? error.message : String(error)

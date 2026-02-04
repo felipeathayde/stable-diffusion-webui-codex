@@ -13,7 +13,7 @@ per-batch runs have consistent lengths.
 Symbols (top-level; keep in sync; no ghosts):
 - `_repeat_to_length` (function): Expands/truncates a sequence to a target length (used for per-batch list normalization).
 - `RefinerConfig` (dataclass): Refiner stage configuration (enabled/steps/cfg/seed + model/vae overrides) with override serialization.
-- `CodexHighResConfig` (dataclass): Hi-res fix configuration (target scale/steps/denoise + upscaler tile config) with override serialization.
+- `CodexHiresConfig` (dataclass): Hires configuration (target scale/steps/denoise + upscaler tile config) with override serialization.
 - `CodexProcessingBase` (dataclass): Shared processing fields for image generation runs (prompt/negative/seed/steps/cfg/dims + hi-res/refiner).
 - `CodexProcessingTxt2Img` (dataclass): Txt2img processing container (extends base with txt2img-specific fields).
 - `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength and related fields).
@@ -77,8 +77,8 @@ class RefinerConfig:
 
 
 @dataclass
-class CodexHighResConfig:
-    """Configuration for high-resolution (second-pass) rendering."""
+class CodexHiresConfig:
+    """Configuration for hires (second-pass) rendering."""
 
     enabled: bool = False
     scale: float = 1.0
@@ -132,7 +132,7 @@ class CodexHighResConfig:
         self.denoise = float(payload.get("denoise", self.denoise))
         self.upscaler = payload.get("upscaler", self.upscaler)
         if "tile" in payload:
-            self.tile = tile_config_from_payload(payload.get("tile"), context="highres.tile")
+            self.tile = tile_config_from_payload(payload.get("tile"), context="hires.tile")
         self.second_pass_steps = int(payload.get("second_pass_steps", self.second_pass_steps))
         self.resize_x = int(payload.get("resize_x", self.resize_x))
         self.resize_y = int(payload.get("resize_y", self.resize_y))
@@ -303,7 +303,7 @@ class CodexProcessingBase:
 class CodexProcessingTxt2Img(CodexProcessingBase):
     """Processing description for txt2img tasks."""
 
-    hires: CodexHighResConfig = field(default_factory=CodexHighResConfig)
+    hires: CodexHiresConfig = field(default_factory=CodexHiresConfig)
     refiner: "RefinerConfig | None" = None
     hires_refiner: "RefinerConfig | None" = None
     firstpass_image: Any = None
@@ -322,7 +322,7 @@ class CodexProcessingTxt2Img(CodexProcessingBase):
     hr_negative_prompts: List[str] = field(default_factory=list, init=False)
     firstpass_use_distilled_cfg_scale: bool = False
 
-    def enable_hires(self, *, cfg: CodexHighResConfig) -> None:
+    def enable_hires(self, *, cfg: CodexHiresConfig) -> None:
         self.hires = cfg
         self.enable_hr = cfg.enabled
         if cfg.enabled:
@@ -365,7 +365,7 @@ class CodexProcessingTxt2Img(CodexProcessingBase):
 class CodexProcessingImg2Img(CodexProcessingBase):
     """Processing description for img2img tasks."""
 
-    hires: CodexHighResConfig = field(default_factory=CodexHighResConfig)
+    hires: CodexHiresConfig = field(default_factory=CodexHiresConfig)
     init_image: Any = None
     init_images: Sequence[Any] = field(default_factory=list)
     denoising_strength: float = 0.75
@@ -386,7 +386,7 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     round_image_mask: bool = True
     image_mask: Any = None
 
-    def enable_hires(self, cfg: CodexHighResConfig) -> None:
+    def enable_hires(self, cfg: CodexHiresConfig) -> None:
         self.hires = cfg
 
     def has_mask(self) -> bool:

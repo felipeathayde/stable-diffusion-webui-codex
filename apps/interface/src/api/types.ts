@@ -275,7 +275,7 @@ export interface EngineCapabilities {
   supports_txt2vid: boolean
   supports_img2vid: boolean
   supports_vid2vid?: boolean
-  supports_highres: boolean
+  supports_hires: boolean
   supports_refiner: boolean
   supports_lora: boolean
   supports_controlnet: boolean

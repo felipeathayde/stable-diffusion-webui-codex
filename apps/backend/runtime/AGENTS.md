@@ -2,7 +2,7 @@
 <!-- tags: backend, runtime, overview -->
 Date: 2025-10-30
 Owner: Runtime Maintainers
-Last Review: 2026-01-31
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -23,7 +23,8 @@ Status: Active
 - `families/` — Model/runtime-specific implementations by engine family (`sd/`, `flux/`, `chroma/`, `zimage/`, `wan22/`).
 - `vision/` — Vision encoder runtimes (clip specs/registry/encoders) shared across engines and patchers.
 - `processing/` — High-level input preprocessing utilities shared by use cases.
-- `workflows/` — Shared orchestration helpers for Codex generation workflows (txt2img, img2img, video).
+- `pipeline_stages/` — Shared pipeline helper stages consumed by canonical use-cases (Option A; no engine-specific pipelines).
+- `streaming/` — Shared segment streaming controller primitives used by multiple family streaming wrappers (Flux/WAN22).
 - `common/` — Shared building blocks (e.g., core (UNet/DiT) wrappers) used across runtimes.
 - `misc/` — Smaller helper modules that don’t fit other buckets (logging, strict checks, etc.).
 - `sampling_adapters/` — Sampling adapter wrappers used by samplers/patchers.
@@ -34,7 +35,7 @@ Status: Active
 - Avoid duplicating helpers across engines—centralize them here to maintain parity.
 - 2026-01-24: Attention backend selection is now driven by the runtime memory config (seeded from `/api/options` key `codex_attention_backend` at bootstrap, and switchable at runtime via `memory_management.set_attention_backend(...)`).
 - Runtime layout: family runtimes live under `apps/backend/runtime/families/<family>/`; keep `apps/backend/runtime/` for generic runtime modules shared across families (plan: `.sangoi/plans/2026-01-17-backend-runtime-families-layout.md`).
-- 2025-12-03: Processing models expose `RefinerConfig` and carry refiner configs on `CodexProcessingTxt2Img`/`CodexHighResConfig` (global + hires) for stage-based refiner execution.
+- 2025-12-03: Processing models expose `RefinerConfig` and carry refiner configs on `CodexProcessingTxt2Img`/`CodexHiresConfig` (global + hires) for stage-based refiner execution.
 - 2025-12-03: Sampler driver checks `backend_state.should_stop` each step and honors `/api/tasks/{id}/cancel` (immediate) by raising `RuntimeError("cancelled")` to abort sampling.
 - 2025-11-03: `runtime.diagnostics.call_trace` exposes global function-call tracing via `enable()/disable()` and `enable_from_env()`. The API entrypoint wires this behind `--trace-debug`/`CODEX_TRACE_DEBUG` and logs each Python function call at `DEBUG` using the `backend.calltrace` logger. As of 2025-11-14, only modules under `apps.*` are recorded to avoid 3rd-party flood, and each function logs at most 10 calls by default (override via `--trace-debug-max-per-func N`, `N<=0` disables the cap).
 - 2025-11-04: Added streaming materialization helpers to `runtime.state_dict.views.FilterPrefixView`/`LazySafetensorsDict` so safetensor-backed parser components load with a single handle instead of reopening per key (prevents Windows `torch_cpu.dll` crashes during SDXL parsing).

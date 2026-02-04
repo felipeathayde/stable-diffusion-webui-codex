@@ -1,7 +1,7 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
 Owner: Backend Use-Case Maintainers
-Last Review: 2026-01-30
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -25,4 +25,5 @@ Status: Active
 - 2026-01-29: `img2img.py` now supports Codex-native masked img2img (“inpaint”) for SD-family engines (Forge-style full-res crop/paste-back + selectable enforcement: post-blend vs per-step clamp). Flux Kontext explicitly fails loud when a mask is provided (not yet supported).
 - 2026-01-30: `txt2img` now consumes `GenerationResult` from the staged runner; removed the global `_already_decoded` decode sentinel.
 - 2026-01-31: `img2img.py` now includes a canonical event wrapper (`run_img2img`) and shared image streaming helpers live in `apps/backend/use_cases/_image_streaming.py` (Option A: mode streaming stays in use-cases; engines delegate).
+- 2026-02-03: Hires pass validation/errors now reference `hires.*` naming (contract cutover).
 - 2026-01-27: WAN video results now support video-first payloads: txt2vid/img2vid export via ffmpeg and return `result.video { rel_path, mime }`; a per-tab `Return frames` knob controls whether frames are included (fallback returns frames when `saveOutput` is off or export fails). Vid2vid now honors the same knob for preview frames.

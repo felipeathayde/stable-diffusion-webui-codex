@@ -2,7 +2,7 @@
 # apps/interface/src/utils Overview
 Date: 2025-12-03
 Owner: Frontend Maintainers
-Last Review: 2026-01-29
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -14,3 +14,4 @@ Status: Active
 - 2025-12-03: Added XYZ helpers (`xyz.ts`) for axis parsing/combo building used by the sweep view/store.
 - 2026-01-03: Added standardized file header block to `xyz.ts` (doc-only change; part of rollout).
 - 2026-01-29: Added PNG infotext parsing + sampler/scheduler mapping helpers (`pnginfo.ts`) with unit tests.
+- 2026-02-03: XYZ axis ids for hires are now `hires_scale` / `hires_steps`.

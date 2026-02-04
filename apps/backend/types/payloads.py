@@ -103,7 +103,6 @@ class ExtrasKeys:
     """Keys for payload.extras."""
     
     COMMON: FrozenSet[str] = frozenset({
-        "highres",
         "hires",
         "refiner",
         "text_encoder_override",

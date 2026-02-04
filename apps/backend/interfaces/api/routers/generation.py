@@ -7,10 +7,10 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Generation API routes (txt2img/img2img/txt2vid/img2vid/vid2vid).
-Contains request parsing and payload validation (including hires tile config via `extras.highres.tile` / `img2img_hr_tile`, Z-Image Turbo/Base
+Contains request parsing and payload validation (including hires tile config via `extras.hires.tile` / `img2img_hires_tile`, Z-Image Turbo/Base
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
-Highres supports sampler/scheduler overrides for the hires pass (txt2img: `extras.highres.sampler` / `extras.highres.scheduler`; img2img: `img2img_hr_sampling` / `img2img_hr_scheduler`).
+Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
@@ -274,31 +274,31 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         detail="'extras.zimage_variant' must be one of: turbo, base",
                     )
                 extras['zimage_variant'] = variant
-        # Highres options
-        highres = raw.get('highres')
-        highres_cfg: Optional[Dict[str, Any]] = None
-        if highres is not None:
-            if not isinstance(highres, dict):
-                raise HTTPException(status_code=400, detail="'extras.highres' must be an object")
-            _reject_unknown_keys(highres, _TXT2IMG_HIRES_KEYS | {"enable"}, "extras.highres")
-            if bool(highres.get('enable')):
+        # Hires options
+        hires = raw.get('hires')
+        hires_cfg: Optional[Dict[str, Any]] = None
+        if hires is not None:
+            if not isinstance(hires, dict):
+                raise HTTPException(status_code=400, detail="'extras.hires' must be an object")
+            _reject_unknown_keys(hires, _TXT2IMG_HIRES_KEYS | {"enable"}, "extras.hires")
+            if bool(hires.get('enable')):
                 required = ['denoise', 'scale', 'resize_x', 'resize_y', 'steps', 'upscaler']
                 for key in required:
-                    if key not in highres:
-                        raise HTTPException(status_code=400, detail=f"Missing 'extras.highres.{key}'")
-                hr_modules = highres.get('modules')
+                    if key not in hires:
+                        raise HTTPException(status_code=400, detail=f"Missing 'extras.hires.{key}'")
+                hr_modules = hires.get('modules')
                 if hr_modules is not None:
                     if not isinstance(hr_modules, list) or any(not isinstance(entry, str) for entry in hr_modules):
-                        raise HTTPException(status_code=400, detail="'extras.highres.modules' must be an array of strings")
+                        raise HTTPException(status_code=400, detail="'extras.hires.modules' must be an array of strings")
                     modules_list = list(hr_modules)
                 else:
                     modules_list = []
-                refiner_raw = highres.get('refiner')
+                refiner_raw = hires.get('refiner')
                 refiner_cfg: Optional[Dict[str, Any]] = None
                 if refiner_raw is not None:
                     if not isinstance(refiner_raw, dict):
-                        raise HTTPException(status_code=400, detail="'extras.highres.refiner' must be an object")
-                    _reject_unknown_keys(refiner_raw, {"enable", "steps", "cfg", "seed", "model", "vae"}, "extras.highres.refiner")
+                        raise HTTPException(status_code=400, detail="'extras.hires.refiner' must be an object")
+                    _reject_unknown_keys(refiner_raw, {"enable", "steps", "cfg", "seed", "model", "vae"}, "extras.hires.refiner")
                     if bool(refiner_raw.get('enable')):
                         refiner_cfg = {
                             "steps": _require_int_field(refiner_raw, 'steps', minimum=0),
@@ -310,7 +310,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         if 'vae' in refiner_raw:
                             refiner_cfg['vae'] = str(refiner_raw['vae'])
                 try:
-                    tile_cfg = tile_config_from_payload(highres.get("tile"), context="extras.highres.tile")
+                    tile_cfg = tile_config_from_payload(hires.get("tile"), context="extras.hires.tile")
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from None
                 tile = {
@@ -319,22 +319,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "fallback_on_oom": bool(tile_cfg.fallback_on_oom),
                     "min_tile": int(tile_cfg.min_tile),
                 }
-                highres_cfg = {
-                    "denoise": float(highres['denoise']),
-                    "scale": float(highres['scale']),
-                    "resize_x": _require_int_field(highres, 'resize_x'),
-                    "resize_y": _require_int_field(highres, 'resize_y'),
-                    "steps": _require_int_field(highres, 'steps', minimum=0),
-                    "upscaler": _require_str_field(highres, 'upscaler', allow_empty=False, trim=True),
+                hires_cfg = {
+                    "denoise": float(hires['denoise']),
+                    "scale": float(hires['scale']),
+                    "resize_x": _require_int_field(hires, 'resize_x'),
+                    "resize_y": _require_int_field(hires, 'resize_y'),
+                    "steps": _require_int_field(hires, 'steps', minimum=0),
+                    "upscaler": _require_str_field(hires, 'upscaler', allow_empty=False, trim=True),
                     "tile": tile,
-                    "checkpoint": highres.get('checkpoint'),
+                    "checkpoint": hires.get('checkpoint'),
                     "modules": modules_list,
-                    "sampler": highres.get('sampler'),
-                    "scheduler": highres.get('scheduler'),
-                    "prompt": highres.get('prompt') or '',
-                    "negative_prompt": highres.get('negative_prompt') or '',
-                    "cfg": float(highres.get('cfg')) if highres.get('cfg') is not None else None,
-                    "distilled_cfg": float(highres.get('distilled_cfg')) if highres.get('distilled_cfg') is not None else None,
+                    "sampler": hires.get('sampler'),
+                    "scheduler": hires.get('scheduler'),
+                    "prompt": hires.get('prompt') or '',
+                    "negative_prompt": hires.get('negative_prompt') or '',
+                    "cfg": float(hires.get('cfg')) if hires.get('cfg') is not None else None,
+                    "distilled_cfg": float(hires.get('distilled_cfg')) if hires.get('distilled_cfg') is not None else None,
                     "refiner": refiner_cfg,
                 }
 
@@ -396,7 +396,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 te_cfg["components"] = components
             extras["text_encoder_override"] = te_cfg
 
-        return extras, highres_cfg
+        return extras, hires_cfg
 
 
     def _resolve_model_ref_from_sha_or_name(
@@ -438,7 +438,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         return resolved.strip()
 
-    def _build_highres_fix(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
+    def _build_hires(cfg: Optional[Dict[str, Any]], width: int, height: int, fallback_cfg: float, fallback_distilled: float = 3.5) -> Dict[str, Any]:
         if cfg is None:
             return {
                 "enable": False,
@@ -730,7 +730,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         clip_skip = _require_int_field(payload, 'clip_skip', minimum=0, maximum=12) if 'clip_skip' in payload else None
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
-        extras, highres_cfg = _parse_txt2img_extras(payload)
+        extras, hires_cfg = _parse_txt2img_extras(payload)
 
         # Read batch params from extras (default to 1)
         batch_size = int(extras.pop('batch_size', 1)) if 'batch_size' in extras else 1
@@ -740,7 +740,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         metadata["n_iter"] = batch_count
         metadata["batch_count"] = batch_count
         metadata["batch_size"] = batch_size
-        metadata["hr"] = bool(highres_cfg)
+        metadata["hr"] = bool(hires_cfg)
         metadata["distilled_cfg_scale"] = distilled_cfg_scale
 
         # Smart offload/fallback flags: prefer payload when present, otherwise fall back to options snapshot.
@@ -791,7 +791,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             batch_size=batch_size,
             clip_skip=clip_skip,
             metadata=metadata,
-            highres_fix=_build_highres_fix(highres_cfg, width, height, cfg_scale, distilled_cfg_scale),
+            hires=_build_hires(hires_cfg, width, height, cfg_scale, distilled_cfg_scale) if hires_cfg is not None else None,
             extras=extras,
             smart_offload=smart_offload,
             smart_fallback=smart_fallback,
@@ -975,10 +975,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         noise_source = payload.get('img2img_randn_source') or payload.get('img2img_noise_source')
         ensd_raw = payload.get('img2img_eta_noise_seed_delta')
 
-        enable_hr = _p.as_bool(payload, 'img2img_hr_enable') if 'img2img_hr_enable' in payload else False
-        if enable_hr:
+        def _reject_legacy_hires_keys(payload: Mapping[str, Any]) -> None:
+            prefix = "img2img_"
+            legacy_marker = "hr_"
+            for key in payload.keys():
+                if not isinstance(key, str):
+                    continue
+                if key.startswith(prefix) and key[len(prefix):].startswith(legacy_marker):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported legacy hires key: {key}. Use 'img2img_hires_*'.",
+                    )
+
+        _reject_legacy_hires_keys(payload)
+
+        enable_hires = _p.as_bool(payload, 'img2img_hires_enable') if 'img2img_hires_enable' in payload else False
+        if enable_hires:
             try:
-                hr_tile_cfg = tile_config_from_payload(payload.get("img2img_hr_tile"), context="img2img_hr_tile")
+                hr_tile_cfg = tile_config_from_payload(payload.get("img2img_hires_tile"), context="img2img_hires_tile")
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from None
             hr_tile = {
@@ -987,36 +1001,36 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "fallback_on_oom": bool(hr_tile_cfg.fallback_on_oom),
                 "min_tile": int(hr_tile_cfg.min_tile),
             }
-            hr_sampler_name = payload.get("img2img_hr_sampling")
+            hr_sampler_name = payload.get("img2img_hires_sampling")
             if hr_sampler_name is not None:
                 if not isinstance(hr_sampler_name, str):
-                    raise HTTPException(status_code=400, detail="'img2img_hr_sampling' must be a string")
+                    raise HTTPException(status_code=400, detail="'img2img_hires_sampling' must be a string")
                 if not hr_sampler_name.strip():
-                    raise HTTPException(status_code=400, detail="'img2img_hr_sampling' must not be empty")
-            hr_scheduler = payload.get("img2img_hr_scheduler")
+                    raise HTTPException(status_code=400, detail="'img2img_hires_sampling' must not be empty")
+            hr_scheduler = payload.get("img2img_hires_scheduler")
             if hr_scheduler is not None:
                 if not isinstance(hr_scheduler, str):
-                    raise HTTPException(status_code=400, detail="'img2img_hr_scheduler' must be a string")
+                    raise HTTPException(status_code=400, detail="'img2img_hires_scheduler' must be a string")
                 if not hr_scheduler.strip():
-                    raise HTTPException(status_code=400, detail="'img2img_hr_scheduler' must not be empty")
-            hr_data = {
+                    raise HTTPException(status_code=400, detail="'img2img_hires_scheduler' must not be empty")
+            hires_data = {
                 "enable": True,
-                "scale": _p.as_float(payload, 'img2img_hr_scale') if 'img2img_hr_scale' in payload else 1.0,
-                "resize_x": _p.as_int(payload, 'img2img_hr_resize_x') if 'img2img_hr_resize_x' in payload else 0,
-                "resize_y": _p.as_int(payload, 'img2img_hr_resize_y') if 'img2img_hr_resize_y' in payload else 0,
-                "steps": _p.as_int(payload, 'img2img_hr_steps') if 'img2img_hr_steps' in payload else 0,
-                "denoise": _p.as_float(payload, 'img2img_hr_denoise') if 'img2img_hr_denoise' in payload else denoise,
-                "upscaler": payload.get('img2img_hr_upscaler', 'Latent'),
+                "scale": _p.as_float(payload, 'img2img_hires_scale') if 'img2img_hires_scale' in payload else 1.0,
+                "resize_x": _p.as_int(payload, 'img2img_hires_resize_x') if 'img2img_hires_resize_x' in payload else 0,
+                "resize_y": _p.as_int(payload, 'img2img_hires_resize_y') if 'img2img_hires_resize_y' in payload else 0,
+                "steps": _p.as_int(payload, 'img2img_hires_steps') if 'img2img_hires_steps' in payload else 0,
+                "denoise": _p.as_float(payload, 'img2img_hires_denoise') if 'img2img_hires_denoise' in payload else denoise,
+                "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
                 "hr_sampler_name": hr_sampler_name.strip() if isinstance(hr_sampler_name, str) and hr_sampler_name.strip() else None,
                 "hr_scheduler": hr_scheduler.strip() if isinstance(hr_scheduler, str) and hr_scheduler.strip() else None,
-                "hr_prompt": payload.get('img2img_hr_prompt', ''),
-                "hr_negative_prompt": payload.get('img2img_hr_neg_prompt', ''),
-                "hr_cfg": _p.as_float(payload, 'img2img_hr_cfg') if 'img2img_hr_cfg' in payload else cfg_scale,
-                "hr_distilled_cfg": _p.as_float(payload, 'img2img_hr_distilled_cfg') if 'img2img_hr_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
+                "hr_prompt": payload.get('img2img_hires_prompt', ''),
+                "hr_negative_prompt": payload.get('img2img_hires_neg_prompt', ''),
+                "hr_cfg": _p.as_float(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
+                "hr_distilled_cfg": _p.as_float(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
             }
         else:
-            hr_data = {"enable": False}
+            hires_data = {"enable": False}
 
         extras: Dict[str, Any] = {}
         raw_extras = payload.get("img2img_extras")
@@ -1143,7 +1157,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             height=height_val,
             steps=steps_val,
             extras=extras,
-            highres_fix=hr_data if hr_data.get("enable") else None,
+            hires=hires_data if hires_data.get("enable") else None,
             smart_offload=bool(payload.get("smart_offload")) if payload.get("smart_offload") is not None else bool(getattr(_opts_snapshot(), "codex_smart_offload", False)),
             smart_fallback=bool(payload.get("smart_fallback")) if payload.get("smart_fallback") is not None else bool(getattr(_opts_snapshot(), "codex_smart_fallback", False)),
             smart_cache=bool(payload.get("smart_cache")) if payload.get("smart_cache") is not None else bool(getattr(_opts_snapshot(), "codex_smart_cache", False)),

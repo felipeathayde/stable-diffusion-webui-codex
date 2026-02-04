@@ -741,7 +741,7 @@ class Txt2ImgPipelineRunner:
         raw_upscaler = getattr(hi_cfg, "upscaler", None)
         if not isinstance(raw_upscaler, str) or not raw_upscaler.strip():
             raise ValueError(
-                "Highres is enabled but 'highres.upscaler' is missing. "
+                "Hires is enabled but 'hires.upscaler' is missing. "
                 "Choose an upscaler id from GET /api/upscalers (e.g. 'latent:bicubic-aa')."
             )
         upscaler_id = raw_upscaler.strip()
@@ -749,7 +749,7 @@ class Txt2ImgPipelineRunner:
 
         if upscaler_id not in LATENT_UPSCALE_MODES and not upscaler_id.startswith("spandrel:"):
             raise ValueError(
-                f"Invalid 'highres.upscaler': {upscaler_id!r}. "
+                f"Invalid 'hires.upscaler': {upscaler_id!r}. "
                 "Expected a 'latent:*' or 'spandrel:*' upscaler id from GET /api/upscalers."
             )
         target_width = hi_cfg.resize_x or int(processing.width * hi_cfg.scale)

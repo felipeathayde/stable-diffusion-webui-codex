@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Request→processing adapters for txt2img/img2img (highres/refiner/smart flags).
-Builds Codex processing objects from API request DTOs, including Highres/Refiner configs (with hires tile config) and per-job smart runtime
+Purpose: Request→processing adapters for txt2img/img2img (hires/refiner/smart flags).
+Builds Codex processing objects from API request DTOs, including Hires/Refiner configs (with hires tile config) and per-job smart runtime
 flags used by workflows.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_build_hires_config` (function): Builds a `CodexHighResConfig` from request payload data (including hires tile config + nested hires refiner).
+- `_build_hires_config` (function): Builds a `CodexHiresConfig` from request payload data (including hires tile config + nested hires refiner).
 - `_build_refiner_config` (function): Builds a `RefinerConfig` from request payload data.
 - `build_txt2img_processing` (function): Converts a `Txt2ImgRequest` into a fully-populated `CodexProcessingTxt2Img`.
 - `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img`.
@@ -24,7 +24,7 @@ import logging
 
 from apps.backend.core.requests import Img2ImgRequest, Txt2ImgRequest
 from apps.backend.runtime.processing.models import (
-    CodexHighResConfig,
+    CodexHiresConfig,
     CodexProcessingImg2Img,
     CodexProcessingTxt2Img,
     RefinerConfig,
@@ -34,11 +34,11 @@ from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 _log = logging.getLogger(__name__)
 
 
-def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, default_distilled: float, default_denoise: float) -> CodexHighResConfig:
+def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, default_distilled: float, default_denoise: float) -> CodexHiresConfig:
     payload = data or {}
     enabled = bool(payload.get("enable", False))
     if not enabled:
-        return CodexHighResConfig(
+        return CodexHiresConfig(
             enabled=False,
             scale=1.0,
             denoise=0.0,
@@ -95,9 +95,9 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
         checkpoint_name = payload.get("checkpoint")
 
     refiner_cfg = _build_refiner_config(payload.get("refiner"), default_cfg=cfg_value)
-    tile_cfg = tile_config_from_payload(payload.get("tile"), context="highres.tile")
+    tile_cfg = tile_config_from_payload(payload.get("tile"), context="hires.tile")
 
-    return CodexHighResConfig(
+    return CodexHiresConfig(
         enabled=enabled,
         scale=float(payload.get("scale", 2.0)) if enabled else 1.0,
         denoise=float(payload.get("denoise", default_denoise)) if enabled else 0.0,
@@ -149,7 +149,7 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         req.scheduler,
         req.guidance_scale,
         req.seed,
-        bool(req.highres_fix),
+        bool(req.hires),
     )
     metadata = dict(req.metadata or {})
     if getattr(req, "clip_skip", None) is not None:
@@ -166,7 +166,7 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
         distilled_cfg = 3.5
 
     hires_cfg = _build_hires_config(
-        req.highres_fix if isinstance(req.highres_fix, dict) else {},
+        req.hires if isinstance(req.hires, dict) else {},
         default_cfg=req.guidance_scale or 7.0,
         default_distilled=distilled_cfg,
         default_denoise=0.5,
@@ -280,9 +280,9 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         smart_fallback=smart_fallback,
         smart_cache=smart_cache,
     )
-    if req.highres_fix:
+    if req.hires:
         hires_cfg = _build_hires_config(
-            req.highres_fix,
+            req.hires,
             default_cfg=processing.guidance_scale,
             default_distilled=processing.distilled_guidance_scale,
             default_denoise=processing.denoising_strength,

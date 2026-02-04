@@ -1,7 +1,7 @@
 # apps/backend/runtime/processing Overview
 Date: 2025-10-28
 Owner: Runtime Maintainers
-Last Review: 2026-01-02
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -13,3 +13,4 @@ Status: Active
 - 2026-01-02: Removed token-merging fields from processing dataclasses (feature is no longer supported).
 - 2026-01-02: Added standardized file header docstrings to processing primitives (`__init__.py`, `conditioners.py`, `datatypes.py`) (doc-only change; part of rollout).
 - 2026-01-29: `CodexProcessingImg2Img` now includes explicit mask enforcement selection (`post_blend` vs `per_step_clamp`) for Codex-native masked img2img.
+- 2026-02-03: Processing models use `CodexHiresConfig` for hires configuration (renamed).

@@ -27,6 +27,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import time
 from pathlib import Path
 import shutil
@@ -38,6 +39,7 @@ from apps.backend.core.params.video import VideoInterpolationOptions
 from apps.backend.core.requests import Img2VidRequest, InferenceEvent, ProgressEvent, ResultEvent, Vid2VidRequest
 from apps.backend.engines.wan22.wan22_common import WanStageOptions
 from apps.backend.infra.config.repo_root import get_repo_root
+from apps.backend.runtime.pipeline_stages.video import assemble_video_metadata, build_video_plan
 from apps.backend.video.export.ffmpeg_exporter import export_video
 from apps.backend.video.flow.torchvision_raft import FlowGuidanceError, RaftFlowEstimator, warp_frame
 from apps.backend.video.interpolation import maybe_interpolate
@@ -494,6 +496,9 @@ def run_vid2vid(
         raise RuntimeError(f"Unsupported vid2vid method: {method}")
 
     try:
+        plan = build_video_plan(request)
+        frames_in_count: int | None = None
+
         if method == "wan_animate":
             yield ProgressEvent(stage="probe", percent=0.0, message="Probing WAN Animate inputs")
             start = time.perf_counter()
@@ -517,6 +522,7 @@ def run_vid2vid(
             fps_val = int(getattr(request, "fps", 24) or 24)
             if use_source_fps:
                 fps_val = max(1, int(round(float(probe.fps))))
+            plan.fps = int(fps_val)
 
             frames_target = int(getattr(request, "num_frames", 0) or 0)
             if use_source_frames and probe.frame_count:
@@ -571,6 +577,7 @@ def run_vid2vid(
                 frames_out = _run_native_pipeline(engine=engine, comp=comp, request=request, frames_in=frames_in)
             else:
                 frames_out = _run_flow_chunks(engine=engine, request=request, frames_in=frames_in)
+            frames_in_count = len(frames_in)
             has_audio = bool(probe.has_audio)
             audio_source = video_path if probe.has_audio else None
 
@@ -595,20 +602,41 @@ def run_vid2vid(
                 vfi_opts = {**vfi_opts, "result": vfi_meta}
 
         elapsed = time.perf_counter() - start
-        info: dict[str, Any] = {
-            "engine": getattr(engine, "engine_id", "unknown"),
-            "task": "vid2vid",
-            "method": method,
-            "elapsed": round(elapsed, 3),
-            "frames_in": (len(frames_in) if method != "wan_animate" else None),
-            "frames_out": len(frames_out),
-            "fps": fps_val,
-            "width": int(getattr(request, "width", 768) or 768),
-            "height": int(getattr(request, "height", 432) or 432),
-            "steps": int(getattr(request, "steps", 30) or 30),
-            "strength": request.strength,
-            "audio_in": bool(has_audio),
-        }
+        if method == "wan_animate":
+            plan.fps = int(fps_val)
+
+        @dataclass(frozen=True)
+        class _SamplerOutcome:
+            sampler_in: str | None
+            scheduler_in: str | None
+            sampler_effective: str | None
+            scheduler_effective: str | None
+            warnings: tuple[str, ...] = ()
+
+        sampler_outcome = _SamplerOutcome(
+            sampler_in=getattr(request, "sampler", None),
+            scheduler_in=getattr(request, "scheduler", None),
+            sampler_effective=getattr(request, "sampler", None),
+            scheduler_effective=getattr(request, "scheduler", None),
+        )
+
+        info = assemble_video_metadata(
+            engine,
+            plan,
+            sampler_outcome,
+            elapsed=elapsed,
+            frame_count=len(frames_out),
+            task="vid2vid",
+        )
+        info.update(
+            {
+                "method": method,
+                "frames_in": (frames_in_count if method != "wan_animate" else None),
+                "frames_out": len(frames_out),
+                "strength": request.strength,
+                "audio_in": bool(has_audio),
+            }
+        )
         if method == "wan_animate":
             info["animate_mode"] = getattr(request, "animate_mode", None)
             info["segment_frame_length"] = int(getattr(request, "segment_frame_length", 77) or 77)

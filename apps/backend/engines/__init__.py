@@ -73,7 +73,9 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     _maybe_register("sd35", registration.register_sd35)
     _maybe_register("zimage", registration.register_zimage)
     # Optional engines are not auto-registered in strict mode (no silent fallbacks)
-    _maybe_register("wan22_14b", registration.register_wan22_videos)
+    # Note: `wan22_14b` is intentionally not registered by default; register explicitly via
+    # `apps.backend.engines.registration.register_wan22_14b_experimental(...)` when ported to Option A.
+    _maybe_register("wan22_5b", registration.register_wan22_videos)
 
 
 __all__ = [

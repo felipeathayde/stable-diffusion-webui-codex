@@ -17,7 +17,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `register_flux` (function): Registers the Flux engine.
 - `register_kontext` (function): Registers the Flux Kontext engine.
 - `register_chroma` (function): Registers the Chroma engine.
-- `register_wan22_videos` (function): Registers WAN22 video engines (14B/5B/animate) and aliases.
+- `register_wan22_videos` (function): Registers WAN22 video engines (5B/animate) and aliases.
+- `register_wan22_14b_experimental` (function): Registers the experimental WAN22 14B engine (not registered by default).
 - `register_zimage` (function): Registers the Z-Image engine and aliases.
 """
 
@@ -88,10 +89,8 @@ def register_hunyuan_video(*, registry: EngineRegistry | None = None, replace: b
 
 
 def register_wan22_videos(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
-    from apps.backend.engines.wan22.wan22_14b import Wan2214BEngine
     from apps.backend.engines.wan22.wan22_5b import Wan225BEngine
     from apps.backend.engines.wan22.wan22_animate_14b import Wan22Animate14BEngine
-    _reg("wan22_14b", Wan2214BEngine, registry=registry, replace=replace, aliases=("wan22-14b",))
     _reg("wan22_5b", Wan225BEngine, registry=registry, replace=replace, aliases=("wan22-5b",))
     _reg(
         "wan22_animate_14b",
@@ -100,6 +99,11 @@ def register_wan22_videos(*, registry: EngineRegistry | None = None, replace: bo
         replace=replace,
         aliases=("wan22-animate-14b", "wan-animate"),
     )
+
+
+def register_wan22_14b_experimental(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
+    from apps.backend.engines.wan22.wan22_14b import Wan2214BEngine
+    _reg("wan22_14b", Wan2214BEngine, registry=registry, replace=replace, aliases=("wan22-14b",))
 
 
 def register_zimage(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:

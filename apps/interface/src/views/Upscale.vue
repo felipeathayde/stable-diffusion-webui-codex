@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Upscale route view.
-Standalone upscaling workspace (Spandrel SR) with tile controls, explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
+Standalone upscaling workspace (Spandrel SR) with tile controls (tile/overlap/min_tile), explicit OOM fallback toggle, HF-backed weight downloads, and task streaming.
 Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight upscale tasks after reload (SSE replay via `after` / `lastEventId`).
 The remote download modal:
 - surfaces backend safeweights mode (`CODEX_SAFE_WEIGHTS`) and allowed suffixes,
@@ -16,6 +16,12 @@ The remote download modal:
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Upscale` (component): Upscale route view component.
+- `setMinTile` (function): Updates the persisted `min_tile` preference used as the tiled OOM fallback lower bound.
+- `start` (function): Starts an upscale task (`/api/upscale`) and subscribes to SSE events.
+- `cancel` (function): Cancels the active upscale task.
+- `downloadSelectedRemote` (function): Starts an upscaler download task (`/api/upscalers/download`) and subscribes to SSE events.
+- `handleTaskEvent` (function): Task SSE handler for upscale runs.
+- `handleDownloadEvent` (function): Task SSE handler for download runs.
 -->
 
 <template>
@@ -88,10 +94,12 @@ Symbols (top-level; keep in sync; no ghosts):
             <UpscalerTileControls
               :tileSize="tileSize"
               :overlap="overlap"
+              :minTile="Math.min(tileSize, minTile)"
               :fallbackOnOom="fallbackOnOom"
               :disabled="isRunning"
               @update:tileSize="setTileSize"
               @update:overlap="setOverlap"
+              @update:minTile="setMinTile"
               @update:fallbackOnOom="setFallbackOnOom"
             />
           </div>
@@ -318,6 +326,7 @@ const {
   spandrelUpscalers,
   latentUpscalers,
   fallbackOnOom,
+  minTile,
 } = storeToRefs(upscalersStore)
 
 const imageFile = ref<File | null>(null)
@@ -328,7 +337,6 @@ const upscalerId = ref<string>('')
 const scale = ref<number>(2)
 const tileSize = ref<number>(256)
 const overlap = ref<number>(16)
-const minTile = ref<number>(128)
 
 const images = ref<GeneratedImage[]>([])
 const info = ref<unknown | null>(null)
@@ -513,6 +521,12 @@ function setFallbackOnOom(value: boolean): void {
   fallbackOnOom.value = Boolean(value)
 }
 
+function setMinTile(value: number): void {
+  const v = Math.max(1, Math.trunc(Number(value)))
+  if (!Number.isFinite(v)) return
+  minTile.value = v
+}
+
 async function loadUpscalers(): Promise<void> {
   await upscalersStore.load({ refresh: true })
   if (!upscalerId.value) {
@@ -582,7 +596,6 @@ function setTileSize(value: number): void {
   tileSize.value = v
   // Keep invariants aligned with backend validation.
   if (overlap.value >= tileSize.value) overlap.value = Math.max(0, tileSize.value - 1)
-  if (minTile.value > tileSize.value) minTile.value = tileSize.value
 }
 
 function setOverlap(value: number): void {
@@ -706,7 +719,7 @@ async function start(): Promise<void> {
         tile: Math.trunc(tileSize.value),
         overlap: Math.trunc(overlap.value),
         fallback_on_oom: Boolean(fallbackOnOom.value),
-        min_tile: Math.trunc(minTile.value),
+        min_tile: Math.trunc(Math.min(tileSize.value, minTile.value)),
       },
     }
     if (!payload.device) throw new Error("Missing device (QuickSettings).")

@@ -6,19 +6,19 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: HiRes (second pass) settings panel.
-Renders HiRes controls (scale/denoise/steps/upscaler + Spandrel tile config) and optional hires refiner settings when enabled.
+Purpose: Hires (second pass) settings panel.
+Renders hires controls (scale/denoise/steps/upscaler + Spandrel tile config, including min tile and OOM fallback preference) and optional hires refiner settings when enabled.
 Upscaler values are stable ids (`latent:*` / `spandrel:*`), not legacy display labels.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `HighresSettingsCard` (component): HiRes settings block for supported image tabs.
-- `toggle` (function): Toggles the HiRes enabled state.
+- `HiresSettingsCard` (component): Hires settings block for supported image tabs.
+- `toggle` (function): Toggles the hires enabled state.
 -->
 
 <template>
-  <div class="highres-card">
+  <div class="hires-card">
     <div class="hr-header">
-      <span class="label-muted">Highres (second pass)</span>
+      <span class="label-muted">Hires (second pass)</span>
       <button class="hr-switch" type="button" @click="toggle">
         <span class="hr-switch-track" :data-on="enabled ? '1' : '0'">
           <span class="hr-switch-thumb" />
@@ -88,10 +88,12 @@ Symbols (top-level; keep in sync; no ghosts):
         <UpscalerTileControls
           :tileSize="tileConfig.tile"
           :overlap="tileConfig.overlap"
+          :minTile="minTile"
           :fallbackOnOom="fallbackOnOom"
           :disabled="disabled || !enabled || !isSpandrelSelected"
           @update:tileSize="onTileSize"
           @update:overlap="onTileOverlap"
+          @update:minTile="(v) => emit('update:minTile', v)"
           @update:fallbackOnOom="(v) => emit('update:fallbackOnOom', v)"
         />
         <p class="hr-hint" v-if="upscaler && !isSpandrelSelected">Tile settings apply to Spandrel (pixel SR) upscalers only.</p>
@@ -114,7 +116,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-// tags: highres, settings, grid
+// tags: hires, settings, grid
 import { computed } from 'vue'
 import type { UpscalerDefinition, UpscalerKind } from '../api/types'
 import RefinerSettingsCard from './RefinerSettingsCard.vue'
@@ -131,6 +133,7 @@ const props = defineProps<{
   steps: number
   upscaler: string
   tile?: TileConfigState
+  minTile?: number
   fallbackOnOom?: boolean
   upscalers?: UpscalerDefinition[]
   upscalersLoading?: boolean
@@ -152,6 +155,7 @@ const emit = defineEmits<{
   (e: 'update:steps', value: number): void
   (e: 'update:upscaler', value: string): void
   (e: 'update:tile', value: TileConfigState): void
+  (e: 'update:minTile', value: number): void
   (e: 'update:fallbackOnOom', value: boolean): void
   (e: 'update:refinerEnabled', value: boolean): void
   (e: 'update:refinerSteps', value: number): void
@@ -186,6 +190,12 @@ const tileConfig = computed<TileConfigState>(() => {
   const tile = Number.isFinite(v.tile) ? Math.max(1, Math.trunc(v.tile)) : 256
   const overlap = Number.isFinite(v.overlap) ? Math.max(0, Math.trunc(v.overlap)) : 16
   return { tile, overlap: Math.min(tile - 1, overlap) }
+})
+
+const minTile = computed(() => {
+  const raw = props.minTile
+  const v = (typeof raw === 'number' && Number.isFinite(raw)) ? Math.max(1, Math.trunc(raw)) : 128
+  return Math.min(tileConfig.value.tile, v)
 })
 
 const targetWidth = computed(() => {
@@ -250,4 +260,4 @@ function onTileOverlap(value: number): void {
 }
 </script>
 
-<!-- styles in styles/components/highres-settings-card.css -->
+<!-- styles in styles/components/hires-settings-card.css -->

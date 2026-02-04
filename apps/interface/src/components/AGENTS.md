@@ -1,8 +1,8 @@
-<!-- tags: frontend, components, prompt, highres, refiner -->
+<!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
 Owner: Frontend Maintainers
-Last Review: 2026-02-01
+Last Review: 2026-02-04
 Status: Active
 
 ## Purpose
@@ -12,7 +12,7 @@ Status: Active
 - Components should be presentational and rely on Pinia stores or props for state.
 - Follow the styling rules documented in `.sangoi/frontend/guidelines/frontend-style-guide.md`.
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts` with Vitest coverage; ensure new prompt widgets pass through that module.
-- Generation + highres + refiner controls live in `GenerationSettingsCard.vue`, `HighresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.
+- Generation + hires + refiner controls live in `GenerationSettingsCard.vue`, `HiresSettingsCard.vue`, and `RefinerSettingsCard.vue`, all using CSS grid layouts.
 - Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
 - `QuickSettingsBar.vue` renders per-tab selectors in the main header row; it includes a nested, collapsible Advanced area (Smart toggles + Attention Backend / Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `uiBlocks.semanticEngine` when available (otherwise `sd15`).
 - 2026-01-18: `QuickSettingsBar.vue` now supports the `chroma` model tab type (mapped to backend engine id `flux1_chroma`) and renders a dedicated `QuickSettingsChroma.vue` selector row.
@@ -53,4 +53,5 @@ Status: Active
 - 2026-01-06: `BasicParametersCard.vue` now defaults to explicit sampler/scheduler selection (no empty option) and selector components tolerate missing `label` by falling back to `name`.
 - 2026-01-06: Sampler/Scheduler selectors now default the empty-option label to “Select” (no `Automatic` placeholder); WAN stage panels still override with “Inherit”.
 - 2026-01-21: WAN stage LoRA UI (`components/wan/WanStageLoraField.vue`) selects by sha (`loraSha`) and payload builders emit `lora_sha` (no stage `lora_path`).
-- 2026-02-01: `HighresSettingsCard.vue` now lists upscalers from `/api/upscalers` (stable ids: `latent:*` / `spandrel:*`) and reuses the shared tile controls + OOM fallback toggle (same as `/upscale`).
+- 2026-02-01: `HiresSettingsCard.vue` now lists upscalers from `/api/upscalers` (stable ids: `latent:*` / `spandrel:*`) and reuses the shared tile controls + OOM fallback toggle (same as `/upscale`).
+- 2026-02-04: `HiresSettingsCard.vue` now also wires `min_tile` (global preference) into the shared tile controls; callers propagate it into hires payloads as `hires.tile.min_tile`.

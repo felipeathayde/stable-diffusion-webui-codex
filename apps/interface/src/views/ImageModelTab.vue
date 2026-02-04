@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Image model tab view (txt2img/img2img/inpaint) UI for SD/Flux/ZImage-family engines.
 Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint, per-tab history, and integrates with the generation composable to
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base UI is variant-dependent: CFG label + negative prompt gating).
-Highres settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
+Hires settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
+Also shares the global `min_tile` preference (tiled OOM fallback lower bound) with `/upscale`.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -23,11 +24,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `loadProfile` (function): Loads a saved profile into current params (with validation/defaulting).
 - `saveProfile` (function): Saves current params as a profile in localStorage.
 - `setParams` (function): Applies partial updates to the current tab params state.
-- `setHighres` (function): Applies partial updates to the highres config object.
-- `setHighresRefiner` (function): Applies partial updates to the highres-refiner config object.
+- `setHires` (function): Applies partial updates to the hires config object.
+- `setHiresRefiner` (function): Applies partial updates to the hires-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
 - `setFallbackOnOom` (function): Updates the global “fallback on OOM” preference used by upscaler tiling (hires-fix + `/upscale`).
+- `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
 - `toggleInitImage` (function): Toggles init-image usage (img2img).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
@@ -274,40 +276,42 @@ Symbols (top-level; keep in sync; no ghosts):
             @sync-init-image-dims="syncInitImageDims"
           />
 
-          <HighresSettingsCard
-            v-if="showHighres"
+          <HiresSettingsCard
+            v-if="showHires"
             :disabled="isRunning"
-            :enabled="params.highres.enabled"
-            :denoise="params.highres.denoise"
-            :scale="params.highres.scale"
-            :steps="params.highres.steps"
-            :upscaler="params.highres.upscaler"
-            :tile="params.highres.tile"
+            :enabled="params.hires.enabled"
+            :denoise="params.hires.denoise"
+            :scale="params.hires.scale"
+            :steps="params.hires.steps"
+            :upscaler="params.hires.upscaler"
+            :tile="params.hires.tile"
+            :minTile="minTile"
             :fallbackOnOom="fallbackOnOom"
             :upscalers="upscalers"
             :upscalersLoading="upscalersLoading"
             :upscalersError="upscalersError"
             :base-width="params.width"
             :base-height="params.height"
-            :refinerEnabled="showHighresRefiner ? params.highres.refiner?.enabled : undefined"
-            :refinerSteps="showHighresRefiner ? params.highres.refiner?.steps : undefined"
-            :refinerCfg="showHighresRefiner ? params.highres.refiner?.cfg : undefined"
-            :refinerSeed="showHighresRefiner ? params.highres.refiner?.seed : undefined"
-            :refinerModel="showHighresRefiner ? params.highres.refiner?.model : undefined"
-            :refinerVae="showHighresRefiner ? params.highres.refiner?.vae : undefined"
-            @update:enabled="(v: boolean) => setHighres({ enabled: v })"
-            @update:denoise="(v: number) => setHighres({ denoise: clampFloat(v, 0, 1) })"
-            @update:scale="(v: number) => setHighres({ scale: v })"
-            @update:steps="(v: number) => setHighres({ steps: Math.max(0, Math.trunc(v)) })"
-            @update:upscaler="(v: string) => setHighres({ upscaler: v })"
-            @update:tile="(v: { tile: number; overlap: number }) => setHighres({ tile: v })"
+            :refinerEnabled="showHiresRefiner ? params.hires.refiner?.enabled : undefined"
+            :refinerSteps="showHiresRefiner ? params.hires.refiner?.steps : undefined"
+            :refinerCfg="showHiresRefiner ? params.hires.refiner?.cfg : undefined"
+            :refinerSeed="showHiresRefiner ? params.hires.refiner?.seed : undefined"
+            :refinerModel="showHiresRefiner ? params.hires.refiner?.model : undefined"
+            :refinerVae="showHiresRefiner ? params.hires.refiner?.vae : undefined"
+            @update:enabled="(v: boolean) => setHires({ enabled: v })"
+            @update:denoise="(v: number) => setHires({ denoise: clampFloat(v, 0, 1) })"
+            @update:scale="(v: number) => setHires({ scale: v })"
+            @update:steps="(v: number) => setHires({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:upscaler="(v: string) => setHires({ upscaler: v })"
+            @update:tile="(v: { tile: number; overlap: number }) => setHires({ tile: v })"
+            @update:minTile="setMinTile"
             @update:fallbackOnOom="setFallbackOnOom"
-            @update:refinerEnabled="(v: boolean) => setHighresRefiner({ enabled: v })"
-            @update:refinerSteps="(v: number) => setHighresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
-            @update:refinerCfg="(v: number) => setHighresRefiner({ cfg: v })"
-            @update:refinerSeed="(v: number) => setHighresRefiner({ seed: Math.trunc(v) })"
-            @update:refinerModel="(v: string) => setHighresRefiner({ model: v })"
-            @update:refinerVae="(v: string) => setHighresRefiner({ vae: v })"
+            @update:refinerEnabled="(v: boolean) => setHiresRefiner({ enabled: v })"
+            @update:refinerSteps="(v: number) => setHiresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:refinerCfg="(v: number) => setHiresRefiner({ cfg: v })"
+            @update:refinerSeed="(v: number) => setHiresRefiner({ seed: Math.trunc(v) })"
+            @update:refinerModel="(v: string) => setHiresRefiner({ model: v })"
+            @update:refinerVae="(v: string) => setHiresRefiner({ vae: v })"
           />
 
           <RefinerSettingsCard
@@ -436,7 +440,7 @@ import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
-import HighresSettingsCard from '../components/HighresSettingsCard.vue'
+import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
@@ -452,7 +456,7 @@ const store = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
 const workflows = useWorkflowsStore()
 const upscalersStore = useUpscalersStore()
-const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnOom } = storeToRefs(upscalersStore)
+const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnOom, minTile } = storeToRefs(upscalersStore)
 
 // Use unified generation composable
 const {
@@ -535,14 +539,14 @@ const showClipSkip = computed(() => props.type === 'sd15' || props.type === 'sdx
 const minClipSkip = computed(() => 0)
 const defaultShowNegative = computed(() => props.type === 'sdxl' && supportsNegative.value)
 
-const showHighres = computed(() => {
+const showHires = computed(() => {
   if (props.type === 'zimage') return false
   const surf = engineSurface.value
   if (!surf) return true
-  return surf.supports_highres
+  return surf.supports_hires
 })
 
-const showHighresRefiner = computed(() => !Boolean((params.value as any)?.useInitImage))
+const showHiresRefiner = computed(() => !Boolean((params.value as any)?.useInitImage))
 
 const showGlobalRefiner = computed(() => {
   if (props.type === 'zimage') return false
@@ -616,12 +620,12 @@ watch(supportsImg2Img, (supported) => {
   })
 }, { immediate: true })
 
-watch(showHighres, (show) => {
+watch(showHires, (show) => {
   if (show) return
-  if (!params.value.highres.enabled && !params.value.highres.refiner?.enabled) return
-  setHighres({
+  if (!params.value.hires.enabled && !params.value.hires.refiner?.enabled) return
+  setHires({
     enabled: false,
-    refiner: { ...(params.value.highres.refiner || {}), enabled: false },
+    refiner: { ...(params.value.hires.refiner || {}), enabled: false },
   } as any)
 })
 
@@ -631,7 +635,7 @@ watch(showGlobalRefiner, (show) => {
   setRefiner({ enabled: false })
 })
 
-watch([supportsImg2Img, showHighres, showGlobalRefiner, () => params.value.useInitImage], () => {
+watch([supportsImg2Img, showHires, showGlobalRefiner, () => params.value.useInitImage], () => {
   void nextTick(syncPreviewHeight)
 })
 
@@ -805,13 +809,13 @@ function setParams(patch: Partial<ImageBaseParams>): void {
   store.updateParams(props.tabId, patch as any)
 }
 
-function setHighres(patch: Record<string, unknown>): void {
-  setParams({ highres: { ...(params.value.highres as any), ...patch } as any })
+function setHires(patch: Record<string, unknown>): void {
+  setParams({ hires: { ...(params.value.hires as any), ...patch } as any })
 }
 
-function setHighresRefiner(patch: Record<string, unknown>): void {
-  const nextRefiner = { ...((params.value.highres as any).refiner || {}), ...patch }
-  setHighres({ refiner: nextRefiner })
+function setHiresRefiner(patch: Record<string, unknown>): void {
+  const nextRefiner = { ...((params.value.hires as any).refiner || {}), ...patch }
+  setHires({ refiner: nextRefiner })
 }
 
 function setRefiner(patch: Record<string, unknown>): void {
@@ -825,6 +829,12 @@ function clampFloat(value: number, min: number, max: number): number {
 
 function setFallbackOnOom(value: boolean): void {
   fallbackOnOom.value = Boolean(value)
+}
+
+function setMinTile(value: number): void {
+  const v = Math.max(1, Math.trunc(Number(value)))
+  if (!Number.isFinite(v)) return
+  minTile.value = v
 }
 
 const _KONTEXT_DEFAULT_STEPS = 28

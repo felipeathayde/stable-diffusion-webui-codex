@@ -86,7 +86,7 @@ class Txt2ImgRequest(BaseRequest):
     height: int = 512
     steps: int = 20
     tiling: bool = False
-    highres_fix: Optional[Mapping[str, Any]] = None
+    hires: Optional[Mapping[str, Any]] = None
     extras: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -108,7 +108,7 @@ class Img2ImgRequest(BaseRequest):
     height: int = 512
     steps: int = 20
     extras: Mapping[str, Any] = field(default_factory=dict)
-    highres_fix: Optional[Mapping[str, Any]] = None
+    hires: Optional[Mapping[str, Any]] = None
 
 
 @dataclass(frozen=True)

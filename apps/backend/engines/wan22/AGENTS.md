@@ -3,7 +3,7 @@
 # apps/backend/engines/wan22 Overview
 Date: 2025-12-06
 Owner: Engine Maintainers
-Last Review: 2026-02-01
+Last Review: 2026-02-03
 Status: Active
 
 ## Purpose
@@ -36,6 +36,7 @@ Status: Active
 - 2026-01-22: `wan22_14b` no longer advertises `TaskType.IMG2VID`; `img2vid` raises `NotImplementedError` to avoid “success with empty frames”. The practical A14B I2V path remains the WAN22 GGUF runtime (invoked via the `wan22_5b` engine wrapper).
 - 2026-01-31: WAN22 14B core streaming enablement now fails loud when explicitly requested (`core_streaming_enabled=True`) and setup fails (no silent fallback to non-streaming).
 - 2026-02-01: `wan22_5b` is now GGUF-only (Diffusers directory-loading branch removed). WAN22 GGUF scheduler is Diffusers-free in the runtime; WAN22 VAE IO and `vid2vid.method=\"wan_animate\"` remain Diffusers-based until their dedicated port plans are executed.
+- 2026-02-03: `wan22_14b` is no longer registered by default (kept unreachable) until it is ported to the canonical Option A use-cases.
 
 ## Execution Paths
 - Diffusers: loads vendor tree and constructs `WanPipeline`; logs device/dtype and component classes (TE/UNet/VAE).

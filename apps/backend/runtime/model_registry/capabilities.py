@@ -56,7 +56,7 @@ class EngineParamSurface:
     supports_img2img: bool
     supports_txt2vid: bool
     supports_img2vid: bool
-    supports_highres: bool
+    supports_hires: bool
     supports_refiner: bool
     supports_lora: bool
     supports_controlnet: bool
@@ -75,7 +75,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_highres=True,
+        supports_hires=True,
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
@@ -88,7 +88,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_highres=True,
+        supports_hires=True,
         supports_refiner=True,
         supports_lora=True,
         supports_controlnet=False,
@@ -101,7 +101,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_highres=False,
+        supports_hires=False,
         supports_refiner=False,
         supports_lora=True,
         supports_controlnet=False,
@@ -116,7 +116,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_highres=False,
+        supports_hires=False,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
@@ -131,7 +131,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
-        supports_highres=False,
+        supports_hires=False,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
@@ -146,7 +146,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=False,
         supports_txt2vid=True,
         supports_img2vid=True,
-        supports_highres=False,
+        supports_hires=False,
         supports_refiner=False,
         supports_lora=True,  # high/low LoRA slots in WAN22 panel
         supports_controlnet=False,
@@ -159,7 +159,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=False,
         supports_txt2vid=True,
         supports_img2vid=True,
-        supports_highres=False,
+        supports_hires=False,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
@@ -172,7 +172,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_img2img=False,
         supports_txt2vid=False,
         supports_img2vid=True,
-        supports_highres=False,
+        supports_hires=False,
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,

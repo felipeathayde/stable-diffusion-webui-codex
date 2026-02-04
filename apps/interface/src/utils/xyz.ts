@@ -34,8 +34,8 @@ export type AxisParam =
   | 'seed'
   | 'width'
   | 'height'
-  | 'highres_scale'
-  | 'highres_steps'
+  | 'hires_scale'
+  | 'hires_steps'
   | 'refiner_model'
   | 'refiner_steps'
   | 'refiner_cfg'
@@ -74,8 +74,8 @@ export const AXIS_OPTIONS: { id: AxisParam; label: string; kind: 'text' | 'numbe
   { id: 'seed', label: 'Seed', kind: 'number' },
   { id: 'width', label: 'Width', kind: 'number' },
   { id: 'height', label: 'Height', kind: 'number' },
-  { id: 'highres_scale', label: 'Highres scale', kind: 'number' },
-  { id: 'highres_steps', label: 'Highres steps', kind: 'number' },
+  { id: 'hires_scale', label: 'Hires scale', kind: 'number' },
+  { id: 'hires_steps', label: 'Hires steps', kind: 'number' },
   { id: 'refiner_model', label: 'Refiner model', kind: 'text' },
   { id: 'refiner_steps', label: 'Refiner steps', kind: 'number' },
   { id: 'refiner_cfg', label: 'Refiner CFG', kind: 'number' },

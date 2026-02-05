@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-03
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -46,3 +46,4 @@ Status: Active
 - 2026-01-31: `generation.py` now delegates the txt2img/img2img task worker boilerplate (status/progress/result/end, engine options build, PNG encoding) to `apps/backend/interfaces/api/tasks/generation_tasks.py` to reduce drift and keep routers thin.
 - 2026-02-03: Generation request contract uses hires naming only: txt2img uses `extras.hires` and img2img uses `img2img_hires_*` for the second pass.
 - 2026-02-03: `upscale.py` validates `upscalers/manifest.json` (schema v1) and enriches `/api/upscalers/remote` results with two categories (curated vs other files) via `weights[].curated` + `weights[].meta`, while preserving raw listing fallback.
+- 2026-02-05: `models.py` engine capabilities now include `anima` in `engine_id_to_semantic_engine` mapping (semantic tag `anima`).

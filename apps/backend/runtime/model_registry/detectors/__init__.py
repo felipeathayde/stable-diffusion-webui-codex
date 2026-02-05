@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Built-in detector registrations for the model registry.
 Imports all detector modules so they can self-register into the shared `REGISTRY` at import time.
+Includes the Anima detector for `net.*` Cosmos Predict2-style checkpoints.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `__all__` (constant): Empty export list; import detector classes from their defining modules.
@@ -16,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from . import aura as _aura
+from . import anima as _anima
 from . import chroma as _chroma
 from . import flux as _flux
 from . import qwen_image as _qwen_image
@@ -26,6 +28,6 @@ from . import stable_cascade as _stable_cascade
 from . import wan22 as _wan22
 from . import zimage as _zimage
 
-del _aura, _chroma, _flux, _qwen_image, _sd3, _sd_v1, _sdxl, _stable_cascade, _wan22, _zimage
+del _aura, _anima, _chroma, _flux, _qwen_image, _sd3, _sd_v1, _sdxl, _stable_cascade, _wan22, _zimage
 
 __all__ = []

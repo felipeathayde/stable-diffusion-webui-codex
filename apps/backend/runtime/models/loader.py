@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Central model loader for diffusion engines (checkpoint/diffusers parsing, component assembly, and runtime-friendly overrides).
 Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts, and selects storage/compute dtypes (storage defaults to weights primary SafeTensors dtype when detectable; compute defaults to fp32 for stability unless overridden).
+Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
 
@@ -147,6 +148,7 @@ ENGINE_KEY_TO_FAMILY: Dict[str, ModelFamily] = {
     "flux1_chroma": ModelFamily.CHROMA,
     "sd20": ModelFamily.SD20,
     "sd15": ModelFamily.SD15,
+    "anima": ModelFamily.ANIMA,
     "wan22_14b": ModelFamily.WAN22,
     "wan22_5b": ModelFamily.WAN22,
 }
@@ -161,6 +163,7 @@ FAMILY_TO_ENGINE_KEY: Dict[ModelFamily, str] = {
     ModelFamily.CHROMA: "flux1_chroma",
     ModelFamily.SD20: "sd20",
     ModelFamily.SD15: "sd15",
+    ModelFamily.ANIMA: "anima",
     ModelFamily.WAN22: "wan22_14b",
 }
 
@@ -1464,6 +1467,51 @@ def codex_loader(
         raise RuntimeError(str(exc)) from exc
 
     component_states = {name: comp.state_dict for name, comp in config.components.items()}
+
+    if parsed.signature.family is ModelFamily.ANIMA:
+        # Anima is not a diffusers repository and must not rely on `model_index.json`/DiffusionPipeline config.
+        # Return a minimal bundle containing the parsed core component state dicts; engines load external assets.
+        if not isinstance(vae_path, str) or not vae_path.strip():
+            raise RuntimeError(
+                "Anima checkpoint requires an external VAE (sha-selected). "
+                "Provide a VAE via request extras.vae_sha so the API can pass a valid vae_path."
+            )
+        resolved_vae_path = os.path.expanduser(vae_path.strip())
+        if not os.path.isfile(resolved_vae_path):
+            raise RuntimeError(f"Anima VAE path not found: {resolved_vae_path}")
+
+        if te_override_cfg is None:
+            raise RuntimeError(
+                "Anima checkpoint requires an external text encoder (Qwen3-0.6B; sha-selected). "
+                "Provide one via request extras.tenc_sha so the API can pass a valid tenc_path."
+            )
+        resolved_tenc_candidates = [
+            value.strip() for value in te_override_paths.values() if isinstance(value, str) and value.strip()
+        ]
+        if len(resolved_tenc_candidates) != 1:
+            raise RuntimeError(
+                "Anima text encoder override resolution failed: expected exactly one non-empty external path, "
+                f"got {len(resolved_tenc_candidates)}."
+            )
+        resolved_tenc_path = resolved_tenc_candidates[0]
+        resolved_tenc_path = os.path.expanduser(resolved_tenc_path)
+        if not os.path.isfile(resolved_tenc_path):
+            raise RuntimeError(f"Anima text encoder path not found: {resolved_tenc_path}")
+
+        return _build_diffusion_bundle(
+            model_ref=sd_path,
+            family=parsed.signature.family,
+            estimated_config=config,
+            components={name: comp.state_dict for name, comp in config.components.items()},
+            signature=parsed.signature,
+            source="state_dict",
+            metadata={
+                "engine_key": "anima",
+                "tenc_override_paths": dict(te_override_paths),
+                "tenc_path": resolved_tenc_path,
+                "vae_path": resolved_vae_path,
+            },
+        )
 
     repo_name = config.repo_id
     if not isinstance(repo_name, str) or not repo_name:

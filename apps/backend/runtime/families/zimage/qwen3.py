@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Native Qwen3-4B text encoder implementation used by the ZImage runtime.
+Purpose: Native Qwen3 text encoder implementation used by the ZImage runtime.
 This is a standalone implementation that avoids `transformers`, enabling GGUF support through the quantization system. Supports an optional
 `compute_dtype` attribute to cast embeddings for stable fp32 compute while keeping storage dtype separate.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Qwen3Config` (dataclass): Configuration defaults for Qwen3-4B (dims/layers/heads/RoPE/norm eps).
+- `Qwen3Config` (dataclass): Configuration defaults for Qwen3 variants (dims/layers/heads/RoPE/norm eps).
 - `RMSNorm` (class): RMSNorm implementation used throughout the encoder (fp32 compute, dtype-preserving output).
 - `rotate_half` (function): Helper for RoPE rotation (splits and rotates half-dims).
 - `apply_rotary_pos_emb` (function): Applies rotary positional embeddings in fp32 and preserves `(q, k)` dtypes.
@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `TransformerBlock` (class): One transformer layer (attn + MLP + residual/norm plumbing).
 - `Qwen3Model` (class): Core Qwen3 transformer stack (embeddings + blocks + forward).
 - `Qwen3_4B` (class): Convenience wrapper for the 4B variant (loads config, provides encode-style forward usage).
+- `Qwen3_06B` (class): Convenience wrapper for the 0.6B variant (Anima text encoder; 1024-dim, 28 layers).
 - `remap_gguf_keys` (function): Remaps GGUF state dict keys to this implementation’s expected parameter names.
 """
 
@@ -465,6 +466,79 @@ class Qwen3_4B(nn.Module):
         """
         return self.load_state_dict(state_dict, strict=False)
 
+class Qwen3_06B(nn.Module):
+    """Qwen3-0.6B for text encoding (Anima).
+
+    Uses the same core implementation as Qwen3_4B with a different config.
+    """
+
+    def __init__(self, config: Optional[Qwen3Config] = None, dtype=None, device=None, ops=None):
+        super().__init__()
+        config = config or Qwen3Config(
+            hidden_size=1024,
+            intermediate_size=3072,
+            num_hidden_layers=28,
+            num_attention_heads=16,
+            num_key_value_heads=8,
+            max_position_embeddings=32768,
+        )
+        self.config = config
+        self.model = Qwen3Model(config, ops=ops)
+        self.num_layers = config.num_hidden_layers
+        self.dtype = dtype
+
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.model.get_input_embeddings()
+
+    def set_input_embeddings(self, value: nn.Embedding):
+        self.model.set_input_embeddings(value)
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        intermediate_output: Optional[int] = None,
+        final_layer_norm_intermediate: bool = True,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if inputs_embeds is None and input_ids is not None:
+            inputs_embeds = self.model.embed_tokens(input_ids)
+        if inputs_embeds is None:
+            raise ValueError("Either input_ids or inputs_embeds must be provided")
+
+        hidden_states = inputs_embeds
+        compute_dtype = getattr(self, "compute_dtype", None)
+        if isinstance(compute_dtype, torch.dtype) and compute_dtype != hidden_states.dtype:
+            hidden_states = hidden_states.to(dtype=compute_dtype)
+        intermediate = None
+
+        batch_size = int(hidden_states.shape[0])
+        seq_len = int(hidden_states.shape[1])
+        causal_mask = self.model._build_attention_mask(
+            batch_size=batch_size,
+            seq_len=seq_len,
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+            attention_mask=attention_mask,
+        )
+
+        if intermediate_output is not None and intermediate_output < 0:
+            intermediate_output = len(self.model.layers) + int(intermediate_output)
+
+        for i, layer in enumerate(self.model.layers):
+            hidden_states = layer(hidden_states, causal_mask)
+            if intermediate_output is not None and i == intermediate_output:
+                intermediate = hidden_states.clone()
+
+        hidden_states = self.model.norm(hidden_states)
+        if intermediate is not None and final_layer_norm_intermediate:
+            intermediate = self.model.norm(intermediate)
+        return hidden_states, intermediate
+
+    def load_sd(self, state_dict: dict) -> Tuple[List[str], List[str]]:
+        return self.load_state_dict(state_dict, strict=False)
+
 
 # =============================================================================
 # GGUF Key Mapping
@@ -493,6 +567,7 @@ def remap_gguf_keys(gguf_state_dict: dict, num_layers: int = 36) -> dict:
 __all__ = [
     "Qwen3Config",
     "Qwen3_4B",
+    "Qwen3_06B",
     "Qwen3Model",
     "remap_gguf_keys",
 ]

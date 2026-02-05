@@ -1,7 +1,7 @@
 # apps/backend/core/contracts Overview
 <!-- tags: backend, core, contracts, assets, drift -->
 Date: 2026-01-18
-Last Review: 2026-01-19
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -14,3 +14,4 @@ Status: Active
 ## Notes
 - Contracts here must be deterministic and fail loudly when an engine key is missing (prevents drift).
 - Keep these modules lightweight: no heavy model imports at module import time.
+- 2026-02-05: Added Anima engine asset contract (`anima`) and Qwen3-0.6B text encoder slot (`qwen3_06b`) for sha-selected TE resolution.

@@ -10,6 +10,6 @@ Status: Active
 - Raise `ClipVisionError` subclasses for all error paths; never fall back to silent prints.
 - Specs live in `specs.py` and feed detection/registry helpers; extend via dataclasses/enums.
 - `ClipVisionEncoder` handles device/dtype selection and logging; keep it free of UI concerns.
-- Update `.sangoi/plans/codex-legacy-backlog.md` entry #9 when behaviour changes or new variants land.
+- Update `.sangoi/plans/2026-01-27-codex-legacy-backlog.md` entry #9 when behaviour changes or new variants land.
 - 2026-01-02: Added standardized file header docstrings to CLIP vision runtime modules (doc-only change; part of rollout).
 - 2026-01-18: `clip/__init__.py` is a package marker (no re-exports); import types/helpers from the defining modules (`encoder.py`, `errors.py`, `types.py`, etc.).

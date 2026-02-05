@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Model-family → parser-plan dispatch for the Codex model parser.
 Maps `ModelFamily` values to the appropriate `build_plan(...)` implementation and provides a single `resolve_plan(...)` entrypoint used by
 `parse_state_dict(...)`.
+Includes core-only families such as Anima (Cosmos Predict2) that rely on sha-selected external assets.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_BUILDERS` (constant): Mapping of supported `ModelFamily` values to plan-builder callables.
@@ -23,7 +24,7 @@ from apps.backend.runtime.model_registry.specs import ModelFamily, ModelSignatur
 
 from ..errors import UnsupportedFamilyError
 from ..specs import ParserPlanBundle
-from . import chroma, flux, sd1, sd2, sd3, sdxl, wan22, zimage
+from . import anima, chroma, flux, sd1, sd2, sd3, sdxl, wan22, zimage
 
 
 _BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
@@ -36,6 +37,7 @@ _BUILDERS: Dict[ModelFamily, Callable[[ModelSignature], ParserPlanBundle]] = {
     ModelFamily.FLUX: flux.build_plan,
     ModelFamily.FLUX_KONTEXT: flux.build_plan,
     ModelFamily.CHROMA: chroma.build_plan,
+    ModelFamily.ANIMA: anima.build_plan,
     ModelFamily.WAN22: wan22.build_plan,
     ModelFamily.ZIMAGE: zimage.build_plan,
 }

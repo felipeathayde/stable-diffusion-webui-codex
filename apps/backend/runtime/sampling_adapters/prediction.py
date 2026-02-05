@@ -8,7 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Prediction adapters and helpers (FlowMatch / EDM variants) used by schedulers/samplers.
 Provides prediction modules that transform model outputs into the form expected by different sigma schedules (including FlowMatch Euler),
-plus helper utilities for beta schedules and SNR/sigma rescaling. This module is Diffusers-free and uses Codex-native flow-shift helpers.
+plus helper utilities for beta schedules and SNR/sigma rescaling. Flow-match helpers follow ComfyUI-style discrete flow semantics:
+`percent_to_sigma` applies the same shift transform used by the schedule, and discrete-flow predictors support an explicit timestep multiplier.
+This module is Diffusers-free and uses Codex-native flow-shift helpers.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `betas_for_alpha_bar` (function): Builds beta schedule from an alpha-bar function (discretized diffusion schedule helper).
@@ -21,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `PredictionContinuousEDM` (class): Continuous EDM prediction base (sigma-continuous mapping).
 - `PredictionContinuousV` (class): Continuous V-prediction implementation (inherits continuous EDM base).
 - `PredictionFlow` (class): Flow prediction implementation (for flow-matching style training/inference).
-- `PredictionDiscreteFlow` (class): Discrete flow prediction implementation.
+- `PredictionDiscreteFlow` (class): Discrete flow prediction implementation (alias of `PredictionFlow`; multiplier support).
 - `FlowMatchEulerPrediction` (class): FlowMatch Euler discrete prediction module (supports explicit shift/alpha and seq-len derived shift).
 - `prediction_from_diffusers_scheduler` (function): Builds the appropriate prediction module from a diffusers scheduler instance.
 """
@@ -248,11 +250,21 @@ class PredictionContinuousV(PredictionContinuousEDM):
 
 
 class PredictionFlow(AbstractPrediction):
-    def __init__(self, sigma_data=1.0, prediction_type='eps', shift=1.0, multiplier=1000, timesteps=1000):
+    def __init__(
+        self,
+        sigma_data: float = 1.0,
+        prediction_type: str = "const",
+        *,
+        shift: float = 1.0,
+        multiplier: float = 1000.0,
+        timesteps: int = 1000,
+    ):
         super().__init__(sigma_data=sigma_data, prediction_type=prediction_type)
-        self.shift = shift
-        self.multiplier = multiplier
-        ts = self.sigma((torch.arange(1, timesteps + 1, 1) / timesteps) * multiplier)
+        self.shift = float(shift)
+        self.multiplier = float(multiplier)
+        if timesteps <= 0:
+            raise ValueError("timesteps must be >= 1")
+        ts = self.sigma((torch.arange(1, timesteps + 1, 1) / float(timesteps)) * self.multiplier)
         self.register_buffer('sigmas', ts)
 
     @property
@@ -274,39 +286,32 @@ class PredictionFlow(AbstractPrediction):
             return 1.0
         if percent >= 1.0:
             return 0.0
-        return 1.0 - percent
+        return time_snr_shift(self.shift, 1.0 - percent)
 
 
-class PredictionDiscreteFlow(AbstractPrediction):
-    def __init__(self,  sigma_data=1.0, prediction_type='const',  shift=1.0, timesteps = 1000):
-        super().__init__(sigma_data=sigma_data, prediction_type=prediction_type)
-        self.shift = shift
-        ts = self.sigma(torch.arange(1, timesteps + 1, 1))
-        self.register_buffer("sigmas", ts)
+class PredictionDiscreteFlow(PredictionFlow):
+    """Discrete flow predictor matching ComfyUI `ModelSamplingDiscreteFlow`.
 
-    @property
-    def sigma_min(self):
-        return self.sigmas[0]
+    This wrapper exists for parity with upstream naming; the implementation is
+    identical to `PredictionFlow` (shift + multiplier-based timestep mapping).
+    """
 
-    @property
-    def sigma_max(self):
-        return self.sigmas[-1]
-
-    def timestep(self, sigma):
-        return sigma * 1000
-
-    def sigma(self, timestep: torch.Tensor):
-        timestep = timestep / 1000.0
-        if self.shift == 1.0:
-            return timestep
-        return self.shift * timestep / (1 + (self.shift - 1) * timestep)
-
-    def percent_to_sigma(self, percent):
-        if percent <= 0.0:
-            return 1.0
-        if percent >= 1.0:
-            return 0.0
-        return 1.0 - percent
+    def __init__(
+        self,
+        sigma_data: float = 1.0,
+        prediction_type: str = "const",
+        *,
+        shift: float = 1.0,
+        timesteps: int = 1000,
+        multiplier: float = 1000.0,
+    ):
+        super().__init__(
+            sigma_data=sigma_data,
+            prediction_type=prediction_type,
+            shift=shift,
+            multiplier=multiplier,
+            timesteps=timesteps,
+        )
 
 
 class FlowMatchEulerPrediction(AbstractPrediction):
@@ -404,7 +409,7 @@ class FlowMatchEulerPrediction(AbstractPrediction):
             return 1.0
         if percent >= 1.0:
             return 0.0
-        return 1.0 - percent
+        return time_snr_shift(float(self.shift), 1.0 - percent)
 
 
 def prediction_from_diffusers_scheduler(scheduler):

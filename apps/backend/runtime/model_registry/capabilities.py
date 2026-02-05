@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
+Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine requiring sha-selected external assets.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
@@ -36,6 +37,7 @@ class SemanticEngine(str, Enum):
     SDXL = "sdxl"
     FLUX = "flux1"
     ZIMAGE = "zimage"
+    ANIMA = "anima"
     CHROMA = "chroma"
     WAN22 = "wan22"
     HUNYUAN_VIDEO = "hunyuan_video"
@@ -123,6 +125,22 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         samplers=("euler", "dpm++ 2m"),
         schedulers=("simple",),
         default_sampler="euler",
+        default_scheduler="simple",
+    ),
+    # Anima (Cosmos Predict2; flow-based; Qwen3-0.6B conditioning; classic CFG).
+    # Gated until full conditioning/inference path is ported end-to-end.
+    SemanticEngine.ANIMA: EngineParamSurface(
+        supports_txt2img=False,
+        supports_img2img=False,
+        supports_txt2vid=False,
+        supports_img2vid=False,
+        supports_hires=False,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        samplers=("er sde", "euler", "euler a", "dpm++ 2m", "dpm++ 2m sde gpu"),
+        schedulers=("simple", "beta", "normal", "exponential"),
+        default_sampler="er sde",
         default_scheduler="simple",
     ),
     # Chroma (flow-based image generation).

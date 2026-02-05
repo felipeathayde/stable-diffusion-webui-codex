@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Typed signature specs produced by model detectors and consumed by loader/runtime assembly.
 Defines the core enums and dataclasses for checkpoint signatures (family, prediction kind, latent format, quantization hints, and component signatures).
+Includes `ModelFamily.ANIMA` for Cosmos Predict2 / MiniTrainDiT-style flow checkpoints.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelFamily` (enum): Checkpoint family tags (SD/SDXL/Flux.1/WAN22/etc).
@@ -44,6 +45,7 @@ class ModelFamily(Enum):
     ZERO123 = "zero123"
     ZIMAGE = "zimage"
     QWEN_IMAGE = "qwen_image"
+    ANIMA = "anima"
     WAN22 = "wan22"
     AURA = "aura"
     HUNYUAN = "hunyuan"

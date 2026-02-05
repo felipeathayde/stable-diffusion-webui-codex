@@ -20,6 +20,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `register_wan22_videos` (function): Registers WAN22 video engines (5B/animate) and aliases.
 - `register_wan22_14b_experimental` (function): Registers the experimental WAN22 14B engine (not registered by default).
 - `register_zimage` (function): Registers the Z-Image engine and aliases.
+- `register_anima` (function): Registers the Anima engine.
 """
 
 from __future__ import annotations
@@ -109,3 +110,8 @@ def register_wan22_14b_experimental(*, registry: EngineRegistry | None = None, r
 def register_zimage(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.zimage.zimage import ZImageEngine
     _reg("zimage", ZImageEngine, registry=registry, replace=replace, aliases=("z-image", "z-image-turbo"))
+
+
+def register_anima(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
+    from apps.backend.engines.anima.anima import AnimaEngine
+    _reg("anima", AnimaEngine, registry=registry, replace=replace, aliases=())

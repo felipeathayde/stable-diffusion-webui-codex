@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-02-03
+Last Review: 2026-02-05
 Status: Draft
 
 ## Purpose
@@ -9,7 +9,7 @@ Status: Draft
 
 ## Current Status
 - Core dataclasses/enums (now `CodexCoreSignature`/`CodexCoreArchitecture`) in place with manifest-driven metadata harvesting.
-- Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, and Qwen Image.
+- Detectors implemented for SD1.x, SDXL (base/refiner), Flux.1 (dev/schnell), AuraFlow, SD3 / SD3.5 (medium & large families), Stable Cascade (B/C), Wan2.2 (T2V/I2V), Chroma, Qwen Image, and Anima (Cosmos Predict2 core `net.*` format).
 - `capabilities.py` defines `SemanticEngine` and an `EngineParamSurface` describing which high-level UI parameter sections (txt2img/img2img/video/hires/refiner/LoRA/ControlNet) are expected to be used for each semantic engine tag; exposed to the API for frontend gating.
 - 2025-12-14: `ModelSignature` gained a legacy `unet` alias for `core`, keeping tests and older call sites working while the new contract stays `signature.core`.
 - 2025-12-14: Qwen Image detector reintroduced (`detectors/qwen_image.py`) and enums extended (`ModelFamily.QWEN_IMAGE`, `LatentFormat.QWEN_IMAGE`).
@@ -21,6 +21,7 @@ Status: Draft
 - 2026-01-08: Added `flow_shift.py` as the canonical flow-shift resolver from diffusers `scheduler_config.json` (fixed + dynamic) and removed hard-coded `flow_shift` values from family runtime specs where the value is not a true family invariant (Flux/WAN22).
 - 2026-01-08: Refreshed file header blocks for `capabilities.py` and `flow_shift.py` to keep the Symbols lists in sync (doc-only change).
 - 2026-01-18: Semantic engine surface for `chroma` now declares `supports_img2img=true` to match the registered `flux1_chroma` engine task surface.
+- 2026-02-05: `SemanticEngine.ANIMA` capability surface is intentionally gated (`supports_txt2img=false`, `supports_img2img=false`) until the Anima conditioning path is fully ported; engine task exposure must stay in parity with this surface.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

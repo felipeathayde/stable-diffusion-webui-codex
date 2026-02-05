@@ -23,4 +23,4 @@ Status: Active
 ## Notes
 - All modules operate exclusivamente em imports `apps.*`; código legado em snapshots de referência é apenas referência.
 - Weight schedules and masks validate against runtime transformer options and emit descriptive failures.
-- Any new model family integration must document itself here and update `.sangoi/plans/controlnet-refactor.md`.
+- Any new model family integration must document itself here and update `.sangoi/plans/2026-01-27-controlnet-refactor.md`.

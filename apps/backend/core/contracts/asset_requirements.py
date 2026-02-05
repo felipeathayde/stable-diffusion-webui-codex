@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Canonical per-engine asset requirements (VAE/text encoders) for generation requests.
 Centralizes “what is required” so UI ↔ API ↔ loader can stay in sync and drift cannot reappear via duplicated `engine_id in (...)` logic.
+Includes sha-selected external-asset engines (e.g., Z-Image and Anima) where VAE/text-encoder weights must be provided explicitly.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TextEncoderKind` (enum): UI-friendly label for the expected text encoder selection kind.
@@ -171,6 +172,14 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
         sha_only=True,
         notes="External-assets-first: requires Flow16 VAE + 1 Qwen text encoder via sha selection.",
     ),
+    "anima": EngineAssetContract(
+        requires_vae=True,
+        tenc_slots=("qwen3_06b",),
+        tenc_slot_labels=("Qwen3-0.6B",),
+        tenc_kind=TextEncoderKind.QWEN,
+        sha_only=True,
+        notes="External-assets-first: requires WanVAE-style VAE (3D conv; `qwen_image_vae.safetensors`) + 1 Qwen3-0.6B text encoder via sha selection.",
+    ),
     # Chroma safetensors are treated as monolithic; GGUF selections remain core-only.
     "flux1_chroma": EngineAssetContract(
         requires_vae=False,
@@ -204,7 +213,7 @@ def contract_for_core_only(engine_id: str) -> EngineAssetContract:
     if not key:
         raise ValueError("engine_id required")
 
-    if key in ("flux1", "flux1_kontext", "zimage"):
+    if key in ("flux1", "flux1_kontext", "zimage", "anima"):
         return contract_for_engine(key)
 
     if key == "flux1_chroma":

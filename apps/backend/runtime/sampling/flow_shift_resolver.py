@@ -6,8 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Resolve flow-match `flow_shift` for sampling from canonical scheduler_config.json sources.
-Used by the sampling context builder for predictors with `prediction_type='const'` (flow-match), including Z-Image Turbo/Base variant resolution from vendored `Tongyi-MAI/Z-Image(-Turbo)` scheduler configs.
+Purpose: Resolve flow-match `flow_shift` for sampling from canonical scheduler_config.json sources (diffusers).
+Used by the sampling context builder for predictors with `prediction_type='const'` (flow-match). Resolution prefers:
+- `predictor.flow_shift_spec` overrides (explicit fixed/dynamic spec),
+- diffusers repo directories that include `scheduler/scheduler_config.json`,
+- vendored Hugging Face mirrors for special cases (e.g. Z-Image variants),
+- fixed `FamilyRuntimeSpec.flow_shift` when a family defines a true invariant (e.g. Anima shift=3.0).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FlowShiftResolution` (dataclass): Flow-shift resolution result (effective shift + spec + source metadata).
@@ -47,6 +51,7 @@ def resolve_flow_shift_for_sampling(
     from apps.backend.runtime.model_registry.family_runtime import get_family_spec
     from apps.backend.runtime.model_registry.flow_shift import (
         FlowShiftMode,
+        FlowShiftSource,
         flow_shift_spec_from_repo_dir,
     )
     from apps.backend.runtime.model_registry.specs import ModelFamily
@@ -118,9 +123,29 @@ def resolve_flow_shift_for_sampling(
                 repo_dir = str(vendor)
 
     if spec_obj is None:
+        bundle = getattr(sd_model, "_current_bundle", None)
+        family = getattr(bundle, "family", None)
+        if isinstance(family, ModelFamily):
+            fam = get_family_spec(family)
+            raw_shift = getattr(fam, "flow_shift", None)
+            if raw_shift is not None:
+                value = float(raw_shift)
+                if value <= 0.0:
+                    raise RuntimeError(f"Invalid family runtime flow_shift={value} for family={family.value!r}")
+                spec_obj = FlowShiftSpec(
+                    mode=FlowShiftMode.FIXED,
+                    source=FlowShiftSource.OVERRIDE,
+                    value=value,
+                    config_path=None,
+                )
+                source = f"family_runtime:{family.value}"
+                repo_dir = None
+
+    if spec_obj is None:
         raise RuntimeError(
             "Flow-match sampling requires a scheduler_config.json to resolve flow_shift, but none was found. "
-            "Load a diffusers repo with scheduler/ configs or ensure the engine provides vendored HF assets."
+            "Load a diffusers repo with scheduler/ configs, ensure the engine provides vendored HF assets, "
+            "or provide a fixed flow_shift override via the family runtime spec or predictor.flow_shift_spec."
         )
 
     effective_shift: float

@@ -139,16 +139,16 @@ rg -n -S -- '\\bhighres\\b|Highres|highres_|highres\\.' apps/backend apps/interf
 
 Wrong command:
 ```bash
-rg -n -- "`tmp/`" . --glob '!.refs/**' --glob '!.sangoi/**'
+rg -n -- "`.tmp/`" . --glob '!.refs/**' --glob '!.sangoi/**'
 ```
 
 Cause and fix:
-- In bash, backticks inside double quotes trigger command substitution, so the shell tries to execute `tmp/`.
+- In bash, backticks inside double quotes trigger command substitution, so the shell tries to execute `.tmp/`.
 - In ripgrep, options must come **before** the pattern/paths. Once you pass the pattern and at least one path, later tokens like `--glob` are treated as paths and can explode the search.
 
 Correct command:
 ```bash
-rg -n --glob '!.refs/**' --glob '!.sangoi/**' -- '`tmp/`' .
+rg -n --glob '!.refs/**' --glob '!.sangoi/**' -- '`.tmp/`' .
 ```
 
 ---
@@ -599,4 +599,72 @@ Cause and fix:
 Correct command:
 ```bash
 rg -n -- "-m pytest -q tests" .sangoi/plans/2026-02-02-p0-task-plumbing-and-upscaler-safety-fixes.md
+```
+
+### `rg` options placed after `--` are treated as file paths
+
+Wrong command:
+```bash
+rg -n -- "GGUF_DEQUANT_CACHE" -S apps/backend/infra/config/args.py
+```
+
+Cause and fix:
+In ripgrep, `--` ends option parsing. Anything after `--` is no longer interpreted as an option flag, so `-S` is treated as a file path and ripgrep errors with “No such file or directory”.
+Move flags *before* `--`.
+
+Correct command:
+```bash
+rg -n -S -- "GGUF_DEQUANT_CACHE" apps/backend/infra/config/args.py
+```
+
+### Backticks in double quotes trigger shell command substitution
+
+Wrong command:
+```bash
+rg -n "Docs: audited `.sangoi/plans`" .sangoi/CHANGELOG.md
+```
+
+Cause and fix:
+In `bash`, backticks inside double quotes still perform command substitution, so the shell tries to execute `.sangoi/plans` before running `rg`.
+Use single quotes for literal backticks, or escape them.
+
+Correct command:
+```bash
+rg -n 'Docs: audited `.sangoi/plans`' .sangoi/CHANGELOG.md
+```
+
+### `VAR=value cmd ...` does not make `$VAR` available for argument expansion on the same line
+
+Wrong command:
+```bash
+CODEX_ROOT="$(pwd)" PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests
+```
+
+Cause and fix:
+In bash, `VAR=value cmd ...` sets environment variables for `cmd`, but **does not** update `$VAR` for argument expansion on that same line.
+This yields an empty `$CODEX_ROOT` and tries to execute `/.venv/bin/python`.
+Assign/export first, then run the command.
+
+Correct command:
+```bash
+CODEX_ROOT="$(pwd)"
+export CODEX_ROOT
+export PYTHONPATH="$CODEX_ROOT"
+"$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests
+```
+
+### `SCHEDULER_OPTIONS` is a list of dicts (use `e["name"]`, not `set(SCHEDULER_OPTIONS)`)
+
+Wrong command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)" && PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -c "from apps.backend.runtime.sampling import SCHEDULER_OPTIONS; names=set(SCHEDULER_OPTIONS)"
+```
+
+Cause and fix:
+`apps.backend.runtime.sampling.SCHEDULER_OPTIONS` is a list of dict entries (e.g. `{"name": "simple", "supported": True}`), so converting it to a `set(...)` fails with `TypeError: unhashable type: 'dict'`.
+Extract the scheduler names first.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)" && PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -c "from apps.backend.runtime.sampling import SCHEDULER_OPTIONS; names={e['name'] for e in SCHEDULER_OPTIONS}; print('simple' in names)"
 ```

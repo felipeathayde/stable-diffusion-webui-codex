@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Per-model-family runtime specification (capabilities + latent/normalization defaults).
 Defines UI-facing capability flags and runtime defaults per `ModelFamily` (latent channels, prediction kind, normalization hints),
 acting as the single source of truth for both backend assembly and frontend conditional UI (flow-shift is left unset when variant-specific).
+Includes Anima (`ModelFamily.ANIMA`) as a flow-based image family with fixed flow shift defaults (ComfyUI parity).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FamilyCapabilities` (dataclass): UI-facing capability flags (what controls should be shown/hidden; supported/excluded samplers/schedulers).
@@ -412,6 +413,28 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         flow_shift=None,
         scheduler_default="simple",
         is_xl_variant=True,
+        patch_size=2,
+        capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.ANIMA: FamilyRuntimeSpec(
+        family=ModelFamily.ANIMA,
+        latent_channels=16,
+        latent_scale_factor=8,
+        # Anima uses ComfyUI WanVAE-style weights (`qwen_image_vae.safetensors`; 3D conv) in reference flows.
+        vae_scaling_factor=1.0,
+        vae_shift_factor=0.0,
+        context_dim=1024,  # Qwen3 0.6B hidden size
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=4.0,
+        prediction=PredictionKind.FLOW,
+        # New fields
+        default_steps=30,
+        flow_shift=3.0,
+        scheduler_default="simple",
+        uses_t5=False,
+        preferred_width=1024,
+        preferred_height=1024,
         patch_size=2,
         capabilities=CAPABILITIES_FLOW_WITH_CFG,
     ),

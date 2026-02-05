@@ -1,7 +1,7 @@
 # apps/backend/engines Overview
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
-Last Review: 2026-01-31
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -9,7 +9,7 @@ Status: Active
 
 ## Subdirectories
 - `common/` — Shared base classes/helpers used by multiple engines.
-- `sd/`, `flux/`, `wan22/`, `zimage/` — Model-specific engine implementations and components (Flux family includes Chroma + Kontext variants).
+- `sd/`, `flux/`, `wan22/`, `zimage/`, `anima/` — Model-specific engine implementations and components (Flux family includes Chroma + Kontext variants).
 - `util/` — Utility helpers for schedulers, attention mapping, etc.
 
 ## Key Files
@@ -32,3 +32,4 @@ Status: Active
 - 2026-01-31: Engine-common helpers expanded to reduce drift:
   - Generic conditioning cache helpers (overrideable per call) + shared tensor move helpers for CPU↔device caching.
   - Runtime guard helper (`require_runtime`) for consistent “call load() first” errors across engines.
+- 2026-02-05: Added the `anima` engine key and a stub `AnimaEngine` facade (fail-loud until runtime is ported).

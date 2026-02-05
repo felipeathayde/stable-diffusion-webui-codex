@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Common engine base helpers for diffusion runtimes (component bundles, loading hooks, smart offload/cache integration).
 Defines `CodexObjects` and the shared engine load/unload path, including fail-fast `.gguf` core-only validation and explicit `vae_source`/`tenc_source`
 selection. Also provides default first-stage VAE encode/decode for image engines and canonical task wrappers that delegate to mode use-cases (Option A) so engines stay adapters.
+External-asset-first families (e.g., Z-Image and Anima) treat `vae_path` as selection rather than a state-dict override.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `CodexObjects` (dataclass): Container for core diffusion components (denoiser/VAE/text encoders + optional clipvision) with validate/describe helpers.
@@ -442,6 +443,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
         # Per-family invariants for text encoder override payloads.
         if bundle.family is ModelFamily.ZIMAGE and isinstance(tenc_path, list):
             raise RuntimeError("Z Image supports exactly 1 text encoder; tenc_path must be a string.")
+        if bundle.family is ModelFamily.ANIMA and isinstance(tenc_path, list):
+            raise RuntimeError("Anima supports exactly 1 text encoder; tenc_path must be a string.")
 
         checkpoint_suffix = os.path.splitext(str(getattr(bundle, "model_ref", "") or ""))[1].lower()
         is_core_only_gguf = checkpoint_suffix == ".gguf"
@@ -517,8 +520,8 @@ class CodexDiffusionEngine(BaseInferenceEngine, ABC):
                 "Provide one via engine option 'vae_path' (or via the API 'extras.vae_sha' selector)."
             )
 
-        # ZImage treats `vae_path` as external selection (may be a directory or GGUF); do not apply a state-dict override here.
-        if vae_source == "external" and vae_path and (bundle.family is not ModelFamily.ZIMAGE) and (not is_core_only_gguf):
+        # ZImage and Anima treat `vae_path` as external selection; do not apply a state-dict override here.
+        if vae_source == "external" and vae_path and (bundle.family not in (ModelFamily.ZIMAGE, ModelFamily.ANIMA)) and (not is_core_only_gguf):
             if not os.path.isfile(vae_path):
                 raise FileNotFoundError(f"vae_path '{vae_path}' does not exist.")
             if getattr(components, "vae", None) is None:

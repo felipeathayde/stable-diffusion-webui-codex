@@ -38,3 +38,4 @@ Status: Active
   - `__init__` accepts an optional `logger=` to avoid subclass logger collisions and keep per-engine log namespaces consistent.
   - Conditioning cache helpers (`_get_cached_cond/_set_cached_cond`) accept per-call enable overrides and store arbitrary payloads (tensors/dicts/tuples), with hit/miss metrics.
   - Default `set_clip_skip` is a no-op for engines without `"clip"` in `required_text_encoders` (engines with CLIP must still implement clip-skip; fail loud otherwise).
+- 2026-02-05: Added Anima-specific `tenc_path` invariant in `base.py`: Anima accepts exactly one external text encoder path and now fails loud when `tenc_path` is passed as `list[str]`.

@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
+Capability surfaces include per-engine asset contracts so the UI can enforce sha-only external asset selection deterministically.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -201,6 +202,7 @@ def build_router(
                 "flux1_kontext": "flux1",
                 "flux1_chroma": "chroma",
                 "zimage": "zimage",
+                "anima": "anima",
                 # Video engines.
                 "wan22_5b": "wan22",
                 "wan22_14b": "wan22",

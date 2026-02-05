@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Engine package facade and default registration entry points.
 Exposes `register_default_engines(...)` and lazily resolves optional/large engine classes to avoid heavy imports during startup.
+Includes the Anima engine facade (registered under engine id `anima`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadError` (class): Error raised when an engine fails to load required resources.
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from typing import Any as Wan225BEngine
     from typing import Any as Wan22Animate14BEngine
     from typing import Any as ZImageEngine
+    from typing import Any as AnimaEngine
 
 
 def register_default_engines(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
@@ -72,6 +74,7 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     _maybe_register("sd20", registration.register_sd20)
     _maybe_register("sd35", registration.register_sd35)
     _maybe_register("zimage", registration.register_zimage)
+    _maybe_register("anima", registration.register_anima)
     # Optional engines are not auto-registered in strict mode (no silent fallbacks)
     # Note: `wan22_14b` is intentionally not registered by default; register explicitly via
     # `apps.backend.engines.registration.register_wan22_14b_experimental(...)` when ported to Option A.
@@ -91,6 +94,7 @@ __all__ = [
     "Kontext",
     "Chroma",
     "ZImageEngine",
+    "AnimaEngine",
     "Wan22Animate14BEngine",
     "Wan2214BEngine",
     "Wan225BEngine",
@@ -106,6 +110,7 @@ _ENGINE_EXPORTS = {
     "Kontext": ("apps.backend.engines.flux.kontext", "Kontext"),
     "Chroma": ("apps.backend.engines.flux.chroma", "Chroma"),
     "ZImageEngine": ("apps.backend.engines.zimage.zimage", "ZImageEngine"),
+    "AnimaEngine": ("apps.backend.engines.anima.anima", "AnimaEngine"),
     "Wan22Animate14BEngine": ("apps.backend.engines.wan22.wan22_animate_14b", "Wan22Animate14BEngine"),
     "Wan2214BEngine": ("apps.backend.engines.wan22.wan22_14b", "Wan2214BEngine"),
     "Wan225BEngine": ("apps.backend.engines.wan22.wan22_5b", "Wan225BEngine"),

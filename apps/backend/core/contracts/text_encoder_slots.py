@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Header-only text encoder slot classification for sha-selected assets.
 Provides a fast, import-light helper used by API request paths to classify a resolved text encoder weights file into
-an explicit slot (`clip_l`, `clip_g`, `t5xxl`, `qwen3_4b`) without loading any tensors.
+an explicit slot (`clip_l`, `clip_g`, `t5xxl`, `qwen3_4b`, `qwen3_06b`) without loading any tensors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TextEncoderSlotError` (class): Raised when a weights file cannot be classified into a known slot.
@@ -154,14 +154,16 @@ def _classify_safetensors_header(header: Mapping[str, object], *, context: str) 
             f"Unrecognized T5 hidden size {hidden} for {context} (expected 4096 for T5-XXL)."
         )
 
-    # --- Qwen3-4B (used by Z-Image text encoder selection)
+    # --- Qwen3 (used by flow-based text encoder selection)
     qwen_embed = _shape_for_suffix(("model.embed_tokens.weight", "embed_tokens.weight"))
     if qwen_embed and len(qwen_embed) >= 2:
         hidden = int(qwen_embed[-1])
         if hidden == 2560:
             return "qwen3_4b"
+        if hidden == 1024:
+            return "qwen3_06b"
         raise TextEncoderSlotError(
-            f"Unrecognized LLM embed dim {hidden} for {context} (expected 2560 for Qwen3-4B)."
+            f"Unrecognized LLM embed dim {hidden} for {context} (expected 2560 (Qwen3-4B) or 1024 (Qwen3-0.6B))."
         )
 
     raise TextEncoderSlotError(
@@ -288,7 +290,39 @@ def _classify_gguf_kv(kv: Mapping[str, object], *, context: str) -> str:
     if "t5" in hint:
         return "t5xxl"
     if "qwen" in hint:
-        return "qwen3_4b"
+        def _get_int(key: str) -> int | None:
+            raw = kv.get(key)
+            if isinstance(raw, bool):
+                return None
+            if isinstance(raw, int):
+                return int(raw)
+            if isinstance(raw, float):
+                if float(raw).is_integer():
+                    return int(raw)
+                return None
+            if isinstance(raw, str):
+                s = raw.strip()
+                if s and s.isdigit():
+                    return int(s)
+            return None
+
+        # GGUF metadata usually follows llama.cpp key naming even for Qwen-family arches.
+        embed = (
+            _get_int("llama.embedding_length")
+            or _get_int("qwen.embedding_length")
+            or _get_int("general.embedding_length")
+        )
+        if embed is None:
+            raise TextEncoderSlotError(
+                f"GGUF Qwen slot disambiguation requires an embed dim (expected 2560 or 1024): {context}"
+            )
+        if embed == 2560:
+            return "qwen3_4b"
+        if embed == 1024:
+            return "qwen3_06b"
+        raise TextEncoderSlotError(
+            f"Unrecognized GGUF Qwen embed dim {embed} for {context} (expected 2560 (Qwen3-4B) or 1024 (Qwen3-0.6B))."
+        )
     if "clip" in hint:
         # GGUF CLIP variants are not slot-disambiguated today; fail if we ever need this.
         raise TextEncoderSlotError(f"GGUF CLIP slot disambiguation is not supported yet: {context}")

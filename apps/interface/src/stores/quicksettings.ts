@@ -9,8 +9,8 @@ Required Notice: see NOTICE
 Purpose: QuickSettings global store (models/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
 resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options.
-Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`, including Anima path-family aliases for TE/VAE SHA
-resolution.
+Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
+sanitized so `tenc_sha` resolution remains deterministic across families (including Anima).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
@@ -26,6 +26,54 @@ const TEXT_ENCODER_OVERRIDES_STORAGE_KEY = 'codex.quicksettings.text_encoder_ove
 const DEVICE_STORAGE_KEY = 'codex.quicksettings.device'
 const VAE_STORAGE_KEY = 'codex.quicksettings.vae'
 
+const TEXT_ENCODER_FAMILY_KEYS: Array<[string, string]> = [
+  ['sd15', 'sd15_tenc'],
+  ['sdxl', 'sdxl_tenc'],
+  ['flux1', 'flux1_tenc'],
+  ['anima', 'anima_tenc'],
+  ['wan22', 'wan22_tenc'],
+  ['zimage', 'zimage_tenc'],
+]
+
+const TEXT_ENCODER_PREFIXES = ['sd15', 'sdxl', 'flux1', 'anima', 'chroma', 'wan22', 'zimage']
+
+function normalizePath(raw: string): string {
+  const normalized = String(raw || '').trim().replace(/\\+/g, '/')
+  if (normalized.length <= 1) return normalized
+  return normalized.replace(/\/+$/g, '')
+}
+
+function pathMatchesRoot(filePath: string, rootPath: string): boolean {
+  if (!filePath || !rootPath) return false
+  const fileNorm = normalizePath(filePath)
+  const rootNorm = normalizePath(rootPath)
+  if (!fileNorm || !rootNorm) return false
+  const candidates = new Set<string>()
+  candidates.add(rootNorm)
+  if (rootNorm.startsWith('/')) {
+    candidates.add(rootNorm.slice(1))
+    const modelsIdx = rootNorm.lastIndexOf('/models/')
+    if (modelsIdx >= 0) {
+      candidates.add(rootNorm.slice(modelsIdx + 1))
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    if (fileNorm === candidate || fileNorm.startsWith(candidate + '/')) return true
+    if (fileNorm.includes('/' + candidate + '/') || fileNorm.endsWith('/' + candidate)) return true
+  }
+  return false
+}
+
+function lookupTextEncoderShaFromMap(map: Map<string, string>, label: string): string | undefined {
+  const normalized = normalizePath(label)
+  if (!normalized) return undefined
+  const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
+  const tail = normalized.split('/').pop() || ''
+  return map.get(normalized) || map.get(withoutPrefix) || map.get(tail)
+}
+
 export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const models = ref<ModelInfo[]>([])
   const currentModel = ref<string>('')
@@ -33,6 +81,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   const currentVae = ref<string>('Automatic')
   const textEncoderChoices = ref<string[]>([])
   const currentTextEncoders = ref<string[]>([])
+  const textEncoderRootLabels = ref<Set<string>>(new Set())
   // SHA256 lookup maps for text encoders and VAEs (populated from inventory)
   const textEncoderShaMap = ref<Map<string, string>>(new Map())
   const vaeShaMap = ref<Map<string, string>>(new Map())
@@ -84,6 +133,47 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       localStorage.setItem(TEXT_ENCODER_OVERRIDES_STORAGE_KEY, JSON.stringify(labels))
     } catch (err) {
       console.warn('[quicksettings] failed to persist text encoder overrides to localStorage', err)
+    }
+  }
+
+  function sanitizeTextEncoderOverrides(): void {
+    if (textEncoderRootLabels.value.size === 0 && textEncoderShaMap.value.size === 0) return
+    const next: string[] = []
+    const seen = new Set<string>()
+    const canValidateSha = textEncoderShaMap.value.size > 0
+
+    for (const entry of currentTextEncoders.value) {
+      const raw = String(entry || '').trim()
+      if (!raw) continue
+      const normalized = normalizePath(raw)
+      if (!normalized) continue
+      const lower = normalized.toLowerCase()
+      const isSha = lower.length === 64 && /^[0-9a-f]+$/.test(lower)
+      if (isSha) {
+        if (!seen.has(lower)) {
+          seen.add(lower)
+          next.push(lower)
+        }
+        continue
+      }
+
+      const resolvedSha = lookupTextEncoderShaFromMap(textEncoderShaMap.value, normalized)
+      if (textEncoderRootLabels.value.has(normalized) && !resolvedSha) continue
+
+      if (!canValidateSha || resolvedSha) {
+        if (!seen.has(normalized)) {
+          seen.add(normalized)
+          next.push(normalized)
+        }
+      }
+    }
+
+    const changed =
+      next.length !== currentTextEncoders.value.length ||
+      next.some((label, index) => label !== currentTextEncoders.value[index])
+    if (changed) {
+      currentTextEncoders.value = next
+      saveTextEncoderOverridesToStorage(next)
     }
   }
 
@@ -158,6 +248,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     loadDeviceFromStorage()
     loadVaeFromStorage()
     loadTextEncoderOverridesFromStorage()
+    sanitizeTextEncoderOverrides()
 
     const res = await fetchOptions()
     const opts = res.values
@@ -219,105 +310,117 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
 
   async function loadTextEncoders(): Promise<void> {
     try {
-      const res = await fetchPaths()
-      const paths = ((res as any)?.paths || {}) as Record<string, string[]>
-      const keys: Array<[string, string]> = [
-        ['sd15', 'sd15_tenc'],
-        ['sdxl', 'sdxl_tenc'],
-        ['flux1', 'flux1_tenc'],
-        ['anima', 'anima_tenc'],
-        ['wan22', 'wan22_tenc'],
-        ['zimage', 'zimage_tenc'],
-      ]
-      const labels: string[] = []
-      for (const [fam, key] of keys) {
-        const entries = Array.isArray(paths[key]) ? paths[key] : []
-        for (const raw of entries) {
-          const p = String(raw || '').trim().replace(/\\+/g, '/')
-          if (!p) continue
-          labels.push(`${fam}/${p}`)
-        }
-      }
-      textEncoderChoices.value = Array.from(new Set(labels)).sort()
-      // Also load inventory for SHA256 lookup
-      try {
-        const inv = await fetchModelInventory()
-        const shaMap = new Map<string, string>()
-        const prefixes = ['sd15', 'sdxl', 'flux1', 'anima', 'chroma', 'wan22', 'zimage']
-        for (const te of inv.text_encoders || []) {
-          const sha = typeof te.sha256 === 'string' ? te.sha256 : ''
-          if (!sha) continue
-          const name = typeof te.name === 'string' ? te.name : ''
-          const rawPath = typeof te.path === 'string' ? te.path : ''
-          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
-          const keys = new Set<string>()
-          if (name) keys.add(name)
-          if (rawPath) keys.add(rawPath)
-          if (normPath) keys.add(normPath)
-          const basename = normPath ? normPath.split('/').pop() : name
-          if (basename) keys.add(basename)
-          if (normPath) {
-            for (const prefix of prefixes) {
-              keys.add(`${prefix}/${normPath}`)
-            }
-          }
-          for (const key of keys) {
-            shaMap.set(key, sha)
-          }
-        }
-        textEncoderShaMap.value = shaMap
-        // Also populate VAE SHA map
-        const vaeMap = new Map<string, string>()
-        for (const v of inv.vaes || []) {
-          const sha = typeof v.sha256 === 'string' ? v.sha256 : ''
-          if (!sha) continue
-          const name = typeof v.name === 'string' ? v.name : ''
-          const rawPath = typeof v.path === 'string' ? v.path : ''
-          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
-          const keys = new Set<string>()
-          if (name) keys.add(name)
-          if (rawPath) keys.add(rawPath)
-          if (normPath) keys.add(normPath)
-          const basename = normPath ? normPath.split('/').pop() : name
-          if (basename) keys.add(basename)
-          if (normPath) {
-            for (const prefix of prefixes) {
-              keys.add(`${prefix}/${normPath}`)
-            }
-          }
-          for (const key of keys) {
-            vaeMap.set(key, sha)
-          }
-        }
-        vaeShaMap.value = vaeMap
+      const [pathsRes, inv] = await Promise.all([fetchPaths(), fetchModelInventory()])
+      const paths = ((pathsRes as any)?.paths || {}) as Record<string, string[]>
 
-        const wanMap = new Map<string, string>()
-        const wanFiles = (inv as any)?.wan22?.gguf
-        if (Array.isArray(wanFiles)) {
-          for (const w of wanFiles) {
-            const sha = typeof w?.sha256 === 'string' ? w.sha256 : ''
-            if (!sha) continue
-            const name = typeof w?.name === 'string' ? w.name : ''
-            const rawPath = typeof w?.path === 'string' ? w.path : ''
-            const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
-            const keys = new Set<string>()
-            if (name) keys.add(name)
-            if (rawPath) keys.add(rawPath)
-            if (normPath) keys.add(normPath)
-            const basename = normPath ? normPath.split('/').pop() : name
-            if (basename) keys.add(basename)
-            for (const key of keys) {
-              wanMap.set(key, sha)
+      const rootsByFamily = new Map<string, string[]>()
+      const rootLabels = new Set<string>()
+      for (const [family, key] of TEXT_ENCODER_FAMILY_KEYS) {
+        const roots = (Array.isArray(paths[key]) ? paths[key] : [])
+          .map((entry) => normalizePath(String(entry || '')))
+          .filter((entry) => entry.length > 0)
+        rootsByFamily.set(family, roots)
+        for (const root of roots) {
+          rootLabels.add(`${family}/${root}`)
+        }
+      }
+      textEncoderRootLabels.value = rootLabels
+
+      const labels = new Set<string>()
+      const shaMap = new Map<string, string>()
+      for (const te of inv.text_encoders || []) {
+        const sha = typeof te.sha256 === 'string' ? te.sha256.trim().toLowerCase() : ''
+        if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
+        const name = typeof te.name === 'string' ? te.name.trim() : ''
+        const rawPath = typeof te.path === 'string' ? te.path.trim() : ''
+        const normPath = normalizePath(rawPath)
+        const basename = normPath ? normPath.split('/').pop() || '' : ''
+
+        const matchedFamilies: string[] = []
+        if (normPath) {
+          for (const [family] of TEXT_ENCODER_FAMILY_KEYS) {
+            const roots = rootsByFamily.get(family) || []
+            if (roots.some((root) => pathMatchesRoot(normPath, root))) {
+              matchedFamilies.push(family)
             }
           }
         }
-        wanGgufShaMap.value = wanMap
-      } catch (_) {
-        // Non-critical - SHA lookup will just be empty
+        for (const family of matchedFamilies) {
+          labels.add(`${family}/${normPath}`)
+        }
+
+        const mapKeys = new Set<string>()
+        if (name) mapKeys.add(name)
+        if (rawPath) mapKeys.add(rawPath)
+        if (normPath) mapKeys.add(normPath)
+        if (basename) mapKeys.add(basename)
+        if (normPath) {
+          for (const prefix of TEXT_ENCODER_PREFIXES) {
+            mapKeys.add(`${prefix}/${normPath}`)
+          }
+        }
+        for (const key of mapKeys) {
+          shaMap.set(key, sha)
+        }
       }
+      textEncoderChoices.value = Array.from(labels).sort()
+      textEncoderShaMap.value = shaMap
+
+      // Also populate VAE SHA map
+      const vaeMap = new Map<string, string>()
+      for (const v of inv.vaes || []) {
+        const sha = typeof v.sha256 === 'string' ? v.sha256 : ''
+        if (!sha) continue
+        const name = typeof v.name === 'string' ? v.name : ''
+        const rawPath = typeof v.path === 'string' ? v.path : ''
+        const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+        const keys = new Set<string>()
+        if (name) keys.add(name)
+        if (rawPath) keys.add(rawPath)
+        if (normPath) keys.add(normPath)
+        const basename = normPath ? normPath.split('/').pop() : name
+        if (basename) keys.add(basename)
+        if (normPath) {
+          for (const prefix of TEXT_ENCODER_PREFIXES) {
+            keys.add(`${prefix}/${normPath}`)
+          }
+        }
+        for (const key of keys) {
+          vaeMap.set(key, sha)
+        }
+      }
+      vaeShaMap.value = vaeMap
+
+      const wanMap = new Map<string, string>()
+      const wanFiles = (inv as any)?.wan22?.gguf
+      if (Array.isArray(wanFiles)) {
+        for (const w of wanFiles) {
+          const sha = typeof w?.sha256 === 'string' ? w.sha256 : ''
+          if (!sha) continue
+          const name = typeof w?.name === 'string' ? w.name : ''
+          const rawPath = typeof w?.path === 'string' ? w.path : ''
+          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+          const keys = new Set<string>()
+          if (name) keys.add(name)
+          if (rawPath) keys.add(rawPath)
+          if (normPath) keys.add(normPath)
+          const basename = normPath ? normPath.split('/').pop() : name
+          if (basename) keys.add(basename)
+          for (const key of keys) {
+            wanMap.set(key, sha)
+          }
+        }
+      }
+      wanGgufShaMap.value = wanMap
+      sanitizeTextEncoderOverrides()
     } catch (e) {
-      // Graceful when endpoint not present yet
-      textEncoderChoices.value = textEncoderChoices.value.length ? textEncoderChoices.value : []
+      console.error('[quicksettings] failed to load text encoders from inventory', e)
+      textEncoderChoices.value = []
+      textEncoderRootLabels.value = new Set()
+      textEncoderShaMap.value = new Map()
+      vaeShaMap.value = new Map()
+      wanGgufShaMap.value = new Map()
+      sanitizeTextEncoderOverrides()
     }
   }
 
@@ -330,13 +433,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       return lower
     }
 
-    const withoutPrefix = normalized.includes('/') ? normalized.split('/').slice(1).join('/') : normalized
-    const tail = normalized.split('/').pop() || ''
-    return (
-      textEncoderShaMap.value.get(normalized) ||
-      textEncoderShaMap.value.get(withoutPrefix) ||
-      textEncoderShaMap.value.get(tail)
-    )
+    return lookupTextEncoderShaFromMap(textEncoderShaMap.value, normalized)
   }
 
   function resolveModelInfo(label: string | null | undefined): ModelInfo | undefined {

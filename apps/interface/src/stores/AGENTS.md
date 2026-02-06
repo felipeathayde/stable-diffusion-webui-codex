@@ -47,3 +47,4 @@ Status: Active
 - 2026-02-05: `model_tabs.normalizeTabType()` is fail-loud for unknown/empty types (no silent fallback to `sd15`); aliases are normalized through a canonical map.
 - 2026-02-05: `model_tabs.load()` now fails loud when `/api/ui/tabs` cannot provide a valid `tabs` array (local fallback no longer masks backend tab-type contract errors).
 - 2026-02-06: `quicksettings.ts` Anima mapping is explicit in text encoder roots (`anima_tenc`) and SHA alias prefixes (`anima/...`) so UI labels resolve for both text encoders and VAEs; coverage added in `quicksettings.test.ts`.
+- 2026-02-06: `quicksettings.ts` now builds selectable text-encoder labels from inventory files constrained by `*_tenc` roots (no selectable folder roots like `anima/models/anima-tenc`) and sanitizes stale root-label overrides from localStorage.

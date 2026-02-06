@@ -36,17 +36,28 @@ const mockedFetchOptions = vi.mocked(fetchOptions)
 const mockedUpdateOptions = vi.mocked(updateOptions)
 
 describe('useQuicksettingsStore anima mappings', () => {
+  let storage = new Map<string, string>()
+
   beforeEach(() => {
     vi.stubGlobal('localStorage', {
-      getItem: () => null,
-      setItem: () => undefined,
-      removeItem: () => undefined,
-      clear: () => undefined,
-      key: () => null,
-      length: 0,
+      getItem: (key: string) => storage.get(String(key)) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(String(key), String(value))
+      },
+      removeItem: (key: string) => {
+        storage.delete(String(key))
+      },
+      clear: () => {
+        storage.clear()
+      },
+      key: (index: number) => Array.from(storage.keys())[index] ?? null,
+      get length() {
+        return storage.size
+      },
     } satisfies Storage)
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    storage = new Map<string, string>()
 
     mockedFetchModels.mockResolvedValue({ models: [], current: '' } as any)
     mockedRefreshModels.mockResolvedValue({ models: [], current: '' } as any)
@@ -80,11 +91,12 @@ describe('useQuicksettingsStore anima mappings', () => {
     vi.unstubAllGlobals()
   })
 
-  it('surfaces anima text-encoder roots from /api/paths', async () => {
+  it('surfaces anima text-encoder file choices from inventory (not root folders)', async () => {
     const store = useQuicksettingsStore()
     await store.init()
 
-    expect(store.textEncoderChoices).toContain('anima/models/anima-tenc')
+    expect(store.textEncoderChoices).toContain('anima/models/anima-tenc/qwen3_06b.safetensors')
+    expect(store.textEncoderChoices).not.toContain('anima/models/anima-tenc')
   })
 
   it('resolves anima-prefixed text encoder and vae labels to SHA', async () => {
@@ -93,5 +105,76 @@ describe('useQuicksettingsStore anima mappings', () => {
 
     expect(store.resolveTextEncoderSha('anima/models/anima-tenc/qwen3_06b.safetensors')).toBe('a'.repeat(64))
     expect(store.resolveVaeSha('anima/models/anima-vae/wan22_anima_vae.safetensors')).toBe('b'.repeat(64))
+  })
+
+  it('sanitizes stale root-folder text encoder overrides from localStorage', async () => {
+    storage.set('codex.quicksettings.text_encoder_overrides', JSON.stringify(['anima/models/anima-tenc']))
+
+    const store = useQuicksettingsStore()
+    await store.init()
+
+    expect(store.currentTextEncoders).toEqual([])
+  })
+
+  it('keeps valid file-root override entries when they resolve to SHA', async () => {
+    storage.set(
+      'codex.quicksettings.text_encoder_overrides',
+      JSON.stringify(['anima/models/anima-tenc/qwen3_06b.safetensors']),
+    )
+    mockedFetchPaths.mockResolvedValueOnce({
+      paths: {
+        anima_tenc: ['models/anima-tenc/qwen3_06b.safetensors'],
+      },
+    } as any)
+
+    const store = useQuicksettingsStore()
+    await store.init()
+
+    expect(store.currentTextEncoders).toEqual(['anima/models/anima-tenc/qwen3_06b.safetensors'])
+    expect(store.resolveTextEncoderSha('anima/models/anima-tenc/qwen3_06b.safetensors')).toBe('a'.repeat(64))
+  })
+
+  it('matches family roots with trailing slash when deriving selectable TE files', async () => {
+    mockedFetchPaths.mockResolvedValueOnce({
+      paths: {
+        anima_tenc: ['models/anima-tenc/'],
+      },
+    } as any)
+
+    const store = useQuicksettingsStore()
+    await store.init()
+
+    expect(store.textEncoderChoices).toContain('anima/models/anima-tenc/qwen3_06b.safetensors')
+  })
+
+  it('matches absolute models root paths when deriving selectable TE files', async () => {
+    mockedFetchPaths.mockResolvedValueOnce({
+      paths: {
+        anima_tenc: ['/home/lucas/work/stable-diffusion-webui-codex/models/anima-tenc'],
+      },
+    } as any)
+
+    const store = useQuicksettingsStore()
+    await store.init()
+
+    expect(store.textEncoderChoices).toContain('anima/models/anima-tenc/qwen3_06b.safetensors')
+  })
+
+  it('clears stale SHA/root maps when text encoder inventory load fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const store = useQuicksettingsStore()
+    store.textEncoderChoices = ['anima/models/anima-tenc/qwen3_06b.safetensors']
+    store.textEncoderShaMap = new Map([['anima/models/anima-tenc/qwen3_06b.safetensors', 'a'.repeat(64)]])
+    store.vaeShaMap = new Map([['anima/models/anima-vae/wan22_anima_vae.safetensors', 'b'.repeat(64)]])
+    store.wanGgufShaMap = new Map([['wan/models/high.gguf', 'c'.repeat(64)]])
+
+    mockedFetchModelInventory.mockRejectedValue(new Error('inventory down'))
+    await store.init()
+
+    expect(store.textEncoderChoices).toEqual([])
+    expect(store.textEncoderShaMap.size).toBe(0)
+    expect(store.vaeShaMap.size).toBe(0)
+    expect(store.wanGgufShaMap.size).toBe(0)
+    errorSpy.mockRestore()
   })
 })

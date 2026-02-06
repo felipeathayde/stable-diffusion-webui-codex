@@ -28,9 +28,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setHires` (function): Applies partial updates to the hires config object.
 - `setHiresRefiner` (function): Applies partial updates to the hires-refiner config object.
 - `setRefiner` (function): Applies partial updates to the refiner config object.
-- `buildFallbackRefiner` (function): Builds a fully shaped fallback refiner config for transient null-tab windows.
-- `buildFallbackHires` (function): Builds a fully shaped fallback hires config for transient null-tab windows.
-- `buildFallbackImageParams` (function): Builds engine-specific fallback image params (including Anima) to avoid undefined nested reads when the tab is temporarily unavailable.
 - `clampFloat` (function): Clamps a float to `[min, max]` (input sanitation).
 - `setFallbackOnOom` (function): Updates the global “fallback on OOM” preference used by upscaler tiling (hires-fix + `/upscale`).
 - `setMinTile` (function): Updates the global `min_tile` preference used as the tiled OOM fallback lower bound (hires-fix + `/upscale`).
@@ -444,8 +441,8 @@ import { fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
-import { useModelTabsStore, type ImageBaseParams, type TabByType } from '../stores/model_tabs'
-import { getEngineConfig, getEngineDefaults, type EngineType } from '../stores/engine_config'
+import { defaultImageParamsForType, useModelTabsStore, type ImageBaseParams, type ImageTabType, type TabByType } from '../stores/model_tabs'
+import { getEngineConfig, getEngineDefaults } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
@@ -463,7 +460,7 @@ import RunCard from '../components/results/RunCard.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
 import SliderField from '../components/ui/SliderField.vue'
 
-const props = defineProps<{ tabId: string; type: EngineType }>()
+const props = defineProps<{ tabId: string; type: ImageTabType }>()
 const store = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
 const bootstrap = useBootstrapStore()
@@ -520,80 +517,7 @@ onBeforeUnmount(() => {
 
 const workflowBusy = ref(false)
 const { notice: copyNotice, toast, copyJson } = useResultsCard()
-type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'anima'>
-
-function buildFallbackRefiner(): ImageBaseParams['refiner'] {
-  return {
-    enabled: false,
-    steps: 0,
-    cfg: 3.5,
-    seed: -1,
-    model: undefined,
-    vae: undefined,
-  }
-}
-
-function buildFallbackHires(): ImageBaseParams['hires'] {
-  return {
-    enabled: false,
-    denoise: 0.4,
-    scale: 1.5,
-    resizeX: 0,
-    resizeY: 0,
-    steps: 0,
-    upscaler: 'latent:bicubic-aa',
-    tile: { tile: 256, overlap: 16 },
-    checkpoint: undefined,
-    modules: [],
-    sampler: undefined,
-    scheduler: undefined,
-    prompt: undefined,
-    negativePrompt: undefined,
-    cfg: undefined,
-    distilledCfg: undefined,
-    refiner: buildFallbackRefiner(),
-  }
-}
-
-function buildFallbackImageParams(type: EngineType): ImageBaseParams {
-  const config = getEngineConfig(type)
-  const defaults = getEngineDefaults(type)
-  const cfgScale = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
-  const fallback: ImageBaseParams = {
-    prompt: '',
-    negativePrompt: '',
-    width: defaults.width,
-    height: defaults.height,
-    sampler: '',
-    scheduler: '',
-    steps: defaults.steps,
-    cfgScale,
-    seed: -1,
-    clipSkip: 0,
-    batchSize: 1,
-    batchCount: 1,
-    hires: buildFallbackHires(),
-    refiner: buildFallbackRefiner(),
-    checkpoint: '',
-    textEncoders: [],
-    useInitImage: false,
-    initImageData: '',
-    initImageName: '',
-    denoiseStrength: 0.75,
-    useMask: false,
-    maskImageData: '',
-    maskImageName: '',
-    maskEnforcement: 'post_blend',
-    inpaintFullRes: true,
-    inpaintFullResPadding: 0,
-    inpaintingFill: 1,
-    maskInvert: false,
-    maskBlur: 4,
-    maskRound: true,
-  }
-  if (type === 'zimage') fallback.zimageTurbo = true
-  return fallback
-}
+type ImageTab = TabByType<ImageTabType>
 
 watch(
   resumeNotice,
@@ -611,7 +535,7 @@ const imageTab = computed<ImageTab | null>(() => {
   if (!candidate || candidate.type === 'wan') return null
   return candidate as unknown as ImageTab
 })
-const fallbackParams = computed<ImageBaseParams>(() => buildFallbackImageParams(props.type))
+const fallbackParams = computed<ImageBaseParams>(() => defaultImageParamsForType(props.type))
 const params = computed<ImageBaseParams>(() => imageTab.value?.params ?? fallbackParams.value)
 const engineConfig = computed(() => getEngineConfig(props.type))
 const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
@@ -844,7 +768,7 @@ function formatHistoryTitle(item: { mode: string; createdAtMs: number; taskId: s
   return `${label} · ${hh}`
 }
 
-function profileStorageKeyFor(type: EngineType): string {
+function profileStorageKeyFor(type: ImageTabType): string {
   if (type === 'flux1') return 'codex.flux1.profile.v1'
   if (type === 'sdxl') return 'codex.sdxl.profile.v1'
   if (type === 'zimage') return 'codex.zimage.profile'

@@ -13,6 +13,7 @@ default parameter shapes per tab type (image vs WAN video) using engine defaults
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
+- `ImageTabType` (type): Image-only tab type discriminator (`BaseTabType` without `wan`).
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
 - `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder failures.
@@ -27,6 +28,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MODEL_TABS_STORAGE_KEY` (const): LocalStorage key used for persisted tabs state (bump when schema changes).
 - `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
 - `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
+- `defaultImageParamsForType` (function): Returns canonical image-tab defaults for a specific image tab type.
 - `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
 - `BASE_REQUIRED_TYPES` (const): Baseline tab types always auto-created by the UI store.
 - `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds `anima` only when exposed).
@@ -49,6 +51,7 @@ import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
 
 export type BaseTabType = ApiTab['type']
+export type ImageTabType = Exclude<BaseTabType, 'wan'>
 
 export interface BaseTabMeta {
   createdAt: string
@@ -355,6 +358,22 @@ function defaultParams<T extends BaseTabType>(
     imageDefaults.zimageTurbo = true
   }
   return imageDefaults as TabParamsByType[T]
+}
+
+export function defaultImageParamsForType(
+  type: ImageTabType,
+  opts?: { sampler?: string; scheduler?: string },
+): ImageBaseParams
+export function defaultImageParamsForType(
+  type: BaseTabType,
+  opts?: { sampler?: string; scheduler?: string },
+): ImageBaseParams {
+  if (type === 'wan') {
+    const msg = "defaultImageParamsForType received 'wan'; expected an image tab type."
+    console.error(`[model_tabs] ${msg}`, { type })
+    throw new Error(msg)
+  }
+  return defaultParams(type, opts)
 }
 
 export function normalizeTabType(type: unknown): BaseTabType {

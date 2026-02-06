@@ -16,7 +16,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `VideoMode` (type): Supported video modes (`txt2vid|img2vid|vid2vid`).
 - `VideoRunStatus` (type): Terminal status for history entries (`completed|error|cancelled`).
 - `VideoRunHistoryItem` (interface): Persisted run history entry (task id, status, summary, params snapshot, error message).
-- `VideoQueuedRun` (interface): Queued run entry (payload snapshot + optional file) to support sequential submissions.
+- `PreparedWanRun` (type): Mode-discriminated prepared run payload (`txt2vid|img2vid|vid2vid`) with typed WAN request bodies.
+- `VideoQueuedRun` (type): Queued run entry (`PreparedWanRun` + `id`) to support sequential submissions.
 - `VideoProgressState` (interface): Progress payload shape (stage/percent/eta/step/totalSteps).
 - `VideoGenerationState` (interface): Per-tab runtime state (status/progress/frames/video result/history/queue/cancel flags).
 - `ResumeState` (type): Persisted task resume marker (task id + last event id + params snapshot).
@@ -27,6 +28,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultAssets` (function): Creates default `WanAssetsParams`.
 - `resumeKey` (function): Returns the localStorage key used to persist a WAN task resume marker for a tab.
 - `isRecordObject` (function): Type guard for plain-object payloads used in resume-state parsing.
+- `assertRunPayloadObject` (function): Runtime invariant guard that fails loud when a prepared run carries a non-object payload.
+- `assertNeverMode` (function): Exhaustiveness guard for prepared-run dispatch by `mode`.
 - `useVideoGeneration` (function): Main composable API; wires payload building, task start/cancel, SSE handling, queued runs, and history updates
   (contains nested handlers for events, queue progression, and per-mode payload assembly).
 */
@@ -39,7 +42,10 @@ import {
   buildWanImg2VidPayload,
   buildWanTxt2VidPayload,
   buildWanVid2VidPayload,
+  type WanImg2VidPayload,
+  type WanTxt2VidPayload,
   type WanVideoCommonInput,
+  type WanVid2VidPayload,
   type WanVid2VidInput,
 } from '../api/payloads_video'
 import type { GeneratedImage, TaskEvent } from '../api/types'
@@ -61,15 +67,45 @@ export interface VideoRunHistoryItem {
   errorMessage?: string
 }
 
-export interface VideoQueuedRun {
+export type PreparedWanRun =
+  | {
+      mode: 'txt2vid'
+      createdAtMs: number
+      summary: string
+      promptPreview: string
+      paramsSnapshot: Record<string, unknown>
+      payload: WanTxt2VidPayload
+    }
+  | {
+      mode: 'img2vid'
+      createdAtMs: number
+      summary: string
+      promptPreview: string
+      paramsSnapshot: Record<string, unknown>
+      payload: WanImg2VidPayload
+    }
+  | {
+      mode: 'vid2vid'
+      createdAtMs: number
+      summary: string
+      promptPreview: string
+      paramsSnapshot: Record<string, unknown>
+      payload: WanVid2VidPayload
+      file?: File | null
+    }
+
+export type VideoQueuedRun = PreparedWanRun & {
   id: string
-  mode: VideoMode
-  createdAtMs: number
-  summary: string
-  promptPreview: string
-  paramsSnapshot: Record<string, unknown>
-  payload: Record<string, unknown>
-  file?: File | null
+}
+
+function assertRunPayloadObject(payload: unknown, mode: VideoMode): asserts payload is Record<string, unknown> {
+  if (!isRecordObject(payload)) {
+    throw new Error(`useVideoGeneration: invalid payload for mode '${mode}'.`)
+  }
+}
+
+function assertNeverMode(mode: never): never {
+  throw new Error(`useVideoGeneration: unsupported prepared run mode '${String(mode)}'.`)
 }
 
 export interface VideoProgressState {
@@ -539,7 +575,7 @@ export function useVideoGeneration(tabId: string) {
     }
   }
 
-  function prepareRunFromValues(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Omit<VideoQueuedRun, 'id'> & { mode: VideoMode } {
+  function prepareRunFromValues(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): PreparedWanRun {
     const promptPreview = String(v.prompt || '').trim().slice(0, 120)
     const createdAtMs = Date.now()
     const summary = buildRunSummary(v, hi)
@@ -561,20 +597,20 @@ export function useVideoGeneration(tabId: string) {
         flowUseLarge: v.vid2vidFlowUseLarge,
         flowDownscale: v.vid2vidFlowDownscale,
         videoPath: v.initVideoPath,
-      } satisfies WanVid2VidInput) as unknown as Record<string, unknown>
+      } satisfies WanVid2VidInput)
       return { mode: 'vid2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload, file: currentInitVideo() }
     }
 
     if (v.useInitImage) {
-      const payload = buildWanImg2VidPayload({ ...common, initImageData: v.initImageData }) as unknown as Record<string, unknown>
+      const payload = buildWanImg2VidPayload({ ...common, initImageData: v.initImageData })
       return { mode: 'img2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
     }
 
-    const payload = buildWanTxt2VidPayload(common) as unknown as Record<string, unknown>
+    const payload = buildWanTxt2VidPayload(common)
     return { mode: 'txt2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
   }
 
-  async function startPreparedRun(run: { mode: VideoMode; createdAtMs: number; summary: string; promptPreview: string; paramsSnapshot: Record<string, unknown>; payload: Record<string, unknown>; file?: File | null }): Promise<void> {
+  async function startPreparedRun(run: PreparedWanRun): Promise<void> {
     stopStream()
     state.value.errorMessage = ''
     state.value.frames = []
@@ -588,15 +624,26 @@ export function useVideoGeneration(tabId: string) {
     state.value.status = 'running'
 
     try {
-      const res =
-        run.mode === 'vid2vid'
-          ? await (async () => {
-              const form = new FormData()
-              form.append('payload', JSON.stringify(run.payload || {}))
-              if (run.file) form.append('video', run.file)
-              return startVid2Vid(form)
-            })()
-          : (run.mode === 'img2vid' ? await startImg2Vid(run.payload) : await startTxt2Vid(run.payload))
+      const res = await (async () => {
+        const mode = run.mode
+        switch (mode) {
+          case 'vid2vid': {
+            assertRunPayloadObject(run.payload, mode)
+            const form = new FormData()
+            form.append('payload', JSON.stringify(run.payload))
+            if (run.file) form.append('video', run.file)
+            return startVid2Vid(form)
+          }
+          case 'img2vid':
+            assertRunPayloadObject(run.payload, mode)
+            return startImg2Vid(run.payload)
+          case 'txt2vid':
+            assertRunPayloadObject(run.payload, mode)
+            return startTxt2Vid(run.payload)
+          default:
+            return assertNeverMode(mode)
+        }
+      })()
       const task_id = res.task_id
       state.value.taskId = task_id
       state.value.currentRun = {

@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: QuickSettings global store (models/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains SHA maps for VAEs/text encoders/WAN GGUF so UI selections
 resolve to backend SHA-based assets (no raw-path inputs). Also owns global component overrides (device + storage/compute dtype) applied via options.
-Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`.
+Asset lists are sourced from `/api/models/inventory` and root config from `/api/paths`, including Anima path-family aliases for TE/VAE SHA
+resolution.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `useQuicksettingsStore` (store): Pinia store that owns QuickSettings state + actions; includes nested loaders (`loadModels/loadVaes/...`),
@@ -224,6 +225,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
         ['sd15', 'sd15_tenc'],
         ['sdxl', 'sdxl_tenc'],
         ['flux1', 'flux1_tenc'],
+        ['anima', 'anima_tenc'],
         ['wan22', 'wan22_tenc'],
         ['zimage', 'zimage_tenc'],
       ]
@@ -241,7 +243,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
       try {
         const inv = await fetchModelInventory()
         const shaMap = new Map<string, string>()
-        const prefixes = ['sd15', 'sdxl', 'flux1', 'chroma', 'wan22', 'zimage']
+        const prefixes = ['sd15', 'sdxl', 'flux1', 'anima', 'chroma', 'wan22', 'zimage']
         for (const te of inv.text_encoders || []) {
           const sha = typeof te.sha256 === 'string' ? te.sha256 : ''
           if (!sha) continue

@@ -683,3 +683,44 @@ Correct command:
 ```bash
 bash .sangoi/.tools/link-check.sh .sangoi
 ```
+
+### Calling backend path helpers without `CODEX_ROOT`
+
+Wrong command:
+```bash
+PYTHONPATH="$(git rev-parse --show-toplevel)" "$(git rev-parse --show-toplevel)/.venv/bin/python" - <<'PY'
+from apps.backend.infra.config.paths import get_paths_for
+print('anima_tenc', get_paths_for('anima_tenc'))
+print('anima_vae', get_paths_for('anima_vae'))
+PY
+```
+
+### Searching markdown headings with backticks in double quotes
+
+Wrong command:
+```bash
+rg -n "Calling backend path helpers without `CODEX_ROOT`|anima_tenc|anima_vae" COMMON_MISTAKES.md
+```
+
+Cause and fix:
+In `bash`, backticks inside double-quoted strings still run command substitution. The shell tries to execute `CODEX_ROOT` before `rg` starts.
+Wrap the pattern in single quotes when matching literal backticks.
+
+Correct command:
+```bash
+rg -n 'Calling backend path helpers without `CODEX_ROOT`|anima_tenc|anima_vae' COMMON_MISTAKES.md
+```
+
+Cause and fix:
+`apps.backend.infra.config.paths.get_paths_for()` resolves `apps/paths.json` via `get_repo_root()`, which requires `CODEX_ROOT` to be set. `PYTHONPATH` alone is not enough and raises `OSError: CODEX_ROOT not set`.
+Set `CODEX_ROOT` first, then run with the workspace venv.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" - <<'PY'
+from apps.backend.infra.config.paths import get_paths_for
+print('anima_tenc', get_paths_for('anima_tenc'))
+print('anima_vae', get_paths_for('anima_vae'))
+PY
+```

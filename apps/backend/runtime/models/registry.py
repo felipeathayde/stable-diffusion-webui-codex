@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Checkpoint/VAE discovery with sha256 caching and telemetry.
 Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, computes sha256 hashes, and maintains a
 persistent cache in `models/.hashes.json` to support fast UI inventory and backend SHA-based resolution.
+Family hints and root selection cover SD/Flux/Anima/WAN/ZImage keyspaces.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
@@ -258,6 +259,7 @@ class ModelRegistry:
                     "sdxl": "sdxl",
                     "flux": "flux1",
                     "zimage": "zimage",
+                    "anima": "anima",
                     "wan22": "wan22",
                 }.get(top)
             sha256, short_hash = self._hash_for(file)
@@ -281,7 +283,7 @@ class ModelRegistry:
 
     def _scan_vaes(self) -> Iterable[VAERecord]:
         candidates: List[Path] = []
-        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "wan22_vae", "zimage_vae"):
+        for key in ("sd15_vae", "sdxl_vae", "flux1_vae", "anima_vae", "wan22_vae", "zimage_vae"):
             for raw in get_paths_for(key):
                 p = Path(raw)
                 if p not in candidates:
@@ -329,7 +331,7 @@ class ModelRegistry:
 
         # 1) User overrides from apps/paths.json per engine
         try:
-            for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "wan22_ckpt", "zimage_ckpt"):
+            for key in ("sd15_ckpt", "sdxl_ckpt", "flux1_ckpt", "anima_ckpt", "wan22_ckpt", "zimage_ckpt"):
                 for raw in get_paths_for(key):
                     p = Path(raw)
                     if p not in candidates:
@@ -345,6 +347,7 @@ class ModelRegistry:
                 self._models_root / "sd15",
                 self._models_root / "sdxl",
                 self._models_root / "flux",
+                self._models_root / "anima",
                 self._models_root / "wan22",
                 self._models_root / "zimage",
             ]

@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-01-26
+Last Review: 2026-02-05
 Status: Active
 
 ## Scope
@@ -69,3 +69,4 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - 2026-01-25: SDXL/Flow16 VAE key normalization now lives in `apps/backend/runtime/state_dict/keymap_sdxl_vae.py`; `_maybe_convert_sdxl_vae_state_dict` delegates to the keymap (single source of truth) and drops `model_ema.decay` / `model_ema.num_updates` metadata keys.
 - 2026-01-25: SDXL base CLIP loads now reuse `apps/backend/runtime/state_dict/keymap_sdxl_clip.py` (HF/OpenCLIP → Codex IntegratedCLIP), including lazy in-proj QKV slicing and projection canonicalization.
 - 2026-02-05: Anima minimal-bundle metadata now canonicalizes `tenc_path` to the single resolved external text-encoder path (exactly one required) instead of preserving raw override payload shapes; both `vae_path` and resolved `tenc_path` are checked for on-disk existence with fail-loud diagnostics.
+- 2026-02-05: `registry.py` discovery roots now include Anima (`anima_ckpt`, `anima_vae`, and default `models/anima`) so checkpoint/vae inventory and family hints align with the Anima model directory layout.

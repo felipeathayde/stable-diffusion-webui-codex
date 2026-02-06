@@ -1,6 +1,6 @@
 # apps/backend/infra Overview
 Date: 2025-10-28
-Last Review: 2026-01-24
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -25,5 +25,6 @@ Status: Active
 - 2026-01-24: Added `config/bootstrap_env.py` so backend bootstrap can publish resolved CLI/env values to env readers without mutating `os.environ`.
 - 2026-01-24: Removed silent CPU fallbacks for missing device defaults; `config/args.py` now prompts in foreground TTY sessions and fails loud in non-interactive startups (requires `--core-device/--te-device/--vae-device` or persisted defaults).
 - 2026-01-04: Added `config/env_flags.py` as the canonical env-flag parsing helper to keep debug/feature toggle semantics consistent across runtime subsystems.
+- 2026-02-05: `config/paths.py` model directory keyset now includes Anima roots (`anima_ckpt`, `anima_tenc`, `anima_vae`, `anima_loras`) so best-effort provisioning mirrors existing Flux/WAN/ZImage conventions.
 - 2026-01-20: Added `--lora-apply-mode` (and `CODEX_LORA_APPLY_MODE`) as a global LoRA application switch: `merge` (default; rewrites weights once) vs `online` (apply on-the-fly during forward). Requires restarting the backend process to take effect.
 - 2026-01-02: Added standardized file header docstrings to `infra/__init__.py`, `infra/accelerators/*`, `infra/config/*`, and `infra/registry/*` modules (doc-only change; part of rollout).

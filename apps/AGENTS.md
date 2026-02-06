@@ -1,6 +1,6 @@
 # apps Overview
 Date: 2025-10-28
-Last Review: 2026-01-25
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -37,3 +37,4 @@ Status: Active
 - 2025-12-28: `apps/settings_values.json` and `apps/interface/{tabs,workflows}.json` are backend-managed runtime state files; they are created/overwritten locally and are intentionally ignored by Git.
 - 2025-12-29: Repo-root resolution across backend + launchers is now strict and `CODEX_ROOT`-anchored (no `__file__`/CWD fallbacks); launch via `run-webui.{bat,sh}` or set `CODEX_ROOT` explicitly.
 - 2026-01-03: Added standardized file header docstrings to the remaining low-core `apps/` entrypoints (`__init__.py`, `backend/__init__.py`, and WebUI entrypoints/config) (doc-only change; part of rollout).
+- 2026-02-05: Added Anima model roots to `apps/paths.json` (`anima_ckpt`, `anima_tenc`, `anima_vae`, `anima_loras`) to mirror existing per-family directory conventions.

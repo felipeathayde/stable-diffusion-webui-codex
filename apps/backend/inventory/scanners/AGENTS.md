@@ -1,7 +1,7 @@
 <!-- tags: backend, inventory, scanners, assets -->
 # apps/backend/inventory/scanners Overview
 Date: 2026-01-04
-Last Review: 2026-01-04
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -21,3 +21,4 @@ Status: Active
 - Root configuration comes from `apps/backend/infra/config/paths.py:get_paths_for` and `CODEX_ROOT` via `infra/config/repo_root.py`.
 - Scanners intentionally ignore ad-hoc files under `models/` (only explicit roots from `apps/paths.json` are scanned).
 - 2026-01-17: `wan22_gguf.py` stage inference now recognizes `HN`/`LN` (and avoids false positives like `flow` → `low`) so WAN High/Low selectors populate correctly.
+- 2026-02-05: Per-family scanner roots now include Anima (`anima_tenc`, `anima_vae`, `anima_loras`) so inventory discovery matches the new `models/anima*` layout.

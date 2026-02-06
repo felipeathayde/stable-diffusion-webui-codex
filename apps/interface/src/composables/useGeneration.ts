@@ -16,6 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `GenerationState` (interface): Per-tab reactive runtime state (status/progress/preview/gallery/history selection).
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
+- `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
   `vae_sha`/`tenc_sha` (core-only checkpoints) and enforcing engine-level external asset requirements via backend `asset_contracts`.
 */
@@ -141,6 +142,13 @@ function defaultState(): GenerationState {
   }
 }
 
+export function resolveEngineForRequest(tabType: string, useInitImage: boolean): string {
+  let engine = tabType === 'wan' ? 'wan22' : tabType
+  if (tabType === 'chroma') engine = 'flux1_chroma'
+  if (useInitImage && engine === 'flux1') engine = 'flux1_kontext'
+  return engine
+}
+
 // Per-tab generation state (keyed by tab ID)
 const tabStates = new Map<string, GenerationState>()
 const unsubscribers = new Map<string, () => void>()
@@ -264,19 +272,33 @@ export function useGeneration(tabId: string) {
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
 
     const tabType = String(engineType.value)
-    let engineOverrideForRequest = tabType === 'wan' ? 'wan22' : tabType
-    if (tabType === 'chroma') engineOverrideForRequest = 'flux1_chroma'
-    // Flux.1 img2img should run via the Kontext workflow engine.
-    if (p.useInitImage && engineOverrideForRequest === 'flux1') {
-      engineOverrideForRequest = 'flux1_kontext'
+    const engineOverrideForRequest = resolveEngineForRequest(tabType, Boolean(p.useInitImage))
+
+    const engineSurface = backendCaps.get(engineOverrideForRequest)
+    if (!engineSurface) {
+      const message = `Engine capabilities missing for '${engineOverrideForRequest}'.`
+      console.error(`[useGeneration] ${message}`)
+      state.value.status = 'error'
+      state.value.errorMessage = message
+      return
     }
 
     const assetContract = backendCaps.getAssetContract(engineOverrideForRequest, { checkpointCoreOnly: modelIsCoreOnly })
 
+    if (!p.useInitImage && !engineSurface.supports_txt2img) {
+      const message = `This engine does not support txt2img (${engineOverrideForRequest}).`
+      console.error(`[useGeneration] ${message}`)
+      state.value.status = 'error'
+      state.value.errorMessage = message
+      return
+    }
+
     if (p.useInitImage) {
-      if (!config.capabilities.tasks.includes('img2img')) {
+      if (!engineSurface.supports_img2img) {
+        const message = `This engine does not support img2img (${engineOverrideForRequest}).`
+        console.error(`[useGeneration] ${message}`)
         state.value.status = 'error'
-        state.value.errorMessage = 'This engine does not support img2img.'
+        state.value.errorMessage = message
         return
       }
       if (!p.initImageData) {

@@ -668,3 +668,18 @@ Correct command:
 ```bash
 CODEX_ROOT="$(git rev-parse --show-toplevel)" && PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -c "from apps.backend.runtime.sampling import SCHEDULER_OPTIONS; names={e['name'] for e in SCHEDULER_OPTIONS}; print('simple' in names)"
 ```
+
+### Running shell scripts with `python3`
+
+Wrong command:
+```bash
+python3 .sangoi/.tools/link-check.sh .sangoi
+```
+
+Cause and fix:
+`.sangoi/.tools/link-check.sh` is a Bash script, not a Python module. Running it with `python3` raises a shell-syntax `SyntaxError`.
+
+Correct command:
+```bash
+bash .sangoi/.tools/link-check.sh .sangoi
+```

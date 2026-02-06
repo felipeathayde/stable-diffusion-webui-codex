@@ -23,7 +23,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
 - `uuid` (function): Generates a random tab id (client-side).
 - `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
+- `TAB_TYPE_ALIASES` (const): Canonical alias map for persisted tab type normalization (no silent fallback).
 - `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
+- `BASE_REQUIRED_TYPES` (const): Baseline tab types always auto-created by the UI store.
+- `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds `anima` only when exposed).
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
 - `useModelTabsStore` (store): Pinia store for tabs; loads/syncs with backend, provides CRUD/reorder actions, and exposes computed helpers.
@@ -31,7 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
+import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi, fetchEngineCapabilities } from '../api/client'
 import type { ApiTab } from '../api/types'
 import type { HiresFormState, RefinerFormState } from '../api/payloads'
 import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
@@ -216,6 +219,7 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     if (type === 'sd15') return { sampler: 'pndm', scheduler: 'ddim' }
     if (type === 'sdxl') return { sampler: 'euler', scheduler: 'euler_discrete' }
     if (type === 'flux1' || type === 'zimage' || type === 'chroma') return { sampler: 'euler', scheduler: 'simple' }
+    if (type === 'anima') return { sampler: 'er sde', scheduler: 'simple' }
     return { sampler: 'dpm++ 2m', scheduler: 'karras' }
   })()
   const refinerDefaults: RefinerFormState = {
@@ -283,15 +287,33 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
   return imageDefaults
 }
 
-function normalizeTabType(type: unknown): BaseTabType {
+const TAB_TYPE_ALIASES: Readonly<Record<string, BaseTabType>> = Object.freeze({
+  sd15: 'sd15',
+  sdxl: 'sdxl',
+  flux1: 'flux1',
+  zimage: 'zimage',
+  chroma: 'chroma',
+  wan: 'wan',
+  anima: 'anima',
+  wan22: 'wan',
+  wan22_14b: 'wan',
+  wan22_5b: 'wan',
+  flux1_chroma: 'chroma',
+})
+
+export function normalizeTabType(type: unknown): BaseTabType {
   const raw = String(type || '').trim()
-  if (!raw) return 'sd15'
+  if (!raw) {
+    const msg = 'Model tab type is required, got empty value.'
+    console.error(`[model_tabs] ${msg}`, { type })
+    throw new Error(msg)
+  }
   const value = raw.toLowerCase()
-  if (value === 'wan22' || value === 'wan22_14b' || value === 'wan22_5b') return 'wan'
-  if (value === 'flux1_chroma') return 'chroma'
-  if (value === 'sd15' || value === 'sdxl' || value === 'flux1' || value === 'zimage' || value === 'chroma' || value === 'wan') return value as BaseTabType
-  // Fail closed: unknown tab types fall back to a safe image tab.
-  return 'sd15'
+  const normalized = TAB_TYPE_ALIASES[value]
+  if (normalized) return normalized
+  const msg = `Unsupported model tab type '${raw}'.`
+  console.error(`[model_tabs] ${msg}`, { type })
+  throw new Error(msg)
 }
 
 function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string, unknown> {
@@ -339,18 +361,37 @@ function normalizeTab(tab: BaseTab): BaseTab {
   return { ...tab, type, params: normalizeParamsForType(type, (tab as any).params) }
 }
 
+const BASE_REQUIRED_TYPES: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'wan']
+
+export function requiredTypesFromCapabilities(engines: Record<string, unknown>): BaseTabType[] {
+  const types: BaseTabType[] = [...BASE_REQUIRED_TYPES]
+  if (Object.prototype.hasOwnProperty.call(engines, 'anima')) {
+    types.push('anima')
+  }
+  return types
+}
+
 export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
 
-  const requiredTypes: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'wan']
+  async function resolveRequiredTypesFromCapabilities(): Promise<BaseTabType[]> {
+    const caps = await fetchEngineCapabilities()
+    const engines = caps?.engines
+    if (!engines || typeof engines !== 'object') {
+      const msg = "Invalid '/api/engines/capabilities' response: missing 'engines' object."
+      console.error(`[model_tabs] ${msg}`, caps)
+      throw new Error(msg)
+    }
+    return requiredTypesFromCapabilities(engines as Record<string, unknown>)
+  }
 
   function save(): void {
     const payload = { tabs: tabs.value, activeId: activeId.value }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   }
 
-  async function ensureRequiredTabs(): Promise<void> {
+  async function ensureRequiredTabs(requiredTypes: BaseTabType[]): Promise<void> {
     const existing = new Set<BaseTabType>(tabs.value.map(t => t.type))
     let nextOrder = tabs.value.length ? (Math.max(...tabs.value.map(t => t.order)) + 1) : 0
     const createdAt = nowIso()
@@ -374,6 +415,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   }
 
   async function load(): Promise<void> {
+    const requiredTypes = await resolveRequiredTypesFromCapabilities()
     const preferredActiveId = activeId.value || (() => {
       try {
         const raw = localStorage.getItem(STORAGE_KEY)
@@ -385,49 +427,30 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       }
     })()
 
-    // Try backend first
-    try {
-      const res = await fetchTabs()
-      if (res && Array.isArray(res.tabs)) {
-        tabs.value = (res.tabs as unknown as BaseTab[]).map(normalizeTab)
-        tabs.value.sort((a, b) => a.order - b.order)
-        activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
-        await ensureRequiredTabs()
-        tabs.value.sort((a, b) => a.order - b.order)
-        if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
-        save()
-        return
-      }
-    } catch {
-      // fallback to local
+    const res = await fetchTabs()
+    if (!res || !Array.isArray(res.tabs)) {
+      const msg = "Invalid '/api/ui/tabs' response: missing 'tabs' array."
+      console.error(`[model_tabs] ${msg}`, res)
+      throw new Error(msg)
     }
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as { tabs: BaseTab[]; activeId: string }
-        tabs.value = (parsed.tabs || []).map(normalizeTab)
-        const stored = typeof parsed.activeId === 'string' ? parsed.activeId : ''
-        const nextActive = activeId.value || stored
-        activeId.value = (nextActive && tabs.value.some(t => t.id === nextActive)) ? nextActive : (tabs.value[0]?.id ?? '')
-        tabs.value.sort((a, b) => a.order - b.order)
-        await ensureRequiredTabs()
-        tabs.value.sort((a, b) => a.order - b.order)
-        if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
-        save()
-        return
-      } catch { /* ignore */ }
-    }
-    bootstrap()
+
+    tabs.value = (res.tabs as unknown as BaseTab[]).map(normalizeTab)
+    tabs.value.sort((a, b) => a.order - b.order)
+    activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
+    await ensureRequiredTabs(requiredTypes)
+    tabs.value.sort((a, b) => a.order - b.order)
+    if (activeId.value && !tabs.value.some(t => t.id === activeId.value)) activeId.value = tabs.value[0]?.id ?? ''
+    save()
   }
 
-  function bootstrap(): void {
+  async function bootstrap(requiredTypes: BaseTabType[]): Promise<void> {
     // Create minimal default tabs when backend persistence is unavailable.
     const createdAt = nowIso()
-    const types: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'wan']
+    const types = requiredTypes
     tabs.value = types.map((type, idx) => ({
       id: uuid(),
       type,
-      title: type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label,
+      title: type === 'wan' ? 'WAN 2.2' : type === 'anima' ? 'Anima' : getEngineConfig(type as EngineType).label,
       order: idx,
       enabled: true,
       params: defaultParams(type),

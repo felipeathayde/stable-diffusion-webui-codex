@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Model tabs management view.
-Lists model tabs and provides actions to create/open/duplicate/remove tabs.
+Lists model tabs and provides actions to create/open/duplicate/remove tabs (including Anima tabs when supported).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelsList` (component): View for managing model tabs.
@@ -23,6 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <option value="sdxl">SDXL</option>
             <option value="flux1">FLUX.1</option>
             <option value="zimage">Z Image</option>
+            <option v-if="showAnimaOption" value="anima">Anima</option>
             <option value="wan">WAN 2.2</option>
           </select>
           <button class="btn btn-sm btn-primary" type="button" @click="createTab">New Tab</button>
@@ -52,18 +53,27 @@ Symbols (top-level; keep in sync; no ghosts):
 	import { ref, onMounted, computed } from 'vue'
 	import { useRouter } from 'vue-router'
 	import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
+	import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 
 	const router = useRouter()
 	const store = useModelTabsStore()
+	const engineCaps = useEngineCapabilitiesStore()
 	const newType = ref<BaseTabType>('wan')
 
 	onMounted(async () => {
+	  await engineCaps.init()
 	  await store.load()
 	})
 
 const tabs = computed(() => store.orderedTabs)
+const showAnimaOption = computed(() => Boolean(engineCaps.get('anima')))
 
 async function createTab(): Promise<void> {
+  if (newType.value === 'anima' && !showAnimaOption.value) {
+    const msg = "Cannot create Anima tab: '/api/engines/capabilities' does not expose 'anima'."
+    console.error(`[ModelsList] ${msg}`)
+    throw new Error(msg)
+  }
   const id = await store.create(newType.value)
   if (id) void router.push(`/models/${id}`)
 }

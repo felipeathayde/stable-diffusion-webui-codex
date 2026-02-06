@@ -55,7 +55,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `UiPresetsResponse` (interface): `/api/ui/presets` response shape.
 - `UiPresetApplyResponse` (interface): `/api/ui/presets/apply` response shape.
 - `ApiTabMeta` (interface): Per-tab metadata timestamps.
-- `ApiTab` (interface): Persisted model tab definition.
+- `ApiTab` (interface): Persisted model tab definition (`sd15|sdxl|flux1|zimage|chroma|wan|anima`).
 - `TabsResponse` (interface): `/api/ui/tabs` response shape.
 - `WorkflowsResponse` (interface): `/api/ui/workflows` response shape.
 - `InventoryResponse` (interface): `/api/models/inventory` response shape.
@@ -370,7 +370,7 @@ export interface UiPresetApplyResponse { applied: boolean; model: string; checkp
 
 // Tabs/workflows persistence
 export interface ApiTabMeta { createdAt: string; updatedAt: string }
-export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'wan'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
+export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'wan' | 'anima'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
 export interface TabsResponse { version: number; tabs: ApiTab[] }
 export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>}
 

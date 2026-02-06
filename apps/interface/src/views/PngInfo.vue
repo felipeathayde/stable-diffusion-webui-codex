@@ -232,7 +232,7 @@ const workflowBusy = ref(false)
 const sendBusy = ref(false)
 const lastSentTabId = ref<string>('')
 
-const compatibleTabs = computed(() => tabs.orderedTabs.filter(t => t.type !== 'wan'))
+const compatibleTabs = computed(() => tabs.orderedTabs.filter(t => t.type !== 'wan' && t.type !== 'anima'))
 const targetTabId = ref('')
 const targetTab = computed(() => compatibleTabs.value.find(t => t.id === targetTabId.value) || null)
 const targetMode = ref<TargetMode>('txt2img')

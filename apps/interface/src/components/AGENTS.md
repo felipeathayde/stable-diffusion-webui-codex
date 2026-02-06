@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-02-04
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -54,3 +54,4 @@ Status: Active
 - 2026-01-21: WAN stage LoRA UI (`components/wan/WanStageLoraField.vue`) selects by sha (`loraSha`) and payload builders emit `lora_sha` (no stage `lora_path`).
 - 2026-02-01: `HiresSettingsCard.vue` now lists upscalers from `/api/upscalers` (stable ids: `latent:*` / `spandrel:*`) and reuses the shared tile controls + OOM fallback toggle (same as `/upscale`).
 - 2026-02-04: `HiresSettingsCard.vue` now also wires `min_tile` (global preference) into the shared tile controls; callers propagate it into hires payloads as `hires.tile.min_tile`.
+- 2026-02-05: `QuickSettingsBar.vue` tab-family normalization now uses a canonical alias map (including `anima`); unknown families stay invalid instead of falling through implicit checks.

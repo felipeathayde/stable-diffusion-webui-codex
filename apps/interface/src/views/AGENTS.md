@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-04
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -43,3 +43,6 @@ Status: Active
 - 2026-02-01: `Upscale.vue` now wires the standalone `/upscale` workspace to the backend (`/api/upscalers`, `/api/upscale`) with SSE task streaming, tile presets, an explicit OOM fallback toggle (persisted), and an HF-backed download modal.
 - 2026-02-03: `Upscale.vue` download modal renders curated manifest metadata (arch/scale/license/sha256/tags/notes) vs “Other files” and surfaces manifest validation issues; raw manifest JSON is now behind a hamburger (☰) action.
 - 2026-02-04: `Upscale.vue` and `ImageModelTab.vue` now also wire the global `min_tile` preference into the shared tile controls and requests (keeps tiled upscaling OOM fallback behavior configurable).
+- 2026-02-05: `Home.vue` and `ModelsList.vue` now expose `Anima` in tab-creation selectors only when backend capabilities include `anima`; forced manual creation without capability fails loud.
+- 2026-02-05: `ImageModelTab.vue` disables Generate with explicit reason when backend capabilities mark the current mode unsupported (e.g., Anima txt2img gated off) and no longer clears img2img state before capability loading completes.
+- 2026-02-05: `PngInfo.vue` excludes `anima` from “Send to” compatible target tabs while the Anima image pipeline remains capability-gated.

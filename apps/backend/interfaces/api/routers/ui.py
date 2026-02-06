@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: UI persistence and metadata API routes.
-Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application.
+Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -108,7 +108,7 @@ def build_router(
 
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
-    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "chroma", "zimage", "wan"}
+    _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "chroma", "zimage", "wan", "anima"}
 
     def _normalize_tab_type(value: object) -> str:
         raw = str(value or "").strip().lower()
@@ -120,7 +120,7 @@ def build_router(
             return "chroma"
         if raw in _ALLOWED_TAB_TYPES:
             return raw
-        return "sd15"
+        raise ValueError(f"invalid tab type: {raw or '<empty>'}")
 
     def _tabs_path() -> str:
         return str(codex_root / "apps" / "interface" / "tabs.json")
@@ -181,7 +181,10 @@ def build_router(
                 if not isinstance(t, dict):
                     continue
                 old_type = t.get("type")
-                new_type = _normalize_tab_type(old_type)
+                try:
+                    new_type = _normalize_tab_type(old_type)
+                except ValueError as exc:
+                    raise HTTPException(status_code=500, detail=f"tabs.json contains {exc}") from exc
                 if new_type != old_type:
                     t["type"] = new_type
                     changed = True
@@ -252,7 +255,9 @@ def build_router(
     def api_create_tab(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         data = _load_tabs()
         tabs = list(data.get("tabs") or [])
-        raw_type = str(payload.get("type") or "sd15").strip().lower()
+        raw_type = str(payload.get("type") or "").strip().lower()
+        if not raw_type:
+            raise HTTPException(status_code=400, detail="tab type is required")
         if raw_type == "flux":
             raise HTTPException(status_code=400, detail="invalid tab type: flux (use flux1)")
         if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b"):

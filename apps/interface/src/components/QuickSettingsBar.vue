@@ -17,7 +17,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `syncAdvancedHeight` (function): Measures/synchronizes advanced-row height for smooth expand/collapse transitions.
 - `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
 - `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
-- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux1`/`chroma`/`wan`/`zimage`).
+- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux1`/`chroma`/`wan`/`zimage`/`anima`).
+- `TAB_FAMILY_ALIASES` (const): Canonical alias map used to normalize raw family identifiers.
 - `normalizeTabFamily` (function): Normalizes unknown inputs to a `TabFamily` (or `null`).
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
 - `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
@@ -380,14 +381,26 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'chroma' | 'wan' | 'zimage'
+type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'chroma' | 'wan' | 'zimage' | 'anima'
+
+const TAB_FAMILY_ALIASES: Readonly<Record<string, TabFamily>> = Object.freeze({
+  sd15: 'sd15',
+  sdxl: 'sdxl',
+  flux1: 'flux1',
+  chroma: 'chroma',
+  wan: 'wan',
+  wan22: 'wan',
+  wan22_14b: 'wan',
+  wan22_5b: 'wan',
+  zimage: 'zimage',
+  anima: 'anima',
+  flux1_chroma: 'chroma',
+})
 
 function normalizeTabFamily(value: unknown): TabFamily | null {
   const raw = String(value || '').trim().toLowerCase()
-  if (raw === 'wan22' || raw === 'wan22_14b' || raw === 'wan22_5b') return 'wan'
-  if (raw === 'flux1_chroma') return 'chroma'
-  if (raw === 'sd15' || raw === 'sdxl' || raw === 'flux1' || raw === 'chroma' || raw === 'wan' || raw === 'zimage') return raw as TabFamily
-  return null
+  if (!raw) return null
+  return TAB_FAMILY_ALIASES[raw] ?? null
 }
 
 const routeTabId = computed(() => String(route.params.tabId || ''))
@@ -444,6 +457,7 @@ const activeFamily = computed<TabFamily>(() => {
   if (eng.startsWith('sdxl')) return 'sdxl'
   if (eng.startsWith('wan')) return 'wan'
   if (eng.startsWith('zimage')) return 'zimage'
+  if (eng.startsWith('anima')) return 'anima'
 
   return 'sd15'
 })
@@ -1230,9 +1244,10 @@ function onWanGuidedGen(): void {
   window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
 
-function enginePrefixForFamily(fam: TabFamily): 'sd15' | 'sdxl' | 'flux1' | 'wan22' | 'zimage' {
+function enginePrefixForFamily(fam: TabFamily): 'sd15' | 'sdxl' | 'flux1' | 'wan22' | 'zimage' | 'anima' {
   if (fam === 'wan') return 'wan22'
   if (fam === 'chroma') return 'flux1'
+  if (fam === 'anima') return 'anima'
   return fam
 }
 

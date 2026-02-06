@@ -1,7 +1,7 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-02-04
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -43,3 +43,6 @@ Status: Active
 - 2026-02-01: `presets.ts` now supports an `upscale` mode for the standalone `/upscale` workspace presets.
 - 2026-02-01: Added `upscalers.ts` store to cache local upscalers inventory (`/api/upscalers`) and persist the global tile OOM fallback preference (shared by hires-fix + `/upscale`).
 - 2026-02-04: `upscalers.ts` now also persists the global `min_tile` preference for tiled upscaling (OOM fallback lower bound), propagated by both txt2img (`extras.hires.tile.min_tile`) and img2img (`img2img_hires_tile.min_tile`), and used by `/upscale`.
+- 2026-02-05: `model_tabs.ts` now supports `anima` as a tab type and derives required auto-created tabs from backend `/api/engines/capabilities` (`anima` is auto-created only when exposed there).
+- 2026-02-05: `model_tabs.normalizeTabType()` is fail-loud for unknown/empty types (no silent fallback to `sd15`); aliases are normalized through a canonical map.
+- 2026-02-05: `model_tabs.load()` now fails loud when `/api/ui/tabs` cannot provide a valid `tabs` array (local fallback no longer masks backend tab-type contract errors).

@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-04
+Last Review: 2026-02-05
 Status: Active
 
 ## Purpose
@@ -30,3 +30,5 @@ Status: Active
 - 2026-02-03: `useGeneration(tabId)` hires payloads now emit `extras.hires` (txt2img) and `img2img_hires_*` (img2img).
 - 2026-02-04: `useGeneration(tabId)` now also propagates the global `min_tile` preference into hires tile payloads (`extras.hires.tile.min_tile` and `img2img_hires_tile.min_tile`, clamped to `tile`).
 - 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).
+- 2026-02-05: `useGeneration(tabId)` now hard-checks backend engine surface before request send; missing capabilities or unsupported mode (`supports_txt2img`/`supports_img2img`) fail loud with explicit errors.
+- 2026-02-05: `useGeneration` now exports `resolveEngineForRequest(...)` as the canonical tab-type/mode engine mapper; `ImageModelTab.vue` reuses it so disable-state and request preflight stay in parity.

@@ -13,7 +13,7 @@ linking users to model tabs (`/models/:tabId`), workflows, and utilities.
 Symbols (top-level; keep in sync; no ghosts):
 - `Home` (component): Home workspace + tab manager; drives tab CRUD and status actions via stores/API (contains nested UI helpers and dialogs).
 - `HelpTopic` (type): Help topic selector for the contextual help panel.
-- `onCreate` (function): Creates a new model tab for the selected engine type (optional title).
+- `onCreate` (function): Creates a new model tab for the selected engine type (optional title; includes Anima when supported).
 - `setTitleDraft` (function): Updates the in-memory title draft for a tab row (before persisting).
 - `commitTitle` (function): Persists a tab title edit to the backend/store.
 - `setEnabled` (function): Toggles a tab enabled/disabled state and persists the change.
@@ -30,7 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <div class="panel-header">Welcome</div>
       <div class="panel-body">
         <p class="subtitle">
-          This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX, Z Image, WAN 2.2)
+          This home workspace is engine-agnostic. Use it to create and manage model tabs (SD 1.5, SDXL, FLUX, Z Image, Anima, WAN 2.2)
           and to navigate to workflows or utilities. Generation happens in tabs and workflows, not here.
         </p>
 
@@ -76,6 +76,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 <option value="sdxl">SDXL</option>
                 <option value="flux1">FLUX.1</option>
                 <option value="zimage">Z Image</option>
+                <option v-if="showAnimaOption" value="anima">Anima</option>
                 <option value="wan">WAN 2.2</option>
               </select>
             </div>
@@ -259,6 +260,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { onMounted, ref, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
+import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import MarkdownHelp from '../components/MarkdownHelp.vue'
 import { loadModelsForTab, unloadModelsForTab } from '../api/client'
 
@@ -266,6 +268,7 @@ type HelpTopic = 'home' | 'wan22' | 'workflows'
 
 const router = useRouter()
 const store = useModelTabsStore()
+const engineCaps = useEngineCapabilitiesStore()
 
 const newType = ref<BaseTabType>('sdxl')
 const newTitle = ref('')
@@ -275,11 +278,13 @@ const tabBusy = reactive<Record<string, boolean>>({})
 const tabError = reactive<Record<string, string>>({})
 
 onMounted(async () => {
+  await engineCaps.init()
   await store.load()
   for (const t of store.orderedTabs) titleDraft[t.id] = t.title
 })
 
 const tabs = computed(() => store.orderedTabs)
+const showAnimaOption = computed(() => Boolean(engineCaps.get('anima')))
 const helpSrc = computed(() => {
   if (helpTopic.value === 'wan22') return '/help/wan22-quickstart.md'
   if (helpTopic.value === 'workflows') return '/help/workflows-basics.md'
@@ -287,6 +292,11 @@ const helpSrc = computed(() => {
 })
 
 async function onCreate(): Promise<void> {
+  if (newType.value === 'anima' && !showAnimaOption.value) {
+    const msg = "Cannot create Anima tab: '/api/engines/capabilities' does not expose 'anima'."
+    console.error(`[Home] ${msg}`)
+    throw new Error(msg)
+  }
   const id = await store.create(newType.value, newTitle.value.trim() || undefined)
   newTitle.value = ''
   if (id) void router.push(`/models/${id}`)

@@ -12,6 +12,7 @@ submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image 
 Hires settings list upscalers from `/api/upscalers` and share tile controls + explicit OOM fallback preference with `/upscale`.
 Also shares the global `min_tile` preference (tiled OOM fallback lower bound) with `/upscale`.
 Surfaces a one-shot toast when the generation composable auto-reattaches to an in-flight task after a reload/crash.
+Generate CTA and run preflight are capability-driven (`/api/engines/capabilities`) and fail loud when the current mode is unsupported.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageModelTab` (component): Main image model tab view; handles prompt/params/profile persistence, init-image UX, history reuse, and actions.
@@ -336,7 +337,8 @@ Symbols (top-level; keep in sync; no ghosts):
     <!-- Right column: Run + Results -->
     <div class="panel-stack">
       <RunCard
-        :generateDisabled="isRunning"
+        :generateDisabled="isRunning || !canGenerateForCurrentMode"
+        :generateTitle="generateDisabledReason"
         :isRunning="isRunning"
         :showBatchControls="true"
         :batchCount="params.batchCount"
@@ -433,7 +435,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
-import { useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
+import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
 import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults, type EngineType } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
@@ -517,14 +519,28 @@ watch(
 
 const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
 const engineConfig = computed(() => getEngineConfig(props.type))
-const engineSurface = computed(() => engineCaps.get(props.type))
+const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
+const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
 
 const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean((params.value as any)?.zimageTurbo ?? true) : false)
 const supportsNegative = computed(() => engineConfig.value.capabilities.usesNegativePrompt)
+const supportsTxt2Img = computed(() => {
+  const surf = engineSurface.value
+  if (!surf) return false
+  return Boolean(surf.supports_txt2img)
+})
 const supportsImg2Img = computed(() => {
   const surf = engineSurface.value
-  if (surf) return Boolean(surf.supports_img2img)
-  return engineConfig.value.capabilities.tasks.includes('img2img')
+  if (!surf) return false
+  return Boolean(surf.supports_img2img)
+})
+const canGenerateForCurrentMode = computed(() => (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value))
+const generateDisabledReason = computed(() => {
+  if (isRunning.value) return ''
+  if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
+  if (params.value.useInitImage && !supportsImg2Img.value) return `${engineConfig.value.label} does not support img2img.`
+  if (!params.value.useInitImage && !supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
+  return ''
 })
 
 const enableAssets = computed(() => true)
@@ -607,8 +623,8 @@ const negativeText = computed({
   },
 })
 
-watch(supportsImg2Img, (supported) => {
-  if (supported) return
+watch([supportsImg2Img, () => engineCaps.loaded], ([supported, capsLoaded]) => {
+  if (!capsLoaded || supported) return
   if (!params.value.useInitImage) return
   setParams({
     useInitImage: false,

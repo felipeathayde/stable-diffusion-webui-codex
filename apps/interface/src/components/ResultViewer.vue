@@ -101,8 +101,8 @@ const props = defineProps<{
   previewImage?: GeneratedImage | null
   previewCaption?: string
   isRunning?: boolean
-  frames?: unknown[]
-  toDataUrl?: (frame: unknown) => string
+  frames?: GeneratedImage[]
+  toDataUrl?: (frame: GeneratedImage) => string
   emptyText?: string
   width?: number
   height?: number
@@ -118,30 +118,17 @@ function imageUrl(img: GeneratedImage): string {
   return `data:image/${img.format};base64,${img.data}`
 }
 
-function frameUrl(frame: unknown): string {
+function frameUrl(frame: GeneratedImage): string {
   if (typeof props.toDataUrl === 'function') return props.toDataUrl(frame)
-  return String(frame ?? '')
+  return imageUrl(frame)
 }
 
-function canDownloadFrame(frame: unknown): boolean {
-  if (typeof props.toDataUrl !== 'function') return false
-  return isGeneratedImage(frame)
+function canDownloadFrame(_frame: GeneratedImage): boolean {
+  return true
 }
 
-function isGeneratedImage(value: unknown): value is GeneratedImage {
-  if (!value || typeof value !== 'object') return false
-  const v = value as any
-  return typeof v.format === 'string' && typeof v.data === 'string'
-}
-
-function frameDownloadName(index: number, frame: unknown): string {
-  const ext = (() => {
-    if (isGeneratedImage(frame)) {
-      const raw = String(frame.format || '').trim().toLowerCase()
-      if (raw) return raw
-    }
-    return 'png'
-  })()
+function frameDownloadName(index: number, frame: GeneratedImage): string {
+  const ext = String(frame.format || '').trim().toLowerCase() || 'png'
   const num = String(index + 1).padStart(4, '0')
   return `frame_${num}.${ext}`
 }

@@ -30,7 +30,7 @@ const props = defineProps<{ modelValue: string }>()
 const emit = defineEmits<{ (e:'update:modelValue', v:string): void }>()
 
 const editor = useEditor({
-  extensions: [StarterKit.configure({ history: true }), PromptToken],
+  extensions: [StarterKit.configure({ history: {} }), PromptToken],
   content: parsePromptToTiptap(props.modelValue || ''),
   onUpdate: ({ editor }) => {
     const json = editor.getJSON()

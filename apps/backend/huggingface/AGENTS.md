@@ -2,7 +2,7 @@
 
 # apps/backend/huggingface Overview
 Date: 2025-10-28
-Last Review: 2026-01-28
+Last Review: 2026-02-06
 Status: Active
 
 ## Purpose
@@ -17,3 +17,4 @@ Status: Active
 - 2026-01-18: `huggingface/__init__.py` is now a package marker (no re-exports); import helpers directly from their owning modules (e.g. `assets.py`).
 - 2026-01-28: Added a lightweight mirror for **Z-Image Base** under `apps/backend/huggingface/Tongyi-MAI/Z-Image/**` (configs + indices + tokenizer; no weights) to support offline/strict runs and variant-specific scheduler semantics.
 - 2026-01-28: Aligned **Z-Image Turbo** vendored assets to `apps/backend/huggingface/Tongyi-MAI/Z-Image-Turbo/**` (the `Alibaba-TongYi/Z-Image-Turbo` repo id is now gated upstream; use `Tongyi-MAI/Z-Image-Turbo`).
+- 2026-02-06: Vendored lightweight upstream docs/workflow + offline tokenizers for Anima under `apps/backend/huggingface/circlestone-labs/Anima/` (no weights).

@@ -113,7 +113,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { StyleValue } from 'vue'
 import NumberStepperInput from '../ui/NumberStepperInput.vue'
 import ResultsCard from './ResultsCard.vue'
 
@@ -169,7 +168,7 @@ const maxBatchSize = computed(() => Number.isFinite(props.maxBatchSize) ? Math.t
 const batchMenuToggleEl = ref<HTMLElement | null>(null)
 const batchMenuPanelEl = ref<HTMLElement | null>(null)
 const isBatchMenuOpen = ref(false)
-const batchMenuStyle = ref<StyleValue | undefined>(undefined)
+const batchMenuStyle = ref<Record<string, string> | undefined>(undefined)
 let batchMenuRAF: number | null = null
 
 watch(() => props.showBatchControls, (show) => {

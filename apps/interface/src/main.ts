@@ -17,11 +17,21 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
+import { useBootstrapStore } from './stores/bootstrap'
 import './styles.css'
 
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+
+app.config.errorHandler = (error) => {
+  try {
+    const bootstrap = useBootstrapStore()
+    bootstrap.reportFatal(error, 'Unhandled Vue component error')
+  } catch (handlerError) {
+    console.error('[bootstrap] failed to report Vue error', handlerError)
+  }
+}
 
 document.documentElement.classList.add('dark')
 

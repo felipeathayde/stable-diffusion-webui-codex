@@ -89,6 +89,7 @@ Symbols (top-level; keep in sync; no ghosts):
             <button class="btn btn-md btn-primary" type="submit">Create Tab</button>
           </div>
         </form>
+        <div v-if="createError" class="panel-error">{{ createError }}</div>
 
         <div class="panel-section">
           <div class="panel-section-title">Existing Tabs</div>
@@ -273,14 +274,19 @@ const engineCaps = useEngineCapabilitiesStore()
 const newType = ref<BaseTabType>('sdxl')
 const newTitle = ref('')
 const helpTopic = ref<HelpTopic>('home')
+const createError = ref('')
 const titleDraft = reactive<Record<string, string>>({})
 const tabBusy = reactive<Record<string, boolean>>({})
 const tabError = reactive<Record<string, string>>({})
 
 onMounted(async () => {
-  await engineCaps.init()
-  await store.load()
-  for (const t of store.orderedTabs) titleDraft[t.id] = t.title
+  try {
+    await engineCaps.init()
+    await store.load()
+    for (const t of store.orderedTabs) titleDraft[t.id] = t.title
+  } catch (error) {
+    createError.value = error instanceof Error ? error.message : String(error)
+  }
 })
 
 const tabs = computed(() => store.orderedTabs)
@@ -292,14 +298,19 @@ const helpSrc = computed(() => {
 })
 
 async function onCreate(): Promise<void> {
-  if (newType.value === 'anima' && !showAnimaOption.value) {
-    const msg = "Cannot create Anima tab: '/api/engines/capabilities' does not expose 'anima'."
-    console.error(`[Home] ${msg}`)
-    throw new Error(msg)
+  createError.value = ''
+  try {
+    if (newType.value === 'anima' && !showAnimaOption.value) {
+      const msg = "Cannot create Anima tab: '/api/engines/capabilities' does not expose 'anima'."
+      console.error(`[Home] ${msg}`)
+      throw new Error(msg)
+    }
+    const id = await store.create(newType.value, newTitle.value.trim() || undefined)
+    newTitle.value = ''
+    if (id) void router.push(`/models/${id}`)
+  } catch (error) {
+    createError.value = error instanceof Error ? error.message : String(error)
   }
-  const id = await store.create(newType.value, newTitle.value.trim() || undefined)
-  newTitle.value = ''
-  if (id) void router.push(`/models/${id}`)
 }
 
 function setTitleDraft(id: string, v: string): void {

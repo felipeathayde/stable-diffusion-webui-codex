@@ -160,8 +160,7 @@ describe('useQuicksettingsStore anima mappings', () => {
     expect(store.textEncoderChoices).toContain('anima/models/anima-tenc/qwen3_06b.safetensors')
   })
 
-  it('clears stale SHA/root maps when text encoder inventory load fails', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  it('fails loud when text encoder inventory load fails', async () => {
     const store = useQuicksettingsStore()
     store.textEncoderChoices = ['anima/models/anima-tenc/qwen3_06b.safetensors']
     store.textEncoderShaMap = new Map([['anima/models/anima-tenc/qwen3_06b.safetensors', 'a'.repeat(64)]])
@@ -169,12 +168,11 @@ describe('useQuicksettingsStore anima mappings', () => {
     store.wanGgufShaMap = new Map([['wan/models/high.gguf', 'c'.repeat(64)]])
 
     mockedFetchModelInventory.mockRejectedValue(new Error('inventory down'))
-    await store.init()
+    await expect(store.init()).rejects.toThrow('inventory down')
 
-    expect(store.textEncoderChoices).toEqual([])
-    expect(store.textEncoderShaMap.size).toBe(0)
-    expect(store.vaeShaMap.size).toBe(0)
-    expect(store.wanGgufShaMap.size).toBe(0)
-    errorSpy.mockRestore()
+    expect(store.textEncoderChoices).toEqual(['anima/models/anima-tenc/qwen3_06b.safetensors'])
+    expect(store.textEncoderShaMap.size).toBe(1)
+    expect(store.vaeShaMap.size).toBe(1)
+    expect(store.wanGgufShaMap.size).toBe(1)
   })
 })

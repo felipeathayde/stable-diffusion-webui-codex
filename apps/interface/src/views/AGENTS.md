@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-05
+Last Review: 2026-02-06
 Status: Active
 
 ## Purpose
@@ -12,7 +12,7 @@ Status: Active
 - Keep routes documented in `apps/interface/src/router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
 - All generation workspaces live under model tabs (`/models/:tabId`):
   - `ModelTabView.vue` mounts `WANTab.vue` when `tab.type === 'wan'`.
-  - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|zimage`.
+  - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|chroma|zimage|anima`.
 - `Home.vue` is the engine-agnostic landing page and the canonical place to manage tabs (enable/disable, rename, duplicate, remove).
 - `WANTab.vue` uses typed WAN video payload builders and `useVideoGeneration(tabId)` for streaming progress.
 - `ImageModelTab.vue` mirrors the legacy engine-tab layout (same `panels` + `panel-stack` structure as WAN): PromptCard (progress/error + optional init-image controls), BasicParametersCard + optional Hires/Refiner, RunCard (batch dropdown), ResultsCard (gentime/actions), ResultViewer gallery, and an Info panel; generation/payload wiring lives in `useGeneration(tabId)` and capability gating uses `useEngineCapabilitiesStore()`.
@@ -46,3 +46,10 @@ Status: Active
 - 2026-02-05: `Home.vue` and `ModelsList.vue` now expose `Anima` in tab-creation selectors only when backend capabilities include `anima`; forced manual creation without capability fails loud.
 - 2026-02-05: `ImageModelTab.vue` disables Generate with explicit reason when backend capabilities mark the current mode unsupported (e.g., Anima txt2img gated off) and no longer clears img2img state before capability loading completes.
 - 2026-02-05: `PngInfo.vue` excludes `anima` from “Send to” compatible target tabs while the Anima image pipeline remains capability-gated.
+- 2026-02-06: `ModelTabView.vue` now derives a typed non-WAN tab kind for `ImageModelTab.vue` (no `as any`) and renders an explicit “Unsupported tab type” panel for impossible states.
+- 2026-02-06: `ImageModelTab.vue` and `WANTab.vue` now render backend-owned dependency checks in-tab and gate generation when `dependency_checks.ready=false`.
+- 2026-02-06: `ModelTabView.vue` no longer self-loads tabs on mount; root bootstrap (`App.vue` + `stores/bootstrap.ts`) now guarantees required startup state before view render.
+- 2026-02-06: Home/ModelsList tab actions now surface creation/duplicate/remove/load failures locally (panel error/toast) and no longer rely on unhandled async propagation.
+- 2026-02-06: `ImageModelTab.vue`/`WANTab.vue` param mutation helpers now catch persistence failures from `model_tabs.updateParams(...)` and surface errors to users.
+- 2026-02-06: `WANTab.vue` now consumes typed WAN tab params (`TabByType<'wan'>`) from `model_tabs.ts` to reduce `tab.params as any` usage in core stage/video/assets flows.
+- 2026-02-06: `ImageModelTab.vue` now narrows to typed image tabs and removed core helper casts (`setParams`/`setHires`/`setRefiner`/history apply) as part of Phase 5 `any` reduction.

@@ -32,3 +32,4 @@ Status: Active
 - 2026-01-21: Updated `blocks.json` WAN22 stage fields to sha-only (`model_sha`/`lora_sha`) to match backend enforcement.
 - 2026-01-23: WAN video dimensions now snap to multiples of 16 (rounded up; Diffusers parity) in the UI and payload builders to avoid backend 400s and silent patch-grid cropping.
 - 2026-01-27: `package-lock.json` updated to match npm 11 (used by the repo-local `.nodeenv` installer) to avoid lockfile churn on fresh installs.
+- 2026-02-06: Added `vue-tsc` typechecking (`npm run typecheck`) and gated `npm run dev` on typecheck to prevent “build passes, types broken” drift.

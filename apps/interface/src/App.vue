@@ -13,11 +13,37 @@ Symbols (top-level; keep in sync; no ghosts):
 - `App` (component): Root application component and layout shell.
 - `setStickyOffset` (function): Computes and sets CSS `--sticky-offset` based on the header height.
 - `requestStickyOffsetRecalc` (function): Schedules a sticky-offset recalculation via `requestAnimationFrame`.
+- `retryBootstrap` (function): Retries hard-fatal app bootstrap initialization.
 - `enabledTabs` (const): Computed list of enabled model tabs used to render the nav.
 -->
 
 <template>
-  <div class="layout">
+  <section v-if="bootstrap.status === 'fatal'" class="bootstrap-screen">
+    <div class="panel bootstrap-panel bootstrap-panel--fatal">
+      <div class="panel-header">Fatal bootstrap error</div>
+      <div class="panel-body">
+        <p class="bootstrap-lead">
+          Required initialization failed and the interface was not started.
+        </p>
+        <p class="bootstrap-detail">
+          <strong>Context:</strong> {{ bootstrap.fatalContext || 'Bootstrap' }}
+        </p>
+        <pre class="bootstrap-error">{{ bootstrap.fatalMessage || 'Unknown error' }}</pre>
+        <button class="btn btn-primary" type="button" @click="retryBootstrap">Retry</button>
+      </div>
+    </div>
+  </section>
+
+  <section v-else-if="bootstrap.status !== 'ready'" class="bootstrap-screen">
+    <div class="panel bootstrap-panel">
+      <div class="panel-header">Initializing WebUI</div>
+      <div class="panel-body">
+        <p class="bootstrap-lead">Loading required backend state...</p>
+      </div>
+    </div>
+  </section>
+
+  <div v-else class="layout">
     <div class="main-shell">
       <header class="main-header" ref="headerRef">
         <div class="main-header-top">
@@ -57,8 +83,9 @@ Symbols (top-level; keep in sync; no ghosts):
 // tags: layout, navigation
 import QuickSettingsBar from './components/QuickSettingsBar.vue'
 import AppFooter from './components/AppFooter.vue'
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useModelTabsStore } from './stores/model_tabs'
+import { useBootstrapStore } from './stores/bootstrap'
 
 const headerRef = ref<HTMLElement | null>(null)
 let headerRO: ResizeObserver | null = null
@@ -80,14 +107,47 @@ function requestStickyOffsetRecalc(): void {
 }
 
 const tabs = useModelTabsStore()
+const bootstrap = useBootstrapStore()
 const enabledTabs = computed(() => tabs.orderedTabs.filter(t => t.enabled))
 
+async function retryBootstrap(): Promise<void> {
+  try {
+    await bootstrap.retry()
+  } catch {
+    // Fatal state is already set by the bootstrap store.
+  }
+}
+
+watch(
+  headerRef,
+  (next, prev) => {
+    if (!headerRO) return
+    if (prev) headerRO.unobserve(prev)
+    if (next) headerRO.observe(next)
+    requestStickyOffsetRecalc()
+  },
+)
+
+watch(
+  () => bootstrap.status,
+  (status) => {
+    if (status !== 'ready') return
+    requestStickyOffsetRecalc()
+  },
+)
+
 onMounted(() => {
-  void tabs.load()
-  requestStickyOffsetRecalc()
+  bootstrap.installGlobalErrorHandlers()
+  bootstrap.start().catch(() => {
+    // Fatal state is already set by bootstrap store.
+  })
+
   if (typeof ResizeObserver !== 'undefined') {
     headerRO = new ResizeObserver(requestStickyOffsetRecalc)
-    if (headerRef.value) headerRO.observe(headerRef.value)
+    if (headerRef.value) {
+      headerRO.observe(headerRef.value)
+      requestStickyOffsetRecalc()
+    }
   }
   window.addEventListener('resize', requestStickyOffsetRecalc)
 })
@@ -100,3 +160,43 @@ onBeforeUnmount(() => {
   stickyOffsetRAF = null
 })
 </script>
+
+<style scoped>
+.bootstrap-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.bootstrap-panel {
+  width: min(44rem, 100%);
+  border: 1px solid rgba(111, 130, 160, 0.34);
+}
+
+.bootstrap-panel--fatal {
+  border-color: rgba(194, 80, 96, 0.58);
+}
+
+.bootstrap-lead {
+  margin: 0 0 0.7rem;
+}
+
+.bootstrap-detail {
+  margin: 0 0 0.6rem;
+  color: rgba(186, 202, 229, 0.9);
+}
+
+.bootstrap-error {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(197, 86, 103, 0.4);
+  background: rgba(27, 12, 18, 0.72);
+  color: rgba(252, 219, 224, 0.95);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.8rem;
+}
+</style>

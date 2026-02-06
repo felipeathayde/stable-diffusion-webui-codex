@@ -291,88 +291,108 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
   }
 
   async function loadVaes(): Promise<void> {
-    try {
-      const inv = await fetchModelInventory()
-      const seen = new Set<string>()
-      const out: string[] = ['Automatic', 'Built in', 'None']
-      for (const item of (inv as any)?.vaes || []) {
-        const name = String(item?.name || '').trim()
-        if (!name || seen.has(name)) continue
-        seen.add(name)
-        if (!out.includes(name)) out.push(name)
-      }
-      vaeChoices.value = out
-    } catch (e) {
-      // API may not expose this yet; keep defaults
-      vaeChoices.value = vaeChoices.value.length ? vaeChoices.value : ['Automatic', 'Built in', 'None']
+    const inv = await fetchModelInventory()
+    const seen = new Set<string>()
+    const out: string[] = ['Automatic', 'Built in', 'None']
+    for (const item of (inv as any)?.vaes || []) {
+      const name = String(item?.name || '').trim()
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      if (!out.includes(name)) out.push(name)
     }
+    vaeChoices.value = out
   }
 
   async function loadTextEncoders(): Promise<void> {
-    try {
-      const [pathsRes, inv] = await Promise.all([fetchPaths(), fetchModelInventory()])
-      const paths = ((pathsRes as any)?.paths || {}) as Record<string, string[]>
+    const [pathsRes, inv] = await Promise.all([fetchPaths(), fetchModelInventory()])
+    const paths = ((pathsRes as any)?.paths || {}) as Record<string, string[]>
 
-      const rootsByFamily = new Map<string, string[]>()
-      const rootLabels = new Set<string>()
-      for (const [family, key] of TEXT_ENCODER_FAMILY_KEYS) {
-        const roots = (Array.isArray(paths[key]) ? paths[key] : [])
-          .map((entry) => normalizePath(String(entry || '')))
-          .filter((entry) => entry.length > 0)
-        rootsByFamily.set(family, roots)
-        for (const root of roots) {
-          rootLabels.add(`${family}/${root}`)
-        }
+    const rootsByFamily = new Map<string, string[]>()
+    const rootLabels = new Set<string>()
+    for (const [family, key] of TEXT_ENCODER_FAMILY_KEYS) {
+      const roots = (Array.isArray(paths[key]) ? paths[key] : [])
+        .map((entry) => normalizePath(String(entry || '')))
+        .filter((entry) => entry.length > 0)
+      rootsByFamily.set(family, roots)
+      for (const root of roots) {
+        rootLabels.add(`${family}/${root}`)
       }
-      textEncoderRootLabels.value = rootLabels
+    }
+    textEncoderRootLabels.value = rootLabels
 
-      const labels = new Set<string>()
-      const shaMap = new Map<string, string>()
-      for (const te of inv.text_encoders || []) {
-        const sha = typeof te.sha256 === 'string' ? te.sha256.trim().toLowerCase() : ''
-        if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
-        const name = typeof te.name === 'string' ? te.name.trim() : ''
-        const rawPath = typeof te.path === 'string' ? te.path.trim() : ''
-        const normPath = normalizePath(rawPath)
-        const basename = normPath ? normPath.split('/').pop() || '' : ''
+    const labels = new Set<string>()
+    const shaMap = new Map<string, string>()
+    for (const te of inv.text_encoders || []) {
+      const sha = typeof te.sha256 === 'string' ? te.sha256.trim().toLowerCase() : ''
+      if (!sha || !/^[0-9a-f]{64}$/.test(sha)) continue
+      const name = typeof te.name === 'string' ? te.name.trim() : ''
+      const rawPath = typeof te.path === 'string' ? te.path.trim() : ''
+      const normPath = normalizePath(rawPath)
+      const basename = normPath ? normPath.split('/').pop() || '' : ''
 
-        const matchedFamilies: string[] = []
-        if (normPath) {
-          for (const [family] of TEXT_ENCODER_FAMILY_KEYS) {
-            const roots = rootsByFamily.get(family) || []
-            if (roots.some((root) => pathMatchesRoot(normPath, root))) {
-              matchedFamilies.push(family)
-            }
+      const matchedFamilies: string[] = []
+      if (normPath) {
+        for (const [family] of TEXT_ENCODER_FAMILY_KEYS) {
+          const roots = rootsByFamily.get(family) || []
+          if (roots.some((root) => pathMatchesRoot(normPath, root))) {
+            matchedFamilies.push(family)
           }
         }
-        for (const family of matchedFamilies) {
-          labels.add(`${family}/${normPath}`)
-        }
+      }
+      for (const family of matchedFamilies) {
+        labels.add(`${family}/${normPath}`)
+      }
 
-        const mapKeys = new Set<string>()
-        if (name) mapKeys.add(name)
-        if (rawPath) mapKeys.add(rawPath)
-        if (normPath) mapKeys.add(normPath)
-        if (basename) mapKeys.add(basename)
-        if (normPath) {
-          for (const prefix of TEXT_ENCODER_PREFIXES) {
-            mapKeys.add(`${prefix}/${normPath}`)
-          }
-        }
-        for (const key of mapKeys) {
-          shaMap.set(key, sha)
+      const mapKeys = new Set<string>()
+      if (name) mapKeys.add(name)
+      if (rawPath) mapKeys.add(rawPath)
+      if (normPath) mapKeys.add(normPath)
+      if (basename) mapKeys.add(basename)
+      if (normPath) {
+        for (const prefix of TEXT_ENCODER_PREFIXES) {
+          mapKeys.add(`${prefix}/${normPath}`)
         }
       }
-      textEncoderChoices.value = Array.from(labels).sort()
-      textEncoderShaMap.value = shaMap
+      for (const key of mapKeys) {
+        shaMap.set(key, sha)
+      }
+    }
+    textEncoderChoices.value = Array.from(labels).sort()
+    textEncoderShaMap.value = shaMap
 
-      // Also populate VAE SHA map
-      const vaeMap = new Map<string, string>()
-      for (const v of inv.vaes || []) {
-        const sha = typeof v.sha256 === 'string' ? v.sha256 : ''
+    // Also populate VAE SHA map
+    const vaeMap = new Map<string, string>()
+    for (const v of inv.vaes || []) {
+      const sha = typeof v.sha256 === 'string' ? v.sha256 : ''
+      if (!sha) continue
+      const name = typeof v.name === 'string' ? v.name : ''
+      const rawPath = typeof v.path === 'string' ? v.path : ''
+      const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
+      const keys = new Set<string>()
+      if (name) keys.add(name)
+      if (rawPath) keys.add(rawPath)
+      if (normPath) keys.add(normPath)
+      const basename = normPath ? normPath.split('/').pop() : name
+      if (basename) keys.add(basename)
+      if (normPath) {
+        for (const prefix of TEXT_ENCODER_PREFIXES) {
+          keys.add(`${prefix}/${normPath}`)
+        }
+      }
+      for (const key of keys) {
+        vaeMap.set(key, sha)
+      }
+    }
+    vaeShaMap.value = vaeMap
+
+    const wanMap = new Map<string, string>()
+    const wanFiles = (inv as any)?.wan22?.gguf
+    if (Array.isArray(wanFiles)) {
+      for (const w of wanFiles) {
+        const sha = typeof w?.sha256 === 'string' ? w.sha256 : ''
         if (!sha) continue
-        const name = typeof v.name === 'string' ? v.name : ''
-        const rawPath = typeof v.path === 'string' ? v.path : ''
+        const name = typeof w?.name === 'string' ? w.name : ''
+        const rawPath = typeof w?.path === 'string' ? w.path : ''
         const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
         const keys = new Set<string>()
         if (name) keys.add(name)
@@ -380,48 +400,13 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
         if (normPath) keys.add(normPath)
         const basename = normPath ? normPath.split('/').pop() : name
         if (basename) keys.add(basename)
-        if (normPath) {
-          for (const prefix of TEXT_ENCODER_PREFIXES) {
-            keys.add(`${prefix}/${normPath}`)
-          }
-        }
         for (const key of keys) {
-          vaeMap.set(key, sha)
+          wanMap.set(key, sha)
         }
       }
-      vaeShaMap.value = vaeMap
-
-      const wanMap = new Map<string, string>()
-      const wanFiles = (inv as any)?.wan22?.gguf
-      if (Array.isArray(wanFiles)) {
-        for (const w of wanFiles) {
-          const sha = typeof w?.sha256 === 'string' ? w.sha256 : ''
-          if (!sha) continue
-          const name = typeof w?.name === 'string' ? w.name : ''
-          const rawPath = typeof w?.path === 'string' ? w.path : ''
-          const normPath = rawPath ? rawPath.replace(/\\+/g, '/') : ''
-          const keys = new Set<string>()
-          if (name) keys.add(name)
-          if (rawPath) keys.add(rawPath)
-          if (normPath) keys.add(normPath)
-          const basename = normPath ? normPath.split('/').pop() : name
-          if (basename) keys.add(basename)
-          for (const key of keys) {
-            wanMap.set(key, sha)
-          }
-        }
-      }
-      wanGgufShaMap.value = wanMap
-      sanitizeTextEncoderOverrides()
-    } catch (e) {
-      console.error('[quicksettings] failed to load text encoders from inventory', e)
-      textEncoderChoices.value = []
-      textEncoderRootLabels.value = new Set()
-      textEncoderShaMap.value = new Map()
-      vaeShaMap.value = new Map()
-      wanGgufShaMap.value = new Map()
-      sanitizeTextEncoderOverrides()
     }
+    wanGgufShaMap.value = wanMap
+    sanitizeTextEncoderOverrides()
   }
 
   function resolveTextEncoderSha(label: string | null | undefined): string | undefined {

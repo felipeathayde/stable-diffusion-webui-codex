@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-05
+Last Review: 2026-02-06
 Status: Active
 
 ## Purpose
@@ -47,4 +47,6 @@ Status: Active
 - 2026-02-03: Generation request contract uses hires naming only: txt2img uses `extras.hires` and img2img uses `img2img_hires_*` for the second pass.
 - 2026-02-03: `upscale.py` validates `upscalers/manifest.json` (schema v1) and enriches `/api/upscalers/remote` results with two categories (curated vs other files) via `weights[].curated` + `weights[].meta`, while preserving raw listing fallback.
 - 2026-02-05: `models.py` engine capabilities now include `anima` in `engine_id_to_semantic_engine` mapping (semantic tag `anima`).
+- 2026-02-06: `models.py` engine capabilities now include backend-owned `dependency_checks` (ready + row list) so frontend tabs can render readiness panels and disable generation when dependencies are missing.
+- 2026-02-06: `models.py` `engine_id_to_semantic_engine` now also maps `flux1_fill -> flux1` to keep strict frontend known-id semantic resolution in sync.
 - 2026-02-05: `ui.py` tab allowlist now accepts `anima`; unknown/empty tab types are fail-loud (`400` for create payloads, `500` on invalid persisted `tabs.json` entries) instead of silent coercion to `sd15`.

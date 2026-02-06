@@ -54,7 +54,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 defineProps<{ title: string; enabled: boolean }>()
-const emit = defineEmits(['rename', 'duplicate', 'remove', 'set-enabled', 'load', 'unload', 'generate'])
+const emit = defineEmits(['rename', 'duplicate', 'remove', 'set-enabled', 'load', 'unload', 'generate', 'send-to-workflows'])
 
 function onTitleInput(e: Event): void {
   emit('rename', (e.target as HTMLInputElement).value)

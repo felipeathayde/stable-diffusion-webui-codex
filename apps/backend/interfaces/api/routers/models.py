@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories, samplers/schedulers, embeddings, and engine capabilities.
-Capability surfaces include per-engine asset contracts so the UI can enforce sha-only external asset selection deterministically.
+Capability surfaces include per-engine asset contracts plus backend-owned dependency checks so the UI can enforce sha-only external asset
+selection and readiness gating deterministically.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for model/inventory endpoints.
@@ -175,6 +176,7 @@ def build_router(
                 contract_for_engine,
                 known_engine_ids,
             )
+            from apps.backend.interfaces.api.dependency_checks import build_engine_dependency_checks
             try:
                 from apps.backend.runtime.memory.smart_offload import get_smart_cache_stats
 
@@ -200,6 +202,7 @@ def build_router(
                 # Flow family.
                 "flux1": "flux1",
                 "flux1_kontext": "flux1",
+                "flux1_fill": "flux1",
                 "flux1_chroma": "chroma",
                 "zimage": "zimage",
                 "anima": "anima",
@@ -210,12 +213,18 @@ def build_router(
                 "svd": "svd",
                 "hunyuan_video": "hunyuan_video",
             }
+            engines = serialize_engine_capabilities()
+            dependency_checks = build_engine_dependency_checks(
+                engine_capabilities=engines,
+                model_api=model_api,
+            )
             return {
-                "engines": serialize_engine_capabilities(),
+                "engines": engines,
                 "families": serialize_family_capabilities(),
                 "smart_cache": cache_stats,
                 "asset_contracts": asset_contracts,
                 "engine_id_to_semantic_engine": engine_id_to_semantic_engine,
+                "dependency_checks": dependency_checks,
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"failed to read engine capabilities: {exc}")

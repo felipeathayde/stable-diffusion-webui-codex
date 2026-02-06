@@ -1,0 +1,363 @@
+"""
+Repository: stable-diffusion-webui-codex
+Repository URL: https://github.com/sangoi-exe/stable-diffusion-webui-codex
+Author: Lucas Freire Sangoi
+License: PolyForm Noncommercial 1.0.0
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+Required Notice: see NOTICE
+
+Purpose: Backend-owned engine dependency check contract for WebUI readiness surfaces.
+Builds deterministic per-engine check rows from backend inventory/model-registry state so the frontend can render a strict
+"Dependency Check" panel and disable generation when required assets are missing.
+
+Symbols (top-level; keep in sync; no ghosts):
+- `DependencyCheckRow` (dataclass): One backend dependency row (`id/label/ok/message`) rendered by the frontend.
+- `EngineDependencyStatus` (dataclass): Aggregated dependency status for one semantic engine (`ready + checks`).
+- `build_engine_dependency_checks` (function): Build per-engine dependency status map for `/api/engines/capabilities`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+from apps.backend.core.contracts.asset_requirements import contract_for_engine
+from apps.backend.infra.config.paths import get_paths_for
+from apps.backend.inventory import cache as inventory_cache
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyCheckRow:
+    """One backend dependency check row shown in the frontend panel."""
+
+    id: str
+    label: str
+    ok: bool
+    message: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "id": str(self.id),
+            "label": str(self.label),
+            "ok": bool(self.ok),
+            "message": str(self.message),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EngineDependencyStatus:
+    """Aggregated dependency checks for one semantic engine surface."""
+
+    ready: bool
+    checks: tuple[DependencyCheckRow, ...]
+
+    @classmethod
+    def from_checks(cls, checks: Iterable[DependencyCheckRow]) -> "EngineDependencyStatus":
+        rows = tuple(checks)
+        return cls(
+            ready=all(bool(row.ok) for row in rows),
+            checks=rows,
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "ready": bool(self.ready),
+            "checks": [row.as_dict() for row in self.checks],
+        }
+
+
+_CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
+    {
+        "sd15",
+        "sdxl",
+        "flux1",
+        "chroma",
+        "zimage",
+        "anima",
+        "svd",
+        "hunyuan_video",
+    }
+)
+
+_CONTRACT_ENGINE_BY_SEMANTIC: Mapping[str, str] = {
+    "sd15": "sd15",
+    "sdxl": "sdxl",
+    "flux1": "flux1",
+    "chroma": "flux1_chroma",
+    "zimage": "zimage",
+    "anima": "anima",
+}
+
+_WAN_METADATA_PREFIX = "wan-ai/wan2.2-"
+
+
+def _count_list_entries(value: object) -> int:
+    if not isinstance(value, list):
+        return 0
+    return sum(1 for item in value if isinstance(item, dict))
+
+
+def _count_wan_metadata_repos(value: object) -> int:
+    if not isinstance(value, list):
+        return 0
+    count = 0
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip().lower()
+        if name.startswith(_WAN_METADATA_PREFIX):
+            count += 1
+    return count
+
+
+def _normalized_path(value: object) -> str:
+    text = str(value or "").strip().replace("\\", "/")
+    if len(text) <= 1:
+        return text
+    return text.rstrip("/")
+
+
+def _path_in_roots(path: str, roots: list[str]) -> bool:
+    norm_path = _normalized_path(path)
+    if not norm_path:
+        return False
+
+    for raw_root in roots:
+        root = _normalized_path(raw_root)
+        if not root:
+            continue
+        if norm_path == root or norm_path.startswith(root + "/"):
+            return True
+        if root.startswith("/"):
+            rel = root.lstrip("/")
+            if norm_path.endswith("/" + rel) or ("/" + rel + "/") in norm_path:
+                return True
+    return False
+
+
+def _count_assets_in_roots(value: object, roots: list[str]) -> int:
+    if not isinstance(value, list):
+        return 0
+    count = 0
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if _path_in_roots(path, roots):
+            count += 1
+    return count
+
+
+def _text_encoder_slots(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    slots: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        slot = str(item.get("slot") or "").strip()
+        if slot:
+            slots.add(slot)
+    return slots
+
+
+def _checkpoint_count(model_api: Any) -> int:
+    records = model_api.list_checkpoints(refresh=False)
+    if isinstance(records, list):
+        return len(records)
+    return 0
+
+
+def build_engine_dependency_checks(
+    *,
+    engine_capabilities: Mapping[str, Mapping[str, object]],
+    model_api: Any,
+) -> dict[str, dict[str, object]]:
+    """Build backend-owned dependency checks for semantic engines.
+
+    Args:
+        engine_capabilities: Capability surfaces keyed by semantic engine.
+        model_api: Runtime models API facade (must expose `list_checkpoints(refresh=...)`).
+
+    Returns:
+        Dict keyed by semantic engine where each value has:
+        - `ready`: bool
+        - `checks`: list of dependency rows (`id`, `label`, `ok`, `message`)
+    """
+
+    inventory = inventory_cache.get()
+    checkpoint_count = _checkpoint_count(model_api)
+    vae_count = _count_list_entries(inventory.get("vaes"))
+    text_encoder_count = _count_list_entries(inventory.get("text_encoders"))
+    text_encoder_slots = _text_encoder_slots(inventory.get("text_encoders"))
+    wan_model_count = _count_list_entries(inventory.get("wan22"))
+    wan_metadata_count = _count_wan_metadata_repos(inventory.get("metadata"))
+    wan_tenc_roots = [str(Path(p).resolve()) for p in get_paths_for("wan22_tenc")]
+    wan_vae_roots = [str(Path(p).resolve()) for p in get_paths_for("wan22_vae")]
+    wan_text_encoder_count = _count_assets_in_roots(inventory.get("text_encoders"), wan_tenc_roots)
+    wan_vae_count = _count_assets_in_roots(inventory.get("vaes"), wan_vae_roots)
+
+    result: dict[str, dict[str, object]] = {}
+    for semantic_engine in sorted(engine_capabilities.keys()):
+        checks: list[DependencyCheckRow] = []
+
+        checks.append(
+            DependencyCheckRow(
+                id="capability_surface",
+                label="Capability Surface",
+                ok=True,
+                message=f"Backend capability surface '{semantic_engine}' loaded.",
+            )
+        )
+
+        if semantic_engine in _CHECKPOINT_REQUIRED_ENGINES:
+            has_checkpoint = checkpoint_count > 0
+            checks.append(
+                DependencyCheckRow(
+                    id="checkpoint_inventory",
+                    label="Model Checkpoints",
+                    ok=has_checkpoint,
+                    message=(
+                        f"{checkpoint_count} checkpoint(s) discovered by backend registry."
+                        if has_checkpoint
+                        else (
+                            "No checkpoints discovered by backend registry. "
+                            "Add at least one checkpoint and refresh model inventory."
+                        )
+                    ),
+                )
+            )
+
+        contract_engine = _CONTRACT_ENGINE_BY_SEMANTIC.get(semantic_engine)
+        if contract_engine is not None:
+            contract = contract_for_engine(contract_engine)
+            if contract.requires_vae:
+                has_vae = vae_count > 0
+                checks.append(
+                    DependencyCheckRow(
+                        id="vae_inventory",
+                        label="VAE Inventory",
+                        ok=has_vae,
+                        message=(
+                            f"{vae_count} VAE file(s) discovered."
+                            if has_vae
+                            else "No VAE files discovered. Configure VAE roots and refresh inventory."
+                        ),
+                    )
+                )
+            if contract.tenc_count > 0:
+                required = int(contract.tenc_count)
+                has_tenc = text_encoder_count >= required
+                checks.append(
+                    DependencyCheckRow(
+                        id="text_encoder_inventory",
+                        label="Text Encoder Inventory",
+                        ok=has_tenc,
+                        message=(
+                            f"{text_encoder_count} text encoder file(s) discovered (requires >= {required})."
+                            if has_tenc
+                            else (
+                                f"Only {text_encoder_count} text encoder file(s) discovered "
+                                f"(requires >= {required}). Configure text-encoder roots and refresh inventory."
+                            )
+                        ),
+                    )
+                )
+                required_slots = tuple(str(slot) for slot in contract.tenc_slots)
+                if required_slots:
+                    missing_slots = [slot for slot in required_slots if slot not in text_encoder_slots]
+                    has_required_slots = len(missing_slots) == 0
+                    checks.append(
+                        DependencyCheckRow(
+                            id="text_encoder_slots",
+                            label="Text Encoder Slots",
+                            ok=has_required_slots,
+                            message=(
+                                f"Required slots available: {', '.join(required_slots)}."
+                                if has_required_slots
+                                else (
+                                    "Missing required text encoder slot(s): "
+                                    f"{', '.join(missing_slots)}."
+                                )
+                            ),
+                        )
+                    )
+
+        if semantic_engine == "wan22":
+            has_wan_models = wan_model_count > 0
+            checks.append(
+                DependencyCheckRow(
+                    id="wan_models_inventory",
+                    label="WAN Models",
+                    ok=has_wan_models,
+                    message=(
+                        f"{wan_model_count} WAN GGUF model(s) discovered."
+                        if has_wan_models
+                        else "No WAN GGUF models discovered. Configure WAN roots and refresh inventory."
+                    ),
+                )
+            )
+
+            has_wan_text_encoder = wan_text_encoder_count > 0
+            checks.append(
+                DependencyCheckRow(
+                    id="wan_text_encoder_inventory",
+                    label="WAN Text Encoder",
+                    ok=has_wan_text_encoder,
+                    message=(
+                        f"{wan_text_encoder_count} WAN text encoder file(s) discovered."
+                        if has_wan_text_encoder
+                        else (
+                            "No text encoders discovered under WAN roots. "
+                            "Configure `wan22_tenc` roots and refresh inventory."
+                        )
+                    ),
+                )
+            )
+
+            has_wan_vae = wan_vae_count > 0
+            checks.append(
+                DependencyCheckRow(
+                    id="wan_vae_inventory",
+                    label="WAN VAE",
+                    ok=has_wan_vae,
+                    message=(
+                        f"{wan_vae_count} WAN VAE file(s) discovered."
+                        if has_wan_vae
+                        else (
+                            "No VAE files discovered under WAN roots. "
+                            "Configure `wan22_vae` roots and refresh inventory."
+                        )
+                    ),
+                )
+            )
+
+            has_wan_metadata = wan_metadata_count > 0
+            checks.append(
+                DependencyCheckRow(
+                    id="wan_metadata_inventory",
+                    label="WAN Metadata",
+                    ok=has_wan_metadata,
+                    message=(
+                        f"{wan_metadata_count} WAN metadata repo(s) discovered under apps/backend/huggingface."
+                        if has_wan_metadata
+                        else (
+                            "No WAN metadata repository discovered under apps/backend/huggingface. "
+                            "Vendor a Wan2.2 metadata repo (e.g. Wan-AI/Wan2.2-I2V-A14B-Diffusers)."
+                        )
+                    ),
+                )
+            )
+
+        status = EngineDependencyStatus.from_checks(checks)
+        result[semantic_engine] = status.as_dict()
+
+    return result
+
+
+__all__ = [
+    "DependencyCheckRow",
+    "EngineDependencyStatus",
+    "build_engine_dependency_checks",
+]

@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/anima Overview
 <!-- tags: backend, runtime, families, anima, cosmos, predict2 -->
 Date: 2026-02-05
-Last Review: 2026-02-05
+Last Review: 2026-02-06
 Status: Draft
 
 ## Purpose
@@ -12,10 +12,14 @@ Status: Draft
 - `apps/backend/runtime/families/anima/dit.py` — Cosmos Predict2 DiT building blocks + `MiniTrainDiT`.
 - `apps/backend/runtime/families/anima/llm_adapter.py` — Anima `LLMAdapter` implementation (dual-tokenization adapter; weights in core checkpoint).
 - `apps/backend/runtime/families/anima/model.py` — `AnimaDiT` wrapper (MiniTrainDiT + adapter glue).
+- `apps/backend/runtime/families/anima/text_encoder.py` — Qwen3-0.6B text encoder loader + offline tokenizers (Qwen + T5 ids/weights).
 - `apps/backend/runtime/families/anima/loader.py` — Strict loader utilities (fail-loud missing/unexpected key diagnostics).
+- `apps/backend/runtime/families/anima/wan_vae.py` — WAN 2.1 image-mode VAE (T=1) + strict header inference / variant gating.
 
 ## Notes
 - Image inference uses 4D latents (`B,C,H,W`) in Codex sampling; Cosmos Predict2 core expects 5D (`B,C,T,H,W`). The Anima runtime must treat images as `T=1` and preserve shape on output.
 - Sampling semantics must match ComfyUI discrete flow: `shift=3.0`, `multiplier=1.0`, prediction type `const` (see `.sangoi/research/models/hf-circlestone-labs-anima.md`).
-- `wan_vae.py` performs explicit header-key variant detection (`2.1` vs `2.2`) before loading weights; Anima v1 currently ports `2.1` only and must fail loud on `2.2`.
+- `text_encoder.py` resolves offline tokenizers from `apps/backend/huggingface/circlestone-labs/Anima/{qwen25_tokenizer,t5_tokenizer}` by default (override via `CODEX_ANIMA_QWEN_TOKENIZER_PATH` / `CODEX_ANIMA_T5_TOKENIZER_PATH`).
+- `wan_vae.py` performs explicit header-key variant detection (`2.1` vs `2.2`) before weight load; Anima v1 currently ports `2.1` only and must fail loud on `2.2`.
+- `wan_vae.py` infers `dim` from `decoder.head.0.gamma.shape` and expects broadcastable `(dim, 1, 1, 1)` (WAN 2.1); errors distinguish missing vs invalid shape, and `encoder.conv1.weight.shape[0]` must match `dim` (fail loud on mismatch).
 - Do not copy `.refs/**` code into `apps/**`; extract intent and re-implement cleanly.

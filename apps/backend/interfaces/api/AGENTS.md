@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-03
+Last Review: 2026-02-06
 Status: Active
 
 ## Purpose
@@ -25,6 +25,7 @@ Status: Active
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — shared generation task worker helpers (image task runners + engine options + PNG encoding).
 - `apps/backend/interfaces/api/serializers.py` — checkpoint serialization helper.
 - `apps/backend/interfaces/api/upscalers_manifest.py` — `upscalers/manifest.json` schema validation/normalization (used by `/api/upscalers/remote`).
+- `apps/backend/interfaces/api/dependency_checks.py` — backend-owned dependency-check builder used by `/api/engines/capabilities`.
 
 ## Notes
 - `run_api.py` is composition-only: it wires routers and mounts the UI; route logic lives in `routers/`.
@@ -37,3 +38,5 @@ Status: Active
 - 2026-01-24: Settings schema/values are now strict: schema is served from the generated registry (JSON fallback), and persisted values are pruned against the registry on startup (unknown keys dropped; invalid values clamped).
 - 2026-01-25: `run_api.py` migrated the deprecated `@app.on_event("startup")` hook to FastAPI lifespan handlers (removes DeprecationWarning).
 - 2026-01-31: Added `interfaces/api/tasks/` to keep routers thin by centralizing shared generation task worker boilerplate (status/progress/result/end + engine options build for image modes).
+- 2026-02-06: Added backend-owned `dependency_checks` contract for `/api/engines/capabilities` (ready + per-row checks), built in `dependency_checks.py`.
+- 2026-02-06: `/api/engines/capabilities` key-space map now includes `flux1_fill -> flux1` in `engine_id_to_semantic_engine` for strict frontend taxonomy mapping parity.

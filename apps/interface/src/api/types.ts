@@ -33,6 +33,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `MemoryResponse` (interface): `/api/memory` response shape.
 - `VersionResponse` (interface): `/api/version` response shape.
 - `EngineCapabilities` (interface): Per-engine capability flags used to gate UI features.
+- `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
+- `EngineDependencyStatus` (interface): Aggregated dependency status (`ready + checks`) for one semantic engine.
 - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
 - `EngineAssetContract` (interface): Per-engine asset requirements contract exposed by the backend (VAE/text encoders).
 - `EngineAssetContractVariants` (interface): Base vs core-only contract variants for one engine id.
@@ -286,12 +288,25 @@ export interface EngineCapabilities {
   default_scheduler?: string | null
 }
 
+export interface EngineDependencyCheckRow {
+  id: string
+  label: string
+  ok: boolean
+  message: string
+}
+
+export interface EngineDependencyStatus {
+  ready: boolean
+  checks: EngineDependencyCheckRow[]
+}
+
 export interface EngineCapabilitiesResponse {
   engines: Record<string, EngineCapabilities>
   families?: Record<string, unknown>
   smart_cache?: Record<string, { hits: number; misses: number }>
   asset_contracts?: Record<string, EngineAssetContractVariants>
-  engine_id_to_semantic_engine?: Record<string, string>
+  engine_id_to_semantic_engine: Record<string, string>
+  dependency_checks: Record<string, EngineDependencyStatus>
 }
 
 export interface EngineAssetContract {

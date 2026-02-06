@@ -429,8 +429,13 @@ def infer_wan_vae_config_from_safetensors_header(header: Mapping[str, object]) -
     variant = detect_wan_vae_variant_from_header(header)
 
     dim_shape = _shape("decoder.head.0.gamma")
-    if dim_shape is None or len(dim_shape) != 1:
+    if dim_shape is None:
         raise RuntimeError("WAN VAE header missing decoder.head.0.gamma shape.")
+    if len(dim_shape) != 4 or tuple(dim_shape[1:]) != (1, 1, 1):
+        raise RuntimeError(
+            "WAN VAE invalid decoder.head.0.gamma shape: "
+            f"got {tuple(dim_shape)}, expected (dim, 1, 1, 1)."
+        )
     dim = int(dim_shape[0])
     if dim <= 0:
         raise RuntimeError(f"WAN VAE invalid dim inferred from decoder.head.0.gamma: {dim}")
@@ -438,6 +443,12 @@ def infer_wan_vae_config_from_safetensors_header(header: Mapping[str, object]) -
     conv1_shape = _shape("encoder.conv1.weight")
     if conv1_shape is None or len(conv1_shape) != 5:
         raise RuntimeError("WAN VAE header missing encoder.conv1.weight 5D shape.")
+    if int(conv1_shape[0]) != dim:
+        raise RuntimeError(
+            "WAN VAE header dim mismatch: "
+            f"decoder.head.0.gamma implies dim={dim}, "
+            f"but encoder.conv1.weight has out_channels={int(conv1_shape[0])}."
+        )
     image_channels = int(conv1_shape[1])
     if image_channels <= 0:
         raise RuntimeError(f"WAN VAE invalid image_channels inferred from encoder.conv1.weight: {image_channels}")
@@ -476,12 +487,13 @@ def load_wan_vae_from_safetensors(
         raise ValueError(f"Anima VAE must be a .safetensors file, got: {p}")
 
     header = read_safetensors_header(p)
-    cfg = infer_wan_vae_config_from_safetensors_header(header)
-    if cfg.variant == "2.2":
+    variant = detect_wan_vae_variant_from_header(header)
+    if variant == "2.2":
         raise NotImplementedError(
             "WAN VAE 2.2 detected by safetensors header keys; "
             "Anima v1 ports WAN 2.1 image-mode only (latent_channels=16)."
         )
+    cfg = infer_wan_vae_config_from_safetensors_header(header)
     if int(cfg.latent_channels) != 16:
         raise RuntimeError(f"WAN VAE latent_channels mismatch: got {cfg.latent_channels}, expected 16 for Anima.")
 

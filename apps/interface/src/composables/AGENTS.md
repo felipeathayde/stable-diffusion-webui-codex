@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-02-05
+Last Review: 2026-02-06
 Status: Active
 
 ## Purpose
@@ -32,3 +32,7 @@ Status: Active
 - 2026-01-03: Added standardized file header blocks to composables (doc-only change; part of rollout).
 - 2026-02-05: `useGeneration(tabId)` now hard-checks backend engine surface before request send; missing capabilities or unsupported mode (`supports_txt2img`/`supports_img2img`) fail loud with explicit errors.
 - 2026-02-05: `useGeneration` now exports `resolveEngineForRequest(...)` as the canonical tab-type/mode engine mapper; `ImageModelTab.vue` reuses it so disable-state and request preflight stay in parity.
+- 2026-02-06: `useVideoGeneration(tabId)` default WAN video params now include `returnFrames` (default false) and align interpolation defaults (`rifeEnabled`/`rifeModel`) with the canonical WAN params surface (prevents drift between store/view/composable defaults).
+- 2026-02-06: `useGeneration` engine mapping now delegates to `utils/engine_taxonomy.ts` so request engine-id resolution (`flux1_kontext`, `flux1_chroma`) is centralized and shared with other frontend modules.
+- 2026-02-06: `useVideoGeneration(tabId)` now consumes typed WAN tab params (`TabByType<'wan'>`) and shared `WanAssetsParams` from `model_tabs.ts` instead of local `tab.params as any` casting for core WAN param reads.
+- 2026-02-06: `useVideoGeneration(tabId)` now imports shared `WanAssetsParams` from `model_tabs.ts` (no local duplicate interface), keeping WAN asset typing aligned across store/view/composable layers.

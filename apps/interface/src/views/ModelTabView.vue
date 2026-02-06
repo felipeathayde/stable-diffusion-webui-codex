@@ -11,12 +11,17 @@ Loads the selected tab from the tabs store and mounts either `WANTab` or `ImageM
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabView` (component): Route view that mounts the correct model tab workspace.
+- `ImageTabType` (type): Non-WAN tab types supported by `ImageModelTab`.
+- `imageTabType` (computed): Normalized non-WAN type passed to `ImageModelTab`.
 -->
 
 <template>
   <section v-if="tab">
     <WANTab v-if="tab.type === 'wan'" :tab-id="tab.id" :key="tab.id" />
-    <ImageModelTab v-else :tab-id="tab.id" :key="tab.id" :type="tab.type as any" />
+    <ImageModelTab v-else-if="imageTabType" :tab-id="tab.id" :key="tab.id" :type="imageTabType" />
+    <div v-else class="panel">
+      <div class="panel-body">Unsupported tab type: {{ tab.type }}</div>
+    </div>
   </section>
   <section v-else>
     <div class="panel"><div class="panel-body">Tab não encontrada.</div></div>
@@ -24,11 +29,11 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { onMounted, computed, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import WANTab from './WANTab.vue'
 import ImageModelTab from './ImageModelTab.vue'
-import { useModelTabsStore } from '../stores/model_tabs'
+import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 
 const route = useRoute()
 const store = useModelTabsStore()
@@ -36,11 +41,15 @@ const store = useModelTabsStore()
 const id = computed(() => String(route.params.tabId || ''))
 const tab = computed(() => store.tabs.find(t => t.id === id.value) || null)
 
+type ImageTabType = Exclude<BaseTabType, 'wan'>
+
+const imageTabType = computed<ImageTabType | null>(() => {
+  const t = tab.value?.type
+  if (!t || t === 'wan') return null
+  return t
+})
+
 watch(id, (nextId) => {
   if (nextId) store.setActive(nextId)
 }, { immediate: true })
-
-onMounted(() => {
-  void store.load()
-})
 </script>

@@ -28,8 +28,10 @@ import type { Txt2ImgRequest } from '../api/payloads'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { AXIS_OPTIONS, buildCombos, labelOf, parseAxisValues, type AxisParam, type AxisValue, type XyzCell } from '../utils/xyz'
 import { useModelTabsStore, type ImageBaseParams } from './model_tabs'
+import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { useQuicksettingsStore } from './quicksettings'
 import { useUpscalersStore } from './upscalers'
+import { fallbackSamplingDefaultsForTabFamily, resolveImageRequestEngineId, type TabFamily } from '../utils/engine_taxonomy'
 
 type Status = 'idle' | 'running' | 'stopped' | 'error' | 'done'
 type StopMode = 'immediate' | 'after_current'
@@ -107,23 +109,27 @@ export const useXyzStore = defineStore('xyz', () => {
     progress.current = ''
   }
 
+  function resetStopState(): void {
+    stopRequested.value = false
+    stopMode.value = 'immediate'
+  }
+
   function buildBaseForm(): any {
     const tabs = useModelTabsStore()
     const quick = useQuicksettingsStore()
+    const caps = useEngineCapabilitiesStore()
     const activeTab = tabs.activeTab
     const params = activeTab?.params as ImageBaseParams | undefined
-    const engineKey = activeTab?.type === 'wan' ? 'wan22' : (activeTab?.type || 'sdxl')
+    const tabFamily = (activeTab?.type || 'sdxl') as TabFamily
+    const engineKey = resolveImageRequestEngineId(tabFamily, false)
     const checkpoint = String((params as any)?.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
     const resolvedModelSha = quick.resolveModelSha(modelLabel)
-    const samplingDefaults = (() => {
-      if (activeTab?.type === 'sd15') return { sampler: 'pndm', scheduler: 'ddim' }
-      if (activeTab?.type === 'sdxl') return { sampler: 'euler', scheduler: 'euler_discrete' }
-      if (activeTab?.type === 'flux1' || activeTab?.type === 'zimage' || activeTab?.type === 'chroma') {
-        return { sampler: 'euler', scheduler: 'simple' }
-      }
-      return { sampler: 'dpm++ 2m', scheduler: 'karras' }
-    })()
+    const fallbackSampling = fallbackSamplingDefaultsForTabFamily(tabFamily)
+    const samplingDefaults = caps.resolveSamplingDefaults(engineKey, {
+      fallbackSampler: fallbackSampling.sampler,
+      fallbackScheduler: fallbackSampling.scheduler,
+    })
     const sampler =
       (typeof params?.sampler === 'string' && params.sampler.trim())
         ? params.sampler
@@ -251,8 +257,7 @@ export const useXyzStore = defineStore('xyz', () => {
     }
 
     errorMessage.value = ''
-    stopRequested.value = false
-    stopMode.value = 'immediate'
+    resetStopState()
     status.value = 'running'
     resetProgress()
 

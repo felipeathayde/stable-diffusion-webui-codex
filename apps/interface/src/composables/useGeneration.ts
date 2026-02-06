@@ -30,6 +30,7 @@ import { getEngineConfig, type EngineType } from '../stores/engine_config'
 import { buildTxt2ImgPayload, type Txt2ImgRequest } from '../api/payloads'
 import { fetchTaskResult, startImg2Img, startTxt2Img, subscribeTask } from '../api/client'
 import type { GeneratedImage, TaskEvent } from '../api/types'
+import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
 
 export interface ImageRunHistoryItem {
   taskId: string
@@ -143,10 +144,7 @@ function defaultState(): GenerationState {
 }
 
 export function resolveEngineForRequest(tabType: string, useInitImage: boolean): string {
-  let engine = tabType === 'wan' ? 'wan22' : tabType
-  if (tabType === 'chroma') engine = 'flux1_chroma'
-  if (useInitImage && engine === 'flux1') engine = 'flux1_kontext'
-  return engine
+  return resolveImageRequestEngineId(tabType, useInitImage)
 }
 
 // Per-tab generation state (keyed by tab ID)

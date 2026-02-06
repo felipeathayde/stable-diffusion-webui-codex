@@ -110,6 +110,7 @@ def _clean_prompt_text(text: str, *, emphasis_name: str = "Original") -> str:
 def _default_qwen_tokenizer_candidates() -> list[Path]:
     repo_root = get_repo_root()
     return [
+        repo_root / "apps" / "backend" / "huggingface" / "circlestone-labs" / "Anima" / "qwen25_tokenizer",
         repo_root / "apps" / "backend" / "huggingface" / "Tongyi-MAI" / "Z-Image-Turbo" / "tokenizer",
         repo_root / "apps" / "backend" / "huggingface" / "Tongyi-MAI" / "Z-Image" / "tokenizer",
     ]
@@ -119,6 +120,7 @@ def _default_t5_tokenizer_candidates() -> list[Path]:
     repo_root = get_repo_root()
     # Prefer Flux T5 tokenizer mirror (tokenizer_2).
     return [
+        repo_root / "apps" / "backend" / "huggingface" / "circlestone-labs" / "Anima" / "t5_tokenizer",
         repo_root / "apps" / "backend" / "huggingface" / "black-forest-labs" / "FLUX.1-dev" / "tokenizer_2",
         repo_root / "apps" / "backend" / "huggingface" / "black-forest-labs" / "FLUX.1-Kontext-dev" / "tokenizer_2",
         repo_root / "apps" / "backend" / "huggingface" / "black-forest-labs" / "FLUX.1-schnell" / "tokenizer_2",
@@ -321,18 +323,24 @@ def load_anima_t5_tokenizer(tokenizer_path: str | None = None) -> Any:
         candidates=_default_t5_tokenizer_candidates(),
     )
 
-    vocab_size = getattr(tok, "vocab_size", None)
-    if vocab_size is not None:
-        try:
-            vocab_size = int(vocab_size)
-        except Exception:
-            vocab_size = None
-    if vocab_size is not None and vocab_size != 32128:
-        raise RuntimeError(f"Anima T5 tokenizer vocab_size mismatch: got {vocab_size}, expected 32128.")
+    token_count: int | None = None
+    try:
+        token_count = int(len(tok))
+    except Exception:
+        token_count = None
+    max_tokens = 32128
+    if token_count is not None and token_count > max_tokens:
+        raise RuntimeError(f"Anima T5 tokenizer is too large: got len={token_count}, expected <= {max_tokens}.")
 
     pad_id = getattr(tok, "pad_token_id", None)
     if pad_id is None:
         raise RuntimeError("Anima T5 tokenizer missing pad_token_id.")
+    try:
+        pad_id = int(pad_id)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Anima T5 tokenizer pad_token_id must be an int; got {pad_id!r}.") from exc
+    if token_count is not None and not (0 <= pad_id < token_count):
+        raise RuntimeError(f"Anima T5 tokenizer pad_token_id out of range: pad_token_id={pad_id} len={token_count}.")
 
     return tok
 

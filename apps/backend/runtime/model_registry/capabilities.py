@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
-Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine requiring sha-selected external assets.
+Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
@@ -128,10 +128,9 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         default_scheduler="simple",
     ),
     # Anima (Cosmos Predict2; flow-based; Qwen3-0.6B conditioning; classic CFG).
-    # Gated until full conditioning/inference path is ported end-to-end.
     SemanticEngine.ANIMA: EngineParamSurface(
-        supports_txt2img=False,
-        supports_img2img=False,
+        supports_txt2img=True,
+        supports_img2img=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=False,

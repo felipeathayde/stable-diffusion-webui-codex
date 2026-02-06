@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-02-05
+Last Review: 2026-02-06
 Status: Draft
 
 ## Purpose
@@ -21,7 +21,7 @@ Status: Draft
 - 2026-01-08: Added `flow_shift.py` as the canonical flow-shift resolver from diffusers `scheduler_config.json` (fixed + dynamic) and removed hard-coded `flow_shift` values from family runtime specs where the value is not a true family invariant (Flux/WAN22).
 - 2026-01-08: Refreshed file header blocks for `capabilities.py` and `flow_shift.py` to keep the Symbols lists in sync (doc-only change).
 - 2026-01-18: Semantic engine surface for `chroma` now declares `supports_img2img=true` to match the registered `flux1_chroma` engine task surface.
-- 2026-02-05: `SemanticEngine.ANIMA` capability surface is intentionally gated (`supports_txt2img=false`, `supports_img2img=false`) until the Anima conditioning path is fully ported; engine task exposure must stay in parity with this surface.
+- 2026-02-06: `SemanticEngine.ANIMA` capability surface now exposes `supports_txt2img=true` and `supports_img2img=true` after conditioning payload port (`crossattn` + pooled `vector` + `t5xxl_ids/t5xxl_weights`) and compile/sampler pass-through validation.
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

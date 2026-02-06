@@ -7,7 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Conditioning helpers for diffusion sampling (tensor and dict-based conditioning payloads).
-Enforces shape invariants and wraps conditioning tensors in small helper classes used by samplers and legacy adapters.
+Enforces shape invariants and wraps conditioning tensors in small helper classes used by samplers and legacy adapters, including optional
+dual-tokenization extras (`t5xxl_ids`/`t5xxl_weights`) required by Anima conditioning.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `repeat_to_batch_size` (function): Repeat/slice a tensor batch dimension to match a target batch size.
@@ -145,6 +146,12 @@ def compile_conditions(cond):
     if not isinstance(pooled_output, torch.Tensor) or pooled_output.ndim != 2:
         raise ValueError(f"'vector' must be a 2D tensor (B,V); got {type(pooled_output).__name__} shape={getattr(pooled_output,'shape',None)}")
 
+    if int(cross_attn.shape[0]) != int(pooled_output.shape[0]):
+        raise ValueError(
+            "conditioning batch mismatch: "
+            f"crossattn.B={int(cross_attn.shape[0])} vector.B={int(pooled_output.shape[0])}"
+        )
+
     result = dict(
         cross_attn=cross_attn,
         pooled_output=pooled_output,
@@ -155,7 +162,48 @@ def compile_conditions(cond):
     )
 
     if 'guidance' in cond:
-        result['model_conds']['guidance'] = Condition(cond['guidance'])
+        guidance = cond['guidance']
+        if not isinstance(guidance, torch.Tensor):
+            raise ValueError(f"'guidance' must be a tensor; got {type(guidance).__name__}")
+        if guidance.ndim != 1:
+            raise ValueError(f"'guidance' must be a 1D tensor (B,); got shape={tuple(guidance.shape)}")
+        if int(guidance.shape[0]) != int(cross_attn.shape[0]):
+            raise ValueError(
+                "conditioning batch mismatch: "
+                f"crossattn.B={int(cross_attn.shape[0])} guidance.B={int(guidance.shape[0])}"
+            )
+        result['model_conds']['guidance'] = Condition(guidance)
+
+    has_t5_ids = 't5xxl_ids' in cond
+    has_t5_weights = 't5xxl_weights' in cond
+    if has_t5_ids != has_t5_weights:
+        raise ValueError("conditioning must provide both 't5xxl_ids' and 't5xxl_weights' together")
+
+    if has_t5_ids:
+        t5xxl_ids = cond['t5xxl_ids']
+        t5xxl_weights = cond['t5xxl_weights']
+        if not isinstance(t5xxl_ids, torch.Tensor) or t5xxl_ids.ndim != 2:
+            raise ValueError(
+                f"'t5xxl_ids' must be a 2D tensor (B,S); got {type(t5xxl_ids).__name__} "
+                f"shape={getattr(t5xxl_ids, 'shape', None)}"
+            )
+        if not isinstance(t5xxl_weights, torch.Tensor) or t5xxl_weights.ndim != 2:
+            raise ValueError(
+                f"'t5xxl_weights' must be a 2D tensor (B,S); got {type(t5xxl_weights).__name__} "
+                f"shape={getattr(t5xxl_weights, 'shape', None)}"
+            )
+        if t5xxl_ids.shape != t5xxl_weights.shape:
+            raise ValueError(
+                "conditioning shape mismatch: "
+                f"t5xxl_ids={tuple(t5xxl_ids.shape)} t5xxl_weights={tuple(t5xxl_weights.shape)}"
+            )
+        if int(t5xxl_ids.shape[0]) != int(cross_attn.shape[0]):
+            raise ValueError(
+                "conditioning batch mismatch: "
+                f"crossattn.B={int(cross_attn.shape[0])} t5xxl_ids.B={int(t5xxl_ids.shape[0])}"
+            )
+        result['model_conds']['t5xxl_ids'] = Condition(t5xxl_ids.to(dtype=torch.long))
+        result['model_conds']['t5xxl_weights'] = Condition(t5xxl_weights)
 
     if 'image_latents' in cond and cond['image_latents'] is not None:
         image_latents = cond['image_latents']

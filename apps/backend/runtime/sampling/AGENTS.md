@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-01-31
+Last Review: 2026-02-06
 Status: Active
 
 ## Purpose
@@ -67,7 +67,8 @@ Status: Active
   - `cond=None` → `None` (semântica preservada).
   - `cond` tensor → tratado como cross-attn (B,S,C); erro se `ndim!=3`.
   - `cond` dict → deve conter `crossattn` (B,S,C) e `vector` (B,V); sem fallback.
-  - Produz `model_conds` com chaves canônicas: `c_crossattn`, `y` e, quando aplicável, `c_concat`.
+  - `t5xxl_ids`/`t5xxl_weights` são opcionais, mas obrigatoriamente em par; ambos 2D (B,S), com batch alinhado a `crossattn`.
+  - Produz `model_conds` com chaves canônicas: `c_crossattn`, `y` e, quando aplicável, `c_concat`/`guidance`/`image_latents`/`t5xxl_ids`/`t5xxl_weights`.
 
 ### Logging
 - DEBUG log (logger `backend.runtime.sampling.condition`) registra shapes compilados.

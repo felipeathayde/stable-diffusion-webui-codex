@@ -8,27 +8,36 @@ Required Notice: see NOTICE
 
 Purpose: Anima engine facade for txt2img/img2img.
 Defines the `AnimaEngine` class and integrates with the common `CodexDiffusionEngine` lifecycle.
-The full runtime (Cosmos Predict2 + Anima adapter + Qwen3-0.6B + VAE) is ported in phases; until then, loading fails loudly.
+Implements Anima conditioning using dual tokenization (Qwen embeddings + T5 ids/weights) and exposes canonical engine hooks used by shared pipelines.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_ANIMA_FACTORY` (constant): Factory used to assemble the Anima runtime and `CodexObjects`.
+- `_AnimaPromptList` (class): Prompt wrapper carrying shared prompt metadata flags for Anima conditioning.
 - `_canonical_device_label` (function): Normalize device identity labels for strict runtime consistency checks.
+- `_resolve_t5_max_length` (function): Resolve fail-loud max-length policy for Anima T5 tokenization.
 - `AnimaEngine` (class): Engine facade registered under engine id `anima`.
 """
 
 from __future__ import annotations
 
+import os
 import logging
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import torch
 
 from apps.backend.core.engine_interface import EngineCapabilities, TaskType
 from apps.backend.engines.common.base import CodexDiffusionEngine, CodexObjects
+from apps.backend.engines.common.model_scopes import stage_scoped_model_load
+from apps.backend.engines.common.prompt_wrappers import PromptListBase
 from apps.backend.engines.common.runtime_lifecycle import require_runtime
+from apps.backend.engines.common.tensor_tree import detach_to_cpu
 from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, SemanticEngine
 from apps.backend.runtime.model_registry.specs import ModelFamily
+from apps.backend.runtime.memory import memory_management
+from apps.backend.runtime.memory.config import DeviceRole
 from apps.backend.runtime.models.loader import DiffusionModelBundle
+from apps.backend.runtime.families.anima.text_encoder import tokenize_t5_with_weights
 
 from .factory import CodexAnimaFactory
 from .spec import ANIMA_SPEC, AnimaEngineRuntime
@@ -36,6 +45,17 @@ from .spec import ANIMA_SPEC, AnimaEngineRuntime
 
 logger = logging.getLogger("backend.engines.anima")
 _ANIMA_FACTORY = CodexAnimaFactory(spec=ANIMA_SPEC)
+
+
+class _AnimaPromptList(PromptListBase):
+    def __init__(
+        self,
+        items: Iterable[str],
+        *,
+        is_negative_prompt: bool,
+        smart_cache: bool | None,
+    ) -> None:
+        super().__init__(items, is_negative_prompt=is_negative_prompt, smart_cache=smart_cache)
 
 
 def _canonical_device_label(value: object, *, field_name: str) -> str:
@@ -61,6 +81,17 @@ def _canonical_device_label(value: object, *, field_name: str) -> str:
     return str(device)
 
 
+def _resolve_t5_max_length() -> int:
+    raw = str(os.getenv("CODEX_ANIMA_T5_MAX_LENGTH", "4096") or "4096").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"CODEX_ANIMA_T5_MAX_LENGTH must be an integer > 0, got: {raw!r}") from exc
+    if value <= 0:
+        raise ValueError(f"CODEX_ANIMA_T5_MAX_LENGTH must be > 0, got: {value}")
+    return value
+
+
 class AnimaEngine(CodexDiffusionEngine):
     """Anima engine (Cosmos Predict2 + Anima adapter)."""
 
@@ -84,6 +115,21 @@ class AnimaEngine(CodexDiffusionEngine):
             model_types=("anima",),
             devices=("cpu", "cuda"),
             precision=("fp16", "bf16", "fp32"),
+        )
+
+    def _prepare_prompt_wrappers(
+        self,
+        texts: list[str],
+        proc: Any,
+        *,
+        is_negative: bool,
+    ) -> _AnimaPromptList:
+        smart_flag = getattr(proc, "smart_cache", None)
+        smart_value = None if smart_flag is None else bool(smart_flag)
+        return _AnimaPromptList(
+            [str(t or "") for t in texts],
+            is_negative_prompt=is_negative,
+            smart_cache=smart_value,
         )
 
     @property
@@ -135,8 +181,104 @@ class AnimaEngine(CodexDiffusionEngine):
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
-        raise NotImplementedError("Anima text conditioning not yet ported.")
+        runtime = self._require_runtime()
+        qwen_patcher = self.codex_objects.text_encoders["qwen3"]
+
+        texts = tuple(str(x or "") for x in prompt)
+        is_negative = bool(getattr(prompt, "is_negative_prompt", False))
+        smart_flag = getattr(prompt, "smart_cache", None)
+        use_cache = bool(smart_flag) if smart_flag is not None else self.smart_cache_enabled
+        qwen_max_length = int(getattr(runtime.text.qwen3_text, "max_length", 512) or 512)
+        t5_max_length = _resolve_t5_max_length()
+        cache_key = (texts, is_negative, qwen_max_length, t5_max_length)
+
+        cached = self._get_cached_cond(cache_key, bucket_name="anima.conditioning", enabled=use_cache)
+        if isinstance(cached, dict):
+            target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+            core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
+            return {
+                "crossattn": cached["crossattn"].to(device=target_device, dtype=core_dtype),
+                "vector": cached["vector"].to(device=target_device, dtype=core_dtype),
+                "t5xxl_ids": cached["t5xxl_ids"].to(device=target_device, dtype=torch.long),
+                "t5xxl_weights": cached["t5xxl_weights"].to(device=target_device, dtype=core_dtype),
+            }
+
+        with stage_scoped_model_load(
+            qwen_patcher,
+            smart_offload_enabled=self.smart_offload_enabled,
+            manager=memory_management.manager,
+        ):
+            crossattn = runtime.text.qwen3_text(list(texts))
+            if not isinstance(crossattn, torch.Tensor) or crossattn.ndim != 3:
+                raise RuntimeError(
+                    f"Anima Qwen text encoder returned invalid crossattn tensor: "
+                    f"type={type(crossattn).__name__} shape={getattr(crossattn, 'shape', None)}"
+                )
+
+            core_dtype = memory_management.manager.dtype_for_role(DeviceRole.CORE)
+            crossattn = crossattn.to(dtype=core_dtype)
+            vector = crossattn.mean(dim=1)
+            if vector.ndim != 2:
+                raise RuntimeError(
+                    f"Anima pooled vector has invalid shape: expected 2D (B,C), got {tuple(vector.shape)}"
+                )
+
+            t5xxl_ids, t5xxl_weights = tokenize_t5_with_weights(
+                tokenizer=runtime.text.t5_tokenizer,
+                texts=list(texts),
+                max_length=t5_max_length,
+            )
+            if t5xxl_ids.ndim != 2 or t5xxl_weights.ndim != 2:
+                raise RuntimeError(
+                    "Anima T5 tokenization produced invalid tensor ranks: "
+                    f"ids_ndim={t5xxl_ids.ndim} weights_ndim={t5xxl_weights.ndim}"
+                )
+            if t5xxl_ids.shape != t5xxl_weights.shape:
+                raise RuntimeError(
+                    "Anima T5 tokenization ids/weights shape mismatch: "
+                    f"ids={tuple(t5xxl_ids.shape)} weights={tuple(t5xxl_weights.shape)}"
+                )
+            if int(t5xxl_ids.shape[0]) != int(crossattn.shape[0]):
+                raise RuntimeError(
+                    "Anima conditioning batch mismatch between Qwen embeddings and T5 tokenization: "
+                    f"crossattn.B={int(crossattn.shape[0])} t5.B={int(t5xxl_ids.shape[0])}"
+                )
+
+            target_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+            cond = {
+                "crossattn": crossattn.to(device=target_device, dtype=core_dtype),
+                "vector": vector.to(device=target_device, dtype=core_dtype),
+                "t5xxl_ids": t5xxl_ids.to(device=target_device, dtype=torch.long),
+                "t5xxl_weights": t5xxl_weights.to(device=target_device, dtype=core_dtype),
+            }
+
+            if use_cache:
+                self._set_cached_cond(cache_key, detach_to_cpu(cond), enabled=use_cache)
+            return cond
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
-        raise NotImplementedError("Anima prompt length calculation not yet ported.")
+        runtime = self._require_runtime()
+        prompt_text = str(prompt or "")
+
+        qwen_tokens = runtime.text.qwen3_text.tokenize([prompt_text])
+        if not (isinstance(qwen_tokens, list) and qwen_tokens and isinstance(qwen_tokens[0], list)):
+            raise RuntimeError("Anima Qwen tokenizer returned invalid tokenization output for prompt length calculation.")
+        qwen_len = len(qwen_tokens[0])
+        qwen_max = int(getattr(runtime.text.qwen3_text, "max_length", qwen_len) or qwen_len)
+
+        t5_max = _resolve_t5_max_length()
+        t5_ids, _t5_weights = tokenize_t5_with_weights(
+            tokenizer=runtime.text.t5_tokenizer,
+            texts=[prompt_text],
+            max_length=t5_max,
+        )
+        if t5_ids.ndim != 2:
+            raise RuntimeError(
+                f"Anima T5 tokenizer returned invalid ids tensor rank for prompt length calculation: ndim={t5_ids.ndim}"
+            )
+        t5_len = int(t5_ids.shape[1])
+
+        current = max(qwen_len, t5_len)
+        maximum = max(current, qwen_max, t5_max)
+        return current, maximum

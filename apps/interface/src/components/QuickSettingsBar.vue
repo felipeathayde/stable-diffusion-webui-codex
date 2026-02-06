@@ -17,12 +17,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `syncAdvancedHeight` (function): Measures/synchronizes advanced-row height for smooth expand/collapse transitions.
 - `toggleAdvancedRow` (function): Toggles the advanced row (uses animation helpers and persisted UI state).
 - `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
-- `TabFamily` (type): Normalized model family identifiers used for per-family UI filtering (`sd15`/`sdxl`/`flux1`/`chroma`/`wan`/`zimage`/`anima`).
-- `TAB_FAMILY_ALIASES` (const): Canonical alias map used to normalize raw family identifiers.
-- `normalizeTabFamily` (function): Normalizes unknown inputs to a `TabFamily` (or `null`).
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
 - `normalizePath` (function): Normalizes paths for stable comparisons (slash/case handling).
 - `MetadataKind` (type): Discriminant for inline metadata popups (checkpoint/TE/VAE/WAN stage).
+- `isRecordObject` (function): Type guard for plain object payloads used by metadata parsers.
+- `parseMetadataKind` (function): Narrows a raw metadata kind string to supported `MetadataKind` values.
+- `parseMetadataPayload` (function): Parses/validates dynamic metadata event payload into `{ kind, value }`.
+- `extractSizeBytes` (function): Reads validated file size bytes from `/models/file-metadata` summary payload.
 - `onShowMetadata` (function): Resolves selection metadata and opens a modal.
 - `fileInPaths` (function): Checks whether a file path belongs to the configured roots for a key from `/api/paths` (drives selector filtering).
 - `modelMatchesFamily` (function): Determines whether a checkpoint/inventory entry matches a given family (combines heuristics + `fileInPaths`).
@@ -263,10 +264,13 @@ import { useRoute } from 'vue-router'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useUiPresetsStore } from '../stores/ui_presets'
 import { useUiBlocksStore } from '../stores/ui_blocks'
-import { MODEL_TABS_STORAGE_KEY, useModelTabsStore } from '../stores/model_tabs'
-import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
+import { MODEL_TABS_STORAGE_KEY, useModelTabsStore, type ImageBaseParams, type TabByType, type WanAssetsParams } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import { useBootstrapStore } from '../stores/bootstrap'
+import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
+import type { ModelInfo } from '../api/types'
 import { useResultsCard } from '../composables/useResultsCard'
+import { normalizeTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
 import QuickSettingsWan from './quicksettings/QuickSettingsWan.vue'
@@ -281,14 +285,17 @@ const presets = useUiPresetsStore()
 const route = useRoute()
 const uiBlocks = useUiBlocksStore()
 const tabsStore = useModelTabsStore()
+const engineCaps = useEngineCapabilitiesStore()
+const bootstrap = useBootstrapStore()
 const pathsConfig = ref<Record<string, string[]>>({})
 type InventoryVae = { name: string; path: string; sha256?: string; format: string; latent_channels?: number | null; scaling_factor?: number | null }
 type InventoryWanGguf = { name: string; path: string; sha256?: string; stage: string }
 type InventoryTextEncoder = { name: string; path: string; sha256?: string }
+type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'anima'>
+type WanTab = TabByType<'wan'>
 const inventoryVaes = ref<InventoryVae[]>([])
 const inventoryWan = ref<InventoryWanGguf[]>([])
 const inventoryTextEncoders = ref<InventoryTextEncoder[]>([])
-const engineCaps = useEngineCapabilitiesStore()
 const showOverridesModal = ref(false)
 const showMetadataModal = ref(false)
 const metadataModalTitle = ref('Metadata')
@@ -381,28 +388,6 @@ function currentTab(): 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' {
   return 'txt2img'
 }
 
-type TabFamily = 'sd15' | 'sdxl' | 'flux1' | 'chroma' | 'wan' | 'zimage' | 'anima'
-
-const TAB_FAMILY_ALIASES: Readonly<Record<string, TabFamily>> = Object.freeze({
-  sd15: 'sd15',
-  sdxl: 'sdxl',
-  flux1: 'flux1',
-  chroma: 'chroma',
-  wan: 'wan',
-  wan22: 'wan',
-  wan22_14b: 'wan',
-  wan22_5b: 'wan',
-  zimage: 'zimage',
-  anima: 'anima',
-  flux1_chroma: 'chroma',
-})
-
-function normalizeTabFamily(value: unknown): TabFamily | null {
-  const raw = String(value || '').trim().toLowerCase()
-  if (!raw) return null
-  return TAB_FAMILY_ALIASES[raw] ?? null
-}
-
 const routeTabId = computed(() => String(route.params.tabId || ''))
 const activeModelTab = computed(() => {
   if (!route.path.startsWith('/models/')) return null
@@ -415,6 +400,20 @@ const activeModelTab = computed(() => {
   return null
 })
 
+function asImageTab(value: unknown): ImageTab | null {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as { type?: unknown }
+  const type = normalizeTabFamily(candidate.type)
+  if (!type || type === 'wan') return null
+  return value as ImageTab
+}
+
+function asWanTab(value: unknown): WanTab | null {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as { type?: unknown }
+  return normalizeTabFamily(candidate.type) === 'wan' ? (value as WanTab) : null
+}
+
 function tabFamilyFromStorage(tabId: string): TabFamily | null {
   if (!tabId) return null
   try {
@@ -422,7 +421,11 @@ function tabFamilyFromStorage(tabId: string): TabFamily | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as { tabs?: unknown[] }
     const list = Array.isArray(parsed.tabs) ? parsed.tabs : []
-    const match = list.find((t) => String((t as any)?.id || '') === tabId) as any
+    const match = list.find((entry) => {
+      if (!entry || typeof entry !== 'object') return false
+      const id = String((entry as { id?: unknown }).id || '')
+      return id === tabId
+    }) as { type?: unknown } | undefined
     return normalizeTabFamily(match?.type)
   } catch {
     return null
@@ -433,15 +436,15 @@ let routeActiveSyncToken = 0
 watch(routeTabId, async (tabId) => {
   const token = ++routeActiveSyncToken
   if (!tabId) return
-  if (!tabsStore.tabs.length) {
-    try {
+  try {
+    if (!tabsStore.tabs.length) {
       await tabsStore.load()
-    } catch {
-      // ignore; store handles bootstrap fallback
     }
+    if (token !== routeActiveSyncToken) return
+    tabsStore.setActive(tabId)
+  } catch (error) {
+    toastQuicksettingsError(error)
   }
-  if (token !== routeActiveSyncToken) return
-  tabsStore.setActive(tabId)
 }, { immediate: true })
 
 const activeFamily = computed<TabFamily>(() => {
@@ -450,14 +453,11 @@ const activeFamily = computed<TabFamily>(() => {
     if (type) return type
   }
 
-  // Fallback when no model tab is active (settings/tools pages etc.)
-  const eng = String(uiBlocks.semanticEngine || 'sd15').toLowerCase()
-  if (eng === 'flux1_chroma' || eng === 'chroma') return 'chroma'
-  if (eng.startsWith('flux1')) return 'flux1'
-  if (eng.startsWith('sdxl')) return 'sdxl'
-  if (eng.startsWith('wan')) return 'wan'
-  if (eng.startsWith('zimage')) return 'zimage'
-  if (eng.startsWith('anima')) return 'anima'
+  // Fallback when no model tab is active (settings/tools pages etc.).
+  if (!engineCaps.loaded) return 'sd15'
+  const semantic = engineCaps.semanticEngineForId(uiBlocks.semanticEngine || 'sd15')
+  const family = tabFamilyFromSemanticEngine(semantic)
+  if (family) return family
 
   return 'sd15'
 })
@@ -468,31 +468,21 @@ const semanticEngine = computed<string>(() => {
 })
 
 async function loadInventory(options?: { forceRefresh?: boolean }): Promise<void> {
-  try {
-    const inv = options?.forceRefresh ? await refreshModelInventory() : await fetchModelInventory()
-    inventoryVaes.value = inv.vaes
-    inventoryWan.value = (inv.wan22?.gguf ?? []).map((g: any) => ({
-      name: String(g.name),
-      path: String(g.path),
-      sha256: typeof g?.sha256 === 'string' ? String(g.sha256) : undefined,
-      stage: String(g.stage || 'unknown'),
-    }))
-    // Text encoder files are available via inventory for future use (e.g., Flux overrides).
-    inventoryTextEncoders.value = inv.text_encoders ?? []
-  } catch (e) {
-    inventoryVaes.value = []
-    inventoryWan.value = []
-    inventoryTextEncoders.value = []
-  }
+  const inv = options?.forceRefresh ? await refreshModelInventory() : await fetchModelInventory()
+  inventoryVaes.value = inv.vaes
+  inventoryWan.value = (inv.wan22?.gguf ?? []).map((g) => ({
+    name: String(g.name),
+    path: String(g.path),
+    sha256: typeof g?.sha256 === 'string' ? String(g.sha256) : undefined,
+    stage: String(g.stage || 'unknown'),
+  }))
+  // Text encoder files are available via inventory for future use (e.g., Flux overrides).
+  inventoryTextEncoders.value = inv.text_encoders ?? []
 }
 
 async function loadPaths(): Promise<void> {
-  try {
-    const res = await fetchPaths()
-    pathsConfig.value = (res.paths || {}) as Record<string, string[]>
-  } catch (e) {
-    pathsConfig.value = {}
-  }
+  const res = await fetchPaths()
+  pathsConfig.value = (res.paths || {}) as Record<string, string[]>
 }
 
 function normalizePath(path: string): string {
@@ -510,6 +500,45 @@ type MetadataKind =
   | 'wan_text_encoder'
   | 'wan_vae'
 
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseMetadataKind(value: unknown): MetadataKind | null {
+  const kind = String(value || '').trim()
+  if (
+    kind === 'checkpoint'
+    || kind === 'vae'
+    || kind === 'text_encoder'
+    || kind === 'text_encoder_primary'
+    || kind === 'text_encoder_secondary'
+    || kind === 'wan_high_model'
+    || kind === 'wan_low_model'
+    || kind === 'wan_text_encoder'
+    || kind === 'wan_vae'
+  ) {
+    return kind
+  }
+  return null
+}
+
+function parseMetadataPayload(payload: unknown): { kind: string; value: string } | null {
+  if (!isRecordObject(payload)) return null
+  const kind = String(payload.kind ?? '').trim()
+  if (!kind) return null
+  const value = String(payload.value ?? '').trim()
+  if (!value) return null
+  return { kind, value }
+}
+
+function extractSizeBytes(summary: Record<string, unknown>): number | null {
+  const summaryFile = summary.file
+  if (!isRecordObject(summaryFile)) return null
+  const size = summaryFile.size_bytes
+  if (typeof size !== 'number' || !Number.isFinite(size) || size < 0) return null
+  return size
+}
+
 function isSha256(value: string): boolean {
   const lower = value.toLowerCase().trim()
   return lower.length === 64 && /^[0-9a-f]+$/.test(lower)
@@ -526,7 +555,7 @@ function stripFamilyPrefix(label: string): string {
   return norm
 }
 
-function findModelByTitle(title: string): any | undefined {
+function findModelByTitle(title: string): ModelInfo | undefined {
   const raw = String(title || '').trim()
   if (!raw) return undefined
   for (const m of store.models) {
@@ -582,14 +611,15 @@ function findWanGgufRecord(label: string, stage: 'high' | 'low'): InventoryWanGg
   })
 }
 
-function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
-  const kind = String((payload as any)?.kind || '').trim() as MetadataKind
-  const value = String((payload as any)?.value || '').trim()
-  if (!kind || !value) return
+function onShowMetadata(payload: unknown): void {
+  const parsed = parseMetadataPayload(payload)
+  if (!parsed) return
+  const { value } = parsed
+  const kind = parseMetadataKind(parsed.kind)
 
   let title = 'Metadata'
   let subtitle = ''
-  let out: unknown = null
+  let out: Record<string, unknown> = {}
   let filePathForMetadata: string | null = null
 
 	  if (kind === 'checkpoint') {
@@ -646,11 +676,11 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
   } else {
     title = 'Metadata'
     subtitle = value
-    out = { selection: value, kind }
+    out = { selection: value, kind: parsed.kind }
   }
 
-  if (filePathForMetadata && typeof out === 'object' && out !== null) {
-    ;(out as any).metadata = { status: 'loading' }
+  if (filePathForMetadata) {
+    out = { ...out, metadata: { status: 'loading' } }
   }
 
 	  metadataModalTitle.value = title
@@ -663,10 +693,11 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
 	      try {
 	        const payload = await fetchCheckpointMetadata(value)
 	        metadataModalPayload.value = payload
-	      } catch (e: any) {
+	      } catch (error: unknown) {
+	        const message = error instanceof Error ? error.message : String(error)
 	        metadataModalPayload.value = {
 	          selection: value,
-	          metadata: { status: 'error', error: String(e?.message || e) },
+	          metadata: { status: 'error', error: message },
 	        }
 	      }
 	    })()
@@ -679,13 +710,13 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
 	    try {
 	      const res = await fetchFileMetadata(filePathForMetadata)
 	      const current = metadataModalPayload.value
-	      if (typeof current !== 'object' || current === null) return
-	      const flat = (res as any)?.flat
-	      const nested = (res as any)?.nested
-	      const sizeBytes = (res as any)?.summary?.file?.size_bytes
+	      if (!isRecordObject(current)) return
+	      const flat = res.flat
+	      const nested = res.nested
+	      const sizeBytes = extractSizeBytes(res.summary)
 
 	      const filePatch: Record<string, unknown> = {}
-	      if (typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0) {
+	      if (sizeBytes !== null) {
 	        const mb = sizeBytes / 1_000_000
 	        const gb = sizeBytes / 1_000_000_000
 	        filePatch['file.size.bytes'] = sizeBytes
@@ -694,20 +725,21 @@ function onShowMetadata(payload: { kind: MetadataKind; value: string }): void {
 	      }
 
 	      const metaOut: Record<string, unknown> = {
-	        raw: flat && typeof flat === 'object' ? flat : (res as any),
-	        nested: nested && typeof nested === 'object' ? nested : undefined,
+	        raw: isRecordObject(flat) ? flat : (res as unknown as Record<string, unknown>),
+	        nested,
 	      }
 	      metadataModalPayload.value = {
-	        ...(current as any),
+	        ...current,
 	        ...filePatch,
 	        metadata: metaOut,
 	      }
-	    } catch (e: any) {
+	    } catch (error: unknown) {
       const current = metadataModalPayload.value
-      if (typeof current !== 'object' || current === null) return
+      if (!isRecordObject(current)) return
+      const message = error instanceof Error ? error.message : String(error)
       metadataModalPayload.value = {
-        ...(current as any),
-        metadata: { status: 'error', error: String(e?.message || e) },
+        ...current,
+        metadata: { status: 'error', error: message },
       }
     }
   })()
@@ -813,10 +845,10 @@ const filteredTextEncoderChoices = computed(() => {
 const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(routeTabId.value))
 const activeImageTab = computed(() => {
   if (!isModelTabRoute.value) return null
-  const tab = activeModelTab.value
-  if (!tab || tab.type === 'wan') return null
-  return tab
+  return asImageTab(activeModelTab.value)
 })
+
+const activeWanTab = computed(() => asWanTab(activeModelTab.value))
 
 function normalizeTextEncoderLabels(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
@@ -826,7 +858,7 @@ function normalizeTextEncoderLabels(raw: unknown): string[] {
 const effectiveTextEncoders = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return store.currentTextEncoders
-  return normalizeTextEncoderLabels((tab.params as any)?.textEncoders)
+  return normalizeTextEncoderLabels(tab.params.textEncoders)
 })
 
 const primaryTextEncoder = computed(() => effectiveTextEncoders.value[0] ?? '')
@@ -841,7 +873,7 @@ const secondaryTeAutomaticLabel = 'Secondary (optional)'
 const effectiveCheckpoint = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return store.currentModel
-  const ckpt = String((tab.params as any)?.checkpoint || '').trim()
+  const ckpt = String(tab.params.checkpoint || '').trim()
   if (ckpt) return ckpt
   return filteredModelTitles.value[0] ?? ''
 })
@@ -851,7 +883,7 @@ const CODEX_REPO_URL = 'https://github.com/sangoi-exe/stable-diffusion-webui-cod
 const zimageTurbo = computed<boolean>(() => {
   const tab = activeImageTab.value
   if (!tab || tab.type !== 'zimage') return true
-  const raw = (tab.params as any)?.zimageTurbo
+  const raw = tab.params.zimageTurbo
   return typeof raw === 'boolean' ? raw : true
 })
 
@@ -859,15 +891,18 @@ const zimageTurboLocked = ref(false)
 let zimageVariantDetectToken = 0
 
 function _trustedZImageVariantFromCheckpointMeta(payload: unknown): 'turbo' | 'base' | null {
-  const raw = (payload as any)?.metadata?.raw
-  if (!raw || typeof raw !== 'object') return null
+  if (!isRecordObject(payload)) return null
+  const metadata = payload.metadata
+  if (!isRecordObject(metadata)) return null
+  const raw = metadata.raw
+  if (!isRecordObject(raw)) return null
 
-  const codexRepo = String((raw as any)['codex.repository'] ?? '').trim()
-  const codexBy = String((raw as any)['codex.quantized_by'] ?? '').trim()
+  const codexRepo = String(raw['codex.repository'] ?? '').trim()
+  const codexBy = String(raw['codex.quantized_by'] ?? '').trim()
   if (!codexRepo || !codexBy) return null
   if (codexRepo !== CODEX_REPO_URL) return null
 
-  const variant = String((raw as any)['codex.zimage.variant'] ?? '').trim().toLowerCase()
+  const variant = String(raw['codex.zimage.variant'] ?? '').trim().toLowerCase()
   if (variant === 'turbo' || variant === 'base') return variant
   return null
 }
@@ -891,9 +926,9 @@ watch(
       const turbo = variant === 'turbo'
       const tab = activeImageTab.value
       if (!tab || tab.type !== 'zimage') return
-      const current = typeof (tab.params as any)?.zimageTurbo === 'boolean' ? Boolean((tab.params as any).zimageTurbo) : true
+      const current = typeof tab.params.zimageTurbo === 'boolean' ? Boolean(tab.params.zimageTurbo) : true
       if (current !== turbo) {
-        await tabsStore.updateParams(tab.id, { zimageTurbo: turbo } as any)
+        await updateImageTabParams(tab.id, { zimageTurbo: turbo })
         qsToast(`Z-Image: Turbo is ${turbo ? 'ON' : 'OFF'} (from model metadata).`)
       }
     } catch {
@@ -909,19 +944,26 @@ watch(
     if (!tabId) return
     const tab = activeImageTab.value
     if (!tab) return
-    const ckpt = String((tab.params as any)?.checkpoint || '').trim()
+    const ckpt = String(tab.params.checkpoint || '').trim()
     if (ckpt) return
     const first = models[0]
     if (!first) return
-    void tabsStore.updateParams(tab.id, { checkpoint: first } as any)
+    updateImageTabParams(tab.id, { checkpoint: first }).catch((error) => {
+      qsToast(error instanceof Error ? error.message : String(error))
+    })
   },
   { immediate: true },
 )
 
-async function initQuicksettings(options?: { forceInventoryRefresh?: boolean; forceModelsRefresh?: boolean }): Promise<void> {
+async function initQuicksettings(
+  options?: { forceInventoryRefresh?: boolean; forceModelsRefresh?: boolean },
+  controls?: { includeStoreInit?: boolean },
+): Promise<void> {
   isLoadingQuicksettings.value = true
   try {
-    await store.init()
+    if (controls?.includeStoreInit !== false) {
+      await store.init()
+    }
     if (options?.forceModelsRefresh === true) {
       await store.refreshModelsList()
     }
@@ -935,7 +977,11 @@ async function initQuicksettings(options?: { forceInventoryRefresh?: boolean; fo
 }
 
 async function refreshAll(): Promise<void> {
-  await initQuicksettings({ forceInventoryRefresh: true, forceModelsRefresh: true })
+  try {
+    await initQuicksettings({ forceInventoryRefresh: true, forceModelsRefresh: true })
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 const wanHighDirChoices = computed(() => {
@@ -971,10 +1017,10 @@ function _wanRepoForMode(mode: WanModelMode): string {
 }
 
 const wanModelMode = computed<WanModelMode>(() => {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return 't2v_14b'
-  const video = (tab.params as any).video as { useInitVideo?: boolean; useInitImage?: boolean } | undefined
-  const rawAssets = ((tab.params as any).assets as WanAssetsParams | undefined) || { metadata: '', textEncoder: '', vae: '' }
+  const tab = activeWanTab.value
+  if (!tab) return 't2v_14b'
+  const video = tab.params.video
+  const rawAssets = tab.params.assets || { metadata: '', textEncoder: '', vae: '' }
   const meta = String(rawAssets.metadata || '').trim().toLowerCase()
   const is5b = meta.includes('ti2v-5b') || meta.includes('5b')
   const kind = video?.useInitVideo ? 'v2v' : (video?.useInitImage ? 'i2v' : 't2v')
@@ -986,32 +1032,28 @@ const wanModelMode = computed<WanModelMode>(() => {
 })
 
 const wanLightx2v = computed(() => {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return false
-  return Boolean((tab.params as any)?.lightx2v)
+  const tab = activeWanTab.value
+  if (!tab) return false
+  return Boolean(tab.params.lightx2v)
 })
 
 const wanHighModel = computed(() => {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return ''
-  const high = (tab.params as any).high as { modelDir?: string } | undefined
-  return high?.modelDir || ''
+  const tab = activeWanTab.value
+  if (!tab) return ''
+  return tab.params.high?.modelDir || ''
 })
 
 const wanLowModel = computed(() => {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return ''
-  const low = (tab.params as any).low as { modelDir?: string } | undefined
-  return low?.modelDir || ''
+  const tab = activeWanTab.value
+  if (!tab) return ''
+  return tab.params.low?.modelDir || ''
 })
-
-type WanAssetsParams = { metadata: string; textEncoder: string; vae: string }
 
 function currentWanAssets(): WanAssetsParams {
   const base: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return base
-  const raw = (tab.params as any).assets as WanAssetsParams | undefined
+  const tab = activeWanTab.value
+  if (!tab) return base
+  const raw = tab.params.assets
   return raw ? { ...base, ...raw } : base
 }
 
@@ -1045,17 +1087,33 @@ const wanVaeChoices = computed(() => {
 })
 
 // Event handlers
+function toastQuicksettingsError(error: unknown): void {
+  qsToast(error instanceof Error ? error.message : String(error))
+}
+
+function updateImageTabParams(tabId: string, patch: Partial<ImageBaseParams>): Promise<void> {
+  return tabsStore.updateParams(tabId, patch as Partial<Record<string, unknown>>)
+}
+
 async function onModelChange(value: string): Promise<void> {
-  const tab = activeImageTab.value
-  if (tab) {
-    await tabsStore.updateParams(tab.id, { checkpoint: String(value || '') } as any)
-    return
+  try {
+    const tab = activeImageTab.value
+    if (tab) {
+      await updateImageTabParams(tab.id, { checkpoint: String(value || '') })
+      return
+    }
+    await store.setModel(value)
+  } catch (error) {
+    toastQuicksettingsError(error)
   }
-  await store.setModel(value)
 }
 
 async function onVaeChange(value: string): Promise<void> {
-  await store.setVae(value)
+  try {
+    await store.setVae(value)
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 function textEncoderLabel(raw: unknown): string {
@@ -1075,7 +1133,7 @@ async function updateFlux1TextEncoders(primary: string, secondary: string): Prom
   if (p) fluxLabels.push(p)
   if (s && s !== p) fluxLabels.push(s)
   if (tab) {
-    await tabsStore.updateParams(tab.id, { textEncoders: fluxLabels } as any)
+    await updateImageTabParams(tab.id, { textEncoders: fluxLabels })
     return
   }
   const all = store.currentTextEncoders.slice()
@@ -1089,15 +1147,21 @@ function onPrimaryTextEncoderChange(value: string): void {
   if (fam === 'flux1') {
     const primary = value || ''
     const secondary = flux1TextEncoderSecondary.value || ''
-    void updateFlux1TextEncoders(primary, secondary)
+    updateFlux1TextEncoders(primary, secondary).catch((error) => {
+      qsToast(error instanceof Error ? error.message : String(error))
+    })
   } else {
     const tab = activeImageTab.value
     const payload = value ? [value] : []
     if (tab) {
-      void tabsStore.updateParams(tab.id, { textEncoders: payload } as any)
+      updateImageTabParams(tab.id, { textEncoders: payload }).catch((error) => {
+        qsToast(error instanceof Error ? error.message : String(error))
+      })
       return
     }
-    void store.setTextEncoders(payload)
+    store.setTextEncoders(payload).catch((error) => {
+      qsToast(error instanceof Error ? error.message : String(error))
+    })
   }
 }
 
@@ -1106,141 +1170,180 @@ function onSecondaryTextEncoderChange(value: string): void {
   if (fam !== 'flux1') return
   const primary = flux1TextEncoderPrimary.value || ''
   const secondary = value || ''
-  void updateFlux1TextEncoders(primary, secondary)
+  updateFlux1TextEncoders(primary, secondary).catch((error) => {
+    qsToast(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function onAttentionChange(value: string): void {
-  void store.setAttentionBackend(value)
+  store.setAttentionBackend(value).catch((error) => {
+    qsToast(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function onSmartOffloadChange(value: boolean): void {
-  void store.setSmartOffload(value)
+  store.setSmartOffload(value).catch((error) => {
+    qsToast(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function onSmartFallbackChange(value: boolean): void {
-  void store.setSmartFallback(value)
+  store.setSmartFallback(value).catch((error) => {
+    qsToast(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function onSmartCacheChange(value: boolean): void {
-  void store.setSmartCache(value)
+  store.setSmartCache(value).catch((error) => {
+    qsToast(error instanceof Error ? error.message : String(error))
+  })
 }
 
 function onCoreStreamingChange(value: boolean): void {
-  void store.setCoreStreaming(value)
+  store.setCoreStreaming(value).catch((error) => {
+    qsToast(error instanceof Error ? error.message : String(error))
+  })
 }
 
 async function onWanModeChange(value: string): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
+  try {
+    const tab = activeWanTab.value
+    if (!tab) return
 
-  const raw = String(value || '').trim().toLowerCase()
-  const nextMode: WanModelMode =
-    raw === 'i2v_14b' ? 'i2v_14b'
-      : raw === 't2v_14b' ? 't2v_14b'
-        : raw === 'i2v_5b' ? 'i2v_5b'
-          : raw === 't2v_5b' ? 't2v_5b'
-            : raw === 'v2v_14b' ? 'v2v_14b'
-              : 't2v_14b'
+    const raw = String(value || '').trim().toLowerCase()
+    const nextMode: WanModelMode =
+      raw === 'i2v_14b' ? 'i2v_14b'
+        : raw === 't2v_14b' ? 't2v_14b'
+          : raw === 'i2v_5b' ? 'i2v_5b'
+            : raw === 't2v_5b' ? 't2v_5b'
+              : raw === 'v2v_14b' ? 'v2v_14b'
+                : 't2v_14b'
 
-  const currentVideo = ((tab.params as any).video as any) || {}
-  const videoPatch: Record<string, unknown> = {}
-  if (nextMode === 't2v_14b' || nextMode === 't2v_5b') {
-    videoPatch.useInitVideo = false
-    videoPatch.initVideoName = ''
-    videoPatch.initVideoPath = ''
-    videoPatch.useInitImage = false
-    videoPatch.initImageData = ''
-    videoPatch.initImageName = ''
-  } else if (nextMode === 'v2v_14b') {
-    videoPatch.useInitVideo = true
-    videoPatch.useInitImage = false
-    videoPatch.initImageData = ''
-    videoPatch.initImageName = ''
-  } else {
-    // i2v
-    videoPatch.useInitVideo = false
-    videoPatch.initVideoName = ''
-    videoPatch.initVideoPath = ''
-    videoPatch.useInitImage = true
+    const currentVideo = tab.params.video
+    const videoPatch: Record<string, unknown> = {}
+    if (nextMode === 't2v_14b' || nextMode === 't2v_5b') {
+      videoPatch.useInitVideo = false
+      videoPatch.initVideoName = ''
+      videoPatch.initVideoPath = ''
+      videoPatch.useInitImage = false
+      videoPatch.initImageData = ''
+      videoPatch.initImageName = ''
+    } else if (nextMode === 'v2v_14b') {
+      videoPatch.useInitVideo = true
+      videoPatch.useInitImage = false
+      videoPatch.initImageData = ''
+      videoPatch.initImageName = ''
+    } else {
+      // i2v
+      videoPatch.useInitVideo = false
+      videoPatch.initVideoName = ''
+      videoPatch.initVideoPath = ''
+      videoPatch.useInitImage = true
+    }
+
+    const currentAssets = currentWanAssets()
+    const nextAssets = { ...currentAssets, metadata: _wanRepoForMode(nextMode) }
+
+    await tabsStore.updateParams(
+      tab.id,
+      {
+        video: { ...currentVideo, ...videoPatch },
+        assets: nextAssets,
+      },
+    )
+  } catch (error) {
+    toastQuicksettingsError(error)
   }
-
-  const currentAssets = currentWanAssets()
-  const nextAssets = { ...currentAssets, metadata: _wanRepoForMode(nextMode) }
-
-  await tabsStore.updateParams(
-    tab.id,
-    {
-      video: { ...currentVideo, ...videoPatch },
-      assets: nextAssets,
-    } as any,
-  )
 }
 
 async function onWanLightx2vChange(value: boolean): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
-  await tabsStore.updateParams(tab.id, { lightx2v: Boolean(value) } as any)
+  try {
+    const tab = activeWanTab.value
+    if (!tab) return
+    await tabsStore.updateParams(tab.id, { lightx2v: Boolean(value) })
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 async function onZImageTurboChange(value: boolean): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'zimage') return
-  if (zimageTurboLocked.value) {
-    qsToast('Z-Image: Turbo variant is fixed by model metadata.')
-    return
+  try {
+    const tab = activeImageTab.value
+    if (!tab || tab.type !== 'zimage') return
+    if (zimageTurboLocked.value) {
+      qsToast('Z-Image: Turbo variant is fixed by model metadata.')
+      return
+    }
+
+    const currentSteps = Number(tab.params.steps)
+    const currentCfg = Number(tab.params.cfgScale)
+
+    const turbo = Boolean(value)
+    const patch: Record<string, unknown> = { zimageTurbo: turbo }
+
+    // Apply variant-recommended defaults only when the user is still on the previous variant's defaults.
+    // Turbo defaults: steps≈9, distilled guidance≈1.0. Base defaults: steps≈30, CFG≈4.0.
+    if (turbo) {
+      if (Number.isFinite(currentSteps) && (currentSteps === 30)) patch.steps = 9
+      if (Number.isFinite(currentCfg) && Math.abs(currentCfg - 4.0) < 1e-6) patch.cfgScale = 1.0
+    } else {
+      if (Number.isFinite(currentSteps) && (currentSteps === 8 || currentSteps === 9)) patch.steps = 30
+      if (Number.isFinite(currentCfg) && Math.abs(currentCfg - 1.0) < 1e-6) patch.cfgScale = 4.0
+    }
+
+    await updateImageTabParams(tab.id, patch)
+  } catch (error) {
+    toastQuicksettingsError(error)
   }
-
-  const current = tab.params as any
-  const currentSteps = Number(current?.steps)
-  const currentCfg = Number(current?.cfgScale)
-
-  const turbo = Boolean(value)
-  const patch: Record<string, unknown> = { zimageTurbo: turbo }
-
-  // Apply variant-recommended defaults only when the user is still on the previous variant's defaults.
-  // Turbo defaults: steps≈9, distilled guidance≈1.0. Base defaults: steps≈30, CFG≈4.0.
-  if (turbo) {
-    if (Number.isFinite(currentSteps) && (currentSteps === 30)) patch.steps = 9
-    if (Number.isFinite(currentCfg) && Math.abs(currentCfg - 4.0) < 1e-6) patch.cfgScale = 1.0
-  } else {
-    if (Number.isFinite(currentSteps) && (currentSteps === 8 || currentSteps === 9)) patch.steps = 30
-    if (Number.isFinite(currentCfg) && Math.abs(currentCfg - 1.0) < 1e-6) patch.cfgScale = 4.0
-  }
-
-  await tabsStore.updateParams(tab.id, patch as any)
 }
 
 async function onWanHighModelChange(value: string): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
-  const current = (tab.params as any).high || {}
-  await tabsStore.updateParams(tab.id, { high: { ...current, modelDir: value } })
+  try {
+    const tab = activeWanTab.value
+    if (!tab) return
+    const current = tab.params.high || {}
+    await tabsStore.updateParams(tab.id, { high: { ...current, modelDir: value } })
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 async function onWanLowModelChange(value: string): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
-  const current = (tab.params as any).low || {}
-  await tabsStore.updateParams(tab.id, { low: { ...current, modelDir: value } })
+  try {
+    const tab = activeWanTab.value
+    if (!tab) return
+    const current = tab.params.low || {}
+    await tabsStore.updateParams(tab.id, { low: { ...current, modelDir: value } })
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 async function onWanTextEncoderChange(value: string): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
-  const current = currentWanAssets()
-  await tabsStore.updateParams(tab.id, { assets: { ...current, textEncoder: value } })
+  try {
+    const tab = activeWanTab.value
+    if (!tab) return
+    const current = currentWanAssets()
+    await tabsStore.updateParams(tab.id, { assets: { ...current, textEncoder: value } })
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 async function onWanVaeChange(value: string): Promise<void> {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
-  const current = currentWanAssets()
-  await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
+  try {
+    const tab = activeWanTab.value
+    if (!tab) return
+    const current = currentWanAssets()
+    await tabsStore.updateParams(tab.id, { assets: { ...current, vae: value } })
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 }
 
 function onWanGuidedGen(): void {
-  const tab = activeModelTab.value
-  if (!tab || tab.type !== 'wan') return
+  const tab = activeWanTab.value
+  if (!tab) return
   window.dispatchEvent(new CustomEvent('codex-wan-guided-gen', { detail: { tabId: tab.id } }))
 }
 
@@ -1377,11 +1480,18 @@ function openOverrides(): void {
 }
 
 onMounted(() => {
-  void initQuicksettings()
-  void presets.init(currentTab())
-  void engineCaps.init()
   window.addEventListener('resize', syncAdvancedHeight)
   requestAnimationFrame(syncAdvancedHeight)
+  bootstrap
+    .runRequired('Failed to initialize QuickSettings', async () => {
+      await Promise.all([
+        initQuicksettings(undefined, { includeStoreInit: false }),
+        presets.init(currentTab()),
+      ])
+    })
+    .catch(() => {
+      // Fatal state is already set by bootstrap store.
+    })
 })
 
 onBeforeUnmount(() => {
@@ -1390,8 +1500,12 @@ onBeforeUnmount(() => {
 })
 
 watch(() => route.path, async () => {
-  await presets.init(currentTab())
-  await loadInventory()
+  try {
+    await presets.init(currentTab())
+    await loadInventory()
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
 })
 
 // random seed button removed from quicksettings; presets applied elsewhere

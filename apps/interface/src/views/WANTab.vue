@@ -13,7 +13,6 @@ Required Notice: see NOTICE
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WANTab` (component): WAN video tab view; handles input modes, generation start/queue, history apply/reuse, and guided-generation UX.
-- `WanAssetsParams` (interface): Minimal WAN assets triple (metadata dir + text encoder + VAE) used for validation and payload building.
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
 - `normalizePath` (function): Normalizes paths for stable comparisons (used by root filtering and UI label handling).
@@ -323,10 +322,15 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <!-- Right column: Results -->
     <div class="panel-stack">
+      <DependencyCheckPanel
+        :status="wanDependencyStatus"
+        engine-label="WAN 2.2"
+      />
+
       <RunCard
         :isRunning="isRunning"
-        :generateDisabled="isRunning"
-        :generateTitle="!canGenerate ? 'Guided gen: click to see what is missing.' : ''"
+        :generateDisabled="isRunning || !canRunGeneration"
+        :generateTitle="generateTitle"
         generateId="wan-guided-generate"
         :showBatchControls="false"
         @generate="onGenerateClick"
@@ -337,8 +341,8 @@ Symbols (top-level; keep in sync; no ghosts):
               v-if="isRunning"
               class="btn btn-sm btn-secondary"
               type="button"
-              :disabled="queue.length >= queueMax || !canGenerate"
-              :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canGenerate ? blockedReason : '')"
+              :disabled="queue.length >= queueMax || !canRunGeneration"
+              :title="queue.length >= queueMax ? `Queue full (max ${queueMax}).` : (!canRunGeneration ? generateTitle : '')"
               @click="queueNext"
             >
               Queue ({{ queue.length }}/{{ queueMax }})
@@ -478,7 +482,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 	import { onMounted, onBeforeUnmount, computed, ref, watch, nextTick } from 'vue'
-	import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
+	import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 	import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../api/types'
 	import { fetchSamplers, fetchSchedulers, fetchModelInventory, fetchPaths } from '../api/client'
 import ResultViewer from '../components/ResultViewer.vue'
@@ -496,37 +500,53 @@ import WanVideoOutputPanel from '../components/wan/WanVideoOutputPanel.vue'
 import { useVideoGeneration, type VideoRunHistoryItem } from '../composables/useVideoGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import { useWorkflowsStore } from '../stores/workflows'
+import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import { useBootstrapStore } from '../stores/bootstrap'
+import DependencyCheckPanel from '../components/DependencyCheckPanel.vue'
 import NumberStepperInput from '../components/ui/NumberStepperInput.vue'
 
 const props = defineProps<{ tabId: string }>()
 const store = useModelTabsStore()
 const workflows = useWorkflowsStore()
+const engineCaps = useEngineCapabilitiesStore()
+const bootstrap = useBootstrapStore()
 
 // Load option lists
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 const wanLoras = ref<Array<{ name: string; path: string; sha256: string }>>([])
 
-	onMounted(async () => {
-	  if (!store.tabs.length) store.load()
-	  const [samp, sched, pathsRes, inv] = await Promise.all([
-	    fetchSamplers(),
-	    fetchSchedulers(),
-	    fetchPaths().catch(() => ({ paths: {} as Record<string, string[]> })),
-	    fetchModelInventory().catch(() => ({ loras: [] as Array<{ name: string; path: string }> } as any)),
-	  ])
-	  samplers.value = samp.samplers
-	  schedulers.value = sched.schedulers
-	
-	  const roots = Array.isArray((pathsRes as any)?.paths?.wan22_loras) ? ((pathsRes as any).paths.wan22_loras as string[]) : []
-	  wanLoras.value = ((inv as any)?.loras || [])
-	    .filter((l: any) => fileInRoots(String(l?.path || ''), roots))
-	    .filter((l: any) => typeof l?.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(l.sha256)))
-	    .map((l: any) => ({ name: String(l.name || ''), path: String(l.path || ''), sha256: String(l.sha256 || '').toLowerCase() }))
-	})
+onMounted(() => {
+  bootstrap
+    .runRequired('Failed to initialize WAN tab controls', async () => {
+      const [samp, sched, pathsRes, inv] = await Promise.all([
+        fetchSamplers(),
+        fetchSchedulers(),
+        fetchPaths(),
+        fetchModelInventory(),
+      ])
+      samplers.value = samp.samplers
+      schedulers.value = sched.schedulers
 
-const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
-const lightx2v = computed<boolean>(() => Boolean((tab.value?.params as any)?.lightx2v))
+      const rootsRaw = pathsRes.paths.wan22_loras
+      const roots = Array.isArray(rootsRaw) ? rootsRaw : []
+      wanLoras.value = inv.loras
+        .filter((lora) => fileInRoots(String(lora.path || ''), roots))
+        .filter((lora): lora is { name: string; path: string; sha256: string } => typeof lora.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(String(lora.sha256)))
+        .map((lora) => ({ name: String(lora.name || ''), path: String(lora.path || ''), sha256: String(lora.sha256 || '').toLowerCase() }))
+    })
+    .catch(() => {
+      // Fatal state is already set by bootstrap store.
+    })
+})
+
+const tab = computed<TabByType<'wan'> | null>(() => {
+  const candidate = store.tabs.find((entry) => entry.id === props.tabId) || null
+  if (!candidate || candidate.type !== 'wan') return null
+  return candidate as TabByType<'wan'>
+})
+const wanParams = computed<TabByType<'wan'>['params'] | null>(() => tab.value?.params || null)
+const lightx2v = computed<boolean>(() => Boolean(wanParams.value?.lightx2v))
 const wanLoraChoices = computed(() => wanLoras.value)
 
 function normalizePath(path: string): string {
@@ -582,38 +602,38 @@ function defaultVideo(): WanVideoParams {
     trimToAudio: false,
     saveMetadata: true,
     saveOutput: true,
+    returnFrames: false,
     rifeEnabled: true,
     rifeModel: 'rife47.pth',
     rifeTimes: 2,
   }
 }
 
-const video = computed<WanVideoParams>(() => ((tab.value?.params as any)?.video as WanVideoParams) || defaultVideo())
-const high = computed<WanStageParams>(() => ((tab.value?.params as any)?.high as WanStageParams) || defaultStage())
-const low = computed<WanStageParams>(() => ((tab.value?.params as any)?.low as WanStageParams) || defaultStage())
+const video = computed<WanVideoParams>(() => wanParams.value?.video || defaultVideo())
+const high = computed<WanStageParams>(() => wanParams.value?.high || defaultStage())
+const low = computed<WanStageParams>(() => wanParams.value?.low || defaultStage())
 
-interface WanAssetsParams { metadata: string; textEncoder: string; vae: string }
 function defaultAssets(): WanAssetsParams { return { metadata: '', textEncoder: '', vae: '' } }
 
-const assets = computed<WanAssetsParams>(() => ((tab.value?.params as any)?.assets as WanAssetsParams) || defaultAssets())
+const assets = computed<WanAssetsParams>(() => wanParams.value?.assets || defaultAssets())
 
 function setVideo(patch: Partial<WanVideoParams>): void {
   if (!tab.value) return
-  const current = (tab.value.params as any).video as WanVideoParams
-  store.updateParams(props.tabId, { video: { ...current, ...patch } })
+  const current = tab.value.params.video
+  store.updateParams(props.tabId, { video: { ...current, ...patch } }).catch(reportTabMutationError)
 }
 function setHigh(patch: Partial<WanStageParams>): void {
   if (!tab.value) return
-  const current = (tab.value.params as any).high as WanStageParams
-  store.updateParams(props.tabId, { high: { ...current, ...patch } })
+  const current = tab.value.params.high
+  store.updateParams(props.tabId, { high: { ...current, ...patch } }).catch(reportTabMutationError)
 }
 function setLow(patch: Partial<WanStageParams>): void {
   if (!tab.value) return
-  const current = (tab.value.params as any).low as WanStageParams
-  store.updateParams(props.tabId, { low: { ...current, ...patch } })
+  const current = tab.value.params.low
+  store.updateParams(props.tabId, { low: { ...current, ...patch } }).catch(reportTabMutationError)
 }
 
-const lowFollowsHigh = computed<boolean>(() => Boolean((tab.value?.params as any)?.lowFollowsHigh))
+const lowFollowsHigh = computed<boolean>(() => Boolean(wanParams.value?.lowFollowsHigh))
 const lowNoiseOpen = ref(true)
 
 function syncLowFromHighIfNeeded(): void {
@@ -626,7 +646,8 @@ function syncLowFromHighIfNeeded(): void {
     loraSha: high.value.loraSha,
     loraWeight: high.value.loraWeight,
   }
-  const needsUpdate = Object.entries(patch).some(([k, v]) => (low.value as any)[k] !== v)
+  const keys = Object.keys(patch) as Array<keyof WanStageParams>
+  const needsUpdate = keys.some((key) => low.value[key] !== patch[key])
   if (!needsUpdate) return
   setLow(patch)
 }
@@ -634,7 +655,7 @@ function syncLowFromHighIfNeeded(): void {
 function onLowFollowsHighChange(enabled: boolean): void {
   if (!tab.value) return
   if (!enabled) {
-    store.updateParams(props.tabId, { lowFollowsHigh: false } as any)
+    store.updateParams(props.tabId, { lowFollowsHigh: false }).catch(reportTabMutationError)
     return
   }
 
@@ -647,7 +668,7 @@ function onLowFollowsHighChange(enabled: boolean): void {
     loraSha: high.value.loraSha,
     loraWeight: high.value.loraWeight,
   }
-  store.updateParams(props.tabId, { lowFollowsHigh: true, low: { ...(low.value as any), ...nextLow } } as any)
+  store.updateParams(props.tabId, { lowFollowsHigh: true, low: { ...low.value, ...nextLow } }).catch(reportTabMutationError)
 }
 
 function toggleLowNoise(): void {
@@ -712,7 +733,6 @@ const {
   generate,
   isRunning,
   canGenerate,
-  blockedReason,
   cancel,
   cancelRequested,
   progress,
@@ -735,8 +755,24 @@ const {
   resumeNotice,
 } = useVideoGeneration(props.tabId)
 
+const wanDependencyStatus = computed(() => engineCaps.getDependencyStatus('wan22'))
+const wanDependencyReady = computed(() => Boolean(wanDependencyStatus.value?.ready))
+const wanDependencyError = computed(() => engineCaps.firstDependencyError('wan22'))
+const canRunGeneration = computed(() => wanDependencyReady.value && canGenerate.value)
+const generateTitle = computed(() => {
+  if (!wanDependencyReady.value) {
+    return wanDependencyError.value || 'WAN dependencies are not ready.'
+  }
+  if (!canGenerate.value) return 'Guided gen: click to see what is missing.'
+  return ''
+})
+
 async function onGenerateClick(): Promise<void> {
   if (isRunning.value) return
+  if (!wanDependencyReady.value) {
+    toast(wanDependencyError.value || 'WAN dependencies are not ready.')
+    return
+  }
   if (!canGenerate.value) {
     startGuided()
     return
@@ -777,6 +813,10 @@ onBeforeUnmount(() => {
 })
 
 const { notice: copyNotice, toast, copyJson, formatJson } = useResultsCard()
+
+function reportTabMutationError(error: unknown): void {
+  toast(error instanceof Error ? error.message : String(error))
+}
 
 watch(
   resumeNotice,
@@ -850,7 +890,7 @@ function isFocusable(el: Element | null): el is HTMLElement {
   return typeof el.focus === 'function'
 }
 
-function findFocusTarget(root: HTMLElement, selector?: string): HTMLElement | null {
+function findFocusTarget(root: Element, selector?: string): HTMLElement | null {
   if (selector) {
     const el = document.querySelector(selector)
     return isFocusable(el) ? el : null
@@ -915,7 +955,7 @@ function focusGuided(step: GuidedStep): void {
   guidedCurrentId.value = step.id
   guidedHighlightedEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
   try {
-    guidedHighlightedEl.focus({ preventScroll: true } as any)
+    guidedHighlightedEl.focus({ preventScroll: true })
   } catch {
     try { guidedHighlightedEl.focus() } catch { /* ignore */ }
   }
@@ -1149,15 +1189,15 @@ async function queueNext(): Promise<void> {
 }
 
 function applyHistory(item: VideoRunHistoryItem): void {
-  const snap = (item.paramsSnapshot || {}) as any
+  const snap = isRecord(item.paramsSnapshot) ? item.paramsSnapshot : {}
 
   const rawMode = String(snap.mode || '').toLowerCase()
   const nextMode: 'txt2vid' | 'img2vid' | 'vid2vid' = rawMode === 'vid2vid' ? 'vid2vid' : (rawMode === 'img2vid' ? 'img2vid' : 'txt2vid')
   setInputMode(nextMode)
 
-  const output = snap.output || {}
-  const interpolation = snap.interpolation || {}
-  const v2v = snap.vid2vid || {}
+  const output = isRecord(snap.output) ? snap.output : {}
+  const interpolation = isRecord(snap.interpolation) ? snap.interpolation : {}
+  const v2v = isRecord(snap.vid2vid) ? snap.vid2vid : {}
 
   setVideo({
     prompt: String(snap.prompt || ''),
@@ -1168,41 +1208,43 @@ function applyHistory(item: VideoRunHistoryItem): void {
     fps: Number(snap.fps) || video.value.fps,
     initVideoName: String(snap.initVideoName || video.value.initVideoName),
     initVideoPath: String(snap.initVideoPath || video.value.initVideoPath),
-    vid2vidStrength: Number.isFinite(v2v.strength) ? Number(v2v.strength) : video.value.vid2vidStrength,
+    vid2vidStrength: typeof v2v.strength === 'number' && Number.isFinite(v2v.strength) ? Number(v2v.strength) : video.value.vid2vidStrength,
     vid2vidMethod: (String(v2v.method || '').toLowerCase() === 'native' ? 'native' : 'flow_chunks'),
     vid2vidUseSourceFps: typeof v2v.useSourceFps === 'boolean' ? Boolean(v2v.useSourceFps) : video.value.vid2vidUseSourceFps,
     vid2vidUseSourceFrames: typeof v2v.useSourceFrames === 'boolean' ? Boolean(v2v.useSourceFrames) : video.value.vid2vidUseSourceFrames,
-    vid2vidChunkFrames: Number.isFinite(v2v.chunkFrames) ? Number(v2v.chunkFrames) : video.value.vid2vidChunkFrames,
-    vid2vidOverlapFrames: Number.isFinite(v2v.overlapFrames) ? Number(v2v.overlapFrames) : video.value.vid2vidOverlapFrames,
-    vid2vidPreviewFrames: Number.isFinite(v2v.previewFrames) ? Number(v2v.previewFrames) : video.value.vid2vidPreviewFrames,
+    vid2vidChunkFrames: typeof v2v.chunkFrames === 'number' && Number.isFinite(v2v.chunkFrames) ? Number(v2v.chunkFrames) : video.value.vid2vidChunkFrames,
+    vid2vidOverlapFrames: typeof v2v.overlapFrames === 'number' && Number.isFinite(v2v.overlapFrames) ? Number(v2v.overlapFrames) : video.value.vid2vidOverlapFrames,
+    vid2vidPreviewFrames: typeof v2v.previewFrames === 'number' && Number.isFinite(v2v.previewFrames) ? Number(v2v.previewFrames) : video.value.vid2vidPreviewFrames,
     vid2vidFlowEnabled: typeof v2v.flowEnabled === 'boolean' ? Boolean(v2v.flowEnabled) : video.value.vid2vidFlowEnabled,
     vid2vidFlowUseLarge: typeof v2v.flowUseLarge === 'boolean' ? Boolean(v2v.flowUseLarge) : video.value.vid2vidFlowUseLarge,
-    vid2vidFlowDownscale: Number.isFinite(v2v.flowDownscale) ? Number(v2v.flowDownscale) : video.value.vid2vidFlowDownscale,
+    vid2vidFlowDownscale: typeof v2v.flowDownscale === 'number' && Number.isFinite(v2v.flowDownscale) ? Number(v2v.flowDownscale) : video.value.vid2vidFlowDownscale,
     filenamePrefix: String(output.filenamePrefix || video.value.filenamePrefix),
     format: String(output.format || video.value.format),
     pixFmt: String(output.pixFmt || video.value.pixFmt),
-    crf: Number.isFinite(output.crf) ? Number(output.crf) : video.value.crf,
-    loopCount: Number.isFinite(output.loopCount) ? Number(output.loopCount) : video.value.loopCount,
+    crf: typeof output.crf === 'number' && Number.isFinite(output.crf) ? Number(output.crf) : video.value.crf,
+    loopCount: typeof output.loopCount === 'number' && Number.isFinite(output.loopCount) ? Number(output.loopCount) : video.value.loopCount,
     pingpong: Boolean(output.pingpong),
     trimToAudio: Boolean(output.trimToAudio),
     saveMetadata: Boolean(output.saveMetadata),
     saveOutput: Boolean(output.saveOutput),
     rifeEnabled: Boolean(interpolation.enabled),
     rifeModel: String(interpolation.model || ''),
-    rifeTimes: Number.isFinite(interpolation.times) ? Number(interpolation.times) : video.value.rifeTimes,
+    rifeTimes: typeof interpolation.times === 'number' && Number.isFinite(interpolation.times) ? Number(interpolation.times) : video.value.rifeTimes,
   })
 
-  const hi = snap.high || {}
-  const lo = snap.low || {}
+  const hi = isRecord(snap.high) ? snap.high : {}
+  const lo = isRecord(snap.low) ? snap.low : {}
+  const hiLoraSha = String(hi.loraSha || '').trim()
+  const loLoraSha = String(lo.loraSha || '').trim()
   const snapLightx2v =
     typeof snap.lightx2v === 'boolean'
       ? Boolean(snap.lightx2v)
-      : Boolean((hi as any).loraSha || (lo as any).loraSha)
-  store.updateParams(props.tabId, { lightx2v: snapLightx2v } as any)
+      : Boolean(hiLoraSha || loLoraSha)
+  store.updateParams(props.tabId, { lightx2v: snapLightx2v }).catch(reportTabMutationError)
 
-  const snapAssets = snap.assets || {}
-  if (snapAssets && typeof snapAssets === 'object') {
-    store.updateParams(props.tabId, { assets: { ...assets.value, ...snapAssets } })
+  const snapAssets = isRecord(snap.assets) ? snap.assets : null
+  if (snapAssets) {
+    store.updateParams(props.tabId, { assets: { ...assets.value, ...snapAssets } }).catch(reportTabMutationError)
   }
 
   setHigh({
@@ -1211,9 +1253,9 @@ function applyHistory(item: VideoRunHistoryItem): void {
     scheduler: String(hi.scheduler || ''),
     steps: Number(hi.steps) || high.value.steps,
     cfgScale: Number(hi.cfgScale) || high.value.cfgScale,
-    seed: Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
+    seed: typeof hi.seed === 'number' && Number.isFinite(hi.seed) ? Number(hi.seed) : high.value.seed,
     loraSha: snapLightx2v ? String(hi.loraSha || '') : '',
-    loraWeight: Number.isFinite(hi.loraWeight) ? Number(hi.loraWeight) : high.value.loraWeight,
+    loraWeight: typeof hi.loraWeight === 'number' && Number.isFinite(hi.loraWeight) ? Number(hi.loraWeight) : high.value.loraWeight,
   })
 
   setLow({
@@ -1222,9 +1264,9 @@ function applyHistory(item: VideoRunHistoryItem): void {
     scheduler: String(lo.scheduler || ''),
     steps: Number(lo.steps) || low.value.steps,
     cfgScale: Number(lo.cfgScale) || low.value.cfgScale,
-    seed: Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
+    seed: typeof lo.seed === 'number' && Number.isFinite(lo.seed) ? Number(lo.seed) : low.value.seed,
     loraSha: snapLightx2v ? String(lo.loraSha || '') : '',
-    loraWeight: Number.isFinite(lo.loraWeight) ? Number(lo.loraWeight) : low.value.loraWeight,
+    loraWeight: typeof lo.loraWeight === 'number' && Number.isFinite(lo.loraWeight) ? Number(lo.loraWeight) : low.value.loraWeight,
   })
 
   toast('Applied params from history.')
@@ -1266,7 +1308,7 @@ function diffObjects(before: unknown, after: unknown, prefix = '', out: Array<{ 
     const keys = new Set([...Object.keys(before), ...Object.keys(after)])
     for (const k of keys) {
       const nextPrefix = prefix ? `${prefix}.${k}` : k
-      diffObjects((before as any)[k], (after as any)[k], nextPrefix, out)
+      diffObjects(before[k], after[k], nextPrefix, out)
       if (out.length > 80) break
     }
     return out

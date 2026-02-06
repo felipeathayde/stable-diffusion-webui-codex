@@ -154,7 +154,7 @@ Symbols (top-level; keep in sync; no ghosts):
                   class="select-md"
                   :disabled="isRunning"
                   :value="params.maskEnforcement"
-                  @change="setParams({ maskEnforcement: ($event.target as HTMLSelectElement).value as any })"
+                  @change="setParams({ maskEnforcement: (($event.target as HTMLSelectElement).value === 'per_step_clamp' ? 'per_step_clamp' : 'post_blend') })"
                 >
                   <option value="post_blend">Forge-style (post-sample blend)</option>
                   <option value="per_step_clamp">Clamp per step</option>
@@ -235,6 +235,11 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </PromptCard>
 
+      <DependencyCheckPanel
+        :status="dependencyStatus"
+        :engine-label="engineConfig.label"
+      />
+
       <div class="panel">
         <div class="panel-header">
           Generation Parameters
@@ -265,13 +270,13 @@ Symbols (top-level; keep in sync; no ghosts):
             :show-init-image-dims="params.useInitImage && Boolean(params.initImageData)"
             :disabled="isRunning"
             @update:sampler="onSamplerChange"
-            @update:scheduler="(v: string) => setParams({ scheduler: v })"
-            @update:steps="(v: number) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
-            @update:width="(v: number) => setParams({ width: Math.max(64, Math.trunc(v)) })"
-            @update:height="(v: number) => setParams({ height: Math.max(64, Math.trunc(v)) })"
-            @update:cfgScale="(v: number) => setParams({ cfgScale: v })"
-            @update:seed="(v: number) => setParams({ seed: Math.trunc(v) })"
-            @update:clipSkip="(v: number) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
+            @update:scheduler="(v) => setParams({ scheduler: v })"
+            @update:steps="(v) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
+            @update:width="(v) => setParams({ width: Math.max(64, Math.trunc(v)) })"
+            @update:height="(v) => setParams({ height: Math.max(64, Math.trunc(v)) })"
+            @update:cfgScale="(v) => setParams({ cfgScale: v })"
+            @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
+            @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
             @random-seed="randomizeSeed"
             @reuse-seed="reuseSeed"
             @sync-init-image-dims="syncInitImageDims"
@@ -299,20 +304,20 @@ Symbols (top-level; keep in sync; no ghosts):
             :refinerSeed="showHiresRefiner ? params.hires.refiner?.seed : undefined"
             :refinerModel="showHiresRefiner ? params.hires.refiner?.model : undefined"
             :refinerVae="showHiresRefiner ? params.hires.refiner?.vae : undefined"
-            @update:enabled="(v: boolean) => setHires({ enabled: v })"
-            @update:denoise="(v: number) => setHires({ denoise: clampFloat(v, 0, 1) })"
-            @update:scale="(v: number) => setHires({ scale: v })"
-            @update:steps="(v: number) => setHires({ steps: Math.max(0, Math.trunc(v)) })"
-            @update:upscaler="(v: string) => setHires({ upscaler: v })"
-            @update:tile="(v: { tile: number; overlap: number }) => setHires({ tile: v })"
+            @update:enabled="(v) => setHires({ enabled: v })"
+            @update:denoise="(v) => setHires({ denoise: clampFloat(v, 0, 1) })"
+            @update:scale="(v) => setHires({ scale: v })"
+            @update:steps="(v) => setHires({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:upscaler="(v) => setHires({ upscaler: v })"
+            @update:tile="(v) => setHires({ tile: v })"
             @update:minTile="setMinTile"
             @update:fallbackOnOom="setFallbackOnOom"
-            @update:refinerEnabled="(v: boolean) => setHiresRefiner({ enabled: v })"
-            @update:refinerSteps="(v: number) => setHiresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
-            @update:refinerCfg="(v: number) => setHiresRefiner({ cfg: v })"
-            @update:refinerSeed="(v: number) => setHiresRefiner({ seed: Math.trunc(v) })"
-            @update:refinerModel="(v: string) => setHiresRefiner({ model: v })"
-            @update:refinerVae="(v: string) => setHiresRefiner({ vae: v })"
+            @update:refinerEnabled="(v) => setHiresRefiner({ enabled: v })"
+            @update:refinerSteps="(v) => setHiresRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:refinerCfg="(v) => setHiresRefiner({ cfg: v })"
+            @update:refinerSeed="(v) => setHiresRefiner({ seed: Math.trunc(v) })"
+            @update:refinerModel="(v) => setHiresRefiner({ model: v })"
+            @update:refinerVae="(v) => setHiresRefiner({ vae: v })"
           />
 
           <RefinerSettingsCard
@@ -323,12 +328,12 @@ Symbols (top-level; keep in sync; no ghosts):
             :seed="params.refiner.seed"
             :model="params.refiner.model"
             :vae="params.refiner.vae"
-            @update:enabled="(v: boolean) => setRefiner({ enabled: v })"
-            @update:steps="(v: number) => setRefiner({ steps: Math.max(0, Math.trunc(v)) })"
-            @update:cfg="(v: number) => setRefiner({ cfg: v })"
-            @update:seed="(v: number) => setRefiner({ seed: Math.trunc(v) })"
-            @update:model="(v: string) => setRefiner({ model: v })"
-            @update:vae="(v: string) => setRefiner({ vae: v })"
+            @update:enabled="(v) => setRefiner({ enabled: v })"
+            @update:steps="(v) => setRefiner({ steps: Math.max(0, Math.trunc(v)) })"
+            @update:cfg="(v) => setRefiner({ cfg: v })"
+            @update:seed="(v) => setRefiner({ seed: Math.trunc(v) })"
+            @update:model="(v) => setRefiner({ model: v })"
+            @update:vae="(v) => setRefiner({ vae: v })"
           />
         </div>
       </div>
@@ -345,8 +350,8 @@ Symbols (top-level; keep in sync; no ghosts):
         :batchSize="params.batchSize"
         :disabled="isRunning"
         @generate="generate"
-        @update:batchCount="(v: number) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
-        @update:batchSize="(v: number) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
+        @update:batchCount="(v) => setParams({ batchCount: Math.max(1, Math.trunc(v)) })"
+        @update:batchSize="(v) => setParams({ batchSize: Math.max(1, Math.trunc(v)) })"
       >
         <div v-if="copyNotice" class="caption">{{ copyNotice }}</div>
         <RunSummaryChips :text="runSummary" />
@@ -436,12 +441,14 @@ import { fetchSamplers, fetchSchedulers } from '../api/client'
 import type { GeneratedImage, SamplerInfo, SchedulerInfo } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
-import { useModelTabsStore, type ImageBaseParams } from '../stores/model_tabs'
+import { useModelTabsStore, type ImageBaseParams, type TabByType } from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults, type EngineType } from '../stores/engine_config'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
+import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
+import DependencyCheckPanel from '../components/DependencyCheckPanel.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
@@ -456,6 +463,7 @@ import SliderField from '../components/ui/SliderField.vue'
 const props = defineProps<{ tabId: string; type: EngineType }>()
 const store = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
+const bootstrap = useBootstrapStore()
 const workflows = useWorkflowsStore()
 const upscalersStore = useUpscalersStore()
 const { upscalers, loading: upscalersLoading, error: upscalersError, fallbackOnOom, minTile } = storeToRefs(upscalersStore)
@@ -487,13 +495,17 @@ const previewStyle = ref<Record<string, string>>({})
 const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 
-onMounted(async () => {
-  if (!store.tabs.length) store.load()
-  void engineCaps.init()
-  void upscalersStore.load()
-  const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
-  samplers.value = samp.samplers
-  schedulers.value = sched.schedulers
+onMounted(() => {
+  bootstrap
+    .runRequired('Failed to initialize image tab controls', async () => {
+      await upscalersStore.load()
+      const [samp, sched] = await Promise.all([fetchSamplers(), fetchSchedulers()])
+      samplers.value = samp.samplers
+      schedulers.value = sched.schedulers
+    })
+    .catch(() => {
+      // Fatal state is already set by bootstrap store.
+    })
   syncPreviewHeight()
   window.addEventListener('resize', syncPreviewHeight)
 })
@@ -505,6 +517,7 @@ onBeforeUnmount(() => {
 
 const workflowBusy = ref(false)
 const { notice: copyNotice, toast, copyJson } = useResultsCard()
+type ImageTab = TabByType<'sd15' | 'sdxl' | 'flux1' | 'zimage' | 'chroma' | 'anima'>
 
 watch(
   resumeNotice,
@@ -517,12 +530,20 @@ watch(
   { immediate: true },
 )
 
-const params = computed<ImageBaseParams>(() => (tab.value?.params as any) as ImageBaseParams)
+const imageTab = computed<ImageTab | null>(() => {
+  const candidate = tab.value
+  if (!candidate || candidate.type === 'wan') return null
+  return candidate as unknown as ImageTab
+})
+const params = computed<ImageBaseParams>(() => imageTab.value?.params ?? ({} as ImageBaseParams))
 const engineConfig = computed(() => getEngineConfig(props.type))
 const resolvedEngineForMode = computed(() => resolveEngineForRequest(props.type, Boolean(params.value.useInitImage)))
 const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
+const dependencyStatus = computed(() => engineCaps.getDependencyStatus(resolvedEngineForMode.value))
+const dependencyError = computed(() => engineCaps.firstDependencyError(resolvedEngineForMode.value))
+const dependencyReady = computed(() => Boolean(dependencyStatus.value?.ready))
 
-const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean((params.value as any)?.zimageTurbo ?? true) : false)
+const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean(params.value.zimageTurbo ?? true) : false)
 const supportsNegative = computed(() => engineConfig.value.capabilities.usesNegativePrompt)
 const supportsTxt2Img = computed(() => {
   const surf = engineSurface.value
@@ -534,9 +555,13 @@ const supportsImg2Img = computed(() => {
   if (!surf) return false
   return Boolean(surf.supports_img2img)
 })
-const canGenerateForCurrentMode = computed(() => (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value))
+const canGenerateForCurrentMode = computed(() =>
+  dependencyReady.value && (params.value.useInitImage ? supportsImg2Img.value : supportsTxt2Img.value),
+)
 const generateDisabledReason = computed(() => {
   if (isRunning.value) return ''
+  if (!dependencyStatus.value) return `Dependency checks for '${resolvedEngineForMode.value}' are not available.`
+  if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (params.value.useInitImage && !supportsImg2Img.value) return `${engineConfig.value.label} does not support img2img.`
   if (!params.value.useInitImage && !supportsTxt2Img.value) return `${engineConfig.value.label} does not support txt2img.`
@@ -562,7 +587,7 @@ const showHires = computed(() => {
   return surf.supports_hires
 })
 
-const showHiresRefiner = computed(() => !Boolean((params.value as any)?.useInitImage))
+const showHiresRefiner = computed(() => !Boolean(params.value.useInitImage))
 
 const showGlobalRefiner = computed(() => {
   if (props.type === 'zimage') return false
@@ -639,10 +664,8 @@ watch([supportsImg2Img, () => engineCaps.loaded], ([supported, capsLoaded]) => {
 watch(showHires, (show) => {
   if (show) return
   if (!params.value.hires.enabled && !params.value.hires.refiner?.enabled) return
-  setHires({
-    enabled: false,
-    refiner: { ...(params.value.hires.refiner || {}), enabled: false },
-  } as any)
+  setHires({ enabled: false })
+  setHiresRefiner({ enabled: false })
 })
 
 watch(showGlobalRefiner, (show) => {
@@ -726,7 +749,7 @@ async function copyHistoryParams(item: ImageRunHistoryItem): Promise<void> {
 function applyHistory(item: ImageRunHistoryItem): void {
   const snap = item.paramsSnapshot as Partial<ImageBaseParams>
   setParams({
-    ...(snap as any),
+    ...snap,
     useInitImage: false,
     initImageData: '',
     initImageName: '',
@@ -822,20 +845,31 @@ function saveProfile(): void {
 
 function setParams(patch: Partial<ImageBaseParams>): void {
   if (!tab.value) return
-  store.updateParams(props.tabId, patch as any)
+  store.updateParams(props.tabId, patch as Partial<Record<string, unknown>>).catch((error) => {
+    toast(error instanceof Error ? error.message : String(error))
+  })
 }
 
-function setHires(patch: Record<string, unknown>): void {
-  setParams({ hires: { ...(params.value.hires as any), ...patch } as any })
+function setHires(patch: Partial<ImageBaseParams['hires']>): void {
+  setParams({ hires: { ...params.value.hires, ...patch } })
 }
 
-function setHiresRefiner(patch: Record<string, unknown>): void {
-  const nextRefiner = { ...((params.value.hires as any).refiner || {}), ...patch }
+function setHiresRefiner(patch: Partial<NonNullable<ImageBaseParams['hires']['refiner']>>): void {
+  const nextRefiner = {
+    enabled: false,
+    steps: 0,
+    cfg: 3.5,
+    seed: -1,
+    model: undefined,
+    vae: undefined,
+    ...(params.value.hires.refiner || {}),
+    ...patch,
+  }
   setHires({ refiner: nextRefiner })
 }
 
-function setRefiner(patch: Record<string, unknown>): void {
-  setParams({ refiner: { ...(params.value.refiner as any), ...patch } as any })
+function setRefiner(patch: Partial<ImageBaseParams['refiner']>): void {
+  setParams({ refiner: { ...params.value.refiner, ...patch } })
 }
 
 function clampFloat(value: number, min: number, max: number): number {

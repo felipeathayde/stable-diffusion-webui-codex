@@ -14,19 +14,26 @@ default parameter shapes per tab type (image vs WAN video) using engine defaults
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
+- `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
+- `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder failures.
 - `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
 - `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
+- `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Chroma/ZImage
   (includes optional family-specific fields like `zimageTurbo`).
+- `TabParamsByType` (type): Canonical params map by tab type.
+- `TabByType` (type): Typed tab shape (`type` + matching params payload).
 - `MODEL_TABS_STORAGE_KEY` (const): LocalStorage key used for persisted tabs state (bump when schema changes).
 - `nowIso` (function): Returns current time in ISO string form for metadata timestamps.
-- `uuid` (function): Generates a random tab id (client-side).
 - `defaultParams` (function): Returns default params for a given tab type (image vs WAN video), merging engine defaults where applicable.
-- `TAB_TYPE_ALIASES` (const): Canonical alias map for persisted tab type normalization (no silent fallback).
 - `normalizeTabType` (function): Validates/coerces raw type values into `BaseTabType`.
 - `BASE_REQUIRED_TYPES` (const): Baseline tab types always auto-created by the UI store.
 - `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds `anima` only when exposed).
+- `asRecordObject` (function): Narrowing helper that normalizes unknown values into plain records for merge-safe processing.
+- `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
+- `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
+- `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
 - `useModelTabsStore` (store): Pinia store for tabs; loads/syncs with backend, provides CRUD/reorder actions, and exposes computed helpers.
@@ -34,16 +41,38 @@ Symbols (top-level; keep in sync; no ghosts):
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi, fetchEngineCapabilities } from '../api/client'
+import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
 import type { ApiTab } from '../api/types'
 import type { HiresFormState, RefinerFormState } from '../api/payloads'
 import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_config'
+import { useEngineCapabilitiesStore } from './engine_capabilities'
+import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
 
 export type BaseTabType = ApiTab['type']
 
 export interface BaseTabMeta {
   createdAt: string
   updatedAt: string
+}
+
+export type ModelTabsErrorCode = 'tab_not_found' | 'api_failure' | 'invalid_response' | 'invalid_reorder'
+
+export class ModelTabsStoreError extends Error {
+  readonly code: ModelTabsErrorCode
+  readonly cause: unknown
+  readonly details: Record<string, unknown> | null
+
+  constructor(
+    code: ModelTabsErrorCode,
+    message: string,
+    options?: { cause?: unknown; details?: Record<string, unknown> | null },
+  ) {
+    super(message)
+    this.name = 'ModelTabsStoreError'
+    this.code = code
+    this.cause = options?.cause
+    this.details = options?.details ?? null
+  }
 }
 
 export interface WanStageParams {
@@ -101,6 +130,12 @@ export interface WanVideoParams {
   rifeTimes: number
 }
 
+export interface WanAssetsParams {
+  metadata: string
+  textEncoder: string
+  vae: string
+}
+
 export interface BaseTab {
   id: string
   type: BaseTabType
@@ -145,6 +180,28 @@ export interface ImageBaseParams {
   zimageTurbo?: boolean
 }
 
+export type TabParamsByType = {
+  sd15: ImageBaseParams
+  sdxl: ImageBaseParams
+  flux1: ImageBaseParams
+  zimage: ImageBaseParams
+  chroma: ImageBaseParams
+  anima: ImageBaseParams
+  wan: {
+    high: WanStageParams
+    low: WanStageParams
+    video: WanVideoParams
+    assets: WanAssetsParams
+    lightx2v: boolean
+    lowFollowsHigh: boolean
+  }
+}
+
+export type TabByType<T extends BaseTabType = BaseTabType> = Omit<BaseTab, 'type' | 'params'> & {
+  type: T
+  params: TabParamsByType[T]
+}
+
 export const MODEL_TABS_STORAGE_KEY = 'codex:model-tabs:v2'
 const STORAGE_KEY = MODEL_TABS_STORAGE_KEY
 
@@ -152,12 +209,21 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
-function uuid(): string {
-  // Suficiente para ids locais; backend ganhará ids estáveis na Fase 4
-  return 'tab-' + Math.random().toString(36).slice(2, 10)
+function requirePersistedTabId(value: unknown, context: string): string {
+  const id = typeof value === 'string' ? value.trim() : ''
+  if (!id) {
+    throw new ModelTabsStoreError(
+      'invalid_response',
+      `Invalid '/api/ui/tabs' contract: ${context} returned an empty 'id'.`,
+    )
+  }
+  return id
 }
 
-function defaultParams(type: BaseTabType): Record<string, unknown> {
+function defaultParams<T extends BaseTabType>(
+  type: T,
+  opts?: { sampler?: string; scheduler?: string },
+): TabParamsByType[T] {
   // Video tabs (WAN)
   if (type === 'wan') {
     const stage = (): WanStageParams => ({
@@ -207,21 +273,25 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
       rifeModel: 'rife47.pth',
       rifeTimes: 2,
     }
-    const assets = { metadata: '', textEncoder: '', vae: '' }
-    return { high: stage(), low: stage(), video, assets, lightx2v: false, lowFollowsHigh: false }
+    const assets: WanAssetsParams = { metadata: '', textEncoder: '', vae: '' }
+    const wanDefaults: TabParamsByType['wan'] = {
+      high: stage(),
+      low: stage(),
+      video,
+      assets,
+      lightx2v: false,
+      lowFollowsHigh: false,
+    }
+    return wanDefaults as TabParamsByType[T]
   }
 
   // Image tabs (SD15, SDXL, FLUX.1)
   const config = getEngineConfig(type as EngineType)
   const defaults = getEngineDefaults(type as EngineType)
   const guidance = config.capabilities.usesDistilledCfg && defaults.distilledCfg !== undefined ? defaults.distilledCfg : defaults.cfg
-  const samplingDefaults = (() => {
-    if (type === 'sd15') return { sampler: 'pndm', scheduler: 'ddim' }
-    if (type === 'sdxl') return { sampler: 'euler', scheduler: 'euler_discrete' }
-    if (type === 'flux1' || type === 'zimage' || type === 'chroma') return { sampler: 'euler', scheduler: 'simple' }
-    if (type === 'anima') return { sampler: 'er sde', scheduler: 'simple' }
-    return { sampler: 'dpm++ 2m', scheduler: 'karras' }
-  })()
+  const samplingDefaults = fallbackSamplingDefaultsForTabFamily(type as TabFamily)
+  const resolvedSampler = String(opts?.sampler || '').trim() || samplingDefaults.sampler
+  const resolvedScheduler = String(opts?.scheduler || '').trim() || samplingDefaults.scheduler
   const refinerDefaults: RefinerFormState = {
     enabled: false,
     steps: 0,
@@ -254,8 +324,8 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
     negativePrompt: config.capabilities.usesNegativePrompt ? '' : '',
     width: defaults.width,
     height: defaults.height,
-    sampler: samplingDefaults.sampler,
-    scheduler: samplingDefaults.scheduler,
+    sampler: resolvedSampler,
+    scheduler: resolvedScheduler,
     steps: defaults.steps,
     cfgScale: guidance,
     seed: -1,
@@ -284,22 +354,8 @@ function defaultParams(type: BaseTabType): Record<string, unknown> {
   if (type === 'zimage') {
     imageDefaults.zimageTurbo = true
   }
-  return imageDefaults
+  return imageDefaults as TabParamsByType[T]
 }
-
-const TAB_TYPE_ALIASES: Readonly<Record<string, BaseTabType>> = Object.freeze({
-  sd15: 'sd15',
-  sdxl: 'sdxl',
-  flux1: 'flux1',
-  zimage: 'zimage',
-  chroma: 'chroma',
-  wan: 'wan',
-  anima: 'anima',
-  wan22: 'wan',
-  wan22_14b: 'wan',
-  wan22_5b: 'wan',
-  flux1_chroma: 'chroma',
-})
 
 export function normalizeTabType(type: unknown): BaseTabType {
   const raw = String(type || '').trim()
@@ -308,57 +364,105 @@ export function normalizeTabType(type: unknown): BaseTabType {
     console.error(`[model_tabs] ${msg}`, { type })
     throw new Error(msg)
   }
-  const value = raw.toLowerCase()
-  const normalized = TAB_TYPE_ALIASES[value]
+  const normalized = normalizeTabFamily(raw)
   if (normalized) return normalized
   const msg = `Unsupported model tab type '${raw}'.`
   console.error(`[model_tabs] ${msg}`, { type })
   throw new Error(msg)
 }
 
-function normalizeParamsForType(type: BaseTabType, raw: unknown): Record<string, unknown> {
-  const params = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? (raw as Record<string, unknown>) : {}
-  const defaults = defaultParams(type)
-  if (type === 'wan') {
-    const merged: Record<string, unknown> = { ...defaults, ...params }
-    const d = defaults as any
-    const p = params as any
-    merged.high = { ...(d.high || {}), ...(p.high || {}) }
-    merged.low = { ...(d.low || {}), ...(p.low || {}) }
-    merged.video = { ...(d.video || {}), ...(p.video || {}) }
-    merged.assets = { ...(d.assets || {}), ...(p.assets || {}) }
-    return merged
+function asRecordObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  return {}
+}
+
+function asParamsRecord(params: TabParamsByType[BaseTabType]): Record<string, unknown> {
+  return params as unknown as Record<string, unknown>
+}
+
+function normalizeWanParams(raw: unknown, defaults: TabParamsByType['wan']): TabParamsByType['wan'] {
+  const patch = asRecordObject(raw) as Partial<TabParamsByType['wan']>
+  const highPatch = asRecordObject(patch.high)
+  const lowPatch = asRecordObject(patch.low)
+  const videoPatch = asRecordObject(patch.video)
+  const assetsPatch = asRecordObject(patch.assets)
+  return {
+    ...defaults,
+    ...patch,
+    high: { ...defaults.high, ...(highPatch as Partial<WanStageParams>) },
+    low: { ...defaults.low, ...(lowPatch as Partial<WanStageParams>) },
+    video: { ...defaults.video, ...(videoPatch as Partial<WanVideoParams>) },
+    assets: { ...defaults.assets, ...(assetsPatch as Partial<WanAssetsParams>) },
+  }
+}
+
+function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBaseParams {
+  const patch = asRecordObject(raw) as Partial<ImageBaseParams>
+  const hiresPatch = asRecordObject(patch.hires)
+  const hiresRefinerPatch = asRecordObject(hiresPatch.refiner)
+  const hiresTilePatch = asRecordObject(hiresPatch.tile)
+  const refinerPatch = asRecordObject(patch.refiner)
+
+  const mergedHires: HiresFormState = {
+    ...defaults.hires,
+    ...(hiresPatch as Partial<HiresFormState>),
+    refiner: {
+      ...(asRecordObject(defaults.hires.refiner) as Partial<RefinerFormState>),
+      ...(hiresRefinerPatch as Partial<RefinerFormState>),
+    } as RefinerFormState,
+    tile: {
+      ...defaults.hires.tile,
+      ...(hiresTilePatch as Partial<HiresFormState['tile']>),
+    },
   }
 
-  const merged: Record<string, unknown> = { ...defaults, ...params }
-  const d = defaults as any
-  const p = params as any
-  if (d.hires && typeof d.hires === 'object') {
-    merged.hires = { ...(d.hires || {}), ...(p.hires || {}) }
-    if ((d.hires as any).refiner && typeof (d.hires as any).refiner === 'object') {
-      ;(merged.hires as any).refiner = { ...((d.hires as any).refiner || {}), ...((p.hires as any)?.refiner || {}) }
-    }
-    if ((d.hires as any).tile && typeof (d.hires as any).tile === 'object') {
-      ;(merged.hires as any).tile = { ...((d.hires as any).tile || {}), ...((p.hires as any)?.tile || {}) }
-    }
+  const merged: ImageBaseParams = {
+    ...defaults,
+    ...patch,
+    hires: mergedHires,
+    refiner: {
+      ...defaults.refiner,
+      ...(refinerPatch as Partial<RefinerFormState>),
+    },
   }
-  if (d.refiner && typeof d.refiner === 'object') {
-    merged.refiner = { ...(d.refiner || {}), ...(p.refiner || {}) }
+
+  if (typeof merged.sampler !== 'string' || !merged.sampler.trim()) {
+    merged.sampler = defaults.sampler
   }
-  const mergedSampler = (merged as any).sampler
-  if (typeof mergedSampler !== 'string' || !mergedSampler.trim()) {
-    ;(merged as any).sampler = (d as any).sampler
-  }
-  const mergedScheduler = (merged as any).scheduler
-  if (typeof mergedScheduler !== 'string' || !mergedScheduler.trim()) {
-    ;(merged as any).scheduler = (d as any).scheduler
+  if (typeof merged.scheduler !== 'string' || !merged.scheduler.trim()) {
+    merged.scheduler = defaults.scheduler
   }
   return merged
 }
 
-function normalizeTab(tab: BaseTab): BaseTab {
-  const type = normalizeTabType((tab as any).type)
-  return { ...tab, type, params: normalizeParamsForType(type, (tab as any).params) }
+function normalizeParamsForType<T extends BaseTabType>(
+  type: T,
+  raw: unknown,
+  defaultsOverride?: TabParamsByType[T],
+): TabParamsByType[T] {
+  const defaults = defaultsOverride ?? defaultParams(type)
+  if (type === 'wan') {
+    return normalizeWanParams(raw, defaults as TabParamsByType['wan']) as TabParamsByType[T]
+  }
+  return normalizeImageParams(raw, defaults as ImageBaseParams) as TabParamsByType[T]
+}
+
+type RawTab = Omit<BaseTab, 'type' | 'params'> & {
+  type: unknown
+  params?: unknown
+}
+
+function normalizeTab(
+  tab: RawTab,
+  resolveDefaults?: <T extends BaseTabType>(type: T) => TabParamsByType[T],
+): BaseTab {
+  const type = normalizeTabType(tab.type)
+  const defaults = resolveDefaults ? resolveDefaults(type) : undefined
+  return {
+    ...tab,
+    type,
+    params: asParamsRecord(normalizeParamsForType(type, tab.params, defaults)),
+  }
 }
 
 const BASE_REQUIRED_TYPES: BaseTabType[] = ['sd15', 'sdxl', 'flux1', 'chroma', 'zimage', 'wan']
@@ -376,13 +480,9 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   const activeId = ref<string>('')
 
   async function resolveRequiredTypesFromCapabilities(): Promise<BaseTabType[]> {
-    const caps = await fetchEngineCapabilities()
-    const engines = caps?.engines
-    if (!engines || typeof engines !== 'object') {
-      const msg = "Invalid '/api/engines/capabilities' response: missing 'engines' object."
-      console.error(`[model_tabs] ${msg}`, caps)
-      throw new Error(msg)
-    }
+    const capsStore = useEngineCapabilitiesStore()
+    await capsStore.init()
+    const engines = capsStore.engines
     return requiredTypesFromCapabilities(engines as Record<string, unknown>)
   }
 
@@ -391,17 +491,55 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   }
 
+  function ensureTabOrThrow(id: string): BaseTab {
+    const tab = tabs.value.find((entry) => entry.id === id)
+    if (!tab) {
+      throw new ModelTabsStoreError('tab_not_found', `Tab not found: '${id}'.`, { details: { id } })
+    }
+    return tab
+  }
+
+  function mapApiError(operation: string, error: unknown, details?: Record<string, unknown>): ModelTabsStoreError {
+    const message = error instanceof Error ? error.message : String(error)
+    return new ModelTabsStoreError(
+      'api_failure',
+      `${operation}: ${message}`,
+      { cause: error, details: details ?? null },
+    )
+  }
+
+  function preferredSamplingDefaultsForType(type: BaseTabType): { sampler: string; scheduler: string } | null {
+    if (type === 'wan') return null
+    const capsStore = useEngineCapabilitiesStore()
+    const fallback = fallbackSamplingDefaultsForTabFamily(type as TabFamily)
+    return capsStore.resolveSamplingDefaults(type, {
+      fallbackSampler: fallback.sampler,
+      fallbackScheduler: fallback.scheduler,
+    })
+  }
+
+  function defaultParamsForType<T extends BaseTabType>(type: T): TabParamsByType[T] {
+    const preferredSampling = preferredSamplingDefaultsForType(type)
+    return defaultParams(type, preferredSampling ?? undefined)
+  }
+
   async function ensureRequiredTabs(requiredTypes: BaseTabType[]): Promise<void> {
     const existing = new Set<BaseTabType>(tabs.value.map(t => t.type))
     let nextOrder = tabs.value.length ? (Math.max(...tabs.value.map(t => t.order)) + 1) : 0
-    const createdAt = nowIso()
     for (const type of requiredTypes) {
       if (existing.has(type)) continue
-      const id = uuid()
       const title = type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label
-      const params = defaultParams(type)
+      const params = asParamsRecord(defaultParamsForType(type))
+      let createdId = ''
+      try {
+        const created = await createTabApi({ type, title, params })
+        createdId = requirePersistedTabId(created?.id, `create required tab '${type}'`)
+      } catch (error) {
+        throw mapApiError(`Failed to ensure required tab '${type}'`, error, { type, title })
+      }
+      const createdAt = nowIso()
       tabs.value.push({
-        id,
+        id: createdId,
         type,
         title,
         order: nextOrder++,
@@ -410,7 +548,6 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         meta: { createdAt, updatedAt: createdAt },
       })
       existing.add(type)
-      try { await createTabApi({ id, type, title, params }) } catch { /* ignore */ }
     }
   }
 
@@ -431,10 +568,10 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     if (!res || !Array.isArray(res.tabs)) {
       const msg = "Invalid '/api/ui/tabs' response: missing 'tabs' array."
       console.error(`[model_tabs] ${msg}`, res)
-      throw new Error(msg)
+      throw new ModelTabsStoreError('invalid_response', msg, { details: { response: res as unknown as Record<string, unknown> } })
     }
 
-    tabs.value = (res.tabs as unknown as BaseTab[]).map(normalizeTab)
+    tabs.value = (res.tabs as unknown as BaseTab[]).map((tab) => normalizeTab(tab, defaultParamsForType))
     tabs.value.sort((a, b) => a.order - b.order)
     activeId.value = (preferredActiveId && tabs.value.some(t => t.id === preferredActiveId)) ? preferredActiveId : (tabs.value[0]?.id ?? '')
     await ensureRequiredTabs(requiredTypes)
@@ -443,102 +580,156 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     save()
   }
 
-  async function bootstrap(requiredTypes: BaseTabType[]): Promise<void> {
-    // Create minimal default tabs when backend persistence is unavailable.
-    const createdAt = nowIso()
-    const types = requiredTypes
-    tabs.value = types.map((type, idx) => ({
-      id: uuid(),
-      type,
-      title: type === 'wan' ? 'WAN 2.2' : type === 'anima' ? 'Anima' : getEngineConfig(type as EngineType).label,
-      order: idx,
-      enabled: true,
-      params: defaultParams(type),
-      meta: { createdAt, updatedAt: createdAt },
-    }))
-    activeId.value = tabs.value[0]?.id ?? ''
-    save()
-  }
-
   async function create(type: BaseTabType, title?: string): Promise<string> {
-    const id = uuid()
+    const resolvedTitle = title?.trim() || (type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label)
+    const params = asParamsRecord(defaultParamsForType(type))
+    let createdId = ''
+    try {
+      const created = await createTabApi({ type, title: resolvedTitle, params })
+      createdId = requirePersistedTabId(created?.id, `create tab '${resolvedTitle}'`)
+    } catch (error) {
+      throw mapApiError(`Failed to create tab '${resolvedTitle}'`, error, { type, title: resolvedTitle })
+    }
     const createdAt = nowIso()
-    const defaultTitle = type === 'wan' ? 'WAN 2.2' : getEngineConfig(type as EngineType).label
     const nextOrder = tabs.value.length ? Math.max(...tabs.value.map(t => t.order)) + 1 : 0
     tabs.value.push({
-      id,
+      id: createdId,
       type,
-      title: title || defaultTitle,
+      title: resolvedTitle,
       order: nextOrder,
       enabled: true,
-      params: defaultParams(type),
+      params,
       meta: { createdAt, updatedAt: createdAt },
     })
-    try { await createTabApi({ id, type, title: title || defaultTitle, params: defaultParams(type) }) } catch { /* ignore */ }
     save()
-    return id
+    return createdId
   }
 
   async function duplicate(id: string): Promise<string> {
-    const src = tabs.value.find(t => t.id === id)
-    if (!src) return ''
+    const src = ensureTabOrThrow(id)
     const copy: BaseTab = JSON.parse(JSON.stringify(src))
-    copy.id = uuid()
     copy.title = src.title + ' (copy)'
+    let createdId = ''
+    try {
+      const created = await createTabApi({ type: copy.type as BaseTabType, title: copy.title, params: copy.params })
+      createdId = requirePersistedTabId(created?.id, `duplicate tab '${id}'`)
+    } catch (error) {
+      throw mapApiError(`Failed to duplicate tab '${id}'`, error, { id, sourceType: src.type })
+    }
+    copy.id = createdId
     copy.order = (Math.max(...tabs.value.map(t => t.order)) || 0) + 1
     copy.meta.createdAt = nowIso()
     copy.meta.updatedAt = copy.meta.createdAt
     tabs.value.push(copy)
-    try { await createTabApi({ id: copy.id, type: copy.type as BaseTabType, title: copy.title, params: copy.params }) } catch { /* ignore */ }
     save()
     return copy.id
   }
 
   async function remove(id: string): Promise<void> {
+    ensureTabOrThrow(id)
+    try {
+      await deleteTabApi(id)
+    } catch (error) {
+      throw mapApiError(`Failed to remove tab '${id}'`, error, { id })
+    }
     tabs.value = tabs.value.filter(t => t.id !== id)
     if (activeId.value === id) activeId.value = tabs.value[0]?.id ?? ''
     normalizeOrder()
-    try { await deleteTabApi(id) } catch { /* ignore */ }
     save()
   }
 
   async function rename(id: string, title: string): Promise<void> {
-    const t = tabs.value.find(x => x.id === id)
-    if (!t) return
+    const t = ensureTabOrThrow(id)
+    try {
+      await updateTabApi(id, { title })
+    } catch (error) {
+      throw mapApiError(`Failed to rename tab '${id}'`, error, { id, title })
+    }
     t.title = title
     t.meta.updatedAt = nowIso()
-    try { await updateTabApi(id, { title }) } catch { /* ignore */ }
     save()
   }
 
   async function setEnabled(id: string, value: boolean): Promise<void> {
-    const t = tabs.value.find(x => x.id === id)
-    if (!t) return
+    const t = ensureTabOrThrow(id)
+    try {
+      await updateTabApi(id, { enabled: value })
+    } catch (error) {
+      throw mapApiError(`Failed to update enabled flag for tab '${id}'`, error, { id, enabled: value })
+    }
     t.enabled = value
     t.meta.updatedAt = nowIso()
-    try { await updateTabApi(id, { enabled: value }) } catch { /* ignore */ }
     save()
   }
 
   async function reorder(ids: string[]): Promise<void> {
+    const expectedIds = tabs.value.map(t => t.id)
+    if (ids.length !== expectedIds.length) {
+      throw new ModelTabsStoreError(
+        'invalid_reorder',
+        'Invalid reorder payload: id list length does not match tabs length.',
+        { details: { expected: expectedIds.length, received: ids.length } },
+      )
+    }
+    if (new Set(ids).size !== ids.length) {
+      throw new ModelTabsStoreError(
+        'invalid_reorder',
+        'Invalid reorder payload: duplicate tab ids are not allowed.',
+        { details: { ids } },
+      )
+    }
+    const expectedSet = new Set(expectedIds)
+    for (const id of ids) {
+      if (!expectedSet.has(id)) {
+        throw new ModelTabsStoreError(
+          'invalid_reorder',
+          `Invalid reorder payload: unknown tab id '${id}'.`,
+          { details: { id, expectedIds } },
+        )
+      }
+    }
+    try {
+      await reorderTabsApi(ids)
+    } catch (error) {
+      throw mapApiError('Failed to reorder tabs', error, { ids })
+    }
     const map = new Map<string, number>()
     ids.forEach((id, idx) => map.set(id, idx))
     tabs.value.forEach(t => { t.order = map.get(t.id) ?? t.order })
     tabs.value.sort((a, b) => a.order - b.order)
-    try { await reorderTabsApi(ids) } catch { /* ignore */ }
     save()
   }
 
   function setActive(id: string): void { activeId.value = id; save() }
 
   async function updateParams<T extends Record<string, unknown>>(id: string, patch: Partial<T>): Promise<void> {
-    const t = tabs.value.find(x => x.id === id)
-    if (!t) return
+    const t = ensureTabOrThrow(id)
     const current = (t.params && typeof t.params === 'object' && !Array.isArray(t.params)) ? (t.params as T) : ({} as T)
     if (current !== t.params) t.params = current
+    const previousEntries = new Map<string, { existed: boolean; value: unknown }>()
+    for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+      previousEntries.set(key, {
+        existed: Object.prototype.hasOwnProperty.call(current, key),
+        value: (current as Record<string, unknown>)[key],
+      })
+    }
+    const previousUpdatedAt = t.meta.updatedAt
     Object.assign(current, patch)
     t.meta.updatedAt = nowIso()
-    try { await updateTabApi(id, { params: t.params }) } catch { /* ignore */ }
+    try {
+      await updateTabApi(id, { params: t.params })
+    } catch (error) {
+      for (const [key, snapshot] of previousEntries.entries()) {
+        if (snapshot.existed) {
+          ;(current as Record<string, unknown>)[key] = snapshot.value
+        } else {
+          delete (current as Record<string, unknown>)[key]
+        }
+      }
+      t.meta.updatedAt = previousUpdatedAt
+      save()
+      throw mapApiError(`Failed to update params for tab '${id}'`, error, { id })
+    }
     save()
   }
 

@@ -24,9 +24,9 @@ Symbols (top-level; keep in sync; no ghosts):
 - `getTabState` (function): Returns (and initializes) the per-tab `VideoGenerationState` for a given tab id.
 - `defaultStage` (function): Creates default `WanStageParams` for UI state initialization.
 - `defaultVideo` (function): Creates default `WanVideoParams` for UI state initialization.
-- `WanAssetsParams` (interface): Minimal assets selection state (metadata/text encoder/VAE labels/paths) used for WAN requests.
 - `defaultAssets` (function): Creates default `WanAssetsParams`.
 - `resumeKey` (function): Returns the localStorage key used to persist a WAN task resume marker for a tab.
+- `isRecordObject` (function): Type guard for plain-object payloads used in resume-state parsing.
 - `useVideoGeneration` (function): Main composable API; wires payload building, task start/cancel, SSE handling, queued runs, and history updates
   (contains nested handlers for events, queue progression, and per-mode payload assembly).
 */
@@ -35,9 +35,15 @@ import { computed, ref } from 'vue'
 
 import { cancelTask, fetchTaskResult, startImg2Vid, startTxt2Vid, startVid2Vid, subscribeTask } from '../api/client'
 import { formatZodError } from '../api/payloads'
-import { buildWanImg2VidPayload, buildWanTxt2VidPayload, buildWanVid2VidPayload, type WanVid2VidInput } from '../api/payloads_video'
+import {
+  buildWanImg2VidPayload,
+  buildWanTxt2VidPayload,
+  buildWanVid2VidPayload,
+  type WanVideoCommonInput,
+  type WanVid2VidInput,
+} from '../api/payloads_video'
 import type { GeneratedImage, TaskEvent } from '../api/types'
-import { useModelTabsStore, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
+import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageParams, type WanVideoParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 
 type Status = 'idle' | 'running' | 'error' | 'done'
@@ -115,22 +121,26 @@ function resumeKey(tabId: string): string {
   return `codex.resume.wan.${tabId}`
 }
 
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
 function loadResumeState(key: string): ResumeState | null {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return null
-    const obj = JSON.parse(raw) as any
-    if (!obj || typeof obj !== 'object') return null
-    if (typeof obj.taskId !== 'string' || !obj.taskId.trim()) return null
-    const taskId = String(obj.taskId).trim()
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecordObject(parsed)) return null
+    if (typeof parsed.taskId !== 'string' || !parsed.taskId.trim()) return null
+    const taskId = String(parsed.taskId).trim()
 
-    const lastEventId = typeof obj.lastEventId === 'number' && Number.isFinite(obj.lastEventId) ? Math.trunc(obj.lastEventId) : 0
-    const createdAtMs = typeof obj.createdAtMs === 'number' && Number.isFinite(obj.createdAtMs) ? Math.trunc(obj.createdAtMs) : 0
-    const summary = typeof obj.summary === 'string' ? obj.summary : ''
-    const promptPreview = typeof obj.promptPreview === 'string' ? obj.promptPreview : ''
-    const paramsSnapshot = obj.paramsSnapshot && typeof obj.paramsSnapshot === 'object' ? (obj.paramsSnapshot as Record<string, unknown>) : {}
+    const lastEventId = typeof parsed.lastEventId === 'number' && Number.isFinite(parsed.lastEventId) ? Math.trunc(parsed.lastEventId) : 0
+    const createdAtMs = typeof parsed.createdAtMs === 'number' && Number.isFinite(parsed.createdAtMs) ? Math.trunc(parsed.createdAtMs) : 0
+    const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
+    const promptPreview = typeof parsed.promptPreview === 'string' ? parsed.promptPreview : ''
+    const paramsSnapshot = isRecordObject(parsed.paramsSnapshot) ? parsed.paramsSnapshot : {}
 
-    const modeRaw = String(obj.mode || '').trim()
+    const modeRaw = String(parsed.mode || '').trim()
     const mode: VideoMode = modeRaw === 'vid2vid' || modeRaw === 'img2vid' ? modeRaw : 'txt2vid'
 
     return {
@@ -241,16 +251,11 @@ function defaultVideo(): WanVideoParams {
     trimToAudio: false,
     saveMetadata: true,
     saveOutput: true,
-    rifeEnabled: false,
-    rifeModel: '',
+    returnFrames: false,
+    rifeEnabled: true,
+    rifeModel: 'rife47.pth',
     rifeTimes: 2,
   }
-}
-
-interface WanAssetsParams {
-  metadata: string
-  textEncoder: string
-  vae: string
 }
 
 function defaultAssets(): WanAssetsParams {
@@ -264,14 +269,18 @@ export function useVideoGeneration(tabId: string) {
   const state = ref(getTabState(tabId))
   const resumeNotice = ref('')
 
-  const tab = computed(() => modelTabs.tabs.find(t => t.id === tabId) || null)
-  const params = computed(() => (tab.value?.params as any) as Record<string, unknown> | null)
+  const tab = computed<TabByType<'wan'> | null>(() => {
+    const candidate = modelTabs.tabs.find((entry) => entry.id === tabId) || null
+    if (!candidate || candidate.type !== 'wan') return null
+    return candidate as TabByType<'wan'>
+  })
+  const params = computed<TabByType<'wan'>['params'] | null>(() => tab.value?.params || null)
 
-  const video = computed<WanVideoParams>(() => (params.value?.video as WanVideoParams) || defaultVideo())
-  const high = computed<WanStageParams>(() => (params.value?.high as WanStageParams) || defaultStage())
-  const low = computed<WanStageParams>(() => (params.value?.low as WanStageParams) || defaultStage())
-  const lightx2v = computed<boolean>(() => Boolean((params.value as any)?.lightx2v))
-  const assets = computed<WanAssetsParams>(() => (params.value?.assets as WanAssetsParams) || defaultAssets())
+  const video = computed<WanVideoParams>(() => params.value?.video || defaultVideo())
+  const high = computed<WanStageParams>(() => params.value?.high || defaultStage())
+  const low = computed<WanStageParams>(() => params.value?.low || defaultStage())
+  const lightx2v = computed<boolean>(() => Boolean(params.value?.lightx2v))
+  const assets = computed<WanAssetsParams>(() => params.value?.assets || defaultAssets())
   const mode = computed<VideoMode>(() => {
     if (video.value.useInitVideo) return 'vid2vid'
     if (video.value.useInitImage) return 'img2vid'
@@ -467,7 +476,7 @@ export function useVideoGeneration(tabId: string) {
     if (state.value.history.length > MAX_HISTORY) state.value.history.length = MAX_HISTORY
   }
 
-  function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams) {
+  function buildCommonInput(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): WanVideoCommonInput {
     const metaRepo = effectiveWanMetadataRepo(v, hi, lo)
     const teLabel = String(assets.value.textEncoder || '').trim()
     const vaeLabel = String(assets.value.vae || '').trim()
@@ -527,7 +536,7 @@ export function useVideoGeneration(tabId: string) {
         model: v.rifeModel,
         times: v.rifeTimes,
       },
-    } as const
+    }
   }
 
   function prepareRunFromValues(v: WanVideoParams, hi: WanStageParams, lo: WanStageParams): Omit<VideoQueuedRun, 'id'> & { mode: VideoMode } {
@@ -540,7 +549,7 @@ export function useVideoGeneration(tabId: string) {
 
     if (v.useInitVideo) {
       const payload = buildWanVid2VidPayload({
-        ...(common as any),
+        ...common,
         strength: v.vid2vidStrength,
         method: v.vid2vidMethod,
         useSourceFps: v.vid2vidUseSourceFps,
@@ -557,11 +566,11 @@ export function useVideoGeneration(tabId: string) {
     }
 
     if (v.useInitImage) {
-      const payload = buildWanImg2VidPayload({ ...(common as any), initImageData: v.initImageData }) as unknown as Record<string, unknown>
+      const payload = buildWanImg2VidPayload({ ...common, initImageData: v.initImageData }) as unknown as Record<string, unknown>
       return { mode: 'img2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
     }
 
-    const payload = buildWanTxt2VidPayload(common as any) as unknown as Record<string, unknown>
+    const payload = buildWanTxt2VidPayload(common) as unknown as Record<string, unknown>
     return { mode: 'txt2vid', createdAtMs, summary, promptPreview, paramsSnapshot, payload }
   }
 
@@ -587,8 +596,8 @@ export function useVideoGeneration(tabId: string) {
               if (run.file) form.append('video', run.file)
               return startVid2Vid(form)
             })()
-          : (run.mode === 'img2vid' ? await startImg2Vid(run.payload as any) : await startTxt2Vid(run.payload as any))
-      const task_id = (res as any).task_id as string
+          : (run.mode === 'img2vid' ? await startImg2Vid(run.payload) : await startTxt2Vid(run.payload))
+      const task_id = res.task_id
       state.value.taskId = task_id
       state.value.currentRun = {
         taskId: task_id,
@@ -629,7 +638,10 @@ export function useVideoGeneration(tabId: string) {
   }
 
   async function generate(): Promise<void> {
-    if (!tab.value) return
+    if (!tab.value) {
+      setError(`useVideoGeneration: tab '${tabId}' not found or not available.`)
+      return
+    }
     if (tab.value.type !== 'wan') {
       setError(`useVideoGeneration: unsupported tab type '${String(tab.value.type)}'`)
       return

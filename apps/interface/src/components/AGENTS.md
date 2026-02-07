@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-02-06
+Last Review: 2026-02-07
 Status: Active
 
 ## Purpose
@@ -55,7 +55,7 @@ Status: Active
 - 2026-02-01: `HiresSettingsCard.vue` now lists upscalers from `/api/upscalers` (stable ids: `latent:*` / `spandrel:*`) and reuses the shared tile controls + OOM fallback toggle (same as `/upscale`).
 - 2026-02-04: `HiresSettingsCard.vue` now also wires `min_tile` (global preference) into the shared tile controls; callers propagate it into hires payloads as `hires.tile.min_tile`.
 - 2026-02-05: `QuickSettingsBar.vue` tab-family normalization now uses a canonical alias map (including `anima`); unknown families stay invalid instead of falling through implicit checks.
-- 2026-02-06: Added `DependencyCheckPanel.vue` for backend-owned dependency readiness rows (binary OK/ERROR indicators + messages) used by image/WAN tabs.
+- 2026-02-07: `DependencyCheckPanel.vue` now serves a single Home-level dependency overview grouped by semantic engine; image/WAN tabs no longer render local dependency panels.
 - 2026-02-06: `QuickSettingsBar.vue` bootstrap init is now routed through `stores/bootstrap` (no fire-and-forget startup calls; inventory/paths loading is fail-loud).
 - 2026-02-06: `QuickSettingsBar.vue` now catches and surfaces tab/options mutation failures (toasts) in async handlers and route-sync watchers, avoiding unhandled promise rejections from tab updates.
 - 2026-02-06: `QuickSettingsBar.vue` now resolves family fallback using canonical taxonomy helpers + backend `engine_id_to_semantic_engine` mapping (no duplicated ad-hoc alias table in the component).

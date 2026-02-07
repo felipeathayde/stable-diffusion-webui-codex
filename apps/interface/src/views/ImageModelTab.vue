@@ -235,11 +235,6 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </PromptCard>
 
-      <DependencyCheckPanel
-        :status="dependencyStatus"
-        :engine-label="engineConfig.label"
-      />
-
       <div class="panel">
         <div class="panel-header">
           Generation Parameters
@@ -448,7 +443,6 @@ import { useBootstrapStore } from '../stores/bootstrap'
 import { useUpscalersStore } from '../stores/upscalers'
 import { useWorkflowsStore } from '../stores/workflows'
 import BasicParametersCard from '../components/BasicParametersCard.vue'
-import DependencyCheckPanel from '../components/DependencyCheckPanel.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import InitialImageCard from '../components/InitialImageCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'

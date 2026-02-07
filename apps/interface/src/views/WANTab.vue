@@ -322,11 +322,6 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <!-- Right column: Results -->
     <div class="panel-stack">
-      <DependencyCheckPanel
-        :status="wanDependencyStatus"
-        engine-label="WAN 2.2"
-      />
-
       <RunCard
         :isRunning="isRunning"
         :generateDisabled="isRunning || !canRunGeneration"
@@ -502,7 +497,6 @@ import { useResultsCard } from '../composables/useResultsCard'
 import { useWorkflowsStore } from '../stores/workflows'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
-import DependencyCheckPanel from '../components/DependencyCheckPanel.vue'
 import NumberStepperInput from '../components/ui/NumberStepperInput.vue'
 
 const props = defineProps<{ tabId: string }>()

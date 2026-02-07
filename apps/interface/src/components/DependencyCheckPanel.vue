@@ -6,37 +6,63 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: In-tab dependency status panel with backend-driven OK/ERROR rows.
-Renders backend dependency checks with binary indicators and actionable messages so tabs can expose readiness and disable generation
-without frontend guesswork.
+Purpose: Home dependency status panel with backend-driven OK/ERROR rows across semantic engines.
+Renders backend dependency checks grouped by engine with binary indicators and actionable messages so Home can expose one
+canonical readiness surface for all engines without frontend guesswork.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `DependencyCheckPanel` (component): Displays backend dependency checks for one semantic engine.
+- `DependencyCheckPanel` (component): Displays backend dependency checks grouped by semantic engine.
+- `EngineDependencyChecks` (type): Map of semantic engine id -> dependency status payload.
+- `entries` (computed): Sorted engine entries rendered by the panel.
+- `allReady` (computed): Global readiness flag across all rendered engines.
 -->
 
 <template>
   <section class="panel dependency-check-panel">
     <div class="panel-header">
       <span>{{ title }}</span>
-      <span v-if="status" :class="['dependency-overall', status.ready ? 'is-ready' : 'is-error']">
-        {{ status.ready ? 'OK' : 'ERROR' }}
+      <span v-if="entries.length > 0" :class="['dependency-overall', allReady ? 'is-ready' : 'is-error']">
+        {{ allReady ? 'OK' : 'ERROR' }}
       </span>
     </div>
     <div class="panel-body">
-      <p v-if="!status" class="caption">
-        Dependency checks are unavailable for {{ engineLabel }}.
+      <p v-if="error" class="caption dependency-error-message">
+        {{ error }}
       </p>
-      <ul v-else class="dependency-check-list">
-        <li v-for="row in status.checks" :key="row.id" class="dependency-check-row">
-          <div class="dependency-check-text">
-            <div class="dependency-check-label">{{ row.label }}</div>
-            <p class="dependency-check-message">{{ row.message }}</p>
+      <p v-else-if="loading" class="caption">
+        Loading dependency checks…
+      </p>
+      <p v-else-if="entries.length === 0" class="caption">
+        Dependency checks are unavailable.
+      </p>
+      <ul v-else class="dependency-engine-list">
+        <li v-for="entry in entries" :key="entry.engine" class="dependency-engine-group">
+          <div class="dependency-engine-header">
+            <div class="dependency-engine-label">{{ entry.label }}</div>
+            <span :class="['dependency-overall', entry.status.ready ? 'is-ready' : 'is-error']">
+              {{ entry.status.ready ? 'OK' : 'ERROR' }}
+            </span>
           </div>
-          <span
-            :class="['dependency-light', row.ok ? 'is-ready' : 'is-error']"
-            :title="row.ok ? 'Check OK' : 'Check failed'"
-            :aria-label="row.ok ? 'Check OK' : 'Check failed'"
-          />
+          <ul v-if="entry.status.checks.length > 0" class="dependency-check-list">
+            <li
+              v-for="row in entry.status.checks"
+              :key="`${entry.engine}:${row.id}`"
+              class="dependency-check-row"
+            >
+              <div class="dependency-check-text">
+                <div class="dependency-check-label">{{ row.label }}</div>
+                <p class="dependency-check-message">{{ row.message }}</p>
+              </div>
+              <span
+                :class="['dependency-light', row.ok ? 'is-ready' : 'is-error']"
+                :title="row.ok ? 'Check OK' : 'Check failed'"
+                :aria-label="row.ok ? 'Check OK' : 'Check failed'"
+              />
+            </li>
+          </ul>
+          <p v-else class="caption dependency-empty-checks">
+            No dependency rows reported for {{ entry.label }}.
+          </p>
         </li>
       </ul>
     </div>
@@ -44,16 +70,36 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { EngineDependencyStatus } from '../api/types'
 
-withDefaults(defineProps<{
-  status: EngineDependencyStatus | null
+type EngineDependencyChecks = Record<string, EngineDependencyStatus>
+
+const props = withDefaults(defineProps<{
+  statuses: EngineDependencyChecks | null | undefined
+  labels?: Record<string, string>
   title?: string
-  engineLabel?: string
+  loading?: boolean
+  error?: string
 }>(), {
+  labels: () => ({}),
   title: 'Dependency Check',
-  engineLabel: 'this engine',
+  loading: false,
+  error: '',
 })
+
+const entries = computed(() =>
+  Object.entries(props.statuses ?? {})
+    .map(([engine, status]) => ({
+      engine,
+      status,
+      label: String(props.labels?.[engine] || engine),
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
+)
+
+const allReady = computed(() => entries.value.every((entry) => entry.status.ready))
+
 </script>
 
 <style scoped>
@@ -91,6 +137,36 @@ withDefaults(defineProps<{
   list-style: none;
 }
 
+.dependency-engine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dependency-engine-group {
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(120, 133, 154, 0.24);
+  background: rgba(18, 26, 38, 0.72);
+}
+
+.dependency-engine-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.45rem;
+}
+
+.dependency-engine-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: rgba(236, 241, 249, 0.98);
+}
+
 .dependency-check-row {
   display: flex;
   align-items: center;
@@ -117,6 +193,14 @@ withDefaults(defineProps<{
   color: rgba(169, 184, 206, 0.94);
   font-size: 0.8rem;
   line-height: 1.35;
+}
+
+.dependency-empty-checks {
+  margin: 0.1rem 0 0;
+}
+
+.dependency-error-message {
+  color: #ff9aa1;
 }
 
 .dependency-light {

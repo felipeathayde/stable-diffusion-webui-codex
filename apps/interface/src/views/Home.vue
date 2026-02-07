@@ -6,13 +6,16 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Engine-agnostic landing page and model-tab manager UI.
-Renders the Home workspace, creates new tabs, and manages existing tabs (enable/disable, rename, load/unload, duplicate, remove) while
-linking users to model tabs (`/models/:tabId`), workflows, and utilities.
+Purpose: Engine-agnostic landing page and model-tab manager UI with global dependency overview.
+Renders the Home workspace, exposes one dependency-check surface for all engines, creates new tabs, and manages existing tabs
+(enable/disable, rename, load/unload, duplicate, remove) while linking users to model tabs (`/models/:tabId`), workflows, and utilities.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Home` (component): Home workspace + tab manager; drives tab CRUD and status actions via stores/API (contains nested UI helpers and dialogs).
 - `HelpTopic` (type): Help topic selector for the contextual help panel.
+- `dependencyChecks` (computed): Home dependency map sourced from engine capabilities store.
+- `dependencyLabels` (computed): Engine label map for dependency panel display and deterministic ordering.
+- `dependencyError` (ref): Fatal capabilities-init error shown in the global dependency panel.
 - `onCreate` (function): Creates a new model tab for the selected engine type (optional title; includes Anima when supported).
 - `setTitleDraft` (function): Updates the in-memory title draft for a tab row (before persisting).
 - `commitTitle` (function): Persists a tab title edit to the backend/store.
@@ -59,6 +62,14 @@ Symbols (top-level; keep in sync; no ghosts):
         </ul>
       </div>
     </div>
+
+    <DependencyCheckPanel
+      :statuses="dependencyChecks"
+      :labels="dependencyLabels"
+      :loading="dependencyLoading"
+      :error="dependencyError"
+      title="Dependency Check (All Engines)"
+    />
 
     <div class="panel">
       <div class="panel-header">Create Model Tab</div>
@@ -263,6 +274,7 @@ import { useRouter } from 'vue-router'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import MarkdownHelp from '../components/MarkdownHelp.vue'
+import DependencyCheckPanel from '../components/DependencyCheckPanel.vue'
 import { loadModelsForTab, unloadModelsForTab } from '../api/client'
 
 type HelpTopic = 'home' | 'wan22' | 'workflows'
@@ -275,6 +287,7 @@ const newType = ref<BaseTabType>('sdxl')
 const newTitle = ref('')
 const helpTopic = ref<HelpTopic>('home')
 const createError = ref('')
+const dependencyError = ref('')
 const titleDraft = reactive<Record<string, string>>({})
 const tabBusy = reactive<Record<string, boolean>>({})
 const tabError = reactive<Record<string, string>>({})
@@ -282,6 +295,10 @@ const tabError = reactive<Record<string, string>>({})
 onMounted(async () => {
   try {
     await engineCaps.init()
+  } catch (error) {
+    dependencyError.value = error instanceof Error ? error.message : String(error)
+  }
+  try {
     await store.load()
     for (const t of store.orderedTabs) titleDraft[t.id] = t.title
   } catch (error) {
@@ -291,6 +308,15 @@ onMounted(async () => {
 
 const tabs = computed(() => store.orderedTabs)
 const showAnimaOption = computed(() => Boolean(engineCaps.get('anima')))
+const dependencyChecks = computed(() => engineCaps.dependencyChecks)
+const dependencyLoading = computed(() => !engineCaps.loaded && !dependencyError.value)
+const dependencyLabels = computed<Record<string, string>>(() => {
+  const out: Record<string, string> = {}
+  for (const engine of Object.keys(engineCaps.dependencyChecks)) {
+    out[engine] = engine
+  }
+  return out
+})
 const helpSrc = computed(() => {
   if (helpTopic.value === 'wan22') return '/help/wan22-quickstart.md'
   if (helpTopic.value === 'workflows') return '/help/workflows-basics.md'

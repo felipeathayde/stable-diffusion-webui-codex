@@ -1,6 +1,6 @@
 # apps/backend/runtime/families/zimage
 Date: 2025-12-12
-Last Review: 2026-01-30
+Last Review: 2026-02-07
 Status: Active
 
 ## Purpose
@@ -42,6 +42,7 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to Z-Image runtime facade/debug modules (doc-only change; part of rollout).
 - 2026-01-23: Centralized llama.cpp-style GGUF tensor-name remapping for Qwen3 in `apps/backend/runtime/state_dict/keymap_llama_gguf.py`; `qwen3.py:remap_gguf_keys` delegates and fails loud on unknown keys.
 - 2026-01-30: Fixed Qwen3 causal+padding attention-mask construction (avoids `0 * -inf` NaNs) and removed always-on debug logs; deep diagnostics remain opt-in behind `CODEX_ZIMAGE_DEBUG_*`.
+- 2026-02-07: Updated Qwen3 attention-mask sentinel to a finite `finfo.min/4` value (ComfyUI parity); if Z-Image output quality regresses, re-check this mask behavior.
 - **Debugging:** enable extra logs with env flags:
   - `CODEX_ZIMAGE_DEBUG_PROMPT=1` (engine prompt string + distilled cfg scale)
   - `CODEX_ZIMAGE_DEBUG_TENC_TEXT=1`, `CODEX_ZIMAGE_DEBUG_TENC_TOKENS=1`, `CODEX_ZIMAGE_DEBUG_TENC_DECODE=1`, `CODEX_ZIMAGE_DEBUG_TENC_RUN=1` (tokenization + embedding stats)

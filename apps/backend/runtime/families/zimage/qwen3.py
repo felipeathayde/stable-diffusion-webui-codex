@@ -330,17 +330,20 @@ class Qwen3Model(nn.Module):
         device: torch.device,
         attention_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
+        # NOTE: We intentionally use a *finite* sentinel value (instead of `-inf`) to match ComfyUI's Qwen3 attention
+        # masking behavior. If Z-Image output quality regresses, revisit this choice and re-check upstream semantics.
+        mask_value = torch.finfo(dtype).min / 4
         causal_mask = torch.zeros((1, 1, seq_len, seq_len), dtype=dtype, device=device)
         causal_mask = causal_mask.masked_fill(
             torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1),
-            float("-inf"),
+            mask_value,
         )
         if attention_mask is None:
             return causal_mask
         if attention_mask.ndim != 2 or tuple(attention_mask.shape) != (batch_size, seq_len):
             raise ValueError(f"attention_mask must be [B, L]; got shape={tuple(attention_mask.shape)}")
         is_padding = attention_mask.to(device=device).view(batch_size, 1, 1, seq_len) == 0
-        return causal_mask.expand(batch_size, 1, seq_len, seq_len).masked_fill(is_padding, float("-inf"))
+        return causal_mask.expand(batch_size, 1, seq_len, seq_len).masked_fill(is_padding, mask_value)
     
     def forward(
         self,

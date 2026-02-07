@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/anima Overview
 <!-- tags: backend, runtime, families, anima, cosmos, predict2 -->
 Date: 2026-02-05
-Last Review: 2026-02-06
+Last Review: 2026-02-07
 Status: Draft
 
 ## Purpose
@@ -20,6 +20,7 @@ Status: Draft
 - Image inference uses 4D latents (`B,C,H,W`) in Codex sampling; Cosmos Predict2 core expects 5D (`B,C,T,H,W`). The Anima runtime must treat images as `T=1` and preserve shape on output.
 - Sampling semantics must match ComfyUI discrete flow: `shift=3.0`, `multiplier=1.0`, prediction type `const` (see `.sangoi/research/models/hf-circlestone-labs-anima.md`).
 - `text_encoder.py` resolves offline tokenizers from `apps/backend/huggingface/circlestone-labs/Anima/{qwen25_tokenizer,t5_tokenizer}` by default (override via `CODEX_ANIMA_QWEN_TOKENIZER_PATH` / `CODEX_ANIMA_T5_TOKENIZER_PATH`).
+- `text_encoder.py` enforces non-empty Qwen token batches (`min_length=1` behavior): if empty prompts tokenize to `S=0`, it synthesizes one masked pad token and fails loud when `pad_token_id` metadata is invalid.
 - `wan_vae.py` performs explicit header-key variant detection (`2.1` vs `2.2`) before weight load; Anima v1 currently ports `2.1` only and must fail loud on `2.2`.
 - `wan_vae.py` infers `dim` from `decoder.head.0.gamma.shape` and expects broadcastable `(dim, 1, 1, 1)` (WAN 2.1); errors distinguish missing vs invalid shape, and `encoder.conv1.weight.shape[0]` must match `dim` (fail loud on mismatch).
 - Do not copy `.refs/**` code into `apps/**`; extract intent and re-implement cleanly.

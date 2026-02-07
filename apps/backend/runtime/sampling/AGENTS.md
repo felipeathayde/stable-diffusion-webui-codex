@@ -1,6 +1,6 @@
 # apps/backend/runtime/sampling Overview
 <!-- tags: runtime, sampling, sigma, scheduler -->
-Last Review: 2026-02-06
+Last Review: 2026-02-07
 Status: Active
 
 ## Purpose
@@ -58,6 +58,7 @@ Status: Active
 - 2026-01-26: Sampling driver enforces smart-offload pre-sampling residency (TE must be off; VAE allowed only for live preview `FULL` with a warning about VRAM/perf).
 - 2026-01-30: Flow-match sampling no longer forces latents to fp32; latents now follow the core role dtype (SDXL parity). Sigma ladders remain fp32.
 - 2026-01-31: Added opt-in global profiling (`CODEX_PROFILE`) at sampling seams to attribute time to per-step regions, model calls, and CPU↔GPU transfers.
+- 2026-02-07: `ConditionCrossAttn` now fails loud on non-tensor/invalid-rank/zero-length cross-attn inputs in `can_concat` and `concat` to prevent raw divide-by-zero failures during concat math.
 
 ## Risks / Invariants
 - `steps` must be `>= 1`; schedule always includes terminal sigma=0.

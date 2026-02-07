@@ -192,6 +192,54 @@ class AnimaQwenTextEncoder(nn.Module):
         attention_mask = encoded.get("attention_mask")
         if not isinstance(input_ids, torch.Tensor) or not isinstance(attention_mask, torch.Tensor):
             raise RuntimeError("Tokenizer did not return input_ids/attention_mask tensors.")
+        if input_ids.ndim != 2 or attention_mask.ndim != 2:
+            raise RuntimeError(
+                "Qwen tokenizer returned invalid tensor ranks: "
+                f"input_ids.ndim={input_ids.ndim}, attention_mask.ndim={attention_mask.ndim}."
+            )
+        if input_ids.shape != attention_mask.shape:
+            raise RuntimeError(
+                "Qwen tokenizer returned mismatched tensor shapes: "
+                f"input_ids.shape={tuple(input_ids.shape)} attention_mask.shape={tuple(attention_mask.shape)}."
+            )
+        if input_ids.shape[0] != len(cleaned):
+            raise RuntimeError(
+                "Qwen tokenizer returned unexpected batch size: "
+                f"got={int(input_ids.shape[0])} expected={len(cleaned)}."
+            )
+
+        if input_ids.shape[1] == 0:
+            pad_id = getattr(tok, "pad_token_id", None)
+            if pad_id is None:
+                raise RuntimeError(
+                    "Anima Qwen tokenizer produced an empty sequence for prompt(s) and is missing pad_token_id."
+                )
+            try:
+                pad_id = int(pad_id)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    "Anima Qwen tokenizer pad_token_id must be an int when synthesizing min_length=1; "
+                    f"got {pad_id!r}."
+                ) from exc
+            token_count: int | None = None
+            try:
+                token_count = int(len(tok))
+            except Exception:
+                token_count = None
+            if token_count is not None and not (0 <= pad_id < token_count):
+                raise RuntimeError(
+                    "Anima Qwen tokenizer pad_token_id out of range when synthesizing min_length=1: "
+                    f"pad_token_id={pad_id} len={token_count}."
+                )
+            batch_size = int(input_ids.shape[0])
+            input_ids = torch.full((batch_size, 1), fill_value=pad_id, dtype=input_ids.dtype, device=input_ids.device)
+            attention_mask = torch.zeros((batch_size, 1), dtype=attention_mask.dtype, device=attention_mask.device)
+            logger.debug(
+                "Qwen tokenizer produced empty sequence; synthesized masked pad token for min_length=1 "
+                "(batch_size=%d, pad_token_id=%d).",
+                batch_size,
+                pad_id,
+            )
 
         # Fail loud on truncation (transformers reports it via tokenizer warnings in some cases; we enforce via length).
         if input_ids.shape[1] >= int(max_length):

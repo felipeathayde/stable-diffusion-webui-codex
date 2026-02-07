@@ -69,31 +69,55 @@ class ConditionNoiseShape(Condition):
 
 
 class ConditionCrossAttn(Condition):
+    @staticmethod
+    def _require_positive_seq_len(cond: torch.Tensor, *, where: str) -> int:
+        if not isinstance(cond, torch.Tensor):
+            raise ValueError(
+                f"ConditionCrossAttn {where} must be a torch.Tensor; got type={type(cond).__name__}."
+            )
+        if cond.ndim != 3:
+            raise ValueError(
+                f"ConditionCrossAttn {where} must be 3D (B,S,C); got shape={tuple(cond.shape)}."
+            )
+        seq_len = int(cond.shape[1])
+        if seq_len <= 0:
+            raise ValueError(
+                "ConditionCrossAttn sequence length must be > 0 for concat math; "
+                f"got shape={tuple(cond.shape)} at {where}."
+            )
+        return seq_len
+
     def can_concat(self, other):
+        seq_len_self = self._require_positive_seq_len(self.cond, where="self")
+        other_cond = getattr(other, "cond", None)
+        seq_len_other = self._require_positive_seq_len(other_cond, where="other")
         s1 = self.cond.shape
-        s2 = other.cond.shape
+        s2 = other_cond.shape
         if s1 != s2:
             if s1[0] != s2[0] or s1[2] != s2[2]:
                 return False
 
-            mult_min = lcm(s1[1], s2[1])
-            diff = mult_min // min(s1[1], s2[1])
+            mult_min = lcm(seq_len_self, seq_len_other)
+            diff = mult_min // min(seq_len_self, seq_len_other)
             if diff > 4:
                 return False
         return True
 
     def concat(self, others):
-        conds = [self.cond]
-        crossattn_max_len = self.cond.shape[1]
-        for x in others:
-            c = x.cond
-            crossattn_max_len = lcm(crossattn_max_len, c.shape[1])
-            conds.append(c)
+        conds_with_lengths: list[tuple[torch.Tensor, int]] = []
+        self_len = self._require_positive_seq_len(self.cond, where="self")
+        conds_with_lengths.append((self.cond, self_len))
+        crossattn_max_len = self_len
+        for idx, x in enumerate(others):
+            c = getattr(x, "cond", None)
+            c_len = self._require_positive_seq_len(c, where=f"others[{idx}]")
+            crossattn_max_len = lcm(crossattn_max_len, c_len)
+            conds_with_lengths.append((c, c_len))
 
         out = []
-        for c in conds:
-            if c.shape[1] < crossattn_max_len:
-                c = c.repeat(1, crossattn_max_len // c.shape[1], 1)
+        for c, c_len in conds_with_lengths:
+            if c_len < crossattn_max_len:
+                c = c.repeat(1, crossattn_max_len // c_len, 1)
             out.append(c)
         return torch.cat(out)
 

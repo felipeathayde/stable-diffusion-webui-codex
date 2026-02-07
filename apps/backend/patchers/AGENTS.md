@@ -1,6 +1,6 @@
 # apps/backend/patchers Overview
 Date: 2025-10-30
-Last Review: 2026-01-31
+Last Review: 2026-02-07
 Status: Active
 
 ## Purpose
@@ -33,6 +33,7 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to patcher modules (doc-only change; part of rollout).
 - 2026-01-04: Added `DenoiserPatcher` for Flux/Z-Image/WAN runtimes; `UnetPatcher` remains UNet/ControlNet-specific.
 - 2026-01-20: Global LoRA apply mode now supports `merge` (default; merges into weights once) vs `online` (patch during forward) via `CODEX_LORA_APPLY_MODE` / `--lora-apply-mode`.
+- 2026-02-07: VAE decode/encode paths now cast forward inputs using the active storage dtype (not compute dtype) and size batches with that same dtype to prevent bf16/float input-bias mismatches when `storage != compute`.
 
 ### unet.py notes
 - `control_nodes` é uma propriedade somente leitura (retorna cópia). Acesse como `unet.control_nodes`, não `unet.control_nodes()`.

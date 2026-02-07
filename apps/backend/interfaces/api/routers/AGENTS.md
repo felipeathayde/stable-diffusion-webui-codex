@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-02-06
+Last Review: 2026-02-07
 Status: Active
 
 ## Purpose
@@ -50,3 +50,4 @@ Status: Active
 - 2026-02-06: `models.py` engine capabilities now include backend-owned `dependency_checks` (ready + row list) so frontend tabs can render readiness panels and disable generation when dependencies are missing.
 - 2026-02-06: `models.py` `engine_id_to_semantic_engine` now also maps `flux1_fill -> flux1` to keep strict frontend known-id semantic resolution in sync.
 - 2026-02-05: `ui.py` tab allowlist now accepts `anima`; unknown/empty tab types are fail-loud (`400` for create payloads, `500` on invalid persisted `tabs.json` entries) instead of silent coercion to `sd15`.
+- 2026-02-07: `generation.py` now validates Anima sampler selections early (txt2img/img2img + hires sampler overrides) against the semantic capability allowlist, returning HTTP 400 instead of late runtime `NotImplementedError`.

@@ -137,9 +137,9 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        samplers=("er sde", "euler", "euler a", "dpm++ 2m", "dpm++ 2m sde gpu"),
+        samplers=("euler", "euler a", "dpm++ 2m"),
         schedulers=("simple", "beta", "normal", "exponential"),
-        default_sampler="er sde",
+        default_sampler="euler",
         default_scheduler="simple",
     ),
     # Chroma (flow-based image generation).

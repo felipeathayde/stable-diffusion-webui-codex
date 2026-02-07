@@ -95,7 +95,7 @@ const TAB_FAMILY_FALLBACK_SAMPLING: Readonly<Record<TabFamily, SamplingDefaults>
   flux1: { sampler: 'euler', scheduler: 'simple' },
   chroma: { sampler: 'euler', scheduler: 'simple' },
   zimage: { sampler: 'euler', scheduler: 'simple' },
-  anima: { sampler: 'er sde', scheduler: 'simple' },
+  anima: { sampler: 'euler', scheduler: 'simple' },
   wan: { sampler: 'uni-pc', scheduler: 'simple' },
 })
 

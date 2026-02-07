@@ -1,7 +1,7 @@
 <!-- tags: frontend, utils, xyz -->
 # apps/interface/src/utils Overview
 Date: 2025-12-03
-Last Review: 2026-02-06
+Last Review: 2026-02-07
 Status: Active
 
 ## Purpose
@@ -15,3 +15,4 @@ Status: Active
 - 2026-01-29: Added PNG infotext parsing + sampler/scheduler mapping helpers (`pnginfo.ts`) with unit tests.
 - 2026-02-03: XYZ axis ids for hires are now `hires_scale` / `hires_steps`.
 - 2026-02-06: Added `engine_taxonomy.ts` as canonical frontend engine taxonomy mapping (tab-family aliases, request engine-id resolution, semantic-engine resolution, and centralized sampler/scheduler fallback defaults).
+- 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts` and added `engine_taxonomy.test.ts` regression coverage.

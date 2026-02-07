@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-02-06
+Last Review: 2026-02-07
 Status: Draft
 
 ## Purpose
@@ -22,6 +22,7 @@ Status: Draft
 - 2026-01-08: Refreshed file header blocks for `capabilities.py` and `flow_shift.py` to keep the Symbols lists in sync (doc-only change).
 - 2026-01-18: Semantic engine surface for `chroma` now declares `supports_img2img=true` to match the registered `flux1_chroma` engine task surface.
 - 2026-02-06: `SemanticEngine.ANIMA` capability surface now exposes `supports_txt2img=true` and `supports_img2img=true` after conditioning payload port (`crossattn` + pooled `vector` + `t5xxl_ids/t5xxl_weights`) and compile/sampler pass-through validation.
+- 2026-02-07: `SemanticEngine.ANIMA` sampler surface now exposes only native-supported entries (`euler`, `euler a`, `dpm++ 2m`) with default `euler` (removed unsupported `er sde`/`dpm++ 2m sde gpu` drift).
 
 ## TODO
 - Add detectors for remaining launch families (KOALA, StableAudio, WAN22 camera/S2V/animate, Chroma Radiance).

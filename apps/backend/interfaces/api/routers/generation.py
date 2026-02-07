@@ -58,6 +58,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         Vid2VidRequest,
     )
     from apps.backend.interfaces.api.device_selection import parse_device_from_payload
+    from apps.backend.runtime.model_registry.capabilities import ENGINE_SURFACES, SemanticEngine
 
     def _ensure_default_engines_registered() -> None:
         # Generation endpoints require the engine registry, but API startup should remain import-light.
@@ -71,6 +72,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
     from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
+
+    _ANIMA_ALLOWED_SAMPLERS = tuple(ENGINE_SURFACES[SemanticEngine.ANIMA].samplers or ())
+    if not _ANIMA_ALLOWED_SAMPLERS:
+        raise RuntimeError("Anima capability surface must declare a non-empty sampler allowlist.")
 
     def _reject_unknown_keys(obj: Mapping[str, Any], allowed: set[str], context: str) -> None:
         unknown = sorted(set(obj.keys()) - allowed)
@@ -493,6 +498,27 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Unknown engine key: {key}") from exc
 
+    def _parse_optional_sampler_field(*, value: object, field_name: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be a string")
+        sampler = value.strip()
+        if not sampler:
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must not be empty")
+        return sampler
+
+    def _validate_anima_sampler_allowlist(*, engine_key: str, sampler: str, field_name: str) -> None:
+        if engine_key != SemanticEngine.ANIMA.value:
+            return
+        if sampler in _ANIMA_ALLOWED_SAMPLERS:
+            return
+        allowed = ", ".join(_ANIMA_ALLOWED_SAMPLERS)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported sampler for engine 'anima' in '{field_name}': '{sampler}'. Allowed: {allowed}",
+        )
+
     def _is_gguf_checkpoint(_models_api: Any, model_ref: object) -> bool:
         raw = str(model_ref or "").strip()
         if not raw:
@@ -708,6 +734,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             distilled_cfg_scale = 3.5
         sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
         scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
+        _validate_anima_sampler_allowlist(engine_key=engine_key, sampler=sampler_name, field_name="sampler")
         try:
             from apps.backend.runtime.sampling.registry import get_sampler_spec
             from apps.backend.runtime.sampling.context import SchedulerName
@@ -731,6 +758,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         styles = _parse_styles(payload)
         metadata = _parse_metadata(payload)
         extras, hires_cfg = _parse_txt2img_extras(payload)
+        if hires_cfg is not None:
+            hires_sampler = _parse_optional_sampler_field(value=hires_cfg.get("sampler"), field_name="extras.hires.sampler")
+            if hires_sampler is not None:
+                hires_cfg["sampler"] = hires_sampler
+                _validate_anima_sampler_allowlist(
+                    engine_key=engine_key,
+                    sampler=hires_sampler,
+                    field_name="extras.hires.sampler",
+                )
 
         # Read batch params from extras (default to 1)
         batch_size = int(extras.pop('batch_size', 1)) if 'batch_size' in extras else 1
@@ -949,6 +985,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="'img2img_height' is required")
         sampler_name = _p.require(payload, 'img2img_sampling')
         scheduler_name = _p.require(payload, 'img2img_scheduler')
+        _validate_anima_sampler_allowlist(
+            engine_key=engine_key,
+            sampler=str(sampler_name),
+            field_name="img2img_sampling",
+        )
         try:
             from apps.backend.runtime.sampling.registry import get_sampler_spec
             from apps.backend.runtime.sampling.context import SchedulerName
@@ -1002,11 +1043,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "min_tile": int(hr_tile_cfg.min_tile),
             }
             hr_sampler_name = payload.get("img2img_hires_sampling")
+            hr_sampler_name = _parse_optional_sampler_field(
+                value=hr_sampler_name,
+                field_name="img2img_hires_sampling",
+            )
             if hr_sampler_name is not None:
-                if not isinstance(hr_sampler_name, str):
-                    raise HTTPException(status_code=400, detail="'img2img_hires_sampling' must be a string")
-                if not hr_sampler_name.strip():
-                    raise HTTPException(status_code=400, detail="'img2img_hires_sampling' must not be empty")
+                _validate_anima_sampler_allowlist(
+                    engine_key=engine_key,
+                    sampler=hr_sampler_name,
+                    field_name="img2img_hires_sampling",
+                )
             hr_scheduler = payload.get("img2img_hires_scheduler")
             if hr_scheduler is not None:
                 if not isinstance(hr_scheduler, str):
@@ -1022,7 +1068,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "denoise": _p.as_float(payload, 'img2img_hires_denoise') if 'img2img_hires_denoise' in payload else denoise,
                 "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
-                "hr_sampler_name": hr_sampler_name.strip() if isinstance(hr_sampler_name, str) and hr_sampler_name.strip() else None,
+                "hr_sampler_name": hr_sampler_name,
                 "hr_scheduler": hr_scheduler.strip() if isinstance(hr_scheduler, str) and hr_scheduler.strip() else None,
                 "hr_prompt": payload.get('img2img_hires_prompt', ''),
                 "hr_negative_prompt": payload.get('img2img_hires_neg_prompt', ''),

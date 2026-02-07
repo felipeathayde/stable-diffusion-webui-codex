@@ -724,3 +724,33 @@ print('anima_tenc', get_paths_for('anima_tenc'))
 print('anima_vae', get_paths_for('anima_vae'))
 PY
 ```
+
+### Running Vitest with repo-root paths while using `npm --prefix`
+
+Wrong command:
+```bash
+npm --prefix apps/interface test -- --run apps/interface/src/utils/engine_taxonomy.test.ts apps/interface/src/stores/model_tabs.test.ts
+```
+
+Cause and fix:
+With `--prefix apps/interface`, Vitest runs from `apps/interface`, so filter paths must be relative to that directory (for example, `src/...`), not repo-root `apps/interface/src/...`.
+
+Correct command:
+```bash
+npm --prefix apps/interface test -- --run src/utils/engine_taxonomy.test.ts src/stores/model_tabs.test.ts
+```
+
+### Grepping literal backticks with double quotes (command substitution trap)
+
+Wrong command:
+```bash
+rg -n "Running Vitest with repo-root paths while using `npm --prefix`" COMMON_MISTAKES.md
+```
+
+Cause and fix:
+Backticks inside double quotes still trigger command substitution in `bash`. Use single quotes for literal backticks in regex patterns.
+
+Correct command:
+```bash
+rg -n 'Running Vitest with repo-root paths while using `npm --prefix`' COMMON_MISTAKES.md
+```

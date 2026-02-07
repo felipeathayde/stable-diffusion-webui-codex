@@ -110,17 +110,19 @@ def resolve_flow_shift_for_sampling(
         sig = getattr(bundle, "signature", None)
         repo_hint = getattr(sig, "repo_hint", None) if sig is not None else None
         if isinstance(repo_hint, str) and repo_hint.strip():
-            repo_root = get_repo_root()
-            vendor_root = repo_root / "apps" / "backend" / "huggingface"
-            vendor = vendor_root / repo_hint
-            if not vendor.is_dir():
-                # Some detectors use a full HF repo id as repo_hint, but the vendored
-                # mirror may be stored under a shorter directory name (e.g., "Chroma").
-                vendor = vendor_root / Path(repo_hint).name
-            if vendor.is_dir():
-                spec_obj = flow_shift_spec_from_repo_dir(vendor)
-                source = "vendored_repo_hint"
-                repo_dir = str(vendor)
+            family = getattr(bundle, "family", None)
+            if not (isinstance(family, ModelFamily) and get_family_spec(family).flow_shift is not None):
+                repo_root = get_repo_root()
+                vendor_root = repo_root / "apps" / "backend" / "huggingface"
+                vendor = vendor_root / repo_hint
+                if not vendor.is_dir():
+                    # Some detectors use a full HF repo id as repo_hint, but the vendored
+                    # mirror may be stored under a shorter directory name (e.g., "Chroma").
+                    vendor = vendor_root / Path(repo_hint).name
+                if vendor.is_dir():
+                    spec_obj = flow_shift_spec_from_repo_dir(vendor)
+                    source = "vendored_repo_hint"
+                    repo_dir = str(vendor)
 
     if spec_obj is None:
         bundle = getattr(sd_model, "_current_bundle", None)

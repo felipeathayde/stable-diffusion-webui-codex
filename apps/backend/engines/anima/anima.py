@@ -146,22 +146,19 @@ class AnimaEngine(CodexDiffusionEngine):
         runtime = assembly.runtime
         self._runtime = runtime
         runtime_device_label = _canonical_device_label(getattr(runtime, "device", None), field_name="runtime.device")
-        denoiser_model = getattr(runtime.denoiser, "model", None)
-        if denoiser_model is None:
-            raise RuntimeError("Anima runtime assembly returned denoiser without `model` for device consistency checks.")
-        denoiser_load_device = getattr(denoiser_model, "load_device", None)
+        denoiser_load_device = getattr(runtime.denoiser, "load_device", None)
         if denoiser_load_device is None:
             raise RuntimeError(
-                "Anima runtime assembly returned denoiser.model without `load_device` for device consistency checks."
+                "Anima runtime assembly returned denoiser without `load_device` for device consistency checks."
             )
         denoiser_device_label = _canonical_device_label(
             denoiser_load_device,
-            field_name="denoiser.model.load_device",
+            field_name="denoiser.load_device",
         )
         if denoiser_device_label != runtime_device_label:
             raise RuntimeError(
                 "Anima runtime device mismatch: runtime.device="
-                f"{runtime_device_label} but denoiser.model.load_device={denoiser_device_label}"
+                f"{runtime_device_label} but denoiser.load_device={denoiser_device_label}"
             )
         runtime_compute_dtype = getattr(runtime, "core_compute_dtype", None)
         if not isinstance(runtime_compute_dtype, str) or not runtime_compute_dtype:

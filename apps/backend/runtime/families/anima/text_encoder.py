@@ -14,9 +14,11 @@ No runtime downloads are allowed: tokenizers must be resolved from vendored `app
 
 Symbols (top-level; keep in sync; no ghosts):
 - `AnimaQwenTextEncoder` (class): Qwen3-0.6B encoder wrapper (native model + tokenizer).
-- `AnimaQwenTextProcessingEngine` (class): Thin adapter exposing `__call__` and `tokenize` for engine conditioning.
+- `AnimaQwenTextProcessingEngine` (class): Thin adapter exposing `__call__`, `tokenize`, and `tokenize_with_weights`.
 - `load_anima_qwen3_06b_text_encoder` (function): Strict loader for Qwen3-0.6B weights (safetensors; sha-selected).
 - `load_anima_t5_tokenizer` (function): Offline T5 tokenizer loader (used for Anima dual-tokenization ids/weights).
+- `tokenize_qwen_with_weights` (function): Qwen tokenization helper with optional `return_word_ids` metadata parity.
+- `tokenize_t5_with_weights` (function): Offline T5 tokenization producing ids+weights tensors for Anima conditioning.
 """
 
 from __future__ import annotations
@@ -133,6 +135,132 @@ class _QwenTokenBatch:
     attention_mask: torch.Tensor
 
 
+QwenWeightedToken = tuple[int, float] | tuple[int, float, int]
+
+
+def _normalize_qwen_weighted_token_entry(entry: object, *, return_word_ids: bool) -> QwenWeightedToken:
+    if not isinstance(entry, (tuple, list)):
+        raise RuntimeError(
+            "Qwen weighted token entry must be tuple/list; "
+            f"got {type(entry).__name__}."
+        )
+    if len(entry) < 2:
+        raise RuntimeError(
+            "Qwen weighted token entry must contain at least (token_id, weight). "
+            f"Got len={len(entry)} entry={entry!r}."
+        )
+
+    try:
+        token_id = int(entry[0])
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Qwen weighted token has non-int token_id: {entry[0]!r}.") from exc
+    try:
+        weight = float(entry[1])
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Qwen weighted token has non-float weight: {entry[1]!r}.") from exc
+
+    if not return_word_ids:
+        return (token_id, weight)
+
+    if len(entry) < 3:
+        raise RuntimeError(
+            "Qwen weighted token entry is missing word_id while return_word_ids=True. "
+            f"entry={entry!r}"
+        )
+    try:
+        word_id = int(entry[2])
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Qwen weighted token has non-int word_id: {entry[2]!r}.") from exc
+    return (token_id, weight, word_id)
+
+
+def _resolve_pad_token_id_for_qwen(*, tokenizer: Any, context: str) -> int:
+    pad_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_id is None:
+        raise RuntimeError(f"{context}: tokenizer missing pad_token_id.")
+    try:
+        pad_id_int = int(pad_id)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{context}: tokenizer pad_token_id must be int; got {pad_id!r}.") from exc
+    token_count: int | None = None
+    try:
+        token_count = int(len(tokenizer))
+    except Exception:
+        token_count = None
+    if token_count is not None and not (0 <= pad_id_int < token_count):
+        raise RuntimeError(
+            f"{context}: tokenizer pad_token_id out of range: "
+            f"pad_token_id={pad_id_int} len={token_count}."
+        )
+    return pad_id_int
+
+
+def tokenize_qwen_with_weights(
+    *,
+    tokenizer: Any,
+    texts: list[str],
+    emphasis_name: str = "Original",
+    max_length: int = 512,
+    return_word_ids: bool = False,
+) -> list[list[QwenWeightedToken]]:
+    """Tokenize Qwen prompts into weighted tuples, optionally preserving word-id metadata.
+
+    Notes:
+    - `word_id` is assigned per parsed emphasis segment from `parse_prompt_attention`.
+    - Tokens emitted by the same parsed segment share the same `word_id`.
+    """
+    max_length = int(max_length)
+    if max_length <= 0:
+        raise ValueError("max_length must be > 0")
+
+    out: list[list[QwenWeightedToken]] = []
+    for raw in texts:
+        parsed = parse_prompt_attention(str(raw or ""), emphasis_name)
+        row: list[QwenWeightedToken] = []
+        word_id = 1
+
+        for seg, weight in parsed:
+            if seg == "BREAK" and weight == -1:
+                seg = " "
+                weight = 1.0
+            tokenized = tokenizer(
+                [str(seg)],
+                padding=False,
+                truncation=False,
+                add_special_tokens=False,
+            )
+            seg_ids = tokenized.get("input_ids")
+            if not (isinstance(seg_ids, list) and seg_ids and isinstance(seg_ids[0], list)):
+                raise RuntimeError("Qwen tokenizer did not return input_ids as list[list[int]].")
+            for token_id in seg_ids[0]:
+                raw_entry = (token_id, weight, word_id) if return_word_ids else (token_id, weight)
+                row.append(
+                    _normalize_qwen_weighted_token_entry(
+                        raw_entry,
+                        return_word_ids=return_word_ids,
+                    )
+                )
+            if seg_ids[0]:
+                word_id += 1
+
+        if not row:
+            pad_id = _resolve_pad_token_id_for_qwen(
+                tokenizer=tokenizer,
+                context="Anima Qwen weighted tokenization produced an empty sequence",
+            )
+            fallback = (pad_id, 1.0, 0) if return_word_ids else (pad_id, 1.0)
+            row.append(_normalize_qwen_weighted_token_entry(fallback, return_word_ids=return_word_ids))
+
+        if len(row) > max_length:
+            raise ValueError(
+                "Anima Qwen tokenization exceeded max_length=%d (len=%d). "
+                "Reduce prompt length or increase CODEX_ANIMA_QWEN_MAX_LENGTH."
+                % (max_length, len(row))
+            )
+        out.append(row)
+    return out
+
+
 class AnimaQwenTextEncoder(nn.Module):
     """Qwen3-0.6B text encoder (native)."""
 
@@ -209,28 +337,10 @@ class AnimaQwenTextEncoder(nn.Module):
             )
 
         if input_ids.shape[1] == 0:
-            pad_id = getattr(tok, "pad_token_id", None)
-            if pad_id is None:
-                raise RuntimeError(
-                    "Anima Qwen tokenizer produced an empty sequence for prompt(s) and is missing pad_token_id."
-                )
-            try:
-                pad_id = int(pad_id)
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    "Anima Qwen tokenizer pad_token_id must be an int when synthesizing min_length=1; "
-                    f"got {pad_id!r}."
-                ) from exc
-            token_count: int | None = None
-            try:
-                token_count = int(len(tok))
-            except Exception:
-                token_count = None
-            if token_count is not None and not (0 <= pad_id < token_count):
-                raise RuntimeError(
-                    "Anima Qwen tokenizer pad_token_id out of range when synthesizing min_length=1: "
-                    f"pad_token_id={pad_id} len={token_count}."
-                )
+            pad_id = _resolve_pad_token_id_for_qwen(
+                tokenizer=tok,
+                context="Anima Qwen tokenizer produced an empty sequence for prompt(s)",
+            )
             batch_size = int(input_ids.shape[0])
             input_ids = torch.full((batch_size, 1), fill_value=pad_id, dtype=input_ids.dtype, device=input_ids.device)
             attention_mask = torch.zeros((batch_size, 1), dtype=attention_mask.dtype, device=attention_mask.device)
@@ -251,6 +361,23 @@ class AnimaQwenTextEncoder(nn.Module):
                 int(input_ids.shape[1]),
             )
         return _QwenTokenBatch(input_ids=input_ids, attention_mask=attention_mask)
+
+    def tokenize_with_weights(
+        self,
+        texts: list[str],
+        *,
+        max_length: int,
+        emphasis_name: str = "Original",
+        return_word_ids: bool = False,
+    ) -> list[list[QwenWeightedToken]]:
+        tok = self._require_tokenizer()
+        return tokenize_qwen_with_weights(
+            tokenizer=tok,
+            texts=texts,
+            emphasis_name=emphasis_name,
+            max_length=max_length,
+            return_word_ids=return_word_ids,
+        )
 
     @torch.no_grad()
     def encode(self, texts: list[str], *, max_length: int) -> torch.Tensor:
@@ -291,6 +418,20 @@ class AnimaQwenTextProcessingEngine:
     def tokenize(self, texts: list[str]) -> list[list[int]]:
         batch = self.text_encoder.tokenize(texts, max_length=self.max_length)
         return batch.input_ids.tolist()
+
+    def tokenize_with_weights(
+        self,
+        texts: list[str],
+        *,
+        emphasis_name: str = "Original",
+        return_word_ids: bool = False,
+    ) -> list[list[QwenWeightedToken]]:
+        return self.text_encoder.tokenize_with_weights(
+            texts,
+            max_length=self.max_length,
+            emphasis_name=emphasis_name,
+            return_word_ids=return_word_ids,
+        )
 
 
 def _validate_qwen3_06b_header(*, header: Mapping[str, object], context: str) -> None:
@@ -462,5 +603,6 @@ __all__ = [
     "AnimaQwenTextProcessingEngine",
     "load_anima_qwen3_06b_text_encoder",
     "load_anima_t5_tokenizer",
+    "tokenize_qwen_with_weights",
     "tokenize_t5_with_weights",
 ]

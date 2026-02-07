@@ -754,3 +754,39 @@ Correct command:
 ```bash
 rg -n 'Running Vitest with repo-root paths while using `npm --prefix`' COMMON_MISTAKES.md
 ```
+
+### Running `.sangoi` pytest without exporting `CODEX_ROOT`/`PYTHONPATH`
+
+Wrong command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+echo "CODEX_ROOT=$CODEX_ROOT"
+"$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_anima_offline_tokenizers.py | tail -n 5
+```
+
+Cause and fix:
+`.sangoi/dev/tests/conftest.py` requires `CODEX_ROOT` in the environment and imports repo modules via `PYTHONPATH`. Setting a shell variable alone is not enough for pytest subprocess/import context.
+Export both variables before running the suite.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+export CODEX_ROOT
+export PYTHONPATH="$CODEX_ROOT"
+"$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_anima_offline_tokenizers.py
+```
+
+### Grepping pattern with backticks in double quotes (again)
+
+Wrong command:
+```bash
+rg -n "Running `.sangoi` pytest without exporting|Wrong command:|Correct command:" COMMON_MISTAKES.md
+```
+
+Cause and fix:
+Backticks inside double-quoted regex trigger shell command substitution (`.sangoi` tried to execute as a command). Use single quotes for literal backticks.
+
+Correct command:
+```bash
+rg -n 'Running `.sangoi` pytest without exporting|Wrong command:|Correct command:' COMMON_MISTAKES.md
+```

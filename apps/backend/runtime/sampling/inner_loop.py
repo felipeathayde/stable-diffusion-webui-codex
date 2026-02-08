@@ -84,18 +84,34 @@ def get_area_and_mult(conds, x_in, timestep_in):
 
     if 'mask' not in conds:
         rr = 8
-        if area[2] != 0:
-            for t in range(rr):
-                mult[:, :, t:1 + t, :] *= ((1.0 / rr) * (t + 1))
-        if (area[0] + area[2]) < x_in.shape[2]:
-            for t in range(rr):
-                mult[:, :, area[0] - 1 - t:area[0] - t, :] *= ((1.0 / rr) * (t + 1))
-        if area[3] != 0:
-            for t in range(rr):
-                mult[:, :, :, t:1 + t] *= ((1.0 / rr) * (t + 1))
-        if (area[1] + area[3]) < x_in.shape[3]:
-            for t in range(rr):
-                mult[:, :, :, area[1] - 1 - t:area[1] - t] *= ((1.0 / rr) * (t + 1))
+        if mult.shape[2] < rr or mult.shape[3] < rr:
+            # Preserve legacy slicing semantics for tiny areas (negative/empty slice edge cases).
+            if area[2] != 0:
+                for t in range(rr):
+                    mult[:, :, t:1 + t, :] *= ((1.0 / rr) * (t + 1))
+            if (area[0] + area[2]) < x_in.shape[2]:
+                for t in range(rr):
+                    mult[:, :, area[0] - 1 - t:area[0] - t, :] *= ((1.0 / rr) * (t + 1))
+            if area[3] != 0:
+                for t in range(rr):
+                    mult[:, :, :, t:1 + t] *= ((1.0 / rr) * (t + 1))
+            if (area[1] + area[3]) < x_in.shape[3]:
+                for t in range(rr):
+                    mult[:, :, :, area[1] - 1 - t:area[1] - t] *= ((1.0 / rr) * (t + 1))
+        else:
+            ramp = torch.arange(1, rr + 1, device=mult.device, dtype=mult.dtype) / float(rr)
+            ramp_h = ramp.view(1, 1, rr, 1)
+            ramp_h_reverse = torch.flip(ramp_h, dims=(2,))
+            ramp_w = ramp.view(1, 1, 1, rr)
+            ramp_w_reverse = torch.flip(ramp_w, dims=(3,))
+            if area[2] != 0:
+                mult[:, :, :rr, :] *= ramp_h
+            if (area[0] + area[2]) < x_in.shape[2]:
+                mult[:, :, area[0] - rr:area[0], :] *= ramp_h_reverse
+            if area[3] != 0:
+                mult[:, :, :, :rr] *= ramp_w
+            if (area[1] + area[3]) < x_in.shape[3]:
+                mult[:, :, :, area[1] - rr:area[1]] *= ramp_w_reverse
 
     conditioning = {}
     model_conds = conds["model_conds"]
@@ -159,26 +175,23 @@ def cond_cat(c_list):
 
 def compute_cond_mark(cond_or_uncond, sigmas):
     cond_or_uncond_size = int(sigmas.shape[0])
-
-    cond_mark = []
-    for cx in cond_or_uncond:
-        cond_mark += [cx] * cond_or_uncond_size
-
-    cond_mark = torch.Tensor(cond_mark).to(sigmas)
-    return cond_mark
+    cond_mark = torch.as_tensor(cond_or_uncond, device=sigmas.device, dtype=sigmas.dtype)
+    return cond_mark.repeat_interleave(cond_or_uncond_size)
 
 
 def compute_cond_indices(cond_or_uncond, sigmas):
-    cl = int(sigmas.shape[0])
+    sigma_count = int(sigmas.shape[0])
+    if sigma_count <= 0:
+        return [], []
 
-    cond_indices = []
-    uncond_indices = []
-    for i, cx in enumerate(cond_or_uncond):
-        if cx == 0:
-            cond_indices += list(range(i * cl, (i + 1) * cl))
-        else:
-            uncond_indices += list(range(i * cl, (i + 1) * cl))
+    cond_flags = torch.as_tensor(cond_or_uncond, dtype=torch.int64)
+    if cond_flags.numel() == 0:
+        return [], []
 
+    flat_indices = torch.arange(cond_flags.numel() * sigma_count, dtype=torch.int64)
+    flat_indices = flat_indices.view(cond_flags.numel(), sigma_count)
+    cond_indices = flat_indices[cond_flags == 0].reshape(-1).tolist()
+    uncond_indices = flat_indices[cond_flags != 0].reshape(-1).tolist()
     return cond_indices, uncond_indices
 
 
@@ -200,20 +213,17 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
     fused_enabled = cfg_batch_mode == "fused"
     fused_disabled_logged = False
 
-    to_run = []
-    for x in cond:
-        p = get_area_and_mult(x, x_in, timestep)
-        if p is None:
-            continue
-
-        to_run += [(p, COND)]
+    to_run = [
+        (prepared, COND)
+        for prepared in (get_area_and_mult(item, x_in, timestep) for item in cond)
+        if prepared is not None
+    ]
     if uncond is not None:
-        for x in uncond:
-            p = get_area_and_mult(x, x_in, timestep)
-            if p is None:
-                continue
-
-            to_run += [(p, UNCOND)]
+        to_run.extend(
+            (prepared, UNCOND)
+            for prepared in (get_area_and_mult(item, x_in, timestep) for item in uncond)
+            if prepared is not None
+        )
 
     def _is_cuda_oom(exc: Exception) -> bool:
         oom_types = []
@@ -233,23 +243,14 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         # Materialize the batch from to_run without mutating it until the forward succeeds.
         items = [to_run[idx] for idx in batch_indices]
 
-        input_x: list[torch.Tensor] = []
-        mult: list[torch.Tensor] = []
-        c: list[dict] = []
-        cond_or_uncond: list[int] = []
-        area: list[tuple[int, int, int, int]] = []
-        control = None
-        patches = None
-        for p, flag in items:
-            input_x.append(p.input_x)
-            mult.append(p.mult)
-            c.append(p.conditioning)
-            area.append(p.area)
-            cond_or_uncond.append(flag)
-            control = p.control
-            patches = p.patches
-
-        batch_chunks = len(cond_or_uncond)
+        batch_chunks = len(items)
+        input_x = [prepared.input_x for prepared, _flag in items]
+        mult = [prepared.mult for prepared, _flag in items]
+        c = [prepared.conditioning for prepared, _flag in items]
+        area = [prepared.area for prepared, _flag in items]
+        cond_or_uncond = [flag for _prepared, flag in items]
+        control = items[-1][0].control if items else None
+        patches = items[-1][0].patches if items else None
         input_x_cat = torch.cat(input_x)
         c_dict = cond_cat(c)
 
@@ -276,7 +277,8 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
                 c_dict['y'] = c_dict['y'].to(device=dev)
             if 'c_concat' in c_dict and isinstance(c_dict['c_concat'], torch.Tensor):
                 c_dict['c_concat'] = c_dict['c_concat'].to(device=dev)
-            timestep_ = torch.cat([timestep] * batch_chunks)
+            timestep_repeat_shape = (batch_chunks,) + (1,) * max(timestep.ndim - 1, 0)
+            timestep_ = timestep.repeat(timestep_repeat_shape)
 
         transformer_options = {}
         if 'transformer_options' in model_options:

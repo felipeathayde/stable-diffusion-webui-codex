@@ -7,11 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WanVAE-style (3D conv) VAE used by Anima (`qwen_image_vae.safetensors`).
-Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, with strict keymap normalization + strict loader diagnostics.
+Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, with strict keymap normalization, explicit Wan21 latent stats exposure, and strict loader diagnostics.
 This implementation is scoped to **images**: inputs are treated as `T=1` (no video caching or temporal chunking).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WanVaeConfig` (dataclass): Minimal config surface required by the shared VAE patcher (`apps/backend/patchers/vae.py`).
+- `WanVaeConfig` (dataclass): Minimal config surface required by the shared VAE patcher (`apps/backend/patchers/vae.py`), including optional per-channel latent stats.
 - `WanVAE` (class): WAN-style VAE module with `encode`/`decode` supporting 4D tensors (image mode; `T=1`).
 - `detect_wan_vae_variant_from_header` (function): Detect WAN VAE variant (`2.1`/`2.2`) from safetensors header keys.
 - `infer_wan_vae_config_from_safetensors_header` (function): Infer WAN VAE config values from header-only metadata.
@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from apps.backend.runtime.attention import attention_function_single_head_spatial
 from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
+from apps.backend.runtime.families.wan22.wan_latent_norms import WAN21_LATENTS_MEAN, WAN21_LATENTS_STD
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
 from apps.backend.runtime.state_dict.keymap_anima import remap_anima_wan_vae_state_dict
@@ -50,6 +51,8 @@ class WanVaeConfig:
     latent_channels: int
     scaling_factor: float = 1.0
     shift_factor: float = 0.0
+    latents_mean: tuple[float, ...] | None = None
+    latents_std: tuple[float, ...] | None = None
 
 
 class CausalConv3d(nn.Conv3d):
@@ -332,6 +335,12 @@ class WanVAE(nn.Module):
         self.temperal_downsample = tuple(bool(x) for x in temperal_downsample)
         self.temperal_upsample = tuple(reversed(self.temperal_downsample))
         self.image_channels = int(image_channels)
+        expected_latent_channels = len(WAN21_LATENTS_MEAN)
+        if self.z_dim != expected_latent_channels:
+            raise RuntimeError(
+                "Anima WanVAE requires z_dim=16 for Wan21 latent normalization stats; "
+                f"got z_dim={self.z_dim}."
+            )
 
         # Minimal config surface consumed by `apps/backend/patchers/vae.py`.
         self.config = WanVaeConfig(
@@ -339,6 +348,8 @@ class WanVAE(nn.Module):
             latent_channels=int(self.z_dim),
             scaling_factor=1.0,
             shift_factor=0.0,
+            latents_mean=WAN21_LATENTS_MEAN,
+            latents_std=WAN21_LATENTS_STD,
         )
 
         self.encoder = Encoder3d(

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: VAE patcher + tiling helpers for encode/decode (diffusers + WAN-aware).
-Provides a VAE wrapper that normalizes diffusers outputs, supports tiled decode/encode paths, and integrates memory-management
+Provides a VAE wrapper that normalizes diffusers outputs (scalar and optional per-channel latent stats), supports tiled decode/encode paths, and integrates memory-management
 and smart-fallback behavior. Supports separate storage vs compute dtype selection (compute defaults to fp32 unless overridden).
 Tiling helpers are shared with the global upscalers runtime to avoid drift.
 
@@ -15,7 +15,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_tensor_stats` (function): Logs tensor shape/dtype/device and basic statistics for debugging VAE behavior.
 - `_unwrap_decode_output` (function): Normalizes diffusers decode outputs to a plain tensor (`DecoderOutput.sample` or passthrough).
 - `_unwrap_encode_output` (function): Normalizes diffusers encode outputs to a latent tensor (handles `latent_dist`, `.sample()`, `.mean`, etc.).
-- `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that normalizes encode/decode return shapes/types for downstream use.
+- `_NormalizingFirstStage` (class): Wrapper around a first-stage VAE that applies strict scalar/per-channel latent normalization and proxies encode/decode APIs.
 - `tiled_scale_multidim` (function): Multi-dim tiled scaling helper (used to process large images in overlapping tiles).
 - `get_tiled_scale_steps` (function): Computes the number of tile steps given dimensions and overlap.
 - `tiled_scale` (function): Convenience wrapper for tiled scaling in 2D (tile_x/tile_y).
@@ -23,8 +23,10 @@ Symbols (top-level; keep in sync; no ghosts):
   (includes nested helpers for memory-management and diffusers/WAN VAE compatibility).
 """
 
-import torch
 import logging
+import math
+
+import torch
 
 try:  # Optional import; diffusers may not be present in minimal environments
     from diffusers.models.autoencoder_kl import AutoencoderKL as DiffusersAutoencoderKL
@@ -124,15 +126,53 @@ def _unwrap_encode_output(output):
 class _NormalizingFirstStage:
     """Adapter that guarantees process_in/out around a diffusers VAE.
 
-    - process_in: (x - shift) * scale
-    - process_out: (x / scale) + shift
+    - scalar-only path:
+      - process_in: (x - shift) * scale
+      - process_out: (x / scale) + shift
+    - per-channel path:
+      - process_in: (x - (latents_mean + shift)) * scale / latents_std
+      - process_out: x * latents_std / scale + (latents_mean + shift)
     Also proxies encode/decode/to/attributes to the wrapped object.
     """
 
-    def __init__(self, base, *, scale: float, shift: float) -> None:
+    def __init__(
+        self,
+        base,
+        *,
+        scale: float,
+        shift: float,
+        latents_mean: tuple[float, ...] | None = None,
+        latents_std: tuple[float, ...] | None = None,
+    ) -> None:
         self._base = base
         self._scale = float(scale)
         self._shift = float(shift)
+        if not math.isfinite(self._scale) or self._scale == 0.0:
+            raise RuntimeError(f"Invalid VAE scaling_factor: {self._scale!r} (must be finite and non-zero).")
+        if not math.isfinite(self._shift):
+            raise RuntimeError(f"Invalid VAE shift_factor: {self._shift!r} (must be finite).")
+
+        if (latents_mean is None) != (latents_std is None):
+            raise RuntimeError("VAE latent stats must provide both latents_mean and latents_std (or neither).")
+
+        self._latents_mean = None
+        self._latents_std = None
+        if latents_mean is not None and latents_std is not None:
+            mean_values = tuple(float(x) for x in latents_mean)
+            std_values = tuple(float(x) for x in latents_std)
+            if not mean_values:
+                raise RuntimeError("VAE latent stats are empty; expected at least one channel value.")
+            if len(mean_values) != len(std_values):
+                raise RuntimeError(
+                    "VAE latent stats length mismatch: "
+                    f"len(latents_mean)={len(mean_values)} len(latents_std)={len(std_values)}."
+                )
+            if any(not math.isfinite(value) for value in mean_values):
+                raise RuntimeError("VAE latents_mean contains non-finite values.")
+            if any((not math.isfinite(value)) or value <= 0.0 for value in std_values):
+                raise RuntimeError("VAE latents_std must contain finite positive values.")
+            self._latents_mean = torch.tensor(mean_values, dtype=torch.float32)
+            self._latents_std = torch.tensor(std_values, dtype=torch.float32)
 
     # Proxy core API used by VAE wrapper
     def encode(self, *args, **kwargs):  # noqa: D401
@@ -148,12 +188,41 @@ class _NormalizingFirstStage:
     def process_in(self, x: torch.Tensor) -> torch.Tensor:
         if not torch.is_tensor(x):
             raise TypeError("process_in expects a torch.Tensor")
-        return (x - self._shift) * self._scale
+        stats = self._stats_for(x)
+        if stats is None:
+            return (x - self._shift) * self._scale
+        latents_mean, latents_std = stats
+        return (x - (latents_mean + self._shift)) * self._scale / latents_std
 
     def process_out(self, x: torch.Tensor) -> torch.Tensor:
         if not torch.is_tensor(x):
             raise TypeError("process_out expects a torch.Tensor")
-        return (x / self._scale) + self._shift
+        stats = self._stats_for(x)
+        if stats is None:
+            return (x / self._scale) + self._shift
+        latents_mean, latents_std = stats
+        return x * latents_std / self._scale + (latents_mean + self._shift)
+
+    def _stats_for(self, x: torch.Tensor):
+        if self._latents_mean is None or self._latents_std is None:
+            return None
+        if x.ndim not in (4, 5):
+            raise RuntimeError(
+                "VAE latent stats only support 4D/5D tensors; "
+                f"got shape={tuple(x.shape)}."
+            )
+        channels = int(x.shape[1]) if x.ndim >= 2 else -1
+        expected_channels = int(self._latents_mean.shape[0])
+        if channels != expected_channels:
+            raise RuntimeError(
+                "VAE latent channel mismatch for per-channel normalization: "
+                f"tensor_channels={channels} expected_channels={expected_channels} "
+                f"shape={tuple(x.shape)}."
+            )
+        view_shape = (1, expected_channels) + (1,) * (x.ndim - 2)
+        latents_mean = self._latents_mean.to(device=x.device, dtype=x.dtype).view(view_shape)
+        latents_std = self._latents_std.to(device=x.device, dtype=x.dtype).view(view_shape)
+        return latents_mean, latents_std
 
     def __getattr__(self, name: str):
         # Delegate any other attribute access to the base VAE
@@ -174,24 +243,47 @@ class _NormalizingFirstStage:
         # Attempt to fetch values from attribute or mapping-like config
         scale = None
         shift = 0.0
+        latents_mean = None
+        latents_std = None
         
         if cfg is not None:
-            if hasattr(cfg, "scaling_factor"):
-                scale = getattr(cfg, "scaling_factor")
-            elif isinstance(cfg, dict):
+            if isinstance(cfg, dict):
                 scale = cfg.get("scaling_factor")
                 shift = cfg.get("shift_factor", 0.0)
+                latents_mean = cfg.get("latents_mean")
+                latents_std = cfg.get("latents_std")
             else:
-                try:
-                    scale = cfg.get("scaling_factor")  # type: ignore[attr-defined]
-                    shift = cfg.get("shift_factor", 0.0)  # type: ignore[attr-defined]
-                except Exception:
-                    scale = None
-            if hasattr(cfg, "shift_factor"):
-                try:
-                    shift = float(getattr(cfg, "shift_factor"))
-                except Exception:
-                    shift = 0.0
+                if hasattr(cfg, "scaling_factor"):
+                    scale = getattr(cfg, "scaling_factor")
+                else:
+                    try:
+                        scale = cfg.get("scaling_factor")  # type: ignore[attr-defined]
+                    except Exception:
+                        scale = None
+                if hasattr(cfg, "shift_factor"):
+                    try:
+                        shift = float(getattr(cfg, "shift_factor"))
+                    except Exception as exc:
+                        raise RuntimeError("VAE config field 'shift_factor' must be a finite numeric value.") from exc
+                else:
+                    try:
+                        shift = cfg.get("shift_factor", 0.0)  # type: ignore[attr-defined]
+                    except Exception:
+                        shift = 0.0
+                if hasattr(cfg, "latents_mean"):
+                    latents_mean = getattr(cfg, "latents_mean")
+                else:
+                    try:
+                        latents_mean = cfg.get("latents_mean")  # type: ignore[attr-defined]
+                    except Exception:
+                        latents_mean = None
+                if hasattr(cfg, "latents_std"):
+                    latents_std = getattr(cfg, "latents_std")
+                else:
+                    try:
+                        latents_std = cfg.get("latents_std")  # type: ignore[attr-defined]
+                    except Exception:
+                        latents_std = None
         
         # Use FamilyRuntimeSpec as fallback if scale is still None
         if scale is None and family is not None:
@@ -206,9 +298,36 @@ class _NormalizingFirstStage:
         
         if scale is None:
             raise RuntimeError("VAE config missing 'scaling_factor' and no family fallback available; engines require normalization semantics")
-        
-        logger.info("[VAE] normalization enabled: scaling_factor=%s shift_factor=%s", scale, shift)
-        return _NormalizingFirstStage(base, scale=float(scale), shift=float(shift))
+
+        def _coerce_optional_float_tuple(name: str, value):
+            if value is None:
+                return None
+            try:
+                return tuple(float(x) for x in value)
+            except TypeError as exc:
+                raise RuntimeError(f"VAE config field '{name}' must be an iterable of numbers.") from exc
+            except ValueError as exc:
+                raise RuntimeError(f"VAE config field '{name}' contains non-numeric values.") from exc
+
+        latents_mean_values = _coerce_optional_float_tuple("latents_mean", latents_mean)
+        latents_std_values = _coerce_optional_float_tuple("latents_std", latents_std)
+
+        if latents_mean_values is not None and latents_std_values is not None:
+            logger.info(
+                "[VAE] normalization enabled: scaling_factor=%s shift_factor=%s channels=%d (per-channel stats)",
+                scale,
+                shift,
+                len(latents_mean_values),
+            )
+        else:
+            logger.info("[VAE] normalization enabled: scaling_factor=%s shift_factor=%s", scale, shift)
+        return _NormalizingFirstStage(
+            base,
+            scale=float(scale),
+            shift=float(shift),
+            latents_mean=latents_mean_values,
+            latents_std=latents_std_values,
+        )
 
 class VAE:
     def __init__(self, model=None, device=None, dtype=None, no_init=False, *, family=None):

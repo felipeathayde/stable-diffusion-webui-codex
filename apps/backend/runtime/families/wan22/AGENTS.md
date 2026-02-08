@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/wan22 Overview
 Date: 2025-12-06
-Last Review: 2026-02-03
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -50,6 +50,7 @@ Status: Active
 - 2026-01-23: WAN22 GGUF core model parity: self-attn now applies RoPE + Q/K RMSNorm across heads (qk_norm), cross-attn applies Q/K RMSNorm, and the timestep embedding matches Diffusers `Timesteps(..., downscale_freq_shift=0, flip_sin_to_cos=True)` (fixes noisy outputs caused by missing positional/timestep semantics).
 - 2026-01-23: WAN22 GGUF numeric stability parity: transformer LayerNorms and gated residual math now follow Diffusers’ FP32 strategy (FP32 LayerNorm + float32 accumulations), addressing VAE decode non-finite outputs caused by fp16 instability drifting latents out of range.
 - 2026-01-23: Centralized WAN22 transformer key remapping in `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`; `model.py:remap_wan22_gguf_state_dict` delegates to it and `stage_lora.py` treats key-style detection failures as “no match” (so LoRA application remains fail-loud at the “0 targets” boundary).
+- 2026-02-08: `wan_latent_norms.py` now exposes `WAN21_LATENTS_MEAN` / `WAN21_LATENTS_STD` constants as shared source-of-truth for Wan21 latent stats (reused by Anima VAE config to avoid duplicated literals).
 
 ## Invariants & Logging (Fase 5)
 - `_get_text_context` (GGUF):

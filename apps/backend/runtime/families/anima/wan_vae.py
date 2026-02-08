@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: WanVAE-style (3D conv) VAE used by Anima (`qwen_image_vae.safetensors`).
-Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, with a strict loader.
+Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, with strict keymap normalization + strict loader diagnostics.
 This implementation is scoped to **images**: inputs are treated as `T=1` (no video caching or temporal chunking).
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -35,6 +35,7 @@ from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
+from apps.backend.runtime.state_dict.keymap_anima import remap_anima_wan_vae_state_dict
 
 logger = logging.getLogger("backend.runtime.anima.wan_vae")
 WAN_VAE_BASE_MARKER_KEY = "decoder.middle.0.residual.0.gamma"
@@ -498,6 +499,14 @@ def load_wan_vae_from_safetensors(
         raise RuntimeError(f"WAN VAE latent_channels mismatch: got {cfg.latent_channels}, expected 16 for Anima.")
 
     sd = load_torch_file(str(p), device="cpu")
+    if not isinstance(sd, Mapping):
+        raise RuntimeError(f"WAN VAE checkpoint loader returned non-mapping state_dict: {type(sd).__name__}")
+    sd = {str(k): v for k, v in sd.items()}
+    try:
+        _, sd = remap_anima_wan_vae_state_dict(sd)
+    except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
+        raise RuntimeError(f"WAN VAE key remap failed: {exc}") from exc
+
     with using_codex_operations(device=None, dtype=torch_dtype, manual_cast_enabled=True):
         model = WanVAE(
             dim=int(cfg.dim),

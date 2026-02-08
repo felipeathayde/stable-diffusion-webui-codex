@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Strict loader utilities for the Anima core transformer (`MiniTrainDiT` + `LLMAdapter`).
-This module is intentionally fail-loud: any missing/unexpected weights are fatal and reported with actionable samples.
+Normalizes keys through the Anima transformer keymap before config inference/load; any remap/load mismatch is fatal and reported with actionable samples.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `load_anima_dit_from_state_dict` (function): Instantiate + strict-load `AnimaDiT` from a transformer state dict.
@@ -19,6 +19,7 @@ from collections.abc import Mapping
 import torch
 
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
+from apps.backend.runtime.state_dict.keymap_anima import remap_anima_transformer_state_dict
 
 from .config import AnimaConfig, infer_anima_config_from_state_dict
 from .model import AnimaDiT
@@ -40,13 +41,19 @@ def load_anima_dit_from_state_dict(
             "Expected the parser-stripped transformer component (prefix removed)."
         )
 
+    normalized_state_dict = {str(k): v for k, v in state_dict.items()}
     try:
-        config: AnimaConfig = infer_anima_config_from_state_dict(state_dict)
+        _, normalized_state_dict = remap_anima_transformer_state_dict(normalized_state_dict)
+    except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
+        raise RuntimeError(f"Anima core transformer key remap failed: {exc}") from exc
+
+    try:
+        config: AnimaConfig = infer_anima_config_from_state_dict(normalized_state_dict)
     except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
         raise RuntimeError(f"Anima config inference failed: {exc}") from exc
     model = AnimaDiT(config=config, device=device, dtype=dtype).eval()
 
-    missing, unexpected = safe_load_state_dict(model, state_dict, log_name="anima.transformer")
+    missing, unexpected = safe_load_state_dict(model, normalized_state_dict, log_name="anima.transformer")
     if missing or unexpected:
         sample_missing = ", ".join(missing[:10])
         sample_unexpected = ", ".join(unexpected[:10])

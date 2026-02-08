@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Anima Qwen3-0.6B text encoder runtime + offline tokenizers (Qwen + T5).
-Loads the sha-selected Qwen3-0.6B weights using the native Qwen3 implementation and provides a small text-processing wrapper
+Loads sha-selected Qwen3-0.6B weights through a strict Anima keymap into the native Qwen3 implementation and provides a small text-processing wrapper
 that produces embeddings for conditioning. Also loads an offline T5 tokenizer used only for dual-tokenization (token ids + weights).
 
 No runtime downloads are allowed: tokenizers must be resolved from vendored `apps/backend/huggingface/**` assets or explicit paths.
@@ -37,6 +37,7 @@ from apps.backend.runtime.checkpoint.io import load_torch_file
 from apps.backend.runtime.checkpoint.safetensors_header import read_safetensors_header
 from apps.backend.runtime.models.state_dict import safe_load_state_dict
 from apps.backend.runtime.ops.operations import using_codex_operations
+from apps.backend.runtime.state_dict.keymap_anima import remap_anima_qwen3_06b_state_dict
 from apps.backend.runtime.text_processing.parsing import parse_prompt_attention
 
 logger = logging.getLogger("backend.runtime.anima.text_encoder")
@@ -490,6 +491,14 @@ def load_anima_qwen3_06b_text_encoder(
     from apps.backend.runtime.families.zimage.qwen3 import Qwen3_06B
 
     sd = load_torch_file(str(p), device="cpu")
+    if not isinstance(sd, Mapping):
+        raise RuntimeError(f"Anima Qwen3-0.6B loader returned non-mapping state_dict: {type(sd).__name__}")
+    sd = {str(k): v for k, v in sd.items()}
+    try:
+        _, sd = remap_anima_qwen3_06b_state_dict(sd)
+    except Exception as exc:  # noqa: BLE001 - surfaced as a load-time error with context
+        raise RuntimeError(f"Anima Qwen3-0.6B key remap failed: {exc}") from exc
+
     with using_codex_operations(device=None, dtype=torch_dtype, manual_cast_enabled=True):
         model = Qwen3_06B(dtype=torch_dtype)
     missing, unexpected = safe_load_state_dict(model, sd, log_name="anima.qwen3_06b")

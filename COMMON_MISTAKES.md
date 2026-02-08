@@ -209,6 +209,24 @@ export PYTHONPATH="$CODEX_ROOT"
 "$CODEX_ROOT/.venv/bin/python" -c "import apps.backend; print('ok')"
 ```
 
+### Running `.sangoi` pytest suite without exporting `CODEX_ROOT`
+
+Wrong command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"; PYTHONPATH="$CODEX_ROOT" "$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_anima_*keymap*.py
+```
+
+Cause and fix:
+`.sangoi/dev/tests/conftest.py` requires `CODEX_ROOT` in the process environment. A shell variable without `export` is not visible to pytest's Python process.
+
+Correct command:
+```bash
+CODEX_ROOT="$(git rev-parse --show-toplevel)"
+export CODEX_ROOT
+export PYTHONPATH="$CODEX_ROOT"
+"$CODEX_ROOT/.venv/bin/python" -m pytest -q .sangoi/dev/tests/backend/test_anima_*keymap*.py
+```
+
 ### Importing heavy deps when you only need a syntax check
 
 Wrong command:

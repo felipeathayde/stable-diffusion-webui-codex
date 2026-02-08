@@ -1,7 +1,7 @@
 # apps/backend/runtime/families/anima Overview
 <!-- tags: backend, runtime, families, anima, cosmos, predict2 -->
 Date: 2026-02-05
-Last Review: 2026-02-07
+Last Review: 2026-02-08
 Status: Draft
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: Draft
 - `wan_vae.py` performs explicit header-key variant detection (`2.1` vs `2.2`) before weight load; Anima v1 currently ports `2.1` only and must fail loud on `2.2`.
 - `wan_vae.py` infers `dim` from `decoder.head.0.gamma.shape` and expects broadcastable `(dim, 1, 1, 1)` (WAN 2.1); errors distinguish missing vs invalid shape, and `encoder.conv1.weight.shape[0]` must match `dim` (fail loud on mismatch).
 - Do not copy `.refs/**` code into `apps/**`; extract intent and re-implement cleanly.
+- 2026-02-08: `loader.py`, `wan_vae.py`, and `text_encoder.py` now run strict family keymaps from `apps.backend.runtime.state_dict.keymap_anima` before strict model load; parser `net.` stripping invariant for core remains enforced.

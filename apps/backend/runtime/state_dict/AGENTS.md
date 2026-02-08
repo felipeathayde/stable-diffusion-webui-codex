@@ -4,6 +4,7 @@ Purpose: Lightweight state-dict mapping views + small state-dict utilities used 
 
 Key files:
 - `apps/backend/runtime/state_dict/key_mapping.py`: Strict key-style detection + remapping core (fail loud; collision/ambiguity checks).
+- `apps/backend/runtime/state_dict/keymap_anima.py`: Anima strict key-style detectors + canonical remaps for core transformer/WAN VAE/Qwen3-0.6B text encoder.
 - `apps/backend/runtime/state_dict/keymap_llama_gguf.py`: llama.cpp-style GGUF tensor-name remaps for text models (HF key layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_clip.py`: SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
 - `apps/backend/runtime/state_dict/keymap_sdxl_checkpoint.py`: SDXL checkpoint wrapper/prefix key normalization (Comfy/original SDXL layout).
@@ -17,5 +18,6 @@ Notes:
 - 2026-01-25: `LazySafetensorsDict` is now truly lazy on non-Windows (persistent `safe_open` handle) and implements `__contains__` so key checks don’t load tensors; `RemapKeysView` also implements `__contains__` for the same reason.
 - Helpers should remain generic and not import model-family runtime code.
 - Key remaps must be explicit and strict: unknown/ambiguous layouts raise (no silent fallbacks). Use the family-specific keymap modules from loaders.
+- 2026-02-08: Added strict Anima keymaps (`keymap_anima.py`) with explicit style detection, wrapper normalization, required-key validation, and collision/unknown fail-loud behavior.
 
-Last Review: 2026-01-25
+Last Review: 2026-02-08

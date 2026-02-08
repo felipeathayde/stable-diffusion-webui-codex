@@ -11,7 +11,7 @@ Implements the WAN 2.1 VAE architecture used by ComfyUI for image inference, wit
 This implementation is scoped to **images**: inputs are treated as `T=1` (no video caching or temporal chunking).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WanVaeConfig` (dataclass): Minimal config surface required by the shared VAE patcher (`apps/backend/patchers/vae.py`), including optional per-channel latent stats.
+- `WanVaeConfig` (dataclass): Minimal config surface required by the shared VAE patcher (`apps/backend/patchers/vae.py`), including optional per-channel latent stats and explicit no-shift (`shift_factor=None`) semantics.
 - `WanVAE` (class): WAN-style VAE module with `encode`/`decode` supporting 4D tensors (image mode; `T=1`).
 - `detect_wan_vae_variant_from_header` (function): Detect WAN VAE variant (`2.1`/`2.2`) from safetensors header keys.
 - `infer_wan_vae_config_from_safetensors_header` (function): Infer WAN VAE config values from header-only metadata.
@@ -50,7 +50,7 @@ class WanVaeConfig:
     down_block_types: Sequence[str]
     latent_channels: int
     scaling_factor: float = 1.0
-    shift_factor: float = 0.0
+    shift_factor: float | None = None
     latents_mean: tuple[float, ...] | None = None
     latents_std: tuple[float, ...] | None = None
 
@@ -347,7 +347,7 @@ class WanVAE(nn.Module):
             down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"),
             latent_channels=int(self.z_dim),
             scaling_factor=1.0,
-            shift_factor=0.0,
+            shift_factor=None,
             latents_mean=WAN21_LATENTS_MEAN,
             latents_std=WAN21_LATENTS_STD,
         )

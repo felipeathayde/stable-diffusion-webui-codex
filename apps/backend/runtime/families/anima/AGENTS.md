@@ -27,3 +27,4 @@ Status: Draft
 - Do not copy `.refs/**` code into `apps/**`; extract intent and re-implement cleanly.
 - 2026-02-08: `loader.py`, `wan_vae.py`, and `text_encoder.py` now run strict family keymaps from `apps.backend.runtime.state_dict.keymap_anima` before strict model load; parser `net.` stripping invariant for core remains enforced.
 - 2026-02-08: `wan_vae.py` now populates Wan21 per-channel latent stats on `WanVaeConfig` (`latents_mean`/`latents_std`) for decode/encode normalization parity with Comfy; constructor enforces `z_dim=16` fail-loud for Anima image-mode scope.
+- 2026-02-08: `wan_vae.py` now emits `shift_factor=None` (not numeric `0.0`) for Anima Wan21 parity; shared VAE no-shift policy remains strict and continues to reject explicit numeric shift values for Anima.

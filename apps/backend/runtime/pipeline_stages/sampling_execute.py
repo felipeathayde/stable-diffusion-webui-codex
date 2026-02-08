@@ -7,10 +7,11 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Sampling execution helper for pipeline orchestrators.
-Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics.
+Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics (including ER-SDE option
+propagation into the sampler and diagnostic metadata dumps).
 
 Symbols (top-level; keep in sync; no ghosts):
-- `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics).
+- `_maybe_dump_latents` (function): Dump latents to disk when enabled via env flags (debug diagnostics + effective ER-SDE metadata).
 - `execute_sampling` (function): Execute sampling given processing + plan + conditioning payload and return the sampled latents.
 """
 
@@ -81,6 +82,22 @@ def _maybe_dump_latents(
                 "subseeds": plan.subseeds,
             },
         }
+        effective_sampler_name = getattr(processing, "sampler_name", None) or plan.sampler_name
+        if isinstance(effective_sampler_name, str) and effective_sampler_name.strip().lower() == "er sde":
+            if plan.er_sde is None:
+                payload["metadata"]["er_sde"] = {
+                    "solver_type": "er_sde",
+                    "max_stage": 3,
+                    "eta": 1.0,
+                    "s_noise": 1.0,
+                }
+            else:
+                payload["metadata"]["er_sde"] = {
+                    "solver_type": plan.er_sde.solver_type,
+                    "max_stage": int(plan.er_sde.max_stage),
+                    "eta": float(plan.er_sde.eta),
+                    "s_noise": float(plan.er_sde.s_noise),
+                }
         torch.save(payload, target)
         logger.info("[diagnostics] dumped latents to %s", target)
     except Exception as exc:  # noqa: BLE001
@@ -188,6 +205,7 @@ def execute_sampling(
         post_step_hook=post_step_hook,
         post_sample_hook=post_sample_hook,
         context=context,
+        er_sde_options=plan.er_sde,
     )
 
     samples = run_post_sample_hooks(processing, samples)

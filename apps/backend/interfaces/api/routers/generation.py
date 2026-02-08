@@ -11,6 +11,8 @@ Contains request parsing and payload validation (including hires tile config via
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`).
+Includes strict ER-SDE option parsing (`extras.er_sde` / `img2img_extras.er_sde`) plus release-scope enforcement for sampler fields and
+prompt `<sampler:...>` control tags (Anima-only rollout).
 Uses cached inventory slot metadata for sha-selected text encoders (`tenc_sha`) and enforces WAN video `height/width % 16 == 0` (Diffusers parity) to avoid silent patch-grid cropping (returns suggested rounded-up dimensions on invalid requests).
 Requires explicit per-request device selection and serializes GPU-heavy execution via the shared inference gate when `CODEX_SINGLE_FLIGHT=1` (default on).
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -71,6 +74,12 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _TXT2IMG_ALLOWED_KEYS = set(TXT2IMG_KEYS.ALL)
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL)
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
+    _IMG2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
+    _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
+    _PROMPT_SAMPLER_CONTROL_RE = re.compile(
+        r"<\s*sampler\s*:\s*([^:>]+)(?::[^:>]+)?\s*>",
+        re.IGNORECASE,
+    )
     from apps.backend.runtime.vision.upscalers.specs import tile_config_from_payload
 
     _ANIMA_ALLOWED_SAMPLERS = tuple(ENGINE_SURFACES[SemanticEngine.ANIMA].samplers or ())
@@ -211,6 +220,85 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return dict(raw)
 
 
+    def _normalize_er_sde_solver_type(value: object, *, field_name: str) -> str:
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be a string")
+        normalized = value.strip().lower().replace("-", " ").replace("_", " ")
+        mapping = {
+            "er sde": "er_sde",
+            "reverse time sde": "reverse_time_sde",
+            "ode": "ode",
+        }
+        solver_type = mapping.get(normalized)
+        if solver_type is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{field_name}' must be one of: ER-SDE, Reverse-time SDE, ODE "
+                    "(or canonical tokens: er_sde, reverse_time_sde, ode)"
+                ),
+            )
+        return solver_type
+
+
+    def _parse_er_sde_options(value: object, *, field_name: str) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=400, detail=f"'{field_name}' must be an object")
+        _reject_unknown_keys(value, _ER_SDE_OPTION_KEYS, field_name)
+
+        options = dict(value)
+        solver_type = _normalize_er_sde_solver_type(
+            options.get("solver_type", "er_sde"),
+            field_name=f"{field_name}.solver_type",
+        )
+        max_stage_raw = options.get("max_stage", 3)
+        if isinstance(max_stage_raw, bool) or not isinstance(max_stage_raw, (int, float)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.max_stage' must be an integer in [1, 3]",
+            )
+        if isinstance(max_stage_raw, float) and not max_stage_raw.is_integer():
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.max_stage' must be an integer in [1, 3]",
+            )
+        max_stage = int(max_stage_raw)
+        if max_stage < 1 or max_stage > 3:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}.max_stage' must be in [1, 3]",
+            )
+
+        eta_raw = options.get("eta", 1.0)
+        if isinstance(eta_raw, bool) or not isinstance(eta_raw, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{field_name}.eta' must be numeric")
+        eta = float(eta_raw)
+        if not math.isfinite(eta):
+            raise HTTPException(status_code=400, detail=f"'{field_name}.eta' must be finite")
+        if eta < 0.0:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.eta' must be >= 0")
+
+        s_noise_raw = options.get("s_noise", 1.0)
+        if isinstance(s_noise_raw, bool) or not isinstance(s_noise_raw, (int, float)):
+            raise HTTPException(status_code=400, detail=f"'{field_name}.s_noise' must be numeric")
+        s_noise = float(s_noise_raw)
+        if not math.isfinite(s_noise):
+            raise HTTPException(status_code=400, detail=f"'{field_name}.s_noise' must be finite")
+        if s_noise < 0.0:
+            raise HTTPException(status_code=400, detail=f"'{field_name}.s_noise' must be >= 0")
+
+        if solver_type == "ode" or (solver_type == "reverse_time_sde" and eta == 0.0):
+            eta = 0.0
+            s_noise = 0.0
+
+        return {
+            "solver_type": solver_type,
+            "max_stage": int(max_stage),
+            "eta": float(eta),
+            "s_noise": float(s_noise),
+        }
+
+
     def _parse_txt2img_extras(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         raw = payload.get('extras')
         if raw is None:
@@ -279,6 +367,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                         detail="'extras.zimage_variant' must be one of: turbo, base",
                     )
                 extras['zimage_variant'] = variant
+        if "er_sde" in raw:
+            extras["er_sde"] = _parse_er_sde_options(raw["er_sde"], field_name="extras.er_sde")
         # Hires options
         hires = raw.get('hires')
         hires_cfg: Optional[Dict[str, Any]] = None
@@ -508,6 +598,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail=f"'{field_name}' must not be empty")
         return sampler
 
+    def _validate_er_sde_release_scope(*, engine_key: str, sampler: str, field_name: str) -> None:
+        if str(sampler).strip().lower() != "er sde":
+            return
+        if engine_key == SemanticEngine.ANIMA.value:
+            return
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Sampler 'er sde' in '{field_name}' is currently enabled only for engine 'anima'."
+            ),
+        )
+
     def _validate_anima_sampler_allowlist(*, engine_key: str, sampler: str, field_name: str) -> None:
         if engine_key != SemanticEngine.ANIMA.value:
             return
@@ -518,6 +620,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             status_code=400,
             detail=f"Unsupported sampler for engine 'anima' in '{field_name}': '{sampler}'. Allowed: {allowed}",
         )
+
+    def _validate_prompt_sampler_controls(*, engine_key: str, prompt: str, field_name: str) -> None:
+        for match in _PROMPT_SAMPLER_CONTROL_RE.finditer(prompt):
+            sampler_raw = match.group(1)
+            sampler = str(sampler_raw or "").strip().lower()
+            if not sampler:
+                continue
+            _validate_er_sde_release_scope(
+                engine_key=engine_key,
+                sampler=sampler,
+                field_name=f"{field_name} (prompt <sampler:...> control)",
+            )
+            _validate_anima_sampler_allowlist(
+                engine_key=engine_key,
+                sampler=sampler,
+                field_name=f"{field_name} (prompt <sampler:...> control)",
+            )
 
     def _is_gguf_checkpoint(_models_api: Any, model_ref: object) -> bool:
         raw = str(model_ref or "").strip()
@@ -706,6 +825,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         prompt = _require_str_field(payload, 'prompt', allow_empty=True)
         negative_prompt = str(payload.get('negative_prompt') or '')
+        _validate_prompt_sampler_controls(
+            engine_key=engine_key,
+            prompt=prompt,
+            field_name="prompt",
+        )
         width = _require_int_field(payload, 'width', minimum=8)
         height = _require_int_field(payload, 'height', minimum=8)
         steps_val = _require_int_field(payload, 'steps', minimum=1)
@@ -734,6 +858,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             distilled_cfg_scale = 3.5
         sampler_name = _require_str_field(payload, 'sampler', allow_empty=False)
         scheduler_name = _require_str_field(payload, 'scheduler', allow_empty=False)
+        _validate_er_sde_release_scope(
+            engine_key=engine_key,
+            sampler=sampler_name,
+            field_name="sampler",
+        )
         _validate_anima_sampler_allowlist(engine_key=engine_key, sampler=sampler_name, field_name="sampler")
         try:
             from apps.backend.runtime.sampling.registry import get_sampler_spec
@@ -759,9 +888,20 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         metadata = _parse_metadata(payload)
         extras, hires_cfg = _parse_txt2img_extras(payload)
         if hires_cfg is not None:
+            hires_prompt = str(hires_cfg.get("prompt") or "")
+            _validate_prompt_sampler_controls(
+                engine_key=engine_key,
+                prompt=hires_prompt,
+                field_name="extras.hires.prompt",
+            )
             hires_sampler = _parse_optional_sampler_field(value=hires_cfg.get("sampler"), field_name="extras.hires.sampler")
             if hires_sampler is not None:
                 hires_cfg["sampler"] = hires_sampler
+                _validate_er_sde_release_scope(
+                    engine_key=engine_key,
+                    sampler=hires_sampler,
+                    field_name="extras.hires.sampler",
+                )
                 _validate_anima_sampler_allowlist(
                     engine_key=engine_key,
                     sampler=hires_sampler,
@@ -948,6 +1088,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
 
         prompt = _p.require(payload, 'img2img_prompt') or ''
         negative_prompt = _p.require(payload, 'img2img_neg_prompt') or ''
+        _validate_prompt_sampler_controls(
+            engine_key=engine_key,
+            prompt=str(prompt),
+            field_name="img2img_prompt",
+        )
         styles = _p.as_list(payload, 'img2img_styles') if 'img2img_styles' in payload else []
         batch_count = _p.as_int(payload, 'img2img_batch_count') if 'img2img_batch_count' in payload else 1
         batch_size = _p.as_int(payload, 'img2img_batch_size') if 'img2img_batch_size' in payload else 1
@@ -985,6 +1130,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="'img2img_height' is required")
         sampler_name = _p.require(payload, 'img2img_sampling')
         scheduler_name = _p.require(payload, 'img2img_scheduler')
+        _validate_er_sde_release_scope(
+            engine_key=engine_key,
+            sampler=str(sampler_name),
+            field_name="img2img_sampling",
+        )
         _validate_anima_sampler_allowlist(
             engine_key=engine_key,
             sampler=str(sampler_name),
@@ -1048,6 +1198,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 field_name="img2img_hires_sampling",
             )
             if hr_sampler_name is not None:
+                _validate_er_sde_release_scope(
+                    engine_key=engine_key,
+                    sampler=hr_sampler_name,
+                    field_name="img2img_hires_sampling",
+                )
                 _validate_anima_sampler_allowlist(
                     engine_key=engine_key,
                     sampler=hr_sampler_name,
@@ -1075,6 +1230,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 "hr_cfg": _p.as_float(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
                 "hr_distilled_cfg": _p.as_float(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
             }
+            _validate_prompt_sampler_controls(
+                engine_key=engine_key,
+                prompt=str(hires_data.get("hr_prompt") or ""),
+                field_name="img2img_hires_prompt",
+            )
         else:
             hires_data = {"enable": False}
 
@@ -1083,6 +1243,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if raw_extras is not None:
             if not isinstance(raw_extras, dict):
                 raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
+            _reject_unknown_keys(raw_extras, _IMG2IMG_EXTRAS_KEYS, "img2img_extras")
+            raw_extras = dict(raw_extras)
 
             te_override = raw_extras.get("text_encoder_override")
             if te_override is not None:
@@ -1111,8 +1273,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 te_cfg: Dict[str, Any] = {"family": family, "label": label}
                 if components:
                     te_cfg["components"] = components
-                raw_extras = dict(raw_extras)
                 raw_extras["text_encoder_override"] = te_cfg
+
+            if "er_sde" in raw_extras:
+                raw_extras["er_sde"] = _parse_er_sde_options(
+                    raw_extras["er_sde"],
+                    field_name="img2img_extras.er_sde",
+                )
 
             extras.update(raw_extras)
         # Z-Image variant selection (Turbo/Base) for img2img runs.

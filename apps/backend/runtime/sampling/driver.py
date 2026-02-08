@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Sampling driver (native-only) for diffusion runtimes.
 Selects sampler implementations from specs, compiles conditioning, handles cancellation/precision fallback, and runs the sampling loop
-while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`).
+while emitting timeline/diagnostic hooks (and optional global profiling sections via `CODEX_PROFILE`), including native ER-SDE stage updates
+with strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
@@ -107,6 +108,120 @@ class CodexSampler:
             str(dtype),
         )
 
+    @staticmethod
+    def _normalize_er_sde_solver_type(value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("ER-SDE option 'solver_type' must be a string")
+        normalized = value.strip().lower().replace("-", " ").replace("_", " ")
+        solver_map = {
+            "er sde": "er_sde",
+            "reverse time sde": "reverse_time_sde",
+            "ode": "ode",
+        }
+        solver_type = solver_map.get(normalized)
+        if solver_type is None:
+            raise ValueError(
+                "ER-SDE option 'solver_type' must be one of: ER-SDE, Reverse-time SDE, ODE"
+            )
+        return solver_type
+
+    @staticmethod
+    def _resolve_er_sde_runtime_params(er_sde_options: Any) -> dict[str, Any]:
+        allowed_keys = {"solver_type", "max_stage", "eta", "s_noise"}
+        if er_sde_options is None:
+            payload: dict[str, Any] = {}
+        elif isinstance(er_sde_options, dict):
+            raw_payload = dict(er_sde_options)
+            unknown_keys = sorted(set(raw_payload.keys()) - allowed_keys)
+            if unknown_keys:
+                raise ValueError(f"Unexpected ER-SDE option key(s): {', '.join(unknown_keys)}")
+            payload = {key: value for key, value in raw_payload.items() if value is not None}
+        else:
+            attr_keys: set[str] = set()
+            if hasattr(er_sde_options, "__dict__"):
+                attr_keys.update(str(key) for key in vars(er_sde_options).keys())
+            slots_value = getattr(type(er_sde_options), "__slots__", ())
+            if isinstance(slots_value, str):
+                slots_iterable = (slots_value,)
+            else:
+                slots_iterable = tuple(slots_value) if isinstance(slots_value, (tuple, list)) else ()
+            attr_keys.update(str(key) for key in slots_iterable)
+            unknown_keys = sorted(
+                key for key in attr_keys if key and not key.startswith("_") and key not in allowed_keys
+            )
+            if unknown_keys:
+                raise ValueError(f"Unexpected ER-SDE option key(s): {', '.join(unknown_keys)}")
+            payload = {}
+            for key in allowed_keys:
+                value = getattr(er_sde_options, key, None)
+                if value is not None:
+                    payload[key] = value
+
+        solver_raw = payload.get("solver_type", "er_sde")
+        solver_type = CodexSampler._normalize_er_sde_solver_type(solver_raw)
+
+        max_stage_raw = payload.get("max_stage", 3)
+        if isinstance(max_stage_raw, bool) or not isinstance(max_stage_raw, (int, float)):
+            raise ValueError("ER-SDE option 'max_stage' must be an integer in [1, 3]")
+        if isinstance(max_stage_raw, float) and not max_stage_raw.is_integer():
+            raise ValueError("ER-SDE option 'max_stage' must be an integer in [1, 3]")
+        max_stage = int(max_stage_raw)
+        if max_stage < 1 or max_stage > 3:
+            raise ValueError("ER-SDE option 'max_stage' must be in [1, 3]")
+
+        eta_raw = payload.get("eta", 1.0)
+        if isinstance(eta_raw, bool) or not isinstance(eta_raw, (int, float)):
+            raise ValueError("ER-SDE option 'eta' must be numeric")
+        eta = float(eta_raw)
+        if not math.isfinite(eta):
+            raise ValueError("ER-SDE option 'eta' must be finite")
+        if eta < 0.0:
+            raise ValueError("ER-SDE option 'eta' must be >= 0")
+
+        s_noise_raw = payload.get("s_noise", 1.0)
+        if isinstance(s_noise_raw, bool) or not isinstance(s_noise_raw, (int, float)):
+            raise ValueError("ER-SDE option 's_noise' must be numeric")
+        s_noise = float(s_noise_raw)
+        if not math.isfinite(s_noise):
+            raise ValueError("ER-SDE option 's_noise' must be finite")
+        if s_noise < 0.0:
+            raise ValueError("ER-SDE option 's_noise' must be >= 0")
+
+        if solver_type == "ode" or (solver_type == "reverse_time_sde" and eta == 0.0):
+            eta = 0.0
+            s_noise = 0.0
+
+        return {
+            "solver_type": solver_type,
+            "max_stage": max_stage,
+            "eta": eta,
+            "s_noise": s_noise,
+        }
+
+    @staticmethod
+    def _er_sde_noise_scaler(
+        values: torch.Tensor,
+        *,
+        solver_type: str,
+        eta: float,
+    ) -> torch.Tensor:
+        if solver_type == "er_sde":
+            return values * (torch.exp(values.pow(0.3)) + 10.0)
+        return values.pow(eta + 1.0)
+
+    @staticmethod
+    def _compute_er_sde_lambdas(sigmas: torch.Tensor, *, prediction_type: str | None) -> torch.Tensor:
+        if sigmas.ndim != 1:
+            raise RuntimeError(f"ER-SDE expects a 1D sigma schedule, got shape={tuple(sigmas.shape)}")
+        sigmas_fp32 = sigmas.to(dtype=torch.float32)
+        if prediction_type == "const":
+            sigma_safe = sigmas_fp32.clamp(min=1e-6, max=1.0 - 1e-6)
+            half_log_snr = -torch.logit(sigma_safe)
+        else:
+            sigma_safe = sigmas_fp32.clamp(min=1e-12)
+            half_log_snr = -torch.log(sigma_safe)
+        return torch.exp(-half_log_snr)
+
     @torch.inference_mode()
     def sample(
         self,
@@ -122,6 +237,7 @@ class CodexSampler:
         post_step_hook: Optional[Callable[[torch.Tensor, int, int], None]] = None,
         post_sample_hook: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         context: SamplingContext | None = None,
+        er_sde_options: Any = None,
     ) -> torch.Tensor:
         base_noise = noise.detach().clone()
         base_context = context
@@ -346,9 +462,25 @@ class CodexSampler:
                     )
 
                 old_denoised: Optional[torch.Tensor] = None
+                old_denoised_d: Optional[torch.Tensor] = None
                 t_prev: float | None = None
                 h_prev: float | None = None
                 eps_history: List[torch.Tensor] = []
+                er_sde_params: dict[str, Any] | None = None
+                er_sde_lambdas: torch.Tensor | None = None
+                er_sde_point_indices: torch.Tensor | None = None
+                if sampler_kind is SamplerKind.ER_SDE:
+                    er_sde_params = self._resolve_er_sde_runtime_params(er_sde_options)
+                    er_sde_lambdas = self._compute_er_sde_lambdas(
+                        sigmas_run,
+                        prediction_type=getattr(active_context, "prediction_type", None),
+                    )
+                    er_sde_point_indices = torch.arange(
+                        0.0,
+                        200.0,
+                        dtype=torch.float32,
+                        device=x.device,
+                    )
 
                 with profiler.profile_run(profile_name, meta=profile_meta):
                     for i in range(start_idx, steps):
@@ -498,6 +630,145 @@ class CodexSampler:
                                         x = x + torch.randn_like(x) * noise_scale
                                     old_denoised = denoised.detach()
                                     h_prev = h
+                            elif sampler_kind is SamplerKind.ER_SDE:
+                                if er_sde_params is None or er_sde_lambdas is None or er_sde_point_indices is None:
+                                    raise RuntimeError("ER-SDE runtime state is not initialized")
+                                sigma_f = float(sigma)
+                                sigma_next_f = float(sigma_next)
+                                if sigma_next_f <= 0.0:
+                                    x = denoised
+                                    old_denoised = denoised.detach()
+                                else:
+                                    solver_type = str(er_sde_params["solver_type"])
+                                    eta = float(er_sde_params["eta"])
+                                    s_noise = float(er_sde_params["s_noise"])
+                                    max_stage = int(er_sde_params["max_stage"])
+                                    stage_used = min(max_stage, step_index + 1)
+
+                                    er_lambda_s = er_sde_lambdas[step_index]
+                                    er_lambda_t = er_sde_lambdas[step_index + 1]
+                                    er_lambda_s_f = float(er_lambda_s)
+                                    er_lambda_t_f = float(er_lambda_t)
+                                    if (
+                                        not math.isfinite(er_lambda_s_f)
+                                        or not math.isfinite(er_lambda_t_f)
+                                        or er_lambda_s_f <= 0.0
+                                        or er_lambda_t_f <= 0.0
+                                    ):
+                                        raise RuntimeError(
+                                            f"ER-SDE received invalid lambda values: {er_lambda_s_f}, {er_lambda_t_f}"
+                                        )
+
+                                    alpha_s = sigma_f / er_lambda_s_f
+                                    alpha_t = sigma_next_f / er_lambda_t_f
+                                    if (
+                                        not math.isfinite(alpha_s)
+                                        or not math.isfinite(alpha_t)
+                                        or alpha_s <= 0.0
+                                        or alpha_t <= 0.0
+                                    ):
+                                        raise RuntimeError(
+                                            f"ER-SDE received invalid alpha values: {alpha_s}, {alpha_t}"
+                                        )
+
+                                    r_alpha = alpha_t / alpha_s
+                                    noise_scale_s = self._er_sde_noise_scaler(
+                                        er_lambda_s,
+                                        solver_type=solver_type,
+                                        eta=eta,
+                                    )
+                                    noise_scale_t = self._er_sde_noise_scaler(
+                                        er_lambda_t,
+                                        solver_type=solver_type,
+                                        eta=eta,
+                                    )
+                                    noise_scale_s_f = float(noise_scale_s)
+                                    noise_scale_t_f = float(noise_scale_t)
+                                    if (
+                                        not math.isfinite(noise_scale_s_f)
+                                        or not math.isfinite(noise_scale_t_f)
+                                        or noise_scale_s_f <= 0.0
+                                        or noise_scale_t_f <= 0.0
+                                    ):
+                                        raise RuntimeError(
+                                            f"ER-SDE noise scaler returned invalid values: {noise_scale_s_f}, {noise_scale_t_f}"
+                                        )
+                                    r = noise_scale_t_f / noise_scale_s_f
+                                    if not math.isfinite(r):
+                                        raise RuntimeError(f"ER-SDE produced non-finite ratio r={r}")
+
+                                    # Stage 1 (Euler)
+                                    x = r_alpha * r * x + alpha_t * (1.0 - r) * denoised
+
+                                    if stage_used >= 2:
+                                        if old_denoised is None:
+                                            raise RuntimeError("ER-SDE stage-2 requires previous denoised state")
+                                        dt = er_lambda_t_f - er_lambda_s_f
+                                        lambda_step_size = -dt / 200.0
+                                        lambda_pos = er_lambda_t + er_sde_point_indices * lambda_step_size
+                                        scaled_pos = self._er_sde_noise_scaler(
+                                            lambda_pos,
+                                            solver_type=solver_type,
+                                            eta=eta,
+                                        )
+                                        if not bool(torch.all(torch.isfinite(scaled_pos))):
+                                            raise RuntimeError(
+                                                f"ER-SDE stage-2 produced non-finite scaled positions at step={step_index + 1}"
+                                            )
+                                        if bool(torch.any(scaled_pos <= 0.0)):
+                                            raise RuntimeError(
+                                                f"ER-SDE stage-2 produced non-positive scaled positions at step={step_index + 1}"
+                                            )
+                                        s_term = float(torch.sum(1.0 / scaled_pos) * lambda_step_size)
+                                        if not math.isfinite(s_term):
+                                            raise RuntimeError(
+                                                f"ER-SDE stage-2 produced non-finite integral term at step={step_index + 1}"
+                                            )
+                                        prev_gap = er_lambda_s_f - float(er_sde_lambdas[step_index - 1])
+                                        if abs(prev_gap) <= 1e-12:
+                                            raise RuntimeError(
+                                                f"ER-SDE stage-2 denominator collapsed at step={step_index + 1}"
+                                            )
+                                        denoised_d = (denoised - old_denoised) / prev_gap
+                                        x = x + alpha_t * (dt + s_term * noise_scale_t_f) * denoised_d
+
+                                        if stage_used >= 3:
+                                            if old_denoised_d is None:
+                                                raise RuntimeError("ER-SDE stage-3 requires previous stage-2 state")
+                                            s_u = float(
+                                                torch.sum((lambda_pos - er_lambda_s) / scaled_pos) * lambda_step_size
+                                            )
+                                            if not math.isfinite(s_u):
+                                                raise RuntimeError(
+                                                    f"ER-SDE stage-3 produced non-finite integral term at step={step_index + 1}"
+                                                )
+                                            stage3_gap = (er_lambda_s_f - float(er_sde_lambdas[step_index - 2])) / 2.0
+                                            if abs(stage3_gap) <= 1e-12:
+                                                raise RuntimeError(
+                                                    f"ER-SDE stage-3 denominator collapsed at step={step_index + 1}"
+                                                )
+                                            denoised_u = (denoised_d - old_denoised_d) / stage3_gap
+                                            x = x + alpha_t * ((dt**2) / 2.0 + s_u * noise_scale_t_f) * denoised_u
+                                        old_denoised_d = denoised_d.detach()
+
+                                    if s_noise > 0.0:
+                                        noise_term = er_lambda_t_f**2 - er_lambda_s_f**2 * (r**2)
+                                        if noise_term < -1e-8:
+                                            raise RuntimeError(
+                                                f"ER-SDE produced negative stochastic term at step={step_index + 1}: {noise_term}"
+                                            )
+                                        noise_scale = math.sqrt(max(noise_term, 0.0))
+                                        if not math.isfinite(noise_scale):
+                                            raise RuntimeError(
+                                                f"ER-SDE produced non-finite stochastic scale at step={step_index + 1}"
+                                            )
+                                        x = x + (
+                                            alpha_t
+                                            * torch.randn_like(x)
+                                            * s_noise
+                                            * noise_scale
+                                        )
+                                    old_denoised = denoised.detach()
                             elif sampler_kind is SamplerKind.DDIM:
                                 x = denoised + float(sigma_next) * eps
                             elif sampler_kind in (SamplerKind.PLMS, SamplerKind.PNDM):

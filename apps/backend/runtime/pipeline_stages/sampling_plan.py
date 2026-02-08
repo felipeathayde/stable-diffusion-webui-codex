@@ -13,6 +13,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_normalize_scheduler_name` (function): Validate a scheduler name for the given sampler.
 - `resolve_sampler_scheduler_override` (function): Resolve sampler/scheduler for a derived plan (e.g., hires pass) with override semantics.
 - `resolve_noise_settings` (function): Derive `NoiseSettings` for a run from processing overrides and env.
+- `resolve_er_sde_options` (function): Build normalized typed ER-SDE options from processing overrides.
 - `build_sampling_plan` (function): Build a `SamplingPlan` from processing state and explicit seeds/subseeds.
 - `apply_sampling_overrides` (function): Apply prompt-derived overrides to a `SamplingPlan` (and reflect them into processing state).
 - `ensure_sampler_and_rng` (function): Ensure `processing.sampler` and `processing.rng` exist for the current sampling plan.
@@ -24,7 +25,7 @@ import logging
 from typing import Any, Mapping, Sequence
 
 from apps.backend.core.rng import ImageRNG, NoiseSettings, NoiseSourceKind
-from apps.backend.runtime.processing.datatypes import SamplingPlan
+from apps.backend.runtime.processing.datatypes import ErSdeOptions, SamplingPlan
 from apps.backend.runtime.sampling import SUPPORTED_SCHEDULERS
 from apps.backend.runtime.sampling.context import SchedulerName
 from apps.backend.runtime.sampling.driver import CodexSampler
@@ -109,6 +110,22 @@ def resolve_noise_settings(processing: Any) -> NoiseSettings:
     return settings
 
 
+def resolve_er_sde_options(processing: Any) -> ErSdeOptions | None:
+    """Resolve ER-SDE options from processing overrides with strict validation."""
+    overrides = getattr(processing, "override_settings", {})
+    if not isinstance(overrides, dict):
+        return None
+    if "er_sde" not in overrides:
+        return None
+    normalized = CodexSampler._resolve_er_sde_runtime_params(overrides.get("er_sde"))
+    return ErSdeOptions(
+        solver_type=str(normalized["solver_type"]),
+        max_stage=int(normalized["max_stage"]),
+        eta=float(normalized["eta"]),
+        s_noise=float(normalized["s_noise"]),
+    )
+
+
 def build_sampling_plan(
     processing: Any,
     seeds: Sequence[int],
@@ -129,6 +146,10 @@ def build_sampling_plan(
         raise ValueError("processing.scheduler must be set to a non-empty scheduler name")
     normalized_scheduler = _normalize_scheduler_name(sampler_name, scheduler_name)
     processing.scheduler = normalized_scheduler
+    hr_sampler_name = getattr(processing, "hr_sampler_name", None)
+    er_sde_in_use = sampler_name.strip().lower() == "er sde"
+    if isinstance(hr_sampler_name, str) and hr_sampler_name.strip().lower() == "er sde":
+        er_sde_in_use = True
     return SamplingPlan(
         sampler_name=sampler_name,
         scheduler_name=normalized_scheduler,
@@ -138,6 +159,7 @@ def build_sampling_plan(
         subseeds=list(subseeds),
         subseed_strength=float(subseed_strength),
         noise_settings=noise_settings,
+        er_sde=resolve_er_sde_options(processing) if er_sde_in_use else None,
     )
 
 
@@ -180,6 +202,13 @@ def apply_sampling_overrides(
             processing.seeds = [seed]
     except Exception:
         logger.debug("Failed to apply sampling overrides", exc_info=True)
+    hr_sampler_name = getattr(processing, "hr_sampler_name", None)
+    er_sde_in_use = (
+        isinstance(plan.sampler_name, str) and plan.sampler_name.strip().lower() == "er sde"
+    ) or (
+        isinstance(hr_sampler_name, str) and hr_sampler_name.strip().lower() == "er sde"
+    )
+    plan.er_sde = resolve_er_sde_options(processing) if er_sde_in_use else None
     return plan
 
 

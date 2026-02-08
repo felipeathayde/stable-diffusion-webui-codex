@@ -13,7 +13,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ExtraNetworkDescriptor` (dataclass): Parsed extra network descriptor (e.g. LoRA path/weight + metadata).
 - `PromptContext` (dataclass): Normalized prompt state after preprocessing (prompts/negatives/loras/controls/metadata).
 - `ConditioningPayload` (dataclass): Conditioning tensors assembled for a generation pass (cond/uncond + extras).
-- `SamplingPlan` (dataclass): Complete specification of a sampling run (sampler/scheduler/steps/seeds/noise settings).
+- `ErSdeOptions` (dataclass): Native ER-SDE runtime options (`solver_type`, `max_stage`, `eta`, `s_noise`).
+- `SamplingPlan` (dataclass): Complete specification of a sampling run (sampler/scheduler/steps/seeds/noise settings + optional ER-SDE options).
 - `HiResPlan` (dataclass): High-resolution second pass configuration (target size + upscaler id + steps/denoise/cfg).
 - `InitImageBundle` (dataclass): Inputs derived from an initial image (pixels/latents + optional mask).
 - `AppliedExtra` (dataclass): Record of applied extra network or post-processing effect.
@@ -60,6 +61,16 @@ class ConditioningPayload:
 
 
 @dataclass(slots=True)
+class ErSdeOptions:
+    """ER-SDE runtime options applied when sampler is `er sde`."""
+
+    solver_type: str
+    max_stage: int
+    eta: float
+    s_noise: float
+
+
+@dataclass(slots=True)
 class SamplingPlan:
     """Complete specification of a sampling run."""
 
@@ -71,6 +82,7 @@ class SamplingPlan:
     subseeds: List[int]
     subseed_strength: float
     noise_settings: NoiseSettings
+    er_sde: ErSdeOptions | None = None
 
 
 @dataclass(slots=True)

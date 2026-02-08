@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine.
-Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets.
+Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
+`er sde` in the sampler allowlist.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
@@ -137,7 +138,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_refiner=False,
         supports_lora=False,
         supports_controlnet=False,
-        samplers=("euler", "euler a", "dpm++ 2m"),
+        samplers=("euler", "euler a", "dpm++ 2m", "er sde"),
         schedulers=("simple", "beta", "normal", "exponential"),
         default_sampler="euler",
         default_scheduler="simple",

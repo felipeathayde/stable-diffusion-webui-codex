@@ -7,8 +7,8 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Request→processing adapters for txt2img/img2img (hires/refiner/smart flags).
-Builds Codex processing objects from API request DTOs, including Hires/Refiner configs (with hires tile config) and per-job smart runtime
-flags used by workflows.
+Builds Codex processing objects from API request DTOs, including Hires/Refiner configs (with hires tile config), per-job smart runtime
+flags, and strict pass-through overrides like `extras.er_sde` for sampler runtime wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_hires_config` (function): Builds a `CodexHiresConfig` from request payload data (including hires tile config + nested hires refiner).
@@ -194,7 +194,10 @@ def build_txt2img_processing(req: Txt2ImgRequest) -> CodexProcessingTxt2Img:
     if hires_cfg.enabled:
         processing.enable_hires(cfg=hires_cfg)
     for key, value in (req.extras or {}).items():
-        processing.update_override(key, value)
+        if key == "er_sde" and isinstance(value, Mapping):
+            processing.update_override(key, dict(value))
+        else:
+            processing.update_override(key, value)
         if key == "eta_noise_seed_delta":
             try:
                 processing.eta_noise_seed_delta = int(value)
@@ -290,7 +293,10 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         if hires_cfg.enabled:
             processing.enable_hires(hires_cfg)
     for key, value in (req.extras or {}).items():
-        processing.update_override(key, value)
+        if key == "er_sde" and isinstance(value, Mapping):
+            processing.update_override(key, dict(value))
+        else:
+            processing.update_override(key, value)
         if key == "eta_noise_seed_delta":
             try:
                 processing.eta_noise_seed_delta = int(value)

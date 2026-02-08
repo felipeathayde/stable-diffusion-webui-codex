@@ -1,14 +1,14 @@
 # apps/interface/src/components/quicksettings Overview
 <!-- tags: frontend, quicksettings, engines -->
 Date: 2025-12-06
-Last Review: 2026-01-28
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
 - Compact engine/paths/performance controls rendered in the main header (`QuickSettingsBar.vue`), backed by the global `quicksettings` store.
 
 ## Key Files
-- `QuickSettingsBase.vue` — Generic quicksettings (mode, checkpoint, VAE, optional text encoder) for SD15/SDXL model tabs; advanced controls are rendered by `QuickSettingsBar.vue`.
+- `QuickSettingsBase.vue` — Generic quicksettings (checkpoint, VAE, optional text encoder) for SD15/SDXL/Anima model tabs; mode toggles are rendered by `QuickSettingsBar.vue`.
 - `QuickSettingsPerf.vue` — Performance toggles shared across engines (Smart Offload/Fallback/Cache/Core Streaming) rendered in the Advanced nested area.
 - `QuickSettingsWan.vue` — WAN22-specific quicksettings (Mode preset selector + `LightX2V` toggle button, high/low model dirs, text encoder/VAE selectors, plus a Refresh button).
 - `QuickSettingsFlux.vue` / `QuickSettingsZImage.vue` / `QuickSettingsChroma.vue` — FLUX.1/ZImage/Chroma-specific checkpoint/VAE/text encoder selectors (advanced controls are rendered by `QuickSettingsBar.vue`).
@@ -20,6 +20,7 @@ Status: Active
 - Text encoder dropdowns display a compact label (`family/basename`) even when `/api/paths` or the inventory return long absolute paths; the full value is still posted back in the `<option value>`.
 - For FLUX.1, `QuickSettingsBar` hides the base text encoder field and exposes a FLUX.1-only pair of text encoder selectors based on individual files under `flux1_tenc`; wiring to backend overrides is intentionally deferred to a dedicated handoff.
 - 2026-01-28: `QuickSettingsZImage.vue` now includes a `Turbo` toggle (per-tab, persisted in `tab.params.zimageTurbo`) and `QuickSettingsBar.vue` can lock the toggle when the selected checkpoint carries trusted `codex.zimage.variant` metadata (Codex-produced GGUFs).
+- 2026-02-08: `QuickSettingsBar.vue` now owns IMG2IMG/INPAINT mode toggles in the top quicksettings row; `QuickSettingsZImage.vue` exposes a `modeToggles` slot right after Turbo so ZImage order is `Turbo → IMG2IMG → INPAINT`. Flux.1 keeps INPAINT visible but disabled.
 - 2025-12-27: Removed the `hideCheckpoint` toggle/prop; checkpoint selection is always rendered, and on `/models/:tabId` it is tab-scoped (`tab.params.checkpoint`, auto-seeded) while still filtering choices by engine-specific `*_ckpt` roots from `apps/paths.json` (plus user-added paths).
 - 2025-12-14: WAN text encoder selector now lists explicit `.safetensors` / `.gguf` files under `wan22_tenc` and stores values as `wan22/<abs_path>` for consistent labeling; payload builders must normalize before sending to backend.
 - 2025-12-14: WAN Metadata/VAE selectors now prefer concrete inventory paths (VAE constrained by `wan22_vae`), keeping the video endpoints strict about asset paths.

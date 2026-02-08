@@ -17,11 +17,12 @@ Symbols (top-level; keep in sync; no ghosts):
 - `defaultState` (function): Creates a fresh `GenerationState` with empty progress/gallery/history.
 - `getTabState` (function): Returns (and initializes) the `GenerationState` for a given tab id from internal maps.
 - `resolveEngineForRequest` (function): Canonical tab-type/mode -> backend engine mapping used for capability checks and request dispatch.
+- `isGenerationRunningForTab` (function): Returns whether the cached generation state for a tab id is currently `running`.
 - `useGeneration` (function): Main composable API; wires payload building, task start, SSE handling, and history updates, enforcing GGUF-required
   `vae_sha`/`tenc_sha` (core-only checkpoints) and enforcing engine-level external asset requirements via backend `asset_contracts`.
 */
 
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useModelTabsStore, type BaseTab, type ImageBaseParams } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
@@ -147,13 +148,17 @@ export function resolveEngineForRequest(tabType: string, useInitImage: boolean):
   return resolveImageRequestEngineId(tabType, useInitImage)
 }
 
+export function isGenerationRunningForTab(tabId: string): boolean {
+  return getTabState(tabId).status === 'running'
+}
+
 // Per-tab generation state (keyed by tab ID)
 const tabStates = new Map<string, GenerationState>()
 const unsubscribers = new Map<string, () => void>()
 
 function getTabState(tabId: string): GenerationState {
   if (!tabStates.has(tabId)) {
-    tabStates.set(tabId, defaultState())
+    tabStates.set(tabId, reactive(defaultState()) as GenerationState)
   }
   return tabStates.get(tabId)!
 }

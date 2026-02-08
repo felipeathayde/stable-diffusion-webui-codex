@@ -1,7 +1,7 @@
 <!-- tags: frontend, styles, tokens, conventions -->
 # apps/interface/src/styles Overview
 Date: 2025-12-22  
-Last Review: 2026-02-03  
+Last Review: 2026-02-08  
 Status: Active
 
 ## Purpose
@@ -85,6 +85,7 @@ These reference files may contain `ab-*` / `--ab-*` from the source project; whe
 - 2025-12-26: Standardized `.panel-header` height to `4.25rem` (min height) and removed title-wrapper `<span>` patterns from panel headers.
 - 2025-12-26: QuickSettings buttons now use `qs-btn-secondary`/`qs-btn-outline` so they fill the `qs-row` height with consistent borders (no fixed `2rem` height).
 - 2025-12-28: QuickSettings toggles now use `qs-toggle-btn` (neon border states) and the legacy `qs-switch` styling was removed.
+- 2026-02-08: `quicksettings.css` now styles a paired mode-toggle group (`IMG2IMG`/`INPAINT`) in the top row and applies explicit disabled-state treatment for `qs-toggle-btn:disabled`.
 - 2025-12-28: QuickSettings bar now stacks `quicksettings-row` blocks and uses an animated (rAF) collapsible Advanced row; WAN adds `wan-subheader` section headers in `styles/views/wan.css`.
 - 2025-12-29: Sticky header offset (`--sticky-offset`) is derived from the `.main-header` height and used by `RunCard` (`.panel-header.results-sticky`).
 - 2026-01-01: History cards now render as a single-row horizontal strip (with horizontal scroll); per-item action buttons appear on hover as a compact overlay (with horizontal scroll when needed) and stay visible for the selected item via `styles/components/views-shared.css` (image tabs + WAN).

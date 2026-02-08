@@ -41,6 +41,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onWanModeChange` (function): Updates WAN mode selection and derived controls.
 - `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
+- `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
+- `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
+- `supportsInpaint` (computed): Flags whether inpaint toggle is supported for the active image family.
+- `isActiveImageTabRunning` (computed): Tracks whether the active image tab currently has an in-flight generation task.
+- `inpaintToggleDisabled` (computed): Disables INPAINT when unsupported or when IMG2IMG is off.
+- `inpaintToggleTitle` (computed): Tooltip reason for INPAINT enabled/disabled state.
+- `onUseMaskChange` (function): Toggles inpaint mode (`useMask`) from quick settings with explicit IMG2IMG/Flux guards.
 - `zimageTurbo` (computed): Returns the current Z-Image Turbo toggle state for the active tab.
 - `zimageTurboLocked` (ref): When true, the Z-Image Turbo toggle is fixed by trusted checkpoint metadata.
 - `_trustedZImageVariantFromCheckpointMeta` (function): Extracts `codex.zimage.variant` when metadata is trusted (Codex provenance).
@@ -130,6 +137,29 @@ Symbols (top-level; keep in sync; no ghosts):
           @addTencPath="onAddTencPath"
           @showMetadata="onShowMetadata"
         />
+        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+          <label class="label-muted">Mode</label>
+          <div class="qs-row">
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useInitImage"
+              @click="onUseInitImageChange(!useInitImage)"
+            >
+              IMG2IMG
+            </button>
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useMask"
+              :disabled="inpaintToggleDisabled"
+              :title="inpaintToggleTitle"
+              @click="onUseMaskChange(!useMask)"
+            >
+              INPAINT
+            </button>
+          </div>
+        </div>
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">
@@ -157,7 +187,33 @@ Symbols (top-level; keep in sync; no ghosts):
           @addVaePath="onAddVaePath"
           @addTencPath="onAddTencPath"
           @showMetadata="onShowMetadata"
-        />
+        >
+          <template #modeToggles>
+            <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+              <label class="label-muted">Mode</label>
+              <div class="qs-row">
+                <button
+                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                  type="button"
+                  :aria-pressed="useInitImage"
+                  @click="onUseInitImageChange(!useInitImage)"
+                >
+                  IMG2IMG
+                </button>
+                <button
+                  :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                  type="button"
+                  :aria-pressed="useMask"
+                  :disabled="inpaintToggleDisabled"
+                  :title="inpaintToggleTitle"
+                  @click="onUseMaskChange(!useMask)"
+                >
+                  INPAINT
+                </button>
+              </div>
+            </div>
+          </template>
+        </QuickSettingsZImage>
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">
@@ -184,6 +240,29 @@ Symbols (top-level; keep in sync; no ghosts):
           @addTencPath="onAddTencPath"
           @showMetadata="onShowMetadata"
         />
+        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+          <label class="label-muted">Mode</label>
+          <div class="qs-row">
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useInitImage"
+              @click="onUseInitImageChange(!useInitImage)"
+            >
+              IMG2IMG
+            </button>
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useMask"
+              :disabled="inpaintToggleDisabled"
+              :title="inpaintToggleTitle"
+              @click="onUseMaskChange(!useMask)"
+            >
+              INPAINT
+            </button>
+          </div>
+        </div>
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">
@@ -210,6 +289,29 @@ Symbols (top-level; keep in sync; no ghosts):
           @addVaePath="onAddVaePath"
           @showMetadata="onShowMetadata"
         />
+        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+          <label class="label-muted">Mode</label>
+          <div class="qs-row">
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useInitImage"
+              @click="onUseInitImageChange(!useInitImage)"
+            >
+              IMG2IMG
+            </button>
+            <button
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="useMask"
+              :disabled="inpaintToggleDisabled"
+              :title="inpaintToggleTitle"
+              @click="onUseMaskChange(!useMask)"
+            >
+              INPAINT
+            </button>
+          </div>
+        </div>
         <div class="quicksettings-group qs-group-models">
           <label class="label-muted">Models</label>
           <div class="qs-row">
@@ -217,20 +319,6 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </div>
       </template>
-
-      <div v-if="canToggleInitImage" class="quicksettings-group qs-group-mode-toggle">
-        <label class="label-muted">Mode</label>
-        <div class="qs-row">
-          <button
-            :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-            type="button"
-            :aria-pressed="useInitImage"
-            @click="onUseInitImageChange(!useInitImage)"
-          >
-            Use Initial Image (img2img)
-          </button>
-        </div>
-      </div>
     </div>
 
     <div v-if="qsNotice" class="caption">{{ qsNotice }}</div>
@@ -303,6 +391,7 @@ import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { fetchCheckpointMetadata, fetchFileMetadata, fetchModelInventory, refreshModelInventory, fetchPaths, updatePaths } from '../api/client'
 import type { ModelInfo } from '../api/types'
+import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import { normalizeTabFamily, tabFamilyFromSemanticEngine, type TabFamily } from '../utils/engine_taxonomy'
 import { filterModelTitlesForFamily, enginePrefixForFamily } from '../utils/model_family_filters'
@@ -875,10 +964,33 @@ const canToggleInitImage = computed(() => {
   if (!surface) return false
   return Boolean(surface.supports_img2img)
 })
+const canShowModeToggles = computed(() => canToggleInitImage.value)
 const useInitImage = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return false
   return Boolean(tab.params.useInitImage)
+})
+const useMask = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return Boolean(tab.params.useMask)
+})
+const supportsInpaint = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return tab.type !== 'flux1'
+})
+const isActiveImageTabRunning = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return isGenerationRunningForTab(tab.id)
+})
+const inpaintToggleDisabled = computed(() => isActiveImageTabRunning.value || !useInitImage.value || !supportsInpaint.value)
+const inpaintToggleTitle = computed(() => {
+  if (isActiveImageTabRunning.value) return 'Cannot change INPAINT while generation is running.'
+  if (!supportsInpaint.value) return 'INPAINT is not supported for Flux.1 img2img (Kontext) yet.'
+  if (!useInitImage.value) return 'Enable IMG2IMG first.'
+  return 'Toggle INPAINT'
 })
 
 const activeWanTab = computed(() => asWanTab(activeModelTab.value))
@@ -1158,6 +1270,24 @@ async function onUseInitImageChange(value: boolean): Promise<void> {
       patch.initImageData = ''
       patch.initImageName = ''
       patch.useMask = false
+      patch.maskImageData = ''
+      patch.maskImageName = ''
+    }
+    await updateImageTabParams(tab.id, patch)
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
+}
+
+async function onUseMaskChange(value: boolean): Promise<void> {
+  try {
+    const tab = activeImageTab.value
+    if (!tab) return
+    if (isActiveImageTabRunning.value) return
+    if (tab.type === 'flux1') return
+    if (!useInitImage.value) return
+    const patch: Partial<ImageBaseParams> = { useMask: Boolean(value) }
+    if (!value) {
       patch.maskImageData = ''
       patch.maskImageName = ''
     }

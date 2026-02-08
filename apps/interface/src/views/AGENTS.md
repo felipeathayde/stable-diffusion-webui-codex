@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-02-07
+Last Review: 2026-02-08
 Status: Active
 
 ## Purpose
@@ -21,6 +21,7 @@ Status: Active
 - 2025-12-29: `WANTab.vue` renders the History card above the results viewer for parity with `ImageModelTab.vue`.
 - 2025-12-31: `ImageModelTab.vue` now syncs Width/Height from the init image (auto on upload and “Send to Img2Img”, plus a manual re-sync action) and applies Kontext-friendly defaults on FLUX.1 init-image runs without overriding custom values.
 - 2026-01-29: `ImageModelTab.vue` now exposes Codex-native masked img2img (“inpaint”) controls alongside init-image img2img (mask upload + enforcement mode + full-res “Only masked” + invert/round/blur + masked-content mode); Flux.1 (Kontext) masking remains explicitly disabled/unsupported for now.
+- 2026-02-08: `ImageModelTab.vue` no longer renders a local “Use Mask (inpaint)” toggle; IMG2IMG/INPAINT mode toggles are now owned by `QuickSettingsBar.vue`, while mask asset/enforcement controls remain in-panel when `params.useMask` is enabled.
 - 2026-01-01: `ImageModelTab.vue` now exposes per-tab `CLIP Skip` (SD15/SDXL/FLUX.1) and persists it in saved profiles; requests send `clip_skip`/`img2img_clip_skip` to the backend.
 - 2026-01-01: `ImageModelTab.vue` and `WANTab.vue` History sections now use `WanSubHeader` and hide per-item actions until hover (with horizontal scroll when needed) to save space.
 - 2026-01-01: History cards now render as a single-row horizontal strip, and `WANTab.vue` reuses the shared `cdx-history-*` card layout for parity with image tabs.

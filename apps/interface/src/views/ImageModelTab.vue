@@ -34,7 +34,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `snapInitImageDim` (function): Snaps init-image derived dimensions to model constraints (e.g., multiples of 8).
 - `onInitFileSet` (function): Reads an init image file into a data URL and stores name/data, then syncs dims (async).
 - `clearInit` (function): Clears init image fields.
-- `toggleMask` (function): Toggles mask usage (inpaint) for masked img2img.
 - `onMaskFileSet` (function): Reads a mask file into a data URL and stores it after validating dimensions (async).
 - `clearMask` (function): Clears mask fields.
 - `toDataUrl` (function): Converts a generated image payload to a data URL for preview.
@@ -100,24 +99,6 @@ Symbols (top-level; keep in sync; no ghosts):
               :disabled="isRunning"
               @update:modelValue="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
             />
-
-            <button
-              :class="[
-                'btn',
-                'qs-toggle-btn',
-                'qs-toggle-btn--sm',
-                params.useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off',
-              ]"
-              type="button"
-              :aria-pressed="params.useMask"
-              :disabled="isRunning || props.type === 'flux1'"
-              @click="toggleMask"
-            >
-              Use Mask (inpaint)
-            </button>
-            <p v-if="props.type === 'flux1'" class="caption">
-              Masking is not supported for Flux.1 img2img (Kontext) yet.
-            </p>
 
             <div v-if="params.useMask">
               <InitialImageCard
@@ -928,17 +909,6 @@ function clearInit(): void {
     maskImageData: '',
     maskImageName: '',
   })
-}
-
-function toggleMask(): void {
-  if (props.type === 'flux1') return
-  const next = !Boolean(params.value.useMask)
-  const patch: Partial<ImageBaseParams> = { useMask: next }
-  if (!next) {
-    patch.maskImageData = ''
-    patch.maskImageName = ''
-  }
-  setParams(patch)
 }
 
 async function onMaskFileSet(file: File): Promise<void> {

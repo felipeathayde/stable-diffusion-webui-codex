@@ -16,7 +16,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ImageTabType` (type): Image-only tab type discriminator (`BaseTabType` without `wan`).
 - `BaseTabMeta` (interface): Tab metadata timestamps (created/updated) tracked client-side.
 - `ModelTabsErrorCode` (type): Error code taxonomy for model-tabs store failures.
-- `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder failures.
+- `ModelTabsStoreError` (class): Typed store error thrown for tab lookup/API/contract/reorder/serialization failures.
 - `WanStageParams` (interface): UI WAN stage params (high/low) used by video tabs and payload builders.
 - `WanVideoParams` (interface): UI WAN video params (prompt/dims/fps/frames + optional init media + overrides).
 - `WanAssetsParams` (interface): WAN asset selectors (metadata/text encoder/VAE) used by WAN requests.
@@ -33,19 +33,21 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BASE_REQUIRED_TYPES` (const): Baseline tab types always auto-created by the UI store.
 - `requiredTypesFromCapabilities` (function): Derives required tab types from backend capability map (adds `anima` only when exposed).
 - `asRecordObject` (function): Narrowing helper that normalizes unknown values into plain records for merge-safe processing.
+- `isPlainRecord` (function): Validates object values as plain record payloads (no arrays/class instances) for patch serialization safety.
 - `asParamsRecord` (function): Explicit boundary cast helper from typed tab params to persisted `Record<string, unknown>`.
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params.
 - `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler fallback.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
-- `cloneParamsForPersist` (function): Deep-clones tab params snapshots used by debounced persistence rollback.
+- `cloneParamsForPersist` (function): Proxy-safe `structuredClone` boundary for params snapshots/payloads; throws typed serialization failures.
+- `restorePendingParamsSnapshot` (function): Restores tab params/meta from pending snapshot after failed persistence attempts.
 - `scheduleParamsPersist` (function): Schedules debounced `/api/ui/tabs/:id` params PATCH calls.
 - `flushParamsPersist` (function): Flushes pending params PATCH for a tab, resolves queued promises, and rolls back on API failure.
 - `useModelTabsStore` (store): Pinia store for tabs; loads/syncs with backend, provides CRUD/reorder actions, and exposes computed helpers.
 */
 
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, toRaw } from 'vue'
 import { fetchTabs, createTabApi, updateTabApi, reorderTabsApi, deleteTabApi } from '../api/client'
 import type { ApiTab } from '../api/types'
 import type { HiresFormState, RefinerFormState } from '../api/payloads'
@@ -61,7 +63,12 @@ export interface BaseTabMeta {
   updatedAt: string
 }
 
-export type ModelTabsErrorCode = 'tab_not_found' | 'api_failure' | 'invalid_response' | 'invalid_reorder'
+export type ModelTabsErrorCode =
+  | 'tab_not_found'
+  | 'api_failure'
+  | 'invalid_response'
+  | 'invalid_reorder'
+  | 'serialization_failure'
 
 export class ModelTabsStoreError extends Error {
   readonly code: ModelTabsErrorCode
@@ -398,6 +405,12 @@ function asRecordObject(value: unknown): Record<string, unknown> {
   return {}
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(toRaw(value))
+  return prototype === Object.prototype || prototype === null
+}
+
 function asParamsRecord(params: TabParamsByType[BaseTabType]): Record<string, unknown> {
   return params as unknown as Record<string, unknown>
 }
@@ -549,11 +562,37 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     )
   }
 
-  function cloneParamsForPersist(value: Record<string, unknown>): Record<string, unknown> {
-    if (typeof structuredClone === 'function') {
-      return structuredClone(value)
+  function cloneParamsForPersist(
+    tabId: string,
+    phase: 'snapshot' | 'patch' | 'persist' | 'rollback',
+    value: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (typeof structuredClone !== 'function') {
+      throw new ModelTabsStoreError(
+        'serialization_failure',
+        `Failed to serialize params for tab '${tabId}' (${phase}): structuredClone is unavailable.`,
+        { details: { tabId, phase } },
+      )
     }
-    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+    try {
+      return structuredClone(toRaw(value))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new ModelTabsStoreError(
+        'serialization_failure',
+        `Failed to serialize params for tab '${tabId}' (${phase}): ${message}`,
+        { cause: error, details: { tabId, phase } },
+      )
+    }
+  }
+
+  function restorePendingParamsSnapshot(tabId: string, tab: BaseTab, pending: PendingParamsPersist): void {
+    if (pending.snapshotParams) {
+      tab.params = cloneParamsForPersist(tabId, 'rollback', pending.snapshotParams)
+    }
+    tab.meta.updatedAt = pending.snapshotUpdatedAt
+    pending.version = pending.persistedVersion
+    pending.snapshotParams = null
   }
 
   function getPendingParamsPersist(tabId: string, tab: BaseTab): PendingParamsPersist {
@@ -618,13 +657,29 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       clearPendingParamsPersist(tabId, error)
       return
     }
-    const versionToPersist = pending.version
-    const paramsSnapshot = cloneParamsForPersist(tab.params as Record<string, unknown>)
+    let paramsToPersist: Record<string, unknown>
     const updatedAtSnapshot = tab.meta.updatedAt
+    try {
+      paramsToPersist = cloneParamsForPersist(tabId, 'persist', tab.params as Record<string, unknown>)
+    } catch (error) {
+      const mapped = error instanceof ModelTabsStoreError
+        ? error
+        : mapApiError(`Failed to serialize params for tab '${tabId}' before persistence`, error, { id: tabId })
+      try {
+        restorePendingParamsSnapshot(tabId, tab, pending)
+        save()
+      } catch (rollbackError) {
+        clearPendingParamsPersist(tabId, rollbackError)
+        return
+      }
+      clearPendingParamsPersist(tabId, mapped)
+      return
+    }
+    const versionToPersist = pending.version
 
     pending.inFlight = true
     try {
-      await updateTabApi(tabId, { params: tab.params })
+      await updateTabApi(tabId, { params: paramsToPersist })
       pending.persistedVersion = versionToPersist
 
       const resolveList = pending.deferreds.filter((entry) => entry.version <= versionToPersist)
@@ -632,7 +687,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       resolveList.forEach((entry) => entry.resolve())
 
       if (pending.version > pending.persistedVersion) {
-        pending.snapshotParams = paramsSnapshot
+        pending.snapshotParams = paramsToPersist
         pending.snapshotUpdatedAt = updatedAtSnapshot
       } else {
         pending.snapshotParams = null
@@ -640,14 +695,16 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       }
       save()
     } catch (error) {
-      if (pending.snapshotParams) {
-        tab.params = cloneParamsForPersist(pending.snapshotParams)
+      try {
+        restorePendingParamsSnapshot(tabId, tab, pending)
+      } catch (rollbackError) {
+        clearPendingParamsPersist(tabId, rollbackError)
+        return
       }
-      tab.meta.updatedAt = pending.snapshotUpdatedAt
-      pending.version = pending.persistedVersion
-      pending.snapshotParams = null
 
-      const mapped = mapApiError(`Failed to update params for tab '${tabId}'`, error, { id: tabId })
+      const mapped = error instanceof ModelTabsStoreError
+        ? error
+        : mapApiError(`Failed to update params for tab '${tabId}'`, error, { id: tabId })
       const rejectList = pending.deferreds
       pending.deferreds = []
       rejectList.forEach((entry) => entry.reject(mapped))
@@ -873,13 +930,22 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     const current = (t.params && typeof t.params === 'object' && !Array.isArray(t.params)) ? (t.params as T) : ({} as T)
     if (current !== t.params) t.params = current
 
+    if (!patch || !isPlainRecord(patch)) {
+      throw new ModelTabsStoreError(
+        'serialization_failure',
+        `Failed to serialize params for tab '${id}' (patch): patch must be a plain object record.`,
+        { details: { tabId: id, phase: 'patch' } },
+      )
+    }
+    const patchSnapshot = cloneParamsForPersist(id, 'patch', patch as Record<string, unknown>)
+
     const pending = getPendingParamsPersist(id, t)
     if (pending.snapshotParams === null) {
-      pending.snapshotParams = cloneParamsForPersist(current as unknown as Record<string, unknown>)
+      pending.snapshotParams = cloneParamsForPersist(id, 'snapshot', current as unknown as Record<string, unknown>)
       pending.snapshotUpdatedAt = t.meta.updatedAt
     }
 
-    Object.assign(current, patch)
+    Object.assign(current, patchSnapshot)
     t.meta.updatedAt = nowIso()
 
     pending.version += 1

@@ -12,7 +12,7 @@ per-batch runs have consistent lengths.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_repeat_to_length` (function): Expands/truncates a sequence to a target length (used for per-batch list normalization).
-- `RefinerConfig` (dataclass): Refiner stage configuration (enabled/steps/cfg/seed + model/vae overrides) with override serialization.
+- `RefinerConfig` (dataclass): Refiner stage configuration (enabled/swap_at_step/cfg/seed + model/vae overrides) with override serialization.
 - `CodexHiresConfig` (dataclass): Hires configuration (target scale/steps/denoise + upscaler tile config) with override serialization.
 - `CodexProcessingBase` (dataclass): Shared processing fields for image generation runs (prompt/negative/seed/steps/cfg/dims + hi-res/refiner).
 - `CodexProcessingTxt2Img` (dataclass): Txt2img processing container (extends base with txt2img-specific fields).
@@ -54,7 +54,7 @@ class RefinerConfig:
     """Configuration for a latent refiner stage."""
 
     enabled: bool = False
-    steps: int = 0
+    swap_at_step: int = 0
     cfg: float = 7.0
     seed: int = -1
     model: Optional[str] = None
@@ -65,7 +65,7 @@ class RefinerConfig:
             return {"enable": False}
         data: Dict[str, Any] = {
             "enable": True,
-            "steps": int(self.steps),
+            "switch_at_step": int(self.swap_at_step),
             "cfg": float(self.cfg),
             "seed": int(self.seed),
         }
@@ -157,7 +157,7 @@ class CodexHiresConfig:
             elif isinstance(ref_payload, dict):
                 self.refiner = RefinerConfig(
                     enabled=bool(ref_payload.get("enable", False)),
-                    steps=int(ref_payload.get("steps", 0) or 0),
+                    swap_at_step=int(ref_payload.get("switch_at_step", 0) or 0),
                     cfg=float(ref_payload.get("cfg", self.cfg)),
                     seed=int(ref_payload.get("seed", -1)),
                     model=str(ref_payload.get("model")) if ref_payload.get("model") else None,

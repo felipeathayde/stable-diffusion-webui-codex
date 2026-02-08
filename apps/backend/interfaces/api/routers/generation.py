@@ -395,10 +395,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 if refiner_raw is not None:
                     if not isinstance(refiner_raw, dict):
                         raise HTTPException(status_code=400, detail="'extras.hires.refiner' must be an object")
-                    _reject_unknown_keys(refiner_raw, {"enable", "steps", "cfg", "seed", "model", "vae"}, "extras.hires.refiner")
+                    _reject_unknown_keys(refiner_raw, {"enable", "switch_at_step", "cfg", "seed", "model", "vae"}, "extras.hires.refiner")
                     if bool(refiner_raw.get('enable')):
                         refiner_cfg = {
-                            "steps": _require_int_field(refiner_raw, 'steps', minimum=0),
+                            "switch_at_step": _require_int_field(refiner_raw, 'switch_at_step', minimum=1),
                             "cfg": _require_float_field(refiner_raw, 'cfg'),
                             "seed": _require_int_field(refiner_raw, 'seed'),
                         }
@@ -435,15 +435,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     "refiner": refiner_cfg,
                 }
 
-        # Refiner options (metadata only for now)
+        # Swap-model options (global)
         refiner = raw.get('refiner')
         if refiner is not None:
             if not isinstance(refiner, dict):
                 raise HTTPException(status_code=400, detail="'extras.refiner' must be an object")
-            _reject_unknown_keys(refiner, {"enable", "steps", "cfg", "seed", "model", "vae"}, "extras.refiner")
+            _reject_unknown_keys(refiner, {"enable", "switch_at_step", "cfg", "seed", "model", "vae"}, "extras.refiner")
             if bool(refiner.get('enable')):
                 ref_cfg: Dict[str, Any] = {
-                    "steps": _require_int_field(refiner, 'steps', minimum=0),
+                    "switch_at_step": _require_int_field(refiner, 'switch_at_step', minimum=1),
                     "cfg": _require_float_field(refiner, 'cfg'),
                     "seed": _require_int_field(refiner, 'seed'),
                 }
@@ -622,6 +622,18 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             status_code=400,
             detail=f"Unsupported sampler for engine 'anima' in '{field_name}': '{sampler}'. Allowed: {allowed}",
         )
+
+    def _validate_swap_at_step_pointer(*, pointer: int, total_steps: int, field_name: str) -> None:
+        if total_steps < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' requires total steps >= 2 (got {total_steps})",
+            )
+        if pointer < 1 or pointer >= total_steps:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be in [1, {total_steps - 1}] (got {pointer})",
+            )
 
     def _validate_prompt_sampler_controls(*, engine_key: str, prompt: str, field_name: str) -> None:
         for match in _PROMPT_SAMPLER_CONTROL_RE.finditer(prompt):
@@ -909,6 +921,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     sampler=hires_sampler,
                     field_name="extras.hires.sampler",
                 )
+            hires_refiner_cfg = hires_cfg.get("refiner")
+            if isinstance(hires_refiner_cfg, dict):
+                hires_total_steps = int(hires_cfg.get("steps") or 0)
+                if hires_total_steps <= 0:
+                    hires_total_steps = int(steps_val)
+                _validate_swap_at_step_pointer(
+                    pointer=int(hires_refiner_cfg.get("switch_at_step", 0)),
+                    total_steps=hires_total_steps,
+                    field_name="extras.hires.refiner.switch_at_step",
+                )
+        global_refiner_cfg = extras.get("refiner")
+        if isinstance(global_refiner_cfg, dict):
+            _validate_swap_at_step_pointer(
+                pointer=int(global_refiner_cfg.get("switch_at_step", 0)),
+                total_steps=int(steps_val),
+                field_name="extras.refiner.switch_at_step",
+            )
 
         # Read batch params from extras (default to 1)
         batch_size = int(extras.pop('batch_size', 1)) if 'batch_size' in extras else 1
@@ -1104,13 +1133,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise HTTPException(status_code=400, detail="'img2img_steps' is required")
 
         if 'img2img_cfg_scale' in payload:
-            cfg_scale = _p.as_float(payload, 'img2img_cfg_scale')
+            cfg_scale = _require_float_field(payload, 'img2img_cfg_scale')
         else:
             raise HTTPException(status_code=400, detail="'img2img_cfg_scale' is required")
 
-        distilled_cfg_scale = _p.as_float_optional(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
-        image_cfg_scale = _p.as_float_optional(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
-        denoise = _p.as_float(payload, 'img2img_denoising_strength')
+        distilled_cfg_scale = _require_float_field(payload, 'img2img_distilled_cfg_scale') if 'img2img_distilled_cfg_scale' in payload else None
+        image_cfg_scale = _require_float_field(payload, 'img2img_image_cfg_scale') if 'img2img_image_cfg_scale' in payload else None
+        denoise = _require_float_field(payload, 'img2img_denoising_strength')
         def _snap_dim(value: int) -> int:
             if not value:
                 return 0
@@ -1218,19 +1247,19 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     raise HTTPException(status_code=400, detail="'img2img_hires_scheduler' must not be empty")
             hires_data = {
                 "enable": True,
-                "scale": _p.as_float(payload, 'img2img_hires_scale') if 'img2img_hires_scale' in payload else 1.0,
+                "scale": _require_float_field(payload, 'img2img_hires_scale') if 'img2img_hires_scale' in payload else 1.0,
                 "resize_x": _p.as_int(payload, 'img2img_hires_resize_x') if 'img2img_hires_resize_x' in payload else 0,
                 "resize_y": _p.as_int(payload, 'img2img_hires_resize_y') if 'img2img_hires_resize_y' in payload else 0,
                 "steps": _p.as_int(payload, 'img2img_hires_steps') if 'img2img_hires_steps' in payload else 0,
-                "denoise": _p.as_float(payload, 'img2img_hires_denoise') if 'img2img_hires_denoise' in payload else denoise,
+                "denoise": _require_float_field(payload, 'img2img_hires_denoise') if 'img2img_hires_denoise' in payload else denoise,
                 "upscaler": payload.get('img2img_hires_upscaler', 'Latent'),
                 "tile": hr_tile,
                 "hr_sampler_name": hr_sampler_name,
                 "hr_scheduler": hr_scheduler.strip() if isinstance(hr_scheduler, str) and hr_scheduler.strip() else None,
                 "hr_prompt": payload.get('img2img_hires_prompt', ''),
                 "hr_negative_prompt": payload.get('img2img_hires_neg_prompt', ''),
-                "hr_cfg": _p.as_float(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
-                "hr_distilled_cfg": _p.as_float(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
+                "hr_cfg": _require_float_field(payload, 'img2img_hires_cfg') if 'img2img_hires_cfg' in payload else cfg_scale,
+                "hr_distilled_cfg": _require_float_field(payload, 'img2img_hires_distilled_cfg') if 'img2img_hires_distilled_cfg' in payload else (distilled_cfg_scale or 3.5),
             }
             _validate_prompt_sampler_controls(
                 engine_key=engine_key,

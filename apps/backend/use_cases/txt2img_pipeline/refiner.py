@@ -45,7 +45,7 @@ class RefinerStage:
 
     def is_enabled(self) -> bool:
         cfg = self.config
-        return bool(cfg and cfg.enabled and cfg.steps > 0)
+        return bool(cfg and cfg.enabled and cfg.swap_at_step > 0)
 
     def run(
         self,
@@ -75,12 +75,25 @@ class RefinerStage:
         if seed_value < 0:
             seed_value = int(torch.randint(0, 2**31 - 1, (1,)).item())
 
+        original_steps = int(processing.steps)
+        swap_at_step = int(cfg.swap_at_step)
+        if original_steps < 2:
+            raise RuntimeError(
+                f"{self.label} requires total steps >= 2 for swap semantics (got {original_steps})."
+            )
+        if swap_at_step < 1 or swap_at_step >= original_steps:
+            raise RuntimeError(
+                f"{self.label} 'switch_at_step' must be in [1, {original_steps - 1}] (got {swap_at_step})."
+            )
+        effective_refiner_steps = original_steps - swap_at_step
+
         logger = logging.getLogger(f"backend.use_cases.txt2img.refiner.{self.label.replace(' ', '_').lower()}")
         logger.info(
-            "[refiner] starting %s model=%s steps=%d cfg=%.3f seed=%d",
+            "[refiner] starting %s model=%s swap_at_step=%d remaining_steps=%d cfg=%.3f seed=%d",
             self.label,
             model_name,
-            cfg.steps,
+            swap_at_step,
+            effective_refiner_steps,
             cfg.cfg,
             seed_value,
         )
@@ -100,7 +113,6 @@ class RefinerStage:
         original_sd_model = processing.sd_model
         original_width = processing.width
         original_height = processing.height
-        original_steps = processing.steps
         original_cfg = processing.guidance_scale
         original_cfg_scale = getattr(processing, "cfg_scale", processing.guidance_scale)
 
@@ -111,7 +123,7 @@ class RefinerStage:
             processing.height = latent_h * 8
             processing.guidance_scale = cfg.cfg
             processing.cfg_scale = cfg.cfg
-            processing.steps = int(cfg.steps)
+            processing.steps = original_steps
 
             plan = build_sampling_plan(
                 processing,
@@ -136,7 +148,9 @@ class RefinerStage:
                 self.label,
                 {
                     "model": model_name,
-                    "steps": int(cfg.steps),
+                    "swap_at_step": int(swap_at_step),
+                    "effective_refiner_steps": int(effective_refiner_steps),
+                    "total_steps": int(original_steps),
                     "cfg": float(cfg.cfg),
                     "seed": int(seed_value),
                 },
@@ -152,7 +166,7 @@ class RefinerStage:
                 rng=rng,
                 noise=noise,
                 init_latent=samples,
-                start_at_step=None,
+                start_at_step=swap_at_step,
             )
             log_tensor_stats(f"{self.label.lower().replace(' ', '_')}_samples", samples_refined)
             return samples_refined

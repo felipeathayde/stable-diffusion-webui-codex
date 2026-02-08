@@ -198,17 +198,17 @@ export const useXyzStore = defineStore('xyz', () => {
         form.hires.steps = Number(value)
         break
       case 'refiner_model':
-        form.refiner = form.refiner || { enabled: true, steps: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
+        form.refiner = form.refiner || { enabled: true, swapAtStep: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
         form.refiner.enabled = true
         form.refiner.model = String(value)
         break
       case 'refiner_steps':
-        form.refiner = form.refiner || { enabled: true, steps: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
+        form.refiner = form.refiner || { enabled: true, swapAtStep: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
         form.refiner.enabled = true
-        form.refiner.steps = Number(value)
+        form.refiner.swapAtStep = Math.max(1, Math.trunc(Number(value)))
         break
       case 'refiner_cfg':
-        form.refiner = form.refiner || { enabled: true, steps: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
+        form.refiner = form.refiner || { enabled: true, swapAtStep: 10, cfg: form.guidanceScale ?? 7, seed: -1 }
         form.refiner.enabled = true
         form.refiner.cfg = Number(value)
         break

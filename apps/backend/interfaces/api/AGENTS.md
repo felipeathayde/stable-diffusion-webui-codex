@@ -40,3 +40,5 @@ Status: Active
 - 2026-01-31: Added `interfaces/api/tasks/` to keep routers thin by centralizing shared generation task worker boilerplate (status/progress/result/end + engine options build for image modes).
 - 2026-02-06: Added backend-owned `dependency_checks` contract for `/api/engines/capabilities` (ready + per-row checks), built in `dependency_checks.py`.
 - 2026-02-06: `/api/engines/capabilities` key-space map now includes `flux1_fill -> flux1` in `engine_id_to_semantic_engine` for strict frontend taxonomy mapping parity.
+- 2026-02-08: Swap-model request contract now uses `switch_at_step` in both `extras.refiner` and `extras.hires.refiner` (step-pointer semantics, not step-count semantics) with strict bounds validation in `routers/generation.py`.
+- 2026-02-08: Img2img numeric parsing now uses finite-float validation for core + hires float fields in `routers/generation.py` (rejects `NaN`/`Infinity` with HTTP 400).

@@ -33,3 +33,4 @@ Status: Active
   - Generic conditioning cache helpers (overrideable per call) + shared tensor move helpers for CPU↔device caching.
   - Runtime guard helper (`require_runtime`) for consistent “call load() first” errors across engines.
 - 2026-02-05: Added the `anima` engine key and a stub `AnimaEngine` facade (fail-loud until runtime is ported).
+- 2026-02-08: Engine adapters now map swap-model pointer semantics using `switch_at_step` (`RefinerConfig.swap_at_step`) for both global and hires nested refiner config.

@@ -45,7 +45,7 @@ describe('buildTxt2ImgPayload', () => {
         tile: { tile: 256, overlap: 16 },
         refiner: {
           enabled: true,
-          steps: 4,
+          swapAtStep: 4,
           cfg: 5,
           seed: -1,
           model: 'sdxl_refiner_1.0',
@@ -54,7 +54,7 @@ describe('buildTxt2ImgPayload', () => {
       },
       refiner: {
         enabled: true,
-        steps: 6,
+        swapAtStep: 6,
         cfg: 6.5,
         seed: 123,
         model: 'base-refiner',
@@ -63,9 +63,9 @@ describe('buildTxt2ImgPayload', () => {
     })
 
     expect(payload.extras?.refiner).toBeDefined()
-    expect(payload.extras?.refiner).toMatchObject({ steps: 6, cfg: 6.5, seed: 123 })
+    expect(payload.extras?.refiner).toMatchObject({ switch_at_step: 6, cfg: 6.5, seed: 123 })
     expect(payload.extras?.hires?.refiner).toBeDefined()
-    expect(payload.extras?.hires?.refiner).toMatchObject({ steps: 4, cfg: 5 })
+    expect(payload.extras?.hires?.refiner).toMatchObject({ switch_at_step: 4, cfg: 5 })
   })
 
   it('propagates hiresFallbackOnOom and hiresMinTile into hires tile config', () => {

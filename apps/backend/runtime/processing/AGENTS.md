@@ -14,3 +14,4 @@ Status: Active
 - 2026-01-29: `CodexProcessingImg2Img` now includes explicit mask enforcement selection (`post_blend` vs `per_step_clamp`) for Codex-native masked img2img.
 - 2026-02-03: Processing models use `CodexHiresConfig` for hires configuration (renamed).
 - 2026-02-08: `datatypes.py` now includes `ErSdeOptions` and `SamplingPlan.er_sde` to carry normalized ER-SDE runtime options through pipeline stages.
+- 2026-02-08: `processing.models.RefinerConfig` now uses `swap_at_step` (serialized as `switch_at_step`) to represent swap-pointer semantics; `CodexHiresConfig.update_from_payload` reads nested refiner pointers from `refiner.switch_at_step`.

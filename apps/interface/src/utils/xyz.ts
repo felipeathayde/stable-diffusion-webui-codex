@@ -77,7 +77,7 @@ export const AXIS_OPTIONS: { id: AxisParam; label: string; kind: 'text' | 'numbe
   { id: 'hires_scale', label: 'Hires scale', kind: 'number' },
   { id: 'hires_steps', label: 'Hires steps', kind: 'number' },
   { id: 'refiner_model', label: 'Refiner model', kind: 'text' },
-  { id: 'refiner_steps', label: 'Refiner steps', kind: 'number' },
+  { id: 'refiner_steps', label: 'Swap at step', kind: 'number' },
   { id: 'refiner_cfg', label: 'Refiner CFG', kind: 'number' },
 ]
 

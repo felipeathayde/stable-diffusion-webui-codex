@@ -310,7 +310,7 @@ function defaultParams<T extends BaseTabType>(
   const resolvedScheduler = String(opts?.scheduler || '').trim() || samplingDefaults.scheduler
   const refinerDefaults: RefinerFormState = {
     enabled: false,
-    steps: 0,
+    swapAtStep: 1,
     cfg: 3.5,
     seed: -1,
     model: undefined,
@@ -462,6 +462,17 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
       ...defaults.refiner,
       ...(refinerPatch as Partial<RefinerFormState>),
     },
+  }
+
+  const globalSwapAtStep = Number(merged.refiner.swapAtStep)
+  merged.refiner.swapAtStep = Number.isFinite(globalSwapAtStep) && globalSwapAtStep >= 1
+    ? Math.trunc(globalSwapAtStep)
+    : 1
+  if (merged.hires.refiner) {
+    const hiresSwapAtStep = Number(merged.hires.refiner.swapAtStep)
+    merged.hires.refiner.swapAtStep = Number.isFinite(hiresSwapAtStep) && hiresSwapAtStep >= 1
+      ? Math.trunc(hiresSwapAtStep)
+      : 1
   }
 
   if (typeof merged.sampler !== 'string' || !merged.sampler.trim()) {

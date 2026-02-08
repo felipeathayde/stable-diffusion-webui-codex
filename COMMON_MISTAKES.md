@@ -106,6 +106,8 @@ Wrong command:
 ```bash
 rg -n "use_cases/restore\\.py|`restore\\.py`" .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
 rg -n "\\(Optional\\) Tile controls: expose `min_tile`" .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
+rg -n "Implementing masking for the Flux Kontext|Phase 2 will implement Kontext masking|fail loud|single `/api/img2img`|no dedicated `/api/inpaint`" .sangoi/plans/2026-01-29-masked-img2img-inpaint-v1.md
+rg -n "Using outdated `EngineRegistry`|Assuming file paths that do not exist" COMMON_MISTAKES.md
 ```
 
 Cause and fix:
@@ -117,6 +119,7 @@ Correct command:
 rg -n 'use_cases/restore\\.py|`restore\\.py`' .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
 rg -n "restore\\.py" .sangoi/plans/2026-02-01-supir-webui-integration-v1.md
 rg -n '\\(Optional\\) Tile controls: expose `min_tile`' .sangoi/plans/2026-02-01-upscalers-and-hires-fix-global-modules-v1-plan.md
+rg -n 'Implementing masking for the Flux Kontext|Phase 2 will implement Kontext masking|fail loud|single `/api/img2img`|no dedicated `/api/inpaint`' .sangoi/plans/2026-01-29-masked-img2img-inpaint-v1.md
 ```
 
 ### Putting `rg` flags after `--` (ripgrep stops parsing options)
@@ -919,4 +922,70 @@ The pattern matched plain separator lines like `========` in tokenizer assets, p
 Correct command:
 ```bash
 rg -n "^(<<<<<<<|=======|>>>>>>>)( |$)" .
+```
+
+### Using outdated `EngineRegistry` import path / positional call for keyword-only API
+
+Wrong command:
+```bash
+sed -n '1,220p' apps/backend/core/engine_registry.py
+CODEX_ROOT=$PWD PYTHONPATH=$PWD .venv/bin/python - <<'PY'
+from apps.backend.core.engine_registry import EngineRegistry
+from apps.backend.engines import register_default_engines
+from apps.backend.core.engine_interface import TaskType
+
+registry = EngineRegistry()
+register_default_engines(registry)
+for engine_id in sorted(registry.list_ids()):
+    engine = registry.get(engine_id)
+    cap = engine.capabilities()
+    if TaskType.IMG2IMG in cap.tasks:
+        print(engine_id)
+PY
+```
+
+Cause and fix:
+The registry module is `apps.backend.core.registry` (not `engine_registry.py`), and `register_default_engines` is keyword-only (`registry=...`).
+Use the correct module path and pass the argument by keyword.
+
+Correct command:
+```bash
+CODEX_ROOT=$PWD PYTHONPATH=$PWD .venv/bin/python - <<'PY'
+from apps.backend.core.registry import EngineRegistry
+from apps.backend.engines import register_default_engines
+from apps.backend.core.engine_interface import TaskType
+
+registry = EngineRegistry()
+register_default_engines(registry=registry)
+for engine_id in sorted(registry.list()):
+    engine = registry.create(engine_id)
+    cap = engine.capabilities()
+    if TaskType.IMG2IMG in cap.tasks:
+        print(engine_id)
+PY
+```
+
+### Assuming file paths that do not exist (sed/nl on guessed locations)
+
+Wrong command:
+```bash
+nl -ba apps/interface/src/views/QuickSettingsBar.vue | sed -n '1,260p'
+sed -n '1,220p' apps/backend/core/engine_registry.py
+sed -n '1,240p' apps/backend/runtime/engine_surface.py
+sed -n '1,240p' apps/backend/runtime/semantic_engine.py
+nl -ba apps/backend/runtime/pipeline_stages/hires.py | sed -n '1,320p'
+rg -n "img2img|inpaint|mask" apps/interface/README.md apps/backend/README.md README.md .sangoi/CHANGELOG.md -g '*.md'
+```
+
+Cause and fix:
+Guessed paths were stale/wrong for this repo layout.
+Confirm the exact path first with `rg --files` or `find`, then open the file.
+
+Correct command:
+```bash
+rg --files apps/interface/src | rg 'QuickSettingsBar\\.vue$'
+rg --files apps/backend/core | rg 'registry\\.py$'
+rg --files apps/backend/runtime | rg 'model_registry/capabilities\\.py$'
+rg --files apps/backend/runtime/pipeline_stages | rg 'hires_fix\\.py$'
+rg -n "img2img|inpaint|mask" apps/interface/README.md README.md .sangoi/CHANGELOG.md -g '*.md'
 ```

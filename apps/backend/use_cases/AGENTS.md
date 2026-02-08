@@ -26,3 +26,4 @@ Status: Active
 - 2026-01-31: `img2img.py` now includes a canonical event wrapper (`run_img2img`) and shared image streaming helpers live in `apps/backend/use_cases/_image_streaming.py` (Option A: mode streaming stays in use-cases; engines delegate).
 - 2026-02-03: Hires pass validation/errors now reference `hires.*` naming (contract cutover).
 - 2026-01-27: WAN video results now support video-first payloads: txt2vid/img2vid export via ffmpeg and return `result.video { rel_path, mime }`; a per-tab `Return frames` knob controls whether frames are included (fallback returns frames when `saveOutput` is off or export fails). Vid2vid now honors the same knob for preview frames.
+- 2026-02-08: `txt2img_pipeline/refiner.py` now interprets refiner swap as a pointer (`switch_at_step`) and starts the refiner pass at that step while preserving total diffusion steps.

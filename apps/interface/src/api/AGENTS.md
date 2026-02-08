@@ -12,6 +12,7 @@ Status: Active
 - Regenerate or update the client whenever backend schemas change.
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.hires.refiner`; `HiresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
+- 2026-02-08: swap-model payload semantics now use `switch_at_step` (not `steps`) in both global and hires nested refiner payloads; frontend form state uses `swapAtStep`.
 - `payloads_video.ts` provides typed (Zod) payload builders for WAN video endpoints (sha-first): stages use `model_sha` + optional `lora_sha` (sha256), TE/VAE use sha selection, and builders guard against sentinel asset values (`Automatic`/`Built-in`). For `vid2vid.method="wan_animate"`, the backend requires repo-scoped paths (under `CODEX_ROOT`) for `vid2vid_model_dir` and stage `model_dir`; stage LoRA remains sha-only via `lora_sha`.
 - 2026-01-23: `payloads_video.ts` snaps WAN video `width/height` up to a multiple of 16 (rounded up; Diffusers parity) so requests never trip backend `%16` validation.
 - 2026-01-23: `client.ts` now extracts FastAPI `{"detail": ...}` error bodies into readable `Error.message` strings (no more opaque “400 Bad Request”).

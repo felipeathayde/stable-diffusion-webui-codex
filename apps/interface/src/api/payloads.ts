@@ -39,7 +39,7 @@ const DeviceEnum = z.enum(DEVICE_VALUES)
 const RefinerOptionsSchema = z
   .object({
     enable: z.literal(true),
-    steps: z.number().int().min(0),
+    switch_at_step: z.number().int().min(1),
     cfg: z.number(),
     seed: z.number().int(),
     model: z.string().min(1).optional(),
@@ -173,7 +173,7 @@ export interface HiresFormState {
 
 export interface RefinerFormState {
   enabled: boolean
-  steps: number
+  swapAtStep: number
   cfg: number
   seed: number
   model?: string
@@ -304,7 +304,7 @@ export function buildTxt2ImgPayload(
       refiner: state.hires.refiner?.enabled
         ? {
             enable: true,
-            steps: state.hires.refiner.steps,
+            switch_at_step: state.hires.refiner.swapAtStep,
             cfg: state.hires.refiner.cfg,
             seed: state.hires.refiner.seed,
             model: state.hires.refiner.model,
@@ -315,7 +315,7 @@ export function buildTxt2ImgPayload(
   if (state.refiner?.enabled) {
     extras.refiner = {
       enable: true,
-      steps: state.refiner.steps,
+      switch_at_step: state.refiner.swapAtStep,
       cfg: state.refiner.cfg,
       seed: state.refiner.seed,
       model: state.refiner.model,

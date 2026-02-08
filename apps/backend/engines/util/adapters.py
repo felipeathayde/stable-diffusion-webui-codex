@@ -121,7 +121,7 @@ def _build_hires_config(data: Mapping[str, Any] | None, *, default_cfg: float, d
 def _build_refiner_config(data: Mapping[str, Any] | None, *, default_cfg: float) -> RefinerConfig:
     payload = data or {}
     enabled = bool(payload.get("enable", False))
-    steps = int(payload.get("steps", 0) or 0)
+    swap_at_step = int(payload.get("switch_at_step", 0) or 0)
     cfg = float(payload.get("cfg", default_cfg))
     seed = int(payload.get("seed", -1))
     model_raw = payload.get("model")
@@ -130,8 +130,8 @@ def _build_refiner_config(data: Mapping[str, Any] | None, *, default_cfg: float)
     vae_name = str(vae_raw).strip() if vae_raw else ""
 
     return RefinerConfig(
-        enabled=enabled and steps > 0,
-        steps=steps,
+        enabled=enabled and swap_at_step > 0,
+        swap_at_step=swap_at_step,
         cfg=cfg,
         seed=seed,
         model=model_name or None,

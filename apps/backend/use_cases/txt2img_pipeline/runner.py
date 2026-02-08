@@ -690,8 +690,8 @@ class Txt2ImgPipelineRunner:
             raw = overrides.get("refiner") if isinstance(overrides, dict) else None
             if isinstance(raw, dict):
                 refiner_cfg = RefinerConfig(
-                    enabled=bool(raw.get("enable", False)) and int(raw.get("steps", 0) or 0) > 0,
-                    steps=int(raw.get("steps", 0) or 0),
+                    enabled=bool(raw.get("enable", False)) and int(raw.get("switch_at_step", 0) or 0) > 0,
+                    swap_at_step=int(raw.get("switch_at_step", 0) or 0),
                     cfg=float(raw.get("cfg", getattr(processing, "guidance_scale", 7.0))),
                     seed=int(raw.get("seed", -1)),
                     model=str(raw.get("model") or "").strip() or None,

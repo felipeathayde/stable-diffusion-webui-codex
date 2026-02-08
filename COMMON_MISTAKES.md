@@ -875,3 +875,18 @@ Correct command:
 ```bash
 rg -n 'Assuming Anima has `sampler.py`|Assuming `runtime/sampling/samplers.py` exists|Assuming image API helpers live' COMMON_MISTAKES.md
 ```
+
+### Grepping phrases with backticks inside double quotes in `bash`
+
+Wrong command:
+```bash
+rg -n "Flux1 GGUF T5 loader `model` unbound fix|State: Completed|Behavior matrix|4 passed|OK_HEADER_CHANGED|No broken markdown links" .sangoi/CHANGELOG.md .sangoi/plans/2026-02-08-flux1-gguf-unbound-model-fix.md .sangoi/task-logs/2026-02-08-flux1-gguf-unbound-model-fix.md .sangoi/dev/tests/backend/AGENTS.md
+```
+
+Cause and fix:
+Backticks inside a double-quoted pattern trigger shell command substitution (`model` was executed as a command). Use single quotes around regex containing literal backticks.
+
+Correct command:
+```bash
+rg -n 'Flux1 GGUF T5 loader `model` unbound fix|State: Completed|Behavior matrix|4 passed|OK_HEADER_CHANGED|No broken markdown links' .sangoi/CHANGELOG.md .sangoi/plans/2026-02-08-flux1-gguf-unbound-model-fix.md .sangoi/task-logs/2026-02-08-flux1-gguf-unbound-model-fix.md .sangoi/dev/tests/backend/AGENTS.md
+```

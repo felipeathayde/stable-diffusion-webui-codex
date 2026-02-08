@@ -11,6 +11,7 @@ Resolves TE/VAE overrides (`tenc_path` shorthand), normalizes state_dict layouts
 Includes core-only families (e.g., Anima) that are not diffusers repositories: the loader returns a minimal bundle and leaves external asset loading to engines.
 NF4/FP4 is not supported (fail loud); GGUF is the only supported pre-quant format.
 SDXL loads are strict: missing/unexpected keys are fatal to surface drift early.
+Flux T5 component loading now guarantees model construction before state-dict load for both GGUF and non-GGUF paths.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ParsedCheckpoint` (dataclass): Parsed checkpoint bundle (primary path + optional additional modules + extracted configs/metadata).
@@ -1083,43 +1084,43 @@ def _load_huggingface_component(
             te_load_device = torch.device("cpu")
             LOGGER.info("[loader] Smart offload: loading %s on CPU (initial)", component_name)
 
-            from transformers import modeling_utils
+        from transformers import modeling_utils
 
-            if storage_dtype == "gguf":
-                with modeling_utils.no_init_weights():
-                    with using_codex_operations(
-                        device=te_load_device,
-                        dtype=memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER),
-                        manual_cast_enabled=False,
-                        weight_format="gguf",
-                    ):
-                        model = IntegratedT5(t5_config)
-            else:
-                with modeling_utils.no_init_weights():
-                    with using_codex_operations(device=te_load_device, dtype=storage_dtype, manual_cast_enabled=True):
-                        model = IntegratedT5(t5_config)
-            model.transformer.compute_dtype = memory_management.manager.compute_dtype_for_role(
-                DeviceRole.TEXT_ENCODER,
-                storage_dtype=storage_dtype if isinstance(storage_dtype, torch.dtype) else None,
-            )
+        if storage_dtype == "gguf":
+            with modeling_utils.no_init_weights():
+                with using_codex_operations(
+                    device=te_load_device,
+                    dtype=memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER),
+                    manual_cast_enabled=False,
+                    weight_format="gguf",
+                ):
+                    model = IntegratedT5(t5_config)
+        else:
+            with modeling_utils.no_init_weights():
+                with using_codex_operations(device=te_load_device, dtype=storage_dtype, manual_cast_enabled=True):
+                    model = IntegratedT5(t5_config)
+        model.transformer.compute_dtype = memory_management.manager.compute_dtype_for_role(
+            DeviceRole.TEXT_ENCODER,
+            storage_dtype=storage_dtype if isinstance(storage_dtype, torch.dtype) else None,
+        )
 
-            # Normalize T5 state dict keys: add transformer. prefix if missing
-            # T5 files often have keys like encoder.block.* but model expects transformer.encoder.block.*
-            if hasattr(state_dict, "keys"):
-                keys_to_check = list(state_dict.keys())
-                needs_prefix = any(k.startswith("encoder.") or k == "shared.weight" for k in keys_to_check[:50])
-                if needs_prefix:
-                    # Create a new dict with normalized keys
-                    normalized_sd = {}
-                    for k, v in (
-                        state_dict.items() if hasattr(state_dict, "items") else [(k, state_dict[k]) for k in keys_to_check]
-                    ):
-                        if k.startswith("encoder.") or k == "shared.weight" or k.startswith("embed_tokens"):
-                            new_key = f"transformer.{k}"
-                            normalized_sd[new_key] = v
-                        else:
-                            normalized_sd[k] = v
-                    state_dict = normalized_sd
+        # Normalize T5 state dict keys: add transformer. prefix if missing
+        # T5 files often have keys like encoder.block.* but model expects transformer.encoder.block.*
+        if hasattr(state_dict, "keys"):
+            keys_to_check = list(state_dict.keys())
+            needs_prefix = any(k.startswith("encoder.") or k == "shared.weight" for k in keys_to_check[:50])
+            if needs_prefix:
+                # Create a new dict with normalized keys
+                normalized_sd = {}
+                for k, v in (
+                    state_dict.items() if hasattr(state_dict, "items") else [(k, state_dict[k]) for k in keys_to_check]
+                ):
+                    if k.startswith("encoder.") or k == "shared.weight" or k.startswith("embed_tokens"):
+                        new_key = f"transformer.{k}"
+                        normalized_sd[new_key] = v
+                    else:
+                        normalized_sd[k] = v
+                state_dict = normalized_sd
 
         load_state_dict(
             model,
